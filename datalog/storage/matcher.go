@@ -20,6 +20,7 @@ type BadgerMatcher struct {
 	builderCacheOnce sync.Once                // Ensures builderCache is initialized exactly once
 	handler          annotations.Handler      // Set from HandlerProvider for detailed storage events
 	options          executor.ExecutorOptions // Options for creating relations
+	forceJoinStrategy *JoinStrategy           // Override join strategy selection for testing
 }
 
 // NewBadgerMatcher creates a new pattern matcher for the BadgerStore
@@ -94,6 +95,12 @@ func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, columns []qu
 	builder := query.NewInternedTupleBuilder(pattern, columns)
 	actual, _ := m.builderCache.LoadOrStore(key, builder)
 	return actual.(*query.InternedTupleBuilder)
+}
+
+// ForceJoinStrategy overrides the join strategy selection for testing
+// Pass nil to restore default behavior
+func (m *BadgerMatcher) ForceJoinStrategy(strategy *JoinStrategy) {
+	m.forceJoinStrategy = strategy
 }
 
 // Deprecated functions removed - use Match() which returns executor.Relation

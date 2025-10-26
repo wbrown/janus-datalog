@@ -23,6 +23,7 @@ type ExecutorOptions struct {
 	// Join options
 	EnableStreamingJoins bool
 	EnableDebugLogging   bool
+	DefaultHashTableSize int // Default hash table size for streaming relations (Size() = -1). If 0, uses 256.
 
 	// Aggregation options
 	EnableStreamingAggregation      bool

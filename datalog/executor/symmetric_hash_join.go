@@ -62,12 +62,21 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinCols []query.Symbol,
 		}
 	}
 
+	// Determine initial hash table size
+	// Use configurable DefaultHashTableSize for better cache locality
+	// Research shows smaller initial sizes (256) provide better L1 cache utilization
+	// than larger sizes (1000+), even with rehashing cost
+	tableSize := opts.DefaultHashTableSize
+	if tableSize == 0 {
+		tableSize = 256 // Default matches regular hash join for consistency
+	}
+
 	// Create the symmetric hash join iterator
 	iter := &symmetricHashJoinIterator{
 		leftIt:       left.Iterator(),
 		rightIt:      right.Iterator(),
-		leftTable:    NewTupleKeyMapWithCapacity(1000), // Start with reasonable size
-		rightTable:   NewTupleKeyMapWithCapacity(1000),
+		leftTable:    NewTupleKeyMapWithCapacity(tableSize),
+		rightTable:   NewTupleKeyMapWithCapacity(tableSize),
 		leftIndices:  leftIndices,
 		rightIndices: rightIndices,
 		joinCols:     joinCols,
@@ -75,7 +84,7 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinCols []query.Symbol,
 		rightCols:    right.Columns(),
 		outputCols:   outputCols,
 		resultQueue:  make([]Tuple, 0),
-		seen:         NewTupleKeyMapWithCapacity(1000),
+		seen:         NewTupleKeyMapWithCapacity(tableSize),
 		batchSize:    100, // Process tuples in batches for efficiency
 	}
 
@@ -131,6 +140,12 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 	for processed < it.batchSize && it.leftIt.Next() {
 		leftTuple := it.leftIt.Tuple()
 
+		// BUG FIX: Copy tuple since iterator might reuse buffer
+		// Without this, all tuples in hash table point to same reused buffer
+		leftTupleCopy := make(Tuple, len(leftTuple))
+		copy(leftTupleCopy, leftTuple)
+		leftTuple = leftTupleCopy
+
 		// Extract join key from left tuple
 		key := NewTupleKey(leftTuple, it.leftIndices)
 
@@ -150,7 +165,7 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 			}
 		}
 
-		// Add to left table
+		// Add to left table (tuple already copied above)
 		if existingVal, ok := it.leftTable.Get(key); ok {
 			existing := existingVal.([]Tuple)
 			it.leftTable.Put(key, append(existing, leftTuple))
@@ -173,6 +188,12 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 	for processed < it.batchSize && it.rightIt.Next() {
 		rightTuple := it.rightIt.Tuple()
 
+		// BUG FIX: Copy tuple since iterator might reuse buffer
+		// Without this, all tuples in hash table point to same reused buffer
+		rightTupleCopy := make(Tuple, len(rightTuple))
+		copy(rightTupleCopy, rightTuple)
+		rightTuple = rightTupleCopy
+
 		// Extract join key from right tuple
 		key := NewTupleKey(rightTuple, it.rightIndices)
 
@@ -192,7 +213,7 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 			}
 		}
 
-		// Add to right table
+		// Add to right table (tuple already copied above)
 		if existingVal, ok := it.rightTable.Get(key); ok {
 			existing := existingVal.([]Tuple)
 			it.rightTable.Put(key, append(existing, rightTuple))

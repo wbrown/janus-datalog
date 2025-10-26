@@ -41,6 +41,11 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 	bindingRel executor.Relation,
 	position int,
 ) JoinStrategy {
+	// Check for forced strategy override (for testing)
+	if m.forceJoinStrategy != nil {
+		return *m.forceJoinStrategy
+	}
+
 	bindingSize := bindingRel.Size()
 
 	// Estimate pattern cardinality (total datoms that match the constant parts)
@@ -50,9 +55,9 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 	selectivity := float64(bindingSize) / float64(patternCard)
 
 	// Strategy selection based on selectivity and absolute size
-	if bindingSize <= 10 {
-		// Very small binding sets: index nested loop is fine
-		// Overhead of hash table not worth it
+	if bindingSize <= 2 {
+		// Very small binding sets (1-2 tuples): direct seek is optimal
+		// Single seek cost < full table scan cost
 		return IndexNestedLoop
 	}
 
