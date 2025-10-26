@@ -606,7 +606,7 @@ These principles guided Janus's development:
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file for details.
+Apache 2.0 License - See [LICENSE](LICENSE) file for details.
 
 ## Questions?
 
