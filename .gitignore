@@ -1,0 +1,66 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+*.cover
+*.coverage
+coverage.html
+coverage.txt
+
+# Profile files
+*.prof
+cpu.prof
+mem.prof
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# BadgerDB directories
+badger/
+*.badger/
+
+# References
+orig_*/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# Build outputs
+datalog-cli
+/cmd/datalog/datalog
+janus-datalog
+test_direct
+test_opt
+
+# Database files
+datalog-db/
+/cmd/datalog/datalog-db/
+*.db
+
+# Test databases (generated)
+datalog/storage/testdata/
+
+# Test files
+test_*.txt

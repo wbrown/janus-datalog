@@ -1,0 +1,83 @@
+; Single-pass hourly OHLC using ONE subquery instead of FOUR
+; This should be 4× faster by scanning each hour's data only once
+
+[:find ?datetime ?open-price ?hour-high ?hour-low ?close-price ?total-volume
+ :where
+        [?s :symbol/ticker "CRWV"]
+
+        ; Get distinct hours by finding first 5-min bar of each hour
+        [?first-bar :price/symbol ?s]
+        [?first-bar :price/time ?t]
+        [(year ?t) ?year]
+        [(month ?t) ?month]
+        [(day ?t) ?day]
+        [(hour ?t) ?hour]
+        [?first-bar :price/minute-of-day ?mod]
+        [(>= ?mod 570)]
+        [(<= ?mod 960)]
+        [(* ?hour 60) ?hour-start]
+        [(+ ?hour-start 4) ?open-end]
+        [(+ ?hour 1) ?next-hour]
+        [(* ?next-hour 60) ?hour-end-mod]
+        [(- ?hour-end-mod 5) ?close-start]
+        [(- ?hour-end-mod 1) ?close-end]
+        [(>= ?mod ?hour-start)]
+        [(<= ?mod ?open-end)]
+        [(str ?year "-" ?month "-" ?day " " ?hour ":00") ?datetime]
+
+        ; SINGLE subquery that computes ALL aggregates in one pass
+        ; This scans each hour's data exactly ONCE instead of FOUR times
+        [(q [:find (max ?h) (min ?l) (min ?o) (max ?c) (sum ?v)
+             :in $ ?sym ?y ?m ?d ?hr ?open-start ?open-end ?close-start ?close-end
+             :where
+                    ; Base filters (all bars for this hour)
+                    [?b :price/symbol ?sym]
+                    [?b :price/time ?time]
+                    [(year ?time) ?py]
+                    [(month ?time) ?pm]
+                    [(day ?time) ?pd]
+                    [(hour ?time) ?ph]
+                    [(= ?py ?y)]
+                    [(= ?pm ?m)]
+                    [(= ?pd ?d)]
+                    [(= ?ph ?hr)]
+
+                    ; Get all OHLC values
+                    [?b :price/high ?h]
+                    [?b :price/low ?l]
+                    [?b :price/volume ?v]
+
+                    ; For open: use bars in first 5 minutes
+                    ; For close: use bars in last 5 minutes
+                    ; Problem: we need CONDITIONAL aggregation
+                    ; This won't work without conditional aggregation support!
+
+                    ; Open price (from first 5 minutes)
+                    [?b :price/minute-of-day ?mod]
+                    [(>= ?mod ?open-start)]
+                    [(<= ?mod ?open-end)]
+                    [?b :price/open ?o]
+
+                    ; Close price (from last 5 minutes)
+                    ; PROBLEM: Can't have two different mod ranges in same query!
+                    ; This is why the original query uses 4 separate subqueries
+                    ]
+            $ ?s ?year ?month ?day ?hour ?hour-start ?open-end ?close-start ?close-end)
+          [[?hour-high ?hour-low ?open-price ?close-price ?total-volume]]]
+
+ :order-by [?datetime]]
+
+; ANALYSIS: This query won't work as-is because:
+; 1. We need open from FIRST 5 minutes (mod in [hour-start, open-end])
+; 2. We need close from LAST 5 minutes (mod in [close-start, close-end])
+; 3. Can't have two mutually exclusive filters in same WHERE clause
+;
+; SQL equivalent would use CASE/FILTER:
+;   SELECT
+;     MAX(high), MIN(low),
+;     MIN(open) FILTER (WHERE mod BETWEEN open_start AND open_end),
+;     MAX(close) FILTER (WHERE mod BETWEEN close_start AND close_end),
+;     SUM(volume)
+;   ...
+;
+; This requires CONDITIONAL AGGREGATION support in Datalog!
