@@ -43,7 +43,11 @@ func TestIteratorReuseRegression(t *testing.T) {
 	loadMinuteBars(t, db, symbols, 60)
 
 	// Verify data was actually stored by doing a simple query
-	testMatcher := NewBadgerMatcher(db.store)
+	// Force IndexNestedLoop to test iterator reuse behavior
+	opts := executor.ExecutorOptions{
+		IndexNestedLoopThreshold: 999999,
+	}
+	testMatcher := NewBadgerMatcherWithOptions(db.store, opts)
 	testPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: "?e"},
@@ -122,7 +126,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 	t.Run("WithoutIteratorReuse", func(t *testing.T) {
 		// Create a matcher that tracks statistics
 		matcher := &instrumentedMatcher{
-			BadgerMatcher: NewBadgerMatcher(db.store),
+			BadgerMatcher: NewBadgerMatcherWithOptions(db.store, opts),
 			stats:         &matchStats{},
 		}
 
@@ -202,7 +206,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		// - Iterator reuse only works with primary sort keys
 
 		matcher := &instrumentedMatcher{
-			BadgerMatcher: NewBadgerMatcher(db.store),
+			BadgerMatcher: NewBadgerMatcherWithOptions(db.store, opts),
 			stats:         &matchStats{},
 			forceReuse:    true, // Force iterator reuse for testing
 		}
@@ -274,7 +278,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 				query.Variable{Name: "?v"},
 			},
 		}
-		regularMatcher := NewBadgerMatcher(db.store)
+		regularMatcher := NewBadgerMatcherWithOptions(db.store, opts)
 		anyResult, err := regularMatcher.Match(anyPattern, nil)
 		if err != nil {
 			t.Fatalf("Any pattern failed: %v", err)
@@ -341,7 +345,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		t.Logf("Regular matcher with binding found %d bars for AAPL", testCount)
 
 		matcher := &instrumentedMatcher{
-			BadgerMatcher: NewBadgerMatcher(db.store),
+			BadgerMatcher: NewBadgerMatcherWithOptions(db.store, opts),
 			stats:         &matchStats{},
 		}
 

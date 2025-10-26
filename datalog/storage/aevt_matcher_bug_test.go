@@ -114,8 +114,10 @@ func TestAEVTMatcherBug(t *testing.T) {
 	for i, event := range events {
 		t.Logf("Event %d: %s - %+v", i, event.Name, event.Data)
 
-		// Check both iterator-reuse-complete and multi-match events
-		if event.Name == "pattern/iterator-reuse-complete" || event.Name == "pattern/multi-match" {
+		// Check iterator-reuse-complete, multi-match, and hash-join-complete events
+		if event.Name == "pattern/iterator-reuse-complete" ||
+		   event.Name == "pattern/multi-match" ||
+		   event.Name == "pattern/hash-join-complete" {
 			if scanned, ok := event.Data["datoms.scanned"].(int); ok {
 				datomsScanned = scanned
 			}
@@ -135,16 +137,22 @@ func TestAEVTMatcherBug(t *testing.T) {
 		t.Errorf("Expected AEVT index, got %s", indexUsed)
 	}
 
-	// CRITICAL TEST: Should scan ~3 datoms (one per bound entity)
-	// Bug: Scans entire database or more
-	expectedScans := 3
-	tolerance := 10 // Allow some overhead, but not 50+
+	// PERFORMANCE TEST: With HashJoinScan strategy, we scan all :person/age datoms (10)
+	// but probe hash set for matches. This is faster than IndexNestedLoop's 3 seeks
+	// because IndexNestedLoop calls Sorted() which adds massive overhead.
+	//
+	// Benchmarks show:
+	//   - Size 3: IndexNestedLoop 2298µs vs HashJoinScan 203µs (11.3× faster)
+	//
+	// So even though HashJoinScan scans more datoms (10 vs 3), the total time is faster.
+	expectedScans := 10 // All :person/age datoms
+	tolerance := 5      // Allow some overhead
 
 	if datomsScanned > expectedScans+tolerance {
-		t.Errorf("🚨 AEVT BUG REPRODUCED: Scanned %d datoms for 3 bound entities (expected ~%d)",
+		t.Errorf("🚨 EXCESSIVE SCANNING: Scanned %d datoms for 3 bound entities (expected ~%d)",
 			datomsScanned, expectedScans)
-		t.Logf("Performance degradation: %dx too many scans", datomsScanned/expectedScans)
+		t.Logf("Should scan all :person/age datoms (~10), not entire database (50)")
 	} else {
-		t.Logf("✅ SUCCESS: Scanned %d datoms (expected ~%d)", datomsScanned, expectedScans)
+		t.Logf("✅ SUCCESS: Scanned %d datoms (expected ~%d for HashJoinScan strategy)", datomsScanned, expectedScans)
 	}
 }

@@ -36,18 +36,18 @@ func TestJoinStrategySelection(t *testing.T) {
 		reason             string
 	}{
 		{
-			name:               "tiny set uses index nested loop",
-			bindingSize:        5,
+			name:               "tiny set uses hash join",
+			bindingSize:        2,
 			patternCardinality: 1000,
-			expectedStrategy:   IndexNestedLoop,
-			reason:             "bindingSize ≤ 10",
+			expectedStrategy:   HashJoinScan,
+			reason:             "bindingSize ≤ 1000 (Sorted() overhead makes IndexNestedLoop slow even for tiny sets)",
 		},
 		{
 			name:               "small set uses hash join",
 			bindingSize:        50,
 			patternCardinality: 1000,
 			expectedStrategy:   HashJoinScan,
-			reason:             "11 ≤ bindingSize ≤ 1000",
+			reason:             "bindingSize ≤ 1000",
 		},
 		{
 			name:               "medium set uses hash join",
