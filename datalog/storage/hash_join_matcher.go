@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -41,6 +42,11 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 	bindingRel executor.Relation,
 	position int,
 ) JoinStrategy {
+	// Check for forced strategy override (for testing)
+	if m.forceJoinStrategy != nil {
+		return *m.forceJoinStrategy
+	}
+
 	bindingSize := bindingRel.Size()
 
 	// Estimate pattern cardinality (total datoms that match the constant parts)
@@ -50,14 +56,31 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 	selectivity := float64(bindingSize) / float64(patternCard)
 
 	// Strategy selection based on selectivity and absolute size
-	if bindingSize <= 10 {
-		// Very small binding sets: index nested loop is fine
-		// Overhead of hash table not worth it
+	//
+	// NOTE: IndexNestedLoop was originally thought to be better for small binding sets,
+	// but comprehensive benchmarking revealed that the Sorted() call in matchWithIteratorReuse()
+	// (which materializes AND sorts) adds so much overhead that HashJoinScan is faster
+	// even for single bindings:
+	//
+	//   Size 1:  IndexNestedLoop 821µs vs HashJoinScan 204µs (4.0× speedup)
+	//   Size 2:  IndexNestedLoop 1522µs vs HashJoinScan 203µs (7.5× speedup)
+	//   Size 3:  IndexNestedLoop 2298µs vs HashJoinScan 203µs (11.3× speedup)
+	//   Size 10: IndexNestedLoop 7660µs vs HashJoinScan 206µs (37× speedup)
+	//
+	// The sorting overhead dominates seek cost at all tested binding sizes.
+	// See: datalog/storage/join_strategy_threshold_bench_test.go
+
+	// Check if IndexNestedLoop is preferred for small binding sets (configurable via options)
+	threshold := m.options.IndexNestedLoopThreshold
+
+	// CRITICAL: Size() returns -1 for streaming relations with unknown size
+	// Don't use IndexNestedLoop for unknown sizes (-1 <= 0 would be true!)
+	// Default to HashJoinScan for streaming relations
+	if bindingSize >= 0 && bindingSize <= threshold {
 		return IndexNestedLoop
 	}
 
-	// For medium-sized binding sets (11-1000), always use hash join
-	// Iterator reuse has proven to be unreliable and scans excessive datoms
+	// For small to medium-sized binding sets (1-1000), use hash join
 	if bindingSize <= 1000 {
 		return HashJoinScan
 	}
@@ -99,12 +122,51 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	columns []query.Symbol,
-	position int,
+	position int, // Datom position (0=E, 1=A, 2=V, 3=T)
 	index IndexType,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
 	// PHASE 1: Build hash set from binding relation
-	hashSet := m.buildHashSet(bindingRel, position)
+	// Find which variable is at the datom position, then find its column index
+	var joinSymbol query.Symbol
+	switch position {
+	case 0:
+		if v, ok := pattern.GetE().(query.Variable); ok {
+			joinSymbol = v.Name
+		}
+	case 1:
+		if v, ok := pattern.GetA().(query.Variable); ok {
+			joinSymbol = v.Name
+		}
+	case 2:
+		if v, ok := pattern.GetV().(query.Variable); ok {
+			joinSymbol = v.Name
+		}
+	case 3:
+		if len(pattern.Elements) > 3 {
+			if v, ok := pattern.GetT().(query.Variable); ok {
+				joinSymbol = v.Name
+			}
+		}
+	}
+
+	// Find the column index of joinSymbol in bindingRel
+	bindingCols := bindingRel.Columns()
+	columnIndex := -1
+	for i, col := range bindingCols {
+		if col == joinSymbol {
+			columnIndex = i
+			break
+		}
+	}
+
+	if columnIndex == -1 {
+		// Variable not in binding relation - shouldn't happen if strategy is correct
+		return executor.NewMaterializedRelationNoDedupeWithOptions(columns, nil, m.options), nil
+	}
+
+	// Build hash set using column index (not datom position)
+	hashSet := m.buildHashSet(bindingRel, columnIndex)
 
 	if len(hashSet) == 0 {
 		// No bindings - return empty result
@@ -112,7 +174,18 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	}
 
 	// PHASE 2: Determine scan range for the pattern
-	scanRange := m.calculatePatternScanRange(pattern, index)
+	// For single bindings, use the bound value to narrow the scan range
+	var boundValue interface{}
+	if len(hashSet) == 1 {
+		// Extract the single bound value from the hash set
+		for _, tuple := range hashSet {
+			if columnIndex < len(tuple) {
+				boundValue = tuple[columnIndex]
+			}
+			break
+		}
+	}
+	scanRange := m.calculatePatternScanRangeWithBinding(pattern, index, position, boundValue)
 
 	// PHASE 3: Create storage iterator
 	storageIter, err := m.store.ScanKeysOnly(index, scanRange.start, scanRange.end)
@@ -146,6 +219,17 @@ type scanRange struct {
 
 // calculatePatternScanRange determines the scan range for a pattern
 func (m *BadgerMatcher) calculatePatternScanRange(pattern *query.DataPattern, index IndexType) scanRange {
+	return m.calculatePatternScanRangeWithBinding(pattern, index, -1, nil)
+}
+
+// calculatePatternScanRangeWithBinding determines the scan range for a pattern,
+// optionally using a bound value for a specific position to narrow the range
+func (m *BadgerMatcher) calculatePatternScanRangeWithBinding(
+	pattern *query.DataPattern,
+	index IndexType,
+	boundPosition int, // -1 means no bound position, 0=E, 1=A, 2=V, 3=T
+	boundValue interface{}, // The bound value for that position (nil if no bound)
+) scanRange {
 	// Extract constant parts of pattern
 	var e, a, v, tx interface{}
 
@@ -160,6 +244,28 @@ func (m *BadgerMatcher) calculatePatternScanRange(pattern *query.DataPattern, in
 	}
 	if c, ok := pattern.GetT().(query.Constant); ok {
 		tx = c.Value
+	}
+
+	// Use bound value if provided for the bound position
+	if boundValue != nil {
+		switch boundPosition {
+		case 0:
+			if e == nil {
+				e = boundValue
+			}
+		case 1:
+			if a == nil {
+				a = boundValue
+			}
+		case 2:
+			if v == nil {
+				v = boundValue
+			}
+		case 3:
+			if tx == nil {
+				tx = boundValue
+			}
+		}
 	}
 
 	// Use existing chooseIndex logic to determine range
@@ -513,6 +619,8 @@ type hashJoinIterator struct {
 	iter         Iterator                  // Storage iterator
 	tupleBuilder *query.InternedTupleBuilder
 	current      executor.Tuple
+	datomsScanned int // Track number of datoms scanned for event reporting
+	matchesFound  int // Track number of matches for event reporting
 }
 
 func (it *hashJoinIterator) Next() bool {
@@ -521,6 +629,9 @@ func (it *hashJoinIterator) Next() bool {
 		if err != nil {
 			continue
 		}
+
+		// Count every datom scanned for performance monitoring
+		it.datomsScanned++
 
 		// Check transaction validity
 		if it.matcher.txID > 0 && datom.Tx > it.matcher.txID {
@@ -548,6 +659,7 @@ func (it *hashJoinIterator) Next() bool {
 					tuple := it.tupleBuilder.BuildTupleInterned(datom)
 					if tuple != nil {
 						it.current = tuple
+						it.matchesFound++
 						return true
 					}
 				}
@@ -562,6 +674,21 @@ func (it *hashJoinIterator) Tuple() executor.Tuple {
 }
 
 func (it *hashJoinIterator) Close() error {
+	// Emit event with scan statistics for performance monitoring
+	// ONLY emit if we actually scanned datoms (avoid emitting on unused iterators)
+	if it.matcher.handler != nil && it.datomsScanned > 0 {
+		it.matcher.handler(annotations.Event{
+			Name: "pattern/hash-join-complete",
+			Data: map[string]interface{}{
+				"pattern":        it.pattern.String(),
+				"index":          indexName(it.index),
+				"binding.size":   len(it.hashSet),
+				"datoms.scanned": it.datomsScanned,
+				"matches.found":  it.matchesFound,
+			},
+		})
+	}
+
 	if it.iter != nil {
 		return it.iter.Close()
 	}

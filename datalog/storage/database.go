@@ -86,6 +86,7 @@ func (d *Database) Matcher() executor.PatternMatcher {
 		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
 		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
 		EnableDebugLogging:              opts.EnableDebugLogging,
+		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	return NewBadgerMatcherWithOptions(d.store, execOpts)
 }
@@ -104,6 +105,7 @@ func (d *Database) AsOf(txID uint64) executor.PatternMatcher {
 		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
 		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
 		EnableDebugLogging:              opts.EnableDebugLogging,
+		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	return NewBadgerMatcherWithOptions(d.store, execOpts).AsOf(txID)
 }
@@ -132,6 +134,12 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableStreamingJoins:       false, // Keep false for stability
 		EnableStreamingAggregation: true,  // Streaming aggregation
 		EnableDebugLogging:         false,
+
+		// Storage join strategy
+		IndexNestedLoopThreshold: 0, // Default to HashJoinScan for all binding sizes
+
+		// Executor architecture (Stage B)
+		UseQueryExecutor: true, // Use new QueryExecutor by default (production-ready as of October 2025)
 	}
 }
 
@@ -157,6 +165,7 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
 		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
 		EnableDebugLogging:              opts.EnableDebugLogging,
+		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
 	return executor.NewExecutorWithOptions(matcher, opts)
@@ -569,7 +578,15 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 
 // relationToSlice converts an executor.Relation to [][]interface{}
 func relationToSlice(rel executor.Relation) [][]interface{} {
-	rows := make([][]interface{}, 0, rel.Size())
+	// Don't preallocate if size is unknown (-1)
+	size := rel.Size()
+	var rows [][]interface{}
+	if size >= 0 {
+		rows = make([][]interface{}, 0, size)
+	} else {
+		rows = make([][]interface{}, 0)
+	}
+
 	it := rel.Iterator()
 	defer it.Close()
 

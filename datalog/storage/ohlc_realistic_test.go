@@ -151,7 +151,16 @@ func TestOHLCRealisticQueries(t *testing.T) {
 		assert.NoError(t, err)
 
 		result, err := exec.Execute(q)
+		if err != nil {
+			t.Logf("Execute error: %v", err)
+		}
 		assert.NoError(t, err)
+
+		// Debug output
+		t.Logf("Result IsEmpty: %v", result.IsEmpty())
+		t.Logf("Result Size: %d", result.Size())
+		t.Logf("Result Columns: %v", result.Columns())
+
 		assert.False(t, result.IsEmpty(), "Should have aggregation results")
 
 		it := result.Iterator()

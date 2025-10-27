@@ -262,8 +262,13 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 	// Pre-size based on build relation size to avoid map growth
 	buildSize := buildRel.Size()
 	if buildSize < 0 {
-		// Unknown size (streaming), use a reasonable default
-		buildSize = 1000
+		// Unknown size (streaming), use configurable default
+		// 256 is a good balance: small enough for common cases (50-500 tuples),
+		// large enough to avoid excessive rehashing for medium cases (500-2000 tuples)
+		buildSize = opts.DefaultHashTableSize
+		if buildSize == 0 {
+			buildSize = 256 // Default if not configured
+		}
 	}
 	hashTable := NewTupleKeyMapWithCapacity(buildSize)
 
@@ -511,23 +516,15 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 			matchIdx:     0,
 		}
 
-		// Materialize immediately by consuming the iterator
-		// This avoids goroutine safety issues with lazy StreamingRelation
-		var results []Tuple
-		for iter.Next() {
-			// Copy tuple to avoid iterator reuse issues
-			tuple := iter.Tuple()
-			tupleCopy := make(Tuple, len(tuple))
-			copy(tupleCopy, tuple)
-			results = append(results, tupleCopy)
+		// Return streaming result - no forced materialization
+		// StreamingRelation enforces single-use semantics via panic if Iterator() called twice
+		// Caller can explicitly call Materialize() if multiple iterations needed
+		return &StreamingRelation{
+			columns:  outputCols,
+			iterator: iter,
+			size:     -1, // unknown size until consumed
+			options:  opts,
 		}
-		iter.Close()
-
-		if opts.EnableDebugLogging {
-			fmt.Printf("[HashJoin STREAMING] Produced %d results\n", len(results))
-		}
-
-		return NewMaterializedRelationWithOptions(outputCols, results, opts)
 	}
 
 	// Materialized mode (original implementation)

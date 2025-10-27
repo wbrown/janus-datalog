@@ -70,7 +70,7 @@ func (pe *ParallelExecutor) ExecuteWithRelations(ctx Context, q *query.Query, in
 
 	// Note: Parallel executor currently only works with legacy QueryPlan
 	// For now, we use the standard ExecuteRealized path
-	return pe.Executor.ExecuteRealized(ctx, realizedPlan)
+	return pe.Executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
 }
 
 // executePhasesWithInputs overrides the base to inject parallel execution

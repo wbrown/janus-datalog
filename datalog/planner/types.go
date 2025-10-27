@@ -391,6 +391,9 @@ type PlannerOptions struct {
 	// Planner architecture selection
 	UseClauseBasedPlanner bool // Use new clause-based planner instead of old phase-based planner (default: false)
 
+	// Executor architecture selection
+	UseQueryExecutor bool // Use new QueryExecutor (Stage B) instead of legacy executor (default: true as of October 2025)
+
 	// Planner options
 	EnableDynamicReordering             bool       // Enable dynamic join reordering (1-3μs overhead, can prevent cross-products - should be enabled)
 	EnablePredicatePushdown             bool       // Early predicate filtering during pattern matching (not true storage pushdown)
@@ -419,6 +422,9 @@ type PlannerOptions struct {
 	EnableStreamingAggregation      bool // Enable streaming aggregation (default: true)
 	EnableStreamingAggregationDebug bool // Debug logging for streaming aggregation (default: false)
 	EnableDebugLogging              bool // Enable debug logging for joins (default: false)
+
+	// Storage join strategy options
+	IndexNestedLoopThreshold int // Threshold for choosing IndexNestedLoop vs HashJoinScan (default: 0)
 }
 
 // String returns a human-readable representation of the query plan

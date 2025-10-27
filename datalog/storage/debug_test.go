@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
@@ -81,52 +82,54 @@ func TestDebugBasicQuery(t *testing.T) {
 	q1, _ := parser.ParseQuery(`[:find ?e ?name :where [?e :person/name ?name]]`)
 	r1, _ := exec.Execute(q1)
 	fmt.Printf("Pattern 1 ([?e :person/name ?name]): %d results\n", r1.Size())
-	it1 := r1.Iterator()
-	for it1.Next() {
-		tuple := it1.Tuple()
-		fmt.Printf("  Tuple len=%d: ", len(tuple))
-		for i, v := range tuple {
-			fmt.Printf("[%d] type=%T value='%#v' ", i, v, v)
-		}
-		fmt.Printf("\n")
-		// Check if entity IDs are comparable
-		if tuple[0] == person1 {
-			fmt.Printf("  ?e matches person1!\n")
-		} else {
-			fmt.Printf("  ?e does NOT match person1\n")
-		}
-	}
-	it1.Close()
 
 	exec = db.NewExecutor() // Fresh executor for pattern 2
 	q2, _ := parser.ParseQuery(`[:find ?e ?age :where [?e :person/age ?age]]`)
 	r2, _ := exec.Execute(q2)
 	fmt.Printf("Pattern 2 ([?e :person/age ?age]): %d results\n", r2.Size())
+
+	// Iterate both relations ONCE, capturing the first tuple from each
+	it1 := r1.Iterator()
 	it2 := r2.Iterator()
-	for it2.Next() {
-		tuple := it2.Tuple()
-		fmt.Printf("  Tuple len=%d: ", len(tuple))
-		for i, v := range tuple {
+
+	var e1, e2 interface{}
+	var tuple1, tuple2 executor.Tuple
+
+	if it1.Next() {
+		tuple1 = it1.Tuple()
+		e1 = tuple1[0]
+		fmt.Printf("Pattern 1 tuple: len=%d: ", len(tuple1))
+		for i, v := range tuple1 {
 			fmt.Printf("[%d] type=%T value='%#v' ", i, v, v)
 		}
 		fmt.Printf("\n")
-		// Check if entity IDs are comparable
-		if tuple[0] == person1 {
+		if tuple1[0] == person1 {
 			fmt.Printf("  ?e matches person1!\n")
 		} else {
 			fmt.Printf("  ?e does NOT match person1\n")
 		}
 	}
+
+	if it2.Next() {
+		tuple2 = it2.Tuple()
+		e2 = tuple2[0]
+		fmt.Printf("Pattern 2 tuple: len=%d: ", len(tuple2))
+		for i, v := range tuple2 {
+			fmt.Printf("[%d] type=%T value='%#v' ", i, v, v)
+		}
+		fmt.Printf("\n")
+		if tuple2[0] == person1 {
+			fmt.Printf("  ?e matches person1!\n")
+		} else {
+			fmt.Printf("  ?e does NOT match person1\n")
+		}
+	}
+
+	it1.Close()
 	it2.Close()
 
 	// Debug: Check if the identities from both patterns are interned to the same pointer
 	fmt.Printf("\nChecking identity interning:\n")
-	it1_check := r1.Iterator()
-	it2_check := r2.Iterator()
-	it1_check.Next()
-	it2_check.Next()
-	e1 := it1_check.Tuple()[0]
-	e2 := it2_check.Tuple()[0]
 	fmt.Printf("Pattern 1 ?e pointer: %p\n", e1)
 	fmt.Printf("Pattern 2 ?e pointer: %p\n", e2)
 	fmt.Printf("Are they the same pointer? %v\n", e1 == e2)
@@ -141,9 +144,6 @@ func TestDebugBasicQuery(t *testing.T) {
 		hash2 := id2.Hash()
 		fmt.Printf("Pattern 2 hash: %x\n", hash2)
 	}
-
-	it1_check.Close()
-	it2_check.Close()
 
 	result, err := execDebug.Execute(q)
 	if err != nil {

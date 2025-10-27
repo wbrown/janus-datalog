@@ -69,8 +69,11 @@ func TestIteratorReusePerformance(t *testing.T) {
 
 			// Test WITHOUT reuse (force VAET)
 			t.Run("without_reuse", func(t *testing.T) {
-				// Temporarily disable AVET reuse
-				matcher := NewBadgerMatcher(store)
+				// Force IndexNestedLoop by setting threshold high
+				opts := executor.ExecutorOptions{
+					IndexNestedLoopThreshold: 999999,
+				}
+				matcher := NewBadgerMatcherWithOptions(store, opts)
 
 				// Hack: Set a flag to force no reuse
 				// For now, we'll measure with current settings
@@ -100,7 +103,11 @@ func TestIteratorReusePerformance(t *testing.T) {
 
 			// Test WITH reuse (current implementation)
 			t.Run("with_reuse", func(t *testing.T) {
-				matcher := NewBadgerMatcher(store)
+				// Force IndexNestedLoop by setting threshold high
+				opts := executor.ExecutorOptions{
+					IndexNestedLoopThreshold: 999999,
+				}
+				matcher := NewBadgerMatcherWithOptions(store, opts)
 
 				start := time.Now()
 				result, err := matcher.Match(pattern, executor.Relations{bindingRel})
