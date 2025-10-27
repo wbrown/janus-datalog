@@ -56,7 +56,6 @@ func (s *simpleBatchScanner) Scan() error {
 	// Step 1: Build a set of binding values for fast lookup
 	bindingSet := s.buildBindingSet()
 	if len(bindingSet) == 0 {
-		fmt.Printf("[SIMPLE] No bindings found\n")
 		return nil
 	}
 

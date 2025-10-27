@@ -144,6 +144,91 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	} else {
 		// Simple projection to :find symbols
 		findSymbols := extractFindSymbols(q.Find)
+
+		// Check if all :find symbols are available across the groups
+		// If symbols span multiple groups, we need to Product() them first
+		if len(groups) > 1 {
+			// Check which groups contain which :find symbols
+			groupsHaveSymbols := make([][]bool, len(groups))
+			for i, group := range groups {
+				groupsHaveSymbols[i] = make([]bool, len(findSymbols))
+				cols := group.Columns()
+				for j, sym := range findSymbols {
+					for _, col := range cols {
+						if col == sym {
+							groupsHaveSymbols[i][j] = true
+							break
+						}
+					}
+				}
+			}
+
+			// Check if any :find symbol is missing from all groups
+			for j, sym := range findSymbols {
+				found := false
+				for i := range groups {
+					if groupsHaveSymbols[i][j] {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("projection failed: symbol %v not found in any relation group", sym)
+				}
+			}
+
+			// Check if any :find symbol spans multiple groups
+			// If so, we need to take the Product() of those groups
+			needsProduct := false
+			for j := range findSymbols {
+				count := 0
+				for i := range groups {
+					if groupsHaveSymbols[i][j] {
+						count++
+					}
+				}
+				if count > 1 {
+					// Symbol appears in multiple groups - this shouldn't happen after collapse
+					return nil, fmt.Errorf("projection failed: symbol %v appears in multiple groups", findSymbols[j])
+				}
+			}
+
+			// Check if ALL :find symbols can be found in a SINGLE group
+			// If not, we need to Product() the groups together
+			for i, group := range groups {
+				allFound := true
+				for j := range findSymbols {
+					if !groupsHaveSymbols[i][j] {
+						allFound = false
+						break
+					}
+				}
+				if allFound {
+					// This group has all symbols - project it and return
+					projected, err := group.Project(findSymbols)
+					if err != nil {
+						return nil, fmt.Errorf("projection failed: %w", err)
+					}
+					return []Relation{projected}, nil
+				}
+			}
+
+			// :find symbols span multiple groups - need Cartesian product
+			// This is the case for our test: [?e, ?name] and [?max-age] are disjoint
+			needsProduct = true
+
+			if needsProduct {
+				// Take Product() of all groups to create a single relation
+				combined := Relations(groups).Product()
+				projected, err := combined.Project(findSymbols)
+				if err != nil {
+					return nil, fmt.Errorf("projection failed after product: %w", err)
+				}
+				return []Relation{projected}, nil
+			}
+		}
+
+		// Single group or each group projects independently
 		for i, group := range groups {
 			projected, err := group.Project(findSymbols)
 			if err != nil {
@@ -284,15 +369,23 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		})
 	}
 
+	// CRITICAL: Materialize groups FIRST to prevent iterator consumption
+	// When we create Product() and materialize it, that will consume the underlying iterators
+	// We need to preserve groups for later use in the outer query
+	materializedGroups := make([]Relation, len(groups))
+	for i, g := range groups {
+		materializedGroups[i] = g.Materialize()
+	}
+
 	// Combine all groups into a single relation for extracting input combinations
 	var combinedRel Relation
-	if len(groups) == 0 {
+	if len(materializedGroups) == 0 {
 		return nil, fmt.Errorf("no input groups for subquery")
-	} else if len(groups) == 1 {
-		combinedRel = groups[0]
+	} else if len(materializedGroups) == 1 {
+		combinedRel = materializedGroups[0]
 	} else {
 		// Multiple groups - need to combine them
-		combinedRel = Relations(groups).Product()
+		combinedRel = Relations(materializedGroups).Product()
 	}
 
 	// Extract which input symbols we need from the outer query
@@ -310,8 +403,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		}
 	}
 
-	// CRITICAL: Materialize combinedRel since getUniqueInputCombinations will consume it
-	// This ensures the original relations in groups remain unconsumed for later joining
+	// Materialize combined relation since getUniqueInputCombinations will consume it
 	combinedRel = combinedRel.Materialize()
 
 	// Get unique combinations of input values

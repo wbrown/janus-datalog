@@ -89,12 +89,8 @@ func (it *batchScanIterator) Next() bool {
 			continue
 		}
 
-		_ = fmt.Sprintf("[BATCH] Processing batch %d-%d of %d tuples\n", it.batchStart, it.batchEnd, len(it.tuples))
-
 		// Process the batch
 		it.processBatch()
-
-		_ = fmt.Sprintf("[BATCH] Found %d matches in batch\n", len(it.pendingMatches))
 
 		// If we found matches, start returning them
 		if len(it.pendingMatches) > 0 {
@@ -127,15 +123,6 @@ func (it *batchScanIterator) loadNextBatch() bool {
 	}
 
 	it.currentBatch = it.tuples[it.batchStart:it.batchEnd]
-
-	// Debug: Show what's in the batch
-	if it.batchStart == 0 && len(it.currentBatch) > 0 {
-		_ = fmt.Sprintf("[LOAD] First batch tuple[0]: %v (len=%d)\n", it.currentBatch[0], len(it.currentBatch[0]))
-		_ = fmt.Sprintf("[LOAD] Position %d should contain entity ID\n", it.position)
-		if it.position < len(it.currentBatch[0]) {
-			_ = fmt.Sprintf("[LOAD] Value at position %d: %v\n", it.position, it.currentBatch[0][it.position])
-		}
-	}
 
 	return len(it.currentBatch) > 0
 }
@@ -204,17 +191,14 @@ func (it *batchScanIterator) areKeysClose(key1, key2 []byte) bool {
 func (it *batchScanIterator) calculateKey(tuple executor.Tuple) []byte {
 	// Extract the binding value based on position
 	if it.position >= len(tuple) {
-		fmt.Printf("[KEY] Position %d >= tuple length %d\n", it.position, len(tuple))
 		return nil
 	}
 
 	value := tuple[it.position]
-	fmt.Printf("[KEY] Value at position %d: %v (type: %T)\n", it.position, value, value)
 
 	// Build key based on index type and binding position
 	switch it.index {
 	case 0: // EAVT
-		fmt.Printf("[KEY] Using EAVT index\n")
 		if e, ok := value.(datalog.Identity); ok {
 			// Also need to include the attribute if it's constant
 			var aBytes []byte
@@ -224,7 +208,6 @@ func (it *batchScanIterator) calculateKey(tuple executor.Tuple) []byte {
 				}
 			}
 			key := buildEAVTKey(e, aBytes, nil, 0)
-			fmt.Printf("[KEY] Built EAVT key: %x\n", key)
 			return key
 		}
 
@@ -265,32 +248,22 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 		it.storageIter.Close()
 	}
 
-	_ = fmt.Sprintf("[RANGE] Scanning range %d-%d, startKey=%x, endKey=%x\n",
-		rg.startIdx, rg.endIdx, rg.startKey[:20], rg.endKey[:20])
-
 	// Open scan for this range using key-only scanning
-	fmt.Printf("[SCAN] Opening scan with index %d from %x to %x\n", it.index, rg.startKey, rg.endKey)
 	var err error
 	it.storageIter, err = it.matcher.store.ScanKeysOnly(it.index, rg.startKey, rg.endKey)
 	if err != nil {
-		fmt.Printf("[SCAN] Error opening scan: %v\n", err)
 		return
 	}
 	it.totalScans++
-	fmt.Printf("[SCAN] Scan opened successfully\n")
 
 	// Build a map of binding values for quick lookup
 	bindingValues := make(map[string]executor.Tuple)
-	fmt.Printf("[SCAN] Building binding map for %d tuples\n", rg.endIdx-rg.startIdx)
 	for i := rg.startIdx; i < rg.endIdx; i++ {
 		tuple := it.currentBatch[i]
 		if it.position < len(tuple) {
 			// Use a string representation of the value as key
 			key := valueToString(tuple[it.position])
 			bindingValues[key] = tuple
-			if i < rg.startIdx+3 {
-				fmt.Printf("[MAP] Binding %d: key=%x\n", i, []byte(key)[:8])
-			}
 		}
 	}
 
@@ -305,10 +278,6 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 		it.datomsScanned++
 		datomCount++
 
-		if datomCount <= 3 {
-			_ = fmt.Sprintf("[SCAN] Datom %d: E=%s, A=%s\n", datomCount, datom.E.String(), datom.A.String())
-		}
-
 		// Check transaction validity
 		if it.matcher.txID > 0 && datom.Tx > it.matcher.txID {
 			continue
@@ -319,9 +288,6 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 		switch it.position {
 		case 0:
 			datomValue = datom.E
-			if datomCount <= 3 {
-				_ = fmt.Sprintf("[EXTRACT] Entity from datom: %v (type: %T)\n", datomValue, datomValue)
-			}
 		case 1:
 			datomValue = datom.A
 		case 2:
@@ -334,12 +300,8 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 		datomKey := valueToString(datomValue)
 		bindingTuple, found := bindingValues[datomKey]
 		if !found {
-			if datomCount <= 3 {
-				fmt.Printf("[MATCH] Datom key %x not in binding map\n", []byte(datomKey)[:8])
-			}
 			continue
 		}
-		fmt.Printf("[MATCH] Found binding match for key %x\n", []byte(datomKey)[:8])
 
 		// Check if datom matches the full pattern with this binding
 		if !it.matchesPattern(datom, bindingTuple) {

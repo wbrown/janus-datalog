@@ -682,12 +682,20 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 	case query.TupleBinding:
 		// [[?var]] - expect single result, bind to variable
 
+		// Filter out $ (database marker) from input symbols - it's not a real variable
+		var realInputSymbols []query.Symbol
+		for _, sym := range inputSymbols {
+			if sym != "$" {
+				realInputSymbols = append(realInputSymbols, sym)
+			}
+		}
+
 		// EMPTY RESULT = PATTERN FAILS TO MATCH
 		// Return empty relation instead of error (datalog semantics)
 		if result.Size() == 0 {
-			columns := make([]query.Symbol, len(inputSymbols)+len(b.Variables))
-			copy(columns, inputSymbols)
-			copy(columns[len(inputSymbols):], b.Variables)
+			columns := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
+			copy(columns, realInputSymbols)
+			copy(columns[len(realInputSymbols):], b.Variables)
 			return NewMaterializedRelation(columns, []Tuple{}), nil
 		}
 
@@ -697,14 +705,14 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 
 		// fmt.Printf("DEBUG: TupleBinding variables: %v\n", b.Variables)
 
-		// Create relation with input columns + binding columns
-		columns := make([]query.Symbol, len(inputSymbols)+len(b.Variables))
-		copy(columns, inputSymbols)
-		copy(columns[len(inputSymbols):], b.Variables)
+		// Create relation with input columns + binding columns (excluding $)
+		columns := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
+		copy(columns, realInputSymbols)
+		copy(columns[len(realInputSymbols):], b.Variables)
 
-		// Create tuple with input values + result values
+		// Create tuple with input values + result values (excluding $)
 		tuple := make(Tuple, len(columns))
-		for i, sym := range inputSymbols {
+		for i, sym := range realInputSymbols {
 			tuple[i] = inputValues[sym]
 		}
 
@@ -723,8 +731,8 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 			// For aggregates, the result column is the aggregate expression (e.g., "(max ?price)")
 			// We need to match this with the binding variable
 			if i < len(resultTuple) {
-				tuple[len(inputSymbols)+i] = resultTuple[i]
-				// fmt.Printf("DEBUG: Binding %v to position %d: %v\n", sym, len(inputSymbols)+i, resultTuple[i])
+				tuple[len(realInputSymbols)+i] = resultTuple[i]
+				// fmt.Printf("DEBUG: Binding %v to position %d: %v\n", sym, len(realInputSymbols)+i, resultTuple[i])
 			} else {
 				// fmt.Printf("DEBUG: No value for binding variable %v at index %d\n", sym, i)
 			}
@@ -745,25 +753,33 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 			return nil, fmt.Errorf("relation binding expects %d columns, got %d", len(b.Variables), len(resultCols))
 		}
 
-		// Create relation with input columns + binding columns
-		columns := make([]query.Symbol, len(inputSymbols)+len(b.Variables))
-		copy(columns, inputSymbols)
-		copy(columns[len(inputSymbols):], b.Variables)
+		// Filter out $ (database marker) from input symbols - it's not a real variable
+		var realInputSymbols []query.Symbol
+		for _, sym := range inputSymbols {
+			if sym != "$" {
+				realInputSymbols = append(realInputSymbols, sym)
+			}
+		}
 
-		// Create tuples with input values + each result row
+		// Create relation with input columns + binding columns (excluding $)
+		columns := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
+		copy(columns, realInputSymbols)
+		copy(columns[len(realInputSymbols):], b.Variables)
+
+		// Create tuples with input values + each result row (excluding $)
 		var tuples []Tuple
 		for i := 0; i < result.Size(); i++ {
 			tuple := make(Tuple, len(columns))
 
-			// Add input values
-			for j, sym := range inputSymbols {
+			// Add input values (excluding $)
+			for j, sym := range realInputSymbols {
 				tuple[j] = inputValues[sym]
 			}
 
 			// Add result values
 			resultTuple := result.Get(i)
 			for j := range b.Variables {
-				tuple[len(inputSymbols)+j] = resultTuple[j]
+				tuple[len(realInputSymbols)+j] = resultTuple[j]
 			}
 
 			tuples = append(tuples, tuple)

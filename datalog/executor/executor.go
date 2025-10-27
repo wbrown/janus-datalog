@@ -68,6 +68,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions)
 // convertToExecutorOptions extracts executor-specific options from PlannerOptions
 func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
+		UseQueryExecutor:                opts.UseQueryExecutor,
 		EnableIteratorComposition:       opts.EnableIteratorComposition,
 		EnableTrueStreaming:             opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
@@ -189,7 +190,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 			return nil, fmt.Errorf("query planning failed: %w", err)
 		}
 		ctx.QueryPlanCreated(realizedPlan.String())
-		return executor.ExecuteRealized(ctx, realizedPlan)
+		return executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
 	} else {
 		// Old path: Use legacy phase executor (only works with PlannerAdapter)
 		adapter, ok := executor.planner.(*planner.PlannerAdapter)
@@ -221,11 +222,18 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 // - Each phase executes as independent Query returning []Relation (disjoint groups)
 // - Groups are projected to Keep columns and passed to next phase
 // - Final phase must collapse to single relation or error on Cartesian product
-func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan) (Relation, error) {
+func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
 	// Create QueryExecutor
 	queryExecutor := NewQueryExecutor(e.matcher, e.options)
 
 	var currentGroups []Relation
+
+	// If we have input relations, bind them before the first phase
+	if len(inputRelations) > 0 && len(plan.Phases) > 0 {
+		// Bind input relations using the query's :in clause
+		boundRelation := BindQueryInputs(plan.Query, inputRelations)
+		currentGroups = []Relation{boundRelation}
+	}
 
 	// Execute each phase as an independent query
 	for i, phase := range plan.Phases {

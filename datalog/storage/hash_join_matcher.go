@@ -72,7 +72,11 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 
 	// Check if IndexNestedLoop is preferred for small binding sets (configurable via options)
 	threshold := m.options.IndexNestedLoopThreshold
-	if bindingSize <= threshold {
+
+	// CRITICAL: Size() returns -1 for streaming relations with unknown size
+	// Don't use IndexNestedLoop for unknown sizes (-1 <= 0 would be true!)
+	// Default to HashJoinScan for streaming relations
+	if bindingSize >= 0 && bindingSize <= threshold {
 		return IndexNestedLoop
 	}
 
@@ -170,7 +174,18 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	}
 
 	// PHASE 2: Determine scan range for the pattern
-	scanRange := m.calculatePatternScanRange(pattern, index)
+	// For single bindings, use the bound value to narrow the scan range
+	var boundValue interface{}
+	if len(hashSet) == 1 {
+		// Extract the single bound value from the hash set
+		for _, tuple := range hashSet {
+			if columnIndex < len(tuple) {
+				boundValue = tuple[columnIndex]
+			}
+			break
+		}
+	}
+	scanRange := m.calculatePatternScanRangeWithBinding(pattern, index, position, boundValue)
 
 	// PHASE 3: Create storage iterator
 	storageIter, err := m.store.ScanKeysOnly(index, scanRange.start, scanRange.end)
@@ -204,6 +219,17 @@ type scanRange struct {
 
 // calculatePatternScanRange determines the scan range for a pattern
 func (m *BadgerMatcher) calculatePatternScanRange(pattern *query.DataPattern, index IndexType) scanRange {
+	return m.calculatePatternScanRangeWithBinding(pattern, index, -1, nil)
+}
+
+// calculatePatternScanRangeWithBinding determines the scan range for a pattern,
+// optionally using a bound value for a specific position to narrow the range
+func (m *BadgerMatcher) calculatePatternScanRangeWithBinding(
+	pattern *query.DataPattern,
+	index IndexType,
+	boundPosition int, // -1 means no bound position, 0=E, 1=A, 2=V, 3=T
+	boundValue interface{}, // The bound value for that position (nil if no bound)
+) scanRange {
 	// Extract constant parts of pattern
 	var e, a, v, tx interface{}
 
@@ -218,6 +244,28 @@ func (m *BadgerMatcher) calculatePatternScanRange(pattern *query.DataPattern, in
 	}
 	if c, ok := pattern.GetT().(query.Constant); ok {
 		tx = c.Value
+	}
+
+	// Use bound value if provided for the bound position
+	if boundValue != nil {
+		switch boundPosition {
+		case 0:
+			if e == nil {
+				e = boundValue
+			}
+		case 1:
+			if a == nil {
+				a = boundValue
+			}
+		case 2:
+			if v == nil {
+				v = boundValue
+			}
+		case 3:
+			if tx == nil {
+				tx = boundValue
+			}
+		}
 	}
 
 	// Use existing chooseIndex logic to determine range
