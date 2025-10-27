@@ -356,16 +356,77 @@ func (e *DefaultQueryExecutor) executeWithDecorrelation(ctx Context, q *query.Qu
 		}
 	}
 
-	projected := make([]Relation, len(groups))
-	for i, group := range groups {
-		p, err := group.Project(findVars)
+	// Handle projection using the same logic as the simple path
+	if len(groups) == 0 {
+		return []Relation{}, nil
+	}
+
+	if len(groups) == 1 {
+		// Single group - project directly
+		projected, err := groups[0].Project(findVars)
 		if err != nil {
 			return nil, fmt.Errorf("projection failed: %w", err)
 		}
-		projected[i] = p
+		return []Relation{projected}, nil
 	}
 
-	return projected, nil
+	// Multiple groups - check if ALL :find symbols are in a single group
+	// Check which groups contain which :find symbols
+	groupsHaveSymbols := make([][]bool, len(groups))
+	for i, group := range groups {
+		groupsHaveSymbols[i] = make([]bool, len(findVars))
+		cols := group.Columns()
+		for j, sym := range findVars {
+			for _, col := range cols {
+				if col == sym {
+					groupsHaveSymbols[i][j] = true
+					break
+				}
+			}
+		}
+	}
+
+	// Check if any :find symbol is missing from all groups
+	for j, sym := range findVars {
+		found := false
+		for i := range groups {
+			if groupsHaveSymbols[i][j] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("projection failed: symbol %v not found in any relation group", sym)
+		}
+	}
+
+	// Check if ALL :find symbols can be found in a SINGLE group
+	for i, group := range groups {
+		allFound := true
+		for j := range findVars {
+			if !groupsHaveSymbols[i][j] {
+				allFound = false
+				break
+			}
+		}
+		if allFound {
+			// This group has all symbols - project it and return
+			projected, err := group.Project(findVars)
+			if err != nil {
+				return nil, fmt.Errorf("projection failed: %w", err)
+			}
+			return []Relation{projected}, nil
+		}
+	}
+
+	// :find symbols span multiple groups - take Product() first, then project
+	// This handles the case where subquery results are in separate groups
+	combined := Relations(groups).Product()
+	projected, err := combined.Project(findVars)
+	if err != nil {
+		return nil, fmt.Errorf("projection failed after product: %w", err)
+	}
+	return []Relation{projected}, nil
 }
 
 // executeBatchedGroup executes a group of subqueries with the same signature as a single batch
