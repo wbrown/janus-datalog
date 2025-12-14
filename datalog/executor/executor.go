@@ -324,7 +324,14 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		return nil, nil
 	}
 
-	return currentGroups[0], nil
+	finalResult := currentGroups[0]
+
+	// Apply ordering if specified
+	if len(plan.Query.OrderBy) > 0 {
+		finalResult = finalResult.Sort(plan.Query.OrderBy)
+	}
+
+	return finalResult, nil
 }
 
 // executePhasesWithInputs executes a query plan with input relations
