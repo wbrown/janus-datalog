@@ -120,6 +120,10 @@ func (tf *TableFormatter) formatValue(val interface{}) string {
 			s = v.String()
 		case datalog.Keyword:
 			s = v.String()
+		case *uint64:
+			s = fmt.Sprintf("%d", *v)
+		case *int64:
+			s = fmt.Sprintf("%d", *v)
 		default:
 			s = fmt.Sprintf("%v", v)
 		}
