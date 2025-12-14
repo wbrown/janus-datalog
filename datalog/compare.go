@@ -75,6 +75,8 @@ func CompareValues(left, right interface{}) int {
 		return compareNumeric(int64(l), right)
 	case int64:
 		return compareNumeric(l, right)
+	case uint64:
+		return compareUint64(l, right)
 	case float64:
 		return compareFloat(l, right)
 	case string:
@@ -187,6 +189,38 @@ func compareInt64s(a, b int64) int {
 
 // compareFloats compares two float64 values
 func compareFloats(a, b float64) int {
+	if a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
+}
+
+// compareUint64 compares a uint64 with another numeric value
+func compareUint64(left uint64, right interface{}) int {
+	switch r := right.(type) {
+	case uint64:
+		return compareUint64s(left, r)
+	case int:
+		if r < 0 {
+			return 1 // unsigned is always >= 0
+		}
+		return compareUint64s(left, uint64(r))
+	case int64:
+		if r < 0 {
+			return 1 // unsigned is always >= 0
+		}
+		return compareUint64s(left, uint64(r))
+	case float64:
+		return compareFloats(float64(left), r)
+	}
+	// Non-numeric: type mismatch
+	return -1
+}
+
+// compareUint64s compares two uint64 values
+func compareUint64s(a, b uint64) int {
 	if a < b {
 		return -1
 	} else if a > b {
