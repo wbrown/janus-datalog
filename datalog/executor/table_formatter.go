@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/renderer"
 	"github.com/olekukonko/tablewriter/tw"
@@ -97,31 +98,42 @@ func (tf *TableFormatter) formatTable(columns []query.Symbol, tuples []Tuple) st
 
 // formatValue converts a value to a string representation
 func (tf *TableFormatter) formatValue(val interface{}) string {
+	var s string
 	if val == nil {
-		return "nil"
+		s = "nil"
+	} else {
+		switch v := val.(type) {
+		case string:
+			s = v
+		case int:
+			s = fmt.Sprintf("%d", v)
+		case int64:
+			s = fmt.Sprintf("%d", v)
+		case float64:
+			s = fmt.Sprintf("%.2f", v)
+		case bool:
+			s = fmt.Sprintf("%t", v)
+		case time.Time:
+			s = v.Format("2006-01-02 15:04:05")
+		case datalog.Identity:
+			// Show the original string for readability
+			s = v.String()
+		case datalog.Keyword:
+			s = v.String()
+		default:
+			s = fmt.Sprintf("%v", v)
+		}
 	}
 
-	switch v := val.(type) {
-	case string:
-		return v
-	case int:
-		return fmt.Sprintf("%d", v)
-	case int64:
-		return fmt.Sprintf("%d", v)
-	case float64:
-		return fmt.Sprintf("%.2f", v)
-	case bool:
-		return fmt.Sprintf("%t", v)
-	case time.Time:
-		return v.Format("2006-01-02 15:04:05")
-	case datalog.Identity:
-		// Show the original string for readability
-		return v.String()
-	case datalog.Keyword:
-		return v.String()
-	default:
-		return fmt.Sprintf("%v", v)
+	return tf.truncate(s)
+}
+
+// truncate shortens a string to MaxWidth display columns, appending TruncateString if truncated
+func (tf *TableFormatter) truncate(s string) string {
+	if tf.MaxWidth <= 0 || runewidth.StringWidth(s) <= tf.MaxWidth {
+		return s
 	}
+	return runewidth.Truncate(s, tf.MaxWidth, tf.TruncateString)
 }
 
 // Quick helper functions for debugging
