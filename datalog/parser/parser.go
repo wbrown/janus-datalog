@@ -264,8 +264,11 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 	}
 
 	// Otherwise it's a data pattern
-	if len(node.Nodes) < 3 || len(node.Nodes) > 4 {
-		return nil, fmt.Errorf("data pattern must have 3 or 4 elements, got %d", len(node.Nodes))
+	// 3 elements: [e a v]
+	// 4 elements: [e a v tx]
+	// 5 elements: [e a v tx op] (history queries)
+	if len(node.Nodes) < 3 || len(node.Nodes) > 5 {
+		return nil, fmt.Errorf("data pattern must have 3, 4, or 5 elements, got %d", len(node.Nodes))
 	}
 
 	pattern := &query.DataPattern{

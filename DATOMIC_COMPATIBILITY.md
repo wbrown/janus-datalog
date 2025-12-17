@@ -418,13 +418,34 @@ No entity navigation:
 - `keys` - no map results
 - `with` - no duplicate control
 
-### 7. Advanced Time Features ❌
+### 7. Time and History Features ⚠️
 
-Limited to as-of queries:
+**Supported:**
+- As-of queries via `db.AsOf(txID)`
+- **History database** via `db.History()` (opt-in with `RetractHistory` mode)
+- 5-element patterns `[?e ?a ?v ?tx ?op]` for history queries
+- Full audit trail: see all assertions and retractions
+
+**History Query API:**
+```go
+// Create database with history mode enabled
+db, _ := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+    Path:        "/path/to/db",
+    RetractMode: storage.RetractHistory,
+})
+
+// Query current state (uses current-state indices, value was retracted)
+results, _ := db.ExecuteQuery(`[:find ?name :where [?e :person/name ?name]]`)
+
+// Query history (uses history indices, sees all assertions AND retractions)
+// 5-element pattern: [?e ?a ?v ?tx ?op] where ?op is true=assert, false=retract
+history, _ := db.ExecuteHistoryQuery(`[:find ?name ?tx ?op :where [?e :person/name ?name ?tx ?op]]`)
+// Returns: [["Alice" 1 true] ["Alice" 2 false]]  -- assertion then retraction
+```
+
+**Not supported:**
 - No `since` queries
-- No `history` database
 - No tx-range queries
-- No full history API
 
 ### 8. Database Features ❌
 
@@ -485,7 +506,6 @@ No advanced database operations:
 
 **Not possible:**
 - Transaction functions
-- History queries beyond as-of
 - Distributed queries
 
 ### Example Query Conversions

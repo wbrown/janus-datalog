@@ -206,7 +206,7 @@ func TestParseErrors(t *testing.T) {
 		{
 			name:  "invalid pattern length",
 			input: `[:find ?e :where [?e ?a]]`,
-			error: "pattern must have 3 or 4 elements",
+			error: "pattern must have 3, 4, or 5 elements",
 		},
 		{
 			name:  "non-vector pattern",

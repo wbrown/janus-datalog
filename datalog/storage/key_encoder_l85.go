@@ -292,3 +292,89 @@ func (e *L85KeyEncoder) EncodePrefixRange(index IndexType, parts ...[]byte) (sta
 
 	return start, end
 }
+
+// l85HistoryIndexToBase maps history index types to their base current-state equivalents
+func l85HistoryIndexToBase(index IndexType) IndexType {
+	switch index {
+	case EAVT_HISTORY:
+		return EAVT
+	case AEVT_HISTORY:
+		return AEVT
+	case AVET_HISTORY:
+		return AVET
+	case VAET_HISTORY:
+		return VAET
+	case TAEV_HISTORY:
+		return TAEV
+	default:
+		return index
+	}
+}
+
+// EncodeHistoryKey creates an L85-encoded index key with Op appended for history indices
+func (e *L85KeyEncoder) EncodeHistoryKey(index IndexType, d *datalog.Datom, op Op) []byte {
+	// Convert to storage datom first
+	sd := ToStorageDatom(*d)
+
+	// Use the history index byte as prefix
+	prefix := []byte{byte(index)}
+
+	// Encode the components to L85
+	eL85 := codec.EncodeFixed20(sd.E)
+	aL85 := codec.EncodeFixed32(sd.A)
+	txL85 := codec.EncodeFixed20(sd.Tx)
+
+	// Get value bytes with type prefix
+	vType := byte(datalog.Type(sd.V))
+	var vBytes []byte
+	if datalog.Type(sd.V) == datalog.TypeReference {
+		var vArr [20]byte
+		copy(vArr[:], datalog.ValueBytes(sd.V))
+		vBytes = append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
+	} else {
+		vData := datalog.ValueBytes(sd.V)
+		vBytes = append([]byte{vType}, vData...)
+	}
+
+	// Op encoding: 0x01 = assert (true), 0x00 = retract (false)
+	opByte := byte(0x00)
+	if op {
+		opByte = 0x01
+	}
+
+	// Build key based on base index type, then append Op
+	baseIndex := l85HistoryIndexToBase(index)
+	switch baseIndex {
+	case EAVT:
+		return concatBytes(prefix, []byte(eL85), []byte(aL85), vBytes, []byte(txL85), []byte{opByte})
+	case AEVT:
+		return concatBytes(prefix, []byte(aL85), []byte(eL85), vBytes, []byte(txL85), []byte{opByte})
+	case AVET:
+		return concatBytes(prefix, []byte(aL85), vBytes, []byte(eL85), []byte(txL85), []byte{opByte})
+	case VAET:
+		return concatBytes(prefix, vBytes, []byte(aL85), []byte(eL85), []byte(txL85), []byte{opByte})
+	case TAEV:
+		return concatBytes(prefix, []byte(txL85), []byte(aL85), []byte(eL85), vBytes, []byte{opByte})
+	default:
+		panic(fmt.Sprintf("unknown history index type: %v", index))
+	}
+}
+
+// DecodeHistoryKey extracts components including Op from an L85-encoded history index key
+func (e *L85KeyEncoder) DecodeHistoryKey(index IndexType, key []byte) (entity, attr, value, tx []byte, op Op, err error) {
+	if len(key) < 2 { // At minimum: prefix + op
+		return nil, nil, nil, nil, false, fmt.Errorf("history key too short")
+	}
+
+	// Op is the last byte
+	opByte := key[len(key)-1]
+	op = opByte == 0x01
+
+	// Decode the rest as a normal key (without the Op byte)
+	keyWithoutOp := key[:len(key)-1]
+
+	// Use the base index type for decoding
+	baseIndex := l85HistoryIndexToBase(index)
+	entity, attr, value, tx, err = e.DecodeKey(baseIndex, keyWithoutOp)
+	return entity, attr, value, tx, op, err
+}
