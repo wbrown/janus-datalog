@@ -196,11 +196,16 @@ func (sr *StructReader) setSingleValue(fieldVal reflect.Value, fieldType reflect
 		return nil
 
 	case identityType:
-		id, ok := value.(datalog.Identity)
-		if !ok {
+		switch v := value.(type) {
+		case datalog.Identity:
+			fieldVal.Set(reflect.ValueOf(v))
+		case *datalog.Identity:
+			if v != nil {
+				fieldVal.Set(reflect.ValueOf(*v))
+			}
+		default:
 			return fmt.Errorf("expected Identity, got %T", value)
 		}
-		fieldVal.Set(reflect.ValueOf(id))
 		return nil
 
 	case keywordType:
