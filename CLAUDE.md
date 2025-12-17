@@ -139,12 +139,13 @@ datalog/
 ├── types/       # Core type definitions
 ├── query/       # Query structures and types
 ├── symbolic/    # User-facing types (EntityID, Keyword, Datom)
-├── executor/    # Query execution with Relations
+├── executor/    # Query execution with Relations, Pull API
 ├── planner/     # Query planning and optimization
 ├── store/       # Storage abstraction and backends
 ├── index/       # Index implementations
 ├── codec/       # L85 and value encoding
 ├── edn/         # EDN lexer and parser
+├── schema/      # Schema support (types, cardinality, uniqueness)
 └── storage/     # Storage implementations (BadgerDB)
 ```
 
@@ -239,8 +240,10 @@ The storage layer connects the query engine to BadgerDB:
 17. **Table formatter** - Markdown table formatting using tablewriter library
 18. **Order-by clause** - Full implementation with multi-column sorting and direction control
 19. **Time comparison fix** - Proper time.Time comparison in aggregations and predicates
-20. **Datomic compatibility** - ~40-50% feature parity (see DATOMIC_COMPATIBILITY.md)
+20. **Datomic compatibility** - ~50-60% feature parity (see DATOMIC_COMPATIBILITY.md)
 21. **Relations migration** - Multi-value variable support throughout codebase
+22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
+23. **Schema support** - Type validation, cardinality (one/many), uniqueness constraints; optional and additive
 
 ### 📋 TODO (Priority Order)
 
@@ -255,9 +258,8 @@ See `TODO.md` and `PERFORMANCE_STATUS.md` for detailed roadmap.
 6. **NOT/OR clauses** - Negation and disjunction support
 
 **Long Term**:
-7. **Schema management** - Attribute definitions and constraints
-8. **Statistics-based optimization** - Query planning with cardinality estimates
-9. **WASM build** - Browser deployment support
+7. **Statistics-based optimization** - Query planning with cardinality estimates
+8. **WASM build** - Browser deployment support
 
 ## Go Implementation Guidelines
 
@@ -479,12 +481,13 @@ Note: While our planner is explicit and feature-complete, the **information flow
 ## Important Documentation
 
 ### Core Documentation
-- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Comprehensive compatibility guide for Datomic users (~40-50% feature parity)
+- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Comprehensive compatibility guide for Datomic users (~50-60% feature parity)
 - **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** - Current performance status, active optimizations, and benchmarks
 - **[TODO.md](TODO.md)** - Active task tracking with completed and pending features
 - **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation navigation
 
 ### Implementation Guides
+- **[docs/reference/SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
 - **[docs/INPUT_PARAMETER_SEMANTICS.md](docs/INPUT_PARAMETER_SEMANTICS.md)** - Comprehensive guide to input parameter handling
 - **[docs/reference/PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
 

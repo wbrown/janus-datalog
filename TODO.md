@@ -11,7 +11,8 @@
 - Subqueries with proper scoping (semantically correct)
 - Order-by clause with multi-column sorting
 - Time extraction functions
-- **Pull API with nested references and cycle detection**
+- **Pull API with nested references and cycle detection (9× faster than queries)**
+- **Schema support: type validation, cardinality, uniqueness (<1% write overhead)**
 - **True streaming execution (2.22× speedup, 52% memory reduction, up to 91.5% on large datasets)**
 - **Iterator composition with lazy evaluation (4.06× speedup)**
 - **Parallel subquery execution (2.06× speedup with 8 workers)**
@@ -93,9 +94,10 @@ The engine is **functionally complete, semantically correct, and memory-efficien
 
 These require fundamental architecture changes:
 - Full Datomic compatibility (different philosophy)
-- Schema enforcement (designed to be schema-less)
-- Time-travel queries (would need different storage)
+- Full history/time-travel queries (would need different storage model)
 - Lazy evaluation throughout (Go doesn't support well)
+
+**Note:** Schema support was added in Dec 2025 as an optional, additive feature. See `docs/reference/SCHEMA.md`.
 
 ## Success Metrics
 

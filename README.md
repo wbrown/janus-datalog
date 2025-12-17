@@ -97,6 +97,8 @@ Available examples:
 - `subquery_ohlc_demo.go` - Financial OHLC queries with subqueries
 - `financial_time_demo.go` - Time-based queries and as-of queries
 - `expression_demo.go` - Expression clauses and arithmetic
+- `schema_demo.go` - Schema validation, cardinality, and uniqueness
+- `pull_demo.go` - Pull API for entity attribute retrieval
 - And many more in `examples/`
 
 ## Tutorial
@@ -233,6 +235,64 @@ When you need scoped aggregations:
 ```
 
 The `q` function runs a sub-query with its own `:find` and `:where` clauses. Results bind to the outer query.
+
+### Schema (Optional)
+
+Schema is **completely optional** but provides type safety and cardinality-many support:
+
+```go
+import "github.com/wbrown/janus-datalog/datalog/schema"
+
+// Define schema with builder API
+s, _ := schema.NewBuilder().
+    Attribute(":user/name").Type(schema.TypeString).Add().
+    Attribute(":user/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
+    Attribute(":user/tags").Type(schema.TypeString).Many().Add().
+    Build()
+
+// Create database with schema
+db, _ := storage.NewDatabaseWithSchema("my.db", s)
+```
+
+**What schema gives you:**
+- **Type validation** at `Add()` time – catch type errors immediately
+- **Uniqueness constraints** at `Commit()` time – enforce data integrity
+- **Cardinality-many** – Pull API returns arrays instead of single values
+
+**Performance:** <1% write overhead for type checking, ~6% for uniqueness. Reads unaffected.
+
+Or define schema via EDN file:
+
+```clojure
+{:user/name   {:db/valueType :db.type/string}
+ :user/email  {:db/valueType :db.type/string
+               :db/unique    :db.unique/value}
+ :user/tags   {:db/valueType   :db.type/string
+               :db/cardinality :db.cardinality/many}}
+```
+
+See [docs/reference/SCHEMA.md](docs/reference/SCHEMA.md) for complete documentation.
+
+### Pull API
+
+Retrieve entity attributes declaratively:
+
+```go
+// In queries
+[:find (pull ?user [:user/name :user/age])
+ :where [?user :user/active true]]
+
+// Standalone
+result, _ := db.Pull(userId, `[:user/name :user/email {:user/friends [:user/name]}]`)
+```
+
+**Features:**
+- Nested reference following with cycle detection
+- Wildcard `[*]` for all attributes
+- Default values: `(default :attr "fallback")`
+- **9× faster than equivalent queries**
+
+See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for Pull API details.
 
 ## What Makes Janus Different
 
@@ -565,7 +625,6 @@ We welcome contributions! Here's how to get started:
 
 **Areas where we'd love help:**
 
-- Schema management and constraints
 - Additional aggregation functions (e.g., distinct, median)
 - WASM build support
 - Query optimization with statistics (for SQL-style workloads)
@@ -575,7 +634,7 @@ We welcome contributions! Here's how to get started:
 
 ## Datomic Compatibility
 
-Janus implements **~40-50% of Datomic's feature set**, focusing on the most commonly used features:
+Janus implements **~50-60% of Datomic's feature set**, focusing on the most commonly used features:
 
 **Implemented:**
 - Core queries: Patterns, joins, variables
@@ -583,13 +642,14 @@ Janus implements **~40-50% of Datomic's feature set**, focusing on the most comm
 - Aggregations: sum, count, avg, min, max
 - Subqueries: Full q support
 - Time queries: as-of, time functions
+- Pull API: Nested references, cycle detection, wildcards
+- Schema: Type validation, cardinality, uniqueness constraints
 - Storage: Persistent BadgerDB backend
 
 **Not implemented:**
-- Pull API
-- Transactions with rules
+- Rules and recursive queries
+- NOT/OR clauses
 - Full-text search
-- Schema constraints
 - Distributed transactions
 
 See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for the complete compatibility matrix.
@@ -601,14 +661,15 @@ See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for the complete compat
 **Production Ready:**
 
 - Core query engine complete and tested
+- Pull API with nested references and cycle detection
+- Schema support: type validation, cardinality, uniqueness
 - Persistent storage with BadgerDB
 - Comprehensive test suite (1.28:1 test-to-code ratio)
 - Used in production for financial analysis
 
 **In Progress:**
 
-- Schema management and attribute constraints
-- Additional aggregation functions
+- Additional aggregation functions (distinct, median)
 
 **Future Work:**
 

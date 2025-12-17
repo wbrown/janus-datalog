@@ -12,6 +12,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // Database provides the main API for reading and writing datoms
@@ -20,8 +21,9 @@ type Database struct {
 	txCounter atomic.Uint64
 	mu        sync.RWMutex
 	activeTx  map[*Transaction]bool
-	useTimeTx bool               // Use time-based transaction IDs
-	planCache *planner.PlanCache // Shared query plan cache
+	useTimeTx bool                   // Use time-based transaction IDs
+	planCache *planner.PlanCache     // Shared query plan cache
+	schema    schema.SchemaProvider  // Optional schema for validation
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -47,6 +49,31 @@ func NewDatabaseWithTimeTx(path string) (*Database, error) {
 	}
 	db.useTimeTx = true
 	return db, nil
+}
+
+// NewDatabaseWithSchema creates a database with schema validation
+func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, error) {
+	db, err := NewDatabase(path)
+	if err != nil {
+		return nil, err
+	}
+	db.schema = s
+	return db, nil
+}
+
+// Schema returns the current schema (may be nil)
+func (d *Database) Schema() schema.SchemaProvider {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.schema
+}
+
+// SetSchema sets or replaces the schema for validation
+// Schema changes take effect for new transactions
+func (d *Database) SetSchema(s schema.SchemaProvider) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.schema = s
 }
 
 // NewTransaction starts a new write transaction
@@ -178,11 +205,17 @@ func (d *Database) Store() *BadgerStore {
 
 // Close closes the database
 func (d *Database) Close() error {
+	// Copy active transactions while holding lock, then release before calling Rollback
+	// to avoid deadlock (Rollback also acquires d.mu)
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	// Rollback any active transactions
+	txs := make([]*Transaction, 0, len(d.activeTx))
 	for tx := range d.activeTx {
+		txs = append(txs, tx)
+	}
+	d.mu.Unlock()
+
+	// Rollback any active transactions (without holding d.mu)
+	for _, tx := range txs {
 		tx.Rollback()
 	}
 
@@ -301,6 +334,11 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("transaction is closed")
 	}
 
+	// Schema validation (if schema present)
+	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
+		return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
+	}
+
 	t.datoms = append(t.datoms, datalog.Datom{
 		E:  e,
 		A:  a,
@@ -367,6 +405,11 @@ func (t *Transaction) Commit() (uint64, error) {
 		return 0, fmt.Errorf("transaction is closed")
 	}
 
+	// Validate uniqueness constraints before committing
+	if err := t.validateUniqueness(); err != nil {
+		return 0, err
+	}
+
 	// Get transaction ID (time-based or sequential)
 	var txID uint64
 	var txTime time.Time
@@ -430,6 +473,97 @@ func (t *Transaction) Commit() (uint64, error) {
 	t.db.mu.Unlock()
 
 	return txID, nil
+}
+
+// validateUniqueness checks uniqueness constraints for all datoms in the transaction
+func (t *Transaction) validateUniqueness() error {
+	s := t.db.Schema()
+	if s == nil || !s.HasSchema() {
+		return nil // No schema = no validation
+	}
+
+	// Track values seen in this transaction for within-transaction uniqueness
+	// Key: attribute + serialized value
+	seenInTx := make(map[string]datalog.Identity)
+
+	matcher := NewBadgerMatcher(t.db.store)
+
+	for _, d := range t.datoms {
+		def := s.GetAttribute(d.A)
+		if def == nil || def.Unique == "" {
+			continue // No uniqueness constraint
+		}
+
+		// Create a key for tracking this attr+value combination
+		txKey := fmt.Sprintf("%s:%v", d.A.String(), d.V)
+
+		// Check within transaction uniqueness
+		if existingEntity, ok := seenInTx[txKey]; ok {
+			if existingEntity != d.E {
+				return fmt.Errorf("uniqueness violation for %s: value %v already used by entity %s in this transaction",
+					d.A.String(), d.V, existingEntity.String())
+			}
+			// Same entity, same value - OK (idempotent update)
+			continue
+		}
+		seenInTx[txKey] = d.E
+
+		// Check database for existing value
+		// Create a pattern [?e :attr value _] to find entities with this value
+		pattern := &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: query.Symbol("?e")},    // Entity variable
+				query.Constant{Value: d.A},                  // Bound attribute
+				query.Constant{Value: d.V},                  // Bound value
+				query.Blank{},                               // Transaction wildcard
+			},
+		}
+
+		results, err := matcher.Match(pattern, nil)
+		if err != nil {
+			return fmt.Errorf("failed to check uniqueness for %s: %w", d.A.String(), err)
+		}
+
+		// Find the index of ?e in the result columns
+		columns := results.Columns()
+		eIndex := -1
+		for i, col := range columns {
+			if col == query.Symbol("?e") {
+				eIndex = i
+				break
+			}
+		}
+		if eIndex < 0 {
+			continue // No entity column in results (shouldn't happen)
+		}
+
+		// Check if any existing datoms have a different entity
+		iter := results.Iterator()
+		for iter.Next() {
+			tuple := iter.Tuple()
+			if eIndex >= len(tuple) {
+				continue
+			}
+			// Handle both value and pointer types for Identity
+			var existingEntity datalog.Identity
+			switch e := tuple[eIndex].(type) {
+			case datalog.Identity:
+				existingEntity = e
+			case *datalog.Identity:
+				existingEntity = *e
+			default:
+				continue
+			}
+			if !existingEntity.Equal(d.E) {
+				iter.Close()
+				return fmt.Errorf("uniqueness violation for %s: value %v already exists on entity %s",
+					d.A.String(), d.V, existingEntity.String())
+			}
+		}
+		iter.Close()
+	}
+
+	return nil
 }
 
 // Rollback aborts the transaction

@@ -115,3 +115,111 @@ func KeyName(k datalog.Keyword) string {
 	}
 	return s
 }
+
+// ============================================================================
+// Resolved Pull Types
+// ============================================================================
+//
+// These types represent pull patterns with cardinality/ref info pre-resolved
+// from schema. Schema lookups happen once when resolving the pattern, not
+// per-entity during execution.
+
+// ResolvedPullPattern has cardinality/ref info baked in from schema resolution
+type ResolvedPullPattern struct {
+	Specs []ResolvedPullAttrSpec
+}
+
+// String returns the string representation of the resolved pull pattern
+func (p *ResolvedPullPattern) String() string {
+	if p == nil {
+		return "[]"
+	}
+	var parts []string
+	for _, spec := range p.Specs {
+		parts = append(parts, spec.String())
+	}
+	return "[" + strings.Join(parts, " ") + "]"
+}
+
+// ResolvedPullAttrSpec is the interface for resolved pull attribute specifications
+type ResolvedPullAttrSpec interface {
+	isResolvedPullAttrSpec()
+	String() string
+}
+
+// ResolvedPullAttribute represents a resolved simple attribute with cardinality info
+type ResolvedPullAttribute struct {
+	Attr   datalog.Keyword
+	IsMany bool // From schema, or false if unknown
+	IsRef  bool // From schema, or detected from value type
+}
+
+func (r *ResolvedPullAttribute) isResolvedPullAttrSpec() {}
+
+func (r *ResolvedPullAttribute) String() string {
+	suffix := ""
+	if r.IsMany {
+		suffix += "[many]"
+	}
+	if r.IsRef {
+		suffix += "[ref]"
+	}
+	return r.Attr.String() + suffix
+}
+
+// ResolvedPullWildcard represents a resolved wildcard
+type ResolvedPullWildcard struct {
+	// No additional info needed - wildcard pulls all attributes
+	// Individual attributes will be resolved at execution time
+}
+
+func (r *ResolvedPullWildcard) isResolvedPullAttrSpec() {}
+
+func (r *ResolvedPullWildcard) String() string {
+	return "*"
+}
+
+// ResolvedPullMapSpec represents a resolved reference follow specification
+type ResolvedPullMapSpec struct {
+	Attr    datalog.Keyword
+	IsMany  bool                 // Cardinality of the ref attribute
+	Pattern *ResolvedPullPattern // Nested pattern, also resolved
+}
+
+func (r *ResolvedPullMapSpec) isResolvedPullAttrSpec() {}
+
+func (r *ResolvedPullMapSpec) String() string {
+	suffix := ""
+	if r.IsMany {
+		suffix = "[many]"
+	}
+	return fmt.Sprintf("{%s%s %s}", r.Attr.String(), suffix, r.Pattern.String())
+}
+
+// ResolvedPullLimitExpr represents a resolved limit expression
+type ResolvedPullLimitExpr struct {
+	Attr   datalog.Keyword
+	Limit  int
+	IsMany bool // From schema
+	IsRef  bool // From schema
+}
+
+func (r *ResolvedPullLimitExpr) isResolvedPullAttrSpec() {}
+
+func (r *ResolvedPullLimitExpr) String() string {
+	return fmt.Sprintf("(limit %s %d)", r.Attr.String(), r.Limit)
+}
+
+// ResolvedPullDefaultExpr represents a resolved default expression
+type ResolvedPullDefaultExpr struct {
+	Attr    datalog.Keyword
+	Default interface{}
+	IsMany  bool // From schema
+	IsRef   bool // From schema
+}
+
+func (r *ResolvedPullDefaultExpr) isResolvedPullAttrSpec() {}
+
+func (r *ResolvedPullDefaultExpr) String() string {
+	return fmt.Sprintf("(default %s %v)", r.Attr.String(), r.Default)
+}

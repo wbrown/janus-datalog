@@ -10,7 +10,8 @@ Janus-datalog implements a pragmatic subset of Datomic's Datalog query language 
 - ✅ Time-based queries using transaction IDs
 - ✅ Database functions: `get-else`, `missing?`, `get-some`
 - ✅ BadgerDB persistent storage with EAVT model
-- ❌ No rules, schema, or transaction functions
+- ✅ Schema support: type validation, cardinality, uniqueness
+- ❌ No rules or transaction functions
 - ❌ No NOT/OR clauses or entity API
 - ❌ Single-node only (no distributed queries)
 
@@ -276,14 +277,53 @@ No logical negation or disjunction:
 (or-join [?e] ...)
 ```
 
-### 3. Schema ❌
+### 3. Schema ✅
 
-No schema definitions or constraints:
-- No cardinality specifications (one/many)
-- No type constraints at schema level
-- No uniqueness constraints
-- No required attributes
-- All attributes effectively `:db.cardinality/one`
+Schema support with Datomic-compatible attributes:
+
+**Supported schema features:**
+- `:db/valueType` - type constraints (string, long, double, boolean, instant, bytes, ref, keyword)
+- `:db/cardinality` - one or many
+- `:db/unique` - value uniqueness or identity
+- `:db/doc` - documentation strings
+
+**Schema definition via EDN:**
+```clojure
+{:person/name   {:db/valueType   :db.type/string
+                 :db/cardinality :db.cardinality/one}
+ :person/friends {:db/valueType   :db.type/ref
+                  :db/cardinality :db.cardinality/many}
+ :person/email  {:db/valueType   :db.type/string
+                 :db/unique      :db.unique/value}}
+```
+
+**Schema definition via Go API:**
+```go
+schema, _ := schema.NewBuilder().
+    Attribute(":person/name").Type(schema.TypeString).Add().
+    Attribute(":person/friends").Type(schema.TypeRef).Many().Add().
+    Attribute(":person/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
+    Build()
+
+db, _ := storage.NewDatabaseWithSchema(path, schema)
+```
+
+**Schema behavior:**
+- Type validation enforced on transaction `Add()`
+- Uniqueness validation enforced on `Commit()`
+- Unknown attributes allowed (additive schema)
+- Pull API uses schema for cardinality-many handling
+- Schema is optional - existing behavior preserved without schema
+
+**Schema limitations vs Datomic:**
+- No `:db/isComponent` - component entity semantics not implemented
+- No `:db/index` - all attributes are indexed by default
+- No `:db/fulltext` - fulltext search not supported
+- No `:db/noHistory` - all datoms are retained
+- No upsert semantics - `:db.unique/identity` behaves like `:db.unique/value`
+- Schema not stored as datoms - schema is in-memory only
+
+**Performance (writes only):** Type validation adds <1% overhead at `Add()` time; uniqueness checking adds ~6% at `Commit()` time. Reads are unaffected. See `PERFORMANCE_STATUS.md` for benchmarks.
 
 ### 4. Transaction Features ❌
 
@@ -381,7 +421,6 @@ No advanced database operations:
 **Require refactoring:**
 - Rules → inline the logic
 - Entity navigation → explicit joins or Pull API
-- Schema validations → application layer
 
 **Not possible:**
 - Transaction functions
@@ -401,8 +440,9 @@ No advanced database operations:
 ```
 
 Note: Nested references like `{:person/friends [...]}` work when `:person/friends`
-stores an entity reference. Cardinality-many attributes are not yet supported,
-so only the first friend would be returned.
+stores an entity reference. With schema support, cardinality-many attributes return
+all values as an array. Use `ResolvePullPattern()` and `PullResolved()` for proper
+cardinality handling.
 
 **Alternative using explicit patterns:**
 ```clojure
@@ -451,8 +491,6 @@ These make it suitable for production workloads despite the simpler feature set.
 
 **Consider alternatives for:**
 - Recursive/graph queries requiring rules
-- Strong schema enforcement needs
-- Cardinality-many attributes (not yet supported)
 - Distributed/multi-node requirements
 
 ## Getting Started
@@ -461,7 +499,7 @@ For Datomic users, the transition is straightforward:
 
 1. Most queries port directly, including Pull expressions
 2. Use subqueries for complex aggregations
-3. Handle schema validation in your application
-4. Use Pull API or explicit patterns for entity navigation
+3. Define schema for type validation and cardinality-many support
+4. Use Pull API with resolved patterns for entity navigation
 
 Most Datalog queries will work with minimal changes, making janus-datalog a practical choice for applications that need Datalog's power without Datomic's full complexity.
