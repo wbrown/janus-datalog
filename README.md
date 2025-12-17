@@ -154,6 +154,32 @@ Predicates apply as soon as their variables are available. You can also chain co
 
 Expression clauses compute new values. The result gets bound to the variable on the right.
 
+### Database Functions
+
+Handle missing attributes gracefully with database functions:
+
+```go
+; Return nickname if exists, otherwise "Anonymous"
+[:find ?name ?display
+ :where [?user :user/name ?name]
+        [(get-else $ ?user :user/nickname "Anonymous") ?display]]
+
+; Filter to users without email addresses
+[:find ?name
+ :where [?user :user/name ?name]
+        [(missing? $ ?user :user/email)]]
+
+; Use first available: nickname → fullname → email
+[:find ?id ?display
+ :where [?user :user/id ?id]
+        [(get-some $ ?user :user/nickname :user/fullname :user/email) ?display]]
+```
+
+The `$` is the database reference. These functions look up attributes at query time:
+- `get-else` – returns attribute value or default
+- `missing?` – filters to entities lacking an attribute (or binds boolean)
+- `get-some` – returns first existing attribute from a list
+
 ### Aggregations
 
 ```go

@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -296,11 +297,27 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	// Product() handles single relation passthrough
 	joined := Relations(relevantRels).Product()
 
-	// Evaluate expression
-	result := evaluateExpressionNew(joined, expr)
+	// Check if this expression might need database access (database functions)
+	// If the matcher supports EntityLookup, pass it to the expression evaluator
+	var lookup query.EntityLookup
+	if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
+		lookup = entityLookupAdapter{lookupMatcher}
+	}
+
+	// Evaluate expression with optional lookup support
+	result := evaluateExpressionWithLookup(joined, expr, lookup)
 
 	// Return result + unchanged relations
 	return append([]Relation{result}, otherRels...), nil
+}
+
+// entityLookupAdapter adapts EntityLookupMatcher to query.EntityLookup
+type entityLookupAdapter struct {
+	matcher EntityLookupMatcher
+}
+
+func (a entityLookupAdapter) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+	return a.matcher.LookupAttribute(entity, attr)
 }
 
 // executePredicate filters relations using a predicate
@@ -341,8 +358,15 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 	// Product() handles single relation passthrough
 	joined := Relations(relevantRels).Product()
 
-	// Filter using predicate
-	result := filterWithPredicate(joined, pred)
+	// Check if this predicate might need database access (DatabaseFunctionPredicate)
+	// If the matcher supports EntityLookup, pass it to the predicate evaluator
+	var lookup query.EntityLookup
+	if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
+		lookup = entityLookupAdapter{lookupMatcher}
+	}
+
+	// Filter using predicate with optional lookup support
+	result := filterWithPredicateAndLookup(joined, pred, lookup)
 
 	// Return result + unchanged relations
 	return append([]Relation{result}, otherRels...), nil
