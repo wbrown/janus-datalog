@@ -601,3 +601,66 @@ func relationToSlice(rel executor.Relation) [][]interface{} {
 
 	return rows
 }
+
+// Pull retrieves entity data according to a pull pattern
+// This provides Datomic-style entity attribute retrieval with nested reference following.
+//
+// The pattern syntax:
+//   - Simple attributes: [:entity/name :entity/code]
+//   - Wildcard: [*] - all attributes
+//   - Nested references: [{:entity/region [:region/code :region/name]}]
+//   - Default values: [(default :entity/status "unknown")]
+//   - Limits (for cardinality-many): [(limit :entity/tags 10)]
+//
+// Examples:
+//
+//	// Get name and code for an entity
+//	result, err := db.Pull(entityID, `[:entity/name :entity/code]`)
+//
+//	// Get all attributes
+//	result, err := db.Pull(entityID, `[*]`)
+//
+//	// Get attributes with nested reference
+//	result, err := db.Pull(entityID, `[:entity/name {:entity/region [:region/code]}]`)
+//
+// Returns nil if the entity does not exist.
+func (d *Database) Pull(entityID datalog.Identity, patternStr string) (map[string]interface{}, error) {
+	// Parse the pull pattern
+	pattern, err := parser.ParsePullPattern(patternStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse pull pattern: %w", err)
+	}
+
+	// Create pull executor with database matcher
+	matcher := d.Matcher()
+	puller := executor.NewPullExecutor(matcher)
+
+	// Execute pull
+	return puller.Pull(entityID, pattern)
+}
+
+// PullMany retrieves data for multiple entities using the same pull pattern
+// This is more efficient than calling Pull multiple times.
+//
+// Example:
+//
+//	results, err := db.PullMany(
+//	    []datalog.Identity{entity1, entity2, entity3},
+//	    `[:entity/name :entity/code]`,
+//	)
+//
+// Returns a slice of maps, one per entity. Nil entries indicate non-existent entities.
+func (d *Database) PullMany(entityIDs []datalog.Identity, patternStr string) ([]map[string]interface{}, error) {
+	// Parse the pull pattern
+	pattern, err := parser.ParsePullPattern(patternStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse pull pattern: %w", err)
+	}
+
+	// Create pull executor with database matcher
+	matcher := d.Matcher()
+	puller := executor.NewPullExecutor(matcher)
+
+	// Execute pull for all entities
+	return puller.PullMany(entityIDs, pattern)
+}

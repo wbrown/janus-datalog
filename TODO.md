@@ -11,6 +11,7 @@
 - Subqueries with proper scoping (semantically correct)
 - Order-by clause with multi-column sorting
 - Time extraction functions
+- **Pull API with nested references and cycle detection**
 - **True streaming execution (2.22× speedup, 52% memory reduction, up to 91.5% on large datasets)**
 - **Iterator composition with lazy evaluation (4.06× speedup)**
 - **Parallel subquery execution (2.06× speedup with 8 workers)**
@@ -78,7 +79,7 @@ The engine is **functionally complete, semantically correct, and memory-efficien
 
 ### Major Features
 1. **Rules System**: Named, reusable query fragments
-2. **Pull Syntax**: Entity graph traversal
+2. ✅ **Pull Syntax**: Entity graph traversal - COMPLETED
 3. **Recursive Queries**: Graph algorithms
 4. **Transaction Functions**: Custom transaction logic
 
