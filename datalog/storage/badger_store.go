@@ -86,13 +86,54 @@ func (s *BadgerStore) Retract(datoms []datalog.Datom) error {
 }
 
 // retractDatom removes a single datom from all indices
+// NOTE: The Tx field in the passed datom is ignored. We find the actual stored
+// datom(s) matching E+A+V and delete those, regardless of their Tx.
 func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
-	// Remove from all indices
-	indices := []IndexType{EAVT, AEVT, AVET, VAET, TAEV}
-	for _, idx := range indices {
-		key := s.encoder.EncodeKey(idx, d)
-		if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
-			return fmt.Errorf("failed to delete from %v index: %w", idx, err)
+	// Convert to storage format for prefix scanning
+	sd := ToStorageDatom(*d)
+
+	// Use EAVT index to find matching datoms (E+A+V, any Tx)
+	// Build prefix: index byte + E + A + V (without Tx)
+	prefix := []byte{byte(EAVT)}
+	vType := byte(datalog.Type(sd.V))
+	vData := datalog.ValueBytes(sd.V)
+	vBytes := append([]byte{vType}, vData...)
+	searchPrefix := concatBytes(prefix, sd.E[:], sd.A[:], vBytes)
+
+	// Iterate to find matching keys with their actual Tx values
+	opts := badger.DefaultIteratorOptions
+	opts.PrefetchValues = false // Keys only for faster iteration
+	it := txn.NewIterator(opts)
+	defer it.Close()
+
+	var keysToDelete [][]byte
+	for it.Seek(searchPrefix); it.ValidForPrefix(searchPrefix); it.Next() {
+		// Found a matching key - save it for deletion
+		key := it.Item().KeyCopy(nil)
+		keysToDelete = append(keysToDelete, key)
+	}
+
+	if len(keysToDelete) == 0 {
+		// No matching datom found - not an error, just nothing to retract
+		return nil
+	}
+
+	// For each matching EAVT key, decode it and delete from all indices
+	for _, eavtKey := range keysToDelete {
+		// Decode the EAVT key to get the full datom including Tx
+		// DatomFromKey handles all the complexity of decoding components
+		storedDatom, err := DatomFromKey(EAVT, eavtKey, s.encoder)
+		if err != nil {
+			return fmt.Errorf("failed to decode key for retraction: %w", err)
+		}
+
+		// Delete from all indices using the actual stored Tx
+		indices := []IndexType{EAVT, AEVT, AVET, VAET, TAEV}
+		for _, idx := range indices {
+			key := s.encoder.EncodeKey(idx, storedDatom)
+			if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
+				return fmt.Errorf("failed to delete from %v index: %w", idx, err)
+			}
 		}
 	}
 

@@ -26,6 +26,40 @@ type TransactionAdder interface {
 	Add(e datalog.Identity, a datalog.Keyword, v interface{}) error
 }
 
+// TransactionUpdater extends TransactionAdder with retract capability
+// This is implemented by storage.Transaction
+type TransactionUpdater interface {
+	TransactionAdder
+	Retract(e datalog.Identity, a datalog.Keyword, v interface{}) error
+}
+
+// EntityLookup provides lookup of existing entity attributes
+// This is used for upsert operations to find existing values to retract
+type EntityLookup interface {
+	// LookupAttribute returns the current value of an attribute for an entity
+	// Returns (value, true) if found, (nil, false) if not found
+	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool)
+
+	// LookupAllAttributes returns all values for a cardinality-many attribute
+	// Returns empty slice if attribute not found
+	LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) []interface{}
+}
+
+// UpdateMode controls how cardinality-many fields are updated
+type UpdateMode int
+
+const (
+	// UpdateModeAdd uses union semantics: adds new values to existing set
+	// Values already present are not duplicated
+	UpdateModeAdd UpdateMode = iota
+
+	// UpdateModeReplace uses set assignment semantics: slice IS the new complete state
+	// - Retracts values in existing but not in new
+	// - Adds values in new but not in existing
+	// - Values present in both are left unchanged
+	UpdateModeReplace
+)
+
 // StructWriter handles struct → datom conversion
 type StructWriter struct {
 	info   *StructInfo
@@ -76,6 +110,165 @@ func (sw *StructWriter) Write(tx TransactionAdder, entity datalog.Identity, v in
 		// Handle different field types
 		if err := sw.writeField(tx, entity, kw, field, fieldVal); err != nil {
 			return fmt.Errorf("field %s: %w", field.FieldName, err)
+		}
+	}
+
+	return nil
+}
+
+// Update performs an upsert operation: retracts changed values and adds new ones.
+// For cardinality-one fields: if the value has changed, retracts the old value and adds the new one.
+// For cardinality-many fields: behavior depends on the UpdateMode.
+//
+// This requires both a TransactionUpdater (for retract capability) and an EntityLookup
+// (to find existing values to compare/retract).
+func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, v interface{}, mode UpdateMode) error {
+	val := reflect.ValueOf(v)
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return fmt.Errorf("cannot update nil struct")
+		}
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct {
+		return fmt.Errorf("expected struct, got %s", val.Kind())
+	}
+
+	for _, field := range sw.info.Fields {
+		fieldVal := val.Field(field.Index)
+
+		// Handle pointer fields (optional)
+		if field.GoType.Kind() == reflect.Ptr {
+			if fieldVal.IsNil() {
+				// For nil optional fields in update mode, we could optionally retract existing
+				// For now, skip nil fields (don't change existing value)
+				continue
+			}
+			fieldVal = fieldVal.Elem()
+		}
+
+		// Get the keyword for this attribute
+		kw := datalog.NewKeyword(field.FullAttr)
+
+		// Handle different field types
+		if err := sw.updateField(tx, lookup, entity, kw, field, fieldVal, mode); err != nil {
+			return fmt.Errorf("field %s: %w", field.FieldName, err)
+		}
+	}
+
+	return nil
+}
+
+// updateField updates a single field with upsert semantics
+func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value, mode UpdateMode) error {
+	// Handle slice fields (cardinality-many)
+	if IsSliceType(field.GoType) {
+		return sw.updateSliceField(tx, lookup, entity, kw, field, val, mode)
+	}
+
+	// Get the new value to write
+	newVal, err := sw.extractValue(field, val)
+	if err != nil {
+		return err
+	}
+
+	// Skip zero values for optional types
+	if newVal == nil {
+		return nil
+	}
+
+	// Look up existing value
+	existingVal, found := lookup.LookupAttribute(entity, kw)
+
+	if found {
+		// Compare values - if same, no action needed
+		if datalog.ValuesEqual(existingVal, newVal) {
+			return nil
+		}
+		// Different value - retract old, add new
+		if err := tx.Retract(entity, kw, existingVal); err != nil {
+			return fmt.Errorf("retract failed: %w", err)
+		}
+	}
+
+	return tx.Add(entity, kw, newVal)
+}
+
+// containsValue checks if a value exists in a slice using ValuesEqual
+func containsValue(vals []interface{}, target interface{}) bool {
+	for _, v := range vals {
+		if datalog.ValuesEqual(v, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// updateSliceField handles cardinality-many field updates
+// Nil slice means "don't touch existing values" - skip entirely.
+// Empty slice (not nil) means "clear all values".
+// Non-empty slice means "set to exactly these values" (diff-based).
+func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value, mode UpdateMode) error {
+	if val.Kind() != reflect.Slice {
+		return fmt.Errorf("expected slice, got %s", val.Kind())
+	}
+
+	// Nil slice = "I didn't set this field" → leave existing values alone
+	if val.IsNil() {
+		return nil
+	}
+
+	// Extract new values (empty slice is valid - means "clear all")
+	var newVals []interface{}
+	for i := 0; i < val.Len(); i++ {
+		elem := val.Index(i)
+		if elem.Kind() == reflect.Ptr {
+			if elem.IsNil() {
+				continue
+			}
+			elem = elem.Elem()
+		}
+		writeVal, err := sw.extractSingleValue(elem)
+		if err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
+		}
+		if writeVal != nil {
+			newVals = append(newVals, writeVal)
+		}
+	}
+
+	if mode == UpdateModeReplace {
+		// Diff-based set assignment: slice IS the new complete state
+		existingVals := lookup.LookupAllAttributes(entity, kw)
+
+		// Retract values in existing but not in new
+		for _, existing := range existingVals {
+			if !containsValue(newVals, existing) {
+				if err := tx.Retract(entity, kw, existing); err != nil {
+					return fmt.Errorf("retract failed: %w", err)
+				}
+			}
+		}
+
+		// Add values in new but not in existing
+		for _, newVal := range newVals {
+			if !containsValue(existingVals, newVal) {
+				if err := tx.Add(entity, kw, newVal); err != nil {
+					return err
+				}
+			}
+		}
+	} else {
+		// UpdateModeAdd - union semantics: add new values to existing set
+		// Only add values that don't already exist
+		existingVals := lookup.LookupAllAttributes(entity, kw)
+		for _, newVal := range newVals {
+			if !containsValue(existingVals, newVal) {
+				if err := tx.Add(entity, kw, newVal); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
@@ -278,20 +471,79 @@ func (sw *StructWriter) WriteAuto(tx TransactionAdder, v interface{}) (datalog.I
 	return entity, nil
 }
 
-// WriteStruct is a convenience function that creates a writer and writes the struct
-func WriteStruct(tx TransactionAdder, entity datalog.Identity, v interface{}, s schema.SchemaProvider) error {
-	writer, err := NewStructWriter(v, s)
-	if err != nil {
-		return err
+// UpdateAuto generates entity ID if not set, then performs upsert with the given mode.
+// This combines ID generation with update semantics.
+func (sw *StructWriter) UpdateAuto(tx TransactionUpdater, lookup EntityLookup, v interface{}, mode UpdateMode) (datalog.Identity, error) {
+	val := reflect.ValueOf(v)
+
+	// Must be pointer to struct for setting ID
+	if val.Kind() != reflect.Ptr {
+		return datalog.Identity{}, fmt.Errorf("UpdateAuto requires pointer to struct")
 	}
-	return writer.Write(tx, entity, v)
+	if val.IsNil() {
+		return datalog.Identity{}, fmt.Errorf("cannot update nil struct")
+	}
+
+	structVal := val.Elem()
+	if structVal.Kind() != reflect.Struct {
+		return datalog.Identity{}, fmt.Errorf("expected pointer to struct, got pointer to %s", structVal.Kind())
+	}
+
+	var entity datalog.Identity
+
+	// Check for existing ID
+	if sw.info.IDField != nil {
+		idField := structVal.Field(sw.info.IDField.Index)
+
+		// Handle pointer ID field
+		if sw.info.IDField.GoType.Kind() == reflect.Ptr {
+			if !idField.IsNil() {
+				entity = idField.Elem().Interface().(datalog.Identity)
+			}
+		} else {
+			entity = idField.Interface().(datalog.Identity)
+		}
+
+		// Check if ID is zero (all zeros in the hash)
+		var zeroHash [20]byte
+		if entity.Hash() == zeroHash {
+			// Generate new unique ID
+			entity = generateUniqueID()
+
+			// Set the ID field
+			if sw.info.IDField.GoType.Kind() == reflect.Ptr {
+				newID := reflect.New(identityType)
+				newID.Elem().Set(reflect.ValueOf(entity))
+				idField.Set(newID)
+			} else {
+				idField.Set(reflect.ValueOf(entity))
+			}
+		}
+	} else {
+		// No ID field, generate a unique ID
+		entity = generateUniqueID()
+	}
+
+	// Update the struct with upsert semantics
+	if err := sw.Update(tx, lookup, entity, v, mode); err != nil {
+		return datalog.Identity{}, err
+	}
+
+	return entity, nil
 }
 
-// WriteStructAuto is a convenience function that creates a writer and writes the struct with auto ID
-func WriteStructAuto(tx TransactionAdder, v interface{}, s schema.SchemaProvider) (datalog.Identity, error) {
+// SaveStruct persists a struct with upsert semantics.
+// Generates entity ID if not set, returns the ID.
+//
+// Upsert behavior:
+//   - Cardinality-one fields: retracts old value if different, adds new value
+//   - Cardinality-many fields (nil slice): leaves existing values unchanged
+//   - Cardinality-many fields (empty slice): clears all existing values
+//   - Cardinality-many fields (non-empty): diff-based update
+func SaveStruct(tx TransactionUpdater, lookup EntityLookup, v interface{}, s schema.SchemaProvider) (datalog.Identity, error) {
 	writer, err := NewStructWriter(v, s)
 	if err != nil {
 		return datalog.Identity{}, err
 	}
-	return writer.WriteAuto(tx, v)
+	return writer.UpdateAuto(tx, lookup, v, UpdateModeReplace)
 }

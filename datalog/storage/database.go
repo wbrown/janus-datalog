@@ -397,32 +397,28 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 	return e, nil
 }
 
-// AddStruct adds all fields from a struct as datoms for the given entity.
-// The struct fields are mapped to attributes based on datalog struct tags.
-//
-// Example:
-//
-//	type Person struct {
-//	    ID   datalog.Identity `datalog:"-,id"`
-//	    Name string           `datalog:"name"`
-//	    Age  int64            `datalog:"age"`
-//	}
-//	tx.AddStruct(entityID, &person)
-func (t *Transaction) AddStruct(entity datalog.Identity, v interface{}) error {
-	return dlreflect.WriteStruct(t, entity, v, t.db.Schema())
-}
-
-// AddStructAuto adds all fields from a struct as datoms, auto-generating an entity ID if needed.
+// SaveStruct persists a struct to the database with upsert semantics.
 // If the struct has an ID field (tagged with `datalog:"-,id"`) and it's empty, a new ID is generated.
 // The generated or existing ID is returned and also set on the struct's ID field.
+//
+// Upsert behavior:
+//   - Cardinality-one fields: retracts old value if different, adds new value
+//   - Cardinality-many fields (nil slice): leaves existing values unchanged
+//   - Cardinality-many fields (empty slice): clears all existing values
+//   - Cardinality-many fields (non-empty): diff-based update (only changes what's different)
 //
 // Example:
 //
 //	person := Person{Name: "Alice", Age: 30}
-//	id, err := tx.AddStructAuto(&person)
+//	id, err := tx.SaveStruct(&person)
 //	// person.ID is now set to the generated identity
-func (t *Transaction) AddStructAuto(v interface{}) (datalog.Identity, error) {
-	return dlreflect.WriteStructAuto(t, v, t.db.Schema())
+//
+//	// Later, modify and save again
+//	person.Name = "Alice Smith"
+//	id, err = tx.SaveStruct(&person)  // Updates name, age unchanged
+func (t *Transaction) SaveStruct(v interface{}) (datalog.Identity, error) {
+	matcher := NewBadgerMatcher(t.db.Store())
+	return dlreflect.SaveStruct(t, matcher, v, t.db.Schema())
 }
 
 // Commit commits the transaction

@@ -198,6 +198,74 @@ func TestBadgerStore(t *testing.T) {
 	})
 }
 
+// TestRetractWithDifferentTx tests that retraction works even when the caller
+// specifies a different Tx than what was used when the datom was asserted.
+// This is the common case when retracting during an update operation, where
+// the caller doesn't know the original transaction ID.
+func TestRetractWithDifferentTx(t *testing.T) {
+	dir, err := os.MkdirTemp("", "badger-retract-tx-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	encoder := NewKeyEncoder(BinaryStrategy)
+	store, err := NewBadgerStore(dir, encoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// Create entity and attribute
+	alice := datalog.NewIdentity("alice-retract-tx")
+	nameAttr := datalog.NewKeyword(":person/name")
+	originalTx := uint64(100)
+	differentTx := uint64(999) // Different from originalTx
+
+	// Assert a datom with originalTx
+	err = store.Assert([]datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: originalTx},
+	})
+	if err != nil {
+		t.Fatalf("Assert failed: %v", err)
+	}
+
+	// Verify it was stored
+	aliceHash := alice.Hash()
+	attr := NewAttribute(":person/name")
+	start, end := encoder.EncodePrefixRange(EAVT, aliceHash[:], attr[:])
+	it, err := store.Scan(EAVT, start, end)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+	if !it.Next() {
+		t.Fatal("Expected to find Alice's name datom")
+	}
+	it.Close()
+
+	// Now retract with a DIFFERENT Tx value
+	// This simulates what happens in UpdateStruct where we lookup a value
+	// and try to retract it, but we don't know the original Tx
+	err = store.Retract([]datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: differentTx},
+	})
+	if err != nil {
+		t.Fatalf("Retract failed: %v", err)
+	}
+
+	// Verify the datom was actually retracted
+	it, err = store.Scan(EAVT, start, end)
+	if err != nil {
+		t.Fatalf("Scan after retract failed: %v", err)
+	}
+	defer it.Close()
+
+	if it.Next() {
+		datom, _ := it.Datom()
+		t.Errorf("Datom should have been retracted but found: %v", datom)
+	}
+}
+
 func TestKeyOnlyScanning(t *testing.T) {
 	// Create temporary directory
 	dir, err := os.MkdirTemp("", "badger-keyonly-test-*")
