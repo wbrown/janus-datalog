@@ -53,7 +53,7 @@ func TestSchemaFromStruct(t *testing.T) {
 	}
 }
 
-func TestAddStructAndPullInto_Simple(t *testing.T) {
+func TestSaveStructAndPullInto_Simple(t *testing.T) {
 	// Create temp database
 	tmpDir, err := os.MkdirTemp("", "reflect-test")
 	if err != nil {
@@ -77,7 +77,7 @@ func TestAddStructAndPullInto_Simple(t *testing.T) {
 	// Create and write a person
 	alice := Person{Name: "Alice", Age: 30}
 	tx := db.NewTransaction()
-	aliceID, err := tx.AddStructAuto(&alice)
+	aliceID, err := tx.SaveStruct(&alice)
 	if err != nil {
 		t.Fatalf("failed to add struct: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestAddStructAndPullInto_Simple(t *testing.T) {
 	}
 }
 
-func TestAddStructAndPullInto_CardinalityMany(t *testing.T) {
+func TestSaveStructAndPullInto_CardinalityMany(t *testing.T) {
 	// Create temp database
 	tmpDir, err := os.MkdirTemp("", "reflect-test-many")
 	if err != nil {
@@ -133,7 +133,7 @@ func TestAddStructAndPullInto_CardinalityMany(t *testing.T) {
 		Tags: []string{"developer", "team-lead", "mentor"},
 	}
 	tx := db.NewTransaction()
-	aliceID, err := tx.AddStructAuto(&alice)
+	aliceID, err := tx.SaveStruct(&alice)
 	if err != nil {
 		t.Fatalf("failed to add struct: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestGeneratePullPattern_Nested(t *testing.T) {
 	t.Logf("Generated pattern: %s", pattern)
 }
 
-func TestAddStruct_WithExistingID(t *testing.T) {
+func TestSaveStruct_WithExistingID(t *testing.T) {
 	// Create temp database
 	tmpDir, err := os.MkdirTemp("", "reflect-test-existing-id")
 	if err != nil {
@@ -203,7 +203,7 @@ func TestAddStruct_WithExistingID(t *testing.T) {
 	}
 
 	tx := db.NewTransaction()
-	returnedID, err := tx.AddStructAuto(&alice)
+	returnedID, err := tx.SaveStruct(&alice)
 	if err != nil {
 		t.Fatalf("failed to add struct: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestPullIntoMany(t *testing.T) {
 	var ids []datalog.Identity
 	tx := db.NewTransaction()
 	for i := range people {
-		id, err := tx.AddStructAuto(&people[i])
+		id, err := tx.SaveStruct(&people[i])
 		if err != nil {
 			t.Fatalf("failed to add struct: %v", err)
 		}
@@ -281,5 +281,397 @@ func TestPullIntoMany(t *testing.T) {
 		for i, p := range people {
 			t.Logf("original person %d: Name=%q, Age=%d, ID=%s", i, p.Name, p.Age, p.ID.String()[:20])
 		}
+	}
+}
+
+func TestSaveStructCardinalityOne(t *testing.T) {
+	// Create temp database
+	tmpDir, err := os.MkdirTemp("", "reflect-test-update")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(Person{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create initial person
+	alice := Person{Name: "Alice", Age: 30}
+
+	tx := db.NewTransaction()
+	id, err := tx.SaveStruct(&alice)
+	if err != nil {
+		t.Fatalf("failed to add struct: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	t.Logf("Created person with ID: %s", id.L85())
+
+	// Verify initial state
+	var loaded Person
+	if err := db.PullInto(id, &loaded); err != nil {
+		t.Fatalf("failed to pull: %v", err)
+	}
+	if loaded.Name != "Alice" || loaded.Age != 30 {
+		t.Fatalf("initial load failed: got Name=%q Age=%d", loaded.Name, loaded.Age)
+	}
+
+	// Update the person
+	alice.Age = 31
+	alice.Name = "Alice Smith"
+
+	tx2 := db.NewTransaction()
+	if _, err := tx2.SaveStruct(&alice); err != nil {
+		t.Fatalf("failed to save struct: %v", err)
+	}
+	if _, err := tx2.Commit(); err != nil {
+		t.Fatalf("failed to commit update: %v", err)
+	}
+
+	// Verify updated state
+	var updated Person
+	if err := db.PullInto(id, &updated); err != nil {
+		t.Fatalf("failed to pull updated: %v", err)
+	}
+
+	if updated.Name != "Alice Smith" {
+		t.Errorf("expected Name='Alice Smith', got %q", updated.Name)
+	}
+	if updated.Age != 31 {
+		t.Errorf("expected Age=31, got %d", updated.Age)
+	}
+
+	// Verify there's only ONE age value (not both 30 and 31)
+	// Query for all age values of this entity
+	results, err := db.ExecuteQueryWithInputs(
+		`[:find ?age :in $ ?e :where [?e :person/age ?age]]`,
+		id,
+	)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 age value, got %d: %v", len(results), results)
+	}
+}
+
+func TestSaveStructCardinalityMany(t *testing.T) {
+	// Create temp database
+	tmpDir, err := os.MkdirTemp("", "reflect-test-update-many")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(PersonWithTags{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create initial person with tags
+	alice := PersonWithTags{Name: "Alice", Tags: []string{"developer", "golang"}}
+
+	tx := db.NewTransaction()
+	id, err := tx.SaveStruct(&alice)
+	if err != nil {
+		t.Fatalf("failed to add struct: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Verify initial tags
+	results, err := db.ExecuteQueryWithInputs(
+		`[:find ?tag :in $ ?e :where [?e :person-with-tags/tags ?tag]]`,
+		id,
+	)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 tags initially, got %d", len(results))
+	}
+
+	// Update - should replace all tags (diff-based)
+	alice.Tags = []string{"architect", "rust"}
+
+	tx2 := db.NewTransaction()
+	if _, err := tx2.SaveStruct(&alice); err != nil {
+		t.Fatalf("failed to save struct: %v", err)
+	}
+	if _, err := tx2.Commit(); err != nil {
+		t.Fatalf("failed to commit update: %v", err)
+	}
+
+	// Verify only new tags exist
+	results, err = db.ExecuteQueryWithInputs(
+		`[:find ?tag :in $ ?e :where [?e :person-with-tags/tags ?tag]]`,
+		id,
+	)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 tags after replace, got %d", len(results))
+	}
+
+	// Check we have the right tags
+	tags := make(map[string]bool)
+	for _, r := range results {
+		if s, ok := r[0].(string); ok {
+			tags[s] = true
+		}
+	}
+	if !tags["architect"] || !tags["rust"] {
+		t.Errorf("expected architect and rust tags, got: %v", tags)
+	}
+	if tags["developer"] || tags["golang"] {
+		t.Errorf("old tags should have been removed, got: %v", tags)
+	}
+}
+
+
+// TestNilVsEmptySliceSemantics verifies that nil slices are skipped (leave existing)
+// while empty slices clear existing values.
+func TestNilVsEmptySliceSemantics(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-test-nil-empty")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(PersonWithTags{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create person with tags
+	alice := PersonWithTags{Name: "Alice", Tags: []string{"developer", "golang"}}
+	tx := db.NewTransaction()
+	id, err := tx.SaveStruct(&alice)
+	if err != nil {
+		t.Fatalf("SaveStruct failed: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	// Test 1: Nil slice should leave existing tags alone
+	partialUpdate := PersonWithTags{ID: id, Name: "Alice Smith", Tags: nil}
+	tx2 := db.NewTransaction()
+	if _, err := tx2.SaveStruct(&partialUpdate); err != nil {
+		t.Fatalf("SaveStruct with nil tags failed: %v", err)
+	}
+	if _, err := tx2.Commit(); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	// Verify tags unchanged
+	results, err := db.ExecuteQueryWithInputs(
+		`[:find ?tag :in $ ?e :where [?e :person-with-tags/tags ?tag]]`,
+		id,
+	)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("nil slice should leave tags unchanged, expected 2, got %d: %v", len(results), results)
+	}
+
+	// Test 2: Empty slice (not nil) should clear all tags
+	emptyTags := make([]string, 0) // Empty but not nil
+	clearUpdate := PersonWithTags{ID: id, Name: "Alice Smith", Tags: emptyTags}
+	tx3 := db.NewTransaction()
+	if _, err := tx3.SaveStruct(&clearUpdate); err != nil {
+		t.Fatalf("SaveStruct with empty tags failed: %v", err)
+	}
+	if _, err := tx3.Commit(); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	// Verify tags cleared
+	results, err = db.ExecuteQueryWithInputs(
+		`[:find ?tag :in $ ?e :where [?e :person-with-tags/tags ?tag]]`,
+		id,
+	)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("empty slice should clear tags, expected 0, got %d: %v", len(results), results)
+	}
+}
+
+// TestSaveStructUpsertSemantics verifies that SaveStruct uses upsert semantics
+// so calling it twice on the same entity properly updates values instead of duplicating.
+func TestSaveStructUpsertSemantics(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-test-upsert")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(Person{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// First add
+	alice := Person{Name: "Alice", Age: 30}
+	tx := db.NewTransaction()
+	id, err := tx.SaveStruct(&alice)
+	if err != nil {
+		t.Fatalf("first SaveStruct failed: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("first commit failed: %v", err)
+	}
+
+	// Modify and add again (using the same ID)
+	alice.Name = "Alice Smith"
+	alice.Age = 31
+	// alice.ID should already be set from first SaveStruct
+
+	tx2 := db.NewTransaction()
+	id2, err := tx2.SaveStruct(&alice)
+	if err != nil {
+		t.Fatalf("second SaveStruct failed: %v", err)
+	}
+	if _, err := tx2.Commit(); err != nil {
+		t.Fatalf("second commit failed: %v", err)
+	}
+
+	// Verify same ID was used
+	if !id.Equal(id2) {
+		t.Errorf("expected same ID, got different: %s vs %s", id.L85(), id2.L85())
+	}
+
+	// Verify updated values
+	var loaded Person
+	if err := db.PullInto(id, &loaded); err != nil {
+		t.Fatalf("PullInto failed: %v", err)
+	}
+
+	if loaded.Name != "Alice Smith" {
+		t.Errorf("expected Name='Alice Smith', got %q", loaded.Name)
+	}
+	if loaded.Age != 31 {
+		t.Errorf("expected Age=31, got %d", loaded.Age)
+	}
+
+	// Verify only one value for each attribute (no duplicates)
+	results, err := db.ExecuteQueryWithInputs(
+		`[:find ?age :in $ ?e :where [?e :person/age ?age]]`,
+		id,
+	)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 age value (upsert), got %d: %v", len(results), results)
+	}
+}
+
+// TestLookupAttributeWithStructAPI verifies that LookupAttribute works with
+// entities and attributes created via the struct reflection API.
+// This test validates the integration between SaveStruct and LookupAttribute.
+func TestLookupAttributeWithStructAPI(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-test-lookup")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(Person{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create person via struct API
+	alice := Person{Name: "Alice", Age: 30}
+	tx := db.NewTransaction()
+	id, err := tx.SaveStruct(&alice)
+	if err != nil {
+		t.Fatalf("failed to add struct: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	t.Logf("Created entity with ID: %s", id.L85())
+
+	// Test LookupAttribute
+	matcher := storage.NewBadgerMatcher(db.Store())
+
+	// Lookup name
+	nameAttr := datalog.NewKeyword(":person/name")
+	val, found := matcher.LookupAttribute(id, nameAttr)
+	if !found {
+		t.Errorf("LookupAttribute failed to find :person/name for entity %s", id.L85())
+	} else {
+		t.Logf("Found name: %v (type: %T)", val, val)
+		if val != "Alice" {
+			t.Errorf("expected name='Alice', got %v", val)
+		}
+	}
+
+	// Lookup age
+	ageAttr := datalog.NewKeyword(":person/age")
+	val, found = matcher.LookupAttribute(id, ageAttr)
+	if !found {
+		t.Errorf("LookupAttribute failed to find :person/age for entity %s", id.L85())
+	} else {
+		t.Logf("Found age: %v (type: %T)", val, val)
+		if val != int64(30) {
+			t.Errorf("expected age=30, got %v", val)
+		}
+	}
+
+	// Verify query also works (sanity check)
+	results, err := db.ExecuteQueryWithInputs(
+		`[:find ?name ?age :in $ ?e :where [?e :person/name ?name] [?e :person/age ?age]]`,
+		id,
+	)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 query result, got %d", len(results))
+	} else {
+		t.Logf("Query result: name=%v age=%v", results[0][0], results[0][1])
 	}
 }

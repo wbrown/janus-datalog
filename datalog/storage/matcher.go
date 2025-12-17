@@ -597,3 +597,39 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	// No datom found
 	return nil, false
 }
+
+// LookupAllAttributes retrieves all values of a cardinality-many attribute for an entity.
+// Returns all matching values, or empty slice if none found.
+func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) []interface{} {
+	// Convert to storage format
+	eBytes := entity.Bytes()
+	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
+
+	encoder := m.store.encoder
+
+	// Use AEVT index which orders by A, then E
+	start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
+
+	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
+	if err != nil {
+		return nil
+	}
+	defer iter.Close()
+
+	var values []interface{}
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			continue
+		}
+
+		// Check transaction filter for as-of queries
+		if m.txID > 0 && datom.Tx > m.txID {
+			continue
+		}
+
+		values = append(values, datom.V)
+	}
+
+	return values
+}

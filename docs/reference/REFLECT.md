@@ -7,7 +7,7 @@ This document describes janus-datalog's struct reflection API for mapping Go str
 The reflection API provides a more ergonomic way to work with the database:
 
 - **`SchemaFromStruct()`** - Generate schema from struct definitions
-- **`AddStruct()`** / **`AddStructAuto()`** - Write structs as datoms
+- **`SaveStruct()`** - Write/update structs with upsert semantics
 - **`PullInto()`** / **`PullIntoMany()`** - Read datoms into structs
 
 ## Struct Tags
@@ -82,6 +82,8 @@ db, err := storage.NewDatabaseWithSchema(path, schema)
 
 ## Writing Structs
 
+`SaveStruct` provides unified upsert semantics - it creates new entities or updates existing ones.
+
 ### With Auto-Generated ID
 
 ```go
@@ -92,7 +94,7 @@ person := &Person{
 }
 
 tx := db.NewTransaction()
-id, err := tx.AddStructAuto(person)  // ID auto-generated
+id, err := tx.SaveStruct(person)  // ID auto-generated
 tx.Commit()
 
 // person.ID is now set to the generated identity
@@ -109,21 +111,99 @@ person := &Person{
 }
 
 tx := db.NewTransaction()
-tx.AddStruct(person.ID, person)
+id, err := tx.SaveStruct(person)  // Uses provided ID
 tx.Commit()
 ```
 
-### With Pre-Set ID
+## Updating Structs
+
+`SaveStruct` provides upsert semantics - calling it on an entity that already exists will update it.
+
+### Cardinality-One Fields
+
+For single-value fields, `SaveStruct` automatically:
+1. Looks up the existing value
+2. If different, retracts the old value
+3. Adds the new value
 
 ```go
-person := &Person{
-    ID:   datalog.NewIdentity("alice"),  // Pre-set ID
-    Name: "Alice",
-}
+// Original: Alice, age 30
+alice.Name = "Alice Smith"
+alice.Age = 31
 
 tx := db.NewTransaction()
-id, err := tx.AddStructAuto(person)  // Uses existing ID
-// id == person.ID
+tx.SaveStruct(&alice)
+tx.Commit()
+// Now: Alice Smith, age 31 (old values retracted)
+```
+
+### Cardinality-Many Fields
+
+For slice fields, `SaveStruct` uses diff-based updates:
+- Retracts values in existing but not in new
+- Adds values in new but not in existing
+- Values present in both are unchanged
+
+```go
+// Original tags: ["developer", "golang"]
+alice.Tags = []string{"developer", "rust", "architect"}
+
+tx := db.NewTransaction()
+tx.SaveStruct(&alice)
+tx.Commit()
+// Result: ["developer", "rust", "architect"]
+// "golang" retracted, "rust" and "architect" added, "developer" unchanged
+```
+
+### Nil vs Empty Slice Semantics
+
+For cardinality-many fields, `nil` and empty slices have different meanings:
+
+| Value | Behavior |
+|-------|----------|
+| `nil` | Skip field (leave existing values unchanged) |
+| `[]T{}` (empty) | Clear all existing values |
+| `[]T{"a", "b"}` | Replace with diff-based update |
+
+```go
+// Load entity - alice has tags ["go", "rust"]
+var alice Person
+db.PullInto(aliceID, &alice)
+
+// Partial update - only change name, leave tags alone
+update := Person{ID: aliceID, Name: "Alice Smith", Tags: nil}
+tx := db.NewTransaction()
+tx.SaveStruct(&update)
+tx.Commit()
+// tags still ["go", "rust"]
+
+// Clear all tags
+clear := Person{ID: aliceID, Name: "Alice Smith", Tags: []string{}}
+tx2 := db.NewTransaction()
+tx2.SaveStruct(&clear)
+tx2.Commit()
+// tags now empty
+```
+
+### Complete Update Example
+
+```go
+// Load existing entity
+var person Person
+db.PullInto(personID, &person)
+
+// Modify fields
+person.Name = "Alice Smith"
+person.Age = 31
+person.Tags = []string{"senior-developer", "team-lead"}
+
+// Save with upsert semantics
+tx := db.NewTransaction()
+_, err := tx.SaveStruct(&person)
+if err != nil {
+    return err
+}
+tx.Commit()
 ```
 
 ## Reading Structs
@@ -166,14 +246,14 @@ References to other entities use the `datalog.Identity` type:
 // Create manager
 manager := &Person{Name: "Carol", Age: 35}
 tx := db.NewTransaction()
-managerID, _ := tx.AddStructAuto(manager)
+managerID, _ := tx.SaveStruct(manager)
 
 // Create employee with manager reference
 employee := &Person{
     Name:    "Alice",
     Manager: &Person{ID: managerID},  // Just need the ID set
 }
-tx.AddStructAuto(employee)
+tx.SaveStruct(employee)
 tx.Commit()
 ```
 
@@ -258,14 +338,14 @@ func main() {
     db, _ := storage.NewDatabaseWithSchema(tmpDir, schema)
     defer db.Close()
 
-    // Write
+    // Create
     alice := &Person{
         Name: "Alice",
         Age:  30,
         Tags: []string{"developer", "mentor"},
     }
     tx := db.NewTransaction()
-    aliceID, _ := tx.AddStructAuto(alice)
+    aliceID, _ := tx.SaveStruct(alice)
     tx.Commit()
 
     fmt.Printf("Created: %s\n", alice.ID.String()[:20])
@@ -277,6 +357,19 @@ func main() {
     fmt.Printf("Name: %s\n", loaded.Name)
     fmt.Printf("Age: %d\n", loaded.Age)
     fmt.Printf("Tags: %v\n", loaded.Tags)
+
+    // Update
+    loaded.Age = 31
+    loaded.Tags = []string{"developer", "mentor", "architect"}
+    tx2 := db.NewTransaction()
+    tx2.SaveStruct(&loaded)
+    tx2.Commit()
+
+    // Verify update
+    var updated Person
+    db.PullInto(aliceID, &updated)
+    fmt.Printf("Updated Age: %d\n", updated.Age)
+    fmt.Printf("Updated Tags: %v\n", updated.Tags)
 }
 ```
 
@@ -285,7 +378,7 @@ func main() {
 - **StructInfo caching**: Struct metadata is cached using `sync.Map` for O(1) lookups after first parse
 - **Reflection overhead**: ~100ns per field access (Go reflection cost)
 - **Schema resolution**: Uses resolved pull patterns for proper cardinality-many handling
-- **Bulk operations**: `AddStruct` calls `Add()` per field (same overhead as manual datom creation)
+- **Bulk operations**: `SaveStruct` calls `Add()` per field (same overhead as manual datom creation)
 
 ## Limitations
 
@@ -308,9 +401,8 @@ reflect.MustSchemaFromStruct(v interface{}) *schema.Schema
 reflect.GeneratePullPattern(v interface{}, s schema.SchemaProvider) string
 reflect.GenerateSimplePullPattern(v interface{}) string
 
-// Writing (usually use Transaction methods instead)
-reflect.WriteStruct(tx TransactionAdder, entity Identity, v interface{}, s SchemaProvider) error
-reflect.WriteStructAuto(tx TransactionAdder, v interface{}, s SchemaProvider) (Identity, error)
+// Writing/Updating (usually use Transaction methods instead)
+reflect.SaveStruct(tx TransactionUpdater, lookup EntityLookup, v interface{}, s SchemaProvider) (Identity, error)
 
 // Reading (usually use Database methods instead)
 reflect.ReadStruct(result map[string]interface{}, v interface{}, s SchemaProvider) error
@@ -319,11 +411,9 @@ reflect.ReadStruct(result map[string]interface{}, v interface{}, s SchemaProvide
 ### Transaction Methods
 
 ```go
-// Write struct with explicit entity ID
-tx.AddStruct(entityID datalog.Identity, v interface{}) error
-
-// Write struct with auto-generated entity ID
-tx.AddStructAuto(v interface{}) (datalog.Identity, error)
+// Save struct with upsert semantics (creates or updates)
+// If ID field is empty, generates a new ID; otherwise uses existing ID
+tx.SaveStruct(v interface{}) (datalog.Identity, error)
 ```
 
 ### Database Methods
