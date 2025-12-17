@@ -1,15 +1,16 @@
-a
+# PERFORMANCE_STATUS.md
 
-**Last Updated**: 2025-10-25
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, and single-use iterator semantics
+**Last Updated**: 2025-12-17
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, and schema support
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks run on 2025-10-25.
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (last updated 2025-12-17).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
 - ✅ **Pull API**: **9× faster than equivalent queries**, linear scaling (verified 2025-12-17)
+- ✅ **Schema validation**: **<1% overhead** for type checking, **~6% overhead** for uniqueness (verified 2025-12-17)
 - ✅ **Iterator composition**: **4.06× speedup** (1,259μs → 310μs, 89% memory reduction) (verified 2025-10-25)
 - ✅ **Streaming execution**: **2.22× faster** with low-selectivity filters (1,720ms → 774ms), 52% memory reduction (verified 2025-10-25)
 - ✅ **Parallel subquery execution**: **2.06× speedup** with 8 workers on M3 Max (730ms → 355ms) (verified 2025-10-25)
@@ -302,7 +303,52 @@ for _, entity := range entities {
 }
 ```
 
-### 9. OHLC Query Performance (MEASURED 2025-10-25)
+### 9. Schema Validation Performance (MEASURED 2025-12-17)
+**Status**: ✅ Negligible overhead for type validation, minimal overhead for uniqueness
+**Performance**: Type validation **<1% write overhead**, uniqueness checking **~6% write overhead**
+**Location**: `datalog/schema/`, `datalog/storage/database.go`
+
+**Note**: All schema overhead is on the **write path only**. Reads are completely unaffected.
+
+**Type Validation Overhead** (Apple M4 Max, write path):
+| Benchmark | ns/op | allocs | Overhead |
+|-----------|-------|--------|----------|
+| Add without schema | 25,771 | 223 | baseline |
+| Add with schema | 25,768 | 225 | **<0.2%** |
+
+**Uniqueness Checking Overhead** (write path):
+| Benchmark | ns/op | allocs | Overhead |
+|-----------|-------|--------|----------|
+| Add without schema | 25,771 | 223 | baseline |
+| Add with uniqueness | 27,236 | 292 | **~5.8%** |
+
+**Bulk Operations (100 items/transaction)**:
+| Benchmark | ns/op | allocs | Overhead |
+|-----------|-------|--------|----------|
+| Bulk without schema | 1,388,000 | 17,115 | baseline |
+| Bulk with schema | 1,408,000 | 17,117 | **~1.4%** |
+
+**Schema Resolution (one-time cost per Pull pattern)**:
+| Operation | ns/op | allocs |
+|-----------|-------|--------|
+| Resolve 5-attr pattern with nested refs | 225 | 10 |
+
+**Pull with Cardinality-Many** (10 values):
+| Cardinality | ns/op | allocs |
+|-------------|-------|--------|
+| Cardinality-one (1 value) | 1,117 | 31 |
+| Cardinality-many (10 values) | 3,679 | 96 |
+
+**Key Findings**:
+- **Type validation is essentially free** - just a map lookup and type switch (write path)
+- **Uniqueness checking adds ~6% to writes** - requires database query to check existing values
+- **Reads are unaffected** - schema validation only impacts the write path
+- **Schema resolution is negligible** - 225ns one-time cost per Pull pattern
+- **Cardinality-many scales linearly** - ~370ns per additional value in Pull results
+
+**Recommendation**: Enable schema validation freely for type safety. Uniqueness constraints are worth the 6% write overhead for data integrity.
+
+### 10. OHLC Query Performance (MEASURED 2025-10-25)
 **Benchmark**: OHLC queries with subqueries and predicate pushdown
 
 **Subquery Performance** (BenchmarkOHLCSubqueries):
@@ -428,17 +474,18 @@ All items below are **measured** and **active** in production code:
 
 1. ✅ **New architecture** (clause-based planner + QueryExecutor) - **2× faster on complex queries** (verified 2025-10-24)
 2. ✅ **Pull API** - **9× faster than equivalent queries**, linear scaling (verified 2025-12-17)
-3. ✅ **Iterator composition** - **4.06× faster, 89% memory reduction** (verified 2025-10-25)
-4. ✅ **Parallel subquery execution** - **2.06× speedup with 8 workers** (verified 2025-10-25)
-5. ✅ **Intern cache optimization** - **6.26× speedup with BadgerDB**
-6. ✅ **Query plan caching** - **3× speedup for repeated queries**
-7. ✅ **Time range optimization** - **4× speedup on hourly OHLC**
-8. ✅ **Semantic rewriting** - **2-6× on time-filtered queries**
-9. ✅ **Predicate pushdown** - **1.58-2.78× faster** (scales with dataset size), **up to 91.5% memory reduction** (verified 2025-10-25)
-10. ✅ **Streaming execution** - **2.22× on low-selectivity filters, 52% memory reduction** (verified 2025-10-25)
-11. ✅ **Hash join pre-sizing** - **24-32% faster, 24-30% less memory**
-12. ✅ **In-memory indexing** - Hash indices now default path throughout codebase
-13. ✅ **Relation collapsing algorithm** - **Prevents catastrophic Cartesian products**
+3. ✅ **Schema validation** - **<1% overhead** for type checking, **~6%** for uniqueness (verified 2025-12-17)
+4. ✅ **Iterator composition** - **4.06× faster, 89% memory reduction** (verified 2025-10-25)
+5. ✅ **Parallel subquery execution** - **2.06× speedup with 8 workers** (verified 2025-10-25)
+6. ✅ **Intern cache optimization** - **6.26× speedup with BadgerDB**
+7. ✅ **Query plan caching** - **3× speedup for repeated queries**
+8. ✅ **Time range optimization** - **4× speedup on hourly OHLC**
+9. ✅ **Semantic rewriting** - **2-6× on time-filtered queries**
+10. ✅ **Predicate pushdown** - **1.58-2.78× faster** (scales with dataset size), **up to 91.5% memory reduction** (verified 2025-10-25)
+11. ✅ **Streaming execution** - **2.22× on low-selectivity filters, 52% memory reduction** (verified 2025-10-25)
+12. ✅ **Hash join pre-sizing** - **24-32% faster, 24-30% less memory**
+13. ✅ **In-memory indexing** - Hash indices now default path throughout codebase
+14. ✅ **Relation collapsing algorithm** - **Prevents catastrophic Cartesian products**
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:
@@ -583,6 +630,20 @@ The engine is **production-ready for datasets up to 10M+ datoms**. All major opt
 ---
 
 ## Session History
+
+### 2025-12-17: Schema Support Implementation & Benchmarking
+- Implemented Datomic-compatible schema support with type validation, cardinality, and uniqueness
+- Schema definable via EDN file or Go builder API (same internal representation)
+- Added plan-time resolution for Pull patterns (schema lookup once per pattern, not per entity)
+- Created comprehensive benchmark suite for schema performance
+- **Measured Results**:
+  - Type validation overhead: **<0.2%** (essentially free)
+  - Uniqueness checking overhead: **~5.8%** (requires database query)
+  - Bulk operations with schema: **~1.4%** overhead
+  - Schema resolution: **225ns** one-time cost per pattern
+  - Cardinality-many: ~370ns per additional value (linear scaling)
+- **Key Finding**: Schema validation is essentially free; use freely for type safety
+- **Files created**: `datalog/schema/` package, `docs/reference/SCHEMA.md`, `examples/schema_demo.go`
 
 ### 2025-12-17: Pull API Implementation & Benchmarking
 - Implemented Datomic-style Pull API with nested references and cycle detection

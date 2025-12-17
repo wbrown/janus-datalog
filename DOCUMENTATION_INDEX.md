@@ -18,6 +18,7 @@
 ## Reference Documentation
 
 Configuration and optimization guides in `docs/reference/`:
+- **[SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
 - **[PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
 
 ## Current Work in Progress
@@ -39,6 +40,7 @@ Implementation notes organized by package in `docs/dev-notes/`:
 - `datalog/storage/` - Persistent storage layer (BadgerDB)
 - `datalog/parser/` - EDN and query parsing
 - `datalog/query/` - Query types and structures
+- `datalog/schema/` - Schema support (types, cardinality, uniqueness)
 
 ### Support Packages
 - `datalog/codec/` - L85 encoding and value serialization
