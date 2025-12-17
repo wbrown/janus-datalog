@@ -146,6 +146,9 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		// Simple projection to :find symbols
 		findSymbols := extractFindSymbols(q.Find)
 
+		// Check if we have pulls to execute
+		needsPulls := hasPulls(q.Find)
+
 		// Check if all :find symbols are available across the groups
 		// If symbols span multiple groups, we need to Product() them first
 		if len(groups) > 1 {
@@ -210,6 +213,13 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 					if err != nil {
 						return nil, fmt.Errorf("projection failed: %w", err)
 					}
+					// Apply pulls if needed
+					if needsPulls {
+						projected, err = e.executePulls(projected, q.Find)
+						if err != nil {
+							return nil, err
+						}
+					}
 					return []Relation{projected}, nil
 				}
 			}
@@ -225,6 +235,13 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				if err != nil {
 					return nil, fmt.Errorf("projection failed after product: %w", err)
 				}
+				// Apply pulls if needed
+				if needsPulls {
+					projected, err = e.executePulls(projected, q.Find)
+					if err != nil {
+						return nil, err
+					}
+				}
 				return []Relation{projected}, nil
 			}
 		}
@@ -234,6 +251,13 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			projected, err := group.Project(findSymbols)
 			if err != nil {
 				return nil, fmt.Errorf("projection of group %d failed: %w", i, err)
+			}
+			// Apply pulls if needed
+			if needsPulls {
+				projected, err = e.executePulls(projected, q.Find)
+				if err != nil {
+					return nil, err
+				}
 			}
 			groups[i] = projected
 		}
@@ -745,7 +769,101 @@ func extractFindSymbols(find []query.FindElement) []query.Symbol {
 		case query.FindAggregate:
 			// For aggregates, include the argument variable
 			symbols = append(symbols, e.Arg)
+		case query.FindPull:
+			// For pulls, include the pulled variable
+			symbols = append(symbols, e.Variable)
 		}
 	}
 	return symbols
+}
+
+// hasPulls checks if any find element is a pull expression
+func hasPulls(find []query.FindElement) bool {
+	for _, elem := range find {
+		if _, ok := elem.(query.FindPull); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// executePulls executes pull expressions on a relation
+// For each tuple in the relation, it replaces entity values with pulled maps
+// based on the FindPull patterns in the find clause.
+func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindElement) (Relation, error) {
+	// Build mapping: column index -> pull pattern
+	columns := rel.Columns()
+	pullSpecs := make(map[int]query.FindPull)
+
+	for _, elem := range find {
+		if pull, ok := elem.(query.FindPull); ok {
+			// Find the column index for this pull variable
+			for i, col := range columns {
+				if col == pull.Variable {
+					pullSpecs[i] = pull
+					break
+				}
+			}
+		}
+	}
+
+	if len(pullSpecs) == 0 {
+		return rel, nil // No pulls to execute
+	}
+
+	// Create pull executor
+	puller := NewPullExecutor(e.matcher)
+
+	// Process tuples and execute pulls
+	var resultTuples []Tuple
+	it := rel.Iterator()
+	defer it.Close()
+
+	for it.Next() {
+		tuple := it.Tuple()
+		// Make a copy to modify
+		newTuple := make(Tuple, len(tuple))
+		copy(newTuple, tuple)
+
+		// Execute pulls for each pull column
+		for colIdx, pull := range pullSpecs {
+			if colIdx >= len(tuple) {
+				continue
+			}
+
+			// Get the entity value - handle both Identity and *Identity
+			var entity datalog.Identity
+			switch v := tuple[colIdx].(type) {
+			case datalog.Identity:
+				entity = v
+			case *datalog.Identity:
+				if v == nil {
+					continue
+				}
+				entity = *v
+			default:
+				// Value is not an entity - keep it as is
+				continue
+			}
+
+			// Execute pull
+			pulled, err := puller.Pull(entity, pull.Pattern)
+			if err != nil {
+				return nil, fmt.Errorf("pull failed for %s: %w", pull.Variable, err)
+			}
+
+			// Replace entity with pulled map (nil if entity not found)
+			newTuple[colIdx] = pulled
+		}
+
+		resultTuples = append(resultTuples, newTuple)
+	}
+
+	// Return relation without deduplication - pulled maps (map[string]interface{})
+	// are not comparable and would panic during deduplication
+	return &MaterializedRelation{
+		columns: columns,
+		tuples:  resultTuples,
+		options: rel.Options(),
+	}, nil
 }

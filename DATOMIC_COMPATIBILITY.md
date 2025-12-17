@@ -6,10 +6,11 @@ This guide is for developers familiar with Datomic who want to understand what j
 
 Janus-datalog implements a pragmatic subset of Datomic's Datalog query language with:
 - ✅ Core query patterns, expressions, aggregations, and subqueries
+- ✅ Pull API with nested references and cycle detection
 - ✅ Time-based queries using transaction IDs
 - ✅ Database functions: `get-else`, `missing?`, `get-some`
 - ✅ BadgerDB persistent storage with EAVT model
-- ❌ No Pull API, rules, schema, or transaction functions
+- ❌ No rules, schema, or transaction functions
 - ❌ No NOT/OR clauses or entity API
 - ❌ Single-node only (no distributed queries)
 
@@ -205,25 +206,52 @@ Every datom includes a transaction ID for temporal queries.
 - Entity references via Identity type
 - Keywords as first-class values
 
-## Missing Datomic Features
+### 10. Pull API ✅
 
-### 1. Pull API ❌
+Declarative entity attribute retrieval with nested reference following:
 
-No support for pull patterns:
-
+**In-query pull:**
 ```clojure
-; NOT SUPPORTED:
-[:find (pull ?e [*])
- :where [?e :person/name "John"]]
+[:find (pull ?e [:person/name :person/age])
+ :where [?e :entity/type :type/person]]
 
-; Use explicit patterns instead:
-[:find ?name ?email ?age
- :where [?e :person/name "John"]
-        [?e :person/email ?email]
-        [?e :person/age ?age]]
+; Mixed with regular variables
+[:find ?type (pull ?e [:person/name])
+ :where [?e :entity/type ?type]]
 ```
 
-### 2. Rules ❌
+**Standalone API (Go):**
+```go
+// Single entity
+result, err := db.Pull(entityID, `[:user/name :user/age]`)
+// result: map[string]interface{}{"user/name": "Alice", "user/age": 30}
+
+// Multiple entities
+results, err := db.PullMany(entityIDs, `[:user/name]`)
+```
+
+**Supported pull patterns:**
+- Simple attributes: `[:attr1 :attr2]`
+- Wildcard: `[*]` (all attributes)
+- Nested references: `{:user/region [:region/code :region/name]}`
+- Default values: `(default :attr "fallback")`
+- Limit (parsed, cardinality-many not yet implemented): `(limit :attr 10)`
+
+**Key behaviors:**
+- Result keys omit leading colon: `"user/name"` not `":user/name"`
+- Missing attributes are omitted from results (not nil)
+- Cycle detection prevents infinite loops on circular references
+- Unlimited nesting depth
+
+**Performance characteristics:**
+- Uses optimized `EntityLookupMatcher` for direct index seeks
+- Each attribute lookup is a single AEVT index seek (no query parsing/planning)
+- Wildcard `[*]` uses single EAVT prefix scan
+- Far more efficient than equivalent application-level N+1 queries
+
+## Missing Datomic Features
+
+### 1. Rules ❌
 
 No rule definitions or recursive queries:
 
@@ -236,7 +264,7 @@ No rule definitions or recursive queries:
   (ancestor ?p ?d)]]
 ```
 
-### 3. NOT and OR Clauses ❌
+### 2. NOT and OR Clauses ❌
 
 No logical negation or disjunction:
 
@@ -248,7 +276,7 @@ No logical negation or disjunction:
 (or-join [?e] ...)
 ```
 
-### 4. Schema ❌
+### 3. Schema ❌
 
 No schema definitions or constraints:
 - No cardinality specifications (one/many)
@@ -257,7 +285,7 @@ No schema definitions or constraints:
 - No required attributes
 - All attributes effectively `:db.cardinality/one`
 
-### 5. Transaction Features ❌
+### 4. Transaction Features ❌
 
 Limited transaction support:
 - **No transaction functions**
@@ -266,7 +294,7 @@ Limited transaction support:
 - **No transaction metadata** beyond timestamp
 - **No transaction entities**
 
-### 6. Entity API ❌
+### 5. Entity API ❌
 
 No entity navigation:
 
@@ -277,7 +305,7 @@ No entity navigation:
 (touch entity)
 ```
 
-### 7. Advanced Query Features (Partial) ⚠️
+### 6. Advanced Query Features (Partial) ⚠️
 
 **Implemented:**
 - `get-else` - default values for missing attributes ✅
@@ -289,7 +317,7 @@ No entity navigation:
 - `keys` - no map results
 - `with` - no duplicate control
 
-### 8. Advanced Time Features ❌
+### 7. Advanced Time Features ❌
 
 Limited to as-of queries:
 - No `since` queries
@@ -297,7 +325,7 @@ Limited to as-of queries:
 - No tx-range queries
 - No full history API
 
-### 9. Database Features ❌
+### 8. Database Features ❌
 
 No advanced database operations:
 - No database branching/forking
@@ -305,7 +333,7 @@ No advanced database operations:
 - No database filters
 - No log API
 
-### 10. Other Missing Features ❌
+### 9. Other Missing Features ❌
 
 - **Nested expressions in predicates**: Cannot do `[(< (- ?t2 ?t1) 300)]`
 - **Distinct in aggregations**: No `(count-distinct ?x)`
@@ -351,9 +379,8 @@ No advanced database operations:
 - Time-based queries similar (using AsOf)
 
 **Require refactoring:**
-- Pull patterns → explicit patterns
 - Rules → inline the logic
-- Entity navigation → explicit joins
+- Entity navigation → explicit joins or Pull API
 - Schema validations → application layer
 
 **Not possible:**
@@ -363,16 +390,21 @@ No advanced database operations:
 
 ### Example Query Conversions
 
-**Datomic Pull API:**
+**Datomic Pull API (now supported!):**
 ```clojure
-[:find (pull ?e [:person/name 
-                  :person/email 
+; Works directly in janus-datalog:
+[:find (pull ?e [:person/name
+                  :person/email
                   {:person/friends [:person/name]}])
  :where [?e :person/age ?age]
         [(> ?age 21)]]
 ```
 
-**Janus-Datalog equivalent:**
+Note: Nested references like `{:person/friends [...]}` work when `:person/friends`
+stores an entity reference. Cardinality-many attributes are not yet supported,
+so only the first friend would be returned.
+
+**Alternative using explicit patterns:**
 ```clojure
 [:find ?name ?email ?friend-name
  :where [?e :person/age ?age]
@@ -414,21 +446,22 @@ These make it suitable for production workloads despite the simpler feature set.
 - OLAP/analytical queries on moderate datasets
 - Time-series data with temporal queries
 - Applications needing Datalog's expressiveness
+- Entity retrieval using Pull API
 - Single-node deployments
 
 **Consider alternatives for:**
-- Applications heavily using Pull API
 - Recursive/graph queries requiring rules
 - Strong schema enforcement needs
+- Cardinality-many attributes (not yet supported)
 - Distributed/multi-node requirements
 
 ## Getting Started
 
-For Datomic users, the transition is straightforward for basic queries:
+For Datomic users, the transition is straightforward:
 
-1. Write patterns instead of pull expressions
+1. Most queries port directly, including Pull expressions
 2. Use subqueries for complex aggregations
 3. Handle schema validation in your application
-4. Use explicit patterns for entity navigation
+4. Use Pull API or explicit patterns for entity navigation
 
 Most Datalog queries will work with minimal changes, making janus-datalog a practical choice for applications that need Datalog's power without Datomic's full complexity.

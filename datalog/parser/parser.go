@@ -178,20 +178,31 @@ func parseFindElement(node *edn.Node) (query.FindElement, error) {
 		return query.FindVariable{Symbol: sym}, nil
 
 	case edn.NodeList:
-		// Aggregate function (sum ?x), (count ?x), etc.
-		if len(node.Nodes) != 2 {
-			return nil, fmt.Errorf("aggregate function must have exactly 2 elements: function and argument")
+		// Could be aggregate function or pull expression
+		if len(node.Nodes) < 2 {
+			return nil, fmt.Errorf("find list expression must have at least 2 elements")
 		}
 
 		if node.Nodes[0].Type != edn.NodeSymbol {
-			return nil, fmt.Errorf("aggregate function name must be a symbol")
+			return nil, fmt.Errorf("find list expression must start with a function name")
+		}
+
+		fn := node.Nodes[0].Value
+
+		// Check for pull expression: (pull ?e [...])
+		if fn == "pull" {
+			return parseFindPull(node)
+		}
+
+		// Otherwise, it's an aggregate function (sum ?x), (count ?x), etc.
+		if len(node.Nodes) != 2 {
+			return nil, fmt.Errorf("aggregate function must have exactly 2 elements: function and argument")
 		}
 
 		if node.Nodes[1].Type != edn.NodeSymbol {
 			return nil, fmt.Errorf("aggregate argument must be a symbol")
 		}
 
-		fn := node.Nodes[0].Value
 		argSym := query.Symbol(node.Nodes[1].Value)
 
 		if !argSym.IsVariable() {
