@@ -62,6 +62,49 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 	return db, nil
 }
 
+// DatabaseOptions configures database creation
+type DatabaseOptions struct {
+	Path        string               // Path to the database directory
+	UseTimeTx   bool                 // Use time-based transaction IDs
+	RetractMode RetractMode          // How retractions are handled
+	Schema      schema.SchemaProvider // Optional schema for validation
+}
+
+// NewDatabaseWithOptions creates a database with the specified options.
+// This is the most flexible constructor, supporting all configuration options.
+//
+// Options:
+//   - Path: Required. Directory for BadgerDB storage.
+//   - UseTimeTx: If true, use nanosecond timestamps as transaction IDs.
+//   - RetractMode: RetractDelete (default) deletes data; RetractHistory preserves full audit trail.
+//   - Schema: Optional schema for validation.
+//
+// Example:
+//
+//	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+//	    Path:        "/path/to/db",
+//	    RetractMode: storage.RetractHistory,
+//	})
+//	// Now db.History() returns a PatternMatcher for querying all changes
+func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
+	if opts.Path == "" {
+		return nil, fmt.Errorf("database path is required")
+	}
+
+	store, err := NewBadgerStoreWithRetractMode(opts.Path, NewKeyEncoder(BinaryStrategy), opts.RetractMode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create store: %w", err)
+	}
+
+	return &Database{
+		store:     store,
+		activeTx:  make(map[*Transaction]bool),
+		planCache: planner.NewPlanCache(1000, 0),
+		useTimeTx: opts.UseTimeTx,
+		schema:    opts.Schema,
+	}, nil
+}
+
 // Schema returns the current schema (may be nil)
 func (d *Database) Schema() schema.SchemaProvider {
 	d.mu.RLock()
@@ -136,6 +179,48 @@ func (d *Database) AsOf(txID uint64) executor.PatternMatcher {
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	return NewBadgerMatcherWithOptions(d.store, execOpts).AsOf(txID)
+}
+
+// History returns a PatternMatcher for querying the full history of the database.
+// This includes all assertions and retractions with the Op (operation) field.
+// History queries can use 5-element patterns: [?e ?a ?v ?tx ?op]
+//
+// Returns nil if the database was not created with RetractHistory mode.
+// In RetractHistory mode, all assertions and retractions are preserved in history indices.
+//
+// Example:
+//
+//	historyMatcher := db.History()
+//	if historyMatcher == nil {
+//	    // Database doesn't support history queries
+//	}
+//	// Query all changes to an entity
+//	// Pattern: [entity-id ?a ?v ?tx ?op]
+func (d *Database) History() executor.PatternMatcher {
+	if d.store.RetractMode() != RetractHistory {
+		return nil
+	}
+	opts := DefaultPlannerOptions()
+	execOpts := executor.ExecutorOptions{
+		EnableIteratorComposition:       opts.EnableIteratorComposition,
+		EnableTrueStreaming:             opts.EnableTrueStreaming,
+		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
+		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
+		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
+		EnableStreamingJoins:            opts.EnableStreamingJoins,
+		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
+		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
+		EnableDebugLogging:              opts.EnableDebugLogging,
+		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
+	}
+	return NewHistoryMatcherWithOptions(d.store, execOpts)
+}
+
+// RetractMode returns the retraction mode of the database.
+// RetractDelete means retractions delete data from current-state indices.
+// RetractHistory means retractions are preserved in history indices for audit trails.
+func (d *Database) RetractMode() RetractMode {
+	return d.store.RetractMode()
 }
 
 // DefaultPlannerOptions returns the default planner and executor options for the database
@@ -296,6 +381,52 @@ func (d *Database) ExecuteQueryWithInputs(queryStr string, inputs ...interface{}
 	result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	// Convert result to [][]interface{}
+	return relationToSlice(result), nil
+}
+
+// ExecuteHistoryQuery executes a Datalog query against the history database
+// This requires the database to be created with RetractHistory mode
+//
+// History queries support 5-element patterns: [?e ?a ?v ?tx ?op]
+// where ?op is true for assertions and false for retractions
+//
+// Example:
+//
+//	results, err := db.ExecuteHistoryQuery(`[:find ?v ?tx ?op :where [?e :person/name ?v ?tx ?op]]`)
+func (d *Database) ExecuteHistoryQuery(queryStr string) ([][]interface{}, error) {
+	return d.ExecuteHistoryQueryWithInputs(queryStr)
+}
+
+// ExecuteHistoryQueryWithInputs executes a parameterized query against the history database
+// This is the history equivalent of ExecuteQueryWithInputs
+func (d *Database) ExecuteHistoryQueryWithInputs(queryStr string, inputs ...interface{}) ([][]interface{}, error) {
+	historyMatcher := d.History()
+	if historyMatcher == nil {
+		return nil, fmt.Errorf("history queries require RetractHistory mode (database was created with RetractDelete mode)")
+	}
+
+	// Parse the query
+	q, err := parser.ParseQuery(queryStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse query: %w", err)
+	}
+
+	// Convert inputs to Relations based on :in clause
+	inputRelations, err := d.convertInputsToRelations(q, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Execute the query using the history matcher
+	opts := DefaultPlannerOptions()
+	opts.Cache = d.planCache
+	exec := executor.NewExecutorWithOptions(historyMatcher, opts)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRelations)
+	if err != nil {
+		return nil, fmt.Errorf("history query execution failed: %w", err)
 	}
 
 	// Convert result to [][]interface{}

@@ -10,12 +10,19 @@ import (
 
 // BadgerStore implements Store using BadgerDB
 type BadgerStore struct {
-	db      *badger.DB
-	encoder KeyEncoder
+	db          *badger.DB
+	encoder     KeyEncoder
+	retractMode RetractMode // Controls how retractions are handled
 }
 
 // NewBadgerStore creates a new BadgerDB-backed store with the specified encoder
+// Uses RetractDelete mode (current behavior) by default
 func NewBadgerStore(path string, encoder KeyEncoder) (*BadgerStore, error) {
+	return NewBadgerStoreWithRetractMode(path, encoder, RetractDelete)
+}
+
+// NewBadgerStoreWithRetractMode creates a new BadgerDB-backed store with specified retract mode
+func NewBadgerStoreWithRetractMode(path string, encoder KeyEncoder, retractMode RetractMode) (*BadgerStore, error) {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil // Disable BadgerDB logs for now
 
@@ -38,9 +45,15 @@ func NewBadgerStore(path string, encoder KeyEncoder) (*BadgerStore, error) {
 	}
 
 	return &BadgerStore{
-		db:      db,
-		encoder: encoder,
+		db:          db,
+		encoder:     encoder,
+		retractMode: retractMode,
 	}, nil
+}
+
+// RetractMode returns the store's retract mode
+func (s *BadgerStore) RetractMode() RetractMode {
+	return s.retractMode
 }
 
 // Assert adds datoms to the store
@@ -61,15 +74,38 @@ func (s *BadgerStore) assertDatom(txn *badger.Txn, d *datalog.Datom) error {
 	sd := ToStorageDatom(*d)
 	value := sd.Bytes()
 
-	// Write to all indices
-	indices := []IndexType{EAVT, AEVT, AVET, VAET, TAEV}
-	for _, idx := range indices {
+	// Write to all current-state indices
+	for _, idx := range CurrentStateIndices {
 		key := s.encoder.EncodeKey(idx, d)
 		if err := txn.Set(key, value); err != nil {
 			return fmt.Errorf("failed to write to %v index: %w", idx, err)
 		}
 	}
 
+	// If history mode, also write to history indices with Op=true
+	if s.retractMode == RetractHistory {
+		if err := s.writeToHistoryIndices(txn, d, OpAssert); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeToHistoryIndices writes a datom to all history indices with the given Op
+func (s *BadgerStore) writeToHistoryIndices(txn *badger.Txn, d *datalog.Datom, op Op) error {
+	// Value is just the Op byte - all other data is in the key
+	value := []byte{0x00}
+	if op {
+		value[0] = 0x01
+	}
+
+	for _, idx := range HistoryIndices {
+		key := s.encoder.EncodeHistoryKey(idx, d, op)
+		if err := txn.Set(key, value); err != nil {
+			return fmt.Errorf("failed to write to %v history index: %w", idx, err)
+		}
+	}
 	return nil
 }
 
@@ -85,9 +121,11 @@ func (s *BadgerStore) Retract(datoms []datalog.Datom) error {
 	})
 }
 
-// retractDatom removes a single datom from all indices
-// NOTE: The Tx field in the passed datom is ignored. We find the actual stored
-// datom(s) matching E+A+V and delete those, regardless of their Tx.
+// retractDatom removes a single datom from current-state indices and optionally
+// records the retraction in history indices.
+// NOTE: The Tx field in the passed datom is ignored for finding stored datoms.
+// We find the actual stored datom(s) matching E+A+V and delete those.
+// In history mode, the Tx from the passed datom is used for the retraction record.
 func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 	// Convert to storage format for prefix scanning
 	sd := ToStorageDatom(*d)
@@ -118,7 +156,7 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 		return nil
 	}
 
-	// For each matching EAVT key, decode it and delete from all indices
+	// For each matching EAVT key, decode it and delete from current-state indices
 	for _, eavtKey := range keysToDelete {
 		// Decode the EAVT key to get the full datom including Tx
 		// DatomFromKey handles all the complexity of decoding components
@@ -127,12 +165,25 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 			return fmt.Errorf("failed to decode key for retraction: %w", err)
 		}
 
-		// Delete from all indices using the actual stored Tx
-		indices := []IndexType{EAVT, AEVT, AVET, VAET, TAEV}
-		for _, idx := range indices {
+		// Delete from all current-state indices using the actual stored Tx
+		for _, idx := range CurrentStateIndices {
 			key := s.encoder.EncodeKey(idx, storedDatom)
 			if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
 				return fmt.Errorf("failed to delete from %v index: %w", idx, err)
+			}
+		}
+
+		// If history mode, write retraction to history indices
+		// Use the Tx from the passed datom (the retraction transaction)
+		if s.retractMode == RetractHistory {
+			retractDatom := &datalog.Datom{
+				E:  storedDatom.E,
+				A:  storedDatom.A,
+				V:  storedDatom.V,
+				Tx: d.Tx, // Use the retraction Tx, not the original assertion Tx
+			}
+			if err := s.writeToHistoryIndices(txn, retractDatom, OpRetract); err != nil {
+				return err
 			}
 		}
 	}

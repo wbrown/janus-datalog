@@ -88,9 +88,11 @@ This is **standard database query optimization** (similar to Selinger's algorith
 - **Unbounded values**: Stored last with 2-byte size prefix and 1-byte type
 - **L85 encoding**: Custom Base85 variant preserving sort order (see below)
 - **Multiple indices**: EAVT, AEVT, AVET, VAET, TAEV for different access patterns
+- **History indices**: EAVT_HISTORY, AEVT_HISTORY, AVET_HISTORY, VAET_HISTORY, TAEV_HISTORY (opt-in with `RetractHistory` mode)
 - **Keyword interning**: Keywords hashed once and reused
 - **RefValues**: 20-byte entity references are L85-encoded like E/Tx components
 - **Attribute size**: Increased from 20 to 32 bytes to support longer attribute names (e.g., `:option/open-interest`)
+- **Retract modes**: `RetractDelete` (default, hard delete) vs `RetractHistory` (preserves audit trail)
 
 ### L85 Encoding Details
 
@@ -244,6 +246,7 @@ The storage layer connects the query engine to BadgerDB:
 21. **Relations migration** - Multi-value variable support throughout codebase
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
 23. **Schema support** - Type validation, cardinality (one/many), uniqueness constraints; optional and additive
+24. **History mode** - Datomic-style retractions with `RetractHistory` mode; full audit trail via `ExecuteHistoryQuery`; 5-element patterns `[?e ?a ?v ?tx ?op]`
 
 ### 📋 TODO (Priority Order)
 

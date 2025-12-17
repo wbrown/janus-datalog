@@ -24,7 +24,7 @@ Most databases make you choose:
 
 **Janus gives you all three:**
 
-- **Datomic-style queries**: Joins, aggregations, subqueries, time-travel
+- **Datomic-style queries**: Joins, aggregations, subqueries, time-travel, history
 - **Single Go binary**: No JVM, no external dependencies, just `go get`
 - **No surprises**: Greedy planning without statistics, explicit error handling, predictable performance
 
@@ -219,6 +219,41 @@ Or extract time components:
 ```
 
 Time functions: `year`, `month`, `day`, `hour`, `minute`, `second`
+
+### History Queries (Audit Trail)
+
+Track every change with full history mode:
+
+```go
+// Create database with history mode enabled
+db, _ := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+    Path:        "my.db",
+    RetractMode: storage.RetractHistory,
+})
+
+// Make changes
+tx := db.NewTransaction()
+tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
+tx.Commit()  // tx 1: assert "Alice"
+
+tx2 := db.NewTransaction()
+tx2.Retract(alice, datalog.NewKeyword(":user/name"), "Alice")
+tx2.Commit()  // tx 2: retract "Alice"
+
+// Query current state - returns nothing (value was retracted)
+db.ExecuteQuery(`[:find ?name :where [_ :user/name ?name]]`)
+
+// Query history - see ALL changes with 5-element pattern [?e ?a ?v ?tx ?op]
+db.ExecuteHistoryQuery(`[:find ?name ?tx ?op :where [_ :user/name ?name ?tx ?op]]`)
+// Returns: [["Alice" 1 true] ["Alice" 2 false]]
+// op=true means assertion, op=false means retraction
+```
+
+**Key concepts:**
+- `RetractHistory` mode preserves full audit trail (default `RetractDelete` just deletes)
+- Current-state queries (`ExecuteQuery`) see only current truth
+- History queries (`ExecuteHistoryQuery`) see all assertions AND retractions
+- 5-element patterns: `[?e ?a ?v ?tx ?op]` where `?op` is true=assert, false=retract
 
 ### Subqueries
 
@@ -686,6 +721,7 @@ Janus implements **~50-60% of Datomic's feature set**, focusing on the most comm
 - Aggregations: sum, count, avg, min, max
 - Subqueries: Full q support
 - Time queries: as-of, time functions
+- History queries: Full audit trail with `ExecuteHistoryQuery`
 - Pull API: Nested references, cycle detection, wildcards
 - Schema: Type validation, cardinality, uniqueness constraints
 - Storage: Persistent BadgerDB backend

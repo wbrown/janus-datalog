@@ -203,6 +203,15 @@ func (p DataPattern) GetT() PatternElement {
 	return nil
 }
 
+// GetOp returns the operation element if it exists (for history queries)
+// This is position 4 in a 5-element pattern [?e ?a ?v ?tx ?op]
+func (p DataPattern) GetOp() PatternElement {
+	if len(p.Elements) > 4 {
+		return p.Elements[4]
+	}
+	return nil
+}
+
 // Symbols returns the symbols (variables) bound by this pattern
 // In relational theory, these become the attributes of the resulting relation
 func (p *DataPattern) Symbols() []Symbol {
@@ -245,6 +254,22 @@ func (p *DataPattern) Symbols() []Symbol {
 	// Check T position if present
 	if len(p.Elements) > 3 {
 		if v, ok := p.GetT().(Variable); ok {
+			found := false
+			for _, sym := range symbols {
+				if sym == v.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				symbols = append(symbols, v.Name)
+			}
+		}
+	}
+
+	// Check Op position if present (5-element history patterns)
+	if len(p.Elements) > 4 {
+		if v, ok := p.GetOp().(Variable); ok {
 			found := false
 			for _, sym := range symbols {
 				if sym == v.Name {
@@ -561,6 +586,57 @@ func DatomToTuple(datom datalog.Datom, pattern *DataPattern, columns []Symbol) T
 	if len(pattern.Elements) > 3 {
 		if v, ok := pattern.GetT().(Variable); ok {
 			values[v.Name] = datom.Tx
+		}
+	}
+
+	// Build tuple in column order
+	tuple := make(Tuple, len(columns))
+	for i, col := range columns {
+		if val, found := values[col]; found {
+			tuple[i] = val
+		}
+	}
+
+	return tuple
+}
+
+// HistoryDatomToTuple converts a datom and Op to a tuple for history queries.
+// This is used by the HistoryMatcher to include the Op in query results.
+// The op parameter is true for assertions, false for retractions.
+func HistoryDatomToTuple(datom datalog.Datom, op bool, pattern *DataPattern, columns []Symbol) Tuple {
+	if len(columns) == 0 {
+		return nil
+	}
+
+	// Build column to value mapping
+	values := make(map[Symbol]interface{})
+
+	// Map E position
+	if v, ok := pattern.GetE().(Variable); ok {
+		values[v.Name] = datom.E
+	}
+
+	// Map A position
+	if v, ok := pattern.GetA().(Variable); ok {
+		values[v.Name] = datom.A
+	}
+
+	// Map V position
+	if v, ok := pattern.GetV().(Variable); ok {
+		values[v.Name] = datom.V
+	}
+
+	// Map T position
+	if len(pattern.Elements) > 3 {
+		if v, ok := pattern.GetT().(Variable); ok {
+			values[v.Name] = datom.Tx
+		}
+	}
+
+	// Map Op position (for history queries)
+	if len(pattern.Elements) > 4 {
+		if v, ok := pattern.GetOp().(Variable); ok {
+			values[v.Name] = op
 		}
 	}
 

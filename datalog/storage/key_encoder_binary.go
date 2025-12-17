@@ -153,3 +153,77 @@ func (e *BinaryKeyEncoder) EncodePrefixRange(index IndexType, parts ...[]byte) (
 
 	return start, end
 }
+
+// historyIndexToBase maps history index types to their base current-state equivalents
+func historyIndexToBase(index IndexType) IndexType {
+	switch index {
+	case EAVT_HISTORY:
+		return EAVT
+	case AEVT_HISTORY:
+		return AEVT
+	case AVET_HISTORY:
+		return AVET
+	case VAET_HISTORY:
+		return VAET
+	case TAEV_HISTORY:
+		return TAEV
+	default:
+		return index
+	}
+}
+
+// EncodeHistoryKey creates a binary index key with Op appended for history indices
+func (e *BinaryKeyEncoder) EncodeHistoryKey(index IndexType, d *datalog.Datom, op Op) []byte {
+	// Convert to storage datom first
+	sd := ToStorageDatom(*d)
+
+	// Use the history index byte as prefix
+	prefix := []byte{byte(index)}
+
+	// Get value bytes with type prefix (1 byte type + variable length data)
+	vType := byte(datalog.Type(sd.V))
+	vData := datalog.ValueBytes(sd.V)
+	vBytes := append([]byte{vType}, vData...)
+
+	// Op encoding: 0x01 = assert (true), 0x00 = retract (false)
+	opByte := byte(0x00)
+	if op {
+		opByte = 0x01
+	}
+
+	// Build key based on base index type, then append Op
+	baseIndex := historyIndexToBase(index)
+	switch baseIndex {
+	case EAVT:
+		return concatBytes(prefix, sd.E[:], sd.A[:], vBytes, sd.Tx[:], []byte{opByte})
+	case AEVT:
+		return concatBytes(prefix, sd.A[:], sd.E[:], vBytes, sd.Tx[:], []byte{opByte})
+	case AVET:
+		return concatBytes(prefix, sd.A[:], vBytes, sd.E[:], sd.Tx[:], []byte{opByte})
+	case VAET:
+		return concatBytes(prefix, vBytes, sd.A[:], sd.E[:], sd.Tx[:], []byte{opByte})
+	case TAEV:
+		return concatBytes(prefix, sd.Tx[:], sd.A[:], sd.E[:], vBytes, []byte{opByte})
+	default:
+		panic(fmt.Sprintf("unknown history index type: %v", index))
+	}
+}
+
+// DecodeHistoryKey extracts components including Op from a binary history index key
+func (e *BinaryKeyEncoder) DecodeHistoryKey(index IndexType, key []byte) (entity, attr, value, tx []byte, op Op, err error) {
+	if len(key) < 2 { // At minimum: prefix + op
+		return nil, nil, nil, nil, false, fmt.Errorf("history key too short")
+	}
+
+	// Op is the last byte
+	opByte := key[len(key)-1]
+	op = opByte == 0x01
+
+	// Decode the rest as a normal key (without the Op byte)
+	keyWithoutOp := key[:len(key)-1]
+
+	// Use the base index type for decoding
+	baseIndex := historyIndexToBase(index)
+	entity, attr, value, tx, err = e.DecodeKey(baseIndex, keyWithoutOp)
+	return entity, attr, value, tx, op, err
+}

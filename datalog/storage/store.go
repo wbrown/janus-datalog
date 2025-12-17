@@ -13,6 +13,37 @@ const (
 	AVET                  // Attribute-Value-Entity-Tx
 	VAET                  // Value-Attribute-Entity-Tx
 	TAEV                  // Tx-Attribute-Entity-Value
+	// History indices (only used in RetractHistory mode)
+	// These mirror the current-state indices but include Op and are append-only
+	EAVT_HISTORY // Entity-Attribute-Value-Tx-Op
+	AEVT_HISTORY // Attribute-Entity-Value-Tx-Op
+	AVET_HISTORY // Attribute-Value-Entity-Tx-Op
+	VAET_HISTORY // Value-Attribute-Entity-Tx-Op
+	TAEV_HISTORY // Tx-Attribute-Entity-Value-Op
+)
+
+// CurrentStateIndices are the indices used for current-state queries
+var CurrentStateIndices = []IndexType{EAVT, AEVT, AVET, VAET, TAEV}
+
+// HistoryIndices are the indices used for history queries (include Op)
+var HistoryIndices = []IndexType{EAVT_HISTORY, AEVT_HISTORY, AVET_HISTORY, VAET_HISTORY, TAEV_HISTORY}
+
+// Op represents the operation type for a datom (assert or retract)
+type Op bool
+
+const (
+	OpAssert  Op = true  // Datom was asserted
+	OpRetract Op = false // Datom was retracted
+)
+
+// RetractMode controls how retractions are handled
+type RetractMode int
+
+const (
+	// RetractDelete removes datoms from the store (default, current behavior)
+	RetractDelete RetractMode = iota
+	// RetractHistory keeps full history - retractions append Op=false to history indices
+	RetractHistory
 )
 
 // Store is the interface for datom storage
