@@ -526,6 +526,28 @@ func (p *Planner) determinePhaseKeepSymbols(phases []Phase, findVars []query.Sym
 						keep[input] = true
 					}
 				}
+
+				// CRITICAL FIX: Also keep symbols that are OUTPUTS of the subquery
+				// if they already exist in the current phase. This enables the JOIN
+				// between existing values and subquery results.
+				//
+				// Example: If phase 1 has pattern [?task :task/status ?s ?maxTx] and
+				// phase 2 has subquery [(q [...] ?task) [[?maxTx]]], we need to keep
+				// ?maxTx so it can be joined with the subquery's output.
+				var bindingSyms []query.Symbol
+				switch b := sq.Subquery.Binding.(type) {
+				case query.TupleBinding:
+					bindingSyms = b.Variables
+				case query.RelationBinding:
+					bindingSyms = b.Variables
+				case query.CollectionBinding:
+					bindingSyms = []query.Symbol{b.Variable}
+				}
+				for _, sym := range bindingSyms {
+					if available[sym] {
+						keep[sym] = true
+					}
+				}
 			}
 		}
 
