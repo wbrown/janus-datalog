@@ -12,6 +12,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -394,6 +395,34 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 	}
 
 	return e, nil
+}
+
+// AddStruct adds all fields from a struct as datoms for the given entity.
+// The struct fields are mapped to attributes based on datalog struct tags.
+//
+// Example:
+//
+//	type Person struct {
+//	    ID   datalog.Identity `datalog:"-,id"`
+//	    Name string           `datalog:"name"`
+//	    Age  int64            `datalog:"age"`
+//	}
+//	tx.AddStruct(entityID, &person)
+func (t *Transaction) AddStruct(entity datalog.Identity, v interface{}) error {
+	return dlreflect.WriteStruct(t, entity, v, t.db.Schema())
+}
+
+// AddStructAuto adds all fields from a struct as datoms, auto-generating an entity ID if needed.
+// If the struct has an ID field (tagged with `datalog:"-,id"`) and it's empty, a new ID is generated.
+// The generated or existing ID is returned and also set on the struct's ID field.
+//
+// Example:
+//
+//	person := Person{Name: "Alice", Age: 30}
+//	id, err := tx.AddStructAuto(&person)
+//	// person.ID is now set to the generated identity
+func (t *Transaction) AddStructAuto(v interface{}) (datalog.Identity, error) {
+	return dlreflect.WriteStructAuto(t, v, t.db.Schema())
 }
 
 // Commit commits the transaction
@@ -797,4 +826,125 @@ func (d *Database) PullMany(entityIDs []datalog.Identity, patternStr string) ([]
 
 	// Execute pull for all entities
 	return puller.PullMany(entityIDs, pattern)
+}
+
+// PullInto retrieves entity data and populates the provided struct.
+// The struct fields are mapped to attributes based on datalog struct tags.
+// A pull pattern is automatically generated from the struct definition.
+// Schema is used to properly handle cardinality-many attributes.
+//
+// Example:
+//
+//	type Person struct {
+//	    ID      datalog.Identity `datalog:"-,id"`
+//	    Name    string           `datalog:"name"`
+//	    Age     int64            `datalog:"age"`
+//	    Friends []*Person        `datalog:"friends"`
+//	}
+//	var person Person
+//	err := db.PullInto(entityID, &person)
+func (d *Database) PullInto(entityID datalog.Identity, v interface{}) error {
+	// Generate pull pattern from struct
+	patternStr := dlreflect.GeneratePullPattern(v, d.Schema())
+	if patternStr == "" {
+		return fmt.Errorf("could not generate pull pattern for %T", v)
+	}
+
+	// Parse the pattern
+	pattern, err := parser.ParsePullPattern(patternStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse pull pattern: %w", err)
+	}
+
+	// Resolve with schema for proper cardinality handling
+	resolved := schema.ResolvePullPattern(pattern, d.Schema())
+
+	// Create pull executor and execute
+	matcher := d.Matcher()
+	puller := executor.NewPullExecutor(matcher)
+	result, err := puller.PullResolved(entityID, resolved)
+	if err != nil {
+		return err
+	}
+
+	// Populate struct from result
+	return dlreflect.ReadStruct(result, v, d.Schema())
+}
+
+// PullIntoMany retrieves data for multiple entities and populates the provided slice.
+// The slice must be a pointer to a slice of structs (e.g., *[]Person or *[]*Person).
+// Schema is used to properly handle cardinality-many attributes.
+//
+// Example:
+//
+//	var people []Person
+//	err := db.PullIntoMany(entityIDs, &people)
+func (d *Database) PullIntoMany(entityIDs []datalog.Identity, v interface{}) error {
+	// Get the slice element type
+	sliceVal := reflect.ValueOf(v)
+	if sliceVal.Kind() != reflect.Ptr {
+		return fmt.Errorf("PullIntoMany requires pointer to slice")
+	}
+	sliceVal = sliceVal.Elem()
+	if sliceVal.Kind() != reflect.Slice {
+		return fmt.Errorf("PullIntoMany requires pointer to slice, got pointer to %s", sliceVal.Kind())
+	}
+
+	elemType := sliceVal.Type().Elem()
+	isPtr := elemType.Kind() == reflect.Ptr
+	if isPtr {
+		elemType = elemType.Elem()
+	}
+
+	// Create a sample struct to generate pattern
+	sampleStruct := reflect.New(elemType).Interface()
+	patternStr := dlreflect.GeneratePullPattern(sampleStruct, d.Schema())
+	if patternStr == "" {
+		return fmt.Errorf("could not generate pull pattern for %s", elemType.Name())
+	}
+
+	// Parse the pattern
+	pattern, err := parser.ParsePullPattern(patternStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse pull pattern: %w", err)
+	}
+
+	// Resolve with schema for proper cardinality handling
+	resolved := schema.ResolvePullPattern(pattern, d.Schema())
+
+	// Create pull executor and execute
+	matcher := d.Matcher()
+	puller := executor.NewPullExecutor(matcher)
+	results, err := puller.PullResolvedMany(entityIDs, resolved)
+	if err != nil {
+		return err
+	}
+
+	// Populate slice from results
+	newSlice := reflect.MakeSlice(sliceVal.Type(), 0, len(results))
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+
+		var newElem reflect.Value
+		if isPtr {
+			newElem = reflect.New(elemType)
+		} else {
+			newElem = reflect.New(elemType)
+		}
+
+		if err := dlreflect.ReadStruct(result, newElem.Interface(), d.Schema()); err != nil {
+			return err
+		}
+
+		if isPtr {
+			newSlice = reflect.Append(newSlice, newElem)
+		} else {
+			newSlice = reflect.Append(newSlice, newElem.Elem())
+		}
+	}
+
+	sliceVal.Set(newSlice)
+	return nil
 }

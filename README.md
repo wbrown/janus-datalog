@@ -99,6 +99,7 @@ Available examples:
 - `expression_demo.go` - Expression clauses and arithmetic
 - `schema_demo.go` - Schema validation, cardinality, and uniqueness
 - `pull_demo.go` - Pull API for entity attribute retrieval
+- `reflect_demo.go` - Struct reflection API for Go structs ↔ datoms
 - And many more in `examples/`
 
 ## Tutorial
@@ -293,6 +294,49 @@ result, _ := db.Pull(userId, `[:user/name :user/email {:user/friends [:user/name
 - **9× faster than equivalent queries**
 
 See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for Pull API details.
+
+### Struct Reflection API
+
+For Go developers, janus-datalog provides a reflection-based API that maps structs directly to datoms:
+
+```go
+import "github.com/wbrown/janus-datalog/datalog/reflect"
+
+// Define your domain type with struct tags
+type Person struct {
+    ID      datalog.Identity `datalog:"-,id"`     // Entity identity
+    Name    string           `datalog:"name"`     // → :person/name
+    Age     int64            `datalog:"age"`      // → :person/age
+    Tags    []string         `datalog:"tags"`     // → :person/tags (many)
+    Manager *Person          `datalog:"manager"`  // → :person/manager (ref)
+}
+
+// Generate schema from struct
+schema, _ := reflect.SchemaFromStruct(Person{})
+db, _ := storage.NewDatabaseWithSchema("my.db", schema)
+
+// Write structs directly
+alice := &Person{Name: "Alice", Age: 30, Tags: []string{"dev", "lead"}}
+tx := db.NewTransaction()
+aliceID, _ := tx.AddStructAuto(alice)  // ID auto-generated
+tx.Commit()
+// alice.ID is now populated
+
+// Read into structs
+var loaded Person
+db.PullInto(aliceID, &loaded)
+fmt.Println(loaded.Name)  // "Alice"
+fmt.Println(loaded.Tags)  // ["dev", "lead"]
+```
+
+**Features:**
+- Schema generation from struct definitions
+- Automatic namespace derivation: `type PersonInfo` → `:person-info/...`
+- Cardinality inference: slices become cardinality-many
+- Auto-generated unique IDs with crypto/rand
+- Reference handling via nested struct pointers
+
+See [docs/reference/REFLECT.md](docs/reference/REFLECT.md) for complete documentation.
 
 ## What Makes Janus Different
 

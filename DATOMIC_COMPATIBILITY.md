@@ -11,6 +11,7 @@ Janus-datalog implements a pragmatic subset of Datomic's Datalog query language 
 - ✅ Database functions: `get-else`, `missing?`, `get-some`
 - ✅ BadgerDB persistent storage with EAVT model
 - ✅ Schema support: type validation, cardinality, uniqueness
+- ✅ Struct reflection API: Go structs ↔ datoms with automatic schema generation
 - ❌ No rules or transaction functions
 - ❌ No NOT/OR clauses or entity API
 - ❌ Single-node only (no distributed queries)
@@ -249,6 +250,66 @@ results, err := db.PullMany(entityIDs, `[:user/name]`)
 - Each attribute lookup is a single AEVT index seek (no query parsing/planning)
 - Wildcard `[*]` uses single EAVT prefix scan
 - Far more efficient than equivalent application-level N+1 queries
+
+### 11. Struct Reflection API ✅
+
+**Go-specific feature** for ergonomic struct ↔ datom conversion:
+
+```go
+import "github.com/wbrown/janus-datalog/datalog/reflect"
+
+// Define domain types with struct tags
+type Person struct {
+    ID      datalog.Identity `datalog:"-,id"`      // Entity identity
+    Name    string           `datalog:"name"`      // → :person/name
+    Age     int64            `datalog:"age"`       // → :person/age
+    Tags    []string         `datalog:"tags"`      // → :person/tags (many)
+    Manager *Person          `datalog:"manager"`   // → :person/manager (ref)
+}
+
+// Generate schema from struct
+schema, _ := reflect.SchemaFromStruct(Person{})
+db, _ := storage.NewDatabaseWithSchema(path, schema)
+
+// Write struct as datoms
+alice := &Person{Name: "Alice", Age: 30, Tags: []string{"dev"}}
+tx := db.NewTransaction()
+aliceID, _ := tx.AddStructAuto(alice)  // Auto-generate ID
+tx.Commit()
+
+// Read datoms into struct
+var loaded Person
+db.PullInto(aliceID, &loaded)
+// loaded.Name == "Alice", loaded.Tags == ["dev"]
+```
+
+**Key features:**
+- `SchemaFromStruct()` - Generate schema from Go struct definitions
+- `AddStructAuto()` - Write struct with auto-generated unique ID
+- `AddStruct()` - Write struct with explicit entity ID
+- `PullInto()` - Read entity into struct using Pull API
+- `PullIntoMany()` - Read multiple entities into slice
+
+**Tag format:**
+| Tag | Meaning |
+|-----|---------|
+| `datalog:"name"` | Attribute local name (namespace from struct) |
+| `datalog:"ns/name"` | Full attribute name |
+| `datalog:"-"` | Skip this field |
+| `datalog:"-,id"` | Entity identity field |
+
+**Namespace derivation:**
+- `Person` → `person`
+- `PersonInfo` → `person-info`
+- `HTTPServer` → `http-server`
+
+**Cardinality inference:**
+- Single values (`string`, `int64`, `*Person`) → cardinality-one
+- Slices (`[]string`, `[]*Person`) → cardinality-many
+
+**Note:** This is a Go-specific ergonomic feature not found in Datomic. It builds on the Pull API and Schema support to provide idiomatic Go development.
+
+See [docs/reference/REFLECT.md](docs/reference/REFLECT.md) for complete documentation.
 
 ## Missing Datomic Features
 
@@ -501,5 +562,8 @@ For Datomic users, the transition is straightforward:
 2. Use subqueries for complex aggregations
 3. Define schema for type validation and cardinality-many support
 4. Use Pull API with resolved patterns for entity navigation
+5. Use Struct Reflection API for idiomatic Go struct ↔ datom mapping
 
 Most Datalog queries will work with minimal changes, making janus-datalog a practical choice for applications that need Datalog's power without Datomic's full complexity.
+
+**For Go developers:** The Struct Reflection API (`datalog/reflect`) provides a particularly ergonomic way to work with the database using native Go structs instead of manual datom creation.
