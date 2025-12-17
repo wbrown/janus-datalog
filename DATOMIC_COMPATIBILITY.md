@@ -7,6 +7,7 @@ This guide is for developers familiar with Datomic who want to understand what j
 Janus-datalog implements a pragmatic subset of Datomic's Datalog query language with:
 - ✅ Core query patterns, expressions, aggregations, and subqueries
 - ✅ Time-based queries using transaction IDs
+- ✅ Database functions: `get-else`, `missing?`, `get-some`
 - ✅ BadgerDB persistent storage with EAVT model
 - ❌ No Pull API, rules, schema, or transaction functions
 - ❌ No NOT/OR clauses or entity API
@@ -143,7 +144,41 @@ Standard Datomic input patterns:
 - `[[?x ?y]]` - tuple
 - `[[?x ?y] ...]` - relation
 
-### 7. Time-Based Queries
+### 7. Database Functions
+
+Functions that access the database for attribute lookups:
+
+**get-else - default values for missing attributes:**
+```clojure
+[:find ?name ?nickname
+ :where [?e :person/name ?name]
+        [(get-else $ ?e :person/nickname "No Nickname") ?nickname]]
+```
+
+**missing? - test if attribute is absent (as predicate filter):**
+```clojure
+[:find ?name
+ :where [?e :user/name ?name]
+        [(missing? $ ?e :user/email)]]  ; Only users without email
+```
+
+**missing? - as expression (returns boolean):**
+```clojure
+[:find ?name ?needs_verification
+ :where [?e :user/name ?name]
+        [(missing? $ ?e :user/verified) ?needs_verification]]
+```
+
+**get-some - first available attribute from fallback list:**
+```clojure
+[:find ?id ?display-name
+ :where [?e :user/id ?id]
+        [(get-some $ ?e :user/nickname :user/fullname :user/email) ?display-name]]
+```
+
+These functions require the `$` database reference as their first argument.
+
+### 8. Time-Based Queries
 
 Query database as of specific times:
 
@@ -242,11 +277,14 @@ No entity navigation:
 (touch entity)
 ```
 
-### 7. Advanced Query Features ❌
+### 7. Advanced Query Features (Partial) ⚠️
 
-Missing query conveniences:
-- `get-else` - no default values
-- `missing?` - cannot test attribute absence
+**Implemented:**
+- `get-else` - default values for missing attributes ✅
+- `missing?` - test attribute absence ✅
+- `get-some` - first available attribute from fallback list ✅
+
+**Not implemented:**
 - `tuple` - no tuple destructuring in find
 - `keys` - no map results
 - `with` - no duplicate control

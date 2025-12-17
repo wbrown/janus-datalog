@@ -554,3 +554,46 @@ func indexName(idx IndexType) string {
 		return "UNKNOWN"
 	}
 }
+
+// LookupAttribute retrieves the value of an attribute for an entity.
+// This implements the query.EntityLookup interface for database functions
+// like get-else, missing?, and get-some.
+//
+// Returns (value, true) if the attribute exists, (nil, false) otherwise.
+// For multi-valued attributes, returns the first value found.
+func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+	// Convert to storage format
+	eBytes := entity.Bytes()
+	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
+
+	encoder := m.store.encoder
+
+	// Use AEVT index which orders by A, then E
+	// This gives us efficient lookup for (A, E) pairs
+	start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
+
+	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
+	if err != nil {
+		return nil, false
+	}
+	defer iter.Close()
+
+	// Look for first matching datom
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			return nil, false
+		}
+
+		// Check transaction filter for as-of queries
+		if m.txID > 0 && datom.Tx > m.txID {
+			continue
+		}
+
+		// Found a match - return the value
+		return datom.V, true
+	}
+
+	// No datom found
+	return nil, false
+}

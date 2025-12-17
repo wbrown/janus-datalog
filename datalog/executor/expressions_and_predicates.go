@@ -20,6 +20,12 @@ func (e *Executor) applyExpressionsAndPredicates(ctx Context, phase *planner.Pha
 		return NewMaterializedRelationWithOptions(phase.Provides, []Tuple{}, e.options), nil
 	}
 
+	// Get entity lookup if matcher supports it (for database functions)
+	var lookup query.EntityLookup
+	if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
+		lookup = entityLookupAdapter{lookupMatcher}
+	}
+
 	// Keep track of relation groups - they might join after expressions add symbols
 	groups := relations
 
@@ -90,12 +96,12 @@ func (e *Executor) applyExpressionsAndPredicates(ctx Context, phase *planner.Pha
 			if exprPlan.IsEquality {
 				// This is an equality expression - apply as a filter using Eval
 				result = ctx.FilterRelation(group, exprPlan.Expression.String(), func() Relation {
-					return filterWithExpression(group, exprPlan.Expression)
+					return filterWithExpressionAndLookup(group, exprPlan.Expression, lookup)
 				})
 			} else {
 				// This is a binding expression - evaluate and add column
 				result = ctx.EvaluateExpressionRelation(group, exprPlan.Expression.String(), func() Relation {
-					return evaluateExpressionNew(group, exprPlan.Expression)
+					return evaluateExpressionWithLookup(group, exprPlan.Expression, lookup)
 				})
 			}
 
@@ -162,7 +168,7 @@ func (e *Executor) applyExpressionsAndPredicates(ctx Context, phase *planner.Pha
 			}
 
 			result := ctx.FilterRelation(group, predPlan.Predicate.String(), func() Relation {
-				return filterWithPredicate(group, predPlan.Predicate)
+				return filterWithPredicateAndLookup(group, predPlan.Predicate, lookup)
 			})
 
 			// CRITICAL: Don't call IsEmpty() - it consumes streaming iterators!
@@ -316,6 +322,12 @@ func (e *Executor) applyExpressionsAndPredicates(ctx Context, phase *planner.Pha
 
 // filterWithPredicate filters a relation using a Predicate's Eval method
 func filterWithPredicate(rel Relation, pred query.Predicate) Relation {
+	return filterWithPredicateAndLookup(rel, pred, nil)
+}
+
+// filterWithPredicateAndLookup filters a relation using a Predicate's Eval method
+// with optional database lookup support for DatabaseFunctionPredicates.
+func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup) Relation {
 	columns := rel.Columns()
 
 	// Pre-allocate filtered only for materialized relations to avoid forcing materialization
@@ -328,6 +340,9 @@ func filterWithPredicate(rel Relation, pred query.Predicate) Relation {
 
 	// Reuse single bindings map to avoid repeated allocations
 	bindings := make(map[query.Symbol]interface{}, len(columns))
+
+	// Check if this is a DatabaseFunctionPredicate that needs lookup
+	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
 
 	iter := rel.Iterator()
 	for iter.Next() {
@@ -342,7 +357,13 @@ func filterWithPredicate(rel Relation, pred query.Predicate) Relation {
 		}
 
 		// Evaluate the predicate
-		passes, err := pred.Eval(bindings)
+		var passes bool
+		var err error
+		if isDbFuncPred && lookup != nil {
+			passes, err = dbFuncPred.EvalWithLookup(bindings, lookup)
+		} else {
+			passes, err = pred.Eval(bindings)
+		}
 		if err != nil {
 			// Log error but continue processing
 			// TODO: Consider better error handling strategy
@@ -361,6 +382,11 @@ func filterWithPredicate(rel Relation, pred query.Predicate) Relation {
 
 // filterWithExpression filters a relation using an Expression that acts as a predicate (IsEquality = true)
 func filterWithExpression(rel Relation, expr *query.Expression) Relation {
+	return filterWithExpressionAndLookup(rel, expr, nil)
+}
+
+// filterWithExpressionAndLookup filters a relation using an Expression with optional database lookup
+func filterWithExpressionAndLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup) Relation {
 	columns := rel.Columns()
 
 	// Pre-allocate filtered only for materialized relations to avoid forcing materialization
@@ -387,7 +413,13 @@ func filterWithExpression(rel Relation, expr *query.Expression) Relation {
 		}
 
 		// Evaluate the expression (should return a boolean)
-		result, err := expr.Function.Eval(bindings)
+		var result interface{}
+		var err error
+		if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok && lookup != nil {
+			result, err = dbFunc.EvalWithLookup(bindings, lookup)
+		} else {
+			result, err = expr.Function.Eval(bindings)
+		}
 		if err != nil {
 			continue
 		}
@@ -404,7 +436,16 @@ func filterWithExpression(rel Relation, expr *query.Expression) Relation {
 }
 
 // evaluateExpressionNew evaluates an expression and adds the result as a new column
+// This version does not support database functions (get-else, missing?, get-some).
+// Use evaluateExpressionWithLookup for queries that may contain database functions.
 func evaluateExpressionNew(rel Relation, expr *query.Expression) Relation {
+	return evaluateExpressionWithLookup(rel, expr, nil)
+}
+
+// evaluateExpressionWithLookup evaluates an expression with optional database lookup support.
+// If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
+// Otherwise, it falls back to the standard Eval method.
+func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup) Relation {
 	columns := rel.Columns()
 
 	// Add the binding column if it doesn't exist
@@ -446,10 +487,23 @@ func evaluateExpressionNew(rel Relation, expr *query.Expression) Relation {
 		}
 
 		// Evaluate the expression
-		result, err := expr.Function.Eval(bindings)
+		// Check if this is a database function that needs lookup access
+		var result interface{}
+		var err error
+		if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok && lookup != nil {
+			result, err = dbFunc.EvalWithLookup(bindings, lookup)
+		} else {
+			result, err = expr.Function.Eval(bindings)
+		}
 		if err != nil {
 			// Skip tuples where expression fails
 			continue
+		}
+
+		// Extract value from GetSomeResult if needed
+		// get-some returns a struct with Attr and Value; we just want the Value for binding
+		if gsr, ok := result.(*query.GetSomeResult); ok {
+			result = gsr.Value
 		}
 
 		// Create new tuple with result

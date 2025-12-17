@@ -2,6 +2,8 @@ package parser
 
 import (
 	"fmt"
+
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -18,6 +20,9 @@ func parsePredicate(fn string, args []query.PatternElement) (query.Predicate, er
 		return parseGround(args)
 	case "missing":
 		return parseMissing(args)
+	case "missing?":
+		// Database function used as predicate filter: [(missing? $ ?e :attr)]
+		return parseMissingAttrPredicate(args)
 	case "day", "month", "year", "hour", "minute", "second":
 		// Time extraction predicates - these are FunctionPredicates
 		return &query.FunctionPredicate{
@@ -175,5 +180,83 @@ func elementToTerm(elem query.PatternElement) query.Term {
 		// For other types, treat as constant
 		// This handles literals that might not be wrapped in Constant
 		return query.ConstantTerm{Value: elem}
+	}
+}
+
+// parseMissingAttrPredicate parses (missing? $ ?entity :attribute) as a predicate
+// This is used when missing? is used as a filter without a binding
+func parseMissingAttrPredicate(args []query.PatternElement) (query.Predicate, error) {
+	// Syntax: (missing? $ ?e :attr)
+	if len(args) != 3 {
+		return nil, fmt.Errorf("missing? requires exactly 3 arguments ($ entity attr), got %d", len(args))
+	}
+
+	// Validate database reference ($)
+	if err := validateDatabaseRefPredicate(args[0]); err != nil {
+		return nil, fmt.Errorf("missing?: %w", err)
+	}
+
+	// Parse entity (can be variable or constant)
+	entity := elementToTerm(args[1])
+
+	// Parse attribute (must be a keyword)
+	attr, err := extractKeywordPredicate(args[2])
+	if err != nil {
+		return nil, fmt.Errorf("missing?: attribute must be a keyword: %w", err)
+	}
+
+	// Create a MissingFunction and wrap it in a DatabaseFunctionPredicate
+	missingFn := &query.MissingFunction{
+		Entity: entity,
+		Attr:   attr,
+	}
+
+	return &query.DatabaseFunctionPredicate{
+		Function: missingFn,
+	}, nil
+}
+
+// validateDatabaseRefPredicate validates that an argument is the database reference ($)
+// This is a copy for the predicate parser to avoid circular imports
+func validateDatabaseRefPredicate(arg query.PatternElement) error {
+	switch a := arg.(type) {
+	case query.Variable:
+		if a.Name == "$" {
+			return nil
+		}
+		return fmt.Errorf("expected database reference ($), got variable %s", a.Name)
+	case query.Constant:
+		if sym, ok := a.Value.(query.Symbol); ok && sym == "$" {
+			return nil
+		}
+		if str, ok := a.Value.(string); ok && str == "$" {
+			return nil
+		}
+		return fmt.Errorf("expected database reference ($), got %v", a.Value)
+	default:
+		return fmt.Errorf("expected database reference ($), got %T", arg)
+	}
+}
+
+// extractKeywordPredicate extracts a Keyword from a pattern element
+// This is a copy for the predicate parser to avoid circular imports
+func extractKeywordPredicate(arg query.PatternElement) (datalog.Keyword, error) {
+	switch a := arg.(type) {
+	case query.Constant:
+		switch v := a.Value.(type) {
+		case datalog.Keyword:
+			return v, nil
+		case *datalog.Keyword:
+			return *v, nil
+		case string:
+			if len(v) > 0 && v[0] == ':' {
+				return datalog.NewKeyword(v), nil
+			}
+			return datalog.Keyword{}, fmt.Errorf("string %q is not a keyword", v)
+		default:
+			return datalog.Keyword{}, fmt.Errorf("expected keyword, got %T", v)
+		}
+	default:
+		return datalog.Keyword{}, fmt.Errorf("expected keyword constant, got %T", arg)
 	}
 }
