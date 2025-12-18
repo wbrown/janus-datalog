@@ -211,7 +211,7 @@ func TestParseErrors(t *testing.T) {
 		{
 			name:  "non-vector pattern",
 			input: `[:find ?e :where (?e :foo ?v)]`,
-			error: "expected vector in :where clause",
+			error: "unknown list clause type",
 		},
 	}
 

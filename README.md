@@ -725,10 +725,10 @@ Janus implements **~50-60% of Datomic's feature set**, focusing on the most comm
 - Pull API: Nested references, cycle detection, wildcards
 - Schema: Type validation, cardinality, uniqueness constraints
 - Storage: Persistent BadgerDB backend
+- NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)`
 
 **Not implemented:**
 - Rules and recursive queries
-- NOT/OR clauses
 - Full-text search
 - Distributed transactions
 

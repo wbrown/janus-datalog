@@ -29,6 +29,14 @@ func extractClauseSymbols(clause query.Clause) ClauseSymbols {
 		return extractMissingPredicateSymbols(c)
 	case *query.Subquery:
 		return extractSubquerySymbols(c)
+	case *query.NotClause:
+		return extractNotClauseSymbols(c)
+	case *query.NotJoinClause:
+		return extractNotJoinClauseSymbols(c)
+	case *query.OrClause:
+		return extractOrClauseSymbols(c)
+	case *query.OrJoinClause:
+		return extractOrJoinClauseSymbols(c)
 	default:
 		// Unknown clause type - conservative: requires and provides nothing
 		return ClauseSymbols{}
@@ -137,6 +145,93 @@ func extractSubquerySymbols(sq *query.Subquery) ClauseSymbols {
 	}
 }
 
+// extractNotClauseSymbols extracts symbols from a NOT clause
+// NOT requires ALL variables from inner clauses to be bound before it executes
+// NOT provides nothing - it filters, doesn't produce new bindings
+func extractNotClauseSymbols(n *query.NotClause) ClauseSymbols {
+	requires := make(map[query.Symbol]bool)
+
+	// Collect all variables from inner clauses
+	for _, innerClause := range n.Clauses {
+		innerSymbols := extractClauseSymbols(innerClause)
+		// All variables in inner clauses must be bound before NOT
+		for _, sym := range innerSymbols.Requires {
+			requires[sym] = true
+		}
+		for _, sym := range innerSymbols.Provides {
+			requires[sym] = true
+		}
+	}
+
+	var requiresSlice []query.Symbol
+	for sym := range requires {
+		requiresSlice = append(requiresSlice, sym)
+	}
+
+	return ClauseSymbols{
+		Requires: requiresSlice,
+		Provides: nil, // NOT does not provide new bindings
+	}
+}
+
+// extractNotJoinClauseSymbols extracts symbols from a NOT-JOIN clause
+// NOT-JOIN only requires the explicit JoinVars to be bound
+func extractNotJoinClauseSymbols(n *query.NotJoinClause) ClauseSymbols {
+	return ClauseSymbols{
+		Requires: n.JoinVars,
+		Provides: nil, // NOT-JOIN does not provide new bindings
+	}
+}
+
+// extractOrClauseSymbols extracts symbols from an OR clause
+// OR provides the intersection of all branches' provided symbols
+func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
+	if len(o.Branches) == 0 {
+		return ClauseSymbols{}
+	}
+
+	// Start with first branch's provided symbols
+	branchSymbols := make([]map[query.Symbol]bool, len(o.Branches))
+	for i, branch := range o.Branches {
+		branchSymbols[i] = make(map[query.Symbol]bool)
+		for _, clause := range branch {
+			clauseSyms := extractClauseSymbols(clause)
+			for _, sym := range clauseSyms.Provides {
+				branchSymbols[i][sym] = true
+			}
+		}
+	}
+
+	// Intersection of all branches
+	var provides []query.Symbol
+	for sym := range branchSymbols[0] {
+		inAll := true
+		for i := 1; i < len(branchSymbols); i++ {
+			if !branchSymbols[i][sym] {
+				inAll = false
+				break
+			}
+		}
+		if inAll {
+			provides = append(provides, sym)
+		}
+	}
+
+	return ClauseSymbols{
+		Requires: nil, // OR branches provide data, don't require prior bindings
+		Provides: provides,
+	}
+}
+
+// extractOrJoinClauseSymbols extracts symbols from an OR-JOIN clause
+// OR-JOIN provides exactly the JoinVars
+func extractOrJoinClauseSymbols(o *query.OrJoinClause) ClauseSymbols {
+	return ClauseSymbols{
+		Requires: nil, // OR-JOIN provides data, doesn't require prior bindings
+		Provides: o.JoinVars,
+	}
+}
+
 // canExecuteClause determines if a clause can be executed given available symbols
 func canExecuteClause(clause query.Clause, available map[query.Symbol]bool) bool {
 	symbols := extractClauseSymbols(clause)
@@ -163,6 +258,14 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 		score += 100
 	}
 
+	// OR clauses that provide symbols are data sources too
+	if _, ok := clause.(*query.OrClause); ok {
+		score += 80
+	}
+	if _, ok := clause.(*query.OrJoinClause); ok {
+		score += 80
+	}
+
 	// Expressions that produce new symbols are valuable
 	if len(symbols.Provides) > 0 {
 		score += 50 * len(symbols.Provides)
@@ -171,6 +274,14 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 	// Predicates that filter are less valuable (should come after data loading)
 	if len(symbols.Requires) > 0 && len(symbols.Provides) == 0 {
 		score += 10
+	}
+
+	// NOT clauses filter - defer until all required symbols are available
+	if _, ok := clause.(*query.NotClause); ok {
+		score += 5 // Lower than regular predicates
+	}
+	if _, ok := clause.(*query.NotJoinClause); ok {
+		score += 5
 	}
 
 	// Subqueries are expensive - defer if possible
