@@ -265,10 +265,14 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 	}
 
 	// We need to materialize the binding relation to iterate multiple times
+	// CRITICAL: Must copy tuples because iterator reuses buffer
 	var bindingTuples []executor.Tuple
 	it := bindingRel.Iterator()
 	for it.Next() {
-		bindingTuples = append(bindingTuples, it.Tuple())
+		tuple := it.Tuple()
+		tupleCopy := make(executor.Tuple, len(tuple))
+		copy(tupleCopy, tuple)
+		bindingTuples = append(bindingTuples, tupleCopy)
 	}
 	it.Close()
 
