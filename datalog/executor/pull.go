@@ -4,30 +4,56 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // PullExecutor executes pull patterns against the database
 type PullExecutor struct {
 	matcher PatternMatcher
+	ctx     PullContext
 }
 
 // NewPullExecutor creates a new pull executor
 func NewPullExecutor(matcher PatternMatcher) *PullExecutor {
 	return &PullExecutor{
 		matcher: matcher,
+		ctx:     &BasePullContext{},
 	}
+}
+
+// NewPullExecutorWithHandler creates a new pull executor with annotation support
+func NewPullExecutorWithHandler(matcher PatternMatcher, handler annotations.Handler) *PullExecutor {
+	return &PullExecutor{
+		matcher: matcher,
+		ctx:     NewPullContext(handler),
+	}
+}
+
+// SetHandler configures the annotation handler
+func (pe *PullExecutor) SetHandler(handler annotations.Handler) {
+	pe.ctx = NewPullContext(handler)
 }
 
 // Pull executes a pull pattern for a single entity
 // Uses cycle detection to handle circular references
 func (pe *PullExecutor) Pull(entity datalog.Identity, pattern *query.PullPattern) (map[string]interface{}, error) {
+	pe.ctx.PullBegin(entity, len(pattern.Specs), false)
+
 	visited := make(map[[20]byte]bool)
-	return pe.pullWithVisited(entity, pattern, visited)
+	result, err := pe.pullWithVisited(entity, pattern, visited, 0)
+
+	attrCount := 0
+	if result != nil {
+		attrCount = len(result)
+	}
+	pe.ctx.PullComplete(entity, attrCount, false, err)
+
+	return result, err
 }
 
 // pullWithVisited executes a pull pattern with cycle detection
-func (pe *PullExecutor) pullWithVisited(entity datalog.Identity, pattern *query.PullPattern, visited map[[20]byte]bool) (map[string]interface{}, error) {
+func (pe *PullExecutor) pullWithVisited(entity datalog.Identity, pattern *query.PullPattern, visited map[[20]byte]bool, depth int) (map[string]interface{}, error) {
 	if pattern == nil {
 		return nil, nil
 	}
@@ -35,18 +61,23 @@ func (pe *PullExecutor) pullWithVisited(entity datalog.Identity, pattern *query.
 	// Check for cycle using entity hash
 	entityHash := entity.Hash()
 	if visited[entityHash] {
+		pe.ctx.CycleDetected(entity, depth)
 		return nil, nil // Cycle detected, stop recursion
 	}
 	visited[entityHash] = true
 	defer delete(visited, entityHash) // Allow revisiting from different paths
 
+	pe.ctx.EntityBegin(entity, depth, len(pattern.Specs))
+
 	result := make(map[string]interface{})
 
 	for _, spec := range pattern.Specs {
-		if err := pe.processSpec(entity, spec, result, visited); err != nil {
+		if err := pe.processSpec(entity, spec, result, visited, depth); err != nil {
 			return nil, err
 		}
 	}
+
+	pe.ctx.EntityComplete(entity, depth, len(result))
 
 	if len(result) == 0 {
 		return nil, nil
@@ -55,7 +86,7 @@ func (pe *PullExecutor) pullWithVisited(entity datalog.Identity, pattern *query.
 }
 
 // processSpec processes a single pull spec and adds results to the map
-func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttrSpec, result map[string]interface{}, visited map[[20]byte]bool) error {
+func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttrSpec, result map[string]interface{}, visited map[[20]byte]bool, depth int) error {
 	switch s := spec.(type) {
 	case *query.PullAttribute:
 		// Simple attribute lookup
@@ -78,7 +109,16 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 		// Follow reference and pull nested pattern
 		if refVal, ok := pe.lookupAttribute(entity, s.Attr); ok {
 			if refEntity, ok := refVal.(datalog.Identity); ok {
-				nested, err := pe.pullWithVisited(refEntity, s.Pattern, visited)
+				pe.ctx.NestedBegin(entity, s.Attr, refEntity, depth+1, false)
+
+				nested, err := pe.pullWithVisited(refEntity, s.Pattern, visited, depth+1)
+
+				attrCount := 0
+				if nested != nil {
+					attrCount = len(nested)
+				}
+				pe.ctx.NestedComplete(entity, s.Attr, refEntity, depth+1, attrCount, err)
+
 				if err != nil {
 					return fmt.Errorf("nested pull for %s failed: %w", s.Attr.String(), err)
 				}
@@ -115,10 +155,25 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 func (pe *PullExecutor) lookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
 	// Use EntityLookupMatcher interface if available
 	if lookupMatcher, ok := pe.matcher.(EntityLookupMatcher); ok {
-		return lookupMatcher.LookupAttribute(entity, attr)
+		var val interface{}
+		var found bool
+		pe.ctx.AttributeLookup(entity, attr, found, "direct", func() {
+			val, found = lookupMatcher.LookupAttribute(entity, attr)
+		})
+		return val, found
 	}
 
 	// Fallback: use pattern matching
+	var val interface{}
+	var found bool
+	pe.ctx.AttributeLookup(entity, attr, found, "pattern", func() {
+		val, found = pe.lookupAttributeViaPattern(entity, attr)
+	})
+	return val, found
+}
+
+// lookupAttributeViaPattern is the fallback path using pattern matching
+func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -133,14 +188,11 @@ func (pe *PullExecutor) lookupAttribute(entity datalog.Identity, attr datalog.Ke
 	}
 
 	// Get the first result
-	// Note: Avoid calling rel.IsEmpty() as it may consume the first tuple
-	// in non-streaming mode. Instead, just try to iterate.
 	it := rel.Iterator()
 	defer it.Close()
 
 	if it.Next() {
 		tuple := it.Tuple()
-		// Find the value column
 		cols := rel.Columns()
 		for i, col := range cols {
 			if col == "?v" && i < len(tuple) {
@@ -154,7 +206,19 @@ func (pe *PullExecutor) lookupAttribute(entity datalog.Identity, attr datalog.Ke
 
 // getAllAttributes retrieves all datoms for an entity (for wildcard pull)
 func (pe *PullExecutor) getAllAttributes(entity datalog.Identity) ([]datalog.Datom, error) {
-	// Create pattern: [entity ?a ?v] - gets all attributes
+	var datoms []datalog.Datom
+	var err error
+
+	pe.ctx.AllAttributes(entity, func() int {
+		datoms, err = pe.getAllAttributesInternal(entity)
+		return len(datoms)
+	})
+
+	return datoms, err
+}
+
+// getAllAttributesInternal is the actual implementation
+func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]datalog.Datom, error) {
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -171,10 +235,6 @@ func (pe *PullExecutor) getAllAttributes(entity datalog.Identity) ([]datalog.Dat
 	if rel == nil {
 		return nil, nil
 	}
-
-	// Note: Avoid calling rel.IsEmpty() as it may consume the first tuple
-	// in non-streaming mode. Empty results are handled naturally by the
-	// iteration loop below.
 
 	// Find column indices
 	cols := rel.Columns()
@@ -247,12 +307,22 @@ func (pe *PullExecutor) PullMany(entities []datalog.Identity, pattern *query.Pul
 // PullResolved executes a resolved pull pattern for a single entity
 // Uses pre-resolved cardinality info for proper handling of many-valued attributes
 func (pe *PullExecutor) PullResolved(entity datalog.Identity, pattern *query.ResolvedPullPattern) (map[string]interface{}, error) {
+	pe.ctx.PullBegin(entity, len(pattern.Specs), true)
+
 	visited := make(map[[20]byte]bool)
-	return pe.pullResolvedWithVisited(entity, pattern, visited)
+	result, err := pe.pullResolvedWithVisited(entity, pattern, visited, 0)
+
+	attrCount := 0
+	if result != nil {
+		attrCount = len(result)
+	}
+	pe.ctx.PullComplete(entity, attrCount, true, err)
+
+	return result, err
 }
 
 // pullResolvedWithVisited executes a resolved pull pattern with cycle detection
-func (pe *PullExecutor) pullResolvedWithVisited(entity datalog.Identity, pattern *query.ResolvedPullPattern, visited map[[20]byte]bool) (map[string]interface{}, error) {
+func (pe *PullExecutor) pullResolvedWithVisited(entity datalog.Identity, pattern *query.ResolvedPullPattern, visited map[[20]byte]bool, depth int) (map[string]interface{}, error) {
 	if pattern == nil {
 		return nil, nil
 	}
@@ -260,18 +330,23 @@ func (pe *PullExecutor) pullResolvedWithVisited(entity datalog.Identity, pattern
 	// Check for cycle using entity hash
 	entityHash := entity.Hash()
 	if visited[entityHash] {
+		pe.ctx.CycleDetected(entity, depth)
 		return nil, nil // Cycle detected, stop recursion
 	}
 	visited[entityHash] = true
 	defer delete(visited, entityHash) // Allow revisiting from different paths
 
+	pe.ctx.EntityBegin(entity, depth, len(pattern.Specs))
+
 	result := make(map[string]interface{})
 
 	for _, spec := range pattern.Specs {
-		if err := pe.processResolvedSpec(entity, spec, result, visited); err != nil {
+		if err := pe.processResolvedSpec(entity, spec, result, visited, depth); err != nil {
 			return nil, err
 		}
 	}
+
+	pe.ctx.EntityComplete(entity, depth, len(result))
 
 	if len(result) == 0 {
 		return nil, nil
@@ -280,7 +355,7 @@ func (pe *PullExecutor) pullResolvedWithVisited(entity datalog.Identity, pattern
 }
 
 // processResolvedSpec processes a single resolved pull spec
-func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.ResolvedPullAttrSpec, result map[string]interface{}, visited map[[20]byte]bool) error {
+func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.ResolvedPullAttrSpec, result map[string]interface{}, visited map[[20]byte]bool, depth int) error {
 	switch s := spec.(type) {
 	case *query.ResolvedPullAttribute:
 		if s.IsMany {
@@ -314,7 +389,16 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 				nestedResults := make([]interface{}, 0, len(refs))
 				for _, refVal := range refs {
 					if refEntity, ok := getIdentity(refVal); ok {
-						nested, err := pe.pullResolvedWithVisited(refEntity, s.Pattern, visited)
+						pe.ctx.NestedBegin(entity, s.Attr, refEntity, depth+1, true)
+
+						nested, err := pe.pullResolvedWithVisited(refEntity, s.Pattern, visited, depth+1)
+
+						attrCount := 0
+						if nested != nil {
+							attrCount = len(nested)
+						}
+						pe.ctx.NestedComplete(entity, s.Attr, refEntity, depth+1, attrCount, err)
+
 						if err != nil {
 							return fmt.Errorf("nested pull for %s failed: %w", s.Attr.String(), err)
 						}
@@ -331,7 +415,16 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 			// Cardinality-one reference: follow single ref
 			if refVal, ok := pe.lookupAttribute(entity, s.Attr); ok {
 				if refEntity, ok := getIdentity(refVal); ok {
-					nested, err := pe.pullResolvedWithVisited(refEntity, s.Pattern, visited)
+					pe.ctx.NestedBegin(entity, s.Attr, refEntity, depth+1, false)
+
+					nested, err := pe.pullResolvedWithVisited(refEntity, s.Pattern, visited, depth+1)
+
+					attrCount := 0
+					if nested != nil {
+						attrCount = len(nested)
+					}
+					pe.ctx.NestedComplete(entity, s.Attr, refEntity, depth+1, attrCount, err)
+
 					if err != nil {
 						return fmt.Errorf("nested pull for %s failed: %w", s.Attr.String(), err)
 					}
@@ -386,7 +479,18 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 
 // lookupAllValues retrieves all values for a cardinality-many attribute
 func (pe *PullExecutor) lookupAllValues(entity datalog.Identity, attr datalog.Keyword) []interface{} {
-	// Create pattern: [entity attr ?v] - gets all values for this attribute
+	var values []interface{}
+
+	pe.ctx.ManyValues(entity, attr, func() int {
+		values = pe.lookupAllValuesInternal(entity, attr)
+		return len(values)
+	})
+
+	return values
+}
+
+// lookupAllValuesInternal is the actual implementation
+func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr datalog.Keyword) []interface{} {
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},

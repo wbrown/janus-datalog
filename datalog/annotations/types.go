@@ -45,6 +45,26 @@ const (
 	// Aggregation operations
 	AggregationExecuted = "aggregation/executed"
 
+	// Pull API operations
+	PullBegin           = "pull/begin"
+	PullComplete        = "pull/complete"
+	PullEntityBegin     = "pull/entity.begin"
+	PullEntityComplete  = "pull/entity.complete"
+	PullAttributeLookup = "pull/attr.lookup"
+	PullAllAttributes   = "pull/attr.wildcard"
+	PullManyValues      = "pull/attr.many"
+	PullNestedBegin     = "pull/nested.begin"
+	PullNestedComplete  = "pull/nested.complete"
+	PullCycleDetected   = "pull/cycle.detected"
+
+	// Reflection operations
+	ReflectReadBegin     = "reflect/read.begin"
+	ReflectReadComplete  = "reflect/read.complete"
+	ReflectWriteBegin    = "reflect/write.begin"
+	ReflectWriteComplete = "reflect/write.complete"
+	ReflectUpdateBegin   = "reflect/update.begin"
+	ReflectUpdateComplete = "reflect/update.complete"
+
 	// Errors
 	ErrorQueryParsing  = "error/query.parsing"
 	ErrorQueryBinding  = "error/query.binding"

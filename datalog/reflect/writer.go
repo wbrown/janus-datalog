@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -64,6 +65,7 @@ const (
 type StructWriter struct {
 	info   *StructInfo
 	schema schema.SchemaProvider
+	ctx    ReflectContext
 }
 
 // NewStructWriter creates a writer for a struct type
@@ -75,11 +77,32 @@ func NewStructWriter(v interface{}, s schema.SchemaProvider) (*StructWriter, err
 	return &StructWriter{
 		info:   info,
 		schema: s,
+		ctx:    &BaseReflectContext{},
 	}, nil
+}
+
+// NewStructWriterWithHandler creates a writer with annotation support
+func NewStructWriterWithHandler(v interface{}, s schema.SchemaProvider, handler annotations.Handler) (*StructWriter, error) {
+	info, err := GetStructInfoFromValue(v)
+	if err != nil {
+		return nil, err
+	}
+	return &StructWriter{
+		info:   info,
+		schema: s,
+		ctx:    NewReflectContext(handler),
+	}, nil
+}
+
+// SetHandler configures the annotation handler
+func (sw *StructWriter) SetHandler(handler annotations.Handler) {
+	sw.ctx = NewReflectContext(handler)
 }
 
 // Write adds all fields from struct to transaction
 func (sw *StructWriter) Write(tx TransactionAdder, entity datalog.Identity, v interface{}) error {
+	sw.ctx.WriteBegin(entity.String(), sw.info.Name, len(sw.info.Fields))
+
 	val := reflect.ValueOf(v)
 	if val.Kind() == reflect.Ptr {
 		if val.IsNil() {
@@ -92,6 +115,7 @@ func (sw *StructWriter) Write(tx TransactionAdder, entity datalog.Identity, v in
 		return fmt.Errorf("expected struct, got %s", val.Kind())
 	}
 
+	fieldsWritten := 0
 	for _, field := range sw.info.Fields {
 		fieldVal := val.Field(field.Index)
 
@@ -111,7 +135,10 @@ func (sw *StructWriter) Write(tx TransactionAdder, entity datalog.Identity, v in
 		if err := sw.writeField(tx, entity, kw, field, fieldVal); err != nil {
 			return fmt.Errorf("field %s: %w", field.FieldName, err)
 		}
+		fieldsWritten++
 	}
+
+	sw.ctx.WriteComplete(entity.String(), sw.info.Name, fieldsWritten, nil)
 
 	return nil
 }
@@ -123,6 +150,12 @@ func (sw *StructWriter) Write(tx TransactionAdder, entity datalog.Identity, v in
 // This requires both a TransactionUpdater (for retract capability) and an EntityLookup
 // (to find existing values to compare/retract).
 func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, v interface{}, mode UpdateMode) error {
+	modeStr := "add"
+	if mode == UpdateModeReplace {
+		modeStr = "replace"
+	}
+	sw.ctx.UpdateBegin(entity.String(), sw.info.Name, len(sw.info.Fields), modeStr)
+
 	val := reflect.ValueOf(v)
 	if val.Kind() == reflect.Ptr {
 		if val.IsNil() {
@@ -135,6 +168,7 @@ func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entit
 		return fmt.Errorf("expected struct, got %s", val.Kind())
 	}
 
+	fieldsProcessed := 0
 	for _, field := range sw.info.Fields {
 		fieldVal := val.Field(field.Index)
 
@@ -155,7 +189,10 @@ func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entit
 		if err := sw.updateField(tx, lookup, entity, kw, field, fieldVal, mode); err != nil {
 			return fmt.Errorf("field %s: %w", field.FieldName, err)
 		}
+		fieldsProcessed++
 	}
+
+	sw.ctx.UpdateComplete(entity.String(), sw.info.Name, fieldsProcessed, modeStr, nil)
 
 	return nil
 }
