@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
@@ -18,13 +19,14 @@ import (
 
 // Database provides the main API for reading and writing datoms
 type Database struct {
-	store     *BadgerStore
-	txCounter atomic.Uint64
-	mu        sync.RWMutex
-	activeTx  map[*Transaction]bool
-	useTimeTx bool                   // Use time-based transaction IDs
-	planCache *planner.PlanCache     // Shared query plan cache
-	schema    schema.SchemaProvider  // Optional schema for validation
+	store             *BadgerStore
+	txCounter         atomic.Uint64
+	mu                sync.RWMutex
+	activeTx          map[*Transaction]bool
+	useTimeTx         bool                   // Use time-based transaction IDs
+	planCache         *planner.PlanCache     // Shared query plan cache
+	schema            schema.SchemaProvider  // Optional schema for validation
+	annotationHandler annotations.Handler    // Optional handler for query tracing
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -64,10 +66,11 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
-	Path        string               // Path to the database directory
-	UseTimeTx   bool                 // Use time-based transaction IDs
-	RetractMode RetractMode          // How retractions are handled
-	Schema      schema.SchemaProvider // Optional schema for validation
+	Path              string                // Path to the database directory
+	UseTimeTx         bool                  // Use time-based transaction IDs
+	RetractMode       RetractMode           // How retractions are handled
+	Schema            schema.SchemaProvider // Optional schema for validation
+	AnnotationHandler annotations.Handler   // Optional handler for query tracing
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -97,11 +100,12 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	}
 
 	return &Database{
-		store:     store,
-		activeTx:  make(map[*Transaction]bool),
-		planCache: planner.NewPlanCache(1000, 0),
-		useTimeTx: opts.UseTimeTx,
-		schema:    opts.Schema,
+		store:             store,
+		activeTx:          make(map[*Transaction]bool),
+		planCache:         planner.NewPlanCache(1000, 0),
+		useTimeTx:         opts.UseTimeTx,
+		schema:            opts.Schema,
+		annotationHandler: opts.AnnotationHandler,
 	}, nil
 }
 
@@ -118,6 +122,28 @@ func (d *Database) SetSchema(s schema.SchemaProvider) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.schema = s
+}
+
+// AnnotationHandler returns the current annotation handler (may be nil)
+func (d *Database) AnnotationHandler() annotations.Handler {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.annotationHandler
+}
+
+// SetAnnotationHandler sets a handler for query tracing and performance observability.
+// When set, all queries executed via ExecuteQueryWithInputs will emit annotation events.
+// Pass nil to disable annotations.
+//
+// Example:
+//
+//	db.SetAnnotationHandler(func(event annotations.Event) {
+//	    fmt.Printf("%s: %v (latency: %v)\n", event.Name, event.Data, event.Latency)
+//	})
+func (d *Database) SetAnnotationHandler(handler annotations.Handler) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.annotationHandler = handler
 }
 
 // NewTransaction starts a new write transaction
@@ -376,9 +402,9 @@ func (d *Database) ExecuteQueryWithInputs(queryStr string, inputs ...interface{}
 		return nil, err
 	}
 
-	// Execute the query
+	// Execute the query with annotation handler if set
 	exec := d.NewExecutor()
-	result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRelations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
@@ -420,11 +446,11 @@ func (d *Database) ExecuteHistoryQueryWithInputs(queryStr string, inputs ...inte
 		return nil, err
 	}
 
-	// Execute the query using the history matcher
+	// Execute the query using the history matcher with annotation handler if set
 	opts := DefaultPlannerOptions()
 	opts.Cache = d.planCache
 	exec := executor.NewExecutorWithOptions(historyMatcher, opts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRelations)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("history query execution failed: %w", err)
 	}
