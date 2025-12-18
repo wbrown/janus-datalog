@@ -994,8 +994,8 @@ func (d *Database) PullInto(entityID datalog.Identity, v interface{}) error {
 		return err
 	}
 
-	// Populate struct from result
-	return dlreflect.ReadStruct(result, v, d.Schema())
+	// Populate struct from result, including the ID field
+	return dlreflect.ReadStructWithID(result, v, d.Schema(), entityID)
 }
 
 // PullIntoMany retrieves data for multiple entities and populates the provided slice.
@@ -1049,7 +1049,7 @@ func (d *Database) PullIntoMany(entityIDs []datalog.Identity, v interface{}) err
 
 	// Populate slice from results
 	newSlice := reflect.MakeSlice(sliceVal.Type(), 0, len(results))
-	for _, result := range results {
+	for i, result := range results {
 		if result == nil {
 			continue
 		}
@@ -1061,7 +1061,8 @@ func (d *Database) PullIntoMany(entityIDs []datalog.Identity, v interface{}) err
 			newElem = reflect.New(elemType)
 		}
 
-		if err := dlreflect.ReadStruct(result, newElem.Interface(), d.Schema()); err != nil {
+		// Use ReadStructWithID to also populate the ID field
+		if err := dlreflect.ReadStructWithID(result, newElem.Interface(), d.Schema(), entityIDs[i]); err != nil {
 			return err
 		}
 

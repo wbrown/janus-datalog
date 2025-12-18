@@ -309,3 +309,43 @@ func ReadStruct(result map[string]interface{}, v interface{}, s schema.SchemaPro
 	}
 	return reader.Read(result, v)
 }
+
+// ReadStructWithID reads a struct from a pull result and also sets the ID field from the entityID.
+// This is used by PullInto to ensure the struct's ID field is populated.
+func ReadStructWithID(result map[string]interface{}, v interface{}, s schema.SchemaProvider, entityID datalog.Identity) error {
+	reader, err := NewStructReader(v, s)
+	if err != nil {
+		return err
+	}
+	if err := reader.Read(result, v); err != nil {
+		return err
+	}
+	// Set the ID field if the struct has one
+	return reader.SetIDField(v, entityID)
+}
+
+// SetIDField sets the ID field of a struct to the given entityID
+func (sr *StructReader) SetIDField(v interface{}, entityID datalog.Identity) error {
+	if sr.info.IDField == nil {
+		return nil // No ID field, nothing to set
+	}
+
+	val := reflect.ValueOf(v)
+	if val.Kind() != reflect.Ptr {
+		return fmt.Errorf("SetIDField requires pointer to struct")
+	}
+	structVal := val.Elem()
+	if structVal.Kind() != reflect.Struct {
+		return fmt.Errorf("expected pointer to struct, got pointer to %s", structVal.Kind())
+	}
+
+	idField := structVal.Field(sr.info.IDField.Index)
+	if sr.info.IDField.GoType.Kind() == reflect.Ptr {
+		newID := reflect.New(identityType)
+		newID.Elem().Set(reflect.ValueOf(entityID))
+		idField.Set(newID)
+	} else {
+		idField.Set(reflect.ValueOf(entityID))
+	}
+	return nil
+}

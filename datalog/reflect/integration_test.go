@@ -6,6 +6,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -597,6 +598,185 @@ func TestSaveStructUpsertSemantics(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Errorf("expected 1 age value (upsert), got %d: %v", len(results), results)
+	}
+}
+
+// PersonWithFriendRefs tests cardinality-many ref slices ([]datalog.Identity)
+type PersonWithFriendRefs struct {
+	ID      datalog.Identity   `datalog:"-,id"`
+	Name    string             `datalog:"name"`
+	Friends []datalog.Identity `datalog:"friends"`
+}
+
+// TestPullInto_CardinalityManyRefs verifies that PullInto correctly loads
+// all elements of cardinality-many ref slices ([]datalog.Identity).
+// This is a regression test for a bug where only the first ref was loaded.
+func TestPullInto_CardinalityManyRefs(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-test-many-refs")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(PersonWithFriendRefs{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create 5 friend entities
+	friends := make([]datalog.Identity, 5)
+	friendNames := []string{"Bob", "Carol", "Dave", "Eve", "Frank"}
+	for i, name := range friendNames {
+		friend := &PersonWithFriendRefs{Name: name}
+		tx := db.NewTransaction()
+		id, err := tx.SaveStruct(friend)
+		if err != nil {
+			t.Fatalf("failed to create friend %s: %v", name, err)
+		}
+		if _, err := tx.Commit(); err != nil {
+			t.Fatalf("failed to commit friend %s: %v", name, err)
+		}
+		friends[i] = id
+		t.Logf("Created friend %s with ID: %s", name, id.L85()[:20])
+	}
+
+	// Create Alice with all 5 friends
+	alice := &PersonWithFriendRefs{
+		Name:    "Alice",
+		Friends: friends,
+	}
+	tx := db.NewTransaction()
+	aliceID, err := tx.SaveStruct(alice)
+	if err != nil {
+		t.Fatalf("failed to create Alice: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit Alice: %v", err)
+	}
+	t.Logf("Created Alice with ID: %s", aliceID.L85()[:20])
+
+	// Verify all 5 friends are stored via direct query
+	tuples, err := db.ExecuteQueryWithInputs(
+		`[:find ?f :in $ ?alice :where [?alice :person-with-friend-refs/friends ?f]]`,
+		aliceID,
+	)
+	if err != nil {
+		t.Fatalf("direct query failed: %v", err)
+	}
+	t.Logf("Direct query found %d friends", len(tuples))
+	if len(tuples) != 5 {
+		t.Errorf("Direct query: expected 5 friends, got %d", len(tuples))
+	}
+
+	// Now test PullInto - this is where the bug manifests
+	var loaded PersonWithFriendRefs
+	if err := db.PullInto(aliceID, &loaded); err != nil {
+		t.Fatalf("PullInto failed: %v", err)
+	}
+
+	t.Logf("PullInto loaded %d friends", len(loaded.Friends))
+	if len(loaded.Friends) != 5 {
+		t.Errorf("PullInto: expected 5 friends, got %d (BUG: only first ref loaded)", len(loaded.Friends))
+		// Show which friends were loaded
+		for i, f := range loaded.Friends {
+			t.Logf("  loaded.Friends[%d] = %s", i, f.L85()[:20])
+		}
+	}
+
+	// Verify Name was loaded correctly
+	if loaded.Name != "Alice" {
+		t.Errorf("expected Name='Alice', got %q", loaded.Name)
+	}
+}
+
+// TestPullInto_CardinalityManyRefs_ManualSchema tests the same scenario
+// but with a manually-defined schema (like real-world usage) instead of SchemaFromStruct.
+// This reproduces a bug seen in narrative-generators where PullInto only returns the first ref.
+func TestPullInto_CardinalityManyRefs_ManualSchema(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-test-manual-schema")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Manually define schema (like real-world usage)
+	builder := schema.NewBuilder()
+	builder.Attribute(":person-with-friend-refs/name").Type(schema.TypeString).Add()
+	builder.Attribute(":person-with-friend-refs/friends").Type(schema.TypeRef).Many().Add()
+	manualSchema, err := builder.Build()
+	if err != nil {
+		t.Fatalf("failed to build schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, manualSchema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create 5 friend entities
+	friends := make([]datalog.Identity, 5)
+	friendNames := []string{"Bob", "Carol", "Dave", "Eve", "Frank"}
+	for i, name := range friendNames {
+		friend := &PersonWithFriendRefs{Name: name}
+		tx := db.NewTransaction()
+		id, err := tx.SaveStruct(friend)
+		if err != nil {
+			t.Fatalf("failed to create friend %s: %v", name, err)
+		}
+		if _, err := tx.Commit(); err != nil {
+			t.Fatalf("failed to commit friend %s: %v", name, err)
+		}
+		friends[i] = id
+		t.Logf("Created friend %s with ID: %s", name, id.L85()[:20])
+	}
+
+	// Create Alice with all 5 friends
+	alice := &PersonWithFriendRefs{
+		Name:    "Alice",
+		Friends: friends,
+	}
+	tx := db.NewTransaction()
+	aliceID, err := tx.SaveStruct(alice)
+	if err != nil {
+		t.Fatalf("failed to create Alice: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit Alice: %v", err)
+	}
+	t.Logf("Created Alice with ID: %s", aliceID.L85()[:20])
+
+	// Verify all 5 friends are stored via direct query
+	tuples, err := db.ExecuteQueryWithInputs(
+		`[:find ?f :in $ ?alice :where [?alice :person-with-friend-refs/friends ?f]]`,
+		aliceID,
+	)
+	if err != nil {
+		t.Fatalf("direct query failed: %v", err)
+	}
+	t.Logf("Direct query found %d friends", len(tuples))
+	if len(tuples) != 5 {
+		t.Errorf("Direct query: expected 5 friends, got %d", len(tuples))
+	}
+
+	// Now test PullInto - this is where the bug manifests with manual schema
+	var loaded PersonWithFriendRefs
+	if err := db.PullInto(aliceID, &loaded); err != nil {
+		t.Fatalf("PullInto failed: %v", err)
+	}
+
+	t.Logf("PullInto loaded %d friends", len(loaded.Friends))
+	if len(loaded.Friends) != 5 {
+		t.Errorf("PullInto with manual schema: expected 5 friends, got %d (BUG: only first ref loaded)", len(loaded.Friends))
+		for i, f := range loaded.Friends {
+			t.Logf("  loaded.Friends[%d] = %s", i, f.L85()[:20])
+		}
 	}
 }
 
