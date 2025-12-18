@@ -65,14 +65,24 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 		case ":where":
 			// Parse where patterns
 			for i < len(node.Nodes) && node.Nodes[i].Type != edn.NodeKeyword {
-				if node.Nodes[i].Type != edn.NodeVector {
-					return nil, fmt.Errorf("expected vector in :where clause, got %v", node.Nodes[i].Type)
+				var clause query.Clause
+				var err error
+
+				switch node.Nodes[i].Type {
+				case edn.NodeVector:
+					// Standard pattern: [?e :attr ?v] or [(fn ...) ?binding]
+					clause, err = parsePattern(&node.Nodes[i])
+				case edn.NodeList:
+					// List form: (not ...), (or ...), (not-join ...), (or-join ...)
+					clause, err = parseListClause(&node.Nodes[i])
+				default:
+					return nil, fmt.Errorf("expected vector or list in :where clause, got %v", node.Nodes[i].Type)
 				}
-				pattern, err := parsePattern(&node.Nodes[i])
+
 				if err != nil {
 					return nil, fmt.Errorf("error parsing pattern: %w", err)
 				}
-				q.Where = append(q.Where, pattern)
+				q.Where = append(q.Where, clause)
 				i++
 			}
 
@@ -631,6 +641,221 @@ func ParseMultipleQueries(input string) ([]*query.Query, error) {
 	return queries, nil
 }
 
+// parseListClause parses a list-form clause: (not ...), (or ...), (not-join ...), (or-join ...)
+func parseListClause(node *edn.Node) (query.Clause, error) {
+	if node.Type != edn.NodeList {
+		return nil, fmt.Errorf("list clause must be a list")
+	}
+
+	if len(node.Nodes) < 2 {
+		return nil, fmt.Errorf("list clause must have at least a keyword and one element")
+	}
+
+	// First element must be a symbol (not, or, not-join, or-join)
+	if node.Nodes[0].Type != edn.NodeSymbol {
+		return nil, fmt.Errorf("list clause must start with a symbol, got %v", node.Nodes[0].Type)
+	}
+
+	keyword := node.Nodes[0].Value
+
+	switch keyword {
+	case "not":
+		return parseNotClause(node)
+	case "not-join":
+		return parseNotJoinClause(node)
+	case "or":
+		return parseOrClause(node)
+	case "or-join":
+		return parseOrJoinClause(node)
+	default:
+		return nil, fmt.Errorf("unknown list clause type: %s", keyword)
+	}
+}
+
+// parseNotClause parses (not [clause1] [clause2] ...)
+func parseNotClause(node *edn.Node) (*query.NotClause, error) {
+	// First element is "not" symbol, remaining are clauses
+	var clauses []query.Clause
+	for i := 1; i < len(node.Nodes); i++ {
+		clause, err := parseWhereElement(&node.Nodes[i])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing not clause element %d: %w", i, err)
+		}
+		clauses = append(clauses, clause)
+	}
+
+	if len(clauses) == 0 {
+		return nil, fmt.Errorf("not clause must have at least one inner clause")
+	}
+
+	return &query.NotClause{Clauses: clauses}, nil
+}
+
+// parseNotJoinClause parses (not-join [?x ?y] [clause1] [clause2] ...)
+func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
+	if len(node.Nodes) < 3 {
+		return nil, fmt.Errorf("not-join clause must have join vars and at least one clause")
+	}
+
+	// Second element must be join vars vector
+	if node.Nodes[1].Type != edn.NodeVector {
+		return nil, fmt.Errorf("not-join second element must be a vector of join variables, got %v", node.Nodes[1].Type)
+	}
+
+	// Parse join variables
+	joinVars, err := parseJoinVars(&node.Nodes[1])
+	if err != nil {
+		return nil, fmt.Errorf("error parsing not-join vars: %w", err)
+	}
+
+	// Parse remaining elements as clauses
+	var clauses []query.Clause
+	for i := 2; i < len(node.Nodes); i++ {
+		clause, err := parseWhereElement(&node.Nodes[i])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing not-join clause element %d: %w", i, err)
+		}
+		clauses = append(clauses, clause)
+	}
+
+	if len(clauses) == 0 {
+		return nil, fmt.Errorf("not-join clause must have at least one inner clause")
+	}
+
+	return &query.NotJoinClause{JoinVars: joinVars, Clauses: clauses}, nil
+}
+
+// parseOrClause parses (or branch1 branch2 ...)
+func parseOrClause(node *edn.Node) (*query.OrClause, error) {
+	// First element is "or" symbol, remaining are branches
+	var branches [][]query.Clause
+	for i := 1; i < len(node.Nodes); i++ {
+		branch, err := parseBranch(&node.Nodes[i])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing or branch %d: %w", i, err)
+		}
+		branches = append(branches, branch)
+	}
+
+	if len(branches) < 2 {
+		return nil, fmt.Errorf("or clause must have at least two branches")
+	}
+
+	return &query.OrClause{Branches: branches}, nil
+}
+
+// parseOrJoinClause parses (or-join [?x] branch1 branch2 ...)
+func parseOrJoinClause(node *edn.Node) (*query.OrJoinClause, error) {
+	if len(node.Nodes) < 4 {
+		return nil, fmt.Errorf("or-join clause must have join vars and at least two branches")
+	}
+
+	// Second element must be join vars vector
+	if node.Nodes[1].Type != edn.NodeVector {
+		return nil, fmt.Errorf("or-join second element must be a vector of join variables, got %v", node.Nodes[1].Type)
+	}
+
+	// Parse join variables
+	joinVars, err := parseJoinVars(&node.Nodes[1])
+	if err != nil {
+		return nil, fmt.Errorf("error parsing or-join vars: %w", err)
+	}
+
+	// Parse remaining elements as branches
+	var branches [][]query.Clause
+	for i := 2; i < len(node.Nodes); i++ {
+		branch, err := parseBranch(&node.Nodes[i])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing or-join branch %d: %w", i, err)
+		}
+		branches = append(branches, branch)
+	}
+
+	if len(branches) < 2 {
+		return nil, fmt.Errorf("or-join clause must have at least two branches")
+	}
+
+	return &query.OrJoinClause{JoinVars: joinVars, Branches: branches}, nil
+}
+
+// parseJoinVars parses a vector of join variables [?x ?y ...]
+func parseJoinVars(node *edn.Node) ([]query.Symbol, error) {
+	if node.Type != edn.NodeVector {
+		return nil, fmt.Errorf("join vars must be a vector")
+	}
+
+	if len(node.Nodes) == 0 {
+		return nil, fmt.Errorf("join vars cannot be empty")
+	}
+
+	var vars []query.Symbol
+	for i, elem := range node.Nodes {
+		if elem.Type != edn.NodeSymbol {
+			return nil, fmt.Errorf("join variable %d must be a symbol, got %v", i, elem.Type)
+		}
+		sym := query.Symbol(elem.Value)
+		if !sym.IsVariable() {
+			return nil, fmt.Errorf("join variable %d must start with ?, got %s", i, sym)
+		}
+		vars = append(vars, sym)
+	}
+
+	return vars, nil
+}
+
+// parseBranch parses a single branch of an or clause
+// Can be a single clause [?e :attr ?v] or an (and ...) form for multiple clauses
+func parseBranch(node *edn.Node) ([]query.Clause, error) {
+	switch node.Type {
+	case edn.NodeVector:
+		// Single clause: [?e :attr ?v]
+		clause, err := parsePattern(node)
+		if err != nil {
+			return nil, err
+		}
+		return []query.Clause{clause}, nil
+
+	case edn.NodeList:
+		// Check for (and ...) form
+		if len(node.Nodes) >= 1 && node.Nodes[0].Type == edn.NodeSymbol && node.Nodes[0].Value == "and" {
+			var clauses []query.Clause
+			for i := 1; i < len(node.Nodes); i++ {
+				clause, err := parseWhereElement(&node.Nodes[i])
+				if err != nil {
+					return nil, fmt.Errorf("error parsing and clause %d: %w", i, err)
+				}
+				clauses = append(clauses, clause)
+			}
+			if len(clauses) == 0 {
+				return nil, fmt.Errorf("and branch must have at least one clause")
+			}
+			return clauses, nil
+		}
+		// Otherwise it's a single list clause like a predicate
+		clause, err := parseListClause(node)
+		if err != nil {
+			return nil, err
+		}
+		return []query.Clause{clause}, nil
+
+	default:
+		return nil, fmt.Errorf("or branch must be a vector or list, got %v", node.Type)
+	}
+}
+
+// parseWhereElement parses a single element that can appear in a where clause
+// This handles both vectors (data patterns, expressions) and lists (not, or, predicates)
+func parseWhereElement(node *edn.Node) (query.Clause, error) {
+	switch node.Type {
+	case edn.NodeVector:
+		return parsePattern(node)
+	case edn.NodeList:
+		return parseListClause(node)
+	default:
+		return nil, fmt.Errorf("where element must be a vector or list, got %v", node.Type)
+	}
+}
+
 // Utility functions
 
 // ExtractVariables returns all unique variables from patterns
@@ -675,6 +900,67 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 				}
 			}
 			// Note: Input variables are consumed, not provided
+
+		case *query.NotClause:
+			// NOT doesn't provide new variables, but recursively extract from inner clauses
+			// (to check they're all bound before NOT executes)
+			innerVars := ExtractVariables(p.Clauses)
+			for _, v := range innerVars {
+				if !seen[v] {
+					seen[v] = true
+					vars = append(vars, v)
+				}
+			}
+
+		case *query.NotJoinClause:
+			// NOT-JOIN only exposes join vars
+			for _, v := range p.JoinVars {
+				if !seen[v] {
+					seen[v] = true
+					vars = append(vars, v)
+				}
+			}
+
+		case *query.OrClause:
+			// OR provides intersection of all branches
+			if len(p.Branches) > 0 {
+				// Get vars from first branch
+				firstBranchVars := make(map[query.Symbol]bool)
+				for _, v := range ExtractVariables(p.Branches[0]) {
+					firstBranchVars[v] = true
+				}
+
+				// Intersect with remaining branches
+				for _, branch := range p.Branches[1:] {
+					branchVars := make(map[query.Symbol]bool)
+					for _, v := range ExtractVariables(branch) {
+						branchVars[v] = true
+					}
+					// Keep only vars in both
+					for v := range firstBranchVars {
+						if !branchVars[v] {
+							delete(firstBranchVars, v)
+						}
+					}
+				}
+
+				// Add intersection to result
+				for v := range firstBranchVars {
+					if !seen[v] {
+						seen[v] = true
+						vars = append(vars, v)
+					}
+				}
+			}
+
+		case *query.OrJoinClause:
+			// OR-JOIN only exposes join vars
+			for _, v := range p.JoinVars {
+				if !seen[v] {
+					seen[v] = true
+					vars = append(vars, v)
+				}
+			}
 		}
 	}
 

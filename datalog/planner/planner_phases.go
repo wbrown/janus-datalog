@@ -8,7 +8,7 @@ import (
 )
 
 // createPhases groups patterns into execution phases based on dependencies
-func (p *Planner) createPhases(dataPatterns []*query.DataPattern, predicates []query.Predicate, expressions []*query.Expression, subqueries []*query.SubqueryPattern, findElements []query.FindElement, inputSymbols map[query.Symbol]bool) []Phase {
+func (p *Planner) createPhases(dataPatterns []*query.DataPattern, predicates []query.Predicate, expressions []*query.Expression, subqueries []*query.SubqueryPattern, notClauses []*query.NotClause, notJoinClauses []*query.NotJoinClause, orClauses []*query.OrClause, orJoinClauses []*query.OrJoinClause, findElements []query.FindElement, inputSymbols map[query.Symbol]bool) []Phase {
 	// Extract symbols from findElements for pattern ordering
 	var findVars []query.Symbol
 	for _, elem := range findElements {
@@ -22,7 +22,9 @@ func (p *Planner) createPhases(dataPatterns []*query.DataPattern, predicates []q
 
 	// Check if we should use fine-grained phases
 	if p.options.EnableFineGrainedPhases {
-		return p.createFineGrainedPhases(dataPatterns, predicates, expressions, subqueries, findElements, inputSymbols)
+		return p.createFineGrainedPhases(dataPatterns, predicates, expressions, subqueries,
+			notClauses, notJoinClauses, orClauses, orJoinClauses,
+			findElements, inputSymbols)
 	}
 
 	// Default: group patterns by their primary entity symbol (like Clojure planner)
@@ -144,6 +146,25 @@ func (p *Planner) createPhases(dataPatterns []*query.DataPattern, predicates []q
 		}
 	}
 
+	// Assign OR/OR-JOIN clauses to phases (they are data sources that provide symbols)
+	p.assignOrClausesToPhases(phases, orClauses, orJoinClauses)
+
+	// Mark OR clause outputs as available
+	for _, orClause := range orClauses {
+		syms := extractOrClauseSymbols(orClause)
+		for _, sym := range syms.Provides {
+			availableSymbols[sym] = true
+		}
+	}
+	for _, orJoinClause := range orJoinClauses {
+		for _, sym := range orJoinClause.JoinVars {
+			availableSymbols[sym] = true
+		}
+	}
+
+	// Assign NOT/NOT-JOIN clauses to phases (they filter based on required symbols)
+	p.assignNotClausesToPhases(phases, notClauses, notJoinClauses)
+
 	// Extract symbols from findElements for Keep calculation
 	findSymbols := make([]query.Symbol, 0, len(findElements))
 	for _, elem := range findElements {
@@ -167,7 +188,7 @@ func (p *Planner) createPhases(dataPatterns []*query.DataPattern, predicates []q
 }
 
 // createFineGrainedPhases creates smaller, more focused phases to avoid large cross-products
-func (p *Planner) createFineGrainedPhases(dataPatterns []*query.DataPattern, predicates []query.Predicate, expressions []*query.Expression, subqueries []*query.SubqueryPattern, findElements []query.FindElement, inputSymbols map[query.Symbol]bool) []Phase {
+func (p *Planner) createFineGrainedPhases(dataPatterns []*query.DataPattern, predicates []query.Predicate, expressions []*query.Expression, subqueries []*query.SubqueryPattern, notClauses []*query.NotClause, notJoinClauses []*query.NotJoinClause, orClauses []*query.OrClause, orJoinClauses []*query.OrJoinClause, findElements []query.FindElement, inputSymbols map[query.Symbol]bool) []Phase {
 	// Extract symbols from findElements for pattern ordering
 	var findVars []query.Symbol
 	for _, elem := range findElements {
@@ -428,6 +449,25 @@ func (p *Planner) createFineGrainedPhases(dataPatterns []*query.DataPattern, pre
 		}
 	}
 
+	// Assign OR/OR-JOIN clauses to phases (they are data sources that provide symbols)
+	p.assignOrClausesToPhases(phases, orClauses, orJoinClauses)
+
+	// Mark OR clause outputs as available
+	for _, orClause := range orClauses {
+		syms := extractOrClauseSymbols(orClause)
+		for _, sym := range syms.Provides {
+			availableSymbols[sym] = true
+		}
+	}
+	for _, orJoinClause := range orJoinClauses {
+		for _, sym := range orJoinClause.JoinVars {
+			availableSymbols[sym] = true
+		}
+	}
+
+	// Assign NOT/NOT-JOIN clauses to phases (they filter based on required symbols)
+	p.assignNotClausesToPhases(phases, notClauses, notJoinClauses)
+
 	// Extract symbols from findElements for Keep calculation
 	findSymbols := make([]query.Symbol, 0, len(findElements))
 	for _, elem := range findElements {
@@ -616,5 +656,102 @@ func (p *Planner) determinePhaseKeepSymbols(phases []Phase, findVars []query.Sym
 
 		// Debug: log what we're keeping
 		// fmt.Printf("DEBUG Phase %d: Provides=%v, Keep=%v\n", i+1, phases[i].Provides, keepSlice)
+	}
+}
+
+// assignOrClausesToPhases assigns OR and OR-JOIN clauses to appropriate phases
+// OR clauses are data sources that provide symbols (like patterns)
+func (p *Planner) assignOrClausesToPhases(phases []Phase, orClauses []*query.OrClause, orJoinClauses []*query.OrJoinClause) {
+	if len(phases) == 0 {
+		return
+	}
+
+	// OR clauses don't require prior bindings - they are data sources
+	// Assign them to the first phase
+	for _, orClause := range orClauses {
+		phases[0].OrClauses = append(phases[0].OrClauses, orClause)
+	}
+
+	for _, orJoinClause := range orJoinClauses {
+		phases[0].OrJoinClauses = append(phases[0].OrJoinClauses, orJoinClause)
+	}
+}
+
+// assignNotClausesToPhases assigns NOT and NOT-JOIN clauses to appropriate phases
+// NOT clauses are filters that require prior bindings
+func (p *Planner) assignNotClausesToPhases(phases []Phase, notClauses []*query.NotClause, notJoinClauses []*query.NotJoinClause) {
+	if len(phases) == 0 {
+		return
+	}
+
+	// For each NOT clause, find the earliest phase where all required symbols are available
+	for _, notClause := range notClauses {
+		syms := extractNotClauseSymbols(notClause)
+		assigned := false
+
+		for i := range phases {
+			// Collect all symbols available after this phase
+			available := make(map[query.Symbol]bool)
+			for _, sym := range phases[i].Available {
+				available[sym] = true
+			}
+			for _, sym := range phases[i].Provides {
+				available[sym] = true
+			}
+
+			// Check if all required symbols are available
+			allAvailable := true
+			for _, req := range syms.Requires {
+				if !available[req] {
+					allAvailable = false
+					break
+				}
+			}
+
+			if allAvailable {
+				phases[i].NotClauses = append(phases[i].NotClauses, notClause)
+				assigned = true
+				break
+			}
+		}
+
+		// If not assigned yet, add to the last phase
+		if !assigned && len(phases) > 0 {
+			phases[len(phases)-1].NotClauses = append(phases[len(phases)-1].NotClauses, notClause)
+		}
+	}
+
+	// Same logic for NOT-JOIN clauses
+	for _, notJoinClause := range notJoinClauses {
+		syms := extractNotJoinClauseSymbols(notJoinClause)
+		assigned := false
+
+		for i := range phases {
+			available := make(map[query.Symbol]bool)
+			for _, sym := range phases[i].Available {
+				available[sym] = true
+			}
+			for _, sym := range phases[i].Provides {
+				available[sym] = true
+			}
+
+			allAvailable := true
+			for _, req := range syms.Requires {
+				if !available[req] {
+					allAvailable = false
+					break
+				}
+			}
+
+			if allAvailable {
+				phases[i].NotJoinClauses = append(phases[i].NotJoinClauses, notJoinClause)
+				assigned = true
+				break
+			}
+		}
+
+		if !assigned && len(phases) > 0 {
+			phases[len(phases)-1].NotJoinClauses = append(phases[len(phases)-1].NotJoinClauses, notJoinClause)
+		}
 	}
 }

@@ -32,6 +32,10 @@ type Phase struct {
 	Expressions            []ExpressionPlan           // Expressions to evaluate in this phase
 	Subqueries             []SubqueryPlan             // Subqueries to execute in this phase
 	DecorrelatedSubqueries []DecorrelatedSubqueryPlan // Decorrelated subquery groups
+	NotClauses             []*query.NotClause         // NOT clauses to apply (anti-join filtering)
+	NotJoinClauses         []*query.NotJoinClause     // NOT-JOIN clauses to apply
+	OrClauses              []*query.OrClause          // OR clauses to execute (union)
+	OrJoinClauses          []*query.OrJoinClause      // OR-JOIN clauses to execute
 	Available              []query.Symbol             // Symbols available from previous phases (including bindings)
 	Provides               []query.Symbol             // Symbols this phase provides
 	Keep                   []query.Symbol             // Symbols to keep for later phases

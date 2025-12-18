@@ -29,6 +29,25 @@ func (e *Executor) applyExpressionsAndPredicates(ctx Context, phase *planner.Pha
 	// Keep track of relation groups - they might join after expressions add symbols
 	groups := relations
 
+	// Execute OR clauses first (they are data sources that provide symbols)
+	for _, orClause := range phase.OrClauses {
+		orResult, err := e.executeOrClause(ctx, orClause, groups)
+		if err != nil {
+			return nil, fmt.Errorf("OR clause execution failed: %w", err)
+		}
+		groups = append(groups, orResult)
+		groups = groups.Collapse(ctx)
+	}
+
+	for _, orJoinClause := range phase.OrJoinClauses {
+		orResult, err := e.executeOrJoinClause(ctx, orJoinClause, groups)
+		if err != nil {
+			return nil, fmt.Errorf("OR-JOIN clause execution failed: %w", err)
+		}
+		groups = append(groups, orResult)
+		groups = groups.Collapse(ctx)
+	}
+
 	// Apply expressions to each group
 	for _, exprPlan := range phase.Expressions {
 		// Skip expressions that were optimized by semantic rewriting
@@ -245,6 +264,29 @@ func (e *Executor) applyExpressionsAndPredicates(ctx Context, phase *planner.Pha
 
 		// Update groups with the result
 		groups = Relations{result}
+	}
+
+	// Execute NOT clauses (they filter based on anti-join)
+	for _, notClause := range phase.NotClauses {
+		if len(groups) != 1 {
+			return nil, fmt.Errorf("NOT clause requires single relation group, got %d", len(groups))
+		}
+		notResult, err := e.executeNotClause(ctx, notClause, groups[0])
+		if err != nil {
+			return nil, fmt.Errorf("NOT clause execution failed: %w", err)
+		}
+		groups = Relations{notResult}
+	}
+
+	for _, notJoinClause := range phase.NotJoinClauses {
+		if len(groups) != 1 {
+			return nil, fmt.Errorf("NOT-JOIN clause requires single relation group, got %d", len(groups))
+		}
+		notResult, err := e.executeNotJoinClause(ctx, notJoinClause, groups[0])
+		if err != nil {
+			return nil, fmt.Errorf("NOT-JOIN clause execution failed: %w", err)
+		}
+		groups = Relations{notResult}
 	}
 
 	// At this point, we should ideally have a single group

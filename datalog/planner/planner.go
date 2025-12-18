@@ -72,8 +72,12 @@ func (p *Planner) Plan(q *query.Query) (*QueryPlan, error) {
 // PlanWithBindings creates an optimized query plan with initial bindings
 // This is used for subqueries where input parameters are already bound
 func (p *Planner) PlanWithBindings(q *query.Query, initialBindings map[query.Symbol]bool) (*QueryPlan, error) {
-	// Separate patterns by type
-	dataPatterns, predicates, expressions, subqueries := p.separatePatterns(q.Where)
+	// Separate patterns by type (including NOT/OR clauses)
+	separated := p.separateAllClauses(q.Where)
+	dataPatterns := separated.DataPatterns
+	predicates := separated.Predicates
+	expressions := separated.Expressions
+	subqueries := separated.Subqueries
 
 	// Extract find symbols from FindElements
 	var findSymbols []query.Symbol
@@ -133,7 +137,10 @@ func (p *Planner) PlanWithBindings(q *query.Query, initialBindings map[query.Sym
 
 	// Create phases with the new types directly
 	// Pass q.Find ([]query.FindElement) to preserve aggregates in Phase.Find
-	phases := p.createPhases(dataPatterns, predicates, expressions, subqueries, q.Find, inputSymbols)
+	phases := p.createPhases(dataPatterns, predicates, expressions, subqueries,
+		separated.NotClauses, separated.NotJoinClauses,
+		separated.OrClauses, separated.OrJoinClauses,
+		q.Find, inputSymbols)
 
 	// Reorder phases to maximize symbol connectivity (if enabled)
 	if p.options.EnableDynamicReordering {
@@ -200,27 +207,50 @@ func (p *Planner) PlanWithBindings(q *query.Query, initialBindings map[query.Sym
 	}, nil
 }
 
+// SeparatedClauses holds the results of separating clauses by type
+type SeparatedClauses struct {
+	DataPatterns   []*query.DataPattern
+	Predicates     []query.Predicate
+	Expressions    []*query.Expression
+	Subqueries     []*query.SubqueryPattern
+	NotClauses     []*query.NotClause
+	NotJoinClauses []*query.NotJoinClause
+	OrClauses      []*query.OrClause
+	OrJoinClauses  []*query.OrJoinClause
+}
+
 // separatePatterns splits patterns into data patterns, predicates, expressions, and subqueries
 func (p *Planner) separatePatterns(patterns []query.Clause) ([]*query.DataPattern, []query.Predicate, []*query.Expression, []*query.SubqueryPattern) {
-	var dataPatterns []*query.DataPattern
-	var predicates []query.Predicate
-	var expressions []*query.Expression
-	var subqueries []*query.SubqueryPattern
+	separated := p.separateAllClauses(patterns)
+	return separated.DataPatterns, separated.Predicates, separated.Expressions, separated.Subqueries
+}
+
+// separateAllClauses splits patterns into all clause types including NOT/OR
+func (p *Planner) separateAllClauses(patterns []query.Clause) SeparatedClauses {
+	var result SeparatedClauses
 
 	for _, pattern := range patterns {
 		switch pat := pattern.(type) {
 		case *query.DataPattern:
-			dataPatterns = append(dataPatterns, pat)
+			result.DataPatterns = append(result.DataPatterns, pat)
 		case query.Predicate:
 			// New predicate interface types
-			predicates = append(predicates, pat)
+			result.Predicates = append(result.Predicates, pat)
 		case *query.Expression:
 			// Use new Expression directly
-			expressions = append(expressions, pat)
+			result.Expressions = append(result.Expressions, pat)
 		case *query.SubqueryPattern:
-			subqueries = append(subqueries, pat)
+			result.Subqueries = append(result.Subqueries, pat)
+		case *query.NotClause:
+			result.NotClauses = append(result.NotClauses, pat)
+		case *query.NotJoinClause:
+			result.NotJoinClauses = append(result.NotJoinClauses, pat)
+		case *query.OrClause:
+			result.OrClauses = append(result.OrClauses, pat)
+		case *query.OrJoinClause:
+			result.OrJoinClauses = append(result.OrJoinClauses, pat)
 		}
 	}
 
-	return dataPatterns, predicates, expressions, subqueries
+	return result
 }

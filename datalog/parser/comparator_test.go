@@ -196,7 +196,7 @@ func TestComparatorErrors(t *testing.T) {
 			name: "function not in vector",
 			input: `[:find ?x
                      :where (< ?x 10)]`,
-			error: "expected vector in :where clause",
+			error: "unknown list clause type",
 		},
 		{
 			name: "empty function",

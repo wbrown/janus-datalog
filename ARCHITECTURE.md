@@ -368,15 +368,15 @@ RelationInput iteration ensures correct aggregation scoping:
 ✅ Order-by clause
 ✅ Time extraction functions
 ✅ As-of queries
+✅ Pull API
+✅ NOT/OR clauses
 
 ### Not Implemented
 ❌ Rules system
-❌ Pull syntax
-❌ NOT/OR clauses
 ❌ Recursive queries
 ❌ Window functions
 
-## Datomic Compatibility (~40-50%)
+## Datomic Compatibility (~50-60%)
 
 ### Compatible Features
 - EAVT data model

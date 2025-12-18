@@ -15,6 +15,10 @@ func (*GroundPredicate) clause()   {}
 func (*MissingPredicate) clause()  {}
 func (*Expression) clause()        {}
 func (*Subquery) clause()          {}
+func (*NotClause) clause()         {}
+func (*NotJoinClause) clause()     {}
+func (*OrClause) clause()          {}
+func (*OrJoinClause) clause()      {}
 
 // Expression wraps a Function with an optional binding variable
 type Expression struct {
@@ -37,4 +41,96 @@ type Subquery struct {
 func (s *Subquery) String() string {
 	// Simplified string representation
 	return "[(q ...) binding]"
+}
+
+// NotClause represents a negation clause: (not [clauses...])
+// Filters tuples where the inner clauses match (anti-join)
+type NotClause struct {
+	Clauses []Clause // Inner clauses to negate
+}
+
+func (n *NotClause) String() string {
+	result := "(not"
+	for _, c := range n.Clauses {
+		result += " " + c.String()
+	}
+	result += ")"
+	return result
+}
+
+// NotJoinClause represents a not-join clause: (not-join [vars] [clauses...])
+// Like NotClause but with explicit join variables
+type NotJoinClause struct {
+	JoinVars []Symbol // Variables to join on (must be bound before this clause)
+	Clauses  []Clause // Inner clauses
+}
+
+func (n *NotJoinClause) String() string {
+	result := "(not-join ["
+	for i, v := range n.JoinVars {
+		if i > 0 {
+			result += " "
+		}
+		result += string(v)
+	}
+	result += "]"
+	for _, c := range n.Clauses {
+		result += " " + c.String()
+	}
+	result += ")"
+	return result
+}
+
+// OrClause represents a disjunction: (or branch1 branch2 ...)
+// Returns union of results from each branch
+type OrClause struct {
+	Branches [][]Clause // Each branch is a list of clauses
+}
+
+func (o *OrClause) String() string {
+	result := "(or"
+	for _, branch := range o.Branches {
+		if len(branch) == 1 {
+			result += " " + branch[0].String()
+		} else {
+			result += " (and"
+			for _, c := range branch {
+				result += " " + c.String()
+			}
+			result += ")"
+		}
+	}
+	result += ")"
+	return result
+}
+
+// OrJoinClause represents an or-join clause with explicit variable binding
+// (or-join [vars] branch1 branch2 ...)
+type OrJoinClause struct {
+	JoinVars []Symbol   // Variables to expose from union
+	Branches [][]Clause // Each branch is a list of clauses
+}
+
+func (o *OrJoinClause) String() string {
+	result := "(or-join ["
+	for i, v := range o.JoinVars {
+		if i > 0 {
+			result += " "
+		}
+		result += string(v)
+	}
+	result += "]"
+	for _, branch := range o.Branches {
+		if len(branch) == 1 {
+			result += " " + branch[0].String()
+		} else {
+			result += " (and"
+			for _, c := range branch {
+				result += " " + c.String()
+			}
+			result += ")"
+		}
+	}
+	result += ")"
+	return result
 }

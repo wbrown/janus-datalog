@@ -12,8 +12,9 @@ Janus-datalog implements a pragmatic subset of Datomic's Datalog query language 
 - ✅ BadgerDB persistent storage with EAVT model
 - ✅ Schema support: type validation, cardinality, uniqueness
 - ✅ Struct reflection API: Go structs ↔ datoms with automatic schema generation
+- ✅ NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)`
 - ❌ No rules or transaction functions
-- ❌ No NOT/OR clauses or entity API
+- ❌ No entity API
 - ❌ Single-node only (no distributed queries)
 
 ## Implemented Datomic Features
@@ -181,7 +182,46 @@ Functions that access the database for attribute lookups:
 
 These functions require the `$` database reference as their first argument.
 
-### 8. Time-Based Queries
+### 8. NOT/OR Clauses
+
+Logical negation and disjunction for complex query patterns:
+
+**NOT - Anti-join (exclude matching tuples):**
+```clojure
+[:find ?name
+ :where [?e :person/name ?name]
+        (not [?e :person/archived true])]
+```
+
+**NOT-JOIN - Anti-join with explicit join variables:**
+```clojure
+[:find ?name
+ :where [?e :person/name ?name]
+        (not-join [?e]
+                  [?e :archived true]
+                  [?e :deleted true])]
+```
+
+**OR - Union of branches:**
+```clojure
+[:find ?name
+ :where [?e :person/name ?name]
+        (or [?e :status "active"]
+            [?e :status "pending"])]
+```
+
+**OR-JOIN - Union with explicit join variables:**
+```clojure
+[:find ?name
+ :where [?e :person/name ?name]
+        (or-join [?e]
+                 [?e :user/status "active"]
+                 [?e :admin/status "enabled"])]
+```
+
+**Note:** Nested NOT/OR clauses support data patterns. Predicates and expressions inside NOT/OR are not yet supported.
+
+### 9. Time-Based Queries
 
 Query database as of specific times:
 
