@@ -6,11 +6,13 @@
 
 ## Resolution Summary
 
-Two fixes were applied:
+Three fixes were applied:
 
 1. **chooseIndex fix** (`matcher.go:354-374`): When E+A+V are all bound, was creating exact key range including Tx=0, missing all real datoms. Fixed to use `EncodePrefixRange` with (A, E, V) prefix.
 
 2. **Multi-position strategy** (`matcher_strategy.go:170-295`): Added `chooseBestMultiPositionStrategy` that chooses the position with most distinct values for iterator reuse, avoiding the NoReuse fallback that opened N separate iterators.
+
+3. **StreamingRelation handling** (`matcher_strategy.go:187-195`): `chooseBestMultiPositionStrategy` iterates the binding relation to count cardinalities. If the binding is a pure `StreamingRelation`, later code (matchWithIteratorReuse, matchWithHashJoin) would panic when calling `Iterator()` again. Fixed by materializing streaming relations at the start of `chooseBestMultiPositionStrategy` and returning the (possibly materialized) relation via an updated function signature.
 
 **Performance Result**: Query time improved from ~40ms to ~652µs (60x speedup)
 

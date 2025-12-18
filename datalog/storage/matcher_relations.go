@@ -77,7 +77,8 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 
 	// Analyze if we can use iterator reuse
-	strategy := analyzeReuseStrategy(pattern, bindingRel)
+	// For multi-position cases, the relation may be materialized to allow cardinality counting
+	strategy, bindingRel := analyzeReuseStrategy(pattern, bindingRel)
 
 	// Emit strategy selection event
 	if m.handler != nil {

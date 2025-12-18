@@ -34,8 +34,10 @@ type ReuseStrategy struct {
 	Index    int // Which index to use (maps to IndexType)
 }
 
-// analyzeReuseStrategy determines if and how iterator reuse can be applied
-func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) ReuseStrategy {
+// analyzeReuseStrategy determines if and how iterator reuse can be applied.
+// Returns the strategy and the (possibly materialized) binding relation.
+// For multi-position cases, the relation may be materialized to allow cardinality counting.
+func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) (ReuseStrategy, executor.Relation) {
 	// TESTING: Re-enable to verify performance with sorted keys
 	// Previous benchmarks showed 2x slower, but that may have been due to:
 	// 1. Not sorting the binding relation properly
@@ -45,7 +47,7 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 
 	// Original logic preserved below but bypassed:
 	if bindingRel == nil {
-		return ReuseStrategy{Type: NoReuse}
+		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
 
 	// CRITICAL FIX: Don't call IsEmpty() on StreamingRelations
@@ -59,7 +61,7 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 	// Check if empty - but only for MaterializedRelations where it's safe
 	if _, isStreaming := bindingRel.(*executor.StreamingRelation); !isStreaming {
 		if bindingRel.IsEmpty() {
-			return ReuseStrategy{Type: NoReuse}
+			return ReuseStrategy{Type: NoReuse}, bindingRel
 		}
 	}
 
@@ -153,10 +155,10 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 				Type:     SinglePositionReuse,
 				Position: position,
 				Index:    indexType,
-			}
+			}, bindingRel
 		}
 		// Fall back to NoReuse for patterns where reuse doesn't help
-		return ReuseStrategy{Type: NoReuse}
+		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
 
 	// Multiple positions bound - choose the most selective position for reuse
@@ -164,7 +166,7 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 		return chooseBestMultiPositionStrategy(pattern, boundPositions, bindingRel, bindingSet)
 	}
 
-	return ReuseStrategy{Type: NoReuse}
+	return ReuseStrategy{Type: NoReuse}, bindingRel
 }
 
 // chooseBestMultiPositionStrategy handles the case where multiple positions are bound
@@ -176,12 +178,22 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 // Example: Pattern [?e :entity/code ?code] with 81 entities and 1 code value:
 // - V has 1 distinct value (more selective)
 // - Use AVET index with A+V prefix to scan, filter by E hash set
+// Returns the strategy and the (possibly materialized) binding relation.
 func chooseBestMultiPositionStrategy(
 	pattern *query.DataPattern,
 	boundPositions []int,
 	bindingRel executor.Relation,
 	bindingSet map[query.Symbol]bool,
-) ReuseStrategy {
+) (ReuseStrategy, executor.Relation) {
+	// CRITICAL: Materialize streaming relations before iterating
+	// This function iterates the relation to count cardinalities, and later code
+	// (matchWithIteratorReuse, matchWithHashJoin) needs to iterate again.
+	// StreamingRelation panics if Iterator() is called twice without Materialize().
+	// See: TestMultiPositionWithStreamingBinding
+	if streamRel, isStreaming := bindingRel.(*executor.StreamingRelation); isStreaming {
+		bindingRel = streamRel.Materialize()
+	}
+
 	// Count distinct values for each bound position
 	positionCardinalities := make(map[int]int)
 	positionIndices := make(map[int]int) // column index in binding relation
@@ -260,7 +272,7 @@ func chooseBestMultiPositionStrategy(
 	}
 
 	if bestPosition == -1 {
-		return ReuseStrategy{Type: NoReuse}
+		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
 
 	// Determine index based on best position for reuse
@@ -284,12 +296,12 @@ func chooseBestMultiPositionStrategy(
 	case 3: // T has most distinct values - use TAEV
 		indexType = 4 // TAEV
 	default:
-		return ReuseStrategy{Type: NoReuse}
+		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
 
 	return ReuseStrategy{
 		Type:     SinglePositionReuse, // Reuse single position reuse logic
 		Position: bestPosition,
 		Index:    indexType,
-	}
+	}, bindingRel
 }

@@ -764,24 +764,27 @@ func BenchmarkPredicatePushdownImprovement(b *testing.B) {
 func setupBenchmarkDatabase(b *testing.B) (*Database, func()) {
 	db, cleanup := setupTestDatabaseForPushdown(b)
 
-	// Add 100,000 people for benchmark
-	tx := db.NewTransaction()
+	// Add 100,000 people for benchmark (batch every 10,000 to avoid Txn size limit)
 	nameAttr := datalog.NewKeyword(":person/name")
 	ageAttr := datalog.NewKeyword(":person/age")
 	cityAttr := datalog.NewKeyword(":person/city")
 
 	cities := []string{"NYC", "SF", "LA", "CHI", "BOS", "SEA", "DEN", "ATL", "MIA", "DAL"}
 
-	for i := 0; i < 100000; i++ {
-		person := datalog.NewIdentity(fmt.Sprintf("person%d", i))
-		tx.Add(person, nameAttr, fmt.Sprintf("Person_%d", i))
-		tx.Add(person, ageAttr, int64(i%100+1)) // Ages 1-100
-		tx.Add(person, cityAttr, cities[i%10])
-	}
+	batchSize := 1000
+	for batch := 0; batch < 100000/batchSize; batch++ {
+		tx := db.NewTransaction()
+		for i := batch * batchSize; i < (batch+1)*batchSize; i++ {
+			person := datalog.NewIdentity(fmt.Sprintf("person%d", i))
+			tx.Add(person, nameAttr, fmt.Sprintf("Person_%d", i))
+			tx.Add(person, ageAttr, int64(i%100+1)) // Ages 1-100
+			tx.Add(person, cityAttr, cities[i%10])
+		}
 
-	_, err := tx.Commit()
-	if err != nil {
-		b.Fatalf("Failed to commit transaction: %v", err)
+		_, err := tx.Commit()
+		if err != nil {
+			b.Fatalf("Failed to commit transaction batch %d: %v", batch, err)
+		}
 	}
 
 	return db, cleanup

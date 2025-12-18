@@ -87,9 +87,16 @@ func BenchmarkIteratorReuseClean(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
+				// Count results by iterating - Size() returns -1 for streaming relations
+				count := 0
+				it := result.Iterator()
+				for it.Next() {
+					count++
+				}
+				it.Close()
 				expectedSize := tc.numSymbols * 200
-				if result.Size() != expectedSize {
-					b.Fatalf("Expected %d bars, got %d", expectedSize, result.Size())
+				if count != expectedSize {
+					b.Fatalf("Expected %d bars, got %d", expectedSize, count)
 				}
 			}
 		})

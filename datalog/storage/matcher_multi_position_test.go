@@ -595,3 +595,87 @@ func collectEntityIDs(result executor.Relation) []string {
 	}
 	return ids
 }
+
+// TestMultiPositionWithStreamingBinding verifies that streaming relations work correctly
+// as binding inputs with multi-position binding. This tests the potential panic issue
+// where chooseBestMultiPositionStrategy iterates the relation, then matchWithIteratorReuse
+// tries to call Sorted() which needs Materialize().
+func TestMultiPositionWithStreamingBinding(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := NewDatabase(tempDir)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Setup: 10 entities with codes
+	tx := db.NewTransaction()
+	entities := make([]datalog.Identity, 10)
+
+	for i := 0; i < 10; i++ {
+		entityID := datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
+		entities[i] = entityID
+
+		code := "A"
+		if i >= 5 {
+			code = "B"
+		}
+		tx.Add(entityID, datalog.NewKeyword(":attr/code"), code)
+	}
+
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Create pattern: [?e :attr/code ?code]
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: "?e"},
+			query.Constant{Value: datalog.NewKeyword(":attr/code")},
+			query.Variable{Name: "?code"},
+		},
+	}
+
+	// Create binding tuples
+	bindingTuples := []executor.Tuple{
+		{entities[0], "A"},
+		{entities[2], "A"},
+		{entities[4], "A"},
+	}
+
+	// Create a STREAMING relation instead of materialized
+	// This simulates what happens when binding comes from a previous pattern match
+	tupleIter := &sliceTupleIterator{tuples: bindingTuples, idx: -1}
+	streamingBindingRel := executor.NewStreamingRelation(
+		[]query.Symbol{"?e", "?code"},
+		tupleIter,
+	)
+
+	// Create matcher and execute - this should NOT panic
+	matcher := NewBadgerMatcher(db.Store())
+	result, err := matcher.Match(pattern, executor.Relations{streamingBindingRel})
+	require.NoError(t, err, "Match should not error with streaming binding relation")
+
+	// Collect results
+	count := countResults(result)
+	require.Equal(t, 3, count, "Expected 3 results")
+}
+
+// sliceTupleIterator is a simple iterator over a slice of tuples for testing
+type sliceTupleIterator struct {
+	tuples []executor.Tuple
+	idx    int
+}
+
+func (it *sliceTupleIterator) Next() bool {
+	it.idx++
+	return it.idx < len(it.tuples)
+}
+
+func (it *sliceTupleIterator) Tuple() executor.Tuple {
+	if it.idx < 0 || it.idx >= len(it.tuples) {
+		return nil
+	}
+	return it.tuples[it.idx]
+}
+
+func (it *sliceTupleIterator) Close() error {
+	return nil
+}

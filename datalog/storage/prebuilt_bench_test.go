@@ -121,9 +121,14 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 					b.Fatalf("Match failed: %v", err)
 				}
 
-				// Force materialization
-				size := result.Size()
-				if size == 0 && tc.name != "BoundEntity_SingleBar" {
+				// Count results by iterating (Size() returns -1 for streaming)
+				count := 0
+				it := result.Iterator()
+				for it.Next() {
+					count++
+				}
+				it.Close()
+				if count == 0 && tc.name != "BoundEntity_SingleBar" {
 					b.Fatalf("Expected non-empty result for %s", tc.name)
 				}
 			}
@@ -180,9 +185,12 @@ func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 					},
 				}
 				openResult, _ := matcher.Match(openPattern, nil)
-				if openResult.Size() > 0 {
+				// Check if result has any tuples by iterating
+				openIt := openResult.Iterator()
+				if openIt.Next() {
 					barCount++
 				}
+				openIt.Close()
 			}
 			iter.Close()
 
