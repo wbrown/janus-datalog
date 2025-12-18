@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 	"github.com/wbrown/janus-datalog/datalog/storage"
@@ -853,5 +854,216 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 		t.Errorf("expected 1 query result, got %d", len(results))
 	} else {
 		t.Logf("Query result: name=%v age=%v", results[0][0], results[0][1])
+	}
+}
+
+// ============================================================================
+// Annotation tests for ReflectContext
+// ============================================================================
+
+// TestStructReader_AnnotationsEmitted verifies that StructReader emits annotation events.
+func TestStructReader_AnnotationsEmitted(t *testing.T) {
+	// Create test data to read
+	pullResult := map[string]interface{}{
+		"person/name": "Alice",
+		"person/age":  int64(30),
+	}
+
+	// Create struct reader with handler
+	var events []annotations.Event
+	handler := func(e annotations.Event) {
+		events = append(events, e)
+	}
+
+	reader, err := dlreflect.NewStructReaderWithHandler(&Person{}, nil, handler)
+	if err != nil {
+		t.Fatalf("failed to create reader: %v", err)
+	}
+
+	// Read into struct
+	var loaded Person
+	if err := reader.Read(pullResult, &loaded); err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+
+	// Verify struct was loaded correctly
+	if loaded.Name != "Alice" {
+		t.Errorf("expected Name=Alice, got %s", loaded.Name)
+	}
+	if loaded.Age != 30 {
+		t.Errorf("expected Age=30, got %d", loaded.Age)
+	}
+
+	// Verify events were emitted
+	if len(events) == 0 {
+		t.Fatal("expected annotation events to be emitted, got none")
+	}
+
+	// Check for read begin/complete events
+	var foundBegin, foundComplete bool
+	for _, e := range events {
+		if e.Name == annotations.ReflectReadBegin {
+			foundBegin = true
+			if e.Data["struct_type"] != "Person" {
+				t.Errorf("expected struct_type=Person, got %v", e.Data["struct_type"])
+			}
+			if e.Data["input_keys"] != 2 {
+				t.Errorf("expected input_keys=2, got %v", e.Data["input_keys"])
+			}
+		}
+		if e.Name == annotations.ReflectReadComplete {
+			foundComplete = true
+			if e.Data["success"] != true {
+				t.Errorf("expected success=true, got %v", e.Data["success"])
+			}
+		}
+	}
+
+	if !foundBegin {
+		t.Error("expected reflect/read.begin event")
+	}
+	if !foundComplete {
+		t.Error("expected reflect/read.complete event")
+	}
+}
+
+// TestStructReader_NoEventsWhenHandlerNil verifies zero-overhead when no handler.
+func TestStructReader_NoEventsWhenHandlerNil(t *testing.T) {
+	pullResult := map[string]interface{}{
+		"person/name": "Alice",
+		"person/age":  int64(30),
+	}
+
+	// Create reader without handler
+	reader, err := dlreflect.NewStructReader(&Person{}, nil)
+	if err != nil {
+		t.Fatalf("failed to create reader: %v", err)
+	}
+
+	// Read into struct - should work without panic
+	var loaded Person
+	if err := reader.Read(pullResult, &loaded); err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+
+	if loaded.Name != "Alice" {
+		t.Errorf("expected Name=Alice, got %s", loaded.Name)
+	}
+}
+
+// TestStructWriter_AnnotationsEmitted verifies that StructWriter emits annotation events.
+func TestStructWriter_AnnotationsEmitted(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-writer-annotation-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(Person{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create writer with handler
+	var events []annotations.Event
+	handler := func(e annotations.Event) {
+		events = append(events, e)
+	}
+
+	alice := Person{Name: "Alice", Age: 30}
+	writer, err := dlreflect.NewStructWriterWithHandler(&alice, schema, handler)
+	if err != nil {
+		t.Fatalf("failed to create writer: %v", err)
+	}
+
+	// Write struct
+	tx := db.NewTransaction()
+	entityID := datalog.NewIdentity("test:alice")
+	if err := writer.Write(tx, entityID, &alice); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	// Verify events were emitted
+	if len(events) == 0 {
+		t.Fatal("expected annotation events to be emitted, got none")
+	}
+
+	// Check for write begin/complete events
+	var foundBegin, foundComplete bool
+	for _, e := range events {
+		if e.Name == annotations.ReflectWriteBegin {
+			foundBegin = true
+			if e.Data["struct_type"] != "Person" {
+				t.Errorf("expected struct_type=Person, got %v", e.Data["struct_type"])
+			}
+		}
+		if e.Name == annotations.ReflectWriteComplete {
+			foundComplete = true
+			if e.Data["success"] != true {
+				t.Errorf("expected success=true, got %v", e.Data["success"])
+			}
+		}
+	}
+
+	if !foundBegin {
+		t.Error("expected reflect/write.begin event")
+	}
+	if !foundComplete {
+		t.Error("expected reflect/write.complete event")
+	}
+}
+
+// TestStructWriter_NoEventsWhenHandlerNil verifies zero-overhead when no handler.
+func TestStructWriter_NoEventsWhenHandlerNil(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-writer-no-annotation-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(Person{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create writer without handler
+	alice := Person{Name: "Alice", Age: 30}
+	writer, err := dlreflect.NewStructWriter(&alice, schema)
+	if err != nil {
+		t.Fatalf("failed to create writer: %v", err)
+	}
+
+	// Write struct - should work without panic
+	tx := db.NewTransaction()
+	entityID := datalog.NewIdentity("test:alice")
+	if err := writer.Write(tx, entityID, &alice); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	// Verify data was written
+	var loaded Person
+	if err := db.PullInto(entityID, &loaded); err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	if loaded.Name != "Alice" {
+		t.Errorf("expected Name=Alice, got %s", loaded.Name)
 	}
 }

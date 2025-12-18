@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -14,6 +15,7 @@ import (
 type StructReader struct {
 	info   *StructInfo
 	schema schema.SchemaProvider
+	ctx    ReflectContext
 }
 
 // NewStructReader creates a reader for a struct type
@@ -25,12 +27,37 @@ func NewStructReader(v interface{}, s schema.SchemaProvider) (*StructReader, err
 	return &StructReader{
 		info:   info,
 		schema: s,
+		ctx:    &BaseReflectContext{},
 	}, nil
+}
+
+// NewStructReaderWithHandler creates a reader with annotation support
+func NewStructReaderWithHandler(v interface{}, s schema.SchemaProvider, handler annotations.Handler) (*StructReader, error) {
+	info, err := GetStructInfoFromValue(v)
+	if err != nil {
+		return nil, err
+	}
+	return &StructReader{
+		info:   info,
+		schema: s,
+		ctx:    NewReflectContext(handler),
+	}, nil
+}
+
+// SetHandler configures the annotation handler
+func (sr *StructReader) SetHandler(handler annotations.Handler) {
+	sr.ctx = NewReflectContext(handler)
 }
 
 // Read populates struct from pull result map
 func (sr *StructReader) Read(result map[string]interface{}, v interface{}) error {
-	return sr.ReadWithDepth(result, v, 10) // Default max depth
+	sr.ctx.ReadBegin(sr.info.Name, len(sr.info.Fields), len(result))
+
+	err := sr.ReadWithDepth(result, v, 10) // Default max depth
+
+	sr.ctx.ReadComplete(sr.info.Name, err)
+
+	return err
 }
 
 // ReadWithDepth limits nested struct recursion
@@ -166,7 +193,7 @@ func (sr *StructReader) setSingleValue(fieldVal reflect.Value, fieldType reflect
 				return err
 			}
 			// Create temporary reader for nested struct
-			nestedReader := &StructReader{info: nestedInfo, schema: sr.schema}
+			nestedReader := &StructReader{info: nestedInfo, schema: sr.schema, ctx: sr.ctx}
 			return nestedReader.readIntoStruct(v, fieldVal, depth+1, maxDepth)
 
 		case datalog.Identity:
@@ -348,4 +375,12 @@ func (sr *StructReader) SetIDField(v interface{}, entityID datalog.Identity) err
 		idField.Set(reflect.ValueOf(entityID))
 	}
 	return nil
+}
+
+// ReadWithID reads a struct and sets the ID field
+func (sr *StructReader) ReadWithID(result map[string]interface{}, v interface{}, entityID datalog.Identity) error {
+	if err := sr.Read(result, v); err != nil {
+		return err
+	}
+	return sr.SetIDField(v, entityID)
 }

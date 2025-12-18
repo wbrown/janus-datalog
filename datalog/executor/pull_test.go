@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -423,5 +424,217 @@ func TestKeyName(t *testing.T) {
 				t.Errorf("KeyName(%q) = %q, expected %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+// ============================================================================
+// Annotation tests for PullContext
+// ============================================================================
+
+func TestPullExecutor_AnnotationsEmitted(t *testing.T) {
+	// Create test data
+	alice := datalog.NewIdentity("user:alice")
+	nameAttr := datalog.NewKeyword(":user/name")
+	ageAttr := datalog.NewKeyword(":user/age")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	puller := NewPullExecutor(matcher)
+
+	// Capture events
+	var events []annotations.Event
+	handler := func(e annotations.Event) {
+		events = append(events, e)
+	}
+	puller.SetHandler(handler)
+
+	// Parse and execute pull
+	pattern, err := parser.ParsePullPattern(`[:user/name :user/age]`)
+	if err != nil {
+		t.Fatalf("failed to parse pattern: %v", err)
+	}
+
+	result, err := puller.Pull(alice, pattern)
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Verify events were emitted
+	if len(events) == 0 {
+		t.Fatal("expected annotation events to be emitted, got none")
+	}
+
+	// Check for pull/begin and pull/complete
+	var foundBegin, foundComplete bool
+	for _, e := range events {
+		if e.Name == annotations.PullBegin {
+			foundBegin = true
+			if e.Data["spec_count"] != 2 {
+				t.Errorf("expected spec_count=2, got %v", e.Data["spec_count"])
+			}
+		}
+		if e.Name == annotations.PullComplete {
+			foundComplete = true
+			if e.Data["success"] != true {
+				t.Errorf("expected success=true, got %v", e.Data["success"])
+			}
+		}
+	}
+
+	if !foundBegin {
+		t.Error("expected pull/begin event")
+	}
+	if !foundComplete {
+		t.Error("expected pull/complete event")
+	}
+}
+
+func TestPullExecutor_NoEventsWhenHandlerNil(t *testing.T) {
+	// Create test data
+	alice := datalog.NewIdentity("user:alice")
+	nameAttr := datalog.NewKeyword(":user/name")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	puller := NewPullExecutor(matcher)
+	// Don't set handler - should use BasePullContext (no-op)
+
+	pattern, err := parser.ParsePullPattern(`[:user/name]`)
+	if err != nil {
+		t.Fatalf("failed to parse pattern: %v", err)
+	}
+
+	// This should work without panic and not emit any events
+	result, err := puller.Pull(alice, pattern)
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+
+	if result["user/name"] != "Alice" {
+		t.Errorf("expected name=Alice, got %v", result["user/name"])
+	}
+}
+
+func TestPullExecutor_CycleDetectedEvent(t *testing.T) {
+	// Create circular reference
+	entity1 := datalog.NewIdentity("entity:1")
+	entity2 := datalog.NewIdentity("entity:2")
+
+	nameAttr := datalog.NewKeyword(":entity/name")
+	nextAttr := datalog.NewKeyword(":entity/next")
+
+	datoms := []datalog.Datom{
+		{E: entity1, A: nameAttr, V: "Entity 1", Tx: 1},
+		{E: entity1, A: nextAttr, V: entity2, Tx: 1},
+		{E: entity2, A: nameAttr, V: "Entity 2", Tx: 1},
+		{E: entity2, A: nextAttr, V: entity1, Tx: 1}, // Circular reference
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	puller := NewPullExecutor(matcher)
+
+	// Capture events
+	var events []annotations.Event
+	handler := func(e annotations.Event) {
+		events = append(events, e)
+	}
+	puller.SetHandler(handler)
+
+	// Pattern that would recurse infinitely without cycle detection
+	pattern, err := parser.ParsePullPattern(`[:entity/name {:entity/next [:entity/name {:entity/next [:entity/name]}]}]`)
+	if err != nil {
+		t.Fatalf("failed to parse pattern: %v", err)
+	}
+
+	_, err = puller.Pull(entity1, pattern)
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+
+	// Check for cycle detected event
+	var foundCycle bool
+	for _, e := range events {
+		if e.Name == annotations.PullCycleDetected {
+			foundCycle = true
+			t.Logf("Cycle detected event: entity=%v depth=%v", e.Data["entity"], e.Data["depth"])
+		}
+	}
+
+	if !foundCycle {
+		t.Error("expected pull/cycle.detected event for circular reference")
+	}
+}
+
+func TestPullExecutor_NestedRefsEmitDepthEvents(t *testing.T) {
+	// Create 2-level nested reference
+	region := datalog.NewIdentity("region:us-west")
+	entity := datalog.NewIdentity("entity:apple")
+
+	regionNameAttr := datalog.NewKeyword(":region/name")
+	entityNameAttr := datalog.NewKeyword(":entity/name")
+	entityRegionAttr := datalog.NewKeyword(":entity/region")
+
+	datoms := []datalog.Datom{
+		{E: region, A: regionNameAttr, V: "US West", Tx: 1},
+		{E: entity, A: entityNameAttr, V: "Apple", Tx: 1},
+		{E: entity, A: entityRegionAttr, V: region, Tx: 1},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	puller := NewPullExecutor(matcher)
+
+	// Capture events
+	var events []annotations.Event
+	handler := func(e annotations.Event) {
+		events = append(events, e)
+	}
+	puller.SetHandler(handler)
+
+	// Nested pattern
+	pattern, err := parser.ParsePullPattern(`[:entity/name {:entity/region [:region/name]}]`)
+	if err != nil {
+		t.Fatalf("failed to parse pattern: %v", err)
+	}
+
+	result, err := puller.Pull(entity, pattern)
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+
+	// Verify result
+	nestedRegion := result["entity/region"].(map[string]interface{})
+	if nestedRegion["region/name"] != "US West" {
+		t.Errorf("expected region/name=US West, got %v", nestedRegion["region/name"])
+	}
+
+	// Check for nested begin/complete events
+	var nestedBeginCount, nestedCompleteCount int
+	for _, e := range events {
+		if e.Name == annotations.PullNestedBegin {
+			nestedBeginCount++
+			t.Logf("Nested begin: parent=%v attr=%v ref=%v depth=%v",
+				e.Data["parent_entity"], e.Data["attr"], e.Data["ref_entity"], e.Data["depth"])
+		}
+		if e.Name == annotations.PullNestedComplete {
+			nestedCompleteCount++
+		}
+	}
+
+	if nestedBeginCount == 0 {
+		t.Error("expected pull/nested.begin events for nested ref")
+	}
+	if nestedCompleteCount == 0 {
+		t.Error("expected pull/nested.complete events for nested ref")
 	}
 }
