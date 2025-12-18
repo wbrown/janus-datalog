@@ -34,8 +34,10 @@ type ReuseStrategy struct {
 	Index    int // Which index to use (maps to IndexType)
 }
 
-// analyzeReuseStrategy determines if and how iterator reuse can be applied
-func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) ReuseStrategy {
+// analyzeReuseStrategy determines if and how iterator reuse can be applied.
+// Returns the strategy and the (possibly materialized) binding relation.
+// For multi-position cases, the relation may be materialized to allow cardinality counting.
+func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relation) (ReuseStrategy, executor.Relation) {
 	// TESTING: Re-enable to verify performance with sorted keys
 	// Previous benchmarks showed 2x slower, but that may have been due to:
 	// 1. Not sorting the binding relation properly
@@ -45,7 +47,7 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 
 	// Original logic preserved below but bypassed:
 	if bindingRel == nil {
-		return ReuseStrategy{Type: NoReuse}
+		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
 
 	// CRITICAL FIX: Don't call IsEmpty() on StreamingRelations
@@ -59,7 +61,7 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 	// Check if empty - but only for MaterializedRelations where it's safe
 	if _, isStreaming := bindingRel.(*executor.StreamingRelation); !isStreaming {
 		if bindingRel.IsEmpty() {
-			return ReuseStrategy{Type: NoReuse}
+			return ReuseStrategy{Type: NoReuse}, bindingRel
 		}
 	}
 
@@ -153,17 +155,153 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 				Type:     SinglePositionReuse,
 				Position: position,
 				Index:    indexType,
-			}
+			}, bindingRel
 		}
 		// Fall back to NoReuse for patterns where reuse doesn't help
-		return ReuseStrategy{Type: NoReuse}
+		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
 
-	// Multiple positions bound - future optimization
+	// Multiple positions bound - choose the most selective position for reuse
 	if len(boundPositions) > 1 {
-		// For now, no reuse. Future: implement merge join
-		return ReuseStrategy{Type: NoReuse}
+		return chooseBestMultiPositionStrategy(pattern, boundPositions, bindingRel, bindingSet)
 	}
 
-	return ReuseStrategy{Type: NoReuse}
+	return ReuseStrategy{Type: NoReuse}, bindingRel
+}
+
+// chooseBestMultiPositionStrategy handles the case where multiple positions are bound
+// from the binding relation. It chooses the most selective position for iterator reuse.
+//
+// Key insight: When both E and V are bound, choose the position with FEWER distinct
+// values as the grouping dimension. The other position will use hash-based filtering.
+//
+// Example: Pattern [?e :entity/code ?code] with 81 entities and 1 code value:
+// - V has 1 distinct value (more selective)
+// - Use AVET index with A+V prefix to scan, filter by E hash set
+// Returns the strategy and the (possibly materialized) binding relation.
+func chooseBestMultiPositionStrategy(
+	pattern *query.DataPattern,
+	boundPositions []int,
+	bindingRel executor.Relation,
+	bindingSet map[query.Symbol]bool,
+) (ReuseStrategy, executor.Relation) {
+	// CRITICAL: Materialize streaming relations before iterating
+	// This function iterates the relation to count cardinalities, and later code
+	// (matchWithIteratorReuse, matchWithHashJoin) needs to iterate again.
+	// StreamingRelation panics if Iterator() is called twice without Materialize().
+	// See: TestMultiPositionWithStreamingBinding
+	if streamRel, isStreaming := bindingRel.(*executor.StreamingRelation); isStreaming {
+		bindingRel = streamRel.Materialize()
+	}
+
+	// Count distinct values for each bound position
+	positionCardinalities := make(map[int]int)
+	positionIndices := make(map[int]int) // column index in binding relation
+
+	// Build position-to-column-index mapping
+	for i, pos := range boundPositions {
+		_ = i // unused
+		var varName query.Symbol
+		switch pos {
+		case 0: // E
+			if v, ok := pattern.GetE().(query.Variable); ok {
+				varName = v.Name
+			}
+		case 1: // A
+			if v, ok := pattern.GetA().(query.Variable); ok {
+				varName = v.Name
+			}
+		case 2: // V
+			if v, ok := pattern.GetV().(query.Variable); ok {
+				varName = v.Name
+			}
+		case 3: // T
+			if len(pattern.Elements) > 3 {
+				if v, ok := pattern.GetT().(query.Variable); ok {
+					varName = v.Name
+				}
+			}
+		}
+
+		if varName == "" {
+			continue
+		}
+
+		// Find column index in binding relation
+		for colIdx, col := range bindingRel.Columns() {
+			if col == varName {
+				positionIndices[pos] = colIdx
+				break
+			}
+		}
+	}
+
+	// Count distinct values for each position
+	distinctValues := make(map[int]map[interface{}]bool)
+	for pos := range positionIndices {
+		distinctValues[pos] = make(map[interface{}]bool)
+	}
+
+	// Iterate through binding relation to count distinct values
+	it := bindingRel.Iterator()
+	for it.Next() {
+		tuple := it.Tuple()
+		for pos, colIdx := range positionIndices {
+			if colIdx < len(tuple) {
+				distinctValues[pos][tuple[colIdx]] = true
+			}
+		}
+	}
+	it.Close()
+
+	// Record cardinalities
+	for pos := range positionIndices {
+		positionCardinalities[pos] = len(distinctValues[pos])
+	}
+
+	// Find the position with the MOST distinct values
+	// This is the position we want to use for iterator reuse (seeking)
+	// The position with fewer distinct values becomes the grouping/hash dimension
+	bestPosition := -1
+	maxCardinality := 0
+	for pos, card := range positionCardinalities {
+		if card > maxCardinality {
+			maxCardinality = card
+			bestPosition = pos
+		}
+	}
+
+	if bestPosition == -1 {
+		return ReuseStrategy{Type: NoReuse}, bindingRel
+	}
+
+	// Determine index based on best position for reuse
+	var indexType int
+	switch bestPosition {
+	case 0: // E has most distinct values - use AEVT or EAVT
+		// Check if A is constant
+		if _, isConstant := pattern.GetA().(query.Constant); isConstant {
+			indexType = 1 // AEVT - A is constant, seek by E
+		} else {
+			indexType = 0 // EAVT - seek by E
+		}
+	case 1: // A has most distinct values - use AEVT
+		indexType = 1 // AEVT
+	case 2: // V has most distinct values - use AVET or VAET
+		if _, isConstant := pattern.GetA().(query.Constant); isConstant {
+			indexType = 2 // AVET - A is constant, seek by V
+		} else {
+			indexType = 3 // VAET - seek by V
+		}
+	case 3: // T has most distinct values - use TAEV
+		indexType = 4 // TAEV
+	default:
+		return ReuseStrategy{Type: NoReuse}, bindingRel
+	}
+
+	return ReuseStrategy{
+		Type:     SinglePositionReuse, // Reuse single position reuse logic
+		Position: bestPosition,
+		Index:    indexType,
+	}, bindingRel
 }

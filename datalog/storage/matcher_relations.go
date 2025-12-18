@@ -77,7 +77,8 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 
 	// Analyze if we can use iterator reuse
-	strategy := analyzeReuseStrategy(pattern, bindingRel)
+	// For multi-position cases, the relation may be materialized to allow cardinality counting
+	strategy, bindingRel := analyzeReuseStrategy(pattern, bindingRel)
 
 	// Emit strategy selection event
 	if m.handler != nil {
@@ -265,10 +266,14 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 	}
 
 	// We need to materialize the binding relation to iterate multiple times
+	// CRITICAL: Must copy tuples because iterator reuses buffer
 	var bindingTuples []executor.Tuple
 	it := bindingRel.Iterator()
 	for it.Next() {
-		bindingTuples = append(bindingTuples, it.Tuple())
+		tuple := it.Tuple()
+		tupleCopy := make(executor.Tuple, len(tuple))
+		copy(tupleCopy, tuple)
+		bindingTuples = append(bindingTuples, tupleCopy)
 	}
 	it.Close()
 

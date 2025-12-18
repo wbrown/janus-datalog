@@ -173,7 +173,7 @@ func BenchmarkBatchScanScaling(b *testing.B) {
 		tx := db.NewTransaction()
 		for i := 0; i < size; i++ {
 			entity := datalog.NewIdentity(fmt.Sprintf("e%d", i))
-			tx.Add(entity, datalog.NewKeyword(":test/attr"), i)
+			tx.Add(entity, datalog.NewKeyword(":test/attr"), int64(i))
 			tx.Add(entity, datalog.NewKeyword(":test/value"), fmt.Sprintf("val%d", i))
 		}
 		tx.Commit()

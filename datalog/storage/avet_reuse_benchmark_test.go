@@ -83,9 +83,16 @@ func BenchmarkAVETReuse(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if result.Size() != days*minutesPerDay*len(symbols) {
+		// Count results by iterating - Size() returns -1 for streaming relations
+		count := 0
+		it := result.Iterator()
+		for it.Next() {
+			count++
+		}
+		it.Close()
+		if count != days*minutesPerDay*len(symbols) {
 			b.Fatalf("Expected %d results, got %d",
-				days*minutesPerDay*len(symbols), result.Size())
+				days*minutesPerDay*len(symbols), count)
 		}
 	}
 }
@@ -166,9 +173,16 @@ func BenchmarkAVETNoReuse(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if result.Size() != days*minutesPerDay*len(symbols) {
+		// Count results by iterating - Size() returns -1 for streaming relations
+		count := 0
+		it := result.Iterator()
+		for it.Next() {
+			count++
+		}
+		it.Close()
+		if count != days*minutesPerDay*len(symbols) {
 			b.Fatalf("Expected %d results, got %d",
-				days*minutesPerDay*len(symbols), result.Size())
+				days*minutesPerDay*len(symbols), count)
 		}
 	}
 }

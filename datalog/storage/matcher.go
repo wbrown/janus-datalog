@@ -352,13 +352,26 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 					}
 
 					if v != nil {
-						// E, A, and V are bound - use AEVT for exact match
-						dummyDatom.V = v
-						key := encoder.EncodeKey(AEVT, dummyDatom)
-						end := make([]byte, len(key))
-						copy(end, key)
-						end[len(end)-1]++ // Increment last byte for exclusive end
-						return AEVT, key, end
+						// E, A, and V are bound - use AEVT prefix range
+						// CRITICAL: Must use prefix range, not exact key!
+						// EncodeKey includes Tx=0, but actual datoms have real Tx values.
+						// The scan range [A+E+V+Tx(0), A+E+V+Tx(1)) would miss all real datoms.
+						// Instead, use EncodePrefixRange to scan all Tx values for (A, E, V) prefix.
+						sDatom := ToStorageDatom(*dummyDatom)
+						sDatom.V = v
+						vType := byte(datalog.Type(sDatom.V))
+						var valueBytes []byte
+						if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
+							var vArr [20]byte
+							copy(vArr[:], datalog.ValueBytes(sDatom.V))
+							valueBytes = append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
+						} else {
+							vData := datalog.ValueBytes(sDatom.V)
+							valueBytes = append([]byte{vType}, vData...)
+						}
+						// AEVT order: A + E + V + Tx, so prefix with (A, E, V) to scan all Tx
+						start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:], valueBytes)
+						return AEVT, start, end
 					}
 
 					// E and A bound, V unbound - use AEVT prefix

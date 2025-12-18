@@ -72,8 +72,15 @@ func BenchmarkIteratorReuse(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if result.Size() != 500 { // 5 symbols * 100 bars
-			b.Fatalf("Expected 500 bars, got %d", result.Size())
+		// Count results by iterating - Size() returns -1 for streaming relations
+		count := 0
+		it := result.Iterator()
+		for it.Next() {
+			count++
+		}
+		it.Close()
+		if count != 500 { // 5 symbols * 100 bars
+			b.Fatalf("Expected 500 bars, got %d", count)
 		}
 	}
 }
@@ -134,10 +141,12 @@ func BenchmarkNoIteratorReuse(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			// Count results
-			for k := 0; k < result.Size(); k++ {
+			// Count results by iterating
+			it := result.Iterator()
+			for it.Next() {
 				allResults = append(allResults, datalog.Datom{}) // Dummy for counting
 			}
+			it.Close()
 		}
 
 		if len(allResults) != 500 {

@@ -62,7 +62,7 @@ func TestPredicatePushdownTrace(t *testing.T) {
 	t.Logf("Symbol relation size: %d", symbolRel.Size())
 
 	// Check what strategy is selected
-	strategy := analyzeReuseStrategy(timePattern, symbolRel)
+	strategy, _ := analyzeReuseStrategy(timePattern, symbolRel)
 	t.Logf("Reuse strategy: Type=%s, Position=%d, Index=%d",
 		strategy.Type.String(), strategy.Position, strategy.Index)
 
