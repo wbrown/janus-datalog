@@ -232,14 +232,14 @@ db.AsOf(timestamp)
 
 Every datom includes a transaction ID for temporal queries.
 
-### 8. Storage Model
+### 10. Storage Model
 
 - **EAVT model** with Entity-Attribute-Value-Transaction tuples
 - **Multiple indices**: EAVT, AEVT, AVET, VAET, TAEV
 - **BadgerDB backend** for persistence
 - **L85 encoding** for sortable, efficient keys
 
-### 9. Type System
+### 11. Type System
 
 **Supported types:**
 - Primitives: `string`, `int64`, `float64`, `bool`
@@ -248,7 +248,7 @@ Every datom includes a transaction ID for temporal queries.
 - Entity references via Identity type
 - Keywords as first-class values
 
-### 10. Pull API ✅
+### 12. Pull API ✅
 
 Declarative entity attribute retrieval with nested reference following:
 
@@ -291,7 +291,7 @@ results, err := db.PullMany(entityIDs, `[:user/name]`)
 - Wildcard `[*]` uses single EAVT prefix scan
 - Far more efficient than equivalent application-level N+1 queries
 
-### 11. Struct Reflection API ✅
+### 13. Struct Reflection API ✅
 
 **Go-specific feature** for ergonomic struct ↔ datom conversion:
 
@@ -351,6 +351,65 @@ db.PullInto(aliceID, &loaded)
 
 See [docs/reference/REFLECT.md](docs/reference/REFLECT.md) for complete documentation.
 
+### 14. QueryInto API ✅
+
+**Go-specific feature** for typed query results - eliminates manual tuple iteration:
+
+```go
+// Define result struct with datalog tags
+type TradeResult struct {
+    Symbol string    `datalog:"?symbol"`
+    Price  float64   `datalog:"?price"`
+    Date   time.Time `datalog:"?date"`
+}
+
+// Query directly into typed slice
+var results []TradeResult
+err := db.QueryInto(&results, `
+    [:find ?symbol ?price ?date
+     :where [?t :trade/symbol ?symbol]
+            [?t :trade/price ?price]
+            [?t :trade/date ?date]]
+`)
+
+// Use with aggregates - tag matches :find expression exactly
+type DeptStats struct {
+    Dept      string  `datalog:"?dept"`
+    TotalPay  float64 `datalog:"(sum ?salary)"`
+    HeadCount int64   `datalog:"(count ?emp)"`
+}
+
+var stats []DeptStats
+err := db.QueryInto(&stats, `
+    [:find ?dept (sum ?salary) (count ?emp)
+     :where [?e :employee/dept ?dept]
+            [?e :employee/salary ?salary]]
+`)
+
+// QueryOneInto for single-result queries
+var result TradeResult
+err := db.QueryOneInto(&result, `
+    [:find ?symbol ?price ?date
+     :where [?t :trade/id ?id]
+            [(= ?id 12345)]
+            [?t :trade/symbol ?symbol]
+            [?t :trade/price ?price]
+            [?t :trade/date ?date]]
+`)
+```
+
+**Tag mapping:**
+- Variables: `datalog:"?symbol"` matches `:find ?symbol`
+- Aggregates: `datalog:"(sum ?salary)"` matches `:find (sum ?salary)` exactly
+- Positional: Omit tags entirely to use field order = result column order
+
+**Error handling:**
+- `ErrNotFound` - QueryOneInto returns no results
+- `ErrMultipleResults` - QueryOneInto returns >1 result
+- `ErrSymbolNotFound` - Tag references symbol not in query
+
+See [docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md) for complete documentation.
+
 ## Missing Datomic Features
 
 ### 1. Rules ❌
@@ -366,21 +425,9 @@ No rule definitions or recursive queries:
   (ancestor ?p ?d)]]
 ```
 
-### 2. NOT and OR Clauses ❌
+### 2. Schema (Partial Support) ⚠️
 
-No logical negation or disjunction:
-
-```clojure
-; NOT SUPPORTED:
-(not [?e :archived true])
-(or [?e :status "active"] 
-    [?e :status "pending"])
-(or-join [?e] ...)
-```
-
-### 3. Schema ✅
-
-Schema support with Datomic-compatible attributes:
+Schema is supported but with limitations vs Datomic:
 
 **Supported schema features:**
 - `:db/valueType` - type constraints (string, long, double, boolean, instant, bytes, ref, keyword)
@@ -426,7 +473,7 @@ db, _ := storage.NewDatabaseWithSchema(path, schema)
 
 **Performance (writes only):** Type validation adds <1% overhead at `Add()` time; uniqueness checking adds ~6% at `Commit()` time. Reads are unaffected. See `PERFORMANCE_STATUS.md` for benchmarks.
 
-### 4. Transaction Features ❌
+### 3. Transaction Features ❌
 
 Limited transaction support:
 - **No transaction functions**
@@ -435,7 +482,7 @@ Limited transaction support:
 - **No transaction metadata** beyond timestamp
 - **No transaction entities**
 
-### 5. Entity API ❌
+### 4. Entity API ❌
 
 No entity navigation:
 
@@ -446,7 +493,7 @@ No entity navigation:
 (touch entity)
 ```
 
-### 6. Advanced Query Features (Partial) ⚠️
+### 5. Advanced Query Features (Partial) ⚠️
 
 **Implemented:**
 - `get-else` - default values for missing attributes ✅
@@ -458,7 +505,7 @@ No entity navigation:
 - `keys` - no map results
 - `with` - no duplicate control
 
-### 7. Time and History Features ⚠️
+### 6. Time and History Features ⚠️
 
 **Supported:**
 - As-of queries via `db.AsOf(txID)`
@@ -487,7 +534,7 @@ history, _ := db.ExecuteHistoryQuery(`[:find ?name ?tx ?op :where [?e :person/na
 - No `since` queries
 - No tx-range queries
 
-### 8. Database Features ❌
+### 7. Database Features ❌
 
 No advanced database operations:
 - No database branching/forking
@@ -495,7 +542,7 @@ No advanced database operations:
 - No database filters
 - No log API
 
-### 9. Other Missing Features ❌
+### 8. Other Missing Features ❌
 
 - **Nested expressions in predicates**: Cannot do `[(< (- ?t2 ?t1) 300)]`
 - **Distinct in aggregations**: No `(count-distinct ?x)`

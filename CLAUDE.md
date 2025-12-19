@@ -248,6 +248,7 @@ The storage layer connects the query engine to BadgerDB:
 23. **Schema support** - Type validation, cardinality (one/many), uniqueness constraints; optional and additive
 24. **History mode** - Datomic-style retractions with `RetractHistory` mode; full audit trail via `ExecuteHistoryQuery`; 5-element patterns `[?e ?a ?v ?tx ?op]`
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics
+26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates
 
 ### 📋 TODO (Priority Order)
 
@@ -491,6 +492,8 @@ Note: While our planner is explicit and feature-complete, the **information flow
 
 ### Implementation Guides
 - **[docs/reference/SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
+- **[docs/reference/REFLECT.md](docs/reference/REFLECT.md)** - Struct reflection API: Go structs ↔ datoms
+- **[docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md)** - QueryInto API: typed query results into Go structs
 - **[docs/INPUT_PARAMETER_SEMANTICS.md](docs/INPUT_PARAMETER_SEMANTICS.md)** - Comprehensive guide to input parameter handling
 - **[docs/reference/PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
 

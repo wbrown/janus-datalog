@@ -373,6 +373,59 @@ fmt.Println(loaded.Tags)  // ["dev", "lead"]
 
 See [docs/reference/REFLECT.md](docs/reference/REFLECT.md) for complete documentation.
 
+### QueryInto API
+
+Query directly into typed Go structs - no manual tuple iteration:
+
+```go
+// Define result struct with datalog tags
+type TradeResult struct {
+    Symbol string    `datalog:"?symbol"`
+    Price  float64   `datalog:"?price"`
+    Volume int64     `datalog:"?volume"`
+}
+
+// Query into typed slice
+var results []TradeResult
+err := db.QueryInto(&results, `
+    [:find ?symbol ?price ?volume
+     :where [?t :trade/symbol ?symbol]
+            [?t :trade/price ?price]
+            [?t :trade/volume ?volume]]
+`)
+
+for _, r := range results {
+    fmt.Printf("%s: $%.2f (%d shares)\n", r.Symbol, r.Price, r.Volume)
+}
+```
+
+**Works with aggregates too:**
+
+```go
+type DeptStats struct {
+    Dept      string  `datalog:"?dept"`
+    AvgSalary float64 `datalog:"(avg ?salary)"`  // Tag matches :find exactly
+    HeadCount int64   `datalog:"(count ?emp)"`
+}
+
+var stats []DeptStats
+db.QueryInto(&stats, `
+    [:find ?dept (avg ?salary) (count ?emp)
+     :where [?e :employee/dept ?dept]
+            [?e :employee/salary ?salary]]
+`)
+```
+
+**Single result queries:**
+
+```go
+var result TradeResult
+err := db.QueryOneInto(&result, `[:find ?symbol ?price ?volume :where ...]`)
+// Returns ErrNotFound if no results, ErrMultipleResults if >1
+```
+
+See [docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md) for complete documentation.
+
 ## What Makes Janus Different
 
 ### Pure Relational Algebra
@@ -726,6 +779,7 @@ Janus implements **~50-60% of Datomic's feature set**, focusing on the most comm
 - Schema: Type validation, cardinality, uniqueness constraints
 - Storage: Persistent BadgerDB backend
 - NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)`
+- Go-specific: Struct reflection API, QueryInto for typed results
 
 **Not implemented:**
 - Rules and recursive queries
@@ -743,6 +797,7 @@ See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for the complete compat
 - Core query engine complete and tested
 - Pull API with nested references and cycle detection
 - Schema support: type validation, cardinality, uniqueness
+- Struct reflection and QueryInto for Go-native ergonomics
 - Persistent storage with BadgerDB
 - Comprehensive test suite (1.28:1 test-to-code ratio)
 - Used in production for financial analysis
