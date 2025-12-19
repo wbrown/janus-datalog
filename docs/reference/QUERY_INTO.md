@@ -7,7 +7,7 @@ This document describes janus-datalog's QueryInto API for mapping Datalog query 
 The QueryInto API eliminates manual tuple iteration by populating typed Go structs from query results:
 
 - **`QueryInto()`** - Query into a slice of structs
-- **`QueryOneInto()`** - Query into a single struct (expects exactly one result)
+- **`QueryOneInto()`** - Query into a single struct (expects at most one result)
 
 ## Basic Usage
 
@@ -41,17 +41,17 @@ for _, r := range results {
 
 ```go
 var result PersonResult
-err := db.QueryOneInto(&result, `
+found, err := db.QueryOneInto(&result, `
     [:find ?name ?age
      :where [?e :person/name ?name]
             [?e :person/age ?age]
             [(= ?name "Alice")]]
 `)
-
-if errors.Is(err, dlreflect.ErrNotFound) {
-    fmt.Println("No matching person")
-} else if err != nil {
+if err != nil {
     return err
+}
+if !found {
+    fmt.Println("No matching person")  // Not an error - valid empty result
 }
 ```
 
@@ -155,11 +155,6 @@ type WithOptional struct {
 ```go
 import dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 
-// ErrNotFound - QueryOneInto returned no results
-if errors.Is(err, dlreflect.ErrNotFound) {
-    // Handle missing result
-}
-
 // ErrMultipleResults - QueryOneInto returned more than one result
 if errors.Is(err, dlreflect.ErrMultipleResults) {
     // Handle unexpected multiple results
@@ -168,6 +163,75 @@ if errors.Is(err, dlreflect.ErrMultipleResults) {
 // ErrSymbolNotFound - Struct tag references symbol not in query
 if errors.Is(err, dlreflect.ErrSymbolNotFound) {
     // Check struct tags match query :find clause
+}
+```
+
+**Note:** `QueryOneInto` no longer returns `ErrNotFound`. Empty results are indicated by `found=false` with `err=nil`, because an empty result is a valid relational answer, not an error condition.
+
+## Aggregates on Empty Result Sets
+
+**Important:** Following Datomic semantics, aggregate functions over empty result sets return an empty result, not a row with default values.
+
+```go
+// If no entities match the where clause, found=false (not an error)
+var result struct {
+    Count int64 `datalog:"(count ?e)"`
+}
+found, err := db.QueryOneInto(&result, `
+    [:find (count ?e)
+     :where [?e :person/name "NonExistent"]]
+`)
+// found == false, err == nil (not result.Count == 0)
+```
+
+This differs from SQL where `SELECT COUNT(*) FROM t WHERE false` returns `[(0)]`.
+
+### Why This Behavior?
+
+In Datomic (and relational algebra), aggregates operate on the set of tuples matched by the `:where` clause. If the `:where` clause matches nothing, there is no set to aggregate over, so the aggregate function never executes. An empty result is a valid answer, not an error.
+
+### Recommended Pattern
+
+Handle the `found=false` case explicitly:
+
+```go
+type CountResult struct {
+    Count int64 `datalog:"(count ?e)"`
+}
+
+var result CountResult
+found, err := db.QueryOneInto(&result, `
+    [:find (count ?e)
+     :where [?e :user/status "active"]]
+`)
+if err != nil {
+    return err
+}
+
+count := int64(0)
+if found {
+    count = result.Count
+}
+```
+
+Or as a helper:
+
+```go
+func countActiveUsers(db *Database) (int64, error) {
+    var result struct {
+        Count int64 `datalog:"(count ?e)"`
+    }
+    found, err := db.QueryOneInto(&result, `
+        [:find (count ?e)
+         :where [?e :user/status "active"]]
+    `)
+    if err != nil {
+        return 0, err
+    }
+    if !found {
+        return 0, nil
+    }
+    return result.Count, nil
 }
 ```
 
@@ -304,10 +368,9 @@ import dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 
 // Database methods
 db.QueryInto(dest interface{}, queryStr string, inputs ...interface{}) error
-db.QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) error
+db.QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) (found bool, err error)
 
 // Error types
-dlreflect.ErrNotFound
 dlreflect.ErrMultipleResults
 dlreflect.ErrSymbolNotFound
 dlreflect.ErrMixedTags

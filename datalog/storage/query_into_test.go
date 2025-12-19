@@ -303,7 +303,7 @@ func TestQueryOneInto_SingleResult(t *testing.T) {
 	defer cleanup()
 
 	var result PersonResult
-	err := db.QueryOneInto(&result, `
+	found, err := db.QueryOneInto(&result, `
 		[:find ?name ?age
 		 :where [?e :person/name ?name]
 		        [?e :person/age ?age]
@@ -311,6 +311,9 @@ func TestQueryOneInto_SingleResult(t *testing.T) {
 	`)
 	if err != nil {
 		t.Fatalf("QueryOneInto failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true")
 	}
 
 	if result.Name != "Alice" {
@@ -326,18 +329,19 @@ func TestQueryOneInto_NoResults(t *testing.T) {
 	defer cleanup()
 
 	var result PersonResult
-	err := db.QueryOneInto(&result, `
+	found, err := db.QueryOneInto(&result, `
 		[:find ?name ?age
 		 :where [?e :person/name ?name]
 		        [?e :person/age ?age]
 		        [(= ?name "NonExistent")]]
 	`)
 
-	if err == nil {
-		t.Fatal("expected error for no results")
+	// Empty result is NOT an error - it's a valid relational answer
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !errors.Is(err, dlreflect.ErrNotFound) {
-		t.Errorf("expected ErrNotFound, got %v", err)
+	if found {
+		t.Error("expected found=false for no results")
 	}
 }
 
@@ -346,7 +350,7 @@ func TestQueryOneInto_MultipleResults(t *testing.T) {
 	defer cleanup()
 
 	var result PersonResult
-	err := db.QueryOneInto(&result, `
+	found, err := db.QueryOneInto(&result, `
 		[:find ?name ?age
 		 :where [?e :person/name ?name]
 		        [?e :person/age ?age]]
@@ -354,6 +358,9 @@ func TestQueryOneInto_MultipleResults(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected error for multiple results")
+	}
+	if found {
+		t.Error("expected found=false when error occurs")
 	}
 	if !errors.Is(err, dlreflect.ErrMultipleResults) {
 		t.Errorf("expected ErrMultipleResults, got %v", err)
@@ -392,14 +399,14 @@ func TestQueryOneInto_InvalidDest(t *testing.T) {
 
 	// Test non-pointer
 	var result PersonResult
-	err := db.QueryOneInto(result, `[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age] [(= ?name "Alice")]]`)
+	_, err := db.QueryOneInto(result, `[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age] [(= ?name "Alice")]]`)
 	if err == nil {
 		t.Error("expected error for non-pointer dest")
 	}
 
 	// Test pointer to non-struct
 	var str string
-	err = db.QueryOneInto(&str, `[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age] [(= ?name "Alice")]]`)
+	_, err = db.QueryOneInto(&str, `[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age] [(= ?name "Alice")]]`)
 	if err == nil {
 		t.Error("expected error for pointer to non-struct")
 	}

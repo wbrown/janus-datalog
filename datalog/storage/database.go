@@ -480,8 +480,11 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 	return mapper.MapAll(results, sliceVal)
 }
 
-// QueryOneInto executes a Datalog query expecting exactly one result and populates a struct.
-// Returns ErrNotFound if the query returns no results, or ErrMultipleResults if more than one.
+// QueryOneInto executes a Datalog query expecting at most one result and populates a struct.
+// Returns (true, nil) if a result was found and mapped successfully.
+// Returns (false, nil) if the query returns no results (empty result is valid, not an error).
+// Returns (false, ErrMultipleResults) if more than one result exists.
+// Returns (false, err) for other errors (parse errors, type errors, etc.).
 //
 // Example:
 //
@@ -491,22 +494,28 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 //	}
 //
 //	var result PersonResult
-//	err := db.QueryOneInto(&result, `[:find ?name ?age :in $ ?id :where [?id :person/name ?name] [?id :person/age ?age]]`, entityID)
-func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) error {
+//	found, err := db.QueryOneInto(&result, `[:find ?name ?age :in $ ?id :where [?id :person/name ?name] [?id :person/age ?age]]`, entityID)
+//	if err != nil {
+//	    return err
+//	}
+//	if !found {
+//	    // Handle empty result (not an error - valid relational answer)
+//	}
+func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) (found bool, err error) {
 	// Validate dest is *T where T is struct
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr {
-		return dlreflect.ErrNotPointerToStruct
+		return false, dlreflect.ErrNotPointerToStruct
 	}
 	structVal := destVal.Elem()
 	if structVal.Kind() != reflect.Struct {
-		return dlreflect.ErrNotPointerToStruct
+		return false, dlreflect.ErrNotPointerToStruct
 	}
 
 	// Parse query to extract :find columns
 	q, err := parser.ParseQuery(queryStr)
 	if err != nil {
-		return fmt.Errorf("failed to parse query: %w", err)
+		return false, fmt.Errorf("failed to parse query: %w", err)
 	}
 
 	// Get column names from :find clause
@@ -515,25 +524,28 @@ func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...int
 	// Create mapper
 	mapper, err := dlreflect.NewQueryResultMapper(structVal.Type(), findColumns)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Execute query
 	results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Check result count
 	if len(results) == 0 {
-		return dlreflect.ErrNotFound
+		return false, nil // Empty result is valid, not an error
 	}
 	if len(results) > 1 {
-		return dlreflect.ErrMultipleResults
+		return false, dlreflect.ErrMultipleResults
 	}
 
 	// Map single result to struct
-	return mapper.MapTuple(results[0], structVal)
+	if err := mapper.MapTuple(results[0], structVal); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // extractFindColumnStrings extracts column names from :find clause as strings.
