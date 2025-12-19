@@ -1,13 +1,17 @@
 # QueryInto API
 
-This document describes janus-datalog's QueryInto API for mapping Datalog query results directly into Go structs.
+This document describes janus-datalog's QueryInto API for mapping Datalog query results directly into Go types.
 
 ## Overview
 
-The QueryInto API eliminates manual tuple iteration by populating typed Go structs from query results:
+The QueryInto API eliminates manual tuple iteration by populating typed Go values from query results:
 
-- **`QueryInto()`** - Query into a slice of structs
-- **`QueryOneInto()`** - Query into a single struct (expects at most one result)
+- **`QueryInto()`** - Query into a slice of structs or scalars
+- **`QueryOneInto()`** - Query into a single struct or scalar (expects at most one result)
+
+Both APIs support:
+- **Structs** for multi-column queries (map columns to fields via tags)
+- **Scalars** for single-column queries (`string`, `int64`, `float64`, `bool`, `time.Time`, `Identity`, `Keyword`, `[]byte`)
 
 ## Basic Usage
 
@@ -54,6 +58,38 @@ if !found {
     fmt.Println("No matching person")  // Not an error - valid empty result
 }
 ```
+
+### Scalar Queries (Single Column)
+
+For single-column queries, use scalar slices or values directly without structs:
+
+```go
+// Get all names as []string
+var names []string
+err := db.QueryInto(&names, `
+    [:find ?name
+     :where [?e :person/name ?name]]
+`)
+
+// Get all entity IDs as []datalog.Identity
+var entities []datalog.Identity
+err := db.QueryInto(&entities, `
+    [:find ?e
+     :where [?e :person/name ?name]]
+`)
+
+// Get a single value
+var age int64
+found, err := db.QueryOneInto(&age, `
+    [:find ?age
+     :where [?e :person/name "Alice"]
+            [?e :person/age ?age]]
+`)
+```
+
+Supported scalar types: `string`, `int64`, `int`, `float64`, `bool`, `time.Time`, `datalog.Identity`, `datalog.Keyword`, `[]byte`
+
+**Note:** Scalar queries require exactly one column in the `:find` clause. Multi-column queries require a struct.
 
 ## Tag Mapping
 

@@ -438,7 +438,7 @@ func (d *Database) ExecuteQueryWithInputs(queryStr string, inputs ...interface{}
 //	var stats []DeptStats
 //	err := db.QueryInto(&stats, `[:find ?dept (sum ?salary) :where [?e :employee/dept ?dept] [?e :employee/salary ?salary]]`)
 func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interface{}) error {
-	// Validate dest is *[]T where T is struct
+	// Validate dest is *[]T
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr {
 		return dlreflect.ErrNotPointerToSlice
@@ -448,11 +448,9 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 		return dlreflect.ErrNotPointerToSlice
 	}
 	elemType := sliceVal.Type().Elem()
-	if elemType.Kind() == reflect.Ptr {
+	elemIsPtr := elemType.Kind() == reflect.Ptr
+	if elemIsPtr {
 		elemType = elemType.Elem()
-	}
-	if elemType.Kind() != reflect.Struct {
-		return dlreflect.ErrNotPointerToSlice
 	}
 
 	// Parse query to extract :find columns
@@ -461,56 +459,61 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 		return fmt.Errorf("failed to parse query: %w", err)
 	}
 
-	// Get column names from :find clause
-	findColumns := extractFindColumnStrings(q.Find)
+	// Check if element type is a struct or scalar
+	// time.Time, Identity, and Keyword are structs but treated as scalars
+	if elemType.Kind() == reflect.Struct && !isScalarStructType(elemType) {
+		// Struct path - use mapper
+		findColumns := extractFindColumnStrings(q.Find)
+		mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
+		if err != nil {
+			return err
+		}
 
-	// Create mapper
-	mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
-	if err != nil {
-		return err
+		results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
+		if err != nil {
+			return err
+		}
+
+		return mapper.MapAll(results, sliceVal)
 	}
 
-	// Execute query
+	// Scalar path - single column queries only
+	if len(q.Find) != 1 {
+		return fmt.Errorf("scalar QueryInto requires exactly 1 find element, got %d", len(q.Find))
+	}
+
 	results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
 	if err != nil {
 		return err
 	}
 
-	// Map results to slice
-	return mapper.MapAll(results, sliceVal)
+	// Map scalar results directly
+	return mapScalarResults(results, sliceVal, elemIsPtr)
 }
 
-// QueryOneInto executes a Datalog query expecting at most one result and populates a struct.
+// QueryOneInto executes a Datalog query expecting at most one result and populates a value.
+// Supports both struct destinations (multi-column) and scalar destinations (single-column).
 // Returns (true, nil) if a result was found and mapped successfully.
 // Returns (false, nil) if the query returns no results (empty result is valid, not an error).
 // Returns (false, ErrMultipleResults) if more than one result exists.
 // Returns (false, err) for other errors (parse errors, type errors, etc.).
 //
-// Example:
-//
-//	type PersonResult struct {
-//	    Name string `datalog:"?name"`
-//	    Age  int64  `datalog:"?age"`
-//	}
+// Example (struct):
 //
 //	var result PersonResult
-//	found, err := db.QueryOneInto(&result, `[:find ?name ?age :in $ ?id :where [?id :person/name ?name] [?id :person/age ?age]]`, entityID)
-//	if err != nil {
-//	    return err
-//	}
-//	if !found {
-//	    // Handle empty result (not an error - valid relational answer)
-//	}
+//	found, err := db.QueryOneInto(&result, `[:find ?name ?age :where ...]`)
+//
+// Example (scalar):
+//
+//	var name string
+//	found, err := db.QueryOneInto(&name, `[:find ?name :where [?e :person/name ?name] [(= ?e eid)]]`)
 func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) (found bool, err error) {
-	// Validate dest is *T where T is struct
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr {
-		return false, dlreflect.ErrNotPointerToStruct
+		return false, fmt.Errorf("QueryOneInto requires pointer destination")
 	}
-	structVal := destVal.Elem()
-	if structVal.Kind() != reflect.Struct {
-		return false, dlreflect.ErrNotPointerToStruct
-	}
+	elemVal := destVal.Elem()
+	elemType := elemVal.Type()
 
 	// Parse query to extract :find columns
 	q, err := parser.ParseQuery(queryStr)
@@ -518,31 +521,57 @@ func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...int
 		return false, fmt.Errorf("failed to parse query: %w", err)
 	}
 
-	// Get column names from :find clause
-	findColumns := extractFindColumnStrings(q.Find)
+	// Check if destination is a struct (but not time.Time, Identity, Keyword which are scalars)
+	isStruct := elemType.Kind() == reflect.Struct && !isScalarStructType(elemType)
 
-	// Create mapper
-	mapper, err := dlreflect.NewQueryResultMapper(structVal.Type(), findColumns)
-	if err != nil {
-		return false, err
+	if isStruct {
+		// Struct path - use mapper
+		findColumns := extractFindColumnStrings(q.Find)
+		mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
+		if err != nil {
+			return false, err
+		}
+
+		results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
+		if err != nil {
+			return false, err
+		}
+
+		if len(results) == 0 {
+			return false, nil
+		}
+		if len(results) > 1 {
+			return false, dlreflect.ErrMultipleResults
+		}
+
+		if err := mapper.MapTuple(results[0], elemVal); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
-	// Execute query
+	// Scalar path - single column queries only
+	if len(q.Find) != 1 {
+		return false, fmt.Errorf("scalar QueryOneInto requires exactly 1 find element, got %d", len(q.Find))
+	}
+
 	results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
 	if err != nil {
 		return false, err
 	}
 
-	// Check result count
 	if len(results) == 0 {
-		return false, nil // Empty result is valid, not an error
+		return false, nil
 	}
 	if len(results) > 1 {
 		return false, dlreflect.ErrMultipleResults
 	}
 
-	// Map single result to struct
-	if err := mapper.MapTuple(results[0], structVal); err != nil {
+	// Map single scalar result
+	if len(results[0]) == 0 {
+		return false, fmt.Errorf("query returned empty tuple")
+	}
+	if err := setScalarValue(elemVal, results[0][0]); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -556,6 +585,178 @@ func extractFindColumnStrings(find []query.FindElement) []string {
 		columns[i] = elem.String()
 	}
 	return columns
+}
+
+// Scalar struct types - these are structs but treated as scalar values
+var (
+	timeType     = reflect.TypeOf(time.Time{})
+	identityType = reflect.TypeOf(datalog.Identity{})
+	keywordType  = reflect.TypeOf(datalog.Keyword{})
+)
+
+// isScalarStructType returns true if the type is a struct that should be treated as a scalar
+func isScalarStructType(t reflect.Type) bool {
+	return t == timeType || t == identityType || t == keywordType
+}
+
+// mapScalarResults maps single-column query results to a scalar slice.
+func mapScalarResults(results [][]interface{}, sliceVal reflect.Value, elemIsPtr bool) error {
+	elemType := sliceVal.Type().Elem()
+	if elemIsPtr {
+		elemType = elemType.Elem()
+	}
+
+	newSlice := reflect.MakeSlice(sliceVal.Type(), len(results), len(results))
+
+	for i, tuple := range results {
+		if len(tuple) == 0 {
+			continue
+		}
+		val := tuple[0]
+
+		var elemVal reflect.Value
+		if elemIsPtr {
+			elemVal = reflect.New(elemType).Elem()
+		} else {
+			elemVal = newSlice.Index(i)
+		}
+
+		if err := setScalarValue(elemVal, val); err != nil {
+			return fmt.Errorf("row %d: %w", i, err)
+		}
+
+		if elemIsPtr {
+			ptr := reflect.New(elemType)
+			ptr.Elem().Set(elemVal)
+			newSlice.Index(i).Set(ptr)
+		}
+	}
+
+	sliceVal.Set(newSlice)
+	return nil
+}
+
+// setScalarValue sets a reflect.Value to the given interface{} value with type coercion.
+func setScalarValue(dest reflect.Value, val interface{}) error {
+	if val == nil {
+		return nil // Leave zero value for nil
+	}
+
+	destType := dest.Type()
+	valReflect := reflect.ValueOf(val)
+
+	// Direct type match
+	if valReflect.Type().AssignableTo(destType) {
+		dest.Set(valReflect)
+		return nil
+	}
+
+	// Type coercion by destination kind
+	switch destType.Kind() {
+	case reflect.String:
+		if s, ok := val.(string); ok {
+			dest.SetString(s)
+			return nil
+		}
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		switch v := val.(type) {
+		case int64:
+			dest.SetInt(v)
+			return nil
+		case int:
+			dest.SetInt(int64(v))
+			return nil
+		case float64:
+			dest.SetInt(int64(v))
+			return nil
+		}
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		switch v := val.(type) {
+		case int64:
+			dest.SetUint(uint64(v))
+			return nil
+		case uint64:
+			dest.SetUint(v)
+			return nil
+		case float64:
+			dest.SetUint(uint64(v))
+			return nil
+		}
+
+	case reflect.Float32, reflect.Float64:
+		switch v := val.(type) {
+		case float64:
+			dest.SetFloat(v)
+			return nil
+		case int64:
+			dest.SetFloat(float64(v))
+			return nil
+		}
+
+	case reflect.Bool:
+		if b, ok := val.(bool); ok {
+			dest.SetBool(b)
+			return nil
+		}
+
+	case reflect.Struct:
+		// Handle scalar struct types
+		if destType == timeType {
+			switch t := val.(type) {
+			case time.Time:
+				dest.Set(reflect.ValueOf(t))
+				return nil
+			case *time.Time:
+				if t != nil {
+					dest.Set(reflect.ValueOf(*t))
+					return nil
+				}
+			}
+		}
+		if destType == identityType {
+			switch id := val.(type) {
+			case datalog.Identity:
+				dest.Set(reflect.ValueOf(id))
+				return nil
+			case *datalog.Identity:
+				if id != nil {
+					dest.Set(reflect.ValueOf(*id))
+					return nil
+				}
+			}
+		}
+		if destType == keywordType {
+			switch kw := val.(type) {
+			case datalog.Keyword:
+				dest.Set(reflect.ValueOf(kw))
+				return nil
+			case *datalog.Keyword:
+				if kw != nil {
+					dest.Set(reflect.ValueOf(*kw))
+					return nil
+				}
+			}
+		}
+
+	case reflect.Slice:
+		// Handle []byte
+		if destType.Elem().Kind() == reflect.Uint8 {
+			if b, ok := val.([]byte); ok {
+				dest.SetBytes(b)
+				return nil
+			}
+		}
+	}
+
+	// Try conversion as last resort
+	if valReflect.Type().ConvertibleTo(destType) {
+		dest.Set(valReflect.Convert(destType))
+		return nil
+	}
+
+	return fmt.Errorf("cannot convert %T to %s", val, destType)
 }
 
 // ExecuteHistoryQuery executes a Datalog query against the history database

@@ -477,3 +477,190 @@ func TestQueryInto_ParseError(t *testing.T) {
 		t.Fatal("expected parse error")
 	}
 }
+
+// Scalar type tests
+
+func TestQueryInto_ScalarString(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var names []string
+	err := db.QueryInto(&names, `
+		[:find ?name
+		 :where [?e :person/name ?name]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	if len(names) != 3 {
+		t.Fatalf("expected 3 names, got %d", len(names))
+	}
+
+	// Check that we got the expected names (order may vary)
+	nameSet := make(map[string]bool)
+	for _, n := range names {
+		nameSet[n] = true
+	}
+	for _, expected := range []string{"Alice", "Bob", "Charlie"} {
+		if !nameSet[expected] {
+			t.Errorf("expected name %q not found", expected)
+		}
+	}
+}
+
+func TestQueryInto_ScalarInt64(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var ages []int64
+	err := db.QueryInto(&ages, `
+		[:find ?age
+		 :where [?e :person/age ?age]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	if len(ages) != 3 {
+		t.Fatalf("expected 3 ages, got %d", len(ages))
+	}
+}
+
+func TestQueryInto_ScalarIdentity(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var entities []datalog.Identity
+	err := db.QueryInto(&entities, `
+		[:find ?e
+		 :where [?e :person/name ?name]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	if len(entities) != 3 {
+		t.Fatalf("expected 3 entities, got %d", len(entities))
+	}
+
+	// Verify these are valid identities
+	for i, e := range entities {
+		if e.String() == "" {
+			t.Errorf("entity %d has empty string representation", i)
+		}
+	}
+}
+
+func TestQueryInto_ScalarMultiColumnError(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var names []string
+	err := db.QueryInto(&names, `
+		[:find ?name ?age
+		 :where [?e :person/name ?name]
+		        [?e :person/age ?age]]
+	`)
+
+	if err == nil {
+		t.Fatal("expected error for multi-column query with scalar slice")
+	}
+}
+
+func TestQueryOneInto_ScalarString(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var name string
+	found, err := db.QueryOneInto(&name, `
+		[:find ?name
+		 :where [?e :person/name ?name]
+		        [(= ?name "Alice")]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryOneInto failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true")
+	}
+	if name != "Alice" {
+		t.Errorf("expected name=Alice, got %q", name)
+	}
+}
+
+func TestQueryOneInto_ScalarInt64(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var age int64
+	found, err := db.QueryOneInto(&age, `
+		[:find ?age
+		 :where [?e :person/name "Alice"]
+		        [?e :person/age ?age]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryOneInto failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true")
+	}
+	if age != 30 {
+		t.Errorf("expected age=30, got %d", age)
+	}
+}
+
+func TestQueryOneInto_ScalarNotFound(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var name string
+	found, err := db.QueryOneInto(&name, `
+		[:find ?name
+		 :where [?e :person/name ?name]
+		        [(= ?name "NonExistent")]]
+	`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found {
+		t.Error("expected found=false for no results")
+	}
+}
+
+func TestQueryOneInto_ScalarMultiColumnError(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var name string
+	_, err := db.QueryOneInto(&name, `
+		[:find ?name ?age
+		 :where [?e :person/name ?name]
+		        [?e :person/age ?age]]
+	`)
+
+	if err == nil {
+		t.Fatal("expected error for multi-column query with scalar destination")
+	}
+}
+
+func TestQueryOneInto_ScalarMultipleResults(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var name string
+	found, err := db.QueryOneInto(&name, `
+		[:find ?name
+		 :where [?e :person/name ?name]]
+	`)
+
+	if err == nil {
+		t.Fatal("expected error for multiple results")
+	}
+	if found {
+		t.Error("expected found=false when error occurs")
+	}
+	if !errors.Is(err, dlreflect.ErrMultipleResults) {
+		t.Errorf("expected ErrMultipleResults, got %v", err)
+	}
+}
