@@ -413,6 +413,139 @@ func (d *Database) ExecuteQueryWithInputs(queryStr string, inputs ...interface{}
 	return relationToSlice(result), nil
 }
 
+// QueryInto executes a Datalog query and populates a slice of structs with the results.
+// Fields are mapped by `datalog` tags (e.g., `datalog:"?name"`) or by position if untagged.
+//
+// For aggregates, use the full expression as the tag (e.g., `datalog:"(sum ?salary)"`).
+//
+// Example:
+//
+//	type PersonResult struct {
+//	    Name string `datalog:"?name"`
+//	    Age  int64  `datalog:"?age"`
+//	}
+//
+//	var results []PersonResult
+//	err := db.QueryInto(&results, `[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
+//
+// Example with aggregates:
+//
+//	type DeptStats struct {
+//	    Dept     string  `datalog:"?dept"`
+//	    TotalPay float64 `datalog:"(sum ?salary)"`
+//	}
+//
+//	var stats []DeptStats
+//	err := db.QueryInto(&stats, `[:find ?dept (sum ?salary) :where [?e :employee/dept ?dept] [?e :employee/salary ?salary]]`)
+func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interface{}) error {
+	// Validate dest is *[]T where T is struct
+	destVal := reflect.ValueOf(dest)
+	if destVal.Kind() != reflect.Ptr {
+		return dlreflect.ErrNotPointerToSlice
+	}
+	sliceVal := destVal.Elem()
+	if sliceVal.Kind() != reflect.Slice {
+		return dlreflect.ErrNotPointerToSlice
+	}
+	elemType := sliceVal.Type().Elem()
+	if elemType.Kind() == reflect.Ptr {
+		elemType = elemType.Elem()
+	}
+	if elemType.Kind() != reflect.Struct {
+		return dlreflect.ErrNotPointerToSlice
+	}
+
+	// Parse query to extract :find columns
+	q, err := parser.ParseQuery(queryStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse query: %w", err)
+	}
+
+	// Get column names from :find clause
+	findColumns := extractFindColumnStrings(q.Find)
+
+	// Create mapper
+	mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
+	if err != nil {
+		return err
+	}
+
+	// Execute query
+	results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
+	if err != nil {
+		return err
+	}
+
+	// Map results to slice
+	return mapper.MapAll(results, sliceVal)
+}
+
+// QueryOneInto executes a Datalog query expecting exactly one result and populates a struct.
+// Returns ErrNotFound if the query returns no results, or ErrMultipleResults if more than one.
+//
+// Example:
+//
+//	type PersonResult struct {
+//	    Name string `datalog:"?name"`
+//	    Age  int64  `datalog:"?age"`
+//	}
+//
+//	var result PersonResult
+//	err := db.QueryOneInto(&result, `[:find ?name ?age :in $ ?id :where [?id :person/name ?name] [?id :person/age ?age]]`, entityID)
+func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) error {
+	// Validate dest is *T where T is struct
+	destVal := reflect.ValueOf(dest)
+	if destVal.Kind() != reflect.Ptr {
+		return dlreflect.ErrNotPointerToStruct
+	}
+	structVal := destVal.Elem()
+	if structVal.Kind() != reflect.Struct {
+		return dlreflect.ErrNotPointerToStruct
+	}
+
+	// Parse query to extract :find columns
+	q, err := parser.ParseQuery(queryStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse query: %w", err)
+	}
+
+	// Get column names from :find clause
+	findColumns := extractFindColumnStrings(q.Find)
+
+	// Create mapper
+	mapper, err := dlreflect.NewQueryResultMapper(structVal.Type(), findColumns)
+	if err != nil {
+		return err
+	}
+
+	// Execute query
+	results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
+	if err != nil {
+		return err
+	}
+
+	// Check result count
+	if len(results) == 0 {
+		return dlreflect.ErrNotFound
+	}
+	if len(results) > 1 {
+		return dlreflect.ErrMultipleResults
+	}
+
+	// Map single result to struct
+	return mapper.MapTuple(results[0], structVal)
+}
+
+// extractFindColumnStrings extracts column names from :find clause as strings.
+// For variables, returns "?name". For aggregates, returns "(sum ?x)".
+func extractFindColumnStrings(find []query.FindElement) []string {
+	columns := make([]string, len(find))
+	for i, elem := range find {
+		columns[i] = elem.String()
+	}
+	return columns
+}
+
 // ExecuteHistoryQuery executes a Datalog query against the history database
 // This requires the database to be created with RetractHistory mode
 //
