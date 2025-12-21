@@ -316,6 +316,73 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 				}
 			}
 		}
+
+	case AVET: // 2
+		if a != nil {
+			if kw, ok := a.(datalog.Keyword); ok {
+				attr := NewAttribute(kw.String())
+				startParts = append(startParts, attr[:])
+				endParts = append(endParts, attr[:])
+
+				if v != nil {
+					// Encode value for the prefix
+					// Values in AVET keys are encoded as: [type byte][value data]
+					// For Identity/Reference values: [TypeReference][20-byte hash]
+					if entity, ok := v.(datalog.Identity); ok {
+						hash := entity.Hash()
+						vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
+						startParts = append(startParts, vBytes)
+						endParts = append(endParts, vBytes)
+					} else if entityPtr, ok := v.(*datalog.Identity); ok {
+						hash := entityPtr.Hash()
+						vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
+						startParts = append(startParts, vBytes)
+						endParts = append(endParts, vBytes)
+					}
+					// For other value types, we could add similar handling
+					// but fall back to attribute-only prefix for now
+				}
+			}
+		}
+
+	case VAET: // 3
+		// VAET: Value-Attribute-Entity-Transaction
+		// Values in VAET are also encoded with type prefix
+		if v != nil {
+			// For Identity/Reference values
+			if entity, ok := v.(datalog.Identity); ok {
+				hash := entity.Hash()
+				vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
+				startParts = append(startParts, vBytes)
+				endParts = append(endParts, vBytes)
+
+				if a != nil {
+					if kw, ok := a.(datalog.Keyword); ok {
+						attr := NewAttribute(kw.String())
+						startParts = append(startParts, attr[:])
+						endParts = append(endParts, attr[:])
+					}
+				}
+			} else if entityPtr, ok := v.(*datalog.Identity); ok {
+				hash := entityPtr.Hash()
+				vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
+				startParts = append(startParts, vBytes)
+				endParts = append(endParts, vBytes)
+
+				if a != nil {
+					if kw, ok := a.(datalog.Keyword); ok {
+						attr := NewAttribute(kw.String())
+						startParts = append(startParts, attr[:])
+						endParts = append(endParts, attr[:])
+					}
+				}
+			}
+		}
+
+	case TAEV: // 4
+		// TAEV: Transaction-Attribute-Entity-Value
+		// Transaction-first index is rarely used for prefix scanning
+		// Just include the index prefix
 	}
 
 	start := encoder.EncodePrefix(index, startParts...)
