@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -411,6 +412,217 @@ func (d *Database) ExecuteQueryWithInputs(queryStr string, inputs ...interface{}
 
 	// Convert result to [][]interface{}
 	return relationToSlice(result), nil
+}
+
+// Explain returns the query plan for a query without executing it.
+// This is useful for understanding index selection, phase structure, and
+// how input parameters affect symbol binding.
+//
+// Example:
+//
+//	plan, err := db.Explain(`[:find ?e :in $ ?scenario :where [?e :task/scenario ?scenario]]`, scenarioID)
+//	if err != nil { ... }
+//	fmt.Println(plan.String())  // Human-readable plan output
+//
+// The plan shows:
+//   - Index selection (EAVT, AEVT, AVET, VAET, TAEV)
+//   - Selectivity scores for patterns
+//   - Symbol availability and binding through phases
+//   - Predicate and expression assignment
+func (d *Database) Explain(queryStr string, inputs ...interface{}) (*planner.QueryPlan, error) {
+	// Parse the query
+	q, err := parser.ParseQuery(queryStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse query: %w", err)
+	}
+
+	// Validate inputs match :in clause (same validation as ExecuteQueryWithInputs)
+	_, err = d.convertInputsToRelations(q, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create executor to get its planner (ensures same options as execution)
+	exec := d.NewExecutor()
+
+	// Get the query plan from the executor's planner
+	// Use GetUnderlyingPlanner() to get QueryPlan (not RealizedPlan)
+	queryPlanner := exec.GetPlanner()
+	if adapter, ok := queryPlanner.(*planner.PlannerAdapter); ok {
+		return adapter.GetUnderlyingPlanner().Plan(q)
+	}
+
+	// Fallback for other planner types
+	realizedPlan, err := queryPlanner.PlanQuery(q)
+	if err != nil {
+		return nil, fmt.Errorf("failed to plan query: %w", err)
+	}
+	// Return minimal QueryPlan from RealizedPlan
+	return &planner.QueryPlan{Query: realizedPlan.Query}, nil
+}
+
+// AnalyzeResult contains the query plan and execution statistics from Analyze().
+type AnalyzeResult struct {
+	Plan      *planner.QueryPlan   // The query plan
+	Result    executor.Relation    // Query result (not materialized)
+	Events    []annotations.Event  // All annotation events from execution
+	TotalTime time.Duration        // Total execution time
+}
+
+// String returns a formatted analysis report showing the query plan
+// and execution statistics.
+func (ar *AnalyzeResult) String() string {
+	var sb strings.Builder
+
+	// Plan section
+	sb.WriteString(ar.Plan.String())
+	sb.WriteString("\n")
+
+	// Execution summary
+	sb.WriteString("Execution:\n")
+	sb.WriteString(fmt.Sprintf("  Total time: %v\n", ar.TotalTime))
+	size := ar.Result.Size()
+	if size >= 0 {
+		sb.WriteString(fmt.Sprintf("  Result rows: %d\n", size))
+	} else {
+		sb.WriteString("  Result rows: (streaming - call Result.Size() to materialize)\n")
+	}
+
+	// Group events by type for summary
+	eventCounts := make(map[string]int)
+	eventTimes := make(map[string]time.Duration)
+	for _, e := range ar.Events {
+		eventCounts[e.Name]++
+		eventTimes[e.Name] += e.Latency
+	}
+
+	if len(eventCounts) > 0 {
+		sb.WriteString("\nEvent Summary:\n")
+
+		// Pattern matching events
+		if t, ok := eventTimes[annotations.PatternStorageScan]; ok {
+			sb.WriteString(fmt.Sprintf("  Storage scans: %d (%.2fms total)\n",
+				eventCounts[annotations.PatternStorageScan], float64(t.Microseconds())/1000))
+		}
+
+		// Join events
+		hashJoins := eventCounts[annotations.JoinHash]
+		nestedJoins := eventCounts[annotations.JoinNested]
+		mergeJoins := eventCounts[annotations.JoinMerge]
+		if hashJoins+nestedJoins+mergeJoins > 0 {
+			sb.WriteString(fmt.Sprintf("  Joins: hash=%d, nested=%d, merge=%d\n",
+				hashJoins, nestedJoins, mergeJoins))
+			if t := eventTimes[annotations.JoinHash]; t > 0 {
+				sb.WriteString(fmt.Sprintf("    Hash join time: %.2fms\n", float64(t.Microseconds())/1000))
+			}
+		}
+
+		// Phase events
+		if t, ok := eventTimes[annotations.PhaseComplete]; ok {
+			sb.WriteString(fmt.Sprintf("  Phases completed: %d (%.2fms total)\n",
+				eventCounts[annotations.PhaseComplete], float64(t.Microseconds())/1000))
+		}
+	}
+
+	// Detailed event trace
+	sb.WriteString("\nEvent Trace:\n")
+	for _, e := range ar.Events {
+		sb.WriteString(fmt.Sprintf("  [%6.2fms] %s", float64(e.Latency.Microseconds())/1000, e.Name))
+		// Add key metrics from Data
+		if e.Data != nil {
+			if tuples, ok := e.Data["tuples"]; ok {
+				sb.WriteString(fmt.Sprintf(" (tuples=%v)", tuples))
+			}
+			if inputSize, ok := e.Data["input_size"]; ok {
+				sb.WriteString(fmt.Sprintf(" (input=%v)", inputSize))
+			}
+			if outputSize, ok := e.Data["output_size"]; ok {
+				sb.WriteString(fmt.Sprintf(" (output=%v)", outputSize))
+			}
+			if index, ok := e.Data["index"]; ok {
+				sb.WriteString(fmt.Sprintf(" (index=%v)", index))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+// Analyze executes a query and returns detailed execution statistics.
+// This is like EXPLAIN ANALYZE in PostgreSQL - it actually runs the query
+// and captures timing information at each step.
+//
+// Example:
+//
+//	result, err := db.Analyze(`[:find ?e :in $ ?scenario :where [?e :task/scenario ?scenario]]`, scenarioID)
+//	if err != nil { ... }
+//	fmt.Println(result.String())  // Shows plan + execution trace
+//
+// The result includes:
+//   - Query plan with index selection
+//   - Query result as a Relation (call .Size() or iterate to access)
+//   - Event trace with timing for each operation
+//   - Summary statistics
+func (d *Database) Analyze(queryStr string, inputs ...interface{}) (*AnalyzeResult, error) {
+	startTime := time.Now()
+
+	// Parse the query
+	q, err := parser.ParseQuery(queryStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse query: %w", err)
+	}
+
+	// Validate and convert inputs
+	inputRelations, err := d.convertInputsToRelations(q, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create executor (this also creates the planner with proper options)
+	exec := d.NewExecutor()
+
+	// Get the query plan from the executor's planner
+	// Use GetUnderlyingPlanner() to get QueryPlan (not RealizedPlan)
+	queryPlanner := exec.GetPlanner()
+	var plan *planner.QueryPlan
+	if adapter, ok := queryPlanner.(*planner.PlannerAdapter); ok {
+		plan, err = adapter.GetUnderlyingPlanner().Plan(q)
+	} else {
+		// Fallback for other planner types - get RealizedPlan and note it in output
+		// This shouldn't happen with default options, but handles edge cases
+		realizedPlan, planErr := queryPlanner.PlanQuery(q)
+		if planErr != nil {
+			return nil, fmt.Errorf("failed to plan query: %w", planErr)
+		}
+		// Create a minimal QueryPlan from RealizedPlan for display
+		plan = &planner.QueryPlan{Query: realizedPlan.Query}
+		err = nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to plan query: %w", err)
+	}
+
+	// Create a collector to capture all events
+	var events []annotations.Event
+	collector := annotations.NewCollector(func(e annotations.Event) {
+		events = append(events, e)
+	})
+
+	// Execute with annotation collection
+	result, err := exec.ExecuteWithRelations(executor.NewContext(collector.Handler()), q, inputRelations)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	totalTime := time.Since(startTime)
+
+	return &AnalyzeResult{
+		Plan:      plan,
+		Result:    result,
+		Events:    events,
+		TotalTime: totalTime,
+	}, nil
 }
 
 // QueryInto executes a Datalog query and populates a slice of structs with the results.
