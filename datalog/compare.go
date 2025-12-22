@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -232,6 +233,21 @@ func compareUint64s(a, b uint64) int {
 // ValuesEqual checks if two values are equal.
 // It uses CompareValues for consistent equality checking.
 func ValuesEqual(a, b interface{}) bool {
+	// Handle []byte/[]uint8 first - slices aren't comparable with ==
+	// This is common because strings are stored as []uint8 internally
+	if ba, ok := a.([]byte); ok {
+		if bb, ok := b.([]byte); ok {
+			return bytes.Equal(ba, bb)
+		}
+		return false
+	}
+	if ba, ok := a.([]uint8); ok {
+		if bb, ok := b.([]uint8); ok {
+			return bytes.Equal(ba, bb)
+		}
+		return false
+	}
+
 	// Quick pointer equality check for interned values
 	if a == b {
 		return true
