@@ -1040,8 +1040,12 @@ func (r *StreamingRelation) Project(columns []query.Symbol) (Relation, error) {
 	// When r.shouldCache=true, the first Iterator() call builds the cache, and both the
 	// original relation and the projection can iterate from cached data
 	projIter := NewProjectIterator(r, r.columns, columns)
+	// SET SEMANTICS: Wrap with DedupIterator to ensure projection maintains set semantics.
+	// Projection can produce duplicates when multiple distinct input tuples map to the same
+	// projected tuple (e.g., [(1,a), (2,a)] projected to column 2 yields [a, a]).
+	dedupIter := NewDedupIterator(projIter, 0)
 	// BUGFIX: Preserve options (especially EnableTrueStreaming) to prevent re-scanning
-	return NewStreamingRelationWithOptions(columns, projIter, r.options), nil
+	return NewStreamingRelationWithOptions(columns, dedupIter, r.options), nil
 }
 
 // Materialize converts this streaming relation to a materialized one

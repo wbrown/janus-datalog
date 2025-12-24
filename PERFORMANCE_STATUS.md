@@ -494,6 +494,22 @@ These are **ideas**, not commitments. Would require benchmarking before implemen
 2. BadgerDB time range integration - Push time constraints to storage layer
 3. Composite index support - For multi-attribute filters
 
+### Known Performance Regressions (Correctness Fixes)
+
+**Set Semantics Fix for StreamingRelation.Project() (2025-12-24)**
+
+`StreamingRelation.Project()` was not deduplicating results, violating set semantics. The fix wraps `ProjectIterator` with `DedupIterator`.
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Time | 35,326 ns/op | 44,331 ns/op | +25% |
+| Memory | 2,520 B/op | 16,744 B/op | +6.6× |
+| Allocs | 111 allocs/op | 224 allocs/op | +2× |
+
+**Why this overhead is acceptable**: Without deduplication, projected relations can contain duplicates, violating Datalog semantics and causing incorrect query results. Correctness trumps performance.
+
+**Future optimization**: See `docs/proposals/TUPLEKEYMAP_OPTIMIZATION.md` for proposal to optimize `TupleKeyMap` for set membership (currently stores values we don't need for dedup).
+
 ### Rejected After Benchmarking ❌
 These were **tried and measured** - data showed they're not worth the complexity:
 
