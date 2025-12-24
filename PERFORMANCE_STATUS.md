@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2025-12-17
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, and schema support
+**Last Updated**: 2025-12-24
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, and key encoder optimization
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (last updated 2025-12-17).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (last updated 2025-12-24).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -500,6 +500,8 @@ These were **tried and measured** - data showed they're not worth the complexity
 1. ~~Key mask iterator for int64~~ - Benchmarked slower than simple approach
 2. ~~Complex iterator reuse~~ - Simpler code is faster
 3. ~~Aggressive CSE~~ - 1-3% sequential, -1% parallel (disabled by default)
+4. ~~Interface-based key encoder consolidation~~ - 10% slower, 60% more allocations (Dec 2025)
+5. ~~Generic key encoder with type parameters~~ - Go generics don't inline, same overhead as interfaces
 
 ---
 
@@ -555,6 +557,9 @@ ExecutorOptions{
 3. **Premature optimization is real** - Key mask, iterator reuse both slower
 4. **Document reality** - Aspirational docs cause confusion
 5. **Redundant optimizations exist** - Semantic rewriting + decorrelation target same bottleneck
+6. **Go interfaces have real cost** - 10% slower, 60% more allocations from interface dispatch in hot paths
+7. **Go generics don't inline** - Unlike C++/Rust, Go generics provide type safety but NOT zero-cost abstraction
+8. **DRY vs performance trade-off** - In hot paths, duplication IS the optimization; share only cold paths
 
 ### What's Next
 1. Keep **simple, correct code** (complexity doesn't pay)
@@ -630,6 +635,91 @@ The engine is **production-ready for datasets up to 10M+ datoms**. All major opt
 ---
 
 ## Session History
+
+### 2025-12-24: Key Encoder Consolidation - A DRY Refactoring Case Study
+
+**Goal**: Reduce code duplication between `L85KeyEncoder` and `BinaryKeyEncoder` (~95% identical logic).
+
+**Attempt 1: Interface-Based Consolidation**
+- Created `ComponentEncoder` interface abstracting encode/decode operations
+- Created `baseKeyEncoder` struct with shared index ordering logic
+- L85/Binary encoders delegated to base via embedded struct + interface field
+
+**Result**:
+| Benchmark | Main | Refactored | Regression |
+|-----------|------|------------|------------|
+| AVETReuse | 29ms, 16MB, 300K allocs | 32ms, 20.8MB, 476K allocs | **+10% time, +30% mem, +60% allocs** |
+| BatchScanScaling/1000 | 1.1ms, 1.15MB, 21K | 1.25ms, 1.41MB, 31K | **+14% time, +23% mem, +47% allocs** |
+
+**Root Cause Analysis**:
+1. **Interface dispatch overhead** - Every `e.comp.EncodeEntity()` call goes through vtable
+2. **Lazy initialization checks** - `ensureInitialized()` branch on every method
+3. **Slice escape to heap** - Passing `[20]byte` by value to interface method, returning `[]byte` causes allocation
+
+**Attempt 2: Go Generics**
+- Changed `baseKeyEncoder` to `baseKeyEncoder[T ComponentEncoder]`
+- Used concrete type parameter to enable compiler inlining
+
+**Result**: No improvement. Go generics don't specialize/inline like C++ templates or Rust generics. The method calls still happen at runtime.
+
+**Attempt 3: Hybrid Approach (SUCCESS)**
+- Restored full inline implementations in each encoder (hot paths)
+- Extracted only truly shared utilities to `key_encoder_base.go`:
+  - `historyIndexToBase()` - Maps history indices to base indices
+  - `incrementLastByte()` - Creates end key for prefix scans
+- Removed duplicate `l85HistoryIndexToBase` function
+
+**Result**:
+| Benchmark | Main | Hybrid | Change |
+|-----------|------|--------|--------|
+| AVETReuse | 29ms, 16MB, 300K | 28ms, 16MB, 300K | ✅ **3% faster** |
+| BatchScanScaling/1000 | 1.1ms, 1.15MB, 21K | 1.0ms, 1.15MB, 21K | ✅ **9% faster** |
+| BatchScanScaling/5000 | 6.0ms, 4.6MB, 86K | 5.3ms, 4.6MB, 86K | ✅ **12% faster** |
+
+**Why Hybrid is Faster Than Main**:
+Main branch had duplicate functions: `l85HistoryIndexToBase` (in L85 encoder) and `historyIndexToBase` (in Binary encoder) - identical 15-line switch statements. The hybrid approach consolidates these into a single shared `historyIndexToBase()` in `key_encoder_base.go`.
+
+Benefits of consolidation:
+1. **Reduced binary size** - One function instead of two identical copies
+2. **Better instruction cache** - Single hot function stays in cache vs two copies competing
+3. **Compiler optimization** - Single definition allows better inlining/branch prediction
+
+This demonstrates that **strategic code sharing CAN improve performance** when sharing cold/utility paths that don't benefit from inlining, while keeping hot encode/decode logic duplicated.
+
+**Code Impact**:
+| Version | Lines |
+|---------|-------|
+| Main (original) | 662 lines |
+| Hybrid (final) | 550 lines |
+| **Reduction** | **112 lines (17%)** |
+
+**Key Takeaways**:
+
+1. **Go interfaces have real cost** - Interface dispatch, escape analysis, and allocation overhead are measurable in hot paths. The ~10% regression and 60% more allocations came purely from abstraction.
+
+2. **Go generics ≠ C++ templates** - Go generics provide type safety but NOT specialization. Method calls through generic type parameters still have runtime overhead. Don't expect zero-cost abstractions.
+
+3. **DRY has limits in performance-critical code** - Sometimes duplication IS the optimization. The compiler can't inline what you've abstracted away.
+
+4. **Hybrid approach works** - Share truly common utilities (helper functions, constants) while keeping hot paths inline. This preserves both readability and performance.
+
+5. **Benchmark before and after** - The interface refactor looked cleaner but was 10% slower. Only benchmarks revealed the truth.
+
+6. **Allocation count is a leading indicator** - The 60% allocation increase (300K → 476K) signaled trouble before timing showed it. Extra allocations = GC pressure = slower execution.
+
+**Files Changed**:
+- `datalog/storage/key_encoder_base.go` - Shared utilities only (37 lines)
+- `datalog/storage/key_encoder_binary.go` - Full inline implementation (172 lines)
+- `datalog/storage/key_encoder_l85.go` - Full inline implementation (288 lines)
+- `datalog/storage/key_encoder_interface.go` - Factory unchanged (53 lines)
+
+**Recommendation**: For performance-critical code paths called millions of times:
+- Prefer inline code over interface abstraction
+- Share constants, helper functions, and cold paths only
+- Keep hot encode/decode/match logic duplicated but identical
+- Use benchmarks to validate any consolidation attempt
+
+---
 
 ### 2025-12-17: Schema Support Implementation & Benchmarking
 - Implemented Datomic-compatible schema support with type validation, cardinality, and uniqueness

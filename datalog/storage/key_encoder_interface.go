@@ -43,11 +43,11 @@ const (
 func NewKeyEncoder(strategy KeyEncodingStrategy) KeyEncoder {
 	switch strategy {
 	case L85Strategy:
-		return NewL85KeyEncoder()
+		return &L85KeyEncoder{}
 	case BinaryStrategy:
-		return NewBinaryKeyEncoder()
+		return &BinaryKeyEncoder{}
 	default:
 		// Default to L85 for debugging
-		return NewL85KeyEncoder()
+		return &L85KeyEncoder{}
 	}
 }
