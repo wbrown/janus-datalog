@@ -719,6 +719,96 @@ This demonstrates that **strategic code sharing CAN improve performance** when s
 - Keep hot encode/decode/match logic duplicated but identical
 - Use benchmarks to validate any consolidation attempt
 
+### 2025-12-24: DRY Refactoring Analysis - What NOT to Consolidate
+
+**Context: Interface Overhead Constrains Our Options**
+
+The key encoder experiment (above) proved that Go interfaces have real cost in hot paths: 10% slower, 60% more allocations. This fundamentally constrains consolidation options:
+
+- **With interfaces**: Could share logic via polymorphism, but pays performance penalty
+- **Without interfaces**: Can only share via extracted helper functions (like `historyIndexToBase()`)
+
+This means any consolidation must either:
+1. Accept the interface overhead (unacceptable for hot paths), OR
+2. Find substantive duplicated logic that can be extracted to shared functions
+
+With this constraint, we evaluated the remaining consolidation candidates:
+
+**Relation Interface Consolidation (REJECTED)**
+
+Problem statement: `relation.go` has 5-6 types (MaterializedRelation, StreamingRelation, EmptyRelation, etc.) each implementing ~26 methods. Initial estimate: 300-500 lines savings.
+
+Analysis revealed this is **NOT real duplication**:
+- `Columns()` → one-liner returning a field
+- `Symbols()` → same as `Columns()`
+- `Options()` → one-liner returning a field
+- `Join()` → one-liner calling `HashJoin()`
+
+Each relation type has fundamentally different storage and iteration logic. The "26 methods" are mostly trivial accessors that are **clearer explicit than abstracted**. Consolidating would add interface overhead (as we learned from key encoders) for no readability benefit.
+
+**Storage Iterator Consolidation (REJECTED)**
+
+Problem statement: Four iterator implementations (`matcher_iterator_reusing.go`, `matcher_iterator_nonreusing.go`, `matcher_iterator_unbound.go`) with ~573 lines total. Initial estimate: 200-300 lines savings.
+
+Analysis revealed these are **different iteration strategies**, not duplicated code:
+- `unboundIterator`: Simple scan, no bindings
+- `nonReusingIterator`: New scan per binding tuple
+- `reusingIterator`: Complex range calculation, single scan across all bindings
+
+Shared elements are minimal:
+- Field declarations (`tupleBuilder`, `constraints`, `columns`)
+- One-liner validation calls
+- Statistics tracking
+
+The core `Next()` logic is completely different for each strategy. Unifying them would create a confusing abstraction with conditionals, not cleaner code.
+
+**Key Insight: Real Duplication vs Structural Similarity**
+
+| Pattern | Example | Should Consolidate? |
+|---------|---------|---------------------|
+| **Real duplication** | Two identical 15-line switch statements | ✅ YES |
+| **Structural similarity** | Multiple types with same field names | ❌ NO |
+| **Trivial accessors** | One-liner `Columns()` methods | ❌ NO |
+| **Different algorithms** | Multiple iterator strategies | ❌ NO |
+
+**Decision Criteria for Future Consolidation**:
+1. Is the duplicated code **substantive** (>10 lines of real logic)?
+2. Would changes to one copy **always** require identical changes to others?
+3. Does consolidation **improve readability** or just reduce line count?
+4. Is the code on a **hot path** where interface overhead matters?
+
+The key encoder consolidation succeeded because it met criteria 1-3: identical 15-line switch statements that would always change together, and consolidation improved readability. The hybrid approach addressed criterion 4 by keeping hot paths inline.
+
+The relation and iterator consolidations failed criteria 1-3: the "duplication" was structural similarity (same field names, same interface) not identical logic.
+
+**Why Interface-Based Consolidation Was Not An Option**
+
+In languages like Java or C#, the typical solution would be a base class or interface with default implementations. In Go, this would mean:
+
+```go
+// Hypothetical base relation (NOT IMPLEMENTED)
+type baseRelation struct {
+    columns []query.Symbol
+    options ExecutorOptions
+}
+func (b *baseRelation) Columns() []query.Symbol { return b.columns }
+// ... 20+ more delegating methods
+```
+
+But the key encoder experiment proved this approach costs 10% performance and 60% more allocations due to:
+1. Interface dispatch (vtable lookup on every call)
+2. Escape analysis failures (values escape to heap through interfaces)
+3. Inlining prevention (compiler can't inline through interface calls)
+
+For relations and iterators—called millions of times during query execution—this overhead is unacceptable.
+
+**The Realistic Choices Were:**
+1. ❌ Interface-based consolidation → Rejected due to proven performance cost
+2. ❌ Extract shared logic to helper functions → Nothing substantive to extract (only trivial accessors)
+3. ✅ Keep explicit implementations → Maintains performance, code is already clear
+
+**Conclusion**: The interface overhead lesson from key encoders eliminated our primary consolidation tool. What remained wasn't real duplication—just structural similarity that's clearer left explicit. Line count reduction is not a goal; code clarity and performance are.
+
 ---
 
 ### 2025-12-17: Schema Support Implementation & Benchmarking
