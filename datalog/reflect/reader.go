@@ -116,7 +116,24 @@ func (sr *StructReader) setFieldValue(fieldVal reflect.Value, field *FieldInfo, 
 
 	fieldType := field.GoType
 
-	// Handle pointer fields
+	// Handle pointer type aliases (Identity, Keyword) BEFORE general pointer handling
+	// These are pointer types that should be assigned directly, not dereferenced
+	if fieldType == identityType {
+		if id, ok := value.(datalog.Identity); ok {
+			fieldVal.Set(reflect.ValueOf(id))
+			return nil
+		}
+		return fmt.Errorf("expected Identity, got %T", value)
+	}
+	if fieldType == keywordType {
+		if kw, ok := value.(datalog.Keyword); ok {
+			fieldVal.Set(reflect.ValueOf(kw))
+			return nil
+		}
+		return fmt.Errorf("expected Keyword, got %T", value)
+	}
+
+	// Handle pointer fields (but not Identity/Keyword which are handled above)
 	if fieldType.Kind() == reflect.Ptr {
 		// Create new value and set pointer
 		newVal := reflect.New(fieldType.Elem())
@@ -151,8 +168,22 @@ func (sr *StructReader) setSliceValue(fieldVal reflect.Value, field *FieldInfo, 
 	for _, elem := range valueSlice {
 		var newElem reflect.Value
 
-		if elemType.Kind() == reflect.Ptr {
-			// Pointer element
+		// Handle pointer type aliases (Identity, Keyword) specially
+		// Don't treat them like regular pointers that need dereferencing
+		if elemType == identityType {
+			if id, ok := elem.(datalog.Identity); ok {
+				newElem = reflect.ValueOf(id)
+			} else {
+				return fmt.Errorf("expected Identity, got %T", elem)
+			}
+		} else if elemType == keywordType {
+			if kw, ok := elem.(datalog.Keyword); ok {
+				newElem = reflect.ValueOf(kw)
+			} else {
+				return fmt.Errorf("expected Keyword, got %T", elem)
+			}
+		} else if elemType.Kind() == reflect.Ptr {
+			// Pointer element (but not Identity/Keyword)
 			newElem = reflect.New(elemType.Elem())
 			if err := sr.setSingleValue(newElem.Elem(), elemType.Elem(), elem, depth, maxDepth); err != nil {
 				return err
@@ -175,7 +206,8 @@ func (sr *StructReader) setSliceValue(fieldVal reflect.Value, field *FieldInfo, 
 // setSingleValue sets a single value (not slice) to a reflect.Value
 func (sr *StructReader) setSingleValue(fieldVal reflect.Value, fieldType reflect.Type, value interface{}, depth, maxDepth int) error {
 	// Handle pointer types by dereferencing the target type
-	if fieldType.Kind() == reflect.Ptr {
+	// BUT not Identity or Keyword which are pointer type aliases that should stay as-is
+	if fieldType.Kind() == reflect.Ptr && fieldType != identityType && fieldType != keywordType {
 		fieldType = fieldType.Elem()
 	}
 
@@ -198,12 +230,8 @@ func (sr *StructReader) setSingleValue(fieldVal reflect.Value, fieldType reflect
 
 		case datalog.Identity:
 			// Just an Identity ref - try to set the ID field if the struct has one
-			return sr.setNestedStructID(fieldVal, fieldType, v)
-
-		case *datalog.Identity:
-			// Pointer to Identity ref
 			if v != nil {
-				return sr.setNestedStructID(fieldVal, fieldType, *v)
+				return sr.setNestedStructID(fieldVal, fieldType, v)
 			}
 			return nil
 
@@ -223,14 +251,9 @@ func (sr *StructReader) setSingleValue(fieldVal reflect.Value, fieldType reflect
 		return nil
 
 	case identityType:
-		switch v := value.(type) {
-		case datalog.Identity:
+		if v, ok := value.(datalog.Identity); ok {
 			fieldVal.Set(reflect.ValueOf(v))
-		case *datalog.Identity:
-			if v != nil {
-				fieldVal.Set(reflect.ValueOf(*v))
-			}
-		default:
+		} else {
 			return fmt.Errorf("expected Identity, got %T", value)
 		}
 		return nil
@@ -317,13 +340,8 @@ func (sr *StructReader) setNestedStructID(fieldVal reflect.Value, fieldType refl
 	}
 	if nestedInfo.IDField != nil {
 		idField := fieldVal.Field(nestedInfo.IDField.Index)
-		if nestedInfo.IDField.GoType.Kind() == reflect.Ptr {
-			newID := reflect.New(identityType)
-			newID.Elem().Set(reflect.ValueOf(id))
-			idField.Set(newID)
-		} else {
-			idField.Set(reflect.ValueOf(id))
-		}
+		// Identity is always a pointer type now, set it directly
+		idField.Set(reflect.ValueOf(id))
 	}
 	return nil
 }
@@ -367,13 +385,8 @@ func (sr *StructReader) SetIDField(v interface{}, entityID datalog.Identity) err
 	}
 
 	idField := structVal.Field(sr.info.IDField.Index)
-	if sr.info.IDField.GoType.Kind() == reflect.Ptr {
-		newID := reflect.New(identityType)
-		newID.Elem().Set(reflect.ValueOf(entityID))
-		idField.Set(newID)
-	} else {
-		idField.Set(reflect.ValueOf(entityID))
-	}
+	// Identity is always a pointer type now, set it directly
+	idField.Set(reflect.ValueOf(entityID))
 	return nil
 }
 

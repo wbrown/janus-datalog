@@ -660,7 +660,9 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 		return dlreflect.ErrNotPointerToSlice
 	}
 	elemType := sliceVal.Type().Elem()
-	elemIsPtr := elemType.Kind() == reflect.Ptr
+	// Check for Identity/Keyword types BEFORE dereferencing - they are pointer type aliases
+	// (*identity, *keyword) and should not be dereferenced
+	elemIsPtr := elemType.Kind() == reflect.Ptr && elemType != identityType && elemType != keywordType
 	if elemIsPtr {
 		elemType = elemType.Elem()
 	}
@@ -672,7 +674,8 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 	}
 
 	// Check if element type is a struct or scalar
-	// time.Time, Identity, and Keyword are structs but treated as scalars
+	// time.Time and Keyword are structs but treated as scalars
+	// Identity is a pointer type alias and goes through scalar path automatically
 	if elemType.Kind() == reflect.Struct && !isScalarStructType(elemType) {
 		// Struct path - use mapper
 		findColumns := extractFindColumnStrings(q.Find)
@@ -802,8 +805,8 @@ func extractFindColumnStrings(find []query.FindElement) []string {
 // Scalar struct types - these are structs but treated as scalar values
 var (
 	timeType     = reflect.TypeOf(time.Time{})
-	identityType = reflect.TypeOf(datalog.Identity{})
-	keywordType  = reflect.TypeOf(datalog.Keyword{})
+	identityType = reflect.TypeOf((datalog.Identity)(nil))
+	keywordType  = reflect.TypeOf((datalog.Keyword)(nil)) // Keyword is *keyword, no .Elem()
 )
 
 // isScalarStructType returns true if the type is a struct that should be treated as a scalar
@@ -928,27 +931,15 @@ func setScalarValue(dest reflect.Value, val interface{}) error {
 			}
 		}
 		if destType == identityType {
-			switch id := val.(type) {
-			case datalog.Identity:
+			if id, ok := val.(datalog.Identity); ok && id != nil {
 				dest.Set(reflect.ValueOf(id))
 				return nil
-			case *datalog.Identity:
-				if id != nil {
-					dest.Set(reflect.ValueOf(*id))
-					return nil
-				}
 			}
 		}
 		if destType == keywordType {
-			switch kw := val.(type) {
-			case datalog.Keyword:
+			if kw, ok := val.(datalog.Keyword); ok && kw != nil {
 				dest.Set(reflect.ValueOf(kw))
 				return nil
-			case *datalog.Keyword:
-				if kw != nil {
-					dest.Set(reflect.ValueOf(*kw))
-					return nil
-				}
 			}
 		}
 
@@ -1106,7 +1097,7 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 	}
 
 	if err := t.AddEntity(e, kwAttrs); err != nil {
-		return datalog.Identity{}, err
+		return nil, err
 	}
 
 	return e, nil
@@ -1284,14 +1275,9 @@ func (t *Transaction) validateUniqueness() error {
 			if eIndex >= len(tuple) {
 				continue
 			}
-			// Handle both value and pointer types for Identity
-			var existingEntity datalog.Identity
-			switch e := tuple[eIndex].(type) {
-			case datalog.Identity:
-				existingEntity = e
-			case *datalog.Identity:
-				existingEntity = *e
-			default:
+			// Get Identity (now always a pointer type)
+			existingEntity, ok := tuple[eIndex].(datalog.Identity)
+			if !ok || existingEntity == nil {
 				continue
 			}
 			if !existingEntity.Equal(d.E) {

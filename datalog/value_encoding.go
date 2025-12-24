@@ -54,11 +54,11 @@ func Type(v Value) ValueType {
 
 // Bytes serializes a value to bytes
 func ValueBytes(v Value) []byte {
-	// Handle pointers by dereferencing first
+	// Handle pointer types first
 	switch ptr := v.(type) {
-	case *Identity:
+	case Identity:
 		return ptr.Bytes()
-	case *Keyword:
+	case Keyword:
 		return []byte(ptr.String())
 	case *uint64:
 		buf := make([]byte, 8)

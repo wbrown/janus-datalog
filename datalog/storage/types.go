@@ -152,7 +152,9 @@ func (d StorageDatom) Bytes() []byte {
 // ToStorageDatom converts a user-facing datom to storage representation
 func ToStorageDatom(d datalog.Datom) StorageDatom {
 	var e Entity
-	copy(e[:], d.E.Bytes())
+	if d.E != nil {
+		copy(e[:], d.E.Bytes())
+	}
 
 	return StorageDatom{
 		E:  e,

@@ -260,16 +260,14 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 	for it.Next() {
 		tuple := it.Tuple()
 		if aIdx < len(tuple) && vIdx < len(tuple) {
-			// Handle both Keyword and *Keyword (BadgerMatcher may return pointers)
+			// Handle *Keyword only - value-type Keywords are a bug
 			var attr datalog.Keyword
 			switch a := tuple[aIdx].(type) {
 			case datalog.Keyword:
-				attr = a
-			case *datalog.Keyword:
 				if a == nil {
 					continue
 				}
-				attr = *a
+				attr = a
 			default:
 				continue
 			}
@@ -546,15 +544,13 @@ func (pe *PullExecutor) PullResolvedMany(entities []datalog.Identity, pattern *q
 	return results, nil
 }
 
-// getIdentity extracts an Identity from a value (handles both value and pointer types)
+// getIdentity extracts an Identity from a value
 func getIdentity(val interface{}) (datalog.Identity, bool) {
 	switch v := val.(type) {
 	case datalog.Identity:
-		return v, true
-	case *datalog.Identity:
 		if v != nil {
-			return *v, true
+			return v, true
 		}
 	}
-	return datalog.Identity{}, false
+	return nil, false
 }

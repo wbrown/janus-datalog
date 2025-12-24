@@ -37,12 +37,12 @@ type WithPointers struct {
 }
 
 type AllTypes struct {
-	Str     string           `datalog:"?str"`
-	Int     int64            `datalog:"?int"`
-	Float   float64          `datalog:"?float"`
-	Bool    bool             `datalog:"?bool"`
-	Time    time.Time        `datalog:"?time"`
-	ID      datalog.Identity `datalog:"?id"`
+	Str     string            `datalog:"?str"`
+	Int     int64             `datalog:"?int"`
+	Float   float64           `datalog:"?float"`
+	Bool    bool              `datalog:"?bool"`
+	Time    time.Time         `datalog:"?time"`
+	ID      datalog.Identity  `datalog:"?id"`
 	Keyword datalog.Keyword  `datalog:"?kw"`
 }
 
@@ -62,8 +62,8 @@ type WithUint64 struct {
 }
 
 type WithIdentityPointer struct {
-	Name string            `datalog:"?name"`
-	Ref  *datalog.Identity `datalog:"?ref"`
+	Name string          `datalog:"?name"`
+	Ref  datalog.Identity `datalog:"?ref"` // Identity is already a pointer type
 }
 
 type WithAttrTag struct {
@@ -408,8 +408,8 @@ func TestMapTuple_IdentityPointer(t *testing.T) {
 	if result.Ref == nil {
 		t.Fatal("Ref: expected non-nil, got nil")
 	}
-	if *result.Ref != id {
-		t.Errorf("Ref: expected %v, got %v", id, *result.Ref)
+	if result.Ref != id {
+		t.Errorf("Ref: expected %v, got %v", id, result.Ref)
 	}
 
 	// Test with nil ref
@@ -422,14 +422,13 @@ func TestMapTuple_IdentityPointer(t *testing.T) {
 		t.Errorf("Ref: expected nil, got %v", result2.Ref)
 	}
 
-	// Test with *Identity value (pointer passed directly)
-	idPtr := &id
-	tuple3 := []interface{}{"ptr", idPtr}
+	// Test with Identity value (passed directly - Identity is now a pointer type)
+	tuple3 := []interface{}{"ptr", id}
 	var result3 WithIdentityPointer
 	if err := mapper.MapTuple(tuple3, reflect.ValueOf(&result3).Elem()); err != nil {
-		t.Fatalf("MapTuple with *Identity failed: %v", err)
+		t.Fatalf("MapTuple with Identity failed: %v", err)
 	}
-	if result3.Ref == nil || *result3.Ref != id {
+	if result3.Ref == nil || result3.Ref != id {
 		t.Errorf("Ref: expected %v, got %v", id, result3.Ref)
 	}
 }
@@ -528,6 +527,53 @@ func TestIsQueryTag(t *testing.T) {
 				t.Errorf("isQueryTag(%q) = %v, want %v", tt.tag, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestKeywordPtrTypeMatch(t *testing.T) {
+	// Verify that datalog.Keyword field type matches keywordPtrType
+	keywordPtrType := reflect.TypeOf((datalog.Keyword)(nil))
+
+	fieldType := reflect.TypeOf(AllTypes{}).Field(6).Type // Keyword field
+	t.Logf("keywordPtrType: %v", keywordPtrType)
+	t.Logf("fieldType: %v", fieldType)
+	t.Logf("Equal: %v", fieldType == keywordPtrType)
+
+	// Test interning - same keyword should return same pointer
+	kw1 := datalog.NewKeyword(":test/keyword")
+	kw2 := datalog.NewKeyword(":test/keyword")
+	t.Logf("kw1 pointer: %p", kw1)
+	t.Logf("kw2 pointer: %p", kw2)
+	t.Logf("Same pointer: %v", kw1 == kw2)
+
+	if kw1 != kw2 {
+		t.Errorf("Interned keywords should be same pointer")
+	}
+
+	// Test the actual mapping flow
+	kw := datalog.NewKeyword(":status/active")
+	tuple := []interface{}{kw}
+	t.Logf("Input kw pointer: %p", kw)
+
+	findColumns := []string{"?kw"}
+	type JustKeyword struct {
+		Keyword datalog.Keyword `datalog:"?kw"`
+	}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(JustKeyword{}), findColumns)
+	if err != nil {
+		t.Fatalf("mapper error: %v", err)
+	}
+
+	var result JustKeyword
+	if err := mapper.MapTuple(tuple, reflect.ValueOf(&result).Elem()); err != nil {
+		t.Fatalf("MapTuple failed: %v", err)
+	}
+
+	t.Logf("Result kw pointer: %p", result.Keyword)
+	t.Logf("Same pointer after mapping: %v", result.Keyword == kw)
+
+	if result.Keyword != kw {
+		t.Errorf("Keyword pointers should match: input=%p result=%p", kw, result.Keyword)
 	}
 }
 

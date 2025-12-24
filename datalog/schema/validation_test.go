@@ -55,7 +55,7 @@ func TestValidateValueBytes(t *testing.T) {
 func TestValidateValueRef(t *testing.T) {
 	id := datalog.NewIdentity("test:entity")
 	assert.NoError(t, ValidateValue(id, TypeRef))
-	assert.NoError(t, ValidateValue(&id, TypeRef))
+	// Note: id is already *identity (Identity is a pointer type alias), so &id is not valid
 	assert.Error(t, ValidateValue("test:entity", TypeRef))
 	assert.Error(t, ValidateValue(12345, TypeRef))
 }
@@ -63,7 +63,7 @@ func TestValidateValueRef(t *testing.T) {
 func TestValidateValueKeyword(t *testing.T) {
 	kw := datalog.NewKeyword(":test/keyword")
 	assert.NoError(t, ValidateValue(kw, TypeKeyword))
-	assert.NoError(t, ValidateValue(&kw, TypeKeyword))
+	// Note: kw is already *Keyword from NewKeyword, no &kw case needed
 	assert.Error(t, ValidateValue(":test/keyword", TypeKeyword))
 	assert.Error(t, ValidateValue("keyword", TypeKeyword))
 }

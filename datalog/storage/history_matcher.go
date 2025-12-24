@@ -128,7 +128,7 @@ func (m *HistoryMatcher) buildScanRange(index IndexType, e, a, v, tx interface{}
 		}
 	case AEVT_HISTORY, AVET_HISTORY:
 		if aKw, ok := a.(datalog.Keyword); ok {
-			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
+			aStorage := ToStorageDatom(datalog.Datom{A: datalog.NewKeyword(aKw.String())}).A
 			parts = append(parts, aStorage[:])
 		}
 	case VAET_HISTORY:

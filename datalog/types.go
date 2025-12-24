@@ -2,47 +2,179 @@ package datalog
 
 import (
 	"fmt"
+	"strings"
 )
 
 // Datom is the fundamental unit of data in a Datalog system
 // It represents a single fact: Entity-Attribute-Value-Transaction
 type Datom struct {
 	E  Identity // Entity identifier
-	A  Keyword  // Attribute keyword
+	A  Keyword  // Attribute keyword (interned pointer)
 	V  Value    // Any value (see value.go for valid types)
 	Tx uint64   // Transaction ID
 }
 
-// Keyword represents an attribute keyword
-// Unlike entities, keywords are interned strings, not hashes
-type Keyword struct {
+// keyword is the unexported base type for attribute keywords.
+// Unlike entities, keywords are interned strings, not hashes.
+type keyword struct {
 	value string // The keyword string (e.g., ":user/name")
 }
 
-// NewKeyword creates a keyword
+// Keyword is the exported pointer type, always interned.
+type Keyword = *keyword
+
+// NewKeyword creates an interned keyword.
+// Accepts both ":foo/bar" and "foo/bar" formats (auto-prefixes colon).
 func NewKeyword(s string) Keyword {
-	// TODO: Add interning/caching for performance
-	return Keyword{value: s}
+	if len(s) == 0 || s[0] != ':' {
+		s = ":" + s
+	}
+	return InternKeyword(s)
 }
 
 // String returns the keyword string
 func (k Keyword) String() string {
+	if k == nil {
+		return ""
+	}
 	return k.value
 }
 
-// Compare compares two keywords
+// Compare compares two keywords using pointer equality first.
+// Since all Keywords are interned, pointer equality implies value equality.
+// Panics if two different pointers have the same string (indicates interning bug).
 func (k Keyword) Compare(other Keyword) int {
-	if k.value < other.value {
+	if k == nil && other == nil {
+		return 0
+	}
+	if k == nil {
 		return -1
-	} else if k.value > other.value {
+	}
+	if other == nil {
 		return 1
 	}
-	return 0
+	// Pointer equality for interned keywords
+	if k == other {
+		return 0
+	}
+	// Different pointers - compare strings for ordering
+	cmp := strings.Compare(k.value, other.value)
+	if cmp == 0 {
+		panic(fmt.Sprintf("BUG: two Keyword pointers with same value %q in Compare - interning failed", k.value))
+	}
+	return cmp
+}
+
+// Equal checks if two keywords are equal using pointer comparison.
+// Since all Keywords are interned, pointer equality implies value equality.
+// Panics if two different pointers have the same string (indicates interning bug).
+func (k Keyword) Equal(other Keyword) bool {
+	if k == other {
+		return true
+	}
+	if k == nil || other == nil {
+		return false
+	}
+	// Different pointers - if they have the same value, interning is broken
+	if k.value == other.value {
+		panic(fmt.Sprintf("BUG: two Keyword pointers with same value %q in Equal - interning failed", k.value))
+	}
+	return false
 }
 
 // Bytes returns the keyword as bytes
 func (k Keyword) Bytes() []byte {
+	if k == nil {
+		return nil
+	}
 	return []byte(k.value)
+}
+
+// Namespace returns the namespace part of a qualified keyword.
+// ":scenario/premise" → "scenario"
+// ":foo" → "" (unqualified)
+// ":/" → "" (slash is the name, not separator)
+func (k Keyword) Namespace() string {
+	if k == nil {
+		return ""
+	}
+	s := k.value
+	if len(s) > 0 && s[0] == ':' {
+		s = s[1:]
+	}
+	// Edge case: just "/" means no namespace (slash is the name)
+	if s == "/" {
+		return ""
+	}
+	idx := strings.Index(s, "/")
+	if idx == -1 {
+		return ""
+	}
+	return s[:idx]
+}
+
+// Name returns the local name part of a keyword.
+// ":scenario/premise" → "premise"
+// ":scenario/characterEval:Alice" → "characterEval:Alice"
+// ":foo" → "foo"
+// ":/" → "/" (slash is the name)
+func (k Keyword) Name() string {
+	if k == nil {
+		return ""
+	}
+	s := k.value
+	if len(s) > 0 && s[0] == ':' {
+		s = s[1:]
+	}
+	// Edge case: just "/" means name is "/"
+	if s == "/" {
+		return "/"
+	}
+	idx := strings.Index(s, "/")
+	if idx == -1 {
+		return s
+	}
+	return s[idx+1:]
+}
+
+// IsQualified returns true if the keyword has a namespace.
+func (k Keyword) IsQualified() bool {
+	if k == nil {
+		return false
+	}
+	s := k.value
+	if len(s) > 0 && s[0] == ':' {
+		s = s[1:]
+	}
+	// Edge case: just "/" is not qualified (slash is the name)
+	if s == "/" {
+		return false
+	}
+	return strings.Contains(s, "/")
+}
+
+// InNamespace returns true if the keyword's namespace matches ns.
+func (k Keyword) InNamespace(ns string) bool {
+	return k.Namespace() == ns
+}
+
+// Matches returns true if keyword matches pattern.
+// Wildcard "*" matches any namespace or name part.
+// k.Matches(Kw("scenario", "*")) - any name in scenario namespace
+// k.Matches(Kw("*", "premise")) - premise in any namespace
+func (k Keyword) Matches(pattern Keyword) bool {
+	if k == nil || pattern == nil {
+		return k == pattern
+	}
+	pns := pattern.Namespace()
+	pname := pattern.Name()
+	if pns != "*" && pns != k.Namespace() {
+		return false
+	}
+	if pname != "*" && pname != k.Name() {
+		return false
+	}
+	return true
 }
 
 // String returns a string representation of the Datom

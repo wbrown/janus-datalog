@@ -63,12 +63,8 @@ func TestIdentityComparisonBestPractices(t *testing.T) {
 	}
 
 	// Get the returned entity
-	var foundID datalog.Identity
-	if id, ok := tuples[0][0].(datalog.Identity); ok {
-		foundID = id
-	} else if ptr, ok := tuples[0][0].(*datalog.Identity); ok && ptr != nil {
-		foundID = *ptr
-	} else {
+	foundID, ok := tuples[0][0].(datalog.Identity)
+	if !ok {
 		t.Fatalf("Result is not an Identity: %T", tuples[0][0])
 	}
 

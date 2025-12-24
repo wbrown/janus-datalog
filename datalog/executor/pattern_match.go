@@ -239,7 +239,8 @@ func matchesConstant(value, constant interface{}) bool {
 	case datalog.Keyword:
 		switch c := constant.(type) {
 		case datalog.Keyword:
-			return v.String() == c.String()
+			// Pointer equality - interned keywords are unique
+			return v == c
 		case string:
 			// Allow matching by string for convenience
 			return v.String() == c

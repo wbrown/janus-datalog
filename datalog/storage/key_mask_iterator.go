@@ -87,23 +87,16 @@ func CreateKeyMaskConstraint(index IndexType, position int, value interface{}) (
 
 	// Handle entity and attribute positions specially (they're fixed-size)
 	if position == 0 { // Entity position
-		switch v := value.(type) {
-		case *datalog.Identity:
+		if v, ok := value.(datalog.Identity); ok {
 			hash := v.Hash()
 			targetBytes = hash[:]
-		case datalog.Identity:
-			hash := v.Hash()
-			targetBytes = hash[:]
-		default:
+		} else {
 			return nil, fmt.Errorf("entity position requires Identity value, got %T", value)
 		}
 	} else if position == 1 { // Attribute position
 		switch v := value.(type) {
-		case *datalog.Keyword:
-			// Attributes are stored as 32-byte padded strings
-			targetBytes = make([]byte, 32)
-			copy(targetBytes, v.String())
 		case datalog.Keyword:
+			// Attributes are stored as 32-byte padded strings
 			targetBytes = make([]byte, 32)
 			copy(targetBytes, v.String())
 		case string:
@@ -145,25 +138,14 @@ func CreateKeyMaskConstraint(index IndexType, position int, value interface{}) (
 			targetBytes = make([]byte, 9)
 			targetBytes[0] = byte(datalog.TypeTime)
 			binary.BigEndian.PutUint64(targetBytes[1:], uint64(v.UnixNano()))
-		case *datalog.Identity:
+		case datalog.Identity:
 			// References are stored as 20-byte hashes
 			targetBytes = make([]byte, 21) // 1 type + 20 hash
 			targetBytes[0] = byte(datalog.TypeReference)
 			hash := v.Hash()
 			copy(targetBytes[1:], hash[:])
-		case datalog.Identity:
-			// Handle non-pointer Identity too
-			targetBytes = make([]byte, 21)
-			targetBytes[0] = byte(datalog.TypeReference)
-			hash := v.Hash()
-			copy(targetBytes[1:], hash[:])
-		case *datalog.Keyword:
-			// Keywords can be values too
-			targetBytes = make([]byte, 1+len(v.String()))
-			targetBytes[0] = byte(datalog.TypeKeyword)
-			copy(targetBytes[1:], v.String())
 		case datalog.Keyword:
-			// Handle non-pointer Keyword
+			// Keywords can be values too
 			targetBytes = make([]byte, 1+len(v.String()))
 			targetBytes[0] = byte(datalog.TypeKeyword)
 			copy(targetBytes[1:], v.String())

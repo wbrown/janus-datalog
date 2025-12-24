@@ -87,11 +87,8 @@ func TestMultiPositionBindingCorrectness(t *testing.T) {
 	// Use L85() for comparison since storage-returned entities don't have original strings
 	resultEntities := make(map[string]bool)
 	for _, tuple := range results {
-		// Handle both pointer and value types
-		switch id := tuple[0].(type) {
-		case datalog.Identity:
-			resultEntities[id.L85()] = true
-		case *datalog.Identity:
+		// Identity is now always a pointer type
+		if id, ok := tuple[0].(datalog.Identity); ok {
 			resultEntities[id.L85()] = true
 		}
 	}
@@ -585,10 +582,7 @@ func collectEntityIDs(result executor.Relation) []string {
 			// Handle both pointer and value types
 			// Use L85() for consistent comparison since storage-returned
 			// entities don't have original strings
-			switch id := tuple[0].(type) {
-			case datalog.Identity:
-				ids = append(ids, id.L85())
-			case *datalog.Identity:
+			if id, ok := tuple[0].(datalog.Identity); ok {
 				ids = append(ids, id.L85())
 			}
 		}

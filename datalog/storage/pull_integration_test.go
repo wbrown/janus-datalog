@@ -281,16 +281,14 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 			tuple := it.Tuple()
 			t.Logf("Tuple: %v (len=%d)", tuple, len(tuple))
 			if aIdx < len(tuple) && vIdx < len(tuple) {
-				// Handle both Keyword and *Keyword (BadgerMatcher may return pointers)
+				// Handle *Keyword only - value-type Keywords are a bug
 				var attr datalog.Keyword
 				switch a := tuple[aIdx].(type) {
 				case datalog.Keyword:
-					attr = a
-				case *datalog.Keyword:
 					if a == nil {
 						continue
 					}
-					attr = *a
+					attr = a
 				default:
 					t.Logf("tuple[%d] is not Keyword or *Keyword, got %T: %v", aIdx, tuple[aIdx], tuple[aIdx])
 					continue

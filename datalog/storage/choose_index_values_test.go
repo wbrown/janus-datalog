@@ -271,10 +271,10 @@ func TestChooseIndexForValuesVAET(t *testing.T) {
 	})
 }
 
-// TestChooseIndexForValuesIdentityPointer verifies that *datalog.Identity
-// values are handled correctly in addition to datalog.Identity values.
-func TestChooseIndexForValuesIdentityPointer(t *testing.T) {
-	dir, err := os.MkdirTemp("", "choose-index-ptr-test-*")
+// TestChooseIndexForValuesIdentity verifies that datalog.Identity
+// values are handled correctly (Identity is now always a pointer type).
+func TestChooseIndexForValuesIdentity(t *testing.T) {
+	dir, err := os.MkdirTemp("", "choose-index-identity-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,36 +313,6 @@ func TestChooseIndexForValuesIdentityPointer(t *testing.T) {
 
 		if count != 5 {
 			t.Errorf("Expected 5 datoms with Identity value, got %d", count)
-		}
-	})
-
-	t.Run("Identity pointer value", func(t *testing.T) {
-		scenarioPtr := &scenario
-		_, start2, end2 := matcher.chooseIndexForValues(AVET, nil, attr, scenarioPtr, 0)
-
-		iter, _ := matcher.store.ScanKeysOnly(AVET, start2, end2)
-		count := 0
-		for iter.Next() {
-			count++
-		}
-		iter.Close()
-
-		if count != 5 {
-			t.Errorf("Expected 5 datoms with *Identity value, got %d", count)
-		}
-	})
-
-	t.Run("same scan range for Identity and *Identity", func(t *testing.T) {
-		scenarioPtr := &scenario
-
-		_, start1, end1 := matcher.chooseIndexForValues(AVET, nil, attr, scenario, 0)
-		_, start2, end2 := matcher.chooseIndexForValues(AVET, nil, attr, scenarioPtr, 0)
-
-		if string(start1) != string(start2) {
-			t.Errorf("Scan range start differs between Identity and *Identity")
-		}
-		if string(end1) != string(end2) {
-			t.Errorf("Scan range end differs between Identity and *Identity")
 		}
 	})
 }

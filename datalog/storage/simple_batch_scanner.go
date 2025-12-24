@@ -101,9 +101,8 @@ func (s *simpleBatchScanner) buildBindingSet() map[string]executor.Tuple {
 // valueToKey converts a value to a string key for the binding set
 func (s *simpleBatchScanner) valueToKey(v interface{}) string {
 	// Handle pointers by dereferencing first
-	if ptr, ok := v.(*datalog.Identity); ok {
-		v = *ptr
-	} else if ptr, ok := v.(*datalog.Keyword); ok {
+	// Note: Identity is always a pointer type now, no dereferencing needed
+	if ptr, ok := v.(datalog.Keyword); ok {
 		v = *ptr
 	} else if ptr, ok := v.(*uint64); ok {
 		v = *ptr
@@ -112,6 +111,9 @@ func (s *simpleBatchScanner) valueToKey(v interface{}) string {
 	switch val := v.(type) {
 	case datalog.Identity:
 		// Use hash for consistent comparison
+		if val == nil {
+			return ""
+		}
 		hash := val.Hash()
 		return string(hash[:])
 	case datalog.Keyword:
@@ -169,9 +171,8 @@ func (s *simpleBatchScanner) calculateScanRange(bindingSet map[string]executor.T
 // buildKey builds a storage key for a binding value
 func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 	// Handle pointers by dereferencing first
-	if ptr, ok := value.(*datalog.Identity); ok {
-		value = *ptr
-	} else if ptr, ok := value.(*datalog.Keyword); ok {
+	// Note: Identity is always a pointer type now, no dereferencing needed
+	if ptr, ok := value.(datalog.Keyword); ok {
 		value = *ptr
 	} else if ptr, ok := value.(*uint64); ok {
 		value = *ptr

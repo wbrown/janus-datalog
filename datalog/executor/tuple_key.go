@@ -65,29 +65,47 @@ func hashValues(values []interface{}) uint64 {
 func hashValue(v interface{}) uint64 {
 	// Handle pointers first - with interning, we'll see these often
 	switch ptr := v.(type) {
-	case *datalog.Identity:
+	case datalog.Identity:
+		// Check for nil - Identity is a pointer type alias
+		if ptr == nil {
+			return 0
+		}
 		// For interned pointers, we can use pointer equality as a fast path
 		// But for hashing, we need consistent hash based on value
 		bytes := ptr.Hash()
 		return hashBytes(bytes[:])
-	case *datalog.Keyword:
+	case datalog.Keyword:
+		// Check for nil - Keyword is a pointer type alias
+		if ptr == nil {
+			return 0
+		}
 		str := ptr.String()
 		return hashString(str)
 	case *uint64:
+		if ptr == nil {
+			return 0
+		}
 		return *ptr
 	}
 
 	// Handle regular values
 	switch val := v.(type) {
 	case datalog.Identity:
+		// Check for nil - Identity is a pointer type alias
+		if val == nil {
+			return 0
+		}
 		// Hash the raw bytes directly
 		bytes := val.Hash()
 		return hashBytes(bytes[:])
 
 	case datalog.Keyword:
-		// Hash the string representation
-		str := val.String()
-		return hashString(str)
+		// Check for nil - Keyword is a pointer type alias
+		if val == nil {
+			return 0
+		}
+		// Use pointer value for hash - interned keywords are unique pointers
+		return uint64(uintptr(unsafe.Pointer(val)))
 
 	case string:
 		return hashString(val)

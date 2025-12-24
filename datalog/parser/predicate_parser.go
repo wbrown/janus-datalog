@@ -246,17 +246,15 @@ func extractKeywordPredicate(arg query.PatternElement) (datalog.Keyword, error) 
 		switch v := a.Value.(type) {
 		case datalog.Keyword:
 			return v, nil
-		case *datalog.Keyword:
-			return *v, nil
 		case string:
 			if len(v) > 0 && v[0] == ':' {
 				return datalog.NewKeyword(v), nil
 			}
-			return datalog.Keyword{}, fmt.Errorf("string %q is not a keyword", v)
+			return nil, fmt.Errorf("string %q is not a keyword", v)
 		default:
-			return datalog.Keyword{}, fmt.Errorf("expected keyword, got %T", v)
+			return nil, fmt.Errorf("expected keyword, got %T", v)
 		}
 	default:
-		return datalog.Keyword{}, fmt.Errorf("expected keyword constant, got %T", arg)
+		return nil, fmt.Errorf("expected keyword constant, got %T", arg)
 	}
 }

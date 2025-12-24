@@ -89,12 +89,12 @@ func TestHashJoinColumnIndexBug(t *testing.T) {
 	for it.Next() {
 		tuple := it.Tuple()
 		assert.Len(t, tuple, 2, "Should have 2 columns: ?e and ?value")
-		// Verify entity is an Identity or pointer to Identity
+		// Verify entity is an Identity
 		switch v := tuple[0].(type) {
-		case datalog.Identity, *datalog.Identity:
+		case datalog.Identity:
 			// Valid Identity type
 		default:
-			t.Errorf("First column should be Identity or *Identity, got %T: %v", v, v)
+			t.Errorf("First column should be Identity, got %T: %v", v, v)
 		}
 		// Verify value is a float64
 		value, ok := tuple[1].(float64)
@@ -164,13 +164,13 @@ func TestHashJoinColumnIndexMultiColumn(t *testing.T) {
 
 	// Verify we got Identity types (the actual values are hashes, not the original strings)
 	switch v := tuple[0].(type) {
-	case datalog.Identity, *datalog.Identity:
+	case datalog.Identity:
 		// Valid Identity type
 	default:
 		t.Fatalf("Expected Identity for first column, got %T", v)
 	}
 	switch v := tuple[1].(type) {
-	case datalog.Identity, *datalog.Identity:
+	case datalog.Identity:
 		// Valid Identity type
 	default:
 		t.Fatalf("Expected Identity for second column, got %T", v)
