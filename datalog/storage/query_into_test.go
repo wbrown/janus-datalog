@@ -552,6 +552,55 @@ func TestQueryInto_ScalarIdentity(t *testing.T) {
 	}
 }
 
+// TestQueryInto_KeywordField tests that Keyword fields in result structs work correctly
+// This is a regression test for a bug where keywordType was defined with .Elem()
+// which caused "value of type *datalog.keyword is not assignable to type datalog.keyword"
+func TestQueryInto_KeywordField(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	// Add some data with keyword values
+	statusKw := datalog.NewKeyword(":person/status")
+	activeKw := datalog.NewKeyword(":status/active")
+
+	tx := db.NewTransaction()
+	alice := datalog.NewIdentity("alice")
+	tx.Add(alice, statusKw, activeKw)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Query into struct with Keyword field
+	type PersonStatus struct {
+		Entity datalog.Identity `datalog:"?e"`
+		Status datalog.Keyword  `datalog:"?status"`
+	}
+
+	var results []PersonStatus
+	err := db.QueryInto(&results, `
+		[:find ?e ?status
+		 :where [?e :person/status ?status]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Status == nil {
+		t.Error("expected Status to be non-nil")
+	} else if results[0].Status.String() != ":status/active" {
+		t.Errorf("expected Status ':status/active', got %q", results[0].Status.String())
+	}
+
+	// Verify interning - should be the same pointer
+	if results[0].Status != activeKw {
+		t.Error("expected Status to be same interned keyword pointer")
+	}
+}
+
 func TestQueryInto_ScalarMultiColumnError(t *testing.T) {
 	db, cleanup := createTestDatabaseWithPeople(t)
 	defer cleanup()

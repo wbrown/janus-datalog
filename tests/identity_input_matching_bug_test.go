@@ -101,11 +101,7 @@ func TestIdentityInputMatchingBug(t *testing.T) {
 	// Verify we got the RIGHT child
 	foundID, ok := tuples[0][0].(datalog.Identity)
 	if !ok {
-		if ptr, ok := tuples[0][0].(*datalog.Identity); ok && ptr != nil {
-			foundID = *ptr
-		} else {
-			t.Fatalf("Result is not an Identity: %T", tuples[0][0])
-		}
+		t.Fatalf("Result is not an Identity: %T", tuples[0][0])
 	}
 
 	// IMPORTANT: Use .Equal() to compare Identities by hash, not struct equality!
@@ -122,12 +118,9 @@ func TestIdentityInputMatchingBug(t *testing.T) {
 		if len(refs) > 0 {
 			t.Logf("Found entity's actual ref (L85): %v", refs[0][0])
 			t.Logf("Our parent1 (L85):               %v", parent1.L85())
-			if refID, ok := refs[0][0].(datalog.Identity); ok {
+			if refID, ok := refs[0][0].(datalog.Identity); ok && refID != nil {
 				t.Logf("Refs equal (by hash): %v", refID.Equal(parent1))
 				t.Logf("Refs hash match: expected=%x got=%x", parent1.Hash(), refID.Hash())
-			} else if refPtr, ok := refs[0][0].(*datalog.Identity); ok && refPtr != nil {
-				t.Logf("Refs equal (by hash): %v", refPtr.Equal(parent1))
-				t.Logf("Refs hash match: expected=%x got=%x", parent1.Hash(), refPtr.Hash())
 			}
 		}
 	}
@@ -200,11 +193,7 @@ func TestIdentityInputMatchingWithMultipleConstraints(t *testing.T) {
 
 	foundID, ok := tuples[0][0].(datalog.Identity)
 	if !ok {
-		if ptr, ok := tuples[0][0].(*datalog.Identity); ok && ptr != nil {
-			foundID = *ptr
-		} else {
-			t.Fatalf("Result is not an Identity: %T", tuples[0][0])
-		}
+		t.Fatalf("Result is not an Identity: %T", tuples[0][0])
 	}
 
 	t.Logf("Found ID (L85): %v", foundID.L85())

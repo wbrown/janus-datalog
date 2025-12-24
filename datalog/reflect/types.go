@@ -12,12 +12,21 @@ import (
 // Well-known types for comparison
 var (
 	timeType     = reflect.TypeOf(time.Time{})
-	identityType = reflect.TypeOf(datalog.Identity{})
-	keywordType  = reflect.TypeOf(datalog.Keyword{})
+	identityType = reflect.TypeOf((datalog.Identity)(nil))
+	keywordType  = reflect.TypeOf((datalog.Keyword)(nil)) // Keyword is *keyword, no .Elem()
 )
 
 // GoTypeToSchemaType maps a Go reflect.Type to a schema.ValueType
 func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
+	// Check pointer type aliases BEFORE dereferencing
+	// Identity and Keyword are pointer type aliases (*identity, *keyword)
+	if t == identityType {
+		return schema.TypeRef, nil
+	}
+	if t == keywordType {
+		return schema.TypeKeyword, nil
+	}
+
 	// Handle pointers by dereferencing
 	if t.Kind() == reflect.Ptr {
 		return GoTypeToSchemaType(t.Elem())
@@ -65,6 +74,12 @@ func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
 // InferCardinality determines cardinality from a Go type
 // Slices (except []byte) are cardinality-many, everything else is one
 func InferCardinality(t reflect.Type) schema.Cardinality {
+	// Check pointer type aliases BEFORE dereferencing
+	// Identity and Keyword are pointer type aliases (*identity, *keyword)
+	if t == identityType || t == keywordType {
+		return schema.CardinalityOne
+	}
+
 	// Handle pointers
 	if t.Kind() == reflect.Ptr {
 		return InferCardinality(t.Elem())
@@ -78,14 +93,18 @@ func InferCardinality(t reflect.Type) schema.Cardinality {
 
 // IsRefType checks if a Go type represents a reference to another entity
 func IsRefType(t reflect.Type) bool {
+	// Check pointer type aliases BEFORE dereferencing
+	// Identity and Keyword are pointer type aliases (*identity, *keyword)
+	if t == identityType {
+		return true
+	}
+	if t == keywordType {
+		return false // Keyword is not a reference type
+	}
+
 	// Handle pointers
 	if t.Kind() == reflect.Ptr {
 		return IsRefType(t.Elem())
-	}
-
-	// Direct Identity type
-	if t == identityType {
-		return true
 	}
 
 	// Slice of Identity
@@ -104,6 +123,11 @@ func IsRefType(t reflect.Type) bool {
 	// Slice of structs (nested entity references)
 	if t.Kind() == reflect.Slice {
 		elem := t.Elem()
+		// Check pointer type aliases BEFORE dereferencing
+		// Identity and Keyword are pointer type aliases (*identity, *keyword)
+		if elem == identityType || elem == keywordType {
+			return false
+		}
 		if elem.Kind() == reflect.Ptr {
 			elem = elem.Elem()
 		}
@@ -120,6 +144,11 @@ func IsRefType(t reflect.Type) bool {
 
 // ElementType returns the element type for slices/pointers, or the type itself
 func ElementType(t reflect.Type) reflect.Type {
+	// Check pointer type aliases BEFORE dereferencing
+	// Identity and Keyword are pointer type aliases (*identity, *keyword)
+	if t == identityType || t == keywordType {
+		return t
+	}
 	if t.Kind() == reflect.Ptr {
 		return ElementType(t.Elem())
 	}
@@ -136,6 +165,11 @@ func IsPointerType(t reflect.Type) bool {
 
 // IsSliceType checks if a type is a slice (indicating cardinality-many)
 func IsSliceType(t reflect.Type) bool {
+	// Check pointer type aliases BEFORE dereferencing
+	// Identity and Keyword are pointer type aliases (*identity, *keyword)
+	if t == identityType || t == keywordType {
+		return false
+	}
 	if t.Kind() == reflect.Ptr {
 		return IsSliceType(t.Elem())
 	}

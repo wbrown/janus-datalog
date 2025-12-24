@@ -180,15 +180,6 @@ func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog
 		tx = m.extractValue(elem)
 	}
 
-	// OPTIMIZATION: Check for time range scan opportunity
-	// Applies when: (1) we have many time ranges (>50 for benefit), (2) A = :price/time, (3) E and V are unbound
-	// Threshold of 50 avoids overhead for queries with few distinct time periods
-	if len(m.timeRanges) > 50 && e == nil && v == nil {
-		if aKw, ok := a.(datalog.Keyword); ok && aKw.String() == ":price/time" {
-			return m.scanTimeRanges(aKw, tx)
-		}
-	}
-
 	// Choose index and create scan range
 	index, start, end := m.chooseIndex(e, a, v, tx)
 
@@ -231,8 +222,9 @@ func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]
 
 	encoder := m.store.encoder
 
-	// Convert attribute to storage format
-	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
+	// Convert attribute to storage format (use interned pointer)
+	attrPtr := datalog.NewKeyword(attr.String())
+	aStorage := ToStorageDatom(datalog.Datom{A: attrPtr}).A
 
 	// Scan each time range
 	for _, timeRange := range m.timeRanges {
@@ -339,14 +331,20 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 
 			if a != nil {
 				// E and A are bound - use AEVT for direct lookup
-				if aKw, ok := a.(datalog.Keyword); ok {
+				var aPtr datalog.Keyword
+				switch kw := a.(type) {
+				case datalog.Keyword:
+					aPtr = kw
+				}
+				if aPtr != nil {
 					// Convert to storage format
-					aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
+					aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
+					_ = aStorage // used below
 
 					// Create a dummy datom to use encoder
 					dummyDatom := &datalog.Datom{
 						E:  eId,
-						A:  aKw,
+						A:  aPtr,
 						V:  nil,
 						Tx: 0,
 					}
@@ -389,15 +387,16 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	} else if a != nil {
 		// A is bound but not E
 		if aKw, ok := a.(datalog.Keyword); ok {
-			// Convert to storage format
-			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
+			// Convert to storage format (intern the keyword)
+			aPtr := datalog.NewKeyword(aKw.String())
+			aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
 
 			if v != nil {
 				// A and V bound - use AVET index
 				// Create dummy datom for encoding
 				dummyDatom := &datalog.Datom{
 					E:  datalog.NewIdentity(""),
-					A:  aKw,
+					A:  aPtr,
 					V:  v,
 					Tx: 0,
 				}
@@ -471,13 +470,8 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 
 // matchesDatom checks if a datom matches the pattern constraints
 func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
-	// Handle pointers by dereferencing first
-	if ptr, ok := e.(*datalog.Identity); ok {
-		e = *ptr
-	}
-	if ptr, ok := a.(*datalog.Keyword); ok {
-		a = *ptr
-	}
+	// Note: Identity is always a pointer type now, no dereferencing needed
+	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
 	if ptr, ok := tx.(*uint64); ok {
 		tx = *ptr
 	}
@@ -501,7 +495,8 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 	if a != nil {
 		switch av := a.(type) {
 		case datalog.Keyword:
-			if datom.A.String() != av.String() {
+			// Pointer equality for interned keywords
+			if datom.A != av {
 				return false
 			}
 		case string:

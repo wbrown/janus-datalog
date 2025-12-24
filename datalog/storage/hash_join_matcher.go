@@ -328,13 +328,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 					// Encode value for the prefix
 					// Values in AVET keys are encoded as: [type byte][value data]
 					// For Identity/Reference values: [TypeReference][20-byte hash]
-					if entity, ok := v.(datalog.Identity); ok {
+					if entity, ok := v.(datalog.Identity); ok && entity != nil {
 						hash := entity.Hash()
-						vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
-						startParts = append(startParts, vBytes)
-						endParts = append(endParts, vBytes)
-					} else if entityPtr, ok := v.(*datalog.Identity); ok {
-						hash := entityPtr.Hash()
 						vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
 						startParts = append(startParts, vBytes)
 						endParts = append(endParts, vBytes)
@@ -350,21 +345,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 		// Values in VAET are also encoded with type prefix
 		if v != nil {
 			// For Identity/Reference values
-			if entity, ok := v.(datalog.Identity); ok {
+			if entity, ok := v.(datalog.Identity); ok && entity != nil {
 				hash := entity.Hash()
-				vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
-				startParts = append(startParts, vBytes)
-				endParts = append(endParts, vBytes)
-
-				if a != nil {
-					if kw, ok := a.(datalog.Keyword); ok {
-						attr := NewAttribute(kw.String())
-						startParts = append(startParts, attr[:])
-						endParts = append(endParts, attr[:])
-					}
-				}
-			} else if entityPtr, ok := v.(*datalog.Identity); ok {
-				hash := entityPtr.Hash()
 				vBytes := append([]byte{byte(datalog.TypeReference)}, hash[:]...)
 				startParts = append(startParts, vBytes)
 				endParts = append(endParts, vBytes)
@@ -438,22 +420,22 @@ func extractProbeKey(datom *datalog.Datom, position int) interface{} {
 
 // valueToHashKey converts a value to a string key for hashing
 func valueToHashKey(v interface{}) string {
-	// Handle pointers by dereferencing
-	if ptr, ok := v.(*datalog.Identity); ok {
-		v = *ptr
-	} else if ptr, ok := v.(*datalog.Keyword); ok {
-		v = *ptr
-	} else if ptr, ok := v.(*uint64); ok {
+	// Note: Identity is always a pointer type now, no dereferencing needed
+	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
+	if ptr, ok := v.(*uint64); ok {
 		v = *ptr
 	}
 
 	switch val := v.(type) {
 	case datalog.Identity:
 		// Use hash for consistent comparison
+		if val == nil {
+			return ""
+		}
 		hash := val.Hash()
 		return string(hash[:])
 	case datalog.Keyword:
-		return val.String()
+		return fmt.Sprintf("%p", val) // Use pointer address for interned keywords
 	case string:
 		return val
 	case uint64:
@@ -592,18 +574,22 @@ func compareJoinKeys(a, b interface{}) int {
 		return 1
 	}
 
-	// Handle pointers by dereferencing
-	if ptr, ok := a.(*datalog.Identity); ok {
-		a = *ptr
-	}
-	if ptr, ok := b.(*datalog.Identity); ok {
-		b = *ptr
-	}
+	// Note: Identity is always a pointer type now, no dereferencing needed
 
 	// Type-specific comparisons using sort order
 	switch aVal := a.(type) {
 	case datalog.Identity:
 		if bVal, ok := b.(datalog.Identity); ok {
+			// Handle nil cases
+			if aVal == nil && bVal == nil {
+				return 0
+			}
+			if aVal == nil {
+				return -1
+			}
+			if bVal == nil {
+				return 1
+			}
 			// Compare by hash (lexicographic order)
 			aHash := aVal.Hash()
 			bHash := bVal.Hash()
@@ -619,15 +605,21 @@ func compareJoinKeys(a, b interface{}) int {
 		}
 	case datalog.Keyword:
 		if bVal, ok := b.(datalog.Keyword); ok {
+			// For interned keywords, pointer equality means value equality
+			if aVal == bVal {
+				return 0
+			}
+			// Different pointers should mean different keywords
+			// If strings are equal but pointers differ, interning is broken
 			aStr := aVal.String()
 			bStr := bVal.String()
+			if aStr == bStr {
+				panic(fmt.Sprintf("BUG: interning broken - same keyword %q has different pointers", aStr))
+			}
 			if aStr < bStr {
 				return -1
 			}
-			if aStr > bStr {
-				return 1
-			}
-			return 0
+			return 1
 		}
 	case string:
 		if bVal, ok := b.(string); ok {

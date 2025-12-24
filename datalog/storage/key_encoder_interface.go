@@ -10,7 +10,9 @@ type KeyEncoder interface {
 	EncodeKey(index IndexType, d *datalog.Datom) []byte
 
 	// DecodeKey extracts components from an index key (for current-state indices)
-	DecodeKey(index IndexType, key []byte) (e, a, v, tx []byte, err error)
+	// Returns fixed-size arrays for e, a, tx to avoid heap allocations from slice escape.
+	// Only v (value) is variable-length.
+	DecodeKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [20]byte, err error)
 
 	// EncodePrefix creates a prefix key for range scans
 	EncodePrefix(index IndexType, parts ...[]byte) []byte
@@ -22,7 +24,8 @@ type KeyEncoder interface {
 	EncodeHistoryKey(index IndexType, d *datalog.Datom, op Op) []byte
 
 	// DecodeHistoryKey extracts components including Op from a history index key
-	DecodeHistoryKey(index IndexType, key []byte) (e, a, v, tx []byte, op Op, err error)
+	// Returns fixed-size arrays for e, a, tx to avoid heap allocations from slice escape.
+	DecodeHistoryKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [20]byte, op Op, err error)
 }
 
 // KeyEncodingStrategy represents different encoding strategies

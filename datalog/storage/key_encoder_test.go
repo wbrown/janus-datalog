@@ -52,7 +52,7 @@ func TestKeyEncoders(t *testing.T) {
 				}
 
 				// Verify components
-				if !bytes.Equal(e, entity[:]) {
+				if !bytes.Equal(e[:], entity[:]) {
 					t.Errorf("%s: entity mismatch for index %v", tc.name, idx)
 				}
 				// For attribute, we need to check if it matches the keyword
@@ -63,9 +63,10 @@ func TestKeyEncoders(t *testing.T) {
 				} else if !bytes.Equal(v[1:], []byte("hello world")) {
 					t.Errorf("%s: value mismatch for index %v", tc.name, idx)
 				}
-				// For tx, verify it's not empty
-				if len(tx) == 0 {
-					t.Errorf("%s: tx missing for index %v", tc.name, idx)
+				// For tx, verify it's not zero
+				var zeroTx [20]byte
+				if tx == zeroTx {
+					t.Errorf("%s: tx is zero for index %v", tc.name, idx)
 				}
 			}
 

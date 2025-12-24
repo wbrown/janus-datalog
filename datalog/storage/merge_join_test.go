@@ -260,15 +260,9 @@ func TestMergeJoinCorrectness(t *testing.T) {
 					t.Errorf("expected 2 columns, got %d", len(tuple))
 				}
 				// Verify entity is in binding set
-				// Tuple may contain Identity or *Identity
-				var entity datalog.Identity
-				switch v := tuple[0].(type) {
-				case datalog.Identity:
-					entity = v
-				case *datalog.Identity:
-					entity = *v
-				default:
-					t.Errorf("expected Identity or *Identity, got %T", tuple[0])
+				entity, ok := tuple[0].(datalog.Identity)
+				if !ok {
+					t.Errorf("expected Identity, got %T", tuple[0])
 					continue
 				}
 				found := false

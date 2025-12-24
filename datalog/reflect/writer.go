@@ -120,12 +120,26 @@ func (sw *StructWriter) Write(tx TransactionAdder, entity datalog.Identity, v in
 		fieldVal := val.Field(field.Index)
 
 		// Handle pointer fields (optional)
+		// BUT don't dereference Identity or Keyword - they are pointer type aliases
+		// that extractSingleValue needs to see as pointers to properly type-assert
 		if field.GoType.Kind() == reflect.Ptr {
 			if fieldVal.IsNil() {
 				// Skip nil optional fields
 				continue
 			}
-			fieldVal = fieldVal.Elem()
+			// Check if this is a pointer type alias (Identity, Keyword) that should NOT be dereferenced
+			if fieldVal.CanInterface() {
+				v := fieldVal.Interface()
+				if _, isIdentity := v.(datalog.Identity); isIdentity {
+					// Don't dereference - pass through as-is
+				} else if _, isKeyword := v.(datalog.Keyword); isKeyword {
+					// Don't dereference - pass through as-is
+				} else {
+					fieldVal = fieldVal.Elem()
+				}
+			} else {
+				fieldVal = fieldVal.Elem()
+			}
 		}
 
 		// Get the keyword for this attribute
@@ -173,13 +187,27 @@ func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entit
 		fieldVal := val.Field(field.Index)
 
 		// Handle pointer fields (optional)
+		// BUT don't dereference Identity or Keyword - they are pointer type aliases
+		// that extractSingleValue needs to see as pointers to properly type-assert
 		if field.GoType.Kind() == reflect.Ptr {
 			if fieldVal.IsNil() {
 				// For nil optional fields in update mode, we could optionally retract existing
 				// For now, skip nil fields (don't change existing value)
 				continue
 			}
-			fieldVal = fieldVal.Elem()
+			// Check if this is a pointer type alias (Identity, Keyword) that should NOT be dereferenced
+			if fieldVal.CanInterface() {
+				v := fieldVal.Interface()
+				if _, isIdentity := v.(datalog.Identity); isIdentity {
+					// Don't dereference - pass through as-is
+				} else if _, isKeyword := v.(datalog.Keyword); isKeyword {
+					// Don't dereference - pass through as-is
+				} else {
+					fieldVal = fieldVal.Elem()
+				}
+			} else {
+				fieldVal = fieldVal.Elem()
+			}
 		}
 
 		// Get the keyword for this attribute
@@ -260,12 +288,9 @@ func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLoo
 	var newVals []interface{}
 	for i := 0; i < val.Len(); i++ {
 		elem := val.Index(i)
-		if elem.Kind() == reflect.Ptr {
-			if elem.IsNil() {
-				continue
-			}
-			elem = elem.Elem()
-		}
+		// Don't dereference pointers here - extractSingleValue handles pointer types
+		// including datalog.Identity which is a pointer type alias (*identity)
+
 		writeVal, err := sw.extractSingleValue(elem)
 		if err != nil {
 			return fmt.Errorf("element %d: %w", i, err)
@@ -342,13 +367,8 @@ func (sw *StructWriter) writeSliceField(tx TransactionAdder, entity datalog.Iden
 	for i := 0; i < val.Len(); i++ {
 		elem := val.Index(i)
 
-		// Handle pointer elements
-		if elem.Kind() == reflect.Ptr {
-			if elem.IsNil() {
-				continue
-			}
-			elem = elem.Elem()
-		}
+		// Don't dereference pointers here - extractSingleValue handles pointer types
+		// including datalog.Identity which is a pointer type alias (*identity)
 
 		writeVal, err := sw.extractSingleValue(elem)
 		if err != nil {
@@ -374,11 +394,21 @@ func (sw *StructWriter) extractValue(field *FieldInfo, val reflect.Value) (inter
 
 // extractSingleValue extracts a single value from a reflect.Value
 func (sw *StructWriter) extractSingleValue(val reflect.Value) (interface{}, error) {
-	// Handle pointer
-	if val.Kind() == reflect.Ptr {
+	// Check for Identity and Keyword BEFORE dereferencing, since they are pointer type aliases
+	// Dereferencing would lose the type information (we'd get identity/keyword instead of *identity/*keyword)
+	if val.Kind() == reflect.Ptr && val.CanInterface() {
 		if val.IsNil() {
 			return nil, nil
 		}
+		// Try to get the interface value first, to preserve pointer type aliases
+		v := val.Interface()
+		if id, ok := v.(datalog.Identity); ok {
+			return id, nil
+		}
+		if kw, ok := v.(datalog.Keyword); ok {
+			return kw, nil
+		}
+		// For other pointers, dereference and continue
 		val = val.Elem()
 	}
 
@@ -454,15 +484,15 @@ func (sw *StructWriter) WriteAuto(tx TransactionAdder, v interface{}) (datalog.I
 
 	// Must be pointer to struct for setting ID
 	if val.Kind() != reflect.Ptr {
-		return datalog.Identity{}, fmt.Errorf("WriteAuto requires pointer to struct")
+		return nil, fmt.Errorf("WriteAuto requires pointer to struct")
 	}
 	if val.IsNil() {
-		return datalog.Identity{}, fmt.Errorf("cannot write nil struct")
+		return nil, fmt.Errorf("cannot write nil struct")
 	}
 
 	structVal := val.Elem()
 	if structVal.Kind() != reflect.Struct {
-		return datalog.Identity{}, fmt.Errorf("expected pointer to struct, got pointer to %s", structVal.Kind())
+		return nil, fmt.Errorf("expected pointer to struct, got pointer to %s", structVal.Kind())
 	}
 
 	var entity datalog.Identity
@@ -471,29 +501,17 @@ func (sw *StructWriter) WriteAuto(tx TransactionAdder, v interface{}) (datalog.I
 	if sw.info.IDField != nil {
 		idField := structVal.Field(sw.info.IDField.Index)
 
-		// Handle pointer ID field
-		if sw.info.IDField.GoType.Kind() == reflect.Ptr {
-			if !idField.IsNil() {
-				entity = idField.Elem().Interface().(datalog.Identity)
-			}
-		} else {
-			entity = idField.Interface().(datalog.Identity)
-		}
+		// Identity is always a pointer type now
+		entity = idField.Interface().(datalog.Identity)
 
-		// Check if ID is zero (all zeros in the hash)
+		// Check if ID is nil or zero (all zeros in the hash)
 		var zeroHash [20]byte
-		if entity.Hash() == zeroHash {
+		if entity == nil || entity.Hash() == zeroHash {
 			// Generate new unique ID
 			entity = generateUniqueID()
 
 			// Set the ID field
-			if sw.info.IDField.GoType.Kind() == reflect.Ptr {
-				newID := reflect.New(identityType)
-				newID.Elem().Set(reflect.ValueOf(entity))
-				idField.Set(newID)
-			} else {
-				idField.Set(reflect.ValueOf(entity))
-			}
+			idField.Set(reflect.ValueOf(entity))
 		}
 	} else {
 		// No ID field, generate a unique ID
@@ -502,7 +520,7 @@ func (sw *StructWriter) WriteAuto(tx TransactionAdder, v interface{}) (datalog.I
 
 	// Write the struct
 	if err := sw.Write(tx, entity, v); err != nil {
-		return datalog.Identity{}, err
+		return nil, err
 	}
 
 	return entity, nil
@@ -515,15 +533,15 @@ func (sw *StructWriter) UpdateAuto(tx TransactionUpdater, lookup EntityLookup, v
 
 	// Must be pointer to struct for setting ID
 	if val.Kind() != reflect.Ptr {
-		return datalog.Identity{}, fmt.Errorf("UpdateAuto requires pointer to struct")
+		return nil, fmt.Errorf("UpdateAuto requires pointer to struct")
 	}
 	if val.IsNil() {
-		return datalog.Identity{}, fmt.Errorf("cannot update nil struct")
+		return nil, fmt.Errorf("cannot update nil struct")
 	}
 
 	structVal := val.Elem()
 	if structVal.Kind() != reflect.Struct {
-		return datalog.Identity{}, fmt.Errorf("expected pointer to struct, got pointer to %s", structVal.Kind())
+		return nil, fmt.Errorf("expected pointer to struct, got pointer to %s", structVal.Kind())
 	}
 
 	var entity datalog.Identity
@@ -532,29 +550,17 @@ func (sw *StructWriter) UpdateAuto(tx TransactionUpdater, lookup EntityLookup, v
 	if sw.info.IDField != nil {
 		idField := structVal.Field(sw.info.IDField.Index)
 
-		// Handle pointer ID field
-		if sw.info.IDField.GoType.Kind() == reflect.Ptr {
-			if !idField.IsNil() {
-				entity = idField.Elem().Interface().(datalog.Identity)
-			}
-		} else {
-			entity = idField.Interface().(datalog.Identity)
-		}
+		// Identity is always a pointer type now
+		entity = idField.Interface().(datalog.Identity)
 
-		// Check if ID is zero (all zeros in the hash)
+		// Check if ID is nil or zero (all zeros in the hash)
 		var zeroHash [20]byte
-		if entity.Hash() == zeroHash {
+		if entity == nil || entity.Hash() == zeroHash {
 			// Generate new unique ID
 			entity = generateUniqueID()
 
 			// Set the ID field
-			if sw.info.IDField.GoType.Kind() == reflect.Ptr {
-				newID := reflect.New(identityType)
-				newID.Elem().Set(reflect.ValueOf(entity))
-				idField.Set(newID)
-			} else {
-				idField.Set(reflect.ValueOf(entity))
-			}
+			idField.Set(reflect.ValueOf(entity))
 		}
 	} else {
 		// No ID field, generate a unique ID
@@ -563,7 +569,7 @@ func (sw *StructWriter) UpdateAuto(tx TransactionUpdater, lookup EntityLookup, v
 
 	// Update the struct with upsert semantics
 	if err := sw.Update(tx, lookup, entity, v, mode); err != nil {
-		return datalog.Identity{}, err
+		return nil, err
 	}
 
 	return entity, nil
@@ -580,7 +586,7 @@ func (sw *StructWriter) UpdateAuto(tx TransactionUpdater, lookup EntityLookup, v
 func SaveStruct(tx TransactionUpdater, lookup EntityLookup, v interface{}, s schema.SchemaProvider) (datalog.Identity, error) {
 	writer, err := NewStructWriter(v, s)
 	if err != nil {
-		return datalog.Identity{}, err
+		return nil, err
 	}
 	return writer.UpdateAuto(tx, lookup, v, UpdateModeReplace)
 }

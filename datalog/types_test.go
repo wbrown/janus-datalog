@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"crypto/sha1"
 	"strings"
 	"testing"
 	"time"
@@ -109,21 +110,27 @@ func TestIdentity(t *testing.T) {
 }
 
 func TestIdentityFromHash(t *testing.T) {
-	// Create an identity
-	id1 := NewIdentity("test:entity")
-	hash := id1.Hash()
+	// Clear interns to test fresh behavior
+	ClearInterns()
 
-	// Create identity from hash
-	id2 := NewIdentityFromHash(hash)
+	// Create identity from hash first (no original string)
+	hash := sha1.Sum([]byte("test:entity"))
+	id1 := NewIdentityFromHash(hash)
 
-	// L85 and hash should be the same
-	if id1.L85() != id2.L85() {
-		t.Error("identity from hash should have same L85")
+	// Original string is unknown when created from hash alone
+	if id1.String() == "test:entity" {
+		t.Error("identity from hash alone should not know original string")
 	}
 
-	// But original string is lost
-	if id2.String() == "test:entity" {
-		t.Error("identity from hash should not preserve original string")
+	// L85 should be set
+	if id1.L85() == "" {
+		t.Error("identity from hash should have L85")
+	}
+
+	// Now create from string - should return same interned pointer
+	id2 := NewIdentity("test:entity")
+	if id1 != id2 {
+		t.Error("NewIdentity should return same pointer as NewIdentityFromHash for same hash")
 	}
 }
 
@@ -131,40 +138,39 @@ func TestIdentityFromHash(t *testing.T) {
 // (created via NewIdentityFromHash) are equal to original identities.
 // This is critical for joins to work correctly.
 func TestIdentityStorageRoundTrip(t *testing.T) {
+	// Clear interns to test fresh behavior
+	ClearInterns()
+
 	// Create an identity
 	id1 := NewIdentity("test")
 	hash := id1.Hash()
 
 	// Create another identity from the same hash (simulates storage round-trip)
+	// Since all constructors now intern, this returns the SAME pointer
 	id2 := NewIdentityFromHash(hash)
 
-	// Create pointers (simulates what tuples contain after interning)
-	ptr1 := InternIdentity(id1)
-	ptr2 := InternIdentityFromHash(hash)
+	// Test 1: Pointer equality - they are the SAME interned pointer
+	if id1 != id2 {
+		t.Error("NewIdentity and NewIdentityFromHash with same hash should return same pointer")
+	}
 
-	// Test 1: Value equality (without pointers)
+	// Test 2: ValuesEqual should work
 	if !ValuesEqual(id1, id2) {
 		t.Error("identities with same hash should be equal (value comparison)")
 	}
 
-	// Test 2: Pointer equality after interning
+	// Test 3: InternIdentity is now effectively an identity function
+	ptr1 := InternIdentity(id1)
+	ptr2 := InternIdentityFromHash(hash)
 	if ptr1 != ptr2 {
 		t.Error("interning same hash should return same pointer")
 	}
-
-	// Test 3: ValuesEqual with pointers
-	if !ValuesEqual(ptr1, ptr2) {
-		t.Error("identities with same hash should be equal (pointer comparison)")
+	if ptr1 != id1 {
+		t.Error("InternIdentity should return same pointer for already-interned identity")
 	}
 
-	// Test 4: ValuesEqual with dereferenced pointers
-	if !ValuesEqual(*ptr1, *ptr2) {
-		t.Error("identities with same hash should be equal (dereferenced comparison)")
-	}
-
-	// Test 5: Direct struct comparison should FAIL (different str/l85 fields)
-	// This is WHY we need ValuesEqual - it only compares the hash
-	if id1 == id2 {
-		t.Error("direct struct comparison should fail (different fields)")
+	// Test 4: Equal method should work
+	if !id1.Equal(id2) {
+		t.Error("Equal should return true for same pointer")
 	}
 }

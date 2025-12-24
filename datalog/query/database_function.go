@@ -38,9 +38,9 @@ type DatabaseFunction interface {
 // Syntax: [(get-else $ ?entity :attribute default-value) ?result]
 // Returns the attribute value if it exists, or the default value if missing.
 type GetElseFunction struct {
-	Entity  Term            // The entity to look up (usually a variable like ?e)
+	Entity  Term             // The entity to look up (usually a variable like ?e)
 	Attr    datalog.Keyword // The attribute to retrieve
-	Default interface{}     // Default value if attribute is missing
+	Default interface{}      // Default value if attribute is missing
 }
 
 func (g *GetElseFunction) RequiredSymbols() []Symbol {
@@ -89,7 +89,7 @@ func (g *GetElseFunction) String() string {
 // Returns true if the entity does NOT have the specified attribute.
 // This is a predicate (filter), not a binding expression.
 type MissingFunction struct {
-	Entity Term            // The entity to check
+	Entity Term             // The entity to check
 	Attr   datalog.Keyword // The attribute to check for
 }
 
@@ -135,7 +135,7 @@ func (m *MissingFunction) String() string {
 // Returns the first attribute that exists along with its value.
 // Useful for fallback chains like "use nickname, else name, else email".
 type GetSomeFunction struct {
-	Entity Term              // The entity to look up
+	Entity Term               // The entity to look up
 	Attrs  []datalog.Keyword // Attributes to try, in order
 }
 
@@ -199,17 +199,15 @@ func (gs *GetSomeFunction) String() string {
 func toIdentity(val interface{}) (datalog.Identity, error) {
 	switch v := val.(type) {
 	case datalog.Identity:
-		return v, nil
-	case *datalog.Identity:
 		if v == nil {
-			return datalog.Identity{}, fmt.Errorf("nil identity pointer")
+			return nil, fmt.Errorf("nil identity")
 		}
-		return *v, nil
+		return v, nil
 	case string:
 		// Allow string conversion for convenience
 		return datalog.NewIdentity(v), nil
 	default:
-		return datalog.Identity{}, fmt.Errorf("expected Identity, got %T", val)
+		return nil, fmt.Errorf("expected Identity, got %T", val)
 	}
 }
 

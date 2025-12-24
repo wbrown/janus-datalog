@@ -19,6 +19,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Intern cache optimization**: 6.26× speedup on BadgerDB queries (verified)
 - ✅ **Time range optimization**: 4× speedup on large datasets (verified - 1.5× on small, 4× on 260-hour dataset)
 - ✅ **Hash join pre-sizing**: 24-32% faster with 24-30% less memory (verified)
+- ✅ **Identity/Keyword interning**: **10-20% faster** on joins and subqueries, **25-44% memory reduction**, pointer equality for all comparisons (verified 2025-12-24)
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -374,6 +375,48 @@ for _, entity := range entities {
 - Predicate pushdown benefits increase with dataset size
 - Large dataset queries complete in <400ms even with 90 days of data
 
+### 11. Identity & Keyword Interning (COMPLETE - December 2025)
+**Status**: ✅ Full pointer interning for Identity and Keyword types
+**Performance**: **10-20% faster** on join-heavy workloads, **25% memory reduction** (verified 2025-12-24)
+**Commits**: a504729
+
+**What We Built**:
+- Unexported structs with pointer type aliases: `type Identity = *identity`, `type Keyword = *keyword`
+- Storage-aligned cache keys: `[20]byte` for Identity (SHA1), `[32]byte` for Keyword (attribute storage format)
+- Zero-allocation lookup from storage via `InternKeywordFromBytes()` and `InternIdentityFromHash()`
+- Runtime invariants detect interning failures (same value, different pointer → panic)
+
+**Measured Results** (high-cardinality benchmark, 224 keywords, ~35K datoms):
+
+| Benchmark | Time | Memory | Allocations |
+|-----------|------|--------|-------------|
+| JoinQuery_CrossNamespace | **-7.6%** | **-44%** | **-38%** |
+| WildcardPull_ManyAttributes | **-9.7%** | **-28%** | -1.3% |
+| Aggregation_ManyAttributes | -2.3% | -15% | -11% |
+| geomean | **-3.8%** | **-25%** | **-14%** |
+
+**Full benchmark suite** (executor package):
+
+| Benchmark | Improvement |
+|-----------|-------------|
+| SubqueryExecution/Legacy | **-11.8%** |
+| SubqueryExecution/Componentized | **-12.1%** |
+| SubqueryExecutionLarge | **-10%** |
+| SequentialVsParallel | **-19% to -20%** |
+| TimeToFirstResult (geomean) | **-17.5%** |
+| HashJoin (data_2500+) | **-7% to -11%** |
+
+**Scaling Behavior**:
+- Small datasets (< 500 tuples): 3-6% regression (intern lookup cost dominates)
+- Large datasets (1000+ tuples): 7-20% improvement (pointer comparison wins amortize)
+- Crossover point: ~500-1000 tuples
+
+**Known Regression**: `TimeAggregation` +13% — intern lookup not amortized in this specific pattern.
+
+**Why It Works**: Entities are join keys. Every hash join probe, every equality check in result deduplication, every tuple comparison is now a pointer comparison instead of 20-byte array (Identity) or string (Keyword) comparison. Memory wins come from reusing interned pointers instead of allocating fresh structs per result tuple.
+
+**Key Insight**: The existing `datom_decoder.go` already had `[20]byte` → Identity caching and `[32]byte` → string caching. This optimization completed the picture by making all downstream comparisons pointer-based.
+
 ---
 
 ## Profiling Results (October 2025)
@@ -651,6 +694,78 @@ The engine is **production-ready for datasets up to 10M+ datoms**. All major opt
 ---
 
 ## Session History
+
+### 2025-12-24: Identity/Keyword Pointer Type Alias Optimization
+
+**Branch**: `main` (merged from `feature/intern-all-keywords`)
+**Status**: ✅ Complete with comprehensive reflection audit
+
+**What Was Done**:
+
+Changed `Identity` and `Keyword` from value types to pointer type aliases with mandatory interning:
+
+```go
+// Before (value types)
+type Identity struct { value [20]byte; l85 string; ... }
+type Keyword struct { value string }
+
+// After (pointer type aliases)
+type identity struct { value [20]byte; l85 string; ... }  // unexported
+type Identity = *identity                                  // exported alias
+
+type keyword struct { value string }                       // unexported
+type Keyword = *keyword                                    // exported alias
+```
+
+**Key Changes**:
+1. **Mandatory interning** - All constructors (`NewIdentity`, `NewKeyword`) automatically intern
+2. **Pointer equality** - `kw1 == kw2` is O(1) pointer comparison, not O(n) string comparison
+3. **Storage-aligned cache keys** - Keyword intern uses `[32]byte` key (matches storage format), Identity uses `[20]byte`
+4. **Direct storage reads** - `InternKeywordFromBytes([32]byte)` and `InternIdentityFromHash([20]byte)` avoid string conversion on cache hit
+5. **DecodeKey returns arrays** - Changed `DecodeKey` interface to return fixed-size arrays `([20]byte, [32]byte, ...)` instead of slices, avoiding heap escape
+
+**Benchmark Results** (Apple M3 Ultra, n=100):
+
+| Benchmark | Time | Memory | Allocs |
+|-----------|------|--------|--------|
+| JoinQuery_CrossNamespace | **-7.6%** | **-44.2%** | **-38.5%** |
+| WildcardPull_ManyAttributes | **-9.7%** | **-28.3%** | -1.3% |
+| Aggregation_ManyAttributes | -2.3% | -14.9% | -10.5% |
+| SimpleQuery_HighKeywordVariety | +4.8% | -5.6% | ~ |
+| **Geomean** | **-3.8%** | **-24.7%** | **-14.2%** |
+
+**Why JoinQuery Benefits Most** (-44% memory, -38% allocs):
+- Hash joins build `TupleKeyMap` using keyword/identity as keys
+- Before: Each key comparison called `.String()`, allocating
+- After: Pointer comparison is O(1), no allocation
+- Join build phase: Fewer allocations for hash table keys
+- Join probe phase: Faster lookups with pointer keys
+
+**SimpleQuery Regression** (+4.8% time):
+- Small queries have overhead from pointer indirection
+- Still uses less memory (-5.6%), acceptable tradeoff
+- Query is already fast (47µs), regression is ~2µs absolute
+
+**Implementation Notes**:
+- Downstream consumers unaffected - still use `datalog.Identity` and `datalog.Keyword`
+- Comparison semantics unchanged - equal values compare equal
+- Thread-safe via `sync.Map` for concurrent interning
+- Invariant check: `Compare()` panics if two different pointers have same hash (indicates interning bug)
+
+**Files Changed**: 46 files, +923/-686 lines
+- `datalog/types.go` - Pointer type aliases, new methods
+- `datalog/intern.go` - Storage-aligned cache keys, `InternKeywordFromBytes`
+- `datalog/storage/key_encoder_*.go` - `DecodeKey` returns arrays
+- `datalog/storage/datom_decoder.go` - Direct byte interning
+
+**Reflection Audit** (completed same day):
+- Fixed 4 functions in `datalog/reflect/types.go` that incorrectly dereferenced Identity/Keyword pointer types
+- Pattern: Check `t == identityType || t == keywordType` BEFORE `t.Kind() == reflect.Ptr` → `t.Elem()`
+- Functions fixed: `InferCardinality`, `IsRefType` (inner loop), `ElementType`, `IsSliceType`
+- Added nil-safety to all Identity/Keyword methods (Hash, L85, String, Equal, Compare, etc.)
+- Added comprehensive test coverage: `TestNilIdentityHandling`, `TestNilKeywordHandling`
+
+---
 
 ### 2025-12-24: Key Encoder Consolidation - A DRY Refactoring Case Study
 

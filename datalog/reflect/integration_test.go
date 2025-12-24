@@ -31,6 +31,15 @@ type PersonWithTags struct {
 	Tags []string         `datalog:"tags"`
 }
 
+// EntityWithKeyword tests that Keyword fields (pointer type alias) are handled correctly
+// This is a regression test for the bug where *keyword was incorrectly dereferenced
+// and treated as a nested struct requiring an ID field.
+type EntityWithKeyword struct {
+	ID   datalog.Identity `datalog:"-,id"`
+	Name string           `datalog:"name"`
+	Type datalog.Keyword  `datalog:"type"`
+}
+
 func TestSchemaFromStruct(t *testing.T) {
 	schema, err := dlreflect.SchemaFromStruct(Person{})
 	if err != nil {
@@ -52,6 +61,76 @@ func TestSchemaFromStruct(t *testing.T) {
 	}
 	if ageAttr.ValueType != "db.type/long" {
 		t.Errorf("expected age to be long, got %s", ageAttr.ValueType)
+	}
+}
+
+// TestSaveStruct_KeywordField is a regression test for a bug where Keyword fields
+// (which are pointer type aliases *keyword) were incorrectly dereferenced and
+// treated as nested entity structs requiring an ID field.
+func TestSaveStruct_KeywordField(t *testing.T) {
+	// Create temp database
+	tmpDir, err := os.MkdirTemp("", "reflect-keyword-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Generate schema from struct
+	sch, err := dlreflect.SchemaFromStruct(EntityWithKeyword{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	// Verify the type attribute is correctly typed as keyword
+	typeAttr := sch.GetAttribute(datalog.NewKeyword(":entity-with-keyword/type"))
+	if typeAttr == nil {
+		t.Fatal("expected :entity-with-keyword/type attribute")
+	}
+	if typeAttr.ValueType != schema.TypeKeyword {
+		t.Errorf("expected type to be keyword, got %s", typeAttr.ValueType)
+	}
+
+	// Create database with schema
+	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create and write an entity with a Keyword field
+	entity := EntityWithKeyword{
+		Name: "TestEntity",
+		Type: datalog.NewKeyword(":crawl/page"),
+	}
+	tx := db.NewTransaction()
+	entityID, err := tx.SaveStruct(&entity)
+	if err != nil {
+		// This was the bug: "field Type: nested struct keyword has no ID field"
+		t.Fatalf("failed to save struct with Keyword field: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Read back using PullInto
+	var loaded EntityWithKeyword
+	if err := db.PullInto(entityID, &loaded); err != nil {
+		t.Fatalf("failed to pull: %v", err)
+	}
+
+	// Verify the keyword was stored and retrieved correctly
+	if loaded.Name != "TestEntity" {
+		t.Errorf("expected name 'TestEntity', got %q", loaded.Name)
+	}
+	if loaded.Type == nil {
+		t.Error("expected Type to be non-nil")
+	} else if loaded.Type.String() != ":crawl/page" {
+		t.Errorf("expected Type ':crawl/page', got %q", loaded.Type.String())
+	}
+
+	// Verify it's the same interned keyword
+	if loaded.Type != datalog.NewKeyword(":crawl/page") {
+		t.Error("expected Type to be the same interned keyword pointer")
 	}
 }
 
@@ -1020,6 +1099,257 @@ func TestStructWriter_AnnotationsEmitted(t *testing.T) {
 	if !foundComplete {
 		t.Error("expected reflect/write.complete event")
 	}
+}
+
+// WorldEntity is a reproduction test struct for a downstream bug where
+// SaveStruct/PullInto failed with structs containing Keyword and Identity fields.
+// Mimics the structure from narrative-generators/pkg/schema/entities.go:353
+type WorldEntity struct {
+	ID            datalog.Identity   `datalog:"-,id"`
+	Type          datalog.Keyword    `datalog:"entity/type"`
+	Map           datalog.Identity   `datalog:"entity/map"`
+	Name          string             `datalog:"entity/name"`
+	IdeaGenre     string             `datalog:"idea/genre"`
+	IdeaSubgenre  string             `datalog:"idea/subgenre"`
+	IdeaPower     string             `datalog:"idea/power"`
+	IdeaIntensity string             `datalog:"idea/intensity"`
+	IdeaScope     string             `datalog:"idea/scope"`
+	IdeaCulture   string             `datalog:"idea/culture"`
+	IdeaElement   string             `datalog:"idea/element"`
+	IdeaTags      []string           `datalog:"idea/tag"`
+	Nations       []datalog.Identity `datalog:"entity/nations"`
+}
+
+// TestSaveStructAndPullInto_WorldEntity is a reproduction test for a downstream bug
+// where SaveStruct/PullInto failed with structs containing Keyword and Identity fields.
+// The bug manifested as: entities saved with SaveStruct came back empty on PullInto.
+func TestSaveStructAndPullInto_WorldEntity(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-world-entity-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Generate schema from struct
+	sch, err := dlreflect.SchemaFromStruct(WorldEntity{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	// Create database with schema
+	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a map entity first (for the Map reference)
+	mapID := datalog.NewIdentity("map:test-map-1")
+
+	// Create the world entity with all field types
+	worldType := datalog.NewKeyword(":entity.type/world")
+	world := WorldEntity{
+		Type:          worldType,
+		Map:           mapID,
+		Name:          "Test World",
+		IdeaGenre:     "fantasy",
+		IdeaSubgenre:  "high fantasy",
+		IdeaPower:     "magic",
+		IdeaIntensity: "dark",
+		IdeaScope:     "continental",
+		IdeaCulture:   "Nordic",
+		IdeaElement:   "dark lord",
+		IdeaTags:      []string{"dragons", "undead", "magic", "medieval"},
+	}
+
+	// Save the world entity
+	tx := db.NewTransaction()
+	worldID, err := tx.SaveStruct(&world)
+	if err != nil {
+		t.Fatalf("SaveStruct failed: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	t.Logf("Saved world entity with ID: %s", worldID.L85())
+
+	// Pull it back
+	var loaded WorldEntity
+	if err := db.PullInto(worldID, &loaded); err != nil {
+		t.Fatalf("PullInto failed: %v", err)
+	}
+
+	// Verify all fields came back correctly
+	t.Run("ID", func(t *testing.T) {
+		if loaded.ID == nil {
+			t.Error("expected ID to be set")
+		} else if !loaded.ID.Equal(worldID) {
+			t.Errorf("expected ID %s, got %s", worldID.L85(), loaded.ID.L85())
+		}
+	})
+
+	t.Run("Type_Keyword", func(t *testing.T) {
+		if loaded.Type == nil {
+			t.Error("expected Type to be non-nil")
+		} else if loaded.Type.String() != ":entity.type/world" {
+			t.Errorf("expected Type ':entity.type/world', got %q", loaded.Type.String())
+		}
+		// Verify interning
+		if loaded.Type != worldType {
+			t.Error("expected Type to be same interned keyword pointer")
+		}
+	})
+
+	t.Run("Map_Identity", func(t *testing.T) {
+		if loaded.Map == nil {
+			t.Error("expected Map to be non-nil")
+		} else if !loaded.Map.Equal(mapID) {
+			t.Errorf("expected Map %s, got %s", mapID.L85(), loaded.Map.L85())
+		}
+	})
+
+	t.Run("Name_String", func(t *testing.T) {
+		if loaded.Name != "Test World" {
+			t.Errorf("expected Name 'Test World', got %q", loaded.Name)
+		}
+	})
+
+	t.Run("IdeaGenre", func(t *testing.T) {
+		if loaded.IdeaGenre != "fantasy" {
+			t.Errorf("expected IdeaGenre 'fantasy', got %q", loaded.IdeaGenre)
+		}
+	})
+
+	t.Run("IdeaSubgenre", func(t *testing.T) {
+		if loaded.IdeaSubgenre != "high fantasy" {
+			t.Errorf("expected IdeaSubgenre 'high fantasy', got %q", loaded.IdeaSubgenre)
+		}
+	})
+
+	t.Run("IdeaPower", func(t *testing.T) {
+		if loaded.IdeaPower != "magic" {
+			t.Errorf("expected IdeaPower 'magic', got %q", loaded.IdeaPower)
+		}
+	})
+
+	t.Run("IdeaIntensity", func(t *testing.T) {
+		if loaded.IdeaIntensity != "dark" {
+			t.Errorf("expected IdeaIntensity 'dark', got %q", loaded.IdeaIntensity)
+		}
+	})
+
+	t.Run("IdeaScope", func(t *testing.T) {
+		if loaded.IdeaScope != "continental" {
+			t.Errorf("expected IdeaScope 'continental', got %q", loaded.IdeaScope)
+		}
+	})
+
+	t.Run("IdeaCulture", func(t *testing.T) {
+		if loaded.IdeaCulture != "Nordic" {
+			t.Errorf("expected IdeaCulture 'Nordic', got %q", loaded.IdeaCulture)
+		}
+	})
+
+	t.Run("IdeaElement", func(t *testing.T) {
+		if loaded.IdeaElement != "dark lord" {
+			t.Errorf("expected IdeaElement 'dark lord', got %q", loaded.IdeaElement)
+		}
+	})
+
+	t.Run("IdeaTags_CardinalityMany", func(t *testing.T) {
+		if len(loaded.IdeaTags) != 4 {
+			t.Errorf("expected 4 tags, got %d: %v", len(loaded.IdeaTags), loaded.IdeaTags)
+		}
+		expectedTags := map[string]bool{"dragons": true, "undead": true, "magic": true, "medieval": true}
+		for _, tag := range loaded.IdeaTags {
+			if !expectedTags[tag] {
+				t.Errorf("unexpected tag: %q", tag)
+			}
+		}
+	})
+
+	// Test the exact pattern from downstream: Query to find entity, then PullInto
+	// This mimics store_world.go findWorldEntity() + GetWorldTags()
+	t.Run("QueryThenPullInto", func(t *testing.T) {
+		// First, let's see what's actually stored for this entity
+		debugTuples, err := db.ExecuteQueryWithInputs(
+			`[:find ?a ?v :in $ ?e :where [?e ?a ?v]]`,
+			worldID,
+		)
+		if err != nil {
+			t.Fatalf("debug query failed: %v", err)
+		}
+		t.Logf("Debug: Entity %s has %d attribute/value pairs:", worldID.L85(), len(debugTuples))
+		for _, tuple := range debugTuples {
+			t.Logf("  %v = %v (type: %T)", tuple[0], tuple[1], tuple[1])
+		}
+
+		// Check if the type attribute is stored correctly
+		// Note: struct tag "entity/type" contains "/" so it's a full path :entity/type
+		typeTuples, err := db.ExecuteQueryWithInputs(
+			`[:find ?type :in $ ?e :where [?e :entity/type ?type]]`,
+			worldID,
+		)
+		if err != nil {
+			t.Fatalf("type query failed: %v", err)
+		}
+		t.Logf("Type query returned %d tuples", len(typeTuples))
+		for _, tuple := range typeTuples {
+			t.Logf("  Type value: %v (type: %T)", tuple[0], tuple[0])
+		}
+
+		// Query to find the world entity by type and map (like findWorldEntity)
+		// Note: struct tags with "/" are treated as full paths, not prefixed with struct name
+		tuples, err := db.ExecuteQueryWithInputs(
+			`[:find ?e :in $ ?map :where
+			  [?e :entity/type :entity.type/world]
+			  [?e :entity/map ?map]]`,
+			mapID,
+		)
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(tuples) == 0 {
+			t.Fatal("query returned no results - entity not found")
+		}
+
+		t.Logf("Query returned %d tuples, first: %T = %v", len(tuples), tuples[0][0], tuples[0][0])
+
+		// Extract the entity ID from query result
+		var foundID datalog.Identity
+		switch v := tuples[0][0].(type) {
+		case datalog.Identity:
+			foundID = v
+		case *datalog.Identity:
+			foundID = *v
+		default:
+			t.Fatalf("unexpected type from query: %T", tuples[0][0])
+		}
+
+		if foundID == nil {
+			t.Fatal("foundID is nil")
+		}
+
+		t.Logf("Found entity ID: %s", foundID.L85())
+
+		// PullInto using the queried ID
+		var pulled WorldEntity
+		if err := db.PullInto(foundID, &pulled); err != nil {
+			t.Fatalf("PullInto failed: %v", err)
+		}
+
+		// Verify the pulled data
+		if pulled.Name != "Test World" {
+			t.Errorf("expected Name 'Test World', got %q", pulled.Name)
+		}
+		if pulled.IdeaGenre != "fantasy" {
+			t.Errorf("expected IdeaGenre 'fantasy', got %q", pulled.IdeaGenre)
+		}
+		if pulled.Type == nil || pulled.Type.String() != ":entity.type/world" {
+			t.Errorf("expected Type ':entity.type/world', got %v", pulled.Type)
+		}
+	})
 }
 
 // TestStructWriter_NoEventsWhenHandlerNil verifies zero-overhead when no handler.

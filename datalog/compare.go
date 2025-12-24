@@ -31,19 +31,7 @@ func CompareValues(left, right interface{}) int {
 		return 1
 	}
 
-	// Handle pointers by dereferencing them
-	if ptr, ok := left.(*Identity); ok {
-		left = *ptr
-	}
-	if ptr, ok := right.(*Identity); ok {
-		right = *ptr
-	}
-	if ptr, ok := left.(*Keyword); ok {
-		left = *ptr
-	}
-	if ptr, ok := right.(*Keyword); ok {
-		right = *ptr
-	}
+	// Handle uint64 pointers by dereferencing
 	if ptr, ok := left.(*uint64); ok {
 		left = *ptr
 	}
@@ -51,20 +39,19 @@ func CompareValues(left, right interface{}) int {
 		right = *ptr
 	}
 
-	// Handle Identity comparison
+	// Handle Identity comparison - use the Compare method which handles nil
 	if id1, ok := left.(Identity); ok {
 		if id2, ok := right.(Identity); ok {
-			// Compare raw bytes directly instead of L85 strings
-			return compareBytes(id1.value[:], id2.value[:])
+			return id1.Compare(id2)
 		}
 		// Identity vs non-Identity: type mismatch
 		return -1
 	}
 
-	// Handle Keyword comparison
+	// Handle Keyword comparison - use the Compare method which handles nil
 	if kw1, ok := left.(Keyword); ok {
 		if kw2, ok := right.(Keyword); ok {
-			return strings.Compare(kw1.String(), kw2.String())
+			return kw1.Compare(kw2)
 		}
 		// Keyword vs non-Keyword: type mismatch
 		return -1
@@ -249,23 +236,12 @@ func ValuesEqual(a, b interface{}) bool {
 	}
 
 	// Quick pointer equality check for interned values
+	// This handles Identity (always interned pointers) directly
 	if a == b {
 		return true
 	}
 
-	// Handle pointers by dereferencing them first
-	if ptr, ok := a.(*Identity); ok {
-		a = *ptr
-	}
-	if ptr, ok := b.(*Identity); ok {
-		b = *ptr
-	}
-	if ptr, ok := a.(*Keyword); ok {
-		a = *ptr
-	}
-	if ptr, ok := b.(*Keyword); ok {
-		b = *ptr
-	}
+	// Handle uint64 pointers by dereferencing
 	if ptr, ok := a.(*uint64); ok {
 		a = *ptr
 	}
@@ -273,22 +249,20 @@ func ValuesEqual(a, b interface{}) bool {
 		b = *ptr
 	}
 
-	// Special handling for Identity types
-	// CRITICAL: Must check this BEFORE general == comparison
-	// because Identity struct equality compares ALL fields (value, l85, str)
-	// but we only want to compare the hash (value field)
+	// Identity comparison - pointer equality since all Identities are interned
 	if id1, ok := a.(Identity); ok {
 		if id2, ok := b.(Identity); ok {
-			// Direct byte comparison - much faster than string comparison
-			return id1.value == id2.value
+			// Use Equal method which handles nil
+			return id1.Equal(id2)
 		}
 		return false
 	}
 
-	// Special handling for Keyword types
+	// Keyword comparison - pointer equality since all Keywords are interned
 	if kw1, ok := a.(Keyword); ok {
 		if kw2, ok := b.(Keyword); ok {
-			return kw1.String() == kw2.String()
+			// Use Equal method which handles nil
+			return kw1.Equal(kw2)
 		}
 		return false
 	}

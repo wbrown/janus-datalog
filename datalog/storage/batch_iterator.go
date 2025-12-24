@@ -380,7 +380,8 @@ func valueToString(v interface{}) string {
 		hash := val.Hash()
 		return string(hash[:])
 	case datalog.Keyword:
-		return val.String()
+		// Use pointer address - interned keywords are unique
+		return fmt.Sprintf("%p", val)
 	case string:
 		return val
 	case uint64:

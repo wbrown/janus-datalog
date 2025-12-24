@@ -136,11 +136,11 @@ func TestDebugBasicQuery(t *testing.T) {
 	fmt.Printf("ValuesEqual(e1, e2): %v\n", datalog.ValuesEqual(e1, e2))
 
 	// Check hash values
-	if id1, ok := e1.(*datalog.Identity); ok {
+	if id1, ok := e1.(datalog.Identity); ok {
 		hash1 := id1.Hash()
 		fmt.Printf("Pattern 1 hash: %x\n", hash1)
 	}
-	if id2, ok := e2.(*datalog.Identity); ok {
+	if id2, ok := e2.(datalog.Identity); ok {
 		hash2 := id2.Hash()
 		fmt.Printf("Pattern 2 hash: %x\n", hash2)
 	}

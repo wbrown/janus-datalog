@@ -149,12 +149,9 @@ func TestSchemaUniquenessValue(t *testing.T) {
 		t.Logf("Found tuple: %v", tuple)
 		if len(tuple) > 0 {
 			t.Logf("  tuple[0] type: %T, value: %v", tuple[0], tuple[0])
-			switch id := tuple[0].(type) {
-			case datalog.Identity:
-				t.Logf("  Is Identity (value): %s", id.String())
-			case *datalog.Identity:
-				t.Logf("  Is Identity (pointer): %s", id.String())
-			default:
+			if id, ok := tuple[0].(datalog.Identity); ok {
+				t.Logf("  Is Identity: %s", id.String())
+			} else {
 				t.Logf("  NOT an Identity type")
 			}
 		}

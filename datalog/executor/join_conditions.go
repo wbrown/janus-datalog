@@ -235,7 +235,8 @@ func valueToString(v interface{}) string {
 	case datalog.Identity:
 		return val.L85()
 	case datalog.Keyword:
-		return val.String()
+		// Use pointer address as string key - interned keywords are unique
+		return fmt.Sprintf("%p", val)
 	default:
 		return fmt.Sprintf("%v", v)
 	}

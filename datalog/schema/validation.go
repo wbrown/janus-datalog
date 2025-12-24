@@ -49,18 +49,15 @@ func ValidateValue(value interface{}, expected ValueType) error {
 		actualType = "[]byte"
 
 	case TypeRef:
+		// Identity is always a pointer type now
 		_, ok = value.(datalog.Identity)
-		if !ok {
-			// Also check for pointer type
-			_, ok = value.(*datalog.Identity)
-		}
 		actualType = "Identity"
 
 	case TypeKeyword:
 		_, ok = value.(datalog.Keyword)
 		if !ok {
 			// Also check for pointer type
-			_, ok = value.(*datalog.Keyword)
+			_, ok = value.(datalog.Keyword)
 		}
 		actualType = "Keyword"
 

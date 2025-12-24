@@ -831,17 +831,9 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 				continue
 			}
 
-			// Get the entity value - handle both Identity and *Identity
-			var entity datalog.Identity
-			switch v := tuple[colIdx].(type) {
-			case datalog.Identity:
-				entity = v
-			case *datalog.Identity:
-				if v == nil {
-					continue
-				}
-				entity = *v
-			default:
+			// Get the entity value
+			entity, ok := tuple[colIdx].(datalog.Identity)
+			if !ok || entity == nil {
 				// Value is not an entity - keep it as is
 				continue
 			}

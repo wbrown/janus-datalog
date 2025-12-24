@@ -210,6 +210,29 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 		return nil
 	}
 
+	// Handle Identity specially BEFORE generic pointer handling
+	// Identity is always a pointer type (*identity)
+	if fieldType == identityType {
+		if v, ok := value.(datalog.Identity); ok {
+			fieldVal.Set(reflect.ValueOf(v))
+		} else {
+			return fmt.Errorf("expected Identity, got %T", value)
+		}
+		return nil
+	}
+
+	// Handle *Keyword specially BEFORE generic pointer handling
+	// Handle Keyword type - always a pointer now
+	if fieldType == keywordType {
+		switch v := value.(type) {
+		case datalog.Keyword:
+			fieldVal.Set(reflect.ValueOf(v))
+		default:
+			return fmt.Errorf("expected Keyword, got %T", value)
+		}
+		return nil
+	}
+
 	// Handle pointer fields
 	if fieldType.Kind() == reflect.Ptr {
 		// Create new value and set pointer
@@ -232,25 +255,15 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 		return nil
 
 	case identityType:
-		switch v := value.(type) {
-		case datalog.Identity:
+		// Identity is now always a pointer type (*identity)
+		if v, ok := value.(datalog.Identity); ok {
 			fieldVal.Set(reflect.ValueOf(v))
-		case *datalog.Identity:
-			if v != nil {
-				fieldVal.Set(reflect.ValueOf(*v))
-			}
-		default:
+		} else {
 			return fmt.Errorf("expected Identity, got %T", value)
 		}
 		return nil
 
-	case keywordType:
-		kw, ok := value.(datalog.Keyword)
-		if !ok {
-			return fmt.Errorf("expected Keyword, got %T", value)
-		}
-		fieldVal.Set(reflect.ValueOf(kw))
-		return nil
+	// Note: keywordType is handled above before generic pointer handling
 	}
 
 	// Handle basic types

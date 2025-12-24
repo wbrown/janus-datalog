@@ -1,44 +1,21 @@
 package storage
 
 import (
-	"bytes"
 	"fmt"
-	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/codec"
 )
 
-// Cache for attribute strings to avoid repeated string allocations
-// Since attribute sets are small (typically 6-20 unique attributes per schema),
-// this cache effectively eliminates string allocations for attribute decoding
-var attrStringCache sync.Map // map[[32]byte]string
-
 // DatomFromKey reconstructs a datom from an index key
 // This allows us to avoid fetching values since the key contains all information
 func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Datom, error) {
-	// DecodeKey already handles the index-specific ordering and returns
-	// components in standard EAVT order
-	eBytes, aBytes, vBytes, txBytes, err := encoder.DecodeKey(index, key)
+	// DecodeKey returns fixed-size arrays directly (no heap escape)
+	entity, attr, vBytes, tx, err := encoder.DecodeKey(index, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode key: %w", err)
 	}
-
-	// Create storage datom from the decoded components
-	var sd StorageDatom
-
-	// Entity (20 bytes)
-	if len(eBytes) != 20 {
-		return nil, fmt.Errorf("invalid entity size: %d", len(eBytes))
-	}
-	copy(sd.E[:], eBytes)
-
-	// Attribute (32 bytes)
-	if len(aBytes) != 32 {
-		return nil, fmt.Errorf("invalid attribute size: %d", len(aBytes))
-	}
-	copy(sd.A[:], aBytes)
 
 	// Value (variable length) - first byte is type, rest is data
 	if len(vBytes) < 1 {
@@ -59,60 +36,24 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Dat
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode value: %w", err)
 	}
-	sd.V = v
 
-	// Transaction (20 bytes)
-	if len(txBytes) != 20 {
-		return nil, fmt.Errorf("invalid tx size: %d", len(txBytes))
-	}
-	copy(sd.Tx[:], txBytes)
-
-	// Convert storage datom to user datom
-	// Note: aBytes is already decoded from L85 if applicable, it contains the raw keyword string
-
-	// Use cached attribute string to avoid repeated allocations
-	var attrString string
-	if cached, ok := attrStringCache.Load(sd.A); ok {
-		attrString = cached.(string)
-	} else {
-		attrString = string(bytes.TrimRight(aBytes, "\x00"))
-		attrStringCache.Store(sd.A, attrString)
-	}
-
-	// Allocate datom directly
-	// Note: Entity and Keyword are already interned via InternIdentityFromHash/InternKeyword,
-	// so we're only allocating the Datom struct itself (96 bytes) plus the attribute string
-	// which is cached above. This is much cheaper than the original 8GB of allocations.
+	// Convert to user datom using direct array-based interning
+	// No intermediate copies needed - arrays go straight to intern cache lookup
 	return &datalog.Datom{
-		E:  *datalog.InternIdentityFromHash(sd.E),
-		A:  *datalog.InternKeyword(attrString),
-		V:  sd.V,
-		Tx: sd.Tx.Uint64(),
+		E:  datalog.InternIdentityFromHash(entity),
+		A:  datalog.InternKeywordFromBytes(attr),
+		V:  v,
+		Tx: Tx(tx).Uint64(),
 	}, nil
 }
 
 // DatomFromHistoryKey reconstructs a datom and Op from a history index key
 func DatomFromHistoryKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Datom, Op, error) {
-	// DecodeHistoryKey handles history indices and returns Op
-	eBytes, aBytes, vBytes, txBytes, op, err := encoder.DecodeHistoryKey(index, key)
+	// DecodeHistoryKey returns fixed-size arrays directly (no heap escape)
+	entity, attr, vBytes, tx, op, err := encoder.DecodeHistoryKey(index, key)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to decode history key: %w", err)
 	}
-
-	// Create storage datom from the decoded components
-	var sd StorageDatom
-
-	// Entity (20 bytes)
-	if len(eBytes) != 20 {
-		return nil, false, fmt.Errorf("invalid entity size: %d", len(eBytes))
-	}
-	copy(sd.E[:], eBytes)
-
-	// Attribute (32 bytes)
-	if len(aBytes) != 32 {
-		return nil, false, fmt.Errorf("invalid attribute size: %d", len(aBytes))
-	}
-	copy(sd.A[:], aBytes)
 
 	// Value (variable length) - first byte is type, rest is data
 	if len(vBytes) < 1 {
@@ -133,28 +74,13 @@ func DatomFromHistoryKey(index IndexType, key []byte, encoder KeyEncoder) (*data
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to decode value: %w", err)
 	}
-	sd.V = v
 
-	// Transaction (20 bytes)
-	if len(txBytes) != 20 {
-		return nil, false, fmt.Errorf("invalid tx size: %d", len(txBytes))
-	}
-	copy(sd.Tx[:], txBytes)
-
-	// Use cached attribute string
-	var attrString string
-	if cached, ok := attrStringCache.Load(sd.A); ok {
-		attrString = cached.(string)
-	} else {
-		attrString = string(bytes.TrimRight(aBytes, "\x00"))
-		attrStringCache.Store(sd.A, attrString)
-	}
-
+	// Convert to user datom using direct array-based interning
 	return &datalog.Datom{
-		E:  *datalog.InternIdentityFromHash(sd.E),
-		A:  *datalog.InternKeyword(attrString),
-		V:  sd.V,
-		Tx: sd.Tx.Uint64(),
+		E:  datalog.InternIdentityFromHash(entity),
+		A:  datalog.InternKeywordFromBytes(attr),
+		V:  v,
+		Tx: Tx(tx).Uint64(),
 	}, op, nil
 }
 

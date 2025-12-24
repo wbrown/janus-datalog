@@ -48,10 +48,11 @@ func (e *L85KeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 	}
 }
 
-// DecodeKey extracts components from an L85-encoded index key
-func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity, attr, value, tx []byte, err error) {
+// DecodeKey extracts components from an L85-encoded index key.
+// Returns fixed-size arrays for entity, attr, tx to avoid heap escape.
+func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]byte, attr [32]byte, value []byte, tx [20]byte, err error) {
 	if len(key) < 1 {
-		return nil, nil, nil, nil, fmt.Errorf("key too short")
+		return entity, attr, nil, tx, fmt.Errorf("key too short")
 	}
 
 	key = key[1:]
@@ -63,12 +64,10 @@ func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity, attr, va
 	case EAVT:
 		minSize := l85Size + l85SizeAttr + l85Size
 		if len(key) < minSize {
-			return nil, nil, nil, nil, fmt.Errorf("EAVT key too short")
+			return entity, attr, nil, tx, fmt.Errorf("EAVT key too short")
 		}
-		eArr, _ := codec.DecodeFixed20(string(key[0:l85Size]))
-		aArr, _ := codec.DecodeFixed32(string(key[l85Size : l85Size+l85SizeAttr]))
-		entity = eArr[:]
-		attr = aArr[:]
+		entity, _ = codec.DecodeFixed20(string(key[0:l85Size]))
+		attr, _ = codec.DecodeFixed32(string(key[l85Size : l85Size+l85SizeAttr]))
 		valueBytes := key[l85Size+l85SizeAttr : len(key)-l85Size]
 		if len(valueBytes) == l85Size {
 			if decoded, decErr := codec.DecodeFixed20(string(valueBytes)); decErr == nil {
@@ -79,18 +78,15 @@ func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity, attr, va
 		} else {
 			value = valueBytes
 		}
-		txArr, _ := codec.DecodeFixed20(string(key[len(key)-l85Size:]))
-		tx = txArr[:]
+		tx, _ = codec.DecodeFixed20(string(key[len(key)-l85Size:]))
 
 	case AEVT:
 		minSize := l85SizeAttr + l85Size + l85Size
 		if len(key) < minSize {
-			return nil, nil, nil, nil, fmt.Errorf("AEVT key too short")
+			return entity, attr, nil, tx, fmt.Errorf("AEVT key too short")
 		}
-		aArr, _ := codec.DecodeFixed32(string(key[0:l85SizeAttr]))
-		eArr, _ := codec.DecodeFixed20(string(key[l85SizeAttr : l85SizeAttr+l85Size]))
-		attr = aArr[:]
-		entity = eArr[:]
+		attr, _ = codec.DecodeFixed32(string(key[0:l85SizeAttr]))
+		entity, _ = codec.DecodeFixed20(string(key[l85SizeAttr : l85SizeAttr+l85Size]))
 		valueBytes := key[l85SizeAttr+l85Size : len(key)-l85Size]
 		if len(valueBytes) == l85Size {
 			if decoded, decErr := codec.DecodeFixed20(string(valueBytes)); decErr == nil {
@@ -101,19 +97,15 @@ func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity, attr, va
 		} else {
 			value = valueBytes
 		}
-		txArr, _ := codec.DecodeFixed20(string(key[len(key)-l85Size:]))
-		tx = txArr[:]
+		tx, _ = codec.DecodeFixed20(string(key[len(key)-l85Size:]))
 
 	case AVET:
 		if len(key) < 2*l85Size {
-			return nil, nil, nil, nil, fmt.Errorf("AVET key too short")
+			return entity, attr, nil, tx, fmt.Errorf("AVET key too short")
 		}
-		aArr, _ := codec.DecodeFixed32(string(key[0:l85SizeAttr]))
-		attr = aArr[:]
-		txArr, _ := codec.DecodeFixed20(string(key[len(key)-l85Size:]))
-		tx = txArr[:]
-		eArr, _ := codec.DecodeFixed20(string(key[len(key)-2*l85Size : len(key)-l85Size]))
-		entity = eArr[:]
+		attr, _ = codec.DecodeFixed32(string(key[0:l85SizeAttr]))
+		tx, _ = codec.DecodeFixed20(string(key[len(key)-l85Size:]))
+		entity, _ = codec.DecodeFixed20(string(key[len(key)-2*l85Size : len(key)-l85Size]))
 		valueBytes := key[l85SizeAttr : len(key)-2*l85Size]
 		if len(valueBytes) == l85Size+1 && valueBytes[0] == byte(datalog.TypeReference) {
 			if decoded, decErr := codec.DecodeFixed20(string(valueBytes[1:])); decErr == nil {
@@ -127,15 +119,12 @@ func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity, attr, va
 
 	case VAET:
 		if len(key) < 3*l85Size {
-			return nil, nil, nil, nil, fmt.Errorf("VAET key too short")
+			return entity, attr, nil, tx, fmt.Errorf("VAET key too short")
 		}
-		txArr, _ := codec.DecodeFixed20(string(key[len(key)-l85Size:]))
-		tx = txArr[:]
-		eArr, _ := codec.DecodeFixed20(string(key[len(key)-2*l85Size : len(key)-l85Size]))
-		entity = eArr[:]
+		tx, _ = codec.DecodeFixed20(string(key[len(key)-l85Size:]))
+		entity, _ = codec.DecodeFixed20(string(key[len(key)-2*l85Size : len(key)-l85Size]))
 		aStart := len(key) - 2*l85Size - l85SizeAttr
-		aArr, _ := codec.DecodeFixed32(string(key[aStart : aStart+l85SizeAttr]))
-		attr = aArr[:]
+		attr, _ = codec.DecodeFixed32(string(key[aStart : aStart+l85SizeAttr]))
 		valueBytes := key[0:aStart]
 		if len(valueBytes) == l85Size {
 			if decoded, decErr := codec.DecodeFixed20(string(valueBytes)); decErr == nil {
@@ -149,14 +138,11 @@ func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity, attr, va
 
 	case TAEV:
 		if len(key) < 3*l85Size {
-			return nil, nil, nil, nil, fmt.Errorf("TAEV key too short")
+			return entity, attr, nil, tx, fmt.Errorf("TAEV key too short")
 		}
-		txArr, _ := codec.DecodeFixed20(string(key[0:l85Size]))
-		tx = txArr[:]
-		aArr, _ := codec.DecodeFixed32(string(key[l85Size : l85Size+l85SizeAttr]))
-		attr = aArr[:]
-		eArr, _ := codec.DecodeFixed20(string(key[l85Size+l85SizeAttr : l85Size+l85SizeAttr+l85Size]))
-		entity = eArr[:]
+		tx, _ = codec.DecodeFixed20(string(key[0:l85Size]))
+		attr, _ = codec.DecodeFixed32(string(key[l85Size : l85Size+l85SizeAttr]))
+		entity, _ = codec.DecodeFixed20(string(key[l85Size+l85SizeAttr : l85Size+l85SizeAttr+l85Size]))
 		valueBytes := key[l85Size+l85SizeAttr+l85Size:]
 		if len(valueBytes) == l85Size {
 			if decoded, decErr := codec.DecodeFixed20(string(valueBytes)); decErr == nil {
@@ -169,7 +155,7 @@ func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity, attr, va
 		}
 
 	default:
-		return nil, nil, nil, nil, fmt.Errorf("unknown index type: %v", index)
+		return entity, attr, nil, tx, fmt.Errorf("unknown index type: %v", index)
 	}
 
 	return entity, attr, value, tx, nil
@@ -273,9 +259,9 @@ func (e *L85KeyEncoder) EncodeHistoryKey(index IndexType, d *datalog.Datom, op O
 }
 
 // DecodeHistoryKey extracts components including Op from an L85-encoded history index key
-func (e *L85KeyEncoder) DecodeHistoryKey(index IndexType, key []byte) (entity, attr, value, tx []byte, op Op, err error) {
+func (e *L85KeyEncoder) DecodeHistoryKey(index IndexType, key []byte) (entity [20]byte, attr [32]byte, value []byte, tx [20]byte, op Op, err error) {
 	if len(key) < 2 {
-		return nil, nil, nil, nil, false, fmt.Errorf("history key too short")
+		return entity, attr, nil, tx, false, fmt.Errorf("history key too short")
 	}
 
 	opByte := key[len(key)-1]

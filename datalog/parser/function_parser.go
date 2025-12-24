@@ -271,19 +271,17 @@ func extractKeyword(arg query.PatternElement) (datalog.Keyword, error) {
 		switch v := a.Value.(type) {
 		case datalog.Keyword:
 			return v, nil
-		case *datalog.Keyword:
-			return *v, nil
 		case string:
 			// Allow string that looks like a keyword
 			if len(v) > 0 && v[0] == ':' {
 				return datalog.NewKeyword(v), nil
 			}
-			return datalog.Keyword{}, fmt.Errorf("string %q is not a keyword (must start with :)", v)
+			return nil, fmt.Errorf("string %q is not a keyword (must start with :)", v)
 		default:
-			return datalog.Keyword{}, fmt.Errorf("expected keyword, got %T", v)
+			return nil, fmt.Errorf("expected keyword, got %T", v)
 		}
 	default:
-		return datalog.Keyword{}, fmt.Errorf("expected keyword constant, got %T", arg)
+		return nil, fmt.Errorf("expected keyword constant, got %T", arg)
 	}
 }
 

@@ -226,10 +226,9 @@ func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
 				return err
 			}
 			// Convert to user-facing datom
-			// TODO: Need proper resolver for attribute names
 			result = &datalog.Datom{
-				E:  *datalog.InternIdentity(datalog.NewIdentity(sd.E.String())),
-				A:  *datalog.InternKeyword(sd.A.String()),
+				E:  datalog.InternIdentityFromHash(sd.E),
+				A:  datalog.InternKeywordFromBytes(sd.A),
 				V:  sd.V,
 				Tx: sd.Tx.Uint64(),
 			}
@@ -344,12 +343,11 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 			return err
 		}
 		// Convert to user-facing datom
-		// TODO: Need proper resolver for attribute names
 		// Note: StorageDatomFromBytes already decodes the value properly,
 		// so sd.V is already the decoded value
 		result = &datalog.Datom{
-			E:  *datalog.InternIdentityFromHash(sd.E),
-			A:  *datalog.InternKeyword(sd.A.String()),
+			E:  datalog.InternIdentityFromHash(sd.E),
+			A:  datalog.InternKeywordFromBytes(sd.A),
 			V:  sd.V,
 			Tx: sd.Tx.Uint64(),
 		}
