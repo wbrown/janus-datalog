@@ -690,7 +690,7 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 ### Getting Started
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design decisions
-- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature comparison (~40-50% compatibility)
+- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature comparison (~70% compatibility)
 - **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation guide
 
 ### Deep Dives
@@ -766,7 +766,7 @@ We welcome contributions! Here's how to get started:
 
 ## Datomic Compatibility
 
-Janus implements **~50-60% of Datomic's feature set**, focusing on the most commonly used features:
+Janus implements **~70% of Datomic's feature set** (weighted by typical usage), focusing on the most commonly used features:
 
 **Implemented:**
 - Core queries: Patterns, joins, variables

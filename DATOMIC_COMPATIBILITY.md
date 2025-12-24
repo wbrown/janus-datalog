@@ -4,18 +4,31 @@ This guide is for developers familiar with Datomic who want to understand what j
 
 ## Quick Summary
 
-Janus-datalog implements a pragmatic subset of Datomic's Datalog query language with:
-- ✅ Core query patterns, expressions, aggregations, and subqueries
-- ✅ Pull API with nested references and cycle detection
-- ✅ Time-based queries using transaction IDs
-- ✅ Database functions: `get-else`, `missing?`, `get-some`
-- ✅ BadgerDB persistent storage with EAVT model
-- ✅ Schema support: type validation, cardinality, uniqueness
-- ✅ Struct reflection API: Go structs ↔ datoms with automatic schema generation
+**Estimated feature parity: ~70%** (weighted by typical usage frequency)
+
+Janus-datalog implements a substantial subset of Datomic's Datalog query language:
+
+**Core Features (fully implemented):**
+- ✅ Query patterns, expressions, aggregations, subqueries, order-by
+- ✅ Pull API with nested references, wildcards, defaults, cycle detection
 - ✅ NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)`
-- ❌ No rules or transaction functions
-- ❌ No entity API
-- ❌ Single-node only (no distributed queries)
+- ✅ Database functions: `get-else`, `missing?`, `get-some`
+- ✅ Schema: type validation, cardinality (one/many), uniqueness
+- ✅ History mode: full audit trail with assertions and retractions
+- ✅ Time queries: as-of, time extraction functions, 5-element history patterns
+
+**Go-Specific Ergonomics:**
+- ✅ Struct Reflection API: Go structs ↔ datoms with automatic schema generation
+- ✅ QueryInto API: typed query results directly into Go structs
+
+**Storage:**
+- ✅ BadgerDB persistent storage with EAVT model and 5 indices
+
+**Not Implemented:**
+- ❌ Rules (recursive queries)
+- ❌ Transaction functions
+- ❌ Entity API (navigation)
+- ❌ Distributed queries (single-node only)
 
 ## Implemented Datomic Features
 
@@ -34,7 +47,7 @@ Basic Datalog queries work as expected:
 - `:find` - with variables and aggregations
 - `:where` - pattern matching and expressions
 - `:in` - database and parameter inputs
-- `:order-by` - result ordering (parser only, executor pending)
+- `:order-by` - result ordering with multi-column and direction support
 
 **Pattern matching:**
 - `[?e ?a ?v]` - basic triple patterns
@@ -473,14 +486,16 @@ db, _ := storage.NewDatabaseWithSchema(path, schema)
 
 **Performance (writes only):** Type validation adds <1% overhead at `Add()` time; uniqueness checking adds ~6% at `Commit()` time. Reads are unaffected. See `PERFORMANCE_STATUS.md` for benchmarks.
 
-### 3. Transaction Features ❌
+### 3. Transaction Features ⚠️
 
-Limited transaction support:
-- **No transaction functions**
-- **No retractions** (only assertions)
-- **No tempids** for new entities
-- **No transaction metadata** beyond timestamp
-- **No transaction entities**
+Partial transaction support:
+- ✅ **Retractions supported** - Two modes available:
+  - `RetractDelete` (default): Hard delete from current-state indices
+  - `RetractHistory`: Preserves full audit trail in history indices
+- ❌ **No transaction functions**
+- ❌ **No tempids** for new entities
+- ❌ **No transaction metadata** beyond timestamp
+- ❌ **No transaction entities**
 
 ### 4. Entity API ❌
 
@@ -582,14 +597,19 @@ No advanced database operations:
 
 ### From Datomic to Janus-Datalog
 
-**Easy migrations:**
-- Basic queries port directly
-- Simple aggregations work unchanged
-- Time-based queries similar (using AsOf)
+**Easy migrations (port directly):**
+- Queries with patterns, expressions, predicates, aggregations
+- Pull API expressions (including nested refs, wildcards, defaults)
+- NOT/OR clauses
+- Subqueries with tuple/relation bindings
+- Order-by clauses
+- Time-based queries (AsOf)
+- History queries (with RetractHistory mode)
+- Database functions (get-else, missing?, get-some)
 
 **Require refactoring:**
-- Rules → inline the logic
-- Entity navigation → explicit joins or Pull API
+- Rules → inline the logic or handle recursion in application code
+- Entity navigation → use Pull API or explicit joins
 
 **Not possible:**
 - Transaction functions
@@ -646,31 +666,35 @@ Janus-datalog includes sophisticated optimizations:
 4. **Index Selection**: Chooses optimal index based on bound values
 5. **Streaming Execution**: Avoids materializing large datasets
 
-These make it suitable for production workloads despite the simpler feature set.
+These make it suitable for production workloads with substantial Datomic feature coverage.
 
 ## Recommended Use Cases
 
 **Good fit for:**
-- OLAP/analytical queries on moderate datasets
-- Time-series data with temporal queries
-- Applications needing Datalog's expressiveness
-- Entity retrieval using Pull API
-- Single-node deployments
+- OLAP/analytical queries on moderate to large datasets
+- Time-series data with temporal queries and full audit trails
+- Applications needing Datalog's expressiveness with Go's performance
+- Entity retrieval using Pull API (9× faster than equivalent queries)
+- Applications requiring NOT/OR logic and subqueries
+- Single-node deployments with BadgerDB persistence
 
 **Consider alternatives for:**
-- Recursive/graph queries requiring rules
-- Distributed/multi-node requirements
+- Recursive/graph queries requiring rules (no rule support)
+- Distributed/multi-node requirements (single-node only)
 
 ## Getting Started
 
 For Datomic users, the transition is straightforward:
 
-1. Most queries port directly, including Pull expressions
-2. Use subqueries for complex aggregations
+1. Most queries port directly, including Pull expressions and NOT/OR clauses
+2. Use subqueries for complex aggregations with proper scoping
 3. Define schema for type validation and cardinality-many support
-4. Use Pull API with resolved patterns for entity navigation
-5. Use Struct Reflection API for idiomatic Go struct ↔ datom mapping
+4. Use Pull API for efficient entity navigation (replaces Entity API)
+5. Enable `RetractHistory` mode for full audit trails
+
+**For Go developers**, additional ergonomic APIs are available:
+- **Struct Reflection API** (`datalog/reflect`): Go structs ↔ datoms with automatic schema generation
+- **QueryInto API**: Typed query results directly into Go structs (no manual tuple iteration)
+- **PullInto**: Read entities directly into Go structs
 
 Most Datalog queries will work with minimal changes, making janus-datalog a practical choice for applications that need Datalog's power without Datomic's full complexity.
-
-**For Go developers:** The Struct Reflection API (`datalog/reflect`) provides a particularly ergonomic way to work with the database using native Go structs instead of manual datom creation.
