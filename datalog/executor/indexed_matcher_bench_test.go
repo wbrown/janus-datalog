@@ -8,6 +8,17 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// countRelationResults counts results by iterating (streaming relations return -1 from Size())
+func countRelationResults(r Relation) int {
+	count := 0
+	iter := r.Iterator()
+	defer iter.Close()
+	for iter.Next() {
+		count++
+	}
+	return count
+}
+
 // createBenchmarkDataset creates a test dataset with specified size
 // Creates realistic OHLC-style data with entities, multiple attributes, and diverse value types
 func createBenchmarkDataset(numEntities int) []datalog.Datom {
@@ -187,8 +198,8 @@ func BenchmarkOHLCStyle_LinearVsIndexed(b *testing.B) {
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
-				if result.Size() != ds.numBars {
-					b.Fatalf("Expected %d results, got %d", ds.numBars, result.Size())
+				if count := countRelationResults(result); count != ds.numBars {
+					b.Fatalf("Expected %d results, got %d", ds.numBars, count)
 				}
 			}
 		})
@@ -203,8 +214,8 @@ func BenchmarkOHLCStyle_LinearVsIndexed(b *testing.B) {
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
-				if result.Size() != ds.numBars {
-					b.Fatalf("Expected %d results, got %d", ds.numBars, result.Size())
+				if count := countRelationResults(result); count != ds.numBars {
+					b.Fatalf("Expected %d results, got %d", ds.numBars, count)
 				}
 			}
 		})
@@ -237,8 +248,8 @@ func BenchmarkSingleEntityLookup(b *testing.B) {
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
-				if result.Size() != 4 {
-					b.Fatalf("Expected 4 results, got %d", result.Size())
+				if count := countRelationResults(result); count != 4 {
+					b.Fatalf("Expected 4 results, got %d", count)
 				}
 			}
 		})
@@ -253,8 +264,8 @@ func BenchmarkSingleEntityLookup(b *testing.B) {
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
-				if result.Size() != 4 {
-					b.Fatalf("Expected 4 results, got %d", result.Size())
+				if count := countRelationResults(result); count != 4 {
+					b.Fatalf("Expected 4 results, got %d", count)
 				}
 			}
 		})
@@ -287,8 +298,8 @@ func BenchmarkAttributeScan(b *testing.B) {
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
-				if result.Size() != size {
-					b.Fatalf("Expected %d results, got %d", size, result.Size())
+				if count := countRelationResults(result); count != size {
+					b.Fatalf("Expected %d results, got %d", size, count)
 				}
 			}
 		})
@@ -303,8 +314,8 @@ func BenchmarkAttributeScan(b *testing.B) {
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
-				if result.Size() != size {
-					b.Fatalf("Expected %d results, got %d", size, result.Size())
+				if count := countRelationResults(result); count != size {
+					b.Fatalf("Expected %d results, got %d", size, count)
 				}
 			}
 		})
@@ -337,8 +348,8 @@ func BenchmarkWorstCase_FullScan(b *testing.B) {
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
-				if result.Size() != size*4 {
-					b.Fatalf("Expected %d results, got %d", size*4, result.Size())
+				if count := countRelationResults(result); count != size*4 {
+					b.Fatalf("Expected %d results, got %d", size*4, count)
 				}
 			}
 		})
@@ -353,8 +364,8 @@ func BenchmarkWorstCase_FullScan(b *testing.B) {
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
-				if result.Size() != size*4 {
-					b.Fatalf("Expected %d results, got %d", size*4, result.Size())
+				if count := countRelationResults(result); count != size*4 {
+					b.Fatalf("Expected %d results, got %d", size*4, count)
 				}
 			}
 		})

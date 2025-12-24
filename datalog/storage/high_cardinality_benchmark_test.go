@@ -129,6 +129,8 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 	orderKeywords := keywords["order"]
 	orderUserKw := datalog.NewKeyword(":order/user")
 	orderProductKw := datalog.NewKeyword(":order/product")
+	orderStatusKw := datalog.NewKeyword(":order/status")
+	orderStatuses := []string{"pending", "processing", "completed", "cancelled", "refunded"}
 
 	for i := 0; i < 1000; i++ {
 		tx := db.NewTransaction()
@@ -140,11 +142,12 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 		tx.Add(orderID, orderUserKw, userRef)
 		// Add product reference
 		tx.Add(orderID, orderProductKw, productRef)
+		// Add status with realistic string values (~200 completed orders)
+		tx.Add(orderID, orderStatusKw, orderStatuses[i%5])
 
 		for j, kw := range orderKeywords {
-			// Skip the ones we already added
-			kwStr := kw.String()
-			if kwStr == ":order/user" || kwStr == ":order/product" {
+			// Skip the ones we already added (pointer comparison - interned)
+			if kw == orderUserKw || kw == orderProductKw || kw == orderStatusKw {
 				continue
 			}
 			var value interface{}
@@ -199,7 +202,7 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 
 	// Query 2: Join across entities with different keyword namespaces
 	b.Run("JoinQuery_CrossNamespace", func(b *testing.B) {
-		queryStr := `[:find ?orderID ?userName ?productName
+		queryStr := `[:find ?userName ?productName
 		              :where
 		              [?o :order/user ?u]
 		              [?o :order/product ?p]
@@ -437,18 +440,36 @@ func BenchmarkKeywordInterning(b *testing.B) {
 		}
 	})
 
-	b.Run("KeywordComparison", func(b *testing.B) {
+	b.Run("KeywordComparison_Pointer", func(b *testing.B) {
 		kw1 := datalog.NewKeyword(":test/attribute")
 		kw2 := datalog.NewKeyword(":test/attribute")
 		kw3 := datalog.NewKeyword(":test/different")
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			// Same value comparison
+			// Same value comparison - pointer equality O(1)
+			if kw1 == kw2 {
+				_ = true
+			}
+			// Different value comparison - pointer inequality O(1)
+			if kw1 == kw3 {
+				_ = false
+			}
+		}
+	})
+
+	b.Run("KeywordComparison_String", func(b *testing.B) {
+		kw1 := datalog.NewKeyword(":test/attribute")
+		kw2 := datalog.NewKeyword(":test/attribute")
+		kw3 := datalog.NewKeyword(":test/different")
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			// Same value comparison - string equality O(n)
 			if kw1.String() == kw2.String() {
 				_ = true
 			}
-			// Different value comparison
+			// Different value comparison - string inequality O(n)
 			if kw1.String() == kw3.String() {
 				_ = false
 			}
