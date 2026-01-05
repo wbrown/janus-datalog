@@ -1397,3 +1397,98 @@ func TestStructWriter_NoEventsWhenHandlerNil(t *testing.T) {
 		t.Errorf("expected Name=Alice, got %s", loaded.Name)
 	}
 }
+
+// DungeonEntity mimics the downstream testDungeonEntity struct
+type DungeonEntity struct {
+	ID    datalog.Identity `datalog:"-,id"`
+	Type  datalog.Keyword  `datalog:"entity/type"`
+	Map   datalog.Identity `datalog:"entity/map"`
+	Code  string           `datalog:"entity/code"`
+	Hooks []string         `datalog:"dungeon/hooks"`
+}
+
+// TestPullInto_CardinalityManyStrings_MultipleValues is a regression test for the
+// downstream bug where PullInto only returns the first value for []string fields.
+// This reproduces the scenario from narrative-generators where:
+// - Raw datoms show all values: [[tag1] [tag2] [tag3]]
+// - But PullInto only returns: ["tag1"]
+func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "reflect-test-many-strings")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Generate schema from struct (like downstream does)
+	sch, err := dlreflect.SchemaFromStruct(DungeonEntity{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	// Verify the schema correctly marks :dungeon/hooks as Many
+	// Note: When tag contains "/" like `datalog:"dungeon/hooks"`, it's the full attr name
+	hooksAttr := sch.GetAttribute(datalog.NewKeyword(":dungeon/hooks"))
+	if hooksAttr == nil {
+		t.Fatal("expected :dungeon/hooks attribute in schema")
+	}
+	t.Logf("Schema :dungeon/hooks cardinality: %s", hooksAttr.Cardinality)
+	if hooksAttr.Cardinality != schema.CardinalityMany {
+		t.Errorf("expected :dungeon-entity/hooks to have CardinalityMany, got %s", hooksAttr.Cardinality)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a map entity ID (just for the reference)
+	mapID := datalog.NewIdentity("map:test-map")
+
+	// Create dungeon with multiple hooks
+	dungeon := DungeonEntity{
+		Type:  datalog.NewKeyword(":entity.type/dungeon"),
+		Map:   mapID,
+		Code:  "TEST",
+		Hooks: []string{"hook1", "hook2", "hook3"},
+	}
+
+	tx := db.NewTransaction()
+	dungeonID, err := tx.SaveStruct(&dungeon)
+	if err != nil {
+		t.Fatalf("SaveStruct failed: %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	t.Logf("Created dungeon with ID: %s", dungeonID.L85())
+
+	// Query raw datoms to verify all hooks are stored
+	tuples, err := db.ExecuteQueryWithInputs(
+		`[:find ?v :in $ ?e :where [?e :dungeon/hooks ?v]]`,
+		dungeonID,
+	)
+	if err != nil {
+		t.Fatalf("direct query failed: %v", err)
+	}
+	t.Logf("Raw datoms for :dungeon/hooks: %v (count=%d)", tuples, len(tuples))
+	if len(tuples) != 3 {
+		t.Errorf("Direct query: expected 3 hooks stored, got %d", len(tuples))
+	}
+
+	// Now test PullInto - this is where the bug manifests
+	var loaded DungeonEntity
+	if err := db.PullInto(dungeonID, &loaded); err != nil {
+		t.Fatalf("PullInto failed: %v", err)
+	}
+
+	t.Logf("Saved Hooks: %q", dungeon.Hooks)
+	t.Logf("Loaded Hooks: %q", loaded.Hooks)
+
+	if len(loaded.Hooks) != 3 {
+		t.Errorf("PullInto: expected 3 hooks, got %d (BUG: only first value returned)", len(loaded.Hooks))
+		t.Errorf("Expected: %v", dungeon.Hooks)
+		t.Errorf("Got: %v", loaded.Hooks)
+	}
+}
