@@ -38,6 +38,17 @@ Built for real-world financial analysis with sentiment, options, and OHLC data w
 go get github.com/wbrown/janus-datalog
 ```
 
+**Define your schema attributes as constants:**
+
+```go
+import "github.com/wbrown/janus-datalog/datalog/qb"
+
+var (
+    UserName = qb.Kw(":user/name")
+    UserAge  = qb.Kw(":user/age")
+)
+```
+
 **Write data:**
 
 ```go
@@ -45,35 +56,95 @@ db, _ := storage.NewDatabase("my.db")
 tx := db.NewTransaction()
 
 alice := datalog.NewIdentity("user:alice")
-tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
-tx.Add(alice, datalog.NewKeyword(":user/age"), int64(30))
+tx.Add(alice, UserName.Keyword(), "Alice")
+tx.Add(alice, UserAge.Keyword(), int64(30))
 tx.Commit()
 ```
 
-**Query it:**
+**Query it (Go-native):**
 
 ```go
-query, _ := parser.ParseQuery(`
-    [:find ?name ?age
-     :where [?user :user/name ?name]
-            [?user :user/age ?age]
-            [(> ?age 21)]]
-`)
+e := qb.NewVar()
+name := qb.NewVar()
+age := qb.NewVar()
 
-exec := executor.NewExecutor(db.Matcher())
-results, _ := exec.Execute(query)
-fmt.Println(results.Table())  // Markdown table output
+q := qb.Query().
+    Find(name, age).
+    Where(
+        qb.Pat(e, UserName, name),
+        qb.Pat(e, UserAge, age),
+        qb.Gt(age, 21),
+    ).
+    MustBuild()
+
+results, _ := db.ExecuteQuery(q)
 ```
 
 **Output:**
 
 ```
-| ?name | ?age |
-|-------|------|
-| Alice |   30 |
+[["Alice" 30]]
 ```
 
-That's it. No schema required. No connection pools. No query tuning.
+That's it. No schema required. No connection pools. No query tuning. Typos caught at compile time.
+
+## Query Builder vs EDN Strings
+
+Janus supports two ways to write queries:
+
+### Query Builder (Recommended)
+
+The `qb` package provides compile-time safety and IDE support:
+
+```go
+var (
+    PersonName = qb.Kw(":person/name")
+    PersonAge  = qb.Kw(":person/age")
+)
+
+e := qb.NewVar()
+name := qb.NewVar()
+age := qb.NewVar()
+
+q := qb.Query().
+    Find(name, age).
+    Where(
+        qb.Pat(e, PersonName, name),
+        qb.Pat(e, PersonAge, age),
+        qb.Gte(age, 21),
+    ).
+    MustBuild()
+
+results, _ := db.ExecuteQuery(q)
+```
+
+**Why use it:**
+- Typos in `":person/naem"` silently return empty results; `PersonName` catches typos at compile time
+- IDE autocomplete shows available attributes
+- Refactoring is safe with find-replace
+- Same `*Var` in multiple patterns = join (no string matching)
+
+### EDN Strings (Fallback)
+
+For REPL exploration, porting Datomic queries, or when you prefer Datalog syntax:
+
+```go
+results, _ := db.ExecuteQuery(`
+    [:find ?name ?age
+     :where [?e :person/name ?name]
+            [?e :person/age ?age]
+            [(>= ?age 21)]]
+`)
+```
+
+**When to use:**
+- Quick ad-hoc queries during development
+- Porting existing Clojure/Datomic code
+- Documentation showing Datalog equivalents
+
+Both produce identical results. All database methods accept either form.
+
+See [docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md) for complete query builder documentation.
 
 ## Running Examples
 
@@ -689,6 +760,7 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 
 ### Getting Started
 
+- **[docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md)** - Go-native query builder (recommended)
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture and design decisions
 - **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature comparison (~70% compatibility)
 - **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation guide
