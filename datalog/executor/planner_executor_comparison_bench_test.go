@@ -72,7 +72,6 @@ func BenchmarkFullQueryOldVsNewPlanner(b *testing.B) {
 			exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 				UseClauseBasedPlanner: true,
 			})
-			exec.SetUseQueryExecutor(true)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, err := exec.Execute(q)
@@ -139,7 +138,6 @@ func BenchmarkFullQueryOldVsNewExecutor(b *testing.B) {
 			exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 				UseClauseBasedPlanner: true,
 			})
-			exec.SetUseQueryExecutor(true) // Use QueryExecutor
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, err := exec.Execute(q)
@@ -445,7 +443,6 @@ func BenchmarkPlanQuality(b *testing.B) {
 			exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 				UseClauseBasedPlanner: false,
 			})
-			exec.SetUseQueryExecutor(true) // Force use of QueryExecutor
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, err := exec.Execute(q)
@@ -460,7 +457,6 @@ func BenchmarkPlanQuality(b *testing.B) {
 			exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 				UseClauseBasedPlanner: true,
 			})
-			exec.SetUseQueryExecutor(true)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, err := exec.Execute(q)
@@ -512,7 +508,6 @@ func BenchmarkPlanQualityOHLC(b *testing.B) {
 		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 			UseClauseBasedPlanner: false,
 		})
-		exec.SetUseQueryExecutor(true)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -528,7 +523,6 @@ func BenchmarkPlanQualityOHLC(b *testing.B) {
 		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 			UseClauseBasedPlanner: true,
 		})
-		exec.SetUseQueryExecutor(true)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

@@ -169,7 +169,6 @@ func TestPlannerExecutionComparison(t *testing.T) {
 			newExec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 				UseClauseBasedPlanner: true,
 			})
-			newExec.SetUseQueryExecutor(true) // Required for new planner
 			newResult, err := newExec.Execute(q)
 			if err != nil {
 				t.Fatalf("new planner execution failed: %v", err)

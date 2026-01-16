@@ -53,7 +53,6 @@ func TestPlannerSelection(t *testing.T) {
 			UseClauseBasedPlanner: true,
 		})
 		// New planner requires UseQueryExecutor=true
-		exec.SetUseQueryExecutor(true)
 
 		result, err := exec.Execute(q)
 		if err != nil {
@@ -77,7 +76,6 @@ func TestPlannerSelection(t *testing.T) {
 		newExec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 			UseClauseBasedPlanner: true,
 		})
-		newExec.SetUseQueryExecutor(true)
 		newResult, err := newExec.Execute(q)
 		if err != nil {
 			t.Fatalf("New planner failed: %v", err)

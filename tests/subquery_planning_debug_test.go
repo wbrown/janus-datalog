@@ -105,7 +105,7 @@ func TestSubqueryPlanningDebug(t *testing.T) {
 	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), opts)
 
 	// Enable new QueryExecutor (Stage B)
-	exec.SetUseQueryExecutor(true)
+	exec.SetUseLegacyExecutor(false)
 
 	// Enable annotations to see execution flow
 	ctx := executor.NewContext(func(event annotations.Event) {

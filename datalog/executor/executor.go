@@ -20,25 +20,26 @@ type Executor struct {
 
 // NewExecutor creates a new query executor with default options
 func NewExecutor(matcher PatternMatcher) *Executor {
-	// Use default options from storage package
+	// Use legacy executor by default for backward compatibility with unit tests.
+	// Production code should use storage.DefaultPlannerOptions() which uses QueryExecutor.
 	defaultOpts := planner.PlannerOptions{
+		UseLegacyExecutor:           true, // Unit test compatibility
 		EnableDynamicReordering:     true,
 		EnablePredicatePushdown:     true,
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableCSE:                   false,
-		UseStreamingSubqueryUnion:   false, // TEMP: disable to compare
+		UseStreamingSubqueryUnion:   false,
 		MaxPhases:                   10,
 		EnableFineGrainedPhases:     true,
-		// Executor options
-		EnableIteratorComposition:  true,
-		EnableTrueStreaming:        true,
-		EnableSymmetricHashJoin:    false,
-		EnableParallelSubqueries:   true,
-		MaxSubqueryWorkers:         0,
-		EnableStreamingJoins:       false,
-		EnableStreamingAggregation: true,
-		EnableDebugLogging:         false,
+		EnableIteratorComposition:   true,
+		EnableTrueStreaming:         true,
+		EnableSymmetricHashJoin:     false,
+		EnableParallelSubqueries:    true,
+		MaxSubqueryWorkers:          0,
+		EnableStreamingJoins:        false,
+		EnableStreamingAggregation:  true,
+		EnableDebugLogging:          false,
 	}
 	return NewExecutorWithOptions(matcher, defaultOpts)
 }
@@ -68,7 +69,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions)
 // convertToExecutorOptions extracts executor-specific options from PlannerOptions
 func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
-		UseQueryExecutor:                opts.UseQueryExecutor,
+		UseLegacyExecutor:               opts.UseLegacyExecutor,
 		EnableIteratorComposition:       opts.EnableIteratorComposition,
 		EnableTrueStreaming:             opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
@@ -95,9 +96,9 @@ func (e *Executor) DisableParallelSubqueries() {
 	e.enableParallelSubqueries = false
 }
 
-// SetUseQueryExecutor enables or disables the new QueryExecutor (for testing)
-func (e *Executor) SetUseQueryExecutor(use bool) {
-	e.options.UseQueryExecutor = use
+// SetUseLegacyExecutor enables or disables the legacy executor (for testing)
+func (e *Executor) SetUseLegacyExecutor(use bool) {
+	e.options.UseLegacyExecutor = use
 }
 
 // Execute runs a parsed query and returns the results
@@ -127,7 +128,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	executor := &Executor{
 		matcher:                  matcher,
 		planner:                  e.planner,
-		options:                  e.options, // Preserve executor options including UseQueryExecutor flag
+		options:                  e.options, // Preserve executor options including UseLegacyExecutor flag
 		enableParallelSubqueries: e.enableParallelSubqueries,
 		maxSubqueryWorkers:       e.maxSubqueryWorkers,
 	}
@@ -176,7 +177,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	}
 
 	// Choose execution path based on options
-	if executor.options.UseQueryExecutor {
+	if !executor.options.UseLegacyExecutor {
 		// New path: Use QueryExecutor (Stage B) with RealizedPlan
 		var realizedPlan *planner.RealizedPlan
 		var err error
@@ -195,7 +196,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 		// Old path: Use legacy phase executor (only works with PlannerAdapter)
 		adapter, ok := executor.planner.(*planner.PlannerAdapter)
 		if !ok {
-			return nil, fmt.Errorf("legacy executor path requires old planner; set UseQueryExecutor=true or UseClauseBasedPlanner=false")
+			return nil, fmt.Errorf("legacy executor path requires old planner; set UseLegacyExecutor=false or UseClauseBasedPlanner=false")
 		}
 
 		oldPlanner := adapter.GetUnderlyingPlanner()

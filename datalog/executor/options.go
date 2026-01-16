@@ -4,7 +4,7 @@ package executor
 // The main configuration comes from PlannerOptions which includes both planner and executor settings
 type ExecutorOptions struct {
 	// Execution engine selection
-	UseQueryExecutor bool // If true, use new QueryExecutor (Stage B); if false, use legacy executor
+	UseLegacyExecutor bool // If true, use legacy phase-based executor; if false (default), use QueryExecutor
 
 	// Streaming options - control memory vs performance tradeoffs
 	EnableIteratorComposition bool

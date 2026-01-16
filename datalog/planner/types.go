@@ -396,7 +396,7 @@ type PlannerOptions struct {
 	UseClauseBasedPlanner bool // Use new clause-based planner instead of old phase-based planner (default: false)
 
 	// Executor architecture selection
-	UseQueryExecutor bool // Use new QueryExecutor (Stage B) instead of legacy executor (default: true as of October 2025)
+	UseLegacyExecutor bool // Use legacy phase-based executor instead of QueryExecutor (default: false - QueryExecutor is production default)
 
 	// Planner options
 	EnableDynamicReordering             bool       // Enable dynamic join reordering (1-3μs overhead, can prevent cross-products - should be enabled)
@@ -731,6 +731,26 @@ func realizePhase(phase Phase, isLastPhase bool, prevKeep []query.Symbol) Realiz
 	// The Metadata will contain decorrelation hints for optimization.
 	for _, sq := range phase.Subqueries {
 		where = append(where, sq.Subquery)
+	}
+
+	// 5. Add NOT clauses (anti-join filtering)
+	for _, nc := range phase.NotClauses {
+		where = append(where, nc)
+	}
+
+	// 6. Add NOT-JOIN clauses
+	for _, njc := range phase.NotJoinClauses {
+		where = append(where, njc)
+	}
+
+	// 7. Add OR clauses (union)
+	for _, oc := range phase.OrClauses {
+		where = append(where, oc)
+	}
+
+	// 8. Add OR-JOIN clauses
+	for _, ojc := range phase.OrJoinClauses {
+		where = append(where, ojc)
 	}
 
 	// Build :find clause
