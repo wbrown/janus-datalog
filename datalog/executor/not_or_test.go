@@ -851,3 +851,163 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 		t.Errorf("expected 'Alice', got %v", result.Get(0)[0])
 	}
 }
+
+func TestOrFallbackWithSubqueryPattern(t *testing.T) {
+	// Test OR with SubqueryPattern as first branch and ground as fallback
+	// This is the real-world use case: count with zero default
+	alice := datalog.NewIdentity("task:alice")
+	nameAttr := datalog.NewKeyword(":task/name")
+	statusAttr := datalog.NewKeyword(":task/status")
+	completeStatus := datalog.NewKeyword(":status/complete")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Task Alice", Tx: 1},
+		{E: alice, A: statusAttr, V: completeStatus, Tx: 1},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
+	ctx := NewContext(nil)
+
+	// Build the OR clause with SubqueryPattern and ground fallback
+	// (or [(q [:find (count ?t) :where [?t :task/status :status/complete]] $) [[?count]]]
+	//     [(ground 0) ?count])
+	orClause := &query.OrClause{
+		Branches: [][]query.Clause{
+			{
+				&query.SubqueryPattern{
+					Query: &query.Query{
+						Find: []query.FindElement{
+							query.FindAggregate{Function: "count", Arg: "?t"},
+						},
+						Where: []query.Clause{
+							&query.DataPattern{
+								Elements: []query.PatternElement{
+									query.Variable{Name: "?t"},
+									query.Constant{Value: statusAttr},
+									query.Constant{Value: completeStatus},
+								},
+							},
+						},
+					},
+					Inputs:  []query.PatternElement{query.Constant{Value: "db"}},
+					Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+				},
+			},
+			{
+				&query.Expression{
+					Function: &query.GroundFunction{Value: int64(0)},
+					Binding:  "?count",
+				},
+			},
+		},
+	}
+
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?count"},
+		},
+		Where: []query.Clause{orClause},
+	}
+
+	result, err := queryExecutor.Execute(ctx, q, nil)
+	if err != nil {
+		t.Fatalf("query executor failed: %v", err)
+	}
+
+	// Collapse to single relation
+	collapsed := Relations(result).Collapse(ctx)
+	if len(collapsed) != 1 {
+		t.Fatalf("Expected 1 collapsed relation, got %d", len(collapsed))
+	}
+
+	finalRel := collapsed[0]
+	t.Logf("Final: columns=%v, size=%d", finalRel.Columns(), finalRel.Size())
+
+	// Should have 1 result with count=1 (one completed task)
+	if finalRel.Size() != 1 {
+		t.Errorf("Expected 1 result, got %d", finalRel.Size())
+	}
+
+	if finalRel.Size() > 0 {
+		val := finalRel.Get(0)[0]
+		// Count returns int64
+		if val != int64(1) {
+			t.Errorf("Expected count=1, got %v (type %T)", val, val)
+		}
+	}
+}
+
+func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
+	// Test OR with SubqueryPattern that returns empty, falling back to ground
+	matcher := NewMemoryPatternMatcher(nil) // Empty database
+	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
+	ctx := NewContext(nil)
+
+	statusAttr := datalog.NewKeyword(":task/status")
+	completeStatus := datalog.NewKeyword(":status/complete")
+
+	// Same query but with empty database - should fall back to ground(0)
+	orClause := &query.OrClause{
+		Branches: [][]query.Clause{
+			{
+				&query.SubqueryPattern{
+					Query: &query.Query{
+						Find: []query.FindElement{
+							query.FindAggregate{Function: "count", Arg: "?t"},
+						},
+						Where: []query.Clause{
+							&query.DataPattern{
+								Elements: []query.PatternElement{
+									query.Variable{Name: "?t"},
+									query.Constant{Value: statusAttr},
+									query.Constant{Value: completeStatus},
+								},
+							},
+						},
+					},
+					Inputs:  []query.PatternElement{query.Constant{Value: "db"}},
+					Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+				},
+			},
+			{
+				&query.Expression{
+					Function: &query.GroundFunction{Value: int64(0)},
+					Binding:  "?count",
+				},
+			},
+		},
+	}
+
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?count"},
+		},
+		Where: []query.Clause{orClause},
+	}
+
+	result, err := queryExecutor.Execute(ctx, q, nil)
+	if err != nil {
+		t.Fatalf("query executor failed: %v", err)
+	}
+
+	collapsed := Relations(result).Collapse(ctx)
+	if len(collapsed) != 1 {
+		t.Fatalf("Expected 1 collapsed relation, got %d", len(collapsed))
+	}
+
+	finalRel := collapsed[0]
+	t.Logf("Final: columns=%v, size=%d", finalRel.Columns(), finalRel.Size())
+
+	// Should have 1 result with count=0 (fallback)
+	if finalRel.Size() != 1 {
+		t.Errorf("Expected 1 result, got %d", finalRel.Size())
+	}
+
+	if finalRel.Size() > 0 {
+		val := finalRel.Get(0)[0]
+		if val != int64(0) {
+			t.Errorf("Expected count=0 (fallback), got %v (type %T)", val, val)
+		}
+	}
+}

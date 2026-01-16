@@ -472,25 +472,6 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		})
 	}
 
-	// CRITICAL: Materialize groups FIRST to prevent iterator consumption
-	// When we create Product() and materialize it, that will consume the underlying iterators
-	// We need to preserve groups for later use in the outer query
-	materializedGroups := make([]Relation, len(groups))
-	for i, g := range groups {
-		materializedGroups[i] = g.Materialize()
-	}
-
-	// Combine all groups into a single relation for extracting input combinations
-	var combinedRel Relation
-	if len(materializedGroups) == 0 {
-		return nil, fmt.Errorf("no input groups for subquery")
-	} else if len(materializedGroups) == 1 {
-		combinedRel = materializedGroups[0]
-	} else {
-		// Multiple groups - need to combine them
-		combinedRel = Relations(materializedGroups).Product()
-	}
-
 	// Extract which input symbols we need from the outer query
 	var inputSymbols []query.Symbol
 	for _, input := range subq.Inputs {
@@ -504,6 +485,54 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			}
 			// Other constants don't need extraction
 		}
+	}
+
+	// CRITICAL: Materialize groups FIRST to prevent iterator consumption
+	// When we create Product() and materialize it, that will consume the underlying iterators
+	// We need to preserve groups for later use in the outer query
+	materializedGroups := make([]Relation, len(groups))
+	for i, g := range groups {
+		materializedGroups[i] = g.Materialize()
+	}
+
+	// Combine all groups into a single relation for extracting input combinations
+	var combinedRel Relation
+	if len(materializedGroups) == 0 {
+		// No input groups - check if subquery has variable inputs that need outer bindings
+		hasVariableInputs := false
+		for _, input := range subq.Inputs {
+			if _, ok := input.(query.Variable); ok {
+				hasVariableInputs = true
+				break
+			}
+		}
+		if hasVariableInputs {
+			return nil, fmt.Errorf("no input groups for subquery with variable inputs")
+		}
+		// No variable inputs - execute subquery once with empty input combination
+		inputRelations := createInputRelationsForSubqueryWithOptions(subq, make(map[query.Symbol]interface{}), e.options)
+		nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
+		if err != nil {
+			return nil, fmt.Errorf("nested query execution failed: %w", err)
+		}
+		if len(nestedGroups) == 0 {
+			// Empty result - return empty relation with binding columns
+			return NewMaterializedRelationWithOptions(extractBindingSymbols(subq.Binding), nil, e.options), nil
+		}
+		if len(nestedGroups) > 1 {
+			return nil, fmt.Errorf("subquery returned %d disjoint groups - expected 1", len(nestedGroups))
+		}
+		// Apply binding form (no outer input values to join with)
+		boundResult, err := applyBindingForm(nestedGroups[0], subq.Binding, nil, nil)
+		if err != nil {
+			return nil, fmt.Errorf("binding form application failed: %w", err)
+		}
+		return boundResult, nil
+	} else if len(materializedGroups) == 1 {
+		combinedRel = materializedGroups[0]
+	} else {
+		// Multiple groups - need to combine them
+		combinedRel = Relations(materializedGroups).Product()
 	}
 
 	// Materialize combined relation since getUniqueInputCombinations will consume it
@@ -1300,6 +1329,16 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 			if err != nil {
 				return nil, err
 			}
+
+		case *query.SubqueryPattern:
+			newRel, err := e.executeSubquery(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = groups.Collapse(ctx)
 
 		default:
 			return nil, fmt.Errorf("unsupported inner clause type: %T", clause)
