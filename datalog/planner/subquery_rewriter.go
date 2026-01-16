@@ -312,24 +312,18 @@ func findFilterPredicates(q *query.Query, inputParams []query.Symbol) ([]FilterP
 // rewriteCorrelatedAggregates transforms detected patterns into conditional aggregates
 // This is the main entry point for query rewriting
 func rewriteCorrelatedAggregates(plan *QueryPlan, options PlannerOptions) error {
-	// TODO: Remove DEBUG output once conditional aggregate rewriting is stable
-	// (Keeping for now as feature was just completed - Oct 2025)
-	fmt.Printf("DEBUG rewriteCorrelatedAggregates: called, enabled=%v, phases=%d\n", options.EnableConditionalAggregateRewriting, len(plan.Phases))
-
 	// Process each phase
 	for phaseIdx := range plan.Phases {
 		phase := &plan.Phases[phaseIdx]
 
 		// Detect patterns
 		patterns := detectCorrelatedAggregates(phase)
-		fmt.Printf("DEBUG rewriteCorrelatedAggregates: Phase %d has %d correlated aggregate patterns, %d subqueries\n", phaseIdx, len(patterns), len(phase.Subqueries))
 		if len(patterns) == 0 {
 			continue
 		}
 
 		// Rewrite each pattern (in reverse order to maintain indices)
 		for i := len(patterns) - 1; i >= 0; i-- {
-			fmt.Printf("DEBUG rewriteCorrelatedAggregates: Rewriting pattern %d in phase %d\n", i, phaseIdx)
 			if err := rewritePattern(plan, phase, &patterns[i]); err != nil {
 				return err
 			}
@@ -344,7 +338,63 @@ func rewriteCorrelatedAggregates(plan *QueryPlan, options PlannerOptions) error 
 	}
 	plan.Phases = fixedPhases
 
+	// Note: Find clause injection is now done in planner.go AFTER updatePhaseSymbols
+	// because updatePhaseSymbols resets phase.Find to q.Find
+
 	return nil
+}
+
+// collectConditionalAggregates gathers all conditional aggregates from phase metadata
+func collectConditionalAggregates(phases []Phase) []ConditionalAggregate {
+	var result []ConditionalAggregate
+	for _, phase := range phases {
+		if phase.Metadata != nil {
+			if condAggs, ok := phase.Metadata["conditional_aggregates"].([]ConditionalAggregate); ok {
+				result = append(result, condAggs...)
+			}
+		}
+	}
+	return result
+}
+
+// injectConditionalAggregatesIntoFind replaces find variables with their conditional aggregates
+func injectConditionalAggregatesIntoFind(findClause []query.FindElement, condAggs []ConditionalAggregate) []query.FindElement {
+	// Build a map from variable symbols to conditional aggregates
+	varToAgg := make(map[query.Symbol]query.FindAggregate)
+
+	for _, condAgg := range condAggs {
+		// Extract variable(s) from the binding
+		switch b := condAgg.Binding.(type) {
+		case query.TupleBinding:
+			if len(b.Variables) == 1 {
+				varToAgg[b.Variables[0]] = condAgg.Aggregate
+			}
+		case query.ScalarBinding:
+			varToAgg[b.Variable] = condAgg.Aggregate
+		case query.CollectionBinding:
+			varToAgg[b.Variable] = condAgg.Aggregate
+		case query.RelationBinding:
+			if len(b.Variables) == 1 {
+				varToAgg[b.Variables[0]] = condAgg.Aggregate
+			}
+		}
+	}
+
+	// Replace find variables with conditional aggregates
+	result := make([]query.FindElement, len(findClause))
+	for i, elem := range findClause {
+		if v, ok := elem.(query.FindVariable); ok {
+			if agg, exists := varToAgg[v.Symbol]; exists {
+				result[i] = agg
+			} else {
+				result[i] = elem
+			}
+		} else {
+			result[i] = elem
+		}
+	}
+
+	return result
 }
 
 // fixExpressionPlacement moves expressions to the earliest phase where all their dependencies are satisfied

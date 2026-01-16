@@ -1,7 +1,7 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2025-12-24
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, and key encoder optimization
+**Last Updated**: 2026-01-16
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, and conditional aggregate rewriting
 
 ## Executive Summary
 
@@ -20,6 +20,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Time range optimization**: 4× speedup on large datasets (verified - 1.5× on small, 4× on 260-hour dataset)
 - ✅ **Hash join pre-sizing**: 24-32% faster with 24-30% less memory (verified)
 - ✅ **Identity/Keyword interning**: **10-20% faster** on joins and subqueries, **25-44% memory reduction**, pointer equality for all comparisons (verified 2025-12-24)
+- ✅ **Conditional aggregate rewriting**: **7.7× faster**, **5.2× less memory**, **8.1× fewer allocations** for correlated aggregate subqueries (verified 2026-01-16)
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -417,6 +418,67 @@ for _, entity := range entities {
 
 **Key Insight**: The existing `datom_decoder.go` already had `[20]byte` → Identity caching and `[32]byte` → string caching. This optimization completed the picture by making all downstream comparisons pointer-based.
 
+### 12. Conditional Aggregate Rewriting (COMPLETE - January 2026)
+**Status**: ✅ Both legacy executor and QueryExecutor now support conditional aggregate rewriting
+**Performance**: **7.7× faster**, **5.2× less memory**, **8.1× fewer allocations** (verified 2026-01-16)
+**Commits**: Latest
+
+**What It Does**:
+Transforms correlated subqueries with aggregates into single-pass conditional aggregation:
+```clojure
+;; Before: N separate subquery executions
+[(q [:find (max ?v) :in $ ?person ?day :where ...] $ ?p ?day) [[?max-value]]]
+
+;; After: Single pass with conditional aggregate
+(max ?v :when ?__cond_?pd)  ;; Condition filters which rows contribute
+```
+
+**Benchmark Results** (Apple M4 Max, 3 people × 10 days × 20 events = 600 events):
+
+| Metric | Without Rewriting | With Rewriting | Improvement |
+|--------|-------------------|----------------|-------------|
+| Time | 16.2 ms/op | 2.1 ms/op | **7.7× faster** |
+| Memory | 15.2 MB/op | 2.9 MB/op | **5.2× less** |
+| Allocations | 275,359/op | 33,899/op | **8.1× fewer** |
+
+**Executor Comparison** (both with rewriting enabled):
+
+| Executor | Time | Memory | Allocations | vs Legacy |
+|----------|------|--------|-------------|-----------|
+| Legacy | 1.95 ms | 2.87 MB | 33.4K | baseline |
+| QueryExecutor | 1.98 ms | 2.95 MB | 33.9K | **+1.5%** (parity) |
+
+**Scale Test** (with rewriting enabled):
+
+| Scale | Legacy | QueryExecutor | Difference |
+|-------|--------|---------------|------------|
+| Small (600 events, 30 groups) | 1.96 ms | 1.99 ms | +1.5% |
+| Medium (3000 events, 100 groups) | 11.4 ms | 12.1 ms | +6% |
+
+**Why It's Fast**:
+- **Without rewriting**: Executes N separate subqueries (one per outer row), each scanning and filtering data
+- **With rewriting**: Single pass over data with grouped conditional aggregation
+- Eliminates repeated index scans, reduces from O(N × M) to O(M)
+
+**Implementation Note** (January 2026 fix):
+The planner now emits **two representations** of conditional aggregates:
+1. **Metadata**: `phase.Metadata["conditional_aggregates"]` - used by legacy executor
+2. **Find clause**: Modified `FindAggregate` with `Predicate` field - used by QueryExecutor
+
+This dual approach maintains backward compatibility while following "Datalog is the IR" principle.
+
+**When It Applies**:
+- Correlated subqueries with aggregates (max, min, sum, count, avg)
+- Pattern: "For each X, find aggregate of Y where Y relates to X"
+- Examples: max value per user per day, latest price per ticker, totals per category
+
+**Configuration**:
+```go
+PlannerOptions{
+    EnableConditionalAggregateRewriting: true,  // ✅ Recommended
+}
+```
+
 ---
 
 ## Profiling Results (October 2025)
@@ -529,6 +591,7 @@ All items below are **measured** and **active** in production code:
 12. ✅ **Hash join pre-sizing** - **24-32% faster, 24-30% less memory**
 13. ✅ **In-memory indexing** - Hash indices now default path throughout codebase
 14. ✅ **Relation collapsing algorithm** - **Prevents catastrophic Cartesian products**
+15. ✅ **Conditional aggregate rewriting** - **7.7× faster, 5.2× less memory** for correlated aggregate subqueries (verified 2026-01-16)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:
@@ -694,6 +757,56 @@ The engine is **production-ready for datasets up to 10M+ datoms**. All major opt
 ---
 
 ## Session History
+
+### 2026-01-16: Conditional Aggregate Rewriting - QueryExecutor Parity Fix
+
+**Branch**: `main`
+**Status**: ✅ Complete with executor comparison benchmarks
+
+**Problem**:
+QueryExecutor couldn't handle conditional aggregate rewriting. Tests used `UseLegacyExecutor: true` as workaround. The rewriter stored aggregates in `phase.Metadata` but QueryExecutor didn't know how to interpret this metadata.
+
+**Root Cause**:
+1. `rewriteCorrelatedAggregates` stored conditional aggregates in `phase.Metadata["conditional_aggregates"]`
+2. Legacy executor had special code to read metadata and apply aggregation
+3. QueryExecutor treated metadata as inert data - didn't create the aggregate output column
+4. Find clause injection was attempted but `updatePhaseSymbols` was overwriting it
+
+**Solution**:
+Moved Find clause injection to AFTER `updatePhaseSymbols` in `planner.go`. The planner now emits two representations:
+1. **Metadata** (for legacy executor backward compatibility)
+2. **Modified Find clause** with `FindAggregate` containing `Predicate` field (for QueryExecutor)
+
+**Key Changes**:
+- `datalog/planner/planner.go`: Added conditional aggregate injection after `updatePhaseSymbols`
+- `datalog/planner/subquery_rewriter.go`: Added `collectConditionalAggregates()` and `injectConditionalAggregatesIntoFind()` helper functions
+- `datalog/executor/executor.go`: Updated comments documenting dual representation
+
+**Benchmark Results** (Apple M4 Max):
+
+| Configuration | Time | Memory | Allocations |
+|---------------|------|--------|-------------|
+| Without rewriting | 16.2 ms | 15.2 MB | 275K |
+| With rewriting | 2.1 ms | 2.9 MB | 33.9K |
+| **Improvement** | **7.7×** | **5.2×** | **8.1×** |
+
+**Executor Comparison** (with rewriting):
+
+| Executor | Time | Difference |
+|----------|------|------------|
+| Legacy | 1.95 ms | baseline |
+| QueryExecutor | 1.98 ms | +1.5% (parity achieved) |
+
+**New Benchmarks Added**:
+- `BenchmarkConditionalAggregateExecutorComparison`: Compares legacy vs QueryExecutor with/without rewriting
+- `BenchmarkConditionalAggregateScale`: Tests scaling behavior at different data sizes
+
+**Files Changed**:
+- `datalog/planner/planner.go` - Find clause injection
+- `datalog/planner/subquery_rewriter.go` - Helper functions
+- `tests/conditional_aggregate_rewriting_benchmark_test.go` - New executor comparison benchmarks
+
+---
 
 ### 2025-12-24: Identity/Keyword Pointer Type Alias Optimization
 

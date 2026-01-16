@@ -194,6 +194,18 @@ func (p *Planner) PlanWithBindings(q *query.Query, initialBindings map[query.Sym
 		// After rewriting, we need to recalculate phase symbols because new expressions were added
 		// This MUST happen regardless of whether reordering is enabled
 		phases = updatePhaseSymbols(phases, q.Find, inputSymbols)
+
+		// Inject conditional aggregates into the last phase's Find clause
+		// This makes the realized plan self-describing - QueryExecutor can handle it
+		// without needing to interpret metadata.
+		// IMPORTANT: This must happen AFTER updatePhaseSymbols because that function resets phase.Find
+		// The legacy executor uses metadata (conditional_aggregates) which is also preserved
+		allCondAggs := collectConditionalAggregates(phases)
+		if len(allCondAggs) > 0 && len(phases) > 0 {
+			modifiedFind := injectConditionalAggregatesIntoFind(q.Find, allCondAggs)
+			// Only update the last phase's Find clause so realizePhase uses the modified version
+			phases[len(phases)-1].Find = modifiedFind
+		}
 	}
 
 	// Validate that all find variables will be bound
