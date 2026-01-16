@@ -381,22 +381,49 @@ func TestParseSubqueryPatterns(t *testing.T) {
 			},
 		},
 		{
-			name: "subquery with collection binding",
-			input: `[:find ?symbol ?prices
-			         :where 
+			name: "subquery with scalar binding",
+			input: `[:find ?symbol ?max-price
+			         :where
 			           [?s :symbol/ticker ?symbol]
-			           [(q [:find ?price ?time
+			           [(q [:find (max ?price)
 			                :where [?p :price/symbol ?sym]
-			                       [?p :price/value ?price]
-			                       [?p :price/time ?time]]
-			               ?s) ?prices]]`,
+			                       [?p :price/value ?price]]
+			               ?s) ?max-price]]`,
 			check: func(q *query.Query) error {
 				subq, ok := q.Where[1].(*query.SubqueryPattern)
 				if !ok {
 					return fmt.Errorf("expected SubqueryPattern")
 				}
 
-				// Check collection binding
+				// Check scalar binding (was previously collection binding, but ?var means scalar in Datomic)
+				binding, ok := subq.Binding.(query.ScalarBinding)
+				if !ok {
+					return fmt.Errorf("expected ScalarBinding, got %T", subq.Binding)
+				}
+
+				if binding.Variable != "?max-price" {
+					return fmt.Errorf("expected ?max-price binding, got %s", binding.Variable)
+				}
+
+				return nil
+			},
+		},
+		{
+			name: "subquery with collection binding",
+			input: `[:find ?symbol ?prices
+			         :where
+			           [?s :symbol/ticker ?symbol]
+			           [(q [:find ?price
+			                :where [?p :price/symbol ?sym]
+			                       [?p :price/value ?price]]
+			               ?s) [?prices ...]]]`,
+			check: func(q *query.Query) error {
+				subq, ok := q.Where[1].(*query.SubqueryPattern)
+				if !ok {
+					return fmt.Errorf("expected SubqueryPattern")
+				}
+
+				// Check collection binding [?var ...]
 				binding, ok := subq.Binding.(query.CollectionBinding)
 				if !ok {
 					return fmt.Errorf("expected CollectionBinding, got %T", subq.Binding)
@@ -589,4 +616,74 @@ func TestFormatSubquery(t *testing.T) {
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s[:len(substr)] == substr || (len(s) > len(substr) && contains(s[1:], substr)))
+}
+
+func TestParseScalarFindSpec(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		scalarReturn bool
+		findCount    int
+		shouldError  bool
+		errorMsg     string
+	}{
+		{
+			name:         "scalar find spec with aggregate",
+			input:        `[:find (max ?v) . :where [?e :event/value ?v]]`,
+			scalarReturn: true,
+			findCount:    1,
+		},
+		{
+			name:         "scalar find spec with variable",
+			input:        `[:find ?name . :where [?e :person/name ?name]]`,
+			scalarReturn: true,
+			findCount:    1,
+		},
+		{
+			name:         "normal find (no scalar spec)",
+			input:        `[:find ?name :where [?e :person/name ?name]]`,
+			scalarReturn: false,
+			findCount:    1,
+		},
+		{
+			name:         "normal find with multiple variables",
+			input:        `[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`,
+			scalarReturn: false,
+			findCount:    2,
+		},
+		{
+			name:        "scalar find spec with multiple elements fails",
+			input:       `[:find ?name ?age . :where [?e :person/name ?name] [?e :person/age ?age]]`,
+			shouldError: true,
+			errorMsg:    "scalar find spec (.) requires exactly one find element",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := ParseQuery(tt.input)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errorMsg)
+				}
+				if !contains(err.Error(), tt.errorMsg) {
+					t.Errorf("expected error containing %q, got %q", tt.errorMsg, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if q.ScalarReturn != tt.scalarReturn {
+				t.Errorf("expected ScalarReturn=%v, got %v", tt.scalarReturn, q.ScalarReturn)
+			}
+
+			if len(q.Find) != tt.findCount {
+				t.Errorf("expected %d find elements, got %d", tt.findCount, len(q.Find))
+			}
+		})
+	}
 }

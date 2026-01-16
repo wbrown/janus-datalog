@@ -67,6 +67,8 @@ func TestConditionalAggregatePlanningDebug(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
+	// QueryExecutor now properly handles conditional aggregate rewriting
+	// via conditional aggregate injection in ExecuteRealized
 	opts := planner.PlannerOptions{
 		EnableDynamicReordering:             true,
 		EnableConditionalAggregateRewriting: true,

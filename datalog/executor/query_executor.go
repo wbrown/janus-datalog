@@ -106,6 +106,48 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return []Relation(groups.Collapse(ctx))
 			}))
 
+		case *query.OrClause:
+			// OR clauses produce new relations (union of branches) that get joined with existing
+			newRel, err := e.executeOrClause(ctx, c, groups)
+			if err != nil {
+				return nil, fmt.Errorf("clause %d (or) failed: %w", i, err)
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(ctx))
+			}))
+
+		case *query.OrJoinClause:
+			// OR-JOIN clauses produce new relations with explicit join variables
+			newRel, err := e.executeOrJoinClause(ctx, c, groups)
+			if err != nil {
+				return nil, fmt.Errorf("clause %d (or-join) failed: %w", i, err)
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(ctx))
+			}))
+
+		case *query.NotClause:
+			// NOT clauses filter existing relations (anti-join)
+			var err error
+			groups, err = e.executeNotClause(ctx, c, groups)
+			if err != nil {
+				return nil, fmt.Errorf("clause %d (not) failed: %w", i, err)
+			}
+
+		case *query.NotJoinClause:
+			// NOT-JOIN clauses filter with explicit join variables
+			var err error
+			groups, err = e.executeNotJoinClause(ctx, c, groups)
+			if err != nil {
+				return nil, fmt.Errorf("clause %d (not-join) failed: %w", i, err)
+			}
+
 		default:
 			return nil, fmt.Errorf("unsupported clause type: %T", clause)
 		}
@@ -858,4 +900,357 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 		tuples:  resultTuples,
 		options: rel.Options(),
 	}, nil
+}
+
+// executeOrClause performs union of OR branches and returns a new relation
+func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
+	if len(clause.Branches) == 0 {
+		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
+	}
+
+	// Execute each branch and collect results
+	var branchResults []Relation
+	var commonCols []query.Symbol
+
+	for i, branch := range clause.Branches {
+		// Execute this branch's clauses against storage (no prior bindings)
+		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
+		if err != nil {
+			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
+		}
+
+		if branchResult == nil {
+			continue
+		}
+
+		// Track columns for intersection
+		if len(branchResults) == 0 {
+			commonCols = branchResult.Columns()
+		} else {
+			// Intersect columns
+			branchColSet := make(map[query.Symbol]bool)
+			for _, col := range branchResult.Columns() {
+				branchColSet[col] = true
+			}
+			var newCommon []query.Symbol
+			for _, col := range commonCols {
+				if branchColSet[col] {
+					newCommon = append(newCommon, col)
+				}
+			}
+			commonCols = newCommon
+		}
+
+		branchResults = append(branchResults, branchResult)
+	}
+
+	if len(branchResults) == 0 || len(commonCols) == 0 {
+		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
+	}
+
+	// Union all branch results, projecting to common columns
+	return unionRelations(branchResults, commonCols, e.options), nil
+}
+
+// executeOrJoinClause performs union with explicit join variables
+func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
+	if len(clause.Branches) == 0 {
+		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
+	}
+
+	joinVars := clause.JoinVars
+	if len(joinVars) == 0 {
+		return nil, fmt.Errorf("OR-JOIN clause has no join variables")
+	}
+
+	var branchResults []Relation
+
+	for i, branch := range clause.Branches {
+		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
+		if err != nil {
+			return nil, fmt.Errorf("OR-JOIN branch %d execution failed: %w", i+1, err)
+		}
+
+		if branchResult != nil {
+			branchResults = append(branchResults, branchResult)
+		}
+	}
+
+	if len(branchResults) == 0 {
+		return NewMaterializedRelationWithOptions(joinVars, nil, e.options), nil
+	}
+
+	// Union all branch results, projecting to join vars
+	return unionRelations(branchResults, joinVars, e.options), nil
+}
+
+// executeNotClause performs anti-join filtering on groups
+func (e *DefaultQueryExecutor) executeNotClause(ctx Context, clause *query.NotClause, groups Relations) (Relations, error) {
+	if len(groups) == 0 {
+		return groups, nil
+	}
+
+	// Collect all variables from inner clauses to determine join keys
+	joinVars := collectInnerVars(clause.Clauses)
+	if len(joinVars) == 0 {
+		return nil, fmt.Errorf("NOT clause has no variables to join on")
+	}
+
+	// Apply NOT filter to each group
+	var result Relations
+	for _, group := range groups {
+		filtered, err := e.filterWithNotClause(ctx, clause, group, joinVars)
+		if err != nil {
+			return nil, err
+		}
+		if filtered != nil {
+			result = append(result, filtered)
+		}
+	}
+
+	return result, nil
+}
+
+// executeNotJoinClause performs anti-join with explicit join variables
+func (e *DefaultQueryExecutor) executeNotJoinClause(ctx Context, clause *query.NotJoinClause, groups Relations) (Relations, error) {
+	if len(groups) == 0 {
+		return groups, nil
+	}
+
+	if len(clause.JoinVars) == 0 {
+		return nil, fmt.Errorf("NOT-JOIN clause has no join variables")
+	}
+
+	// Apply NOT-JOIN filter to each group
+	var result Relations
+	for _, group := range groups {
+		filtered, err := e.filterWithNotJoinClause(ctx, clause, group)
+		if err != nil {
+			return nil, err
+		}
+		if filtered != nil {
+			result = append(result, filtered)
+		}
+	}
+
+	return result, nil
+}
+
+// filterWithNotClause applies anti-join filtering to a single relation
+func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.NotClause, input Relation, joinVars []query.Symbol) (Relation, error) {
+	if input == nil {
+		return nil, nil
+	}
+
+	// Materialize input since we need to iterate multiple times
+	input = input.Materialize()
+
+	// Filter to only variables present in input relation
+	inputCols := input.Columns()
+	inputColSet := make(map[query.Symbol]bool)
+	for _, col := range inputCols {
+		inputColSet[col] = true
+	}
+
+	var actualJoinVars []query.Symbol
+	for _, v := range joinVars {
+		if inputColSet[v] {
+			actualJoinVars = append(actualJoinVars, v)
+		}
+	}
+
+	if len(actualJoinVars) == 0 {
+		return nil, fmt.Errorf("NOT clause variables not found in input relation")
+	}
+
+	// Get unique combinations of join variables from input
+	uniqueCombos := getUniqueCombinations(input, actualJoinVars)
+
+	// Track which key combinations matched the inner clauses
+	matchedKeys := make(map[string]bool)
+
+	// For each unique combination, execute inner clauses
+	for _, combo := range uniqueCombos {
+		// Create a single-tuple relation with the combo values for binding
+		bindingRel := NewMaterializedRelationWithOptions(actualJoinVars, []Tuple{combo}, e.options)
+
+		// Execute inner clauses with this binding
+		innerResult, err := e.executeInnerClauses(ctx, clause.Clauses, bindingRel)
+		if err != nil {
+			return nil, fmt.Errorf("NOT inner clause execution failed: %w", err)
+		}
+
+		// If inner produced any results, this combo is "matched" and should be excluded
+		if innerResult != nil && innerResult.Size() > 0 {
+			key := notOrTupleKey(combo)
+			matchedKeys[key] = true
+		}
+	}
+
+	// Build join key column indices for input
+	keyIndices := make([]int, len(actualJoinVars))
+	for i, v := range actualJoinVars {
+		for j, col := range inputCols {
+			if col == v {
+				keyIndices[i] = j
+				break
+			}
+		}
+	}
+
+	// Filter input: keep tuples whose join key is NOT in matchedKeys
+	var filtered []Tuple
+	iter := input.Iterator()
+	for iter.Next() {
+		tuple := iter.Tuple()
+		// Extract key values
+		keyVals := make(Tuple, len(keyIndices))
+		for i, idx := range keyIndices {
+			keyVals[i] = tuple[idx]
+		}
+		key := notOrTupleKey(keyVals)
+
+		if !matchedKeys[key] {
+			filtered = append(filtered, tuple)
+		}
+	}
+	iter.Close()
+
+	return NewMaterializedRelationWithOptions(inputCols, filtered, e.options), nil
+}
+
+// filterWithNotJoinClause applies anti-join with explicit join vars to a single relation
+func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *query.NotJoinClause, input Relation) (Relation, error) {
+	if input == nil {
+		return nil, nil
+	}
+
+	// Materialize input
+	input = input.Materialize()
+	inputCols := input.Columns()
+
+	// Verify join vars exist in input
+	inputColSet := make(map[query.Symbol]bool)
+	for _, col := range inputCols {
+		inputColSet[col] = true
+	}
+
+	for _, v := range clause.JoinVars {
+		if !inputColSet[v] {
+			return nil, fmt.Errorf("NOT-JOIN variable %s not found in input relation", v)
+		}
+	}
+
+	// Get unique combinations of join variables
+	uniqueCombos := getUniqueCombinations(input, clause.JoinVars)
+
+	// Track matched keys
+	matchedKeys := make(map[string]bool)
+
+	for _, combo := range uniqueCombos {
+		bindingRel := NewMaterializedRelationWithOptions(clause.JoinVars, []Tuple{combo}, e.options)
+
+		innerResult, err := e.executeInnerClauses(ctx, clause.Clauses, bindingRel)
+		if err != nil {
+			return nil, fmt.Errorf("NOT-JOIN inner clause execution failed: %w", err)
+		}
+
+		if innerResult != nil && innerResult.Size() > 0 {
+			key := notOrTupleKey(combo)
+			matchedKeys[key] = true
+		}
+	}
+
+	// Build key indices
+	keyIndices := make([]int, len(clause.JoinVars))
+	for i, v := range clause.JoinVars {
+		for j, col := range inputCols {
+			if col == v {
+				keyIndices[i] = j
+				break
+			}
+		}
+	}
+
+	// Filter
+	var filtered []Tuple
+	iter := input.Iterator()
+	for iter.Next() {
+		tuple := iter.Tuple()
+		keyVals := make(Tuple, len(keyIndices))
+		for i, idx := range keyIndices {
+			keyVals[i] = tuple[idx]
+		}
+		key := notOrTupleKey(keyVals)
+
+		if !matchedKeys[key] {
+			filtered = append(filtered, tuple)
+		}
+	}
+	iter.Close()
+
+	return NewMaterializedRelationWithOptions(inputCols, filtered, e.options), nil
+}
+
+// executeInnerClauses executes a list of clauses and returns the result
+// Used by NOT and OR to execute their inner clauses
+func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.Clause, binding Relation) (Relation, error) {
+	if len(clauses) == 0 {
+		return binding, nil
+	}
+
+	// Start with binding relation (or empty)
+	var groups Relations
+	if binding != nil {
+		groups = Relations{binding}
+	}
+
+	// Execute each clause
+	for _, clause := range clauses {
+		switch c := clause.(type) {
+		case *query.DataPattern:
+			newRel, err := e.executePattern(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = groups.Collapse(ctx)
+
+		case *query.Expression:
+			var err error
+			groups, err = e.executeExpression(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			groups = groups.Collapse(ctx)
+
+		case query.Predicate:
+			var err error
+			groups, err = e.executePredicate(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+
+		default:
+			return nil, fmt.Errorf("unsupported inner clause type: %T", clause)
+		}
+
+		// Early termination on empty
+		if len(groups) == 0 {
+			return nil, nil
+		}
+	}
+
+	// Return collapsed result
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	if len(groups) == 1 {
+		return groups[0], nil
+	}
+
+	// Multiple disjoint groups - take product for inner clause result
+	return groups.Product(), nil
 }

@@ -626,6 +626,11 @@ func applyBindingFormBatched(result Relation, binding query.BindingForm, inputSy
 		// This is already the correct format
 		return result, nil
 
+	case query.ScalarBinding:
+		// For batched ScalarBinding, result should have [correlation_vars..., binding_var]
+		// This is already the correct format
+		return result, nil
+
 	case query.RelationBinding:
 		// For batched RelationBinding, result should have [correlation_vars..., binding_vars...]
 		// This is already the correct format

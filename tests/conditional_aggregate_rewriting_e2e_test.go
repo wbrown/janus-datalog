@@ -136,6 +136,8 @@ func TestConditionalAggregateRewritingE2E(t *testing.T) {
 	})
 
 	// Test WITH rewriting (optimized)
+	// Uses QueryExecutor which now properly handles conditional aggregate rewriting
+	// via conditional aggregate injection in ExecuteRealized
 	t.Run("With rewriting", func(t *testing.T) {
 		opts := planner.PlannerOptions{
 			EnableDynamicReordering:             true,

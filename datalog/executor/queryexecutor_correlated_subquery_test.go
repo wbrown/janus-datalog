@@ -49,7 +49,7 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 	t.Run("QueryExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms)
 		opts := planner.PlannerOptions{
-			UseQueryExecutor: true,
+
 		}
 		exec := NewExecutorWithOptions(matcher, opts)
 		result, err := exec.Execute(q)
@@ -84,7 +84,7 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 	t.Run("LegacyExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms)
 		opts := planner.PlannerOptions{
-			UseQueryExecutor: false,
+			UseLegacyExecutor: true,
 		}
 		exec := NewExecutorWithOptions(matcher, opts)
 		result, err := exec.Execute(q)

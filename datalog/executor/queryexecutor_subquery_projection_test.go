@@ -51,7 +51,7 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	t.Run("LegacyExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
 		opts := planner.PlannerOptions{
-			UseQueryExecutor: false, // Legacy executor
+			UseLegacyExecutor: true, // Legacy executor
 		}
 		exec := NewExecutorWithOptions(matcher, opts)
 		result, err := exec.Execute(q)
@@ -74,7 +74,7 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	t.Run("QueryExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
 		opts := planner.PlannerOptions{
-			UseQueryExecutor: true, // QueryExecutor (Stage B)
+
 		}
 		exec := NewExecutorWithOptions(matcher, opts)
 		result, err := exec.Execute(q)
@@ -185,7 +185,7 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 	t.Run("QueryExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
 		opts := planner.PlannerOptions{
-			UseQueryExecutor: true, // QueryExecutor (Stage B)
+
 		}
 		exec := NewExecutorWithOptions(matcher, opts)
 		result, err := exec.Execute(q)

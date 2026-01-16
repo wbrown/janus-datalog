@@ -435,6 +435,7 @@ func TestComprehensiveExecutorValidation(t *testing.T) {
 			legacyCtx := executor.NewContext(nil)
 			legacyOpts := plannerOpts
 			legacyOpts.EnableIteratorComposition = true
+			legacyOpts.UseLegacyExecutor = true
 			legacyExec := executor.NewExecutorWithOptions(matcher, legacyOpts)
 
 			legacyResult, legacyErr := legacyExec.ExecuteWithContext(legacyCtx, parsedQuery)
@@ -443,9 +444,8 @@ func TestComprehensiveExecutorValidation(t *testing.T) {
 			newCtx := executor.NewContext(nil)
 			newOpts := plannerOpts
 			newOpts.EnableIteratorComposition = true
-			// Need to explicitly set UseQueryExecutor in executor options
+			newOpts.UseLegacyExecutor = false
 			newExec := executor.NewExecutorWithOptions(matcher, newOpts)
-			newExec.SetUseQueryExecutor(true)
 			newResult, newErr := newExec.ExecuteWithContext(newCtx, parsedQuery)
 
 			// Compare errors
@@ -538,16 +538,19 @@ func TestExecutorValidationWithVariousOptimizations(t *testing.T) {
 
 	for _, config := range optimizationConfigs {
 		t.Run(config.name, func(t *testing.T) {
-			ctx := executor.NewContext(nil)
+			// Legacy executor with separate context
+			legacyCtx := executor.NewContext(nil)
+			legacyOpts := config.opts
+			legacyOpts.UseLegacyExecutor = true
+			legacyExec := executor.NewExecutorWithOptions(matcher, legacyOpts)
+			legacyResult, legacyErr := legacyExec.ExecuteWithContext(legacyCtx, parsedQuery)
 
-			// Legacy executor
-			legacyExec := executor.NewExecutorWithOptions(matcher, config.opts)
-			legacyResult, legacyErr := legacyExec.ExecuteWithContext(ctx, parsedQuery)
-
-			// New executor
-			newExec := executor.NewExecutorWithOptions(matcher, config.opts)
-			newExec.SetUseQueryExecutor(true)
-			newResult, newErr := newExec.ExecuteWithContext(ctx, parsedQuery)
+			// New QueryExecutor with separate context
+			newCtx := executor.NewContext(nil)
+			newOpts := config.opts
+			newOpts.UseLegacyExecutor = false
+			newExec := executor.NewExecutorWithOptions(matcher, newOpts)
+			newResult, newErr := newExec.ExecuteWithContext(newCtx, parsedQuery)
 
 			// Compare
 			if (legacyErr != nil) != (newErr != nil) {
@@ -609,14 +612,19 @@ func TestExecutorValidationEdgeCases(t *testing.T) {
 				t.Fatalf("Failed to parse query: %v", err)
 			}
 
-			ctx := executor.NewContext(nil)
+			// Legacy executor with UseLegacyExecutor: true
+			legacyCtx := executor.NewContext(nil)
+			legacyOpts := opts
+			legacyOpts.UseLegacyExecutor = true
+			legacyExec := executor.NewExecutorWithOptions(matcher, legacyOpts)
+			legacyResult, legacyErr := legacyExec.ExecuteWithContext(legacyCtx, parsedQuery)
 
-			legacyExec := executor.NewExecutorWithOptions(matcher, opts)
-			legacyResult, legacyErr := legacyExec.ExecuteWithContext(ctx, parsedQuery)
-
-			newExec := executor.NewExecutorWithOptions(matcher, opts)
-			newExec.SetUseQueryExecutor(true)
-			newResult, newErr := newExec.ExecuteWithContext(ctx, parsedQuery)
+			// New QueryExecutor with UseLegacyExecutor: false
+			newCtx := executor.NewContext(nil)
+			newOpts := opts
+			newOpts.UseLegacyExecutor = false
+			newExec := executor.NewExecutorWithOptions(matcher, newOpts)
+			newResult, newErr := newExec.ExecuteWithContext(newCtx, parsedQuery)
 
 			// For some edge cases, we expect different behavior
 			// Log differences for analysis

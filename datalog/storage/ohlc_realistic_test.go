@@ -327,12 +327,10 @@ func TestOHLCRealisticQueries(t *testing.T) {
 		defer it.Close()
 		assert.True(t, it.Next(), "Should have count result")
 		count := it.Tuple()[0].(int64)
-		// BUG: We have 78 bars, all on the same day
-		// Expected: count should be 78 (count of all tuples with ?day)
-		// Actual: count is 1 (counting unique values of ?day instead of tuple count)
-		// This is a critical bug - count should count tuples, not deduplicate
+		// We have 78 bars, all on the same day
+		// count should be 78 (count of all tuples with ?day)
 		t.Logf("Count result: %d (expected 78)", count)
-		assert.Equal(t, int64(1), count, "BUG: count is deduplicating ?day values (should be 78)")
+		assert.Equal(t, int64(78), count, "count should return 78 tuples")
 	})
 
 	t.Run("Test6_FetchAllBars", func(t *testing.T) {

@@ -20,25 +20,26 @@ type Executor struct {
 
 // NewExecutor creates a new query executor with default options
 func NewExecutor(matcher PatternMatcher) *Executor {
-	// Use default options from storage package
+	// Use legacy executor by default for backward compatibility with unit tests.
+	// Production code should use storage.DefaultPlannerOptions() which uses QueryExecutor.
 	defaultOpts := planner.PlannerOptions{
+		UseLegacyExecutor:           true, // Unit test compatibility
 		EnableDynamicReordering:     true,
 		EnablePredicatePushdown:     true,
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableCSE:                   false,
-		UseStreamingSubqueryUnion:   false, // TEMP: disable to compare
+		UseStreamingSubqueryUnion:   false,
 		MaxPhases:                   10,
 		EnableFineGrainedPhases:     true,
-		// Executor options
-		EnableIteratorComposition:  true,
-		EnableTrueStreaming:        true,
-		EnableSymmetricHashJoin:    false,
-		EnableParallelSubqueries:   true,
-		MaxSubqueryWorkers:         0,
-		EnableStreamingJoins:       false,
-		EnableStreamingAggregation: true,
-		EnableDebugLogging:         false,
+		EnableIteratorComposition:   true,
+		EnableTrueStreaming:         true,
+		EnableSymmetricHashJoin:     false,
+		EnableParallelSubqueries:    true,
+		MaxSubqueryWorkers:          0,
+		EnableStreamingJoins:        false,
+		EnableStreamingAggregation:  true,
+		EnableDebugLogging:          false,
 	}
 	return NewExecutorWithOptions(matcher, defaultOpts)
 }
@@ -68,7 +69,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions)
 // convertToExecutorOptions extracts executor-specific options from PlannerOptions
 func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
-		UseQueryExecutor:                opts.UseQueryExecutor,
+		UseLegacyExecutor:               opts.UseLegacyExecutor,
 		EnableIteratorComposition:       opts.EnableIteratorComposition,
 		EnableTrueStreaming:             opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
@@ -95,9 +96,9 @@ func (e *Executor) DisableParallelSubqueries() {
 	e.enableParallelSubqueries = false
 }
 
-// SetUseQueryExecutor enables or disables the new QueryExecutor (for testing)
-func (e *Executor) SetUseQueryExecutor(use bool) {
-	e.options.UseQueryExecutor = use
+// SetUseLegacyExecutor enables or disables the legacy executor (for testing)
+func (e *Executor) SetUseLegacyExecutor(use bool) {
+	e.options.UseLegacyExecutor = use
 }
 
 // Execute runs a parsed query and returns the results
@@ -127,7 +128,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	executor := &Executor{
 		matcher:                  matcher,
 		planner:                  e.planner,
-		options:                  e.options, // Preserve executor options including UseQueryExecutor flag
+		options:                  e.options, // Preserve executor options including UseLegacyExecutor flag
 		enableParallelSubqueries: e.enableParallelSubqueries,
 		maxSubqueryWorkers:       e.maxSubqueryWorkers,
 	}
@@ -176,7 +177,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	}
 
 	// Choose execution path based on options
-	if executor.options.UseQueryExecutor {
+	if !executor.options.UseLegacyExecutor {
 		// New path: Use QueryExecutor (Stage B) with RealizedPlan
 		var realizedPlan *planner.RealizedPlan
 		var err error
@@ -195,7 +196,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 		// Old path: Use legacy phase executor (only works with PlannerAdapter)
 		adapter, ok := executor.planner.(*planner.PlannerAdapter)
 		if !ok {
-			return nil, fmt.Errorf("legacy executor path requires old planner; set UseQueryExecutor=true or UseClauseBasedPlanner=false")
+			return nil, fmt.Errorf("legacy executor path requires old planner; set UseLegacyExecutor=false or UseClauseBasedPlanner=false")
 		}
 
 		oldPlanner := adapter.GetUnderlyingPlanner()
@@ -223,6 +224,12 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 // - Groups are projected to Keep columns and passed to next phase
 // - Final phase must collapse to single relation or error on Cartesian product
 func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
+	// Check if we need to iterate over a RelationInput
+	// RelationInput (e.g., :in [[?a ?b]]) requires executing the query once per tuple
+	if hasRelationInput(plan.Query) && len(inputRelations) > 0 {
+		return e.executeRealizedWithRelationInputIteration(ctx, plan, inputRelations)
+	}
+
 	// Create QueryExecutor
 	queryExecutor := NewQueryExecutor(e.matcher, e.options)
 
@@ -233,6 +240,31 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		// Bind input relations using the query's :in clause
 		boundRelation := BindQueryInputs(plan.Query, inputRelations)
 		currentGroups = []Relation{boundRelation}
+	}
+
+	// Check for conditional aggregates and emit annotation for observability
+	// The planner emits two representations of conditional aggregates:
+	// 1. Metadata: phase.Metadata["conditional_aggregates"] - used by legacy executor
+	// 2. Find clause: phase.Find contains FindAggregate with Predicate - used by QueryExecutor
+	// This dual approach maintains backward compatibility while following "Datalog is the IR"
+	var condAggCount int
+	for _, phase := range plan.Phases {
+		if phase.Metadata != nil {
+			if condAggs, ok := phase.Metadata["conditional_aggregates"].([]planner.ConditionalAggregate); ok {
+				condAggCount += len(condAggs)
+			}
+		}
+	}
+	if condAggCount > 0 {
+		if collector := ctx.Collector(); collector != nil {
+			data := collector.GetDataMap()
+			data["rewritten.subquery.count"] = condAggCount
+			data["optimization"] = "conditional-aggregate-rewriting"
+			collector.Add(annotations.Event{
+				Name: "query/rewrite.conditional-aggregates",
+				Data: data,
+			})
+		}
 	}
 
 	// Execute each phase as an independent query
@@ -314,6 +346,302 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		// For last phase, must collapse to single relation (error on Cartesian product)
 		if isLastPhase && len(groups) > 1 {
 			return nil, fmt.Errorf("phase %d resulted in %d disjoint relation groups - Cartesian products not supported", phaseIndex+1, len(groups))
+		}
+
+		currentGroups = groups
+	}
+
+	// Return the final single relation
+	if len(currentGroups) == 0 {
+		return nil, nil
+	}
+
+	finalResult := currentGroups[0]
+
+	// Apply ordering if specified
+	if len(plan.Query.OrderBy) > 0 {
+		finalResult = finalResult.Sort(plan.Query.OrderBy)
+	}
+
+	return finalResult, nil
+}
+
+// executeRealizedWithRelationInputIteration handles RelationInput iteration for QueryExecutor path
+// This iterates over each tuple in the RelationInput and executes the plan once per tuple.
+func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
+	// Find the RelationInput and its corresponding relation
+	var relationInput query.RelationInput
+	var iterationRelation Relation
+	relationIndex := 0
+
+	for _, input := range plan.Query.In {
+		switch inp := input.(type) {
+		case query.DatabaseInput:
+			// Skip database
+		case query.RelationInput:
+			relationInput = inp
+			if relationIndex < len(inputRelations) {
+				iterationRelation = inputRelations[relationIndex]
+			}
+			relationIndex++
+		case query.ScalarInput, query.TupleInput, query.CollectionInput:
+			// These would be handled as regular inputs
+			relationIndex++
+		}
+	}
+
+	if iterationRelation == nil || iterationRelation.Size() == 0 {
+		// No iteration needed or empty input
+		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
+	}
+
+	// Dispatch to parallel or sequential implementation
+	if e.enableParallelSubqueries {
+		return e.executeRealizedWithRelationInputIterationParallel(ctx, plan, inputRelations, relationInput, iterationRelation)
+	}
+	return e.executeRealizedWithRelationInputIterationSequential(ctx, plan, inputRelations, relationInput, iterationRelation)
+}
+
+// executeRealizedWithRelationInputIterationSequential executes QueryExecutor path sequentially for RelationInput
+func (e *Executor) executeRealizedWithRelationInputIterationSequential(
+	ctx Context,
+	plan *planner.RealizedPlan,
+	inputRelations []Relation,
+	relationInput query.RelationInput,
+	iterationRelation Relation,
+) (Relation, error) {
+	// Collect results from each tuple iteration
+	var allResults []Relation
+
+	// Iterate over each tuple in the relation
+	it := iterationRelation.Iterator()
+	defer it.Close()
+
+	for it.Next() {
+		tuple := it.Tuple()
+
+		// Create scalar input relations for this tuple
+		var tupleInputRelations []Relation
+		for i, sym := range relationInput.Symbols {
+			if i < len(tuple) {
+				scalarRel := NewMaterializedRelation(
+					[]query.Symbol{sym},
+					[]Tuple{{tuple[i]}},
+				)
+				tupleInputRelations = append(tupleInputRelations, scalarRel)
+			}
+		}
+
+		// Execute the plan with these scalar inputs using QueryExecutor
+		result, err := e.executeRealizedNonIterating(ctx, plan, tupleInputRelations, relationInput)
+		if err != nil {
+			return nil, fmt.Errorf("iteration execution failed: %w", err)
+		}
+
+		if result != nil && result.Size() > 0 {
+			allResults = append(allResults, result)
+		}
+	}
+
+	// Combine all results
+	if len(allResults) == 0 {
+		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
+	}
+
+	// Union all results
+	var allTuples []Tuple
+	columns := allResults[0].Columns()
+
+	for _, rel := range allResults {
+		it := rel.Iterator()
+		for it.Next() {
+			allTuples = append(allTuples, it.Tuple())
+		}
+		it.Close()
+	}
+
+	return NewMaterializedRelation(columns, allTuples), nil
+}
+
+// executeRealizedWithRelationInputIterationParallel executes QueryExecutor path in parallel for RelationInput
+func (e *Executor) executeRealizedWithRelationInputIterationParallel(
+	ctx Context,
+	plan *planner.RealizedPlan,
+	inputRelations []Relation,
+	relationInput query.RelationInput,
+	iterationRelation Relation,
+) (Relation, error) {
+	// Determine number of workers
+	numWorkers := e.maxSubqueryWorkers
+	if numWorkers <= 0 {
+		numWorkers = 4 // Default to 4 workers
+	}
+
+	// Collect all tuples first (needed for worker pool)
+	var tuples []Tuple
+	it := iterationRelation.Iterator()
+	for it.Next() {
+		tuples = append(tuples, it.Tuple())
+	}
+	it.Close()
+
+	if len(tuples) == 0 {
+		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
+	}
+
+	// Result collection with mutex for thread safety
+	type iterationResult struct {
+		result Relation
+		err    error
+	}
+	results := make([]iterationResult, len(tuples))
+
+	// Worker pool using semaphore pattern
+	sem := make(chan struct{}, numWorkers)
+	done := make(chan struct{})
+
+	for tupleIdx, tuple := range tuples {
+		go func(idx int, tup Tuple) {
+			// Acquire semaphore
+			sem <- struct{}{}
+			defer func() {
+				<-sem
+				// Signal completion after releasing semaphore
+				done <- struct{}{}
+			}()
+
+			// Create scalar input relations for this tuple
+			var tupleInputRelations []Relation
+			for i, sym := range relationInput.Symbols {
+				if i < len(tup) {
+					scalarRel := NewMaterializedRelation(
+						[]query.Symbol{sym},
+						[]Tuple{{tup[i]}},
+					)
+					tupleInputRelations = append(tupleInputRelations, scalarRel)
+				}
+			}
+
+			// Execute the plan with these scalar inputs
+			result, err := e.executeRealizedNonIterating(ctx, plan, tupleInputRelations, relationInput)
+			results[idx] = iterationResult{result: result, err: err}
+		}(tupleIdx, tuple)
+	}
+
+	// Wait for all workers to complete
+	for range tuples {
+		<-done
+	}
+
+	// Check for errors and collect results
+	var allResults []Relation
+	for _, r := range results {
+		if r.err != nil {
+			return nil, fmt.Errorf("parallel iteration execution failed: %w", r.err)
+		}
+		if r.result != nil && r.result.Size() > 0 {
+			allResults = append(allResults, r.result)
+		}
+	}
+
+	// Combine all results
+	if len(allResults) == 0 {
+		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
+	}
+
+	// Union all results
+	var allTuples []Tuple
+	columns := allResults[0].Columns()
+
+	for _, rel := range allResults {
+		it := rel.Iterator()
+		for it.Next() {
+			allTuples = append(allTuples, it.Tuple())
+		}
+		it.Close()
+	}
+
+	return NewMaterializedRelation(columns, allTuples), nil
+}
+
+// executeRealizedNonIterating executes a RealizedPlan without RelationInput iteration
+// This is the core QueryExecutor path, called once per RelationInput tuple during iteration.
+func (e *Executor) executeRealizedNonIterating(
+	ctx Context,
+	plan *planner.RealizedPlan,
+	scalarInputRelations []Relation,
+	relationInput query.RelationInput,
+) (Relation, error) {
+	// Create QueryExecutor
+	queryExecutor := NewQueryExecutor(e.matcher, e.options)
+
+	var currentGroups []Relation
+
+	// Bind scalar input relations (one per symbol from RelationInput)
+	if len(scalarInputRelations) > 0 {
+		// Create a modified query with scalar inputs instead of RelationInput
+		modifiedQuery := *plan.Query
+		var newIn []query.InputSpec
+
+		for _, input := range modifiedQuery.In {
+			if _, isRelInput := input.(query.RelationInput); isRelInput {
+				// Replace with scalar inputs
+				for _, sym := range relationInput.Symbols {
+					newIn = append(newIn, query.ScalarInput{Symbol: sym})
+				}
+			} else {
+				newIn = append(newIn, input)
+			}
+		}
+		modifiedQuery.In = newIn
+
+		// Bind the scalar input relations
+		boundRelation := BindQueryInputs(&modifiedQuery, scalarInputRelations)
+		currentGroups = []Relation{boundRelation}
+	}
+
+	// Execute each phase as an independent query
+	for i, phase := range plan.Phases {
+		phaseIndex := i
+		isLastPhase := (i == len(plan.Phases)-1)
+
+		// Execute phase query
+		groups, err := queryExecutor.Execute(ctx, phase.Query, currentGroups)
+		if err != nil {
+			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
+		}
+
+		// Project each group to Keep columns (what passes to next phase)
+		// Skip for last phase - QueryExecutor already projected to :find symbols
+		if !isLastPhase && len(phase.Keep) > 0 {
+			for i, group := range groups {
+				// Materialize first to avoid iterator consumption issues
+				var tuples []Tuple
+				it := group.Iterator()
+				for it.Next() {
+					tuples = append(tuples, it.Tuple())
+				}
+				it.Close()
+
+				opts := group.Options()
+				materialized := NewMaterializedRelationWithOptions(group.Columns(), tuples, opts)
+
+				projected, err := materialized.Project(phase.Keep)
+				if err != nil {
+					return nil, fmt.Errorf("phase %d projection of group %d failed: %w", phaseIndex+1, i, err)
+				}
+				groups[i] = projected
+			}
+		}
+
+		// Early termination on empty
+		if len(groups) == 0 {
+			return nil, nil
+		}
+
+		// For last phase, must collapse to single relation (error on Cartesian product)
+		if isLastPhase && len(groups) > 1 {
+			return nil, fmt.Errorf("phase %d resulted in %d disjoint relation groups", phaseIndex+1, len(groups))
 		}
 
 		currentGroups = groups

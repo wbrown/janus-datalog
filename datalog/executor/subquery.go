@@ -741,8 +741,48 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		// fmt.Printf("DEBUG: Final tuple: %v\n", tuple)
 		return NewMaterializedRelation(columns, []Tuple{tuple}), nil
 
+	case query.ScalarBinding:
+		// ?var - expect single result with single column, bind to variable
+		// This is the Datomic scalar binding pattern used with scalar find spec
+
+		// Filter out $ (database marker) from input symbols
+		var realInputSymbols []query.Symbol
+		for _, sym := range inputSymbols {
+			if sym != "$" {
+				realInputSymbols = append(realInputSymbols, sym)
+			}
+		}
+
+		// EMPTY RESULT = PATTERN FAILS TO MATCH
+		if result.Size() == 0 {
+			columns := append(realInputSymbols, b.Variable)
+			return NewMaterializedRelation(columns, []Tuple{}), nil
+		}
+
+		// Scalar binding expects exactly 1 row
+		if result.Size() != 1 {
+			return nil, fmt.Errorf("scalar binding expects 1 result, got %d", result.Size())
+		}
+
+		resultTuple := result.Get(0)
+
+		// Scalar binding expects exactly 1 column
+		if len(resultTuple) != 1 {
+			return nil, fmt.Errorf("scalar binding expects 1 column, got %d", len(resultTuple))
+		}
+
+		// Create relation with input columns + binding variable
+		columns := append(realInputSymbols, b.Variable)
+		tuple := make(Tuple, len(columns))
+		for i, sym := range realInputSymbols {
+			tuple[i] = inputValues[sym]
+		}
+		tuple[len(realInputSymbols)] = resultTuple[0]
+
+		return NewMaterializedRelation(columns, []Tuple{tuple}), nil
+
 	case query.CollectionBinding:
-		// ?coll - collect all values into a collection
+		// [?coll ...] - collect all values from a single column into a collection
 		// For now, implement as a simple relation
 		return nil, fmt.Errorf("collection binding not yet implemented")
 
@@ -801,6 +841,8 @@ func getBindingColumns(binding query.BindingForm, inputSymbols []query.Symbol) [
 	switch b := binding.(type) {
 	case query.TupleBinding:
 		columns = append(columns, b.Variables...)
+	case query.ScalarBinding:
+		columns = append(columns, b.Variable)
 	case query.CollectionBinding:
 		columns = append(columns, b.Variable)
 	case query.RelationBinding:

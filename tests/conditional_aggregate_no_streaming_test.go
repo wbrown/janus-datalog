@@ -73,6 +73,8 @@ func TestConditionalAggregateWithoutStreaming(t *testing.T) {
 	}
 
 	// Test with conditional aggregate rewriting but streaming DISABLED
+	// QueryExecutor now properly handles conditional aggregate rewriting
+	// via conditional aggregate injection in ExecuteRealized
 	opts := planner.PlannerOptions{
 		EnableDynamicReordering:             true,
 		EnableConditionalAggregateRewriting: true,

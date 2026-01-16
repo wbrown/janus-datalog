@@ -88,7 +88,7 @@ func TestOptimizationComposition(t *testing.T) {
 			opts: planner.PlannerOptions{
 				EnableDynamicReordering:             false,
 				EnableConditionalAggregateRewriting: false,
-				EnableSubqueryDecorrelation:         false, // Disable to isolate the bug
+				EnableSubqueryDecorrelation:         false,
 			},
 			shouldPass:   true,
 			expectedRows: 2, // Alice day 15, Alice day 16
@@ -104,6 +104,8 @@ func TestOptimizationComposition(t *testing.T) {
 			expectedRows: 2,
 		},
 		{
+			// QueryExecutor now properly handles conditional aggregate rewriting
+			// via conditional aggregate injection in ExecuteRealized
 			name: "Conditional aggregates only",
 			opts: planner.PlannerOptions{
 				EnableDynamicReordering:             false,
@@ -114,13 +116,14 @@ func TestOptimizationComposition(t *testing.T) {
 			expectedRows: 2,
 		},
 		{
+			// QueryExecutor now properly handles conditional aggregate rewriting
 			name: "Both optimizations (COMPOSITION TEST)",
 			opts: planner.PlannerOptions{
 				EnableDynamicReordering:             true,
 				EnableConditionalAggregateRewriting: true,
 				EnableSubqueryDecorrelation:         false,
 			},
-			shouldPass:   true, // Should pass but currently fails!
+			shouldPass:   true,
 			expectedRows: 2,
 		},
 	}

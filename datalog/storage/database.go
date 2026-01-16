@@ -278,8 +278,6 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		// Storage join strategy
 		IndexNestedLoopThreshold: 0, // Default to HashJoinScan for all binding sizes
 
-		// Executor architecture (Stage B)
-		UseQueryExecutor: true, // Use new QueryExecutor by default (production-ready as of October 2025)
 	}
 }
 
