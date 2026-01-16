@@ -196,6 +196,133 @@ func TestOrOnlyQueryPlanning(t *testing.T) {
 	}
 }
 
+func TestExtractSubqueryPatternSymbols(t *testing.T) {
+	tests := []struct {
+		name             string
+		pattern          *query.SubqueryPattern
+		expectedProvides []query.Symbol
+		expectedRequires []query.Symbol
+	}{
+		{
+			name: "TupleBinding provides variables",
+			pattern: &query.SubqueryPattern{
+				Query: &query.Query{
+					Find: []query.FindElement{
+						query.FindAggregate{Function: "count", Arg: "?t"},
+					},
+				},
+				Inputs: []query.PatternElement{
+					query.Constant{Value: "db"},
+					query.Variable{Name: "?scenario"},
+				},
+				Binding: query.TupleBinding{Variables: []query.Symbol{"?openingCount"}},
+			},
+			expectedProvides: []query.Symbol{"?openingCount"},
+			expectedRequires: []query.Symbol{"?scenario"},
+		},
+		{
+			name: "RelationBinding provides multiple variables",
+			pattern: &query.SubqueryPattern{
+				Query: &query.Query{
+					Find: []query.FindElement{
+						query.FindVariable{Symbol: "?a"},
+						query.FindVariable{Symbol: "?b"},
+					},
+				},
+				Inputs:  []query.PatternElement{},
+				Binding: query.RelationBinding{Variables: []query.Symbol{"?a", "?b"}},
+			},
+			expectedProvides: []query.Symbol{"?a", "?b"},
+			expectedRequires: []query.Symbol{},
+		},
+		{
+			name: "ScalarBinding provides single variable",
+			pattern: &query.SubqueryPattern{
+				Query: &query.Query{
+					Find: []query.FindElement{
+						query.FindVariable{Symbol: "?x"},
+					},
+				},
+				Inputs:  []query.PatternElement{},
+				Binding: query.ScalarBinding{Variable: "?result"},
+			},
+			expectedProvides: []query.Symbol{"?result"},
+			expectedRequires: []query.Symbol{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			syms := extractSubqueryPatternSymbols(tt.pattern)
+
+			// Check provides
+			providedSet := make(map[query.Symbol]bool)
+			for _, sym := range syms.Provides {
+				providedSet[sym] = true
+			}
+			for _, expected := range tt.expectedProvides {
+				if !providedSet[expected] {
+					t.Errorf("Expected symbol %s to be provided, but it wasn't. Got: %v", expected, syms.Provides)
+				}
+			}
+
+			// Check requires
+			requiresSet := make(map[query.Symbol]bool)
+			for _, sym := range syms.Requires {
+				requiresSet[sym] = true
+			}
+			for _, expected := range tt.expectedRequires {
+				if !requiresSet[expected] {
+					t.Errorf("Expected symbol %s to be required, but it wasn't. Got: %v", expected, syms.Requires)
+				}
+			}
+		})
+	}
+}
+
+func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
+	// This test verifies the fix for the planner not recognizing
+	// that SubqueryPattern provides symbols in OR fallback branches
+	orClause := &query.OrClause{
+		Branches: [][]query.Clause{
+			{
+				&query.SubqueryPattern{
+					Query: &query.Query{
+						Find: []query.FindElement{
+							query.FindAggregate{Function: "count", Arg: "?t"},
+						},
+					},
+					Inputs: []query.PatternElement{
+						query.Constant{Value: "db"},
+						query.Variable{Name: "?scenario"},
+					},
+					Binding: query.TupleBinding{Variables: []query.Symbol{"?openingCount"}},
+				},
+			},
+			{
+				&query.Expression{
+					Function: &query.GroundFunction{Value: int64(0)},
+					Binding:  "?openingCount",
+				},
+			},
+		},
+	}
+
+	syms := extractOrClauseSymbols(orClause)
+
+	// Both branches provide ?openingCount, so the OR should provide it
+	foundOpeningCount := false
+	for _, sym := range syms.Provides {
+		if sym == "?openingCount" {
+			foundOpeningCount = true
+		}
+	}
+
+	if !foundOpeningCount {
+		t.Errorf("Expected ?openingCount to be provided by OR clause, but got: %v", syms.Provides)
+	}
+}
+
 func TestExtractExpressionSymbols(t *testing.T) {
 	tests := []struct {
 		name            string

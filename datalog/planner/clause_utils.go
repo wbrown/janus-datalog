@@ -29,6 +29,8 @@ func extractClauseSymbols(clause query.Clause) ClauseSymbols {
 		return extractMissingPredicateSymbols(c)
 	case *query.Subquery:
 		return extractSubquerySymbols(c)
+	case *query.SubqueryPattern:
+		return extractSubqueryPatternSymbols(c)
 	case *query.NotClause:
 		return extractNotClauseSymbols(c)
 	case *query.NotJoinClause:
@@ -137,6 +139,36 @@ func extractSubquerySymbols(sq *query.Subquery) ClauseSymbols {
 		provides = append(provides, binding.Variables...)
 	case query.RelationBinding:
 		provides = append(provides, binding.Variables...)
+	}
+
+	return ClauseSymbols{
+		Requires: requires,
+		Provides: provides,
+	}
+}
+
+// extractSubqueryPatternSymbols extracts symbols from a subquery pattern
+// SubqueryPattern is used in OR branches: [(q [...] $ ?in) [[?out]]]
+func extractSubqueryPatternSymbols(sp *query.SubqueryPattern) ClauseSymbols {
+	// Inputs that are variables are required
+	var requires []query.Symbol
+	for _, input := range sp.Inputs {
+		if v, ok := input.(query.Variable); ok {
+			requires = append(requires, v.Name)
+		}
+	}
+
+	// Binding provides symbols
+	var provides []query.Symbol
+	switch binding := sp.Binding.(type) {
+	case query.TupleBinding:
+		provides = append(provides, binding.Variables...)
+	case query.RelationBinding:
+		provides = append(provides, binding.Variables...)
+	case query.ScalarBinding:
+		provides = append(provides, binding.Variable)
+	case query.CollectionBinding:
+		provides = append(provides, binding.Variable)
 	}
 
 	return ClauseSymbols{
