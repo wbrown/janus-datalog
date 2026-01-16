@@ -280,6 +280,133 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 	}
 }
 
+func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
+	// Test that pattern-only OR uses intersection semantics
+	// and OR with expressions uses union semantics
+
+	t.Run("Pattern-only OR uses intersection", func(t *testing.T) {
+		// Branch 1 provides: ?e, ?x
+		// Branch 2 provides: ?f, ?x
+		// Intersection should be: ?x only
+		orClause := &query.OrClause{
+			Branches: [][]query.Clause{
+				{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: "?e"},
+							query.Constant{Value: datalog.NewKeyword(":attr1")},
+							query.Variable{Name: "?x"},
+						},
+					},
+				},
+				{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: "?f"},
+							query.Constant{Value: datalog.NewKeyword(":attr2")},
+							query.Variable{Name: "?x"},
+						},
+					},
+				},
+			},
+		}
+
+		syms := extractOrClauseSymbols(orClause)
+
+		// Should only have ?x (intersection)
+		if len(syms.Provides) != 1 {
+			t.Errorf("Expected 1 symbol (intersection), got %d: %v", len(syms.Provides), syms.Provides)
+		}
+		if len(syms.Provides) == 1 && syms.Provides[0] != "?x" {
+			t.Errorf("Expected ?x, got %v", syms.Provides[0])
+		}
+	})
+
+	t.Run("OR with expression uses union", func(t *testing.T) {
+		// Branch 1 (pattern) provides: ?e, ?x
+		// Branch 2 (expression) provides: ?x
+		// Union should be: ?e, ?x (fallback semantics - one branch executes)
+		orClause := &query.OrClause{
+			Branches: [][]query.Clause{
+				{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: "?e"},
+							query.Constant{Value: datalog.NewKeyword(":test/attr")},
+							query.Variable{Name: "?x"},
+						},
+					},
+				},
+				{
+					&query.Expression{
+						Function: &query.GroundFunction{Value: int64(0)},
+						Binding:  "?x",
+					},
+				},
+			},
+		}
+
+		syms := extractOrClauseSymbols(orClause)
+
+		// Should have both ?e and ?x (union)
+		providedSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Provides {
+			providedSet[sym] = true
+		}
+
+		if !providedSet["?x"] {
+			t.Errorf("Expected ?x to be provided, got: %v", syms.Provides)
+		}
+		if !providedSet["?e"] {
+			t.Errorf("Expected ?e to be provided (union semantics), got: %v", syms.Provides)
+		}
+	})
+
+	t.Run("SubqueryPattern with ground fallback uses union", func(t *testing.T) {
+		// Branch 1 (SubqueryPattern) provides: ?openingCount
+		// Branch 2 (Expression) provides: ?openingCount
+		// Union should be: ?openingCount
+		// This is the real-world use case that broke
+		orClause := &query.OrClause{
+			Branches: [][]query.Clause{
+				{
+					&query.SubqueryPattern{
+						Query: &query.Query{
+							Find: []query.FindElement{
+								query.FindAggregate{Function: "count", Arg: "?t"},
+							},
+						},
+						Inputs: []query.PatternElement{
+							query.Constant{Value: "db"},
+							query.Variable{Name: "?scenario"},
+						},
+						Binding: query.TupleBinding{Variables: []query.Symbol{"?openingCount"}},
+					},
+				},
+				{
+					&query.Expression{
+						Function: &query.GroundFunction{Value: int64(0)},
+						Binding:  "?openingCount",
+					},
+				},
+			},
+		}
+
+		syms := extractOrClauseSymbols(orClause)
+
+		foundOpeningCount := false
+		for _, sym := range syms.Provides {
+			if sym == "?openingCount" {
+				foundOpeningCount = true
+			}
+		}
+
+		if !foundOpeningCount {
+			t.Errorf("Expected ?openingCount to be provided, got: %v", syms.Provides)
+		}
+	})
+}
+
 func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 	// This test verifies the fix for the planner not recognizing
 	// that SubqueryPattern provides symbols in OR fallback branches

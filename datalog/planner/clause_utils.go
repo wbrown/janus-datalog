@@ -216,13 +216,14 @@ func extractNotJoinClauseSymbols(n *query.NotJoinClause) ClauseSymbols {
 }
 
 // extractOrClauseSymbols extracts symbols from an OR clause
-// OR provides the intersection of all branches' provided symbols
+// - For union semantics (pattern-only): provides intersection of all branches
+// - For fallback semantics (has expressions): provides union of all branches
 func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 	if len(o.Branches) == 0 {
 		return ClauseSymbols{}
 	}
 
-	// Start with first branch's provided symbols
+	// Collect symbols from each branch
 	branchSymbols := make([]map[query.Symbol]bool, len(o.Branches))
 	for i, branch := range o.Branches {
 		branchSymbols[i] = make(map[query.Symbol]bool)
@@ -234,18 +235,35 @@ func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 		}
 	}
 
-	// Intersection of all branches
 	var provides []query.Symbol
-	for sym := range branchSymbols[0] {
-		inAll := true
-		for i := 1; i < len(branchSymbols); i++ {
-			if !branchSymbols[i][sym] {
-				inAll = false
-				break
+
+	// Check if fallback semantics apply (any branch has expressions)
+	if query.OrHasExpressions(o.Branches) {
+		// Fallback semantics: only one branch executes, so use UNION
+		// Any symbol that any branch provides will be provided
+		allSymbols := make(map[query.Symbol]bool)
+		for _, syms := range branchSymbols {
+			for sym := range syms {
+				allSymbols[sym] = true
 			}
 		}
-		if inAll {
+		for sym := range allSymbols {
 			provides = append(provides, sym)
+		}
+	} else {
+		// Union semantics: all branches execute, so use INTERSECTION
+		// Only symbols that ALL branches provide are guaranteed
+		for sym := range branchSymbols[0] {
+			inAll := true
+			for i := 1; i < len(branchSymbols); i++ {
+				if !branchSymbols[i][sym] {
+					inAll = false
+					break
+				}
+			}
+			if inAll {
+				provides = append(provides, sym)
+			}
 		}
 	}
 
