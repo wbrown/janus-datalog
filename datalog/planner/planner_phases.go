@@ -108,9 +108,9 @@ func (p *Planner) createPhases(dataPatterns []*query.DataPattern, predicates []q
 		}
 	}
 
-	// If we have no phases but have predicates/expressions/subqueries, create at least one phase
-	if len(phases) == 0 && (len(predicates) > 0 || len(expressions) > 0 || len(subqueries) > 0) {
-		// Create a phase that can execute predicates/expressions with input symbols
+	// If we have no phases but have predicates/expressions/subqueries/OR clauses, create at least one phase
+	if len(phases) == 0 && (len(predicates) > 0 || len(expressions) > 0 || len(subqueries) > 0 || len(orClauses) > 0 || len(orJoinClauses) > 0) {
+		// Create a phase that can execute predicates/expressions/OR clauses with input symbols
 		phase := Phase{
 			Available: p.getResolvedSymbols(availableSymbols),
 			Provides:  []query.Symbol{},
@@ -411,9 +411,9 @@ func (p *Planner) createFineGrainedPhases(dataPatterns []*query.DataPattern, pre
 		}
 	}
 
-	// If we have no phases but have predicates/expressions/subqueries, create at least one phase
-	if len(phases) == 0 && (len(predicates) > 0 || len(expressions) > 0 || len(subqueries) > 0) {
-		// Create a phase that can execute predicates/expressions with input symbols
+	// If we have no phases but have predicates/expressions/subqueries/OR clauses, create at least one phase
+	if len(phases) == 0 && (len(predicates) > 0 || len(expressions) > 0 || len(subqueries) > 0 || len(orClauses) > 0 || len(orJoinClauses) > 0) {
+		// Create a phase that can execute predicates/expressions/OR clauses with input symbols
 		phase := Phase{
 			Available: p.getResolvedSymbols(availableSymbols),
 			Provides:  []query.Symbol{},
@@ -666,14 +666,38 @@ func (p *Planner) assignOrClausesToPhases(phases []Phase, orClauses []*query.OrC
 		return
 	}
 
+	// Track symbols provided by OR clauses
+	orProvides := make(map[query.Symbol]bool)
+
 	// OR clauses don't require prior bindings - they are data sources
 	// Assign them to the first phase
 	for _, orClause := range orClauses {
 		phases[0].OrClauses = append(phases[0].OrClauses, orClause)
+		// Track what this OR clause provides
+		syms := extractOrClauseSymbols(orClause)
+		for _, sym := range syms.Provides {
+			orProvides[sym] = true
+		}
 	}
 
 	for _, orJoinClause := range orJoinClauses {
 		phases[0].OrJoinClauses = append(phases[0].OrJoinClauses, orJoinClause)
+		// OR-JOIN provides exactly its join vars
+		for _, sym := range orJoinClause.JoinVars {
+			orProvides[sym] = true
+		}
+	}
+
+	// Add OR clause symbols to the phase's Provides list
+	// (they weren't already there because Provides is normally from patterns)
+	existingProvides := make(map[query.Symbol]bool)
+	for _, sym := range phases[0].Provides {
+		existingProvides[sym] = true
+	}
+	for sym := range orProvides {
+		if !existingProvides[sym] {
+			phases[0].Provides = append(phases[0].Provides, sym)
+		}
 	}
 }
 

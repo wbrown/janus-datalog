@@ -248,7 +248,7 @@ The storage layer connects the query engine to BadgerDB:
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
 23. **Schema support** - Type validation, cardinality (one/many), uniqueness constraints; optional and additive
 24. **History mode** - Datomic-style retractions with `RetractHistory` mode; full audit trail via `ExecuteHistoryQuery`; 5-element patterns `[?e ?a ?v ?tx ?op]`
-25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics
+25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics; OR supports fallback expressions for default values
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates
 
 ### 📋 TODO (Priority Order)

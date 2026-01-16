@@ -13,10 +13,12 @@ import (
 // add new symbols that might connect them.
 func (e *Executor) applyExpressionsAndPredicates(ctx Context, phase *planner.Phase, relations Relations) (Relation, error) {
 
-	// If we have no relations, return empty
+	// If we have no relations AND no OR clauses, return empty
 	// CRITICAL: Don't call IsEmpty() - it consumes streaming iterators!
 	// Empty detection happens naturally through subsequent operations
-	if len(relations) == 0 {
+	// NOTE: We must NOT return early if there are OR clauses or OR-JOIN clauses,
+	// as they can provide symbols even with no input relations (e.g., fallback semantics).
+	if len(relations) == 0 && len(phase.OrClauses) == 0 && len(phase.OrJoinClauses) == 0 {
 		return NewMaterializedRelationWithOptions(phase.Provides, []Tuple{}, e.options), nil
 	}
 

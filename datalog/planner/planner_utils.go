@@ -152,6 +152,21 @@ func (p *Planner) validatePlan(phases []Phase, expressions []*query.Expression, 
 				resolved[pred.Variable] = true
 			}
 		}
+
+		// Track symbols provided by OR clauses
+		for _, orClause := range phase.OrClauses {
+			syms := extractOrClauseSymbols(orClause)
+			for _, sym := range syms.Provides {
+				resolved[sym] = true
+			}
+		}
+
+		// Track symbols provided by OR-JOIN clauses
+		for _, orJoinClause := range phase.OrJoinClauses {
+			for _, sym := range orJoinClause.JoinVars {
+				resolved[sym] = true
+			}
+		}
 	}
 
 	// Track what symbols are resolved by expressions

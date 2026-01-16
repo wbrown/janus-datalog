@@ -111,6 +111,31 @@ type OrJoinClause struct {
 	Branches [][]Clause // Each branch is a list of clauses
 }
 
+// BranchHasExpressions checks if any clause in a branch is an expression type.
+// This is used to determine whether an OR clause should use fallback semantics
+// (Clojure-style first-non-empty-wins) vs union semantics (Datalog-style).
+func BranchHasExpressions(branch []Clause) bool {
+	for _, c := range branch {
+		switch c.(type) {
+		case *Expression, *Subquery:
+			return true
+		case *GroundPredicate:
+			return true
+		}
+	}
+	return false
+}
+
+// OrHasExpressions checks if any branch in an OR clause contains expressions.
+func OrHasExpressions(branches [][]Clause) bool {
+	for _, branch := range branches {
+		if BranchHasExpressions(branch) {
+			return true
+		}
+	}
+	return false
+}
+
 func (o *OrJoinClause) String() string {
 	result := "(or-join ["
 	for i, v := range o.JoinVars {

@@ -24,8 +24,9 @@ type IndexedMemoryMatcher struct {
 	collectorMutex sync.RWMutex
 	collector      *annotations.Collector
 
-	// ExecutorOptions for configuring relation behavior
-	options ExecutorOptions
+	// ExecutorOptions for configuring relation behavior (protected by optionsMutex)
+	optionsMutex sync.RWMutex
+	options      ExecutorOptions
 }
 
 // boundDatomIterator lazily matches bound patterns during iteration
@@ -141,7 +142,9 @@ func (m *IndexedMemoryMatcher) WithCollector(collector *annotations.Collector) C
 
 // WithOptions sets the executor options and returns self for chaining
 func (m *IndexedMemoryMatcher) WithOptions(opts ExecutorOptions) *IndexedMemoryMatcher {
+	m.optionsMutex.Lock()
 	m.options = opts
+	m.optionsMutex.Unlock()
 	return m
 }
 
@@ -163,7 +166,9 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	columns := pattern.ExtractColumns()
 
 	// Extract options: prefer bindings, fall back to matcher's options
+	m.optionsMutex.RLock()
 	opts := m.options
+	m.optionsMutex.RUnlock()
 	if bindings != nil && len(bindings) > 0 {
 		opts = bindings[0].Options()
 	}

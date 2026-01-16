@@ -232,7 +232,25 @@ Logical negation and disjunction for complex query patterns:
                  [?e :admin/status "enabled"])]
 ```
 
-**Note:** Nested NOT/OR clauses support data patterns. Predicates and expressions inside NOT/OR are not yet supported.
+**OR with fallback expressions:**
+
+When an OR clause contains expression branches (e.g., `ground`, arithmetic), janus-datalog uses **fallback semantics**: branches are tried in order, returning the first non-empty result. This enables default values:
+
+```clojure
+;; Return "Unknown" if no name exists
+[:find ?name
+ :where (or [?e :person/name ?name]
+            [(ground "Unknown") ?name])]
+
+;; Count with zero default
+[:find ?count
+ :where (or [(q [:find (count ?t) :where [?t :task/done true]] $) [[?count]]]
+            [(ground 0) ?count])]
+```
+
+This differs from Datomic, where OR always uses union semantics. See [OR_FALLBACK_SEMANTICS.md](docs/reference/OR_FALLBACK_SEMANTICS.md) for details.
+
+**Note:** NOT clauses support data patterns. Predicates and expressions inside NOT are not yet supported.
 
 ### 9. Time-Based Queries
 
