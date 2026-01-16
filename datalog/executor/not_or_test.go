@@ -434,3 +434,420 @@ func TestOrJoinClause(t *testing.T) {
 		t.Error("Charlie should not be in results")
 	}
 }
+
+// =============================================================================
+// OR Fallback Semantics Tests
+// =============================================================================
+
+func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
+	// Directly test the query executor to isolate the issue
+	matcher := NewMemoryPatternMatcher(nil)
+	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
+	ctx := NewContext(nil)
+
+	// Build the OR clause query directly
+	orClause := &query.OrClause{
+		Branches: [][]query.Clause{
+			{
+				&query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Variable{Name: "?e"},
+						query.Constant{Value: datalog.NewKeyword(":nonexistent/attr")},
+						query.Variable{Name: "?x"},
+					},
+				},
+			},
+			{
+				&query.Expression{
+					Function: &query.GroundFunction{Value: int64(0)},
+					Binding:  "?x",
+				},
+			},
+		},
+	}
+
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?x"},
+		},
+		Where: []query.Clause{orClause},
+	}
+
+	result, err := queryExecutor.Execute(ctx, q, nil)
+	if err != nil {
+		t.Fatalf("query executor failed: %v", err)
+	}
+
+	t.Logf("Results: %d", len(result))
+	for i, r := range result {
+		t.Logf("Result %d: columns=%v, size=%d", i, r.Columns(), r.Size())
+	}
+
+	// Collapse to single relation
+	collapsed := Relations(result).Collapse(ctx)
+	if len(collapsed) != 1 {
+		t.Fatalf("Expected 1 collapsed relation, got %d", len(collapsed))
+	}
+
+	finalRel := collapsed[0]
+	t.Logf("Final: columns=%v, size=%d", finalRel.Columns(), finalRel.Size())
+
+	if finalRel.Size() != 1 {
+		t.Errorf("Expected 1 result, got %d", finalRel.Size())
+	}
+}
+
+func TestOrFallbackWithGroundExpression(t *testing.T) {
+	// Test OR with ground expression as fallback
+	// When pattern matches nothing, ground should provide default value
+	matcher := NewMemoryPatternMatcher(nil) // Empty database
+	executor := NewExecutor(matcher)
+
+	// Query: (or [?e :nonexistent ?x] [(ground 0) ?x])
+	// Since no data exists, should fall back to ground(0)
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?x"},
+		},
+		Where: []query.Clause{
+			&query.OrClause{
+				Branches: [][]query.Clause{
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: "?e"},
+								query.Constant{Value: datalog.NewKeyword(":nonexistent/attr")},
+								query.Variable{Name: "?x"},
+							},
+						},
+					},
+					{
+						&query.Expression{
+							Function: &query.GroundFunction{Value: int64(0)},
+							Binding:  "?x",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	// Should have 1 result with value 0
+	if result.Size() != 1 {
+		t.Errorf("expected 1 result, got %d", result.Size())
+	}
+
+	if result.Size() > 0 {
+		val := result.Get(0)[0]
+		if val != int64(0) {
+			t.Errorf("expected 0, got %v (type %T)", val, val)
+		}
+	}
+}
+
+func TestOrFallbackFirstBranchMatches(t *testing.T) {
+	// Test that when first branch matches, second is not evaluated
+	alice := datalog.NewIdentity("user:alice")
+	nameAttr := datalog.NewKeyword(":user/name")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	executor := NewExecutor(matcher)
+
+	// Query: (or [?e :user/name ?x] [(ground "fallback") ?x])
+	// First branch should match, so we should get "Alice", not "fallback"
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?x"},
+		},
+		Where: []query.Clause{
+			&query.OrClause{
+				Branches: [][]query.Clause{
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: "?e"},
+								query.Constant{Value: nameAttr},
+								query.Variable{Name: "?x"},
+							},
+						},
+					},
+					{
+						&query.Expression{
+							Function: &query.GroundFunction{Value: "fallback"},
+							Binding:  "?x",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	// Should have 1 result with value "Alice"
+	if result.Size() != 1 {
+		t.Errorf("expected 1 result, got %d", result.Size())
+	}
+
+	if result.Size() > 0 {
+		val := result.Get(0)[0]
+		if val != "Alice" {
+			t.Errorf("expected 'Alice', got %v", val)
+		}
+	}
+}
+
+func TestOrFallbackMultipleBranches(t *testing.T) {
+	// Test OR with multiple fallback branches
+	// (or [nonexistent1] [nonexistent2] [(ground "default")])
+	matcher := NewMemoryPatternMatcher(nil) // Empty database
+	executor := NewExecutor(matcher)
+
+	nonexistent1 := datalog.NewKeyword(":nonexistent1")
+	nonexistent2 := datalog.NewKeyword(":nonexistent2")
+
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?x"},
+		},
+		Where: []query.Clause{
+			&query.OrClause{
+				Branches: [][]query.Clause{
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: "?e"},
+								query.Constant{Value: nonexistent1},
+								query.Variable{Name: "?x"},
+							},
+						},
+					},
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: "?e"},
+								query.Constant{Value: nonexistent2},
+								query.Variable{Name: "?x"},
+							},
+						},
+					},
+					{
+						&query.Expression{
+							Function: &query.GroundFunction{Value: "default"},
+							Binding:  "?x",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	// Should fall through to third branch with "default"
+	if result.Size() != 1 {
+		t.Errorf("expected 1 result, got %d", result.Size())
+	}
+
+	if result.Size() > 0 {
+		val := result.Get(0)[0]
+		if val != "default" {
+			t.Errorf("expected 'default', got %v", val)
+		}
+	}
+}
+
+func TestOrFallbackWithArithmeticExpression(t *testing.T) {
+	// Test OR with arithmetic expression as fallback
+	alice := datalog.NewIdentity("user:alice")
+	ageAttr := datalog.NewKeyword(":user/age")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	executor := NewExecutor(matcher)
+
+	// Query: (or [?e :nonexistent ?x] [(+ 1 1) ?x])
+	// Pattern won't match, so should get 2 from arithmetic
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?x"},
+		},
+		Where: []query.Clause{
+			&query.OrClause{
+				Branches: [][]query.Clause{
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: "?e"},
+								query.Constant{Value: datalog.NewKeyword(":nonexistent/attr")},
+								query.Variable{Name: "?x"},
+							},
+						},
+					},
+					{
+						&query.Expression{
+							Function: &query.ArithmeticFunction{
+								Op:    query.OpAdd,
+								Left:  query.ConstantTerm{Value: int64(1)},
+								Right: query.ConstantTerm{Value: int64(1)},
+							},
+							Binding: "?x",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	if result.Size() != 1 {
+		t.Errorf("expected 1 result, got %d", result.Size())
+	}
+
+	if result.Size() > 0 {
+		val := result.Get(0)[0]
+		// Arithmetic on integers returns int64
+		expected := int64(2)
+		if val != expected {
+			t.Errorf("expected %v, got %v (type %T)", expected, val, val)
+		}
+	}
+}
+
+func TestOrFallbackPatternOnlyUnionSemantics(t *testing.T) {
+	// Verify pattern-only OR still uses union semantics (regression test)
+	alice := datalog.NewIdentity("user:alice")
+	bob := datalog.NewIdentity("user:bob")
+	nameAttr := datalog.NewKeyword(":user/name")
+	activeAttr := datalog.NewKeyword(":user/active")
+	premiumAttr := datalog.NewKeyword(":user/premium")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
+		{E: alice, A: activeAttr, V: true, Tx: 1}, // Alice is active
+		{E: bob, A: premiumAttr, V: true, Tx: 1},  // Bob is premium
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	executor := NewExecutor(matcher)
+
+	// Pattern-only OR should return BOTH Alice and Bob (union semantics)
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?e"},
+		},
+		Where: []query.Clause{
+			&query.OrClause{
+				Branches: [][]query.Clause{
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: "?e"},
+								query.Constant{Value: activeAttr},
+								query.Constant{Value: true},
+							},
+						},
+					},
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: "?e"},
+								query.Constant{Value: premiumAttr},
+								query.Constant{Value: true},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	// Should have both Alice and Bob (union of both branches)
+	if result.Size() != 2 {
+		t.Errorf("expected 2 results (union semantics), got %d", result.Size())
+	}
+}
+
+func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
+	// Test that pattern matching works correctly in OR fallback path
+	// even when the pattern returns a streaming relation
+	nameAttr := datalog.NewKeyword(":user/name")
+	alice := datalog.NewIdentity("user:alice")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	executor := NewExecutor(matcher)
+
+	// Query: (or [?e :user/name ?x] [(ground "fallback") ?x])
+	// Pattern should match, returning "Alice"
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?x"},
+		},
+		Where: []query.Clause{
+			&query.OrClause{
+				Branches: [][]query.Clause{
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: "?e"},
+								query.Constant{Value: nameAttr},
+								query.Variable{Name: "?x"},
+							},
+						},
+					},
+					{
+						&query.Expression{
+							Function: &query.GroundFunction{Value: "fallback"},
+							Binding:  "?x",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	if result.Size() != 1 {
+		t.Errorf("expected 1 result, got %d", result.Size())
+	}
+
+	if result.Size() > 0 && result.Get(0)[0] != "Alice" {
+		t.Errorf("expected 'Alice', got %v", result.Get(0)[0])
+	}
+}

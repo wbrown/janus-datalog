@@ -172,12 +172,55 @@ func (e *Executor) executeNotJoinClause(ctx Context, clause *query.NotJoinClause
 	return NewMaterializedRelationWithOptions(inputCols, filtered, e.options), nil
 }
 
-// executeOrClause performs union of branches
+// executeOrClause performs union of branches, or fallback semantics for expression branches
 func (e *Executor) executeOrClause(ctx Context, clause *query.OrClause, available Relations) (Relation, error) {
 	if len(clause.Branches) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 	}
 
+	// Check if any branch has expressions - use fallback semantics if so
+	if query.OrHasExpressions(clause.Branches) {
+		return e.executeOrClauseFallback(ctx, clause, available)
+	}
+
+	// Standard union semantics for pattern-only OR
+	return e.executeOrClauseUnion(ctx, clause, available)
+}
+
+// executeOrClauseFallback implements Clojure-style fallback semantics:
+// Try each branch in order, return first non-empty result
+func (e *Executor) executeOrClauseFallback(ctx Context, clause *query.OrClause, available Relations) (Relation, error) {
+	for i, branch := range clause.Branches {
+		// Execute branch with available bindings
+		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
+		if err != nil {
+			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
+		}
+
+		// Check if result is non-empty by collecting tuples
+		// We materialize here because fallback semantics require knowing if a branch
+		// produced results before trying the next branch
+		if branchResult != nil {
+			var tuples []Tuple
+			iter := branchResult.Iterator()
+			for iter.Next() {
+				tuples = append(tuples, iter.Tuple())
+			}
+			iter.Close()
+
+			if len(tuples) > 0 {
+				return NewMaterializedRelationWithOptions(branchResult.Columns(), tuples, e.options), nil
+			}
+		}
+	}
+
+	// All branches empty
+	return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
+}
+
+// executeOrClauseUnion implements standard Datalog union semantics:
+// Execute all branches and merge results
+func (e *Executor) executeOrClauseUnion(ctx Context, clause *query.OrClause, available Relations) (Relation, error) {
 	// Execute each branch and collect results
 	var branchResults []Relation
 	var commonCols []query.Symbol
@@ -222,7 +265,7 @@ func (e *Executor) executeOrClause(ctx Context, clause *query.OrClause, availabl
 	return unionRelations(branchResults, commonCols, e.options), nil
 }
 
-// executeOrJoinClause performs union with explicit join variables
+// executeOrJoinClause performs union with explicit join variables, or fallback for expressions
 func (e *Executor) executeOrJoinClause(ctx Context, clause *query.OrJoinClause, available Relations) (Relation, error) {
 	if len(clause.Branches) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
@@ -231,6 +274,11 @@ func (e *Executor) executeOrJoinClause(ctx Context, clause *query.OrJoinClause, 
 	joinVars := clause.JoinVars
 	if len(joinVars) == 0 {
 		return nil, fmt.Errorf("OR-JOIN clause has no join variables")
+	}
+
+	// Check if any branch has expressions - use fallback semantics if so
+	if query.OrHasExpressions(clause.Branches) {
+		return e.executeOrJoinClauseFallback(ctx, clause, available)
 	}
 
 	var branchResults []Relation
@@ -252,6 +300,63 @@ func (e *Executor) executeOrJoinClause(ctx Context, clause *query.OrJoinClause, 
 
 	// Union all branch results, projecting to join vars
 	return unionRelations(branchResults, joinVars, e.options), nil
+}
+
+// executeOrJoinClauseFallback implements fallback semantics for or-join with expressions
+func (e *Executor) executeOrJoinClauseFallback(ctx Context, clause *query.OrJoinClause, available Relations) (Relation, error) {
+	joinVars := clause.JoinVars
+
+	for i, branch := range clause.Branches {
+		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
+		if err != nil {
+			return nil, fmt.Errorf("OR-JOIN branch %d execution failed: %w", i+1, err)
+		}
+
+		// Return first non-empty result, projected to join vars
+		if branchResult != nil && branchResult.Size() > 0 {
+			// Project to join vars only
+			return projectToColumns(branchResult, joinVars, e.options), nil
+		}
+	}
+
+	// All branches empty
+	return NewMaterializedRelationWithOptions(joinVars, nil, e.options), nil
+}
+
+// projectToColumns projects a relation to specified columns
+func projectToColumns(rel Relation, cols []query.Symbol, opts ExecutorOptions) Relation {
+	relCols := rel.Columns()
+
+	// Build column index mapping
+	colIndices := make([]int, len(cols))
+	for i, col := range cols {
+		found := false
+		for j, relCol := range relCols {
+			if relCol == col {
+				colIndices[i] = j
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Column not found - return empty relation
+			return NewMaterializedRelationWithOptions(cols, nil, opts)
+		}
+	}
+
+	var projected []Tuple
+	iter := rel.Iterator()
+	for iter.Next() {
+		tuple := iter.Tuple()
+		newTuple := make(Tuple, len(cols))
+		for i, idx := range colIndices {
+			newTuple[i] = tuple[idx]
+		}
+		projected = append(projected, newTuple)
+	}
+	iter.Close()
+
+	return NewMaterializedRelationWithOptions(cols, projected, opts)
 }
 
 // executeInnerClauses executes a list of clauses and returns the result
@@ -314,8 +419,26 @@ func (e *Executor) executeInnerClauses(ctx Context, clauses []query.Clause, bind
 				result = Relations{orResult}
 			}
 
-		// Note: Predicates and expressions inside NOT/OR are not yet supported
-		// They would need similar handling to the main executor
+		case *query.Expression:
+			// Expression evaluation - supports ground, arithmetic, etc.
+			exprResult, err := e.executeInnerExpression(ctx, c, result)
+			if err != nil {
+				return nil, fmt.Errorf("expression evaluation failed: %w", err)
+			}
+			result = Relations{exprResult}
+
+		case query.Predicate:
+			// Predicate filtering
+			if len(result) == 0 {
+				return nil, fmt.Errorf("predicate requires prior bindings")
+			}
+			collapsed := result.Collapse(ctx)
+			if len(collapsed) != 1 {
+				return nil, fmt.Errorf("predicate requires single relation")
+			}
+			predResult := filterWithPredicate(collapsed[0], c)
+			result = Relations{predResult}
+
 		default:
 			return nil, fmt.Errorf("unsupported clause type in NOT/OR: %T", clause)
 		}
@@ -332,6 +455,31 @@ func (e *Executor) executeInnerClauses(ctx Context, clauses []query.Clause, bind
 	}
 
 	return collapsed[0], nil
+}
+
+// executeInnerExpression evaluates an expression within an OR/NOT branch
+func (e *Executor) executeInnerExpression(ctx Context, expr *query.Expression, groups Relations) (Relation, error) {
+	// If no input relations, create a single empty tuple to evaluate against
+	// This is needed for ground expressions like [(ground 0) ?x]
+	if len(groups) == 0 {
+		// Create a single-tuple relation with just the binding
+		result, err := expr.Function.Eval(make(map[query.Symbol]interface{}))
+		if err != nil {
+			return nil, err
+		}
+		columns := []query.Symbol{expr.Binding}
+		tuples := []Tuple{{result}}
+		return NewMaterializedRelationWithOptions(columns, tuples, e.options), nil
+	}
+
+	// Collapse groups to single relation for expression evaluation
+	collapsed := groups.Collapse(ctx)
+	if len(collapsed) != 1 {
+		return nil, fmt.Errorf("expression requires single relation, got %d disjoint groups", len(collapsed))
+	}
+
+	// Evaluate expression over the relation
+	return evaluateExpressionWithLookup(collapsed[0], expr, nil), nil
 }
 
 // collectInnerVars collects all variables from inner clauses
