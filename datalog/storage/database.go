@@ -18,6 +18,19 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
+// resolveQuery converts a query input (string or *query.Query) to *query.Query.
+// This enables the query builder to work seamlessly with database methods.
+func resolveQuery(q interface{}) (*query.Query, error) {
+	switch v := q.(type) {
+	case string:
+		return parser.ParseQuery(v)
+	case *query.Query:
+		return v, nil
+	default:
+		return nil, fmt.Errorf("query must be string or *query.Query, got %T", q)
+	}
+}
+
 // Database provides the main API for reading and writing datoms
 type Database struct {
 	store             *BadgerStore
@@ -350,18 +363,25 @@ func (d *Database) ClearPlanCache() {
 	}
 }
 
-// ExecuteQuery executes a Datalog query string and returns results as a slice of tuples
-// This is a convenience method that handles parsing and execution
+// ExecuteQuery executes a Datalog query and returns results as a slice of tuples.
+// The query can be either an EDN string or a *query.Query from the query builder.
 //
-// Example:
+// Example with string:
 //
 //	results, err := db.ExecuteQuery(`[:find ?name :where [?e :person/name ?name]]`)
-func (d *Database) ExecuteQuery(queryStr string) ([][]interface{}, error) {
-	return d.ExecuteQueryWithInputs(queryStr)
+//
+// Example with query builder:
+//
+//	e, name := qb.NewVar(), qb.NewVar()
+//	q := qb.Query().Find(name).Where(qb.Pat(e, PersonName, name)).MustBuild()
+//	results, err := db.ExecuteQuery(q)
+func (d *Database) ExecuteQuery(q interface{}) ([][]interface{}, error) {
+	return d.ExecuteQueryWithInputs(q)
 }
 
-// ExecuteQueryWithInputs executes a parameterized Datalog query with input parameters
-// This provides type-safe query execution without string formatting
+// ExecuteQueryWithInputs executes a parameterized Datalog query with input parameters.
+// The query can be either an EDN string or a *query.Query from the query builder.
+// This provides type-safe query execution without string formatting.
 //
 // Input parameters are matched with the :in clause in order (after the $ database parameter):
 //   - Scalar inputs: ?name
@@ -371,28 +391,27 @@ func (d *Database) ExecuteQuery(queryStr string) ([][]interface{}, error) {
 //
 // Examples:
 //
-//	// Scalar input
+//	// Scalar input with string query
 //	results, err := db.ExecuteQueryWithInputs(
 //	    `[:find ?e :in $ ?name :where [?e :person/name ?name]]`,
 //	    "Alice",
 //	)
 //
-//	// Multiple scalar inputs
-//	results, err := db.ExecuteQueryWithInputs(
-//	    `[:find ?e :in $ ?name ?min-age :where [?e :person/name ?name] [?e :person/age ?age] [(>= ?age ?min-age)]]`,
-//	    "Alice", 25,
-//	)
+//	// Scalar input with query builder
+//	e, name, minAge := qb.NewVar(), qb.NewVar(), qb.NewVar()
+//	q := qb.Query().Find(e).In(qb.DB, qb.Scalar(minAge)).Where(...).MustBuild()
+//	results, err := db.ExecuteQueryWithInputs(q, 25)
 //
 //	// Collection input
 //	results, err := db.ExecuteQueryWithInputs(
 //	    `[:find ?e ?food :in $ [?food ...] :where [?e :person/likes ?food]]`,
 //	    []string{"pizza", "pasta"},
 //	)
-func (d *Database) ExecuteQueryWithInputs(queryStr string, inputs ...interface{}) ([][]interface{}, error) {
-	// Parse the query
-	q, err := parser.ParseQuery(queryStr)
+func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...interface{}) ([][]interface{}, error) {
+	// Resolve the query (string or *query.Query)
+	q, err := resolveQuery(queryInput)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse query: %w", err)
+		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
 	// Convert inputs to Relations based on :in clause
@@ -413,6 +432,7 @@ func (d *Database) ExecuteQueryWithInputs(queryStr string, inputs ...interface{}
 }
 
 // Explain returns the query plan for a query without executing it.
+// The query can be either an EDN string or a *query.Query from the query builder.
 // This is useful for understanding index selection, phase structure, and
 // how input parameters affect symbol binding.
 //
@@ -427,11 +447,11 @@ func (d *Database) ExecuteQueryWithInputs(queryStr string, inputs ...interface{}
 //   - Selectivity scores for patterns
 //   - Symbol availability and binding through phases
 //   - Predicate and expression assignment
-func (d *Database) Explain(queryStr string, inputs ...interface{}) (*planner.QueryPlan, error) {
-	// Parse the query
-	q, err := parser.ParseQuery(queryStr)
+func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*planner.QueryPlan, error) {
+	// Resolve the query (string or *query.Query)
+	q, err := resolveQuery(queryInput)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse query: %w", err)
+		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
 	// Validate inputs match :in clause (same validation as ExecuteQueryWithInputs)
@@ -548,6 +568,7 @@ func (ar *AnalyzeResult) String() string {
 }
 
 // Analyze executes a query and returns detailed execution statistics.
+// The query can be either an EDN string or a *query.Query from the query builder.
 // This is like EXPLAIN ANALYZE in PostgreSQL - it actually runs the query
 // and captures timing information at each step.
 //
@@ -562,13 +583,13 @@ func (ar *AnalyzeResult) String() string {
 //   - Query result as a Relation (call .Size() or iterate to access)
 //   - Event trace with timing for each operation
 //   - Summary statistics
-func (d *Database) Analyze(queryStr string, inputs ...interface{}) (*AnalyzeResult, error) {
+func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*AnalyzeResult, error) {
 	startTime := time.Now()
 
-	// Parse the query
-	q, err := parser.ParseQuery(queryStr)
+	// Resolve the query (string or *query.Query)
+	q, err := resolveQuery(queryInput)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse query: %w", err)
+		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
 	// Validate and convert inputs
@@ -624,6 +645,7 @@ func (d *Database) Analyze(queryStr string, inputs ...interface{}) (*AnalyzeResu
 }
 
 // QueryInto executes a Datalog query and populates a slice of structs with the results.
+// The query can be either an EDN string or a *query.Query from the query builder.
 // Fields are mapped by `datalog` tags (e.g., `datalog:"?name"`) or by position if untagged.
 //
 // For aggregates, use the full expression as the tag (e.g., `datalog:"(sum ?salary)"`).
@@ -638,6 +660,12 @@ func (d *Database) Analyze(queryStr string, inputs ...interface{}) (*AnalyzeResu
 //	var results []PersonResult
 //	err := db.QueryInto(&results, `[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
 //
+// Example with query builder:
+//
+//	e, name, age := qb.NewVar(), qb.NewVar(), qb.NewVar()
+//	q := qb.Query().Find(name, age).Where(qb.Pat(e, PersonName, name), qb.Pat(e, PersonAge, age)).MustBuild()
+//	err := db.QueryInto(&results, q)
+//
 // Example with aggregates:
 //
 //	type DeptStats struct {
@@ -647,7 +675,7 @@ func (d *Database) Analyze(queryStr string, inputs ...interface{}) (*AnalyzeResu
 //
 //	var stats []DeptStats
 //	err := db.QueryInto(&stats, `[:find ?dept (sum ?salary) :where [?e :employee/dept ?dept] [?e :employee/salary ?salary]]`)
-func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interface{}) error {
+func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ...interface{}) error {
 	// Validate dest is *[]T
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr {
@@ -665,10 +693,10 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 		elemType = elemType.Elem()
 	}
 
-	// Parse query to extract :find columns
-	q, err := parser.ParseQuery(queryStr)
+	// Resolve the query (string or *query.Query)
+	q, err := resolveQuery(queryInput)
 	if err != nil {
-		return fmt.Errorf("failed to parse query: %w", err)
+		return fmt.Errorf("failed to resolve query: %w", err)
 	}
 
 	// Check if element type is a struct or scalar
@@ -682,7 +710,7 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 			return err
 		}
 
-		results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
+		results, err := d.ExecuteQueryWithInputs(q, inputs...)
 		if err != nil {
 			return err
 		}
@@ -695,7 +723,7 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 		return fmt.Errorf("scalar QueryInto requires exactly 1 find element, got %d", len(q.Find))
 	}
 
-	results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
+	results, err := d.ExecuteQueryWithInputs(q, inputs...)
 	if err != nil {
 		return err
 	}
@@ -705,6 +733,7 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 }
 
 // QueryOneInto executes a Datalog query expecting at most one result and populates a value.
+// The query can be either an EDN string or a *query.Query from the query builder.
 // Supports both struct destinations (multi-column) and scalar destinations (single-column).
 // Returns (true, nil) if a result was found and mapped successfully.
 // Returns (false, nil) if the query returns no results (empty result is valid, not an error).
@@ -720,7 +749,7 @@ func (d *Database) QueryInto(dest interface{}, queryStr string, inputs ...interf
 //
 //	var name string
 //	found, err := db.QueryOneInto(&name, `[:find ?name :where [?e :person/name ?name] [(= ?e eid)]]`)
-func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) (found bool, err error) {
+func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs ...interface{}) (found bool, err error) {
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr {
 		return false, fmt.Errorf("QueryOneInto requires pointer destination")
@@ -728,10 +757,10 @@ func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...int
 	elemVal := destVal.Elem()
 	elemType := elemVal.Type()
 
-	// Parse query to extract :find columns
-	q, err := parser.ParseQuery(queryStr)
+	// Resolve the query (string or *query.Query)
+	q, err := resolveQuery(queryInput)
 	if err != nil {
-		return false, fmt.Errorf("failed to parse query: %w", err)
+		return false, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
 	// Check if destination is a struct (but not time.Time, Identity, Keyword which are scalars)
@@ -745,7 +774,7 @@ func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...int
 			return false, err
 		}
 
-		results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
+		results, err := d.ExecuteQueryWithInputs(q, inputs...)
 		if err != nil {
 			return false, err
 		}
@@ -768,7 +797,7 @@ func (d *Database) QueryOneInto(dest interface{}, queryStr string, inputs ...int
 		return false, fmt.Errorf("scalar QueryOneInto requires exactly 1 find element, got %d", len(q.Find))
 	}
 
-	results, err := d.ExecuteQueryWithInputs(queryStr, inputs...)
+	results, err := d.ExecuteQueryWithInputs(q, inputs...)
 	if err != nil {
 		return false, err
 	}
@@ -960,8 +989,9 @@ func setScalarValue(dest reflect.Value, val interface{}) error {
 	return fmt.Errorf("cannot convert %T to %s", val, destType)
 }
 
-// ExecuteHistoryQuery executes a Datalog query against the history database
-// This requires the database to be created with RetractHistory mode
+// ExecuteHistoryQuery executes a Datalog query against the history database.
+// The query can be either an EDN string or a *query.Query from the query builder.
+// This requires the database to be created with RetractHistory mode.
 //
 // History queries support 5-element patterns: [?e ?a ?v ?tx ?op]
 // where ?op is true for assertions and false for retractions
@@ -969,22 +999,23 @@ func setScalarValue(dest reflect.Value, val interface{}) error {
 // Example:
 //
 //	results, err := db.ExecuteHistoryQuery(`[:find ?v ?tx ?op :where [?e :person/name ?v ?tx ?op]]`)
-func (d *Database) ExecuteHistoryQuery(queryStr string) ([][]interface{}, error) {
-	return d.ExecuteHistoryQueryWithInputs(queryStr)
+func (d *Database) ExecuteHistoryQuery(q interface{}) ([][]interface{}, error) {
+	return d.ExecuteHistoryQueryWithInputs(q)
 }
 
-// ExecuteHistoryQueryWithInputs executes a parameterized query against the history database
-// This is the history equivalent of ExecuteQueryWithInputs
-func (d *Database) ExecuteHistoryQueryWithInputs(queryStr string, inputs ...interface{}) ([][]interface{}, error) {
+// ExecuteHistoryQueryWithInputs executes a parameterized query against the history database.
+// The query can be either an EDN string or a *query.Query from the query builder.
+// This is the history equivalent of ExecuteQueryWithInputs.
+func (d *Database) ExecuteHistoryQueryWithInputs(queryInput interface{}, inputs ...interface{}) ([][]interface{}, error) {
 	historyMatcher := d.History()
 	if historyMatcher == nil {
 		return nil, fmt.Errorf("history queries require RetractHistory mode (database was created with RetractDelete mode)")
 	}
 
-	// Parse the query
-	q, err := parser.ParseQuery(queryStr)
+	// Resolve the query (string or *query.Query)
+	q, err := resolveQuery(queryInput)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse query: %w", err)
+		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
 	// Convert inputs to Relations based on :in clause
