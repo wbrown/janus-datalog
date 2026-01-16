@@ -236,6 +236,26 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		currentGroups = []Relation{boundRelation}
 	}
 
+	// Collect conditional aggregates from all phases' metadata
+	// These need to be injected into the last phase's Find clause for aggregation
+	var allCondAggs []planner.ConditionalAggregate
+	for i, phase := range plan.Phases {
+		if phase.Metadata != nil {
+			if condAggs, ok := phase.Metadata["conditional_aggregates"].([]planner.ConditionalAggregate); ok && len(condAggs) > 0 {
+				allCondAggs = append(allCondAggs, condAggs...)
+				if collector := ctx.Collector(); collector != nil {
+					collector.Add(annotations.Event{
+						Name: "realized/conditional-agg-found",
+						Data: map[string]interface{}{
+							"phase": i + 1,
+							"count": len(condAggs),
+						},
+					})
+				}
+			}
+		}
+	}
+
 	// Execute each phase as an independent query
 	for i, phase := range plan.Phases {
 		phaseIndex := i
@@ -254,8 +274,41 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			})
 		}
 
+		// For the last phase, inject conditional aggregates into the Find clause
+		// This is needed because the rewriter stores aggregate info in metadata,
+		// and we need to modify the Find clause to include the actual aggregates
+		phaseQuery := phase.Query
+		if isLastPhase && len(allCondAggs) > 0 {
+			// Create a modified query with injected conditional aggregates
+			modifiedFind := injectConditionalAggregates(phase.Query.Find, allCondAggs)
+			// Create a copy of the query with the modified Find clause
+			modifiedQuery := *phase.Query // shallow copy
+			modifiedQuery.Find = modifiedFind
+			phaseQuery = &modifiedQuery
+
+			if collector := ctx.Collector(); collector != nil {
+				collector.Add(annotations.Event{
+					Name: "realized/conditional-agg-injected",
+					Data: map[string]interface{}{
+						"phase":          phaseIndex + 1,
+						"agg_count":      len(allCondAggs),
+						"original_find":  phase.Query.Find,
+						"modified_find":  modifiedFind,
+					},
+				})
+				// Also emit legacy-compatible annotation for tests
+				data := collector.GetDataMap()
+				data["rewritten.subquery.count"] = len(allCondAggs)
+				data["optimization"] = "conditional-aggregate-rewriting"
+				collector.Add(annotations.Event{
+					Name: "query/rewrite.conditional-aggregates",
+					Data: data,
+				})
+			}
+		}
+
 		// Execute phase query
-		groups, err := queryExecutor.Execute(ctx, phase.Query, currentGroups)
+		groups, err := queryExecutor.Execute(ctx, phaseQuery, currentGroups)
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
 		}

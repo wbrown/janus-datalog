@@ -100,14 +100,26 @@ func (t TupleBinding) String() string {
 	return result
 }
 
-// CollectionBinding binds all rows: ?coll
+// CollectionBinding binds a single column from all rows: [?coll ...]
+// This collects all values from a single-column result into a collection.
 type CollectionBinding struct {
 	Variable Symbol
 }
 
 func (c CollectionBinding) isBindingForm() {}
 func (c CollectionBinding) String() string {
-	return c.Variable.String()
+	return "[" + c.Variable.String() + " ...]"
+}
+
+// ScalarBinding binds a single value to a single variable: ?var
+// Expects exactly one row with one column. Used with scalar find spec (.:find ... .)
+type ScalarBinding struct {
+	Variable Symbol
+}
+
+func (s ScalarBinding) isBindingForm() {}
+func (s ScalarBinding) String() string {
+	return s.Variable.String()
 }
 
 // RelationBinding binds as relation: [[?a ?b] ...]
@@ -294,10 +306,11 @@ func (p *DataPattern) ExtractColumns() []Symbol {
 
 // Query represents a Datalog query
 type Query struct {
-	Find    []FindElement   // Elements to return (variables or aggregates)
-	In      []InputSpec     // Input specifications (database and parameters)
-	Where   []Clause        // Clauses in WHERE (DataPattern, Predicate, Expression, Subquery)
-	OrderBy []OrderByClause // Optional ordering of results
+	Find         []FindElement   // Elements to return (variables or aggregates)
+	In           []InputSpec     // Input specifications (database and parameters)
+	Where        []Clause        // Clauses in WHERE (DataPattern, Predicate, Expression, Subquery)
+	OrderBy      []OrderByClause // Optional ordering of results
+	ScalarReturn bool            // If true, return scalar value (find spec ends with .)
 }
 
 // InputSpec represents an input specification in the :in clause

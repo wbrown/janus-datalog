@@ -24,6 +24,9 @@ func injectConditionalAggregates(findClause []query.FindElement, condAggs []plan
 				varToAgg[b.Variables[0]] = condAgg.Aggregate
 			}
 			// If multiple variables, we'd need to handle differently (not yet implemented)
+		case query.ScalarBinding:
+			// Scalar binding: single value to single variable
+			varToAgg[b.Variable] = condAgg.Aggregate
 		case query.CollectionBinding:
 			varToAgg[b.Variable] = condAgg.Aggregate
 		case query.RelationBinding:

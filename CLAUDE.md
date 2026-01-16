@@ -36,6 +36,7 @@ Before making ANY of these decisions, ASK:
 - "This is just temporary/experimental"
 - "I'll refactor this later"
 - "It's faster to do it this way"
+- "It's simpler/easier this way" (when deviating from a plan or established pattern)
 - Making a choice between multiple valid approaches without consulting
 
 **The user's job**: Set direction, make architectural choices, review designs

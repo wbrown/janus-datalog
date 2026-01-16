@@ -330,7 +330,7 @@ func rewriteCorrelatedAggregates(plan *QueryPlan, options PlannerOptions) error 
 		// Rewrite each pattern (in reverse order to maintain indices)
 		for i := len(patterns) - 1; i >= 0; i-- {
 			fmt.Printf("DEBUG rewriteCorrelatedAggregates: Rewriting pattern %d in phase %d\n", i, phaseIdx)
-			if err := rewritePattern(phase, &patterns[i]); err != nil {
+			if err := rewritePattern(plan, phase, &patterns[i]); err != nil {
 				return err
 			}
 		}
@@ -556,7 +556,7 @@ func fixAggregateMetadata(phases []Phase, symbolPhase map[query.Symbol]int) erro
 
 // rewritePattern transforms a single correlated aggregate pattern
 // This modifies the query plan to eliminate the subquery and add a conditional aggregate
-func rewritePattern(phase *Phase, pattern *CorrelatedAggregatePattern) error {
+func rewritePattern(plan *QueryPlan, phase *Phase, pattern *CorrelatedAggregatePattern) error {
 	q := pattern.SubqueryPlan.Subquery.Query
 
 	// Step 0: Create mapping from subquery input params to outer query variables
@@ -778,27 +778,6 @@ func rewritePattern(phase *Phase, pattern *CorrelatedAggregatePattern) error {
 	conditionalAgg := pattern.Aggregate
 	conditionalAgg.Predicate = filterSymbol
 
-	// Store the conditional aggregate in phase metadata
-	// The executor will use this when processing aggregations
-	if phase.Metadata == nil {
-		phase.Metadata = make(map[string]interface{})
-	}
-
-	// Map the subquery's result binding to the conditional aggregate
-	// Store as a slice since we need to preserve order and handle multiple aggregates
-	var condAggs []ConditionalAggregate
-	if existing, ok := phase.Metadata["conditional_aggregates"]; ok {
-		condAggs = existing.([]ConditionalAggregate)
-	}
-
-	condAgg := ConditionalAggregate{
-		Binding:   pattern.SubqueryPlan.Subquery.Binding,
-		Aggregate: conditionalAgg,
-	}
-	condAggs = append(condAggs, condAgg)
-
-	phase.Metadata["conditional_aggregates"] = condAggs
-
 	// Step 6: Mark the subquery as rewritten (to prevent execution)
 	phase.Subqueries[pattern.SubqueryIndex].Decorrelated = true
 
@@ -810,6 +789,8 @@ func rewritePattern(phase *Phase, pattern *CorrelatedAggregatePattern) error {
 	switch b := pattern.SubqueryPlan.Subquery.Binding.(type) {
 	case query.TupleBinding:
 		bindingVars = b.Variables
+	case query.ScalarBinding:
+		bindingVars = []query.Symbol{b.Variable}
 	case query.CollectionBinding:
 		bindingVars = []query.Symbol{b.Variable}
 	case query.RelationBinding:
@@ -830,6 +811,25 @@ func rewritePattern(phase *Phase, pattern *CorrelatedAggregatePattern) error {
 		// Update the conditional aggregate to use the correct variable name
 		conditionalAgg.Arg = aggVar
 	}
+
+	// Store the conditional aggregate in phase metadata
+	// Both legacy executor and QueryExecutor will read this during aggregation
+	if phase.Metadata == nil {
+		phase.Metadata = make(map[string]interface{})
+	}
+
+	var condAggs []ConditionalAggregate
+	if existing, ok := phase.Metadata["conditional_aggregates"]; ok {
+		condAggs = existing.([]ConditionalAggregate)
+	}
+
+	condAgg := ConditionalAggregate{
+		Binding:   pattern.SubqueryPlan.Subquery.Binding,
+		Aggregate: conditionalAgg,
+	}
+	condAggs = append(condAggs, condAgg)
+
+	phase.Metadata["conditional_aggregates"] = condAggs
 
 	// Also need the predicate variable (use filterSymbol which was computed earlier)
 	if filterSymbol != "" {
@@ -918,4 +918,24 @@ func rewritePattern(phase *Phase, pattern *CorrelatedAggregatePattern) error {
 	phase.Metadata["aggregate_required_columns"] = requiredCols
 
 	return nil
+}
+
+// getBindingVariable extracts the first variable from a binding form
+// Returns empty string if the binding doesn't have a simple variable
+func getBindingVariable(binding query.BindingForm) query.Symbol {
+	switch b := binding.(type) {
+	case query.TupleBinding:
+		if len(b.Variables) == 1 {
+			return b.Variables[0]
+		}
+	case query.ScalarBinding:
+		return b.Variable
+	case query.CollectionBinding:
+		return b.Variable
+	case query.RelationBinding:
+		if len(b.Variables) == 1 {
+			return b.Variables[0]
+		}
+	}
+	return ""
 }

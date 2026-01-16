@@ -104,13 +104,10 @@ func TestOptimizationComposition(t *testing.T) {
 			expectedRows: 2,
 		},
 		{
-			// BUG: QueryExecutor doesn't handle conditional aggregate rewriting correctly.
-			// The rewriting produces internal columns like ?__cond_?pd but QueryExecutor
-			// fails to map them back to the expected output column ?max-value.
-			// Using legacy executor as workaround until this is fixed.
+			// QueryExecutor now properly handles conditional aggregate rewriting
+			// via conditional aggregate injection in ExecuteRealized
 			name: "Conditional aggregates only",
 			opts: planner.PlannerOptions{
-				UseLegacyExecutor:                   true,
 				EnableDynamicReordering:             false,
 				EnableConditionalAggregateRewriting: true,
 				EnableSubqueryDecorrelation:         false,
@@ -119,10 +116,9 @@ func TestOptimizationComposition(t *testing.T) {
 			expectedRows: 2,
 		},
 		{
-			// BUG: Same QueryExecutor + conditional aggregate rewriting bug as above.
+			// QueryExecutor now properly handles conditional aggregate rewriting
 			name: "Both optimizations (COMPOSITION TEST)",
 			opts: planner.PlannerOptions{
-				UseLegacyExecutor:                   true,
 				EnableDynamicReordering:             true,
 				EnableConditionalAggregateRewriting: true,
 				EnableSubqueryDecorrelation:         false,

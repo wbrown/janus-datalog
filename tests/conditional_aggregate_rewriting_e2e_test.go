@@ -136,11 +136,10 @@ func TestConditionalAggregateRewritingE2E(t *testing.T) {
 	})
 
 	// Test WITH rewriting (optimized)
-	// TODO: Fix QueryExecutor bug - conditional aggregate rewriting produces ?__cond_?pd
-	// instead of ?max-value. For now, use legacy executor.
+	// Uses QueryExecutor which now properly handles conditional aggregate rewriting
+	// via conditional aggregate injection in ExecuteRealized
 	t.Run("With rewriting", func(t *testing.T) {
 		opts := planner.PlannerOptions{
-			UseLegacyExecutor:                   true,
 			EnableDynamicReordering:             true,
 			EnableConditionalAggregateRewriting: true,
 		}

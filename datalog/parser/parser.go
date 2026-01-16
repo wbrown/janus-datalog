@@ -42,13 +42,26 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 		switch keyword {
 		case ":find":
 			// Parse find elements (variables or aggregates)
+			// Also check for scalar find spec: ":find (max ?v) ." where . indicates scalar return
 			for i < len(node.Nodes) && node.Nodes[i].Type != edn.NodeKeyword {
+				// Check for scalar find spec marker "."
+				if node.Nodes[i].Type == edn.NodeSymbol && node.Nodes[i].Value == "." {
+					q.ScalarReturn = true
+					i++
+					continue
+				}
+
 				elem, err := parseFindElement(&node.Nodes[i])
 				if err != nil {
 					return nil, fmt.Errorf("error parsing find element: %w", err)
 				}
 				q.Find = append(q.Find, elem)
 				i++
+			}
+
+			// Validate: scalar find spec requires exactly one find element
+			if q.ScalarReturn && len(q.Find) != 1 {
+				return nil, fmt.Errorf("scalar find spec (.) requires exactly one find element, got %d", len(q.Find))
 			}
 
 		case ":in":
@@ -416,23 +429,38 @@ func parseSubqueryPattern(list *edn.Node, bindingNode *edn.Node) (*query.Subquer
 }
 
 // parseBindingForm parses a binding form for subqueries
+// Datomic binding forms:
+//   - ?var         = Scalar binding (expects single row, single column)
+//   - [?var ...]   = Collection binding (collects all values from single column)
+//   - [[?a ?b]]    = Tuple binding (expects single row, multiple columns)
+//   - [[?a ?b] ...] = Relation binding (multiple rows and columns)
 func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
-		// Collection binding: ?coll
+		// Scalar binding: ?var (expects one row, one column)
 		sym := query.Symbol(node.Value)
 		if !sym.IsVariable() {
-			return nil, fmt.Errorf("collection binding must be a variable, got %s", sym)
+			return nil, fmt.Errorf("scalar binding must be a variable, got %s", sym)
 		}
-		return query.CollectionBinding{Variable: sym}, nil
+		return query.ScalarBinding{Variable: sym}, nil
 
 	case edn.NodeVector:
-		// Could be [[?a ?b]] tuple binding or [[?a ?b] ...] relation binding
 		if len(node.Nodes) == 0 {
 			return nil, fmt.Errorf("binding form cannot be empty vector")
 		}
 
-		// Check if it's a nested vector (tuple binding)
+		// Check if it's a collection binding [?var ...]
+		if len(node.Nodes) == 2 &&
+			node.Nodes[0].Type == edn.NodeSymbol &&
+			node.Nodes[1].Type == edn.NodeSymbol && node.Nodes[1].Value == "..." {
+			sym := query.Symbol(node.Nodes[0].Value)
+			if !sym.IsVariable() {
+				return nil, fmt.Errorf("collection binding must be a variable, got %s", sym)
+			}
+			return query.CollectionBinding{Variable: sym}, nil
+		}
+
+		// Check if it's a nested vector (tuple or relation binding)
 		if node.Nodes[0].Type == edn.NodeVector {
 			if len(node.Nodes) == 1 {
 				// [[?a ?b]] - tuple binding
@@ -443,7 +471,7 @@ func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 			}
 		}
 
-		return nil, fmt.Errorf("invalid binding form: expected [[?vars]], [[?vars] ...], or ?coll")
+		return nil, fmt.Errorf("invalid binding form: expected ?var, [?var ...], [[?vars]], or [[?vars] ...]")
 
 	default:
 		return nil, fmt.Errorf("binding form must be a symbol or vector, got %v", node.Type)
