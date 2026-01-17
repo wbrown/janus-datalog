@@ -1105,36 +1105,42 @@ func (e *DefaultQueryExecutor) executeOrClauseFallback(ctx Context, clause *quer
 	// Find which symbols the OR branches need from outer context
 	neededSymbols := collectOrBranchRequiredSymbols(clause)
 
-	// If no outer bindings needed, do global fallback
-	if len(neededSymbols) == 0 || len(groups) == 0 {
-		return e.executeOrClauseFallbackGlobal(ctx, clause)
-	}
-
-	// Find the group that provides ANY of the needed symbols and materialize it
-	// We need to materialize because: (1) we iterate per-tuple for short-circuit evaluation,
-	// and (2) the outer query needs this relation for the final collapse
-	// Note: We use containsAny because neededSymbols may include OUTPUT symbols from
-	// the OR branches (like ?count in [(ground 0) ?count]). We correlate on whatever
-	// symbols ARE available from outer context.
-	var outerBindingIdx int = -1
-	for i, rel := range groups {
-		if containsAny(rel.Columns(), neededSymbols) {
-			outerBindingIdx = i
-			break
+	// Always have an outer context - use unit relation if none available.
+	// This eliminates the "global fallback" path and unifies execution:
+	// per-row fallback on unit relation (one empty tuple) = try branches until one works.
+	var outerRel Relation
+	if len(groups) == 0 {
+		// No input groups - use unit relation as base case
+		outerRel = NewUnitRelation(e.options)
+	} else if len(neededSymbols) == 0 {
+		// No symbols needed from outer context - use unit relation
+		outerRel = NewUnitRelation(e.options)
+	} else {
+		// Find the group that provides ANY of the needed symbols
+		// Note: We use containsAny because neededSymbols may include OUTPUT symbols from
+		// the OR branches (like ?count in [(ground 0) ?count]). We correlate on whatever
+		// symbols ARE available from outer context.
+		var outerBindingIdx int = -1
+		for i, rel := range groups {
+			if containsAny(rel.Columns(), neededSymbols) {
+				outerBindingIdx = i
+				break
+			}
+		}
+		if outerBindingIdx < 0 {
+			// No group has needed symbols - use unit relation
+			outerRel = NewUnitRelation(e.options)
+		} else {
+			// Materialize the outer binding so it can be iterated multiple times:
+			// 1. By the OrFallbackRelation internally (per-tuple evaluation)
+			// 2. In the collapse operation after this function returns
+			groups[outerBindingIdx] = groups[outerBindingIdx].Materialize()
+			outerRel = groups[outerBindingIdx]
 		}
 	}
-	if outerBindingIdx < 0 {
-		// No group has any of the needed symbols - try global fallback
-		return e.executeOrClauseFallbackGlobal(ctx, clause)
-	}
 
-	// Materialize the outer binding so it can be iterated multiple times:
-	// 1. By the OrFallbackRelation internally (per-tuple evaluation)
-	// 2. In the collapse operation after this function returns
-	// The OrFallbackRelation output is still streaming - we only materialize the input.
-	groups[outerBindingIdx] = groups[outerBindingIdx].Materialize()
-	outerBindingRel := groups[outerBindingIdx]
-	return NewOrFallbackRelation(e, ctx, clause, outerBindingRel, e.options), nil
+	// Always use OrFallbackRelation for per-row evaluation
+	return NewOrFallbackRelation(e, ctx, clause, outerRel, e.options), nil
 }
 
 // findCommonColumns returns columns that exist in all relations
@@ -1260,28 +1266,6 @@ func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
 	outerIter.Close()
 
 	return NewMaterializedRelationWithOptions(combinedCols, resultTuples, opts)
-}
-
-// executeOrClauseFallbackGlobal does global fallback when no outer bindings needed
-func (e *DefaultQueryExecutor) executeOrClauseFallbackGlobal(ctx Context, clause *query.OrClause) (Relation, error) {
-	for i, branch := range clause.Branches {
-		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
-		if err != nil {
-			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
-		}
-
-		if branchResult != nil {
-			// Peek to check if branch has results (works with streaming)
-			it := branchResult.Iterator()
-			if it.Next() {
-				// Branch has results - return it wrapped with the peeked tuple
-				return NewPrependedRelation(branchResult.Columns(), it.Tuple(), it, e.options), nil
-			}
-			it.Close()
-		}
-	}
-
-	return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 }
 
 // executeOrClauseUnion implements standard Datalog union semantics

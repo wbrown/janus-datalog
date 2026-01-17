@@ -370,17 +370,22 @@ func (it *OrFallbackIterator) Next() bool {
 			})
 		}
 
-		// Build single-tuple relation for this input
-		singleTupleRel := NewMaterializedRelationWithOptions(
-			it.outerCols,
-			[]Tuple{outerTuple},
-			it.options,
-		)
+		// Build single-tuple relation for this input.
+		// Special case: if outer has no columns (unit relation), pass nil to avoid
+		// creating a ProductRelation that would try to re-iterate streaming results.
+		var inputRel Relation
+		if len(it.outerCols) > 0 {
+			inputRel = NewMaterializedRelationWithOptions(
+				it.outerCols,
+				[]Tuple{outerTuple},
+				it.options,
+			)
+		}
 
 		// Try each branch until one returns results
 		for branchIdx, branch := range it.clause.Branches {
 			_ = branchIdx // used in annotation
-			branchResult, err := it.executor.executeInnerClauses(it.ctx, branch, singleTupleRel)
+			branchResult, err := it.executor.executeInnerClauses(it.ctx, branch, inputRel)
 			if err != nil {
 				it.err = err
 				it.done = true

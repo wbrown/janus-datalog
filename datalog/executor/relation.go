@@ -295,6 +295,17 @@ func NewMaterializedRelationNoDedupeWithOptions(columns []query.Symbol, tuples [
 	}
 }
 
+// NewUnitRelation returns a relation with one empty tuple (identity for joins).
+// Used when OR fallback needs a base case with no outer context.
+// The unit relation has no columns and one tuple with no values.
+func NewUnitRelation(opts ExecutorOptions) *MaterializedRelation {
+	return &MaterializedRelation{
+		columns: []query.Symbol{},
+		tuples:  []Tuple{{}}, // One empty tuple
+		options: opts,
+	}
+}
+
 // deduplicateTuples removes duplicate tuples
 func deduplicateTuples(tuples []Tuple) []Tuple {
 	if len(tuples) == 0 {
