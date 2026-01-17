@@ -690,11 +690,15 @@ func realizePhase(phase Phase, isLastPhase bool, prevKeep []query.Symbol) Realiz
 	// CRITICAL: Preserve EXACT execution order from current executor!
 	// This ensures identical results for validation.
 	//
-	// Current executor executes in this order:
-	//   1. Patterns (pattern matching)
-	//   2. Expressions (function evaluation)
-	//   3. Predicates (filtering)
-	//   4. Subqueries (nested query execution)
+	// Current executor (applyExpressionsAndPredicates) executes in this order:
+	//   1. Patterns (pattern matching) - in executePhaseSequential
+	//   2. OR clauses (data sources, may provide symbols for expressions)
+	//   3. OR-JOIN clauses (data sources)
+	//   4. Expressions (function evaluation, may need symbols from OR clauses)
+	//   5. Predicates (filtering)
+	//   6. Subqueries (nested query execution)
+	//   7. NOT clauses (anti-join filtering)
+	//   8. NOT-JOIN clauses
 
 	// 1. Add patterns (in order)
 	for _, pp := range phase.Patterns {
@@ -705,52 +709,53 @@ func realizePhase(phase Phase, isLastPhase bool, prevKeep []query.Symbol) Realiz
 		}
 	}
 
-	// 2. Add expressions (in order)
+	// 2. Add OR clauses (data sources that provide symbols)
+	// MUST come before expressions that may depend on their outputs
+	for _, oc := range phase.OrClauses {
+		where = append(where, oc)
+	}
+
+	// 3. Add OR-JOIN clauses (data sources)
+	for _, ojc := range phase.OrJoinClauses {
+		where = append(where, ojc)
+	}
+
+	// 4. Add expressions (in order)
 	for _, ep := range phase.Expressions {
 		where = append(where, ep.Expression)
 	}
 
-	// 3. Add predicates (in order)
+	// 5. Add predicates (in order)
 	for _, pred := range phase.Predicates {
 		where = append(where, pred.Predicate)
 	}
 
-	// 3a. Reconstruct predicates from storage constraints (for pushed predicates)
+	// 5a. Reconstruct predicates from storage constraints (for pushed predicates)
 	// These predicates were removed from phase.Predicates after being pushed to storage,
 	// but need to appear in the realized query for semantic completeness.
 	reconstructedPredicates := reconstructPredicatesFromConstraints(phase)
 	where = append(where, reconstructedPredicates...)
 
-	// 3b. Add join predicates (optimization hints that are also predicates)
+	// 5b. Add join predicates (optimization hints that are also predicates)
 	for _, jp := range phase.JoinPredicates {
 		where = append(where, jp.Predicate)
 	}
 
-	// 4. Add subqueries (in order)
+	// 6. Add subqueries (in order)
 	// Note: We include all subqueries, even those marked as Decorrelated.
 	// The Metadata will contain decorrelation hints for optimization.
 	for _, sq := range phase.Subqueries {
 		where = append(where, sq.Subquery)
 	}
 
-	// 5. Add NOT clauses (anti-join filtering)
+	// 7. Add NOT clauses (anti-join filtering)
 	for _, nc := range phase.NotClauses {
 		where = append(where, nc)
 	}
 
-	// 6. Add NOT-JOIN clauses
+	// 8. Add NOT-JOIN clauses
 	for _, njc := range phase.NotJoinClauses {
 		where = append(where, njc)
-	}
-
-	// 7. Add OR clauses (union)
-	for _, oc := range phase.OrClauses {
-		where = append(where, oc)
-	}
-
-	// 8. Add OR-JOIN clauses
-	for _, ojc := range phase.OrJoinClauses {
-		where = append(where, ojc)
 	}
 
 	// Build :find clause
