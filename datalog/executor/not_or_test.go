@@ -365,8 +365,8 @@ func TestOrJoinClause(t *testing.T) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
 		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
 		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: alice, A: userStatusAttr, V: "active", Tx: 1},    // Alice is active user
-		{E: bob, A: adminStatusAttr, V: "enabled", Tx: 1},    // Bob is enabled admin
+		{E: alice, A: userStatusAttr, V: "active", Tx: 1},     // Alice is active user
+		{E: bob, A: adminStatusAttr, V: "enabled", Tx: 1},     // Bob is enabled admin
 		{E: charlie, A: userStatusAttr, V: "inactive", Tx: 1}, // Charlie is inactive
 	}
 

@@ -150,14 +150,14 @@ func (m *HistoryMatcher) buildScanRange(index IndexType, e, a, v, tx interface{}
 
 // historyIterator iterates over history index results
 type historyIterator struct {
-	matcher             *HistoryMatcher
-	index               IndexType
-	histIter            *HistoryKeyOnlyIterator
-	pattern             *query.DataPattern
-	columns             []query.Symbol
-	e, a, v, tx, op     interface{}
-	current             executor.Tuple
-	done                bool
+	matcher         *HistoryMatcher
+	index           IndexType
+	histIter        *HistoryKeyOnlyIterator
+	pattern         *query.DataPattern
+	columns         []query.Symbol
+	e, a, v, tx, op interface{}
+	current         executor.Tuple
+	done            bool
 }
 
 func (i *historyIterator) Next() bool {

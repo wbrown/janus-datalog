@@ -13,14 +13,14 @@ import (
 
 // BadgerMatcher implements the executor.PatternMatcher interface using BadgerStore
 type BadgerMatcher struct {
-	store            *BadgerStore
-	txID             uint64                   // For as-of queries (0 means latest)
-	timeRanges       []executor.TimeRange     // For time range optimization
-	builderCache     *sync.Map                // map[string]*query.InternedTupleBuilder - Thread-safe cache for tuple builders
-	builderCacheOnce sync.Once                // Ensures builderCache is initialized exactly once
-	handler          annotations.Handler      // Set from HandlerProvider for detailed storage events
-	options          executor.ExecutorOptions // Options for creating relations
-	forceJoinStrategy *JoinStrategy           // Override join strategy selection for testing
+	store             *BadgerStore
+	txID              uint64                   // For as-of queries (0 means latest)
+	timeRanges        []executor.TimeRange     // For time range optimization
+	builderCache      *sync.Map                // map[string]*query.InternedTupleBuilder - Thread-safe cache for tuple builders
+	builderCacheOnce  sync.Once                // Ensures builderCache is initialized exactly once
+	handler           annotations.Handler      // Set from HandlerProvider for detailed storage events
+	options           executor.ExecutorOptions // Options for creating relations
+	forceJoinStrategy *JoinStrategy            // Override join strategy selection for testing
 }
 
 // NewBadgerMatcher creates a new pattern matcher for the BadgerStore

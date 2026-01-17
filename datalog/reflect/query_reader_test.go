@@ -37,12 +37,12 @@ type WithPointers struct {
 }
 
 type AllTypes struct {
-	Str     string            `datalog:"?str"`
-	Int     int64             `datalog:"?int"`
-	Float   float64           `datalog:"?float"`
-	Bool    bool              `datalog:"?bool"`
-	Time    time.Time         `datalog:"?time"`
-	ID      datalog.Identity  `datalog:"?id"`
+	Str     string           `datalog:"?str"`
+	Int     int64            `datalog:"?int"`
+	Float   float64          `datalog:"?float"`
+	Bool    bool             `datalog:"?bool"`
+	Time    time.Time        `datalog:"?time"`
+	ID      datalog.Identity `datalog:"?id"`
 	Keyword datalog.Keyword  `datalog:"?kw"`
 }
 
@@ -62,7 +62,7 @@ type WithUint64 struct {
 }
 
 type WithIdentityPointer struct {
-	Name string          `datalog:"?name"`
+	Name string           `datalog:"?name"`
 	Ref  datalog.Identity `datalog:"?ref"` // Identity is already a pointer type
 }
 

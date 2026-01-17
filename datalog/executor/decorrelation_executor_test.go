@@ -134,7 +134,7 @@ func TestExtractCorrelationSignature(t *testing.T) {
 			                   :where [?b :price/symbol ?sym]
 			                          [?b :price/high ?h]]
 			                  $ ?s ?hour) [[?high]]]`,
-			expectedInputCount: 2, // ?sym, ?hr
+			expectedInputCount: 2,     // ?sym, ?hr
 			expectedIsGrouped:  false, // Only aggregate in :find, no grouping vars
 		},
 		{
@@ -143,7 +143,7 @@ func TestExtractCorrelationSignature(t *testing.T) {
 			                   :in $ ?name
 			                   :where [?x :person/name ?name]]
 			                  $ ?n) [[?count]]]`,
-			expectedInputCount: 1, // ?name
+			expectedInputCount: 1,     // ?name
 			expectedIsGrouped:  false, // Pure aggregation
 		},
 	}

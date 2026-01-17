@@ -116,8 +116,8 @@ func TestAEVTMatcherBug(t *testing.T) {
 
 		// Check iterator-reuse-complete, multi-match, and hash-join-complete events
 		if event.Name == "pattern/iterator-reuse-complete" ||
-		   event.Name == "pattern/multi-match" ||
-		   event.Name == "pattern/hash-join-complete" {
+			event.Name == "pattern/multi-match" ||
+			event.Name == "pattern/hash-join-complete" {
 			if scanned, ok := event.Data["datoms.scanned"].(int); ok {
 				datomsScanned = scanned
 			}

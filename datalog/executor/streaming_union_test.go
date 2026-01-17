@@ -199,7 +199,7 @@ func TestUnionBuilder_WithColumns_NeedProjection(t *testing.T) {
 	)
 
 	rel2 := NewMaterializedRelation(
-		[]query.Symbol{"?y", "?x"},  // Different order
+		[]query.Symbol{"?y", "?x"}, // Different order
 		[]Tuple{{4, 3}},
 	)
 
@@ -265,7 +265,7 @@ func TestUnionBuilder_WithColumns_SingleRelation(t *testing.T) {
 	builder := NewStreamingUnionBuilder(opts)
 
 	rel := NewMaterializedRelation(
-		[]query.Symbol{"?y", "?x"},  // Different order
+		[]query.Symbol{"?y", "?x"}, // Different order
 		[]Tuple{{2, 1}},
 	)
 

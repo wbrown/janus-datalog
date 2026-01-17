@@ -35,8 +35,8 @@ func (r *PrependedRelation) Iterator() Iterator {
 	}
 	r.iterStarted = true
 	return &PrependedIterator{
-		firstTuple:   r.firstTuple,
-		restIter:     r.restIter,
+		firstTuple:    r.firstTuple,
+		restIter:      r.restIter,
 		returnedFirst: false,
 	}
 }

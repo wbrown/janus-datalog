@@ -83,7 +83,7 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 	// This assertion will FAIL until matcher_relations.go:241 is fixed
 	require.Equal(t, 1000, count,
 		"Expected 2000 results but got %d. "+
-		"Bug: matcher_relations.go:241 doesn't copy tuples, "+
-		"causing all bindingTuples to point to same reused buffer. "+
-		"Scan finds datoms but relation shows 0 tuples.", count)
+			"Bug: matcher_relations.go:241 doesn't copy tuples, "+
+			"causing all bindingTuples to point to same reused buffer. "+
+			"Scan finds datoms but relation shows 0 tuples.", count)
 }

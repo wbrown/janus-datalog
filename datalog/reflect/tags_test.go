@@ -15,18 +15,18 @@ type SimpleStruct struct {
 }
 
 type StructWithDefaults struct {
-	ID          datalog.Identity `datalog:"-,id"`
-	FirstName   string           // Uses field name converted to kebab-case
-	LastName    string           // Uses field name converted to kebab-case
-	EmailAddr   string           `datalog:"email"` // Explicit name
-	unexported  string           // Should be ignored
-	SkipMe      string           `datalog:"-"` // Explicit skip
+	ID         datalog.Identity `datalog:"-,id"`
+	FirstName  string           // Uses field name converted to kebab-case
+	LastName   string           // Uses field name converted to kebab-case
+	EmailAddr  string           `datalog:"email"` // Explicit name
+	unexported string           // Should be ignored
+	SkipMe     string           `datalog:"-"` // Explicit skip
 }
 
 type StructWithFullAttr struct {
-	ID     datalog.Identity `datalog:"-,id"`
-	Name   string           `datalog:"custom/name"`   // Full attribute name
-	Other  string           `datalog:":other/value"`  // Full attribute with colon
+	ID    datalog.Identity `datalog:"-,id"`
+	Name  string           `datalog:"custom/name"`  // Full attribute name
+	Other string           `datalog:":other/value"` // Full attribute with colon
 }
 
 func TestParseStructInfo_Simple(t *testing.T) {

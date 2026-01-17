@@ -667,17 +667,17 @@ func compareJoinKeys(a, b interface{}) int {
 
 // hashJoinIterator performs lazy hash join iteration
 type hashJoinIterator struct {
-	matcher      *BadgerMatcher
-	pattern      *query.DataPattern
-	bindingRel   executor.Relation
-	columns      []query.Symbol
-	position     int
-	index        IndexType
-	constraints  []executor.StorageConstraint
-	hashSet      map[string]executor.Tuple // Built upfront
-	iter         Iterator                  // Storage iterator
-	tupleBuilder *query.InternedTupleBuilder
-	current      executor.Tuple
+	matcher       *BadgerMatcher
+	pattern       *query.DataPattern
+	bindingRel    executor.Relation
+	columns       []query.Symbol
+	position      int
+	index         IndexType
+	constraints   []executor.StorageConstraint
+	hashSet       map[string]executor.Tuple // Built upfront
+	iter          Iterator                  // Storage iterator
+	tupleBuilder  *query.InternedTupleBuilder
+	current       executor.Tuple
 	datomsScanned int // Track number of datoms scanned for event reporting
 	matchesFound  int // Track number of matches for event reporting
 }
@@ -756,18 +756,18 @@ func (it *hashJoinIterator) Close() error {
 
 // mergeJoinIterator performs lazy merge join iteration
 type mergeJoinIterator struct {
-	matcher       *BadgerMatcher
-	pattern       *query.DataPattern
-	bindingRel    executor.Relation
-	columns       []query.Symbol
-	position      int
-	index         IndexType
-	constraints   []executor.StorageConstraint
-	sortedTuples  []executor.Tuple // Sorted binding tuples
-	bindingIdx    int              // Current position in sorted tuples
-	iter          Iterator         // Storage iterator
-	tupleBuilder  *query.InternedTupleBuilder
-	current       executor.Tuple
+	matcher      *BadgerMatcher
+	pattern      *query.DataPattern
+	bindingRel   executor.Relation
+	columns      []query.Symbol
+	position     int
+	index        IndexType
+	constraints  []executor.StorageConstraint
+	sortedTuples []executor.Tuple // Sorted binding tuples
+	bindingIdx   int              // Current position in sorted tuples
+	iter         Iterator         // Storage iterator
+	tupleBuilder *query.InternedTupleBuilder
+	current      executor.Tuple
 }
 
 func (it *mergeJoinIterator) Next() bool {

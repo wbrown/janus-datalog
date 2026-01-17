@@ -9,8 +9,8 @@ import (
 
 func TestExtractOrClauseSymbols(t *testing.T) {
 	tests := []struct {
-		name            string
-		orClause        *query.OrClause
+		name             string
+		orClause         *query.OrClause
 		expectedProvides []query.Symbol
 	}{
 		{
@@ -367,8 +367,8 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 
 func TestExtractExpressionSymbols(t *testing.T) {
 	tests := []struct {
-		name            string
-		expression      *query.Expression
+		name             string
+		expression       *query.Expression
 		expectedProvides []query.Symbol
 		expectedRequires []query.Symbol
 	}{

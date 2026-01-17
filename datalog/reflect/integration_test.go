@@ -19,9 +19,9 @@ type Person struct {
 }
 
 type PersonWithFriends struct {
-	ID      datalog.Identity    `datalog:"-,id"`
-	Name    string              `datalog:"name"`
-	Age     int64               `datalog:"age"`
+	ID      datalog.Identity     `datalog:"-,id"`
+	Name    string               `datalog:"name"`
+	Age     int64                `datalog:"age"`
 	Friends []*PersonWithFriends `datalog:"friends"`
 }
 
@@ -526,7 +526,6 @@ func TestSaveStructCardinalityMany(t *testing.T) {
 		t.Errorf("old tags should have been removed, got: %v", tags)
 	}
 }
-
 
 // TestNilVsEmptySliceSemantics verifies that nil slices are skipped (leave existing)
 // while empty slices clear existing values.

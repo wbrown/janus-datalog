@@ -33,7 +33,7 @@ func TestPlanCache(t *testing.T) {
 		Query: q,
 		Phases: []RealizedPhase{
 			{
-				Query: q,
+				Query:    q,
 				Provides: []query.Symbol{"?e"},
 			},
 		},

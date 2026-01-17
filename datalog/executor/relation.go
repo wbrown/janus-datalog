@@ -157,13 +157,13 @@ func (i *CountingIterator) IsDone() bool {
 // This implements lazy-seq semantics for concurrent access to streaming relations
 type CachingIterator struct {
 	inner             Iterator
-	cache             *[]Tuple       // Pointer to cache in StreamingRelation
-	cacheComplete     chan struct{}  // Closed when caching finishes
-	cachingInProgress *bool          // Pointer to flag in StreamingRelation
-	cacheReady        *bool          // Pointer to ready flag in StreamingRelation
-	mu                *sync.Mutex    // Protects state transitions
+	cache             *[]Tuple      // Pointer to cache in StreamingRelation
+	cacheComplete     chan struct{} // Closed when caching finishes
+	cachingInProgress *bool         // Pointer to flag in StreamingRelation
+	cacheReady        *bool         // Pointer to ready flag in StreamingRelation
+	mu                *sync.Mutex   // Protects state transitions
 	done              bool
-	signaled          bool           // Ensure we only signal once
+	signaled          bool // Ensure we only signal once
 }
 
 // NewCachingIterator creates a caching iterator that builds a cache as it iterates
@@ -235,14 +235,14 @@ func (ci *CachingIterator) signalComplete() {
 	shouldClose := *ci.cachingInProgress
 	if shouldClose {
 		*ci.cachingInProgress = false
-		*ci.cacheReady = true  // Mark cache as ready to prevent double-iterator creation
+		*ci.cacheReady = true // Mark cache as ready to prevent double-iterator creation
 	}
 	ci.signaled = true
 	ci.mu.Unlock()
 
 	// Close channel OUTSIDE lock to avoid holding lock while unblocking waiters
 	if shouldClose {
-		close(ci.cacheComplete)  // Unblock all waiting Iterator() calls
+		close(ci.cacheComplete) // Unblock all waiting Iterator() calls
 	}
 }
 
@@ -700,8 +700,8 @@ type StreamingRelation struct {
 	mu                sync.Mutex    // Protects cache state transitions
 
 	// Lightweight size tracking: count tuples without buffering data
-	counter         *CountingIterator // For tracking tuple count during iteration
-	iteratorCalled  bool              // Track if Iterator() was already called (for single-use enforcement)
+	counter        *CountingIterator // For tracking tuple count during iteration
+	iteratorCalled bool              // Track if Iterator() was already called (for single-use enforcement)
 }
 
 func NewStreamingRelation(columns []query.Symbol, iterator Iterator) *StreamingRelation {
@@ -745,7 +745,7 @@ func (r *StreamingRelation) Iterator() Iterator {
 
 	// If caching is in progress, BLOCK until it completes
 	if r.cachingInProgress {
-		completeChan := r.cacheComplete  // Capture channel before unlocking
+		completeChan := r.cacheComplete // Capture channel before unlocking
 		r.mu.Unlock()
 
 		// BLOCK: Wait for cache to complete
@@ -1071,8 +1071,8 @@ func (r *StreamingRelation) Materialize() Relation {
 
 	// Set flag - actual caching happens on first Iterator() call
 	r.shouldCache = true
-	r.cacheComplete = make(chan struct{})  // Create completion signal
-	return r  // Return self, NOT a new MaterializedRelation
+	r.cacheComplete = make(chan struct{}) // Create completion signal
+	return r                              // Return self, NOT a new MaterializedRelation
 }
 
 // Sort returns a new relation sorted by the specified order-by clauses

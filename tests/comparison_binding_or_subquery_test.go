@@ -13,12 +13,14 @@ import (
 
 // TestComparisonBindingWithOrSubquery_E2E is an end-to-end integration test
 // that reproduces the downstream failure:
-//   column ?complete not found in relation
+//
+//	column ?complete not found in relation
 //
 // The pattern is:
-//   (or [(q [...count subquery...] $ ?scenario) [[?taskCount]]]
-//       [(ground 0) ?taskCount])
-//   [(> ?taskCount 0) ?complete]
+//
+//	(or [(q [...count subquery...] $ ?scenario) [[?taskCount]]]
+//	    [(ground 0) ?taskCount])
+//	[(> ?taskCount 0) ?complete]
 func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 	dir, err := os.MkdirTemp("", "comparison-or-subquery-*")
 	if err != nil {

@@ -137,9 +137,7 @@ func TestQueryExecutorMultipleCorrelatedSubqueries(t *testing.T) {
 	// Test with QueryExecutor (Stage B)
 	t.Run("QueryExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms)
-		opts := planner.PlannerOptions{
-
-		}
+		opts := planner.PlannerOptions{}
 		exec := NewExecutorWithOptions(matcher, opts)
 		result, err := exec.Execute(q)
 

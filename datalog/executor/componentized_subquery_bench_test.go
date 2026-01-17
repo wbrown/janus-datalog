@@ -142,8 +142,8 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 	b.Run("Legacy", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
 		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
-			UseComponentizedSubquery:  false,
-			EnableParallelSubqueries:  false,
+			UseComponentizedSubquery: false,
+			EnableParallelSubqueries: false,
 		})
 
 		b.ResetTimer()
@@ -293,7 +293,7 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 	b.Run("Legacy_Large", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
 		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
-			UseComponentizedSubquery:  false,
+			UseComponentizedSubquery: false,
 		})
 
 		b.ResetTimer()

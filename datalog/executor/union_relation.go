@@ -16,12 +16,12 @@ import (
 // IMPORTANT: Channels can only be consumed once, but Relations must be reusable (multiple Iterator() calls).
 // Solution: First Iterator() call consumes channel and caches results, subsequent calls replay from cache.
 type UnionRelation struct {
-	source       <-chan relationItem
-	columns      []query.Symbol
-	opts         ExecutorOptions
-	cached       []Tuple // Cache for reuse after first iteration
-	cacheBuilt   bool    // Has cache been built?
-	cacheMutex   sync.Mutex // Protect cache building
+	source     <-chan relationItem
+	columns    []query.Symbol
+	opts       ExecutorOptions
+	cached     []Tuple    // Cache for reuse after first iteration
+	cacheBuilt bool       // Has cache been built?
+	cacheMutex sync.Mutex // Protect cache building
 }
 
 // relationItem holds either a relation or an error from subquery execution
@@ -190,7 +190,7 @@ type UnionIterator struct {
 	seen         *TupleKeyMap // Deduplication without materialization
 	currentTuple Tuple
 	exhausted    bool
-	firstError   error // Track first error encountered
+	firstError   error    // Track first error encountered
 	cache        *[]Tuple // Pointer to cache to build
 	cacheBuilt   *bool    // Pointer to flag
 }

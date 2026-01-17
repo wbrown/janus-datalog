@@ -60,7 +60,7 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	for it.Next() {
 		tuple := it.Tuple()
 		assert.Len(t, tuple, 2)
-		assert.IsType(t, "", tuple[0])      // name
+		assert.IsType(t, "", tuple[0])       // name
 		assert.Equal(t, int64(35), tuple[1]) // max-age
 		count++
 	}
@@ -153,9 +153,7 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 	// Test with QueryExecutor (Stage B) - this is the bug
 	t.Run("QueryExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
-		opts := planner.PlannerOptions{
-
-		}
+		opts := planner.PlannerOptions{}
 		exec := NewExecutorWithOptions(matcher, opts)
 		result, err := exec.Execute(q)
 
@@ -174,6 +172,6 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 		assert.Equal(t, 103.0, tuple[2]) // last-close (max of all closes)
 		assert.Equal(t, 105.0, tuple[3]) // max-high
 		assert.Equal(t, 99.0, tuple[4])  // min-low
-		assert.False(t, it.Next()) // Should be only 1 result for AAPL
+		assert.False(t, it.Next())       // Should be only 1 result for AAPL
 	})
 }

@@ -68,11 +68,11 @@ const (
 	PullCycleDetected   = "pull/cycle.detected"
 
 	// Reflection operations
-	ReflectReadBegin     = "reflect/read.begin"
-	ReflectReadComplete  = "reflect/read.complete"
-	ReflectWriteBegin    = "reflect/write.begin"
-	ReflectWriteComplete = "reflect/write.complete"
-	ReflectUpdateBegin   = "reflect/update.begin"
+	ReflectReadBegin      = "reflect/read.begin"
+	ReflectReadComplete   = "reflect/read.complete"
+	ReflectWriteBegin     = "reflect/write.begin"
+	ReflectWriteComplete  = "reflect/write.complete"
+	ReflectUpdateBegin    = "reflect/update.begin"
 	ReflectUpdateComplete = "reflect/update.complete"
 
 	// Errors

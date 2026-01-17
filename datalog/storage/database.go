@@ -37,10 +37,10 @@ type Database struct {
 	txCounter         atomic.Uint64
 	mu                sync.RWMutex
 	activeTx          map[*Transaction]bool
-	useTimeTx         bool                   // Use time-based transaction IDs
-	planCache         *planner.PlanCache     // Shared query plan cache
-	schema            schema.SchemaProvider  // Optional schema for validation
-	annotationHandler annotations.Handler    // Optional handler for query tracing
+	useTimeTx         bool                  // Use time-based transaction IDs
+	planCache         *planner.PlanCache    // Shared query plan cache
+	schema            schema.SchemaProvider // Optional schema for validation
+	annotationHandler annotations.Handler   // Optional handler for query tracing
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -474,9 +474,9 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 // AnalyzeResult contains the query plan and execution statistics from Analyze().
 type AnalyzeResult struct {
 	Plan      *planner.RealizedPlan // The query plan
-	Result    executor.Relation    // Query result (not materialized)
-	Events    []annotations.Event  // All annotation events from execution
-	TotalTime time.Duration        // Total execution time
+	Result    executor.Relation     // Query result (not materialized)
+	Events    []annotations.Event   // All annotation events from execution
+	TotalTime time.Duration         // Total execution time
 }
 
 // String returns a formatted analysis report showing the query plan
@@ -1250,10 +1250,10 @@ func (t *Transaction) validateUniqueness() error {
 		// Create a pattern [?e :attr value _] to find entities with this value
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: query.Symbol("?e")},    // Entity variable
-				query.Constant{Value: d.A},                  // Bound attribute
-				query.Constant{Value: d.V},                  // Bound value
-				query.Blank{},                               // Transaction wildcard
+				query.Variable{Name: query.Symbol("?e")}, // Entity variable
+				query.Constant{Value: d.A},               // Bound attribute
+				query.Constant{Value: d.V},               // Bound value
+				query.Blank{},                            // Transaction wildcard
 			},
 		}
 

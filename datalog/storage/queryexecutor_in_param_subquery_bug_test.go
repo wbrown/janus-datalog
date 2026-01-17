@@ -108,7 +108,7 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 
 	// Execute with GOPHER-STREET options (EnableFineGrainedPhases = FALSE)
 	gopherStreetOpts := DefaultPlannerOptions()
-	gopherStreetOpts.EnableFineGrainedPhases = false  // THIS TRIGGERS THE BUG
+	gopherStreetOpts.EnableFineGrainedPhases = false // THIS TRIGGERS THE BUG
 	gopherStreetOpts.EnableDynamicReordering = false
 
 	// Execute (like ExecuteQueryWithInputs but with custom options)

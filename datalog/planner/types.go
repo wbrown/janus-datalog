@@ -563,18 +563,18 @@ type RealizedPhase struct {
 // RealizedPlan is the output of the planner in the realized format.
 // The executor operates on RealizedPlan instead of QueryPlan.
 type RealizedPlan struct {
-	Query  *query.Query     // Original user query
-	Phases []RealizedPhase  // Phases as Datalog query fragments
+	Query  *query.Query    // Original user query
+	Phases []RealizedPhase // Phases as Datalog query fragments
 }
 
 // Realize converts a QueryPlan (with Phase structures) into a RealizedPlan
 // (with Query fragments). This is the interchange format between planner and executor.
 //
 // The realized queries preserve EXACT execution order from the current executor:
-//   1. Patterns (pattern matching)
-//   2. Expressions (function evaluation)
-//   3. Predicates (filtering)
-//   4. Subqueries (nested query execution)
+//  1. Patterns (pattern matching)
+//  2. Expressions (function evaluation)
+//  3. Predicates (filtering)
+//  4. Subqueries (nested query execution)
 //
 // This ensures identical results for validation during migration.
 func (qp *QueryPlan) Realize() *RealizedPlan {

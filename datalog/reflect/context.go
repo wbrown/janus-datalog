@@ -28,11 +28,12 @@ type BaseReflectContext struct{}
 func (c *BaseReflectContext) ReadBegin(structName string, fieldCount, inputKeys int) {}
 func (c *BaseReflectContext) ReadComplete(structName string, err error)              {}
 
-func (c *BaseReflectContext) WriteBegin(entity, structName string, fieldCount int)                    {}
-func (c *BaseReflectContext) WriteComplete(entity, structName string, fieldsWritten int, err error)   {}
+func (c *BaseReflectContext) WriteBegin(entity, structName string, fieldCount int)                  {}
+func (c *BaseReflectContext) WriteComplete(entity, structName string, fieldsWritten int, err error) {}
 
-func (c *BaseReflectContext) UpdateBegin(entity, structName string, fieldCount int, mode string)                    {}
-func (c *BaseReflectContext) UpdateComplete(entity, structName string, fieldsProcessed int, mode string, err error) {}
+func (c *BaseReflectContext) UpdateBegin(entity, structName string, fieldCount int, mode string) {}
+func (c *BaseReflectContext) UpdateComplete(entity, structName string, fieldsProcessed int, mode string, err error) {
+}
 
 // AnnotatedReflectContext wraps operations with timing and event emission.
 type AnnotatedReflectContext struct {

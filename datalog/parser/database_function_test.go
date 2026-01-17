@@ -257,9 +257,9 @@ func TestParseGetSome(t *testing.T) {
 			},
 		},
 		{
-			name:        "get-some with only one attribute (invalid - need at least 2 for fallback)",
-			queryStr:    `[:find ?e ?val :where [?e :entity/id _] [(get-some $ ?e :user/name) ?val]]`,
-			wantErr:     false, // Actually valid - at least 1 attr is fine
+			name:     "get-some with only one attribute (invalid - need at least 2 for fallback)",
+			queryStr: `[:find ?e ?val :where [?e :entity/id _] [(get-some $ ?e :user/name) ?val]]`,
+			wantErr:  false, // Actually valid - at least 1 attr is fine
 			validate: func(t *testing.T, q *query.Query) {
 				expr := q.Where[1].(*query.Expression)
 				getSome := expr.Function.(*query.GetSomeFunction)
@@ -366,4 +366,3 @@ func TestDatabaseFunctionString(t *testing.T) {
 		t.Errorf("unexpected String() output: %s", str)
 	}
 }
-

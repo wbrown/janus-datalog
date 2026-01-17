@@ -493,10 +493,10 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		collector.Add(annotations.Event{
 			Name: "subquery/executor-path",
 			Data: map[string]interface{}{
-				"path":          "Legacy QueryExecutor",
-				"query":         subq.Query.String(),
-				"input_count":   len(subq.Inputs),
-				"groups_count":  len(groups),
+				"path":         "Legacy QueryExecutor",
+				"query":        subq.Query.String(),
+				"input_count":  len(subq.Inputs),
+				"groups_count": len(groups),
 			},
 		})
 	}

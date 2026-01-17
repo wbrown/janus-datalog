@@ -31,18 +31,18 @@ const (
 type Unique string
 
 const (
-	UniqueNone     Unique = ""                    // No uniqueness (default)
-	UniqueValue    Unique = "db.unique/value"     // Value must be globally unique
-	UniqueIdentity Unique = "db.unique/identity"  // Upsert behavior on conflict
+	UniqueNone     Unique = ""                   // No uniqueness (default)
+	UniqueValue    Unique = "db.unique/value"    // Value must be globally unique
+	UniqueIdentity Unique = "db.unique/identity" // Upsert behavior on conflict
 )
 
 // AttributeDefinition defines schema for a single attribute
 type AttributeDefinition struct {
 	Ident       datalog.Keyword // The attribute keyword (e.g., :person/name), interned
-	ValueType   ValueType        // Required for type validation
-	Cardinality Cardinality      // Required for Pull API (default: one)
-	Unique      Unique           // Optional uniqueness constraint
-	Doc         string           // Optional documentation
+	ValueType   ValueType       // Required for type validation
+	Cardinality Cardinality     // Required for Pull API (default: one)
+	Unique      Unique          // Optional uniqueness constraint
+	Doc         string          // Optional documentation
 }
 
 // Schema holds all attribute definitions

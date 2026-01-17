@@ -15,12 +15,12 @@ import (
 // lazily per outer tuple. For each outer tuple, it tries branches in order
 // until one produces results, then yields those results.
 type OrFallbackRelation struct {
-	executor     *DefaultQueryExecutor
-	ctx          Context
-	clause       *query.OrClause
-	outerRel     Relation
-	columns      []query.Symbol // Determined lazily from first result
-	options      ExecutorOptions
+	executor      *DefaultQueryExecutor
+	ctx           Context
+	clause        *query.OrClause
+	outerRel      Relation
+	columns       []query.Symbol // Determined lazily from first result
+	options       ExecutorOptions
 	iteratorCount int // Track how many iterators have been created (for debugging)
 }
 
@@ -389,9 +389,9 @@ func (it *OrFallbackIterator) Next() bool {
 							Name:  "or-fallback/branch.success",
 							Start: time.Now(),
 							Data: map[string]interface{}{
-								"branch_index":  branchIdx,
-								"branch_cols":   fmt.Sprintf("%v", branchResult.Columns()),
-								"first_tuple":   fmt.Sprintf("%v", branchIter.Tuple()),
+								"branch_index": branchIdx,
+								"branch_cols":  fmt.Sprintf("%v", branchResult.Columns()),
+								"first_tuple":  fmt.Sprintf("%v", branchIter.Tuple()),
 							},
 						})
 					}

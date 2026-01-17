@@ -119,7 +119,7 @@ func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
 	tx.Add(e1, name, "Alice")
 	tx.Add(e1, city, "NYC")
 	tx.Add(e2, name, "Bob")
-	tx.Add(e2, city, "NYC") // Same city as e1
+	tx.Add(e2, city, "NYC")   // Same city as e1
 	tx.Add(e3, name, "Alice") // Same name as e1
 	tx.Add(e3, city, "LA")
 
