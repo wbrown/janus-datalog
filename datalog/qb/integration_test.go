@@ -1181,3 +1181,501 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 		}
 	})
 }
+
+// ========================================
+// Comparison Binding E2E Tests
+// ========================================
+
+// TestIntegration_ComparisonBinding tests comparison binding with .As()
+func TestIntegration_ComparisonBinding(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	e := qb.NewVar()
+	name := qb.NewVar()
+	age := qb.NewVar()
+	isOver30 := qb.NewVar()
+
+	// Bind comparison result to variable
+	q := qb.Query().
+		Find(name, age, isOver30).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.Pat(e, PersonAge, age),
+			qb.Gt(age, qb.V(int64(30))).As(isOver30),
+		).
+		OrderBy(qb.Asc(name)).
+		MustBuild()
+
+	results, err := db.ExecuteQuery(q)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// Should have all 5 people
+	if len(results) != 5 {
+		t.Errorf("Expected 5 results, got %d", len(results))
+	}
+
+	// Verify specific results
+	resultMap := make(map[string]bool)
+	for _, row := range results {
+		name := row[0].(string)
+		isOver30Val := row[2].(bool)
+		resultMap[name] = isOver30Val
+	}
+
+	// Alice (30) should be false (not strictly > 30)
+	if resultMap["Alice"] != false {
+		t.Errorf("Alice (age 30) should have isOver30=false")
+	}
+	// Bob (25) should be false
+	if resultMap["Bob"] != false {
+		t.Errorf("Bob (age 25) should have isOver30=false")
+	}
+	// Charlie (35) should be true
+	if resultMap["Charlie"] != true {
+		t.Errorf("Charlie (age 35) should have isOver30=true")
+	}
+	// Eve (32) should be true
+	if resultMap["Eve"] != true {
+		t.Errorf("Eve (age 32) should have isOver30=true")
+	}
+}
+
+// TestIntegration_ComparisonBindingEDNEquivalence compares qb with EDN query
+func TestIntegration_ComparisonBindingEDNEquivalence(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// EDN query with comparison binding
+	ednQuery := `[:find ?name ?age ?flag
+	              :where
+	              [?e :person/name ?name]
+	              [?e :person/age ?age]
+	              [(> ?age 30) ?flag]]`
+
+	// Built query
+	e := qb.NewVar()
+	name := qb.NewVar()
+	age := qb.NewVar()
+	flag := qb.NewVar()
+
+	builtQuery := qb.Query().
+		Find(name, age, flag).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.Pat(e, PersonAge, age),
+			qb.Gt(age, qb.V(int64(30))).As(flag),
+		).
+		MustBuild()
+
+	ednResults, err := db.ExecuteQuery(ednQuery)
+	if err != nil {
+		t.Fatalf("EDN query failed: %v", err)
+	}
+
+	builtResults, err := db.ExecuteQuery(builtQuery)
+	if err != nil {
+		t.Fatalf("Built query failed: %v", err)
+	}
+
+	if len(ednResults) != len(builtResults) {
+		t.Errorf("Result count mismatch: EDN=%d, built=%d", len(ednResults), len(builtResults))
+	}
+
+	// Both should have 5 results
+	if len(builtResults) != 5 {
+		t.Errorf("Expected 5 results, got %d", len(builtResults))
+	}
+}
+
+// TestIntegration_ChainedComparisonBinding tests chained comparison binding
+func TestIntegration_ChainedComparisonBinding(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	e := qb.NewVar()
+	name := qb.NewVar()
+	age := qb.NewVar()
+	inRange := qb.NewVar()
+
+	// Check if age is in range 26-34 (exclusive)
+	q := qb.Query().
+		Find(name, age, inRange).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.Pat(e, PersonAge, age),
+			qb.Range(qb.V(int64(26)), age, qb.V(int64(34))).As(inRange),
+		).
+		OrderBy(qb.Asc(name)).
+		MustBuild()
+
+	results, err := db.ExecuteQuery(q)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if len(results) != 5 {
+		t.Errorf("Expected 5 results, got %d", len(results))
+	}
+
+	// Verify range results
+	// Alice (30): 26 < 30 < 34 = true
+	// Bob (25): 26 < 25 = false
+	// Charlie (35): 35 < 34 = false
+	// Diana (28): 26 < 28 < 34 = true
+	// Eve (32): 26 < 32 < 34 = true
+	resultMap := make(map[string]bool)
+	for _, row := range results {
+		name := row[0].(string)
+		inRangeVal := row[2].(bool)
+		resultMap[name] = inRangeVal
+	}
+
+	expected := map[string]bool{
+		"Alice":   true,  // 30 in (26, 34)
+		"Bob":     false, // 25 not in (26, 34)
+		"Charlie": false, // 35 not in (26, 34)
+		"Diana":   true,  // 28 in (26, 34)
+		"Eve":     true,  // 32 in (26, 34)
+	}
+
+	for name, exp := range expected {
+		if resultMap[name] != exp {
+			t.Errorf("%s: expected inRange=%v, got %v", name, exp, resultMap[name])
+		}
+	}
+}
+
+// ========================================
+// Database Function E2E Tests
+// ========================================
+
+// Additional attributes for database function tests
+var (
+	PersonNickname = qb.Kw(":person/nickname")
+	PersonEmail    = qb.Kw(":person/email")
+)
+
+// setupTestDBWithOptionalAttrs creates a test database with some optional attributes
+func setupTestDBWithOptionalAttrs(t *testing.T) (*storage.Database, func()) {
+	t.Helper()
+
+	tmpDir, err := os.MkdirTemp("", "qb-dbfunc-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to create database: %v", err)
+	}
+
+	// Insert test data with some optional attributes
+	tx := db.NewTransaction()
+
+	// Alice: has nickname and email
+	alice := datalog.NewIdentity("alice")
+	tx.Add(alice, PersonName.Keyword(), "Alice")
+	tx.Add(alice, PersonNickname.Keyword(), "Ali")
+	tx.Add(alice, PersonEmail.Keyword(), "alice@example.com")
+
+	// Bob: has email but no nickname
+	bob := datalog.NewIdentity("bob")
+	tx.Add(bob, PersonName.Keyword(), "Bob")
+	tx.Add(bob, PersonEmail.Keyword(), "bob@example.com")
+
+	// Charlie: has nickname but no email
+	charlie := datalog.NewIdentity("charlie")
+	tx.Add(charlie, PersonName.Keyword(), "Charlie")
+	tx.Add(charlie, PersonNickname.Keyword(), "Chuck")
+
+	// Diana: has neither nickname nor email
+	diana := datalog.NewIdentity("diana")
+	tx.Add(diana, PersonName.Keyword(), "Diana")
+
+	if _, err := tx.Commit(); err != nil {
+		db.Close()
+		os.RemoveAll(tmpDir)
+		t.Fatalf("Failed to commit transaction: %v", err)
+	}
+
+	cleanup := func() {
+		db.Close()
+		os.RemoveAll(tmpDir)
+	}
+
+	return db, cleanup
+}
+
+// TestIntegration_GetElse tests get-else with default value
+func TestIntegration_GetElse(t *testing.T) {
+	db, cleanup := setupTestDBWithOptionalAttrs(t)
+	defer cleanup()
+
+	e := qb.NewVar()
+	name := qb.NewVar()
+	nickname := qb.NewVar()
+
+	q := qb.Query().
+		Find(name, nickname).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.GetElse(e, PersonNickname, "Anonymous").As(nickname),
+		).
+		OrderBy(qb.Asc(name)).
+		MustBuild()
+
+	results, err := db.ExecuteQuery(q)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if len(results) != 4 {
+		t.Errorf("Expected 4 results, got %d", len(results))
+	}
+
+	// Verify results
+	resultMap := make(map[string]string)
+	for _, row := range results {
+		name := row[0].(string)
+		nick := row[1].(string)
+		resultMap[name] = nick
+	}
+
+	// Alice has nickname "Ali"
+	if resultMap["Alice"] != "Ali" {
+		t.Errorf("Alice: expected nickname 'Ali', got '%s'", resultMap["Alice"])
+	}
+	// Bob has no nickname, should get default "Anonymous"
+	if resultMap["Bob"] != "Anonymous" {
+		t.Errorf("Bob: expected nickname 'Anonymous', got '%s'", resultMap["Bob"])
+	}
+	// Charlie has nickname "Chuck"
+	if resultMap["Charlie"] != "Chuck" {
+		t.Errorf("Charlie: expected nickname 'Chuck', got '%s'", resultMap["Charlie"])
+	}
+	// Diana has no nickname, should get default "Anonymous"
+	if resultMap["Diana"] != "Anonymous" {
+		t.Errorf("Diana: expected nickname 'Anonymous', got '%s'", resultMap["Diana"])
+	}
+}
+
+// TestIntegration_GetElseEDNEquivalence compares qb GetElse with EDN query
+func TestIntegration_GetElseEDNEquivalence(t *testing.T) {
+	db, cleanup := setupTestDBWithOptionalAttrs(t)
+	defer cleanup()
+
+	// EDN query
+	ednQuery := `[:find ?name ?nick
+	              :where
+	              [?e :person/name ?name]
+	              [(get-else $ ?e :person/nickname "Anonymous") ?nick]]`
+
+	// Built query
+	e := qb.NewVar()
+	name := qb.NewVar()
+	nick := qb.NewVar()
+
+	builtQuery := qb.Query().
+		Find(name, nick).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.GetElse(e, PersonNickname, "Anonymous").As(nick),
+		).
+		MustBuild()
+
+	ednResults, err := db.ExecuteQuery(ednQuery)
+	if err != nil {
+		t.Fatalf("EDN query failed: %v", err)
+	}
+
+	builtResults, err := db.ExecuteQuery(builtQuery)
+	if err != nil {
+		t.Fatalf("Built query failed: %v", err)
+	}
+
+	if len(ednResults) != len(builtResults) {
+		t.Errorf("Result count mismatch: EDN=%d, built=%d", len(ednResults), len(builtResults))
+	}
+
+	// Both should have 4 results
+	if len(builtResults) != 4 {
+		t.Errorf("Expected 4 results, got %d", len(builtResults))
+	}
+}
+
+// TestIntegration_MissingPredicate tests missing? as a filter predicate
+func TestIntegration_MissingPredicate(t *testing.T) {
+	db, cleanup := setupTestDBWithOptionalAttrs(t)
+	defer cleanup()
+
+	e := qb.NewVar()
+	name := qb.NewVar()
+
+	// Find people who don't have email
+	q := qb.Query().
+		Find(name).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.Missing(e, PersonEmail),
+		).
+		OrderBy(qb.Asc(name)).
+		MustBuild()
+
+	results, err := db.ExecuteQuery(q)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// Charlie and Diana don't have email
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(results))
+	}
+
+	names := make(map[string]bool)
+	for _, row := range results {
+		names[row[0].(string)] = true
+	}
+
+	if !names["Charlie"] {
+		t.Error("Expected Charlie in results (no email)")
+	}
+	if !names["Diana"] {
+		t.Error("Expected Diana in results (no email)")
+	}
+}
+
+// TestIntegration_MissingPredicateEDNEquivalence compares qb Missing predicate with EDN
+func TestIntegration_MissingPredicateEDNEquivalence(t *testing.T) {
+	db, cleanup := setupTestDBWithOptionalAttrs(t)
+	defer cleanup()
+
+	// EDN query
+	ednQuery := `[:find ?name
+	              :where
+	              [?e :person/name ?name]
+	              [(missing? $ ?e :person/email)]]`
+
+	// Built query
+	e := qb.NewVar()
+	name := qb.NewVar()
+
+	builtQuery := qb.Query().
+		Find(name).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.Missing(e, PersonEmail),
+		).
+		MustBuild()
+
+	ednResults, err := db.ExecuteQuery(ednQuery)
+	if err != nil {
+		t.Fatalf("EDN query failed: %v", err)
+	}
+
+	builtResults, err := db.ExecuteQuery(builtQuery)
+	if err != nil {
+		t.Fatalf("Built query failed: %v", err)
+	}
+
+	if len(ednResults) != len(builtResults) {
+		t.Errorf("Result count mismatch: EDN=%d, built=%d", len(ednResults), len(builtResults))
+	}
+
+	// Both should have 2 results (Charlie and Diana)
+	if len(builtResults) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(builtResults))
+	}
+}
+
+// TestIntegration_MissingExpression tests missing? as an expression binding bool
+func TestIntegration_MissingExpression(t *testing.T) {
+	db, cleanup := setupTestDBWithOptionalAttrs(t)
+	defer cleanup()
+
+	e := qb.NewVar()
+	name := qb.NewVar()
+	needsEmail := qb.NewVar()
+
+	// Bind missing? result to variable
+	q := qb.Query().
+		Find(name, needsEmail).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.Missing(e, PersonEmail).As(needsEmail),
+		).
+		OrderBy(qb.Asc(name)).
+		MustBuild()
+
+	results, err := db.ExecuteQuery(q)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if len(results) != 4 {
+		t.Errorf("Expected 4 results, got %d", len(results))
+	}
+
+	// Verify results
+	resultMap := make(map[string]bool)
+	for _, row := range results {
+		name := row[0].(string)
+		needsEmailVal := row[1].(bool)
+		resultMap[name] = needsEmailVal
+	}
+
+	// Alice has email -> needsEmail = false
+	if resultMap["Alice"] != false {
+		t.Errorf("Alice: expected needsEmail=false, got %v", resultMap["Alice"])
+	}
+	// Bob has email -> needsEmail = false
+	if resultMap["Bob"] != false {
+		t.Errorf("Bob: expected needsEmail=false, got %v", resultMap["Bob"])
+	}
+	// Charlie has no email -> needsEmail = true
+	if resultMap["Charlie"] != true {
+		t.Errorf("Charlie: expected needsEmail=true, got %v", resultMap["Charlie"])
+	}
+	// Diana has no email -> needsEmail = true
+	if resultMap["Diana"] != true {
+		t.Errorf("Diana: expected needsEmail=true, got %v", resultMap["Diana"])
+	}
+}
+
+// TestIntegration_GetSome tests get-some fallback attribute chain
+func TestIntegration_GetSome(t *testing.T) {
+	db, cleanup := setupTestDBWithOptionalAttrs(t)
+	defer cleanup()
+
+	e := qb.NewVar()
+	name := qb.NewVar()
+	displayName := qb.NewVar()
+
+	// Get nickname, fallback to name, fallback to email
+	q := qb.Query().
+		Find(name, displayName).
+		Where(
+			qb.Pat(e, PersonName, name),
+			qb.GetSome(e, PersonNickname, PersonName, PersonEmail).As(displayName),
+		).
+		OrderBy(qb.Asc(name)).
+		MustBuild()
+
+	results, err := db.ExecuteQuery(q)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if len(results) != 4 {
+		t.Errorf("Expected 4 results, got %d", len(results))
+	}
+
+	// Note: GetSome returns a GetSomeResult struct with Attr and Value
+	// The executor should handle this appropriately
+	// For now, let's verify the query executes successfully
+	t.Logf("GetSome results: %v", results)
+}

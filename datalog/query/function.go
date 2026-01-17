@@ -322,6 +322,31 @@ func (c ComparisonFunction) String() string {
 	return c.Comparison.String()
 }
 
+// ChainedComparisonFunction wraps a ChainedComparison as a Function
+// This allows chained comparisons to be used in expression bindings
+// Example: [(< 0 ?x 100) ?in-range] binds the boolean result to ?in-range
+type ChainedComparisonFunction struct {
+	ChainedComparison *ChainedComparison
+}
+
+func (c ChainedComparisonFunction) RequiredSymbols() []Symbol {
+	return c.ChainedComparison.RequiredSymbols()
+}
+
+func (c ChainedComparisonFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) {
+	// Evaluate the chained comparison and return the boolean result as interface{}
+	result, err := c.ChainedComparison.Eval(bindings)
+	return result, err
+}
+
+func (c ChainedComparisonFunction) ReturnType() string {
+	return "boolean"
+}
+
+func (c ChainedComparisonFunction) String() string {
+	return c.ChainedComparison.String()
+}
+
 // AndFunction combines multiple boolean terms with logical AND
 // Used for synthesizing filter predicates in query rewriting
 type AndFunction struct {

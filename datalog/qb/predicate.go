@@ -54,12 +54,34 @@ func Ne(left, right interface{}) *Comparison {
 	return &Comparison{op: query.OpNE, left: left, right: right}
 }
 
-// toClause converts Comparison to a query.Clause
+// toClause converts Comparison to a query.Clause (used as a filter predicate)
 func (c *Comparison) toClause() query.Clause {
 	return &query.Comparison{
 		Op:    c.op,
 		Left:  toTerm(c.left),
 		Right: toTerm(c.right),
+	}
+}
+
+// As binds the comparison result (true/false) to a variable.
+// This allows comparisons to be used as expressions rather than predicates.
+//
+// Example:
+//
+//	hasItems := qb.NewVar()
+//	qb.Gt(count, 0).As(hasItems)  // [(> ?count 0) ?has-items]
+//
+// The result is a boolean: true if the comparison passes, false otherwise.
+func (c *Comparison) As(result *Var) *Expression {
+	return &Expression{
+		fn: &query.ComparisonFunction{
+			Comparison: &query.Comparison{
+				Op:    c.op,
+				Left:  toTerm(c.left),
+				Right: toTerm(c.right),
+			},
+		},
+		binding: result,
 	}
 }
 
@@ -100,7 +122,7 @@ func RangeInclusive(min interface{}, v *Var, max interface{}) *ChainedComparison
 	return Chained(query.OpLTE, min, v, max)
 }
 
-// toClause converts ChainedComparison to a query.Clause
+// toClause converts ChainedComparison to a query.Clause (used as a filter predicate)
 func (c *ChainedComparison) toClause() query.Clause {
 	terms := make([]query.Term, len(c.terms))
 	for i, t := range c.terms {
@@ -109,5 +131,30 @@ func (c *ChainedComparison) toClause() query.Clause {
 	return &query.ChainedComparison{
 		Op:    c.op,
 		Terms: terms,
+	}
+}
+
+// As binds the chained comparison result (true/false) to a variable.
+// This allows chained comparisons to be used as expressions rather than predicates.
+//
+// Example:
+//
+//	inRange := qb.NewVar()
+//	qb.Range(0, price, 100).As(inRange)  // [(< 0 ?price 100) ?in-range]
+//
+// The result is a boolean: true if all adjacent pairs satisfy the comparison.
+func (c *ChainedComparison) As(result *Var) *Expression {
+	terms := make([]query.Term, len(c.terms))
+	for i, t := range c.terms {
+		terms[i] = toTerm(t)
+	}
+	return &Expression{
+		fn: &query.ChainedComparisonFunction{
+			ChainedComparison: &query.ChainedComparison{
+				Op:    c.op,
+				Terms: terms,
+			},
+		},
+		binding: result,
 	}
 }

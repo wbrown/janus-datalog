@@ -157,6 +157,38 @@ qb.Range(18, age, 65)
 
 // Inclusive range: 1 <= rating <= 5
 qb.RangeInclusive(1, rating, 5)
+
+// General chained comparison with any operator
+qb.Chained(query.OpLT, a, b, c, d)  // a < b < c < d
+```
+
+### Comparison Binding
+
+Comparisons can also **bind their boolean result** to a variable using `.As()`:
+
+```go
+hasItems := qb.NewVar()
+
+q := qb.Query().
+    Find(name, count, hasItems).
+    Where(
+        qb.Pat(e, ItemName, name),
+        qb.Pat(e, ItemCount, count),
+        qb.Gt(count, 0).As(hasItems),  // binds true/false to hasItems
+    ).
+    MustBuild()
+
+// Results include the boolean:
+// [["Widget", 5, true], ["Gadget", 0, false], ...]
+```
+
+This works with all comparison types:
+
+```go
+qb.Gt(x, 0).As(isPositive)           // [(> ?x 0) ?is-positive]
+qb.Lt(x, 100).As(isSmall)            // [(< ?x 100) ?is-small]
+qb.Eq(status, "active").As(isActive) // [(= ?status "active") ?is-active]
+qb.Range(0, x, 100).As(inRange)      // [(< 0 ?x 100) ?in-range]
 ```
 
 ## Aggregations
@@ -217,6 +249,89 @@ qb.Hour(timestamp).As(h)
 qb.Minute(timestamp).As(min)
 qb.Second(timestamp).As(sec)
 ```
+
+## Database Functions
+
+Database functions access entity attributes with special semantics for missing values.
+
+### GetElse - Default Values
+
+Returns an attribute value, or a default if the attribute is missing:
+
+```go
+nickname := qb.NewVar()
+
+q := qb.Query().
+    Find(name, nickname).
+    Where(
+        qb.Pat(e, PersonName, name),
+        qb.GetElse(e, PersonNickname, "Anonymous").As(nickname),
+    ).
+    MustBuild()
+
+// Results:
+// [["Alice", "Ali"], ["Bob", "Anonymous"], ...]
+// Bob has no nickname, so gets the default
+```
+
+Equivalent EDN: `[(get-else $ ?e :person/nickname "Anonymous") ?nickname]`
+
+### Missing - Check Attribute Absence
+
+**As a predicate** (filter rows where attribute is missing):
+
+```go
+q := qb.Query().
+    Find(name).
+    Where(
+        qb.Pat(e, PersonName, name),
+        qb.Missing(e, PersonEmail),  // only people without email
+    ).
+    MustBuild()
+```
+
+Equivalent EDN: `[(missing? $ ?e :person/email)]`
+
+**As an expression** (bind boolean result):
+
+```go
+needsEmail := qb.NewVar()
+
+q := qb.Query().
+    Find(name, needsEmail).
+    Where(
+        qb.Pat(e, PersonName, name),
+        qb.Missing(e, PersonEmail).As(needsEmail),  // true if missing
+    ).
+    MustBuild()
+
+// Results:
+// [["Alice", false], ["Bob", true], ...]
+// Alice has email, Bob doesn't
+```
+
+Equivalent EDN: `[(missing? $ ?e :person/email) ?needs-email]`
+
+### GetSome - Fallback Attribute Chain
+
+Returns the first available attribute from a list (useful for display names, fallbacks):
+
+```go
+displayName := qb.NewVar()
+
+q := qb.Query().
+    Find(name, displayName).
+    Where(
+        qb.Pat(e, PersonName, name),
+        qb.GetSome(e, PersonNickname, PersonFullName, PersonEmail).As(displayName),
+    ).
+    MustBuild()
+
+// Returns first available: nickname > fullname > email
+// [["Alice", "Ali"], ["Bob", "Robert Jones"], ["Charlie", "charlie@example.com"]]
+```
+
+Equivalent EDN: `[(get-some $ ?e :person/nickname :person/fullname :person/email) ?display-name]`
 
 ## Input Parameters
 
@@ -556,3 +671,91 @@ func main() {
     }
 }
 ```
+
+## Quick Reference
+
+### Core Types
+
+| Type | Purpose | Example |
+|------|---------|---------|
+| `*Var` | Query variable | `e := qb.NewVar()` |
+| `Attr` | Keyword attribute | `PersonName := qb.Kw(":person/name")` |
+| `Val` | Constant value | `qb.V("NYC")`, `qb.V(42)` |
+
+### Pattern Building
+
+| Function | EDN Equivalent | Description |
+|----------|----------------|-------------|
+| `qb.Pat(e, a, v)` | `[?e ?a ?v]` | 3-element pattern |
+| `qb.Pat(e, a, v, tx)` | `[?e ?a ?v ?tx]` | With transaction |
+| `qb.Pat(e, a, v, tx, op)` | `[?e ?a ?v ?tx ?op]` | History pattern |
+| `qb.Blank()` | `_` | Wildcard |
+
+### Comparisons
+
+| Function | EDN Equivalent | With Binding |
+|----------|----------------|--------------|
+| `qb.Lt(a, b)` | `[(< ?a ?b)]` | `qb.Lt(a, b).As(result)` |
+| `qb.Lte(a, b)` | `[(<= ?a ?b)]` | `qb.Lte(a, b).As(result)` |
+| `qb.Gt(a, b)` | `[(> ?a ?b)]` | `qb.Gt(a, b).As(result)` |
+| `qb.Gte(a, b)` | `[(>= ?a ?b)]` | `qb.Gte(a, b).As(result)` |
+| `qb.Eq(a, b)` | `[(= ?a ?b)]` | `qb.Eq(a, b).As(result)` |
+| `qb.Ne(a, b)` | `[(!= ?a ?b)]` | `qb.Ne(a, b).As(result)` |
+| `qb.Range(lo, x, hi)` | `[(< lo ?x hi)]` | `qb.Range(lo, x, hi).As(result)` |
+
+### Aggregations
+
+| Function | EDN Equivalent |
+|----------|----------------|
+| `qb.Sum(v)` | `(sum ?v)` |
+| `qb.Count(v)` | `(count ?v)` |
+| `qb.Avg(v)` | `(avg ?v)` |
+| `qb.Min(v)` | `(min ?v)` |
+| `qb.Max(v)` | `(max ?v)` |
+
+### Expressions
+
+| Function | EDN Equivalent |
+|----------|----------------|
+| `qb.Add(a, b).As(r)` | `[(+ ?a ?b) ?r]` |
+| `qb.Sub(a, b).As(r)` | `[(- ?a ?b) ?r]` |
+| `qb.Mul(a, b).As(r)` | `[(* ?a ?b) ?r]` |
+| `qb.Div(a, b).As(r)` | `[(/ ?a ?b) ?r]` |
+| `qb.Str(a, b, c).As(r)` | `[(str ?a ?b ?c) ?r]` |
+| `qb.Ground(42).As(r)` | `[(ground 42) ?r]` |
+| `qb.Year(t).As(y)` | `[(year ?t) ?y]` |
+
+### Database Functions
+
+| Function | EDN Equivalent | Description |
+|----------|----------------|-------------|
+| `qb.GetElse(e, attr, default).As(r)` | `[(get-else $ ?e :attr default) ?r]` | Default for missing |
+| `qb.Missing(e, attr)` | `[(missing? $ ?e :attr)]` | Filter: attr missing |
+| `qb.Missing(e, attr).As(r)` | `[(missing? $ ?e :attr) ?r]` | Bind: is attr missing? |
+| `qb.GetSome(e, a1, a2, a3).As(r)` | `[(get-some $ ?e :a1 :a2 :a3) ?r]` | First available attr |
+
+### Input Parameters
+
+| Function | EDN Equivalent | Description |
+|----------|----------------|-------------|
+| `qb.DB` | `$` | Database source |
+| `qb.Scalar(v)` | `?v` | Single value |
+| `qb.Collection(v)` | `[?v ...]` | Multiple values |
+| `qb.Tuple(a, b)` | `[?a ?b]` | Single tuple |
+| `qb.Relation(a, b)` | `[[?a ?b] ...]` | Multiple tuples |
+
+### Logical Clauses
+
+| Function | EDN Equivalent |
+|----------|----------------|
+| `qb.Not(clauses...)` | `(not ...)` |
+| `qb.NotJoin(vars, clauses...)` | `(not-join [vars] ...)` |
+| `qb.Or(branch1, branch2)` | `(or ...)` |
+| `qb.OrJoin(vars, branch1, branch2)` | `(or-join [vars] ...)` |
+
+### Ordering
+
+| Function | EDN Equivalent |
+|----------|----------------|
+| `qb.Asc(v)` | `:asc` |
+| `qb.Desc(v)` | `:desc` |

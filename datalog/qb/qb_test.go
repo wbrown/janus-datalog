@@ -859,3 +859,491 @@ func TestComplexQuery(t *testing.T) {
 		t.Errorf("Expected 3 find elements, got %d", len(q.Find))
 	}
 }
+
+// ========================================
+// Comparison Binding Tests
+// ========================================
+
+// TestComparisonBindingAs tests all comparison operators with .As() binding
+func TestComparisonBindingAs(t *testing.T) {
+	a := NewVar()
+	result := NewVar()
+
+	tests := []struct {
+		name string
+		expr *Expression
+		op   query.CompareOp
+	}{
+		{"Gt.As", Gt(a, V(0)).As(result), query.OpGT},
+		{"Lt.As", Lt(a, V(100)).As(result), query.OpLT},
+		{"Gte.As", Gte(a, V(21)).As(result), query.OpGTE},
+		{"Lte.As", Lte(a, V(65)).As(result), query.OpLTE},
+		{"Eq.As", Eq(a, V("active")).As(result), query.OpEQ},
+		{"Ne.As", Ne(a, V("deleted")).As(result), query.OpNE},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clause := tt.expr.toClause()
+			expr, ok := clause.(*query.Expression)
+			if !ok {
+				t.Fatalf("Expected *query.Expression, got %T", clause)
+			}
+
+			compFn, ok := expr.Function.(*query.ComparisonFunction)
+			if !ok {
+				t.Fatalf("Expected *query.ComparisonFunction, got %T", expr.Function)
+			}
+
+			if compFn.Comparison.Op != tt.op {
+				t.Errorf("Expected op %v, got %v", tt.op, compFn.Comparison.Op)
+			}
+
+			// Check binding
+			if expr.Binding != result.Symbol() {
+				t.Errorf("Expected binding %s, got %s", result.Symbol(), expr.Binding)
+			}
+		})
+	}
+}
+
+// TestComparisonBindingTerms tests comparison binding with different term combinations
+func TestComparisonBindingTerms(t *testing.T) {
+	x := NewVar()
+	y := NewVar()
+	result := NewVar()
+
+	// Var vs Constant
+	expr1 := Gt(x, V(0)).As(result)
+	clause1 := expr1.toClause().(*query.Expression)
+	fn1 := clause1.Function.(*query.ComparisonFunction)
+	if _, ok := fn1.Comparison.Left.(query.VariableTerm); !ok {
+		t.Errorf("Expected VariableTerm for left, got %T", fn1.Comparison.Left)
+	}
+	if _, ok := fn1.Comparison.Right.(query.ConstantTerm); !ok {
+		t.Errorf("Expected ConstantTerm for right, got %T", fn1.Comparison.Right)
+	}
+
+	// Constant vs Var
+	expr2 := Gt(V(100), x).As(result)
+	clause2 := expr2.toClause().(*query.Expression)
+	fn2 := clause2.Function.(*query.ComparisonFunction)
+	if _, ok := fn2.Comparison.Left.(query.ConstantTerm); !ok {
+		t.Errorf("Expected ConstantTerm for left, got %T", fn2.Comparison.Left)
+	}
+	if _, ok := fn2.Comparison.Right.(query.VariableTerm); !ok {
+		t.Errorf("Expected VariableTerm for right, got %T", fn2.Comparison.Right)
+	}
+
+	// Var vs Var
+	expr3 := Gt(x, y).As(result)
+	clause3 := expr3.toClause().(*query.Expression)
+	fn3 := clause3.Function.(*query.ComparisonFunction)
+	if _, ok := fn3.Comparison.Left.(query.VariableTerm); !ok {
+		t.Errorf("Expected VariableTerm for left, got %T", fn3.Comparison.Left)
+	}
+	if _, ok := fn3.Comparison.Right.(query.VariableTerm); !ok {
+		t.Errorf("Expected VariableTerm for right, got %T", fn3.Comparison.Right)
+	}
+}
+
+// TestChainedComparisonBindingAs tests chained comparison with .As() binding
+func TestChainedComparisonBindingAs(t *testing.T) {
+	x := NewVar()
+	result := NewVar()
+
+	// Chained with OpLT
+	chain := Chained(query.OpLT, V(0), x, V(100)).As(result)
+	clause := chain.toClause()
+	expr, ok := clause.(*query.Expression)
+	if !ok {
+		t.Fatalf("Expected *query.Expression, got %T", clause)
+	}
+
+	chainFn, ok := expr.Function.(*query.ChainedComparisonFunction)
+	if !ok {
+		t.Fatalf("Expected *query.ChainedComparisonFunction, got %T", expr.Function)
+	}
+
+	if chainFn.ChainedComparison.Op != query.OpLT {
+		t.Errorf("Expected OpLT, got %v", chainFn.ChainedComparison.Op)
+	}
+	if len(chainFn.ChainedComparison.Terms) != 3 {
+		t.Errorf("Expected 3 terms, got %d", len(chainFn.ChainedComparison.Terms))
+	}
+	if expr.Binding != result.Symbol() {
+		t.Errorf("Expected binding %s, got %s", result.Symbol(), expr.Binding)
+	}
+}
+
+// TestRangeBindingAs tests Range convenience function with .As() binding
+func TestRangeBindingAs(t *testing.T) {
+	x := NewVar()
+	inRange := NewVar()
+
+	// Range: 0 < x < 100
+	chain := Range(V(0), x, V(100)).As(inRange)
+	clause := chain.toClause()
+	expr := clause.(*query.Expression)
+	chainFn := expr.Function.(*query.ChainedComparisonFunction)
+
+	if chainFn.ChainedComparison.Op != query.OpLT {
+		t.Errorf("Range should use OpLT, got %v", chainFn.ChainedComparison.Op)
+	}
+}
+
+// TestRangeInclusiveBindingAs tests RangeInclusive convenience function with .As() binding
+func TestRangeInclusiveBindingAs(t *testing.T) {
+	rating := NewVar()
+	valid := NewVar()
+
+	// Range: 1 <= rating <= 5
+	chain := RangeInclusive(V(1), rating, V(5)).As(valid)
+	clause := chain.toClause()
+	expr := clause.(*query.Expression)
+	chainFn := expr.Function.(*query.ChainedComparisonFunction)
+
+	if chainFn.ChainedComparison.Op != query.OpLTE {
+		t.Errorf("RangeInclusive should use OpLTE, got %v", chainFn.ChainedComparison.Op)
+	}
+}
+
+// TestComparisonDualUse tests that comparisons work both as predicate and expression
+func TestComparisonDualUse(t *testing.T) {
+	x := NewVar()
+	flag := NewVar()
+
+	// As predicate (filter)
+	pred := Gt(x, V(0))
+	predClause := pred.toClause()
+	if _, ok := predClause.(*query.Comparison); !ok {
+		t.Errorf("Without .As(), expected *query.Comparison, got %T", predClause)
+	}
+
+	// As expression (binding)
+	expr := Gt(x, V(0)).As(flag)
+	exprClause := expr.toClause()
+	if _, ok := exprClause.(*query.Expression); !ok {
+		t.Errorf("With .As(), expected *query.Expression, got %T", exprClause)
+	}
+}
+
+// TestChainedComparisonDualUse tests that chained comparisons work both as predicate and expression
+func TestChainedComparisonDualUse(t *testing.T) {
+	x := NewVar()
+	flag := NewVar()
+
+	// As predicate (filter)
+	pred := Range(V(0), x, V(100))
+	predClause := pred.toClause()
+	if _, ok := predClause.(*query.ChainedComparison); !ok {
+		t.Errorf("Without .As(), expected *query.ChainedComparison, got %T", predClause)
+	}
+
+	// As expression (binding)
+	expr := Range(V(0), x, V(100)).As(flag)
+	exprClause := expr.toClause()
+	if _, ok := exprClause.(*query.Expression); !ok {
+		t.Errorf("With .As(), expected *query.Expression, got %T", exprClause)
+	}
+}
+
+// ========================================
+// Database Function Tests
+// ========================================
+
+// TestGetElse tests GetElse function builder
+func TestGetElse(t *testing.T) {
+	entity := NewVar()
+	result := NewVar()
+	PersonNickname := Kw(":person/nickname")
+
+	// GetElse with string default
+	expr := GetElse(entity, PersonNickname, "Anonymous").As(result)
+	clause := expr.toClause()
+	queryExpr, ok := clause.(*query.Expression)
+	if !ok {
+		t.Fatalf("Expected *query.Expression, got %T", clause)
+	}
+
+	getElse, ok := queryExpr.Function.(*query.GetElseFunction)
+	if !ok {
+		t.Fatalf("Expected *query.GetElseFunction, got %T", queryExpr.Function)
+	}
+
+	// Check entity is VariableTerm
+	varTerm, ok := getElse.Entity.(query.VariableTerm)
+	if !ok {
+		t.Fatalf("Expected VariableTerm, got %T", getElse.Entity)
+	}
+	if varTerm.Symbol != entity.Symbol() {
+		t.Errorf("Expected entity symbol %s, got %s", entity.Symbol(), varTerm.Symbol)
+	}
+
+	// Check attribute
+	if getElse.Attr.String() != ":person/nickname" {
+		t.Errorf("Expected attr :person/nickname, got %s", getElse.Attr.String())
+	}
+
+	// Check default
+	if getElse.Default != "Anonymous" {
+		t.Errorf("Expected default 'Anonymous', got %v", getElse.Default)
+	}
+
+	// Check binding
+	if queryExpr.Binding != result.Symbol() {
+		t.Errorf("Expected binding %s, got %s", result.Symbol(), queryExpr.Binding)
+	}
+}
+
+// TestGetElseWithDifferentDefaults tests GetElse with various default value types
+func TestGetElseWithDifferentDefaults(t *testing.T) {
+	entity := NewVar()
+	result := NewVar()
+	attr := Kw(":test/attr")
+
+	tests := []struct {
+		name        string
+		defaultVal  interface{}
+		checkResult func(interface{}) bool
+	}{
+		{"string", "default", func(v interface{}) bool { return v == "default" }},
+		{"int", int64(0), func(v interface{}) bool { return v == int64(0) }},
+		{"float", 3.14, func(v interface{}) bool { return v == 3.14 }},
+		{"bool", false, func(v interface{}) bool { return v == false }},
+		{"nil", nil, func(v interface{}) bool { return v == nil }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr := GetElse(entity, attr, tt.defaultVal).As(result)
+			clause := expr.toClause().(*query.Expression)
+			getElse := clause.Function.(*query.GetElseFunction)
+			if !tt.checkResult(getElse.Default) {
+				t.Errorf("Default value mismatch, got %v", getElse.Default)
+			}
+		})
+	}
+}
+
+// TestMissingAsPredicate tests Missing as a filter predicate (without .As())
+func TestMissingAsPredicate(t *testing.T) {
+	entity := NewVar()
+	PersonEmail := Kw(":person/email")
+
+	missing := Missing(entity, PersonEmail)
+	clause := missing.toClause()
+
+	dbPred, ok := clause.(*query.DatabaseFunctionPredicate)
+	if !ok {
+		t.Fatalf("Expected *query.DatabaseFunctionPredicate, got %T", clause)
+	}
+
+	missingFn, ok := dbPred.Function.(*query.MissingFunction)
+	if !ok {
+		t.Fatalf("Expected *query.MissingFunction, got %T", dbPred.Function)
+	}
+
+	// Check entity
+	varTerm := missingFn.Entity.(query.VariableTerm)
+	if varTerm.Symbol != entity.Symbol() {
+		t.Errorf("Expected entity %s, got %s", entity.Symbol(), varTerm.Symbol)
+	}
+
+	// Check attribute
+	if missingFn.Attr.String() != ":person/email" {
+		t.Errorf("Expected attr :person/email, got %s", missingFn.Attr.String())
+	}
+}
+
+// TestMissingAsExpression tests Missing as an expression (with .As())
+func TestMissingAsExpression(t *testing.T) {
+	entity := NewVar()
+	needsEmail := NewVar()
+	PersonEmail := Kw(":person/email")
+
+	missing := Missing(entity, PersonEmail).As(needsEmail)
+	clause := missing.toClause()
+
+	queryExpr, ok := clause.(*query.Expression)
+	if !ok {
+		t.Fatalf("Expected *query.Expression, got %T", clause)
+	}
+
+	missingFn, ok := queryExpr.Function.(*query.MissingFunction)
+	if !ok {
+		t.Fatalf("Expected *query.MissingFunction, got %T", queryExpr.Function)
+	}
+
+	// Check binding
+	if queryExpr.Binding != needsEmail.Symbol() {
+		t.Errorf("Expected binding %s, got %s", needsEmail.Symbol(), queryExpr.Binding)
+	}
+
+	// Check attribute
+	if missingFn.Attr.String() != ":person/email" {
+		t.Errorf("Expected attr :person/email, got %s", missingFn.Attr.String())
+	}
+}
+
+// TestGetSome tests GetSome function builder
+func TestGetSome(t *testing.T) {
+	entity := NewVar()
+	displayName := NewVar()
+	PersonNickname := Kw(":person/nickname")
+	PersonFullName := Kw(":person/fullname")
+	PersonEmail := Kw(":person/email")
+
+	getSome := GetSome(entity, PersonNickname, PersonFullName, PersonEmail).As(displayName)
+	clause := getSome.toClause()
+
+	queryExpr, ok := clause.(*query.Expression)
+	if !ok {
+		t.Fatalf("Expected *query.Expression, got %T", clause)
+	}
+
+	getSomeFn, ok := queryExpr.Function.(*query.GetSomeFunction)
+	if !ok {
+		t.Fatalf("Expected *query.GetSomeFunction, got %T", queryExpr.Function)
+	}
+
+	// Check entity
+	varTerm := getSomeFn.Entity.(query.VariableTerm)
+	if varTerm.Symbol != entity.Symbol() {
+		t.Errorf("Expected entity %s, got %s", entity.Symbol(), varTerm.Symbol)
+	}
+
+	// Check attrs list
+	if len(getSomeFn.Attrs) != 3 {
+		t.Errorf("Expected 3 attrs, got %d", len(getSomeFn.Attrs))
+	}
+	if getSomeFn.Attrs[0].String() != ":person/nickname" {
+		t.Errorf("Expected first attr :person/nickname, got %s", getSomeFn.Attrs[0].String())
+	}
+	if getSomeFn.Attrs[1].String() != ":person/fullname" {
+		t.Errorf("Expected second attr :person/fullname, got %s", getSomeFn.Attrs[1].String())
+	}
+	if getSomeFn.Attrs[2].String() != ":person/email" {
+		t.Errorf("Expected third attr :person/email, got %s", getSomeFn.Attrs[2].String())
+	}
+
+	// Check binding
+	if queryExpr.Binding != displayName.Symbol() {
+		t.Errorf("Expected binding %s, got %s", displayName.Symbol(), queryExpr.Binding)
+	}
+}
+
+// TestGetSomeWithTwoAttrs tests GetSome with minimum required attributes
+func TestGetSomeWithTwoAttrs(t *testing.T) {
+	entity := NewVar()
+	result := NewVar()
+	AttrA := Kw(":attr/a")
+	AttrB := Kw(":attr/b")
+
+	getSome := GetSome(entity, AttrA, AttrB).As(result)
+	clause := getSome.toClause().(*query.Expression)
+	getSomeFn := clause.Function.(*query.GetSomeFunction)
+
+	if len(getSomeFn.Attrs) != 2 {
+		t.Errorf("Expected 2 attrs, got %d", len(getSomeFn.Attrs))
+	}
+}
+
+// TestDatabaseFunctionInQuery tests using database functions in a complete query
+func TestDatabaseFunctionInQuery(t *testing.T) {
+	e := NewVar()
+	name := NewVar()
+	nickname := NewVar()
+	PersonName := Kw(":person/name")
+	PersonNickname := Kw(":person/nickname")
+
+	q, err := Query().
+		Find(name, nickname).
+		Where(
+			Pat(e, PersonName, name),
+			GetElse(e, PersonNickname, "Anonymous").As(nickname),
+		).
+		Build()
+
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Should have 2 where clauses
+	if len(q.Where) != 2 {
+		t.Errorf("Expected 2 where clauses, got %d", len(q.Where))
+	}
+
+	// Second clause should be an expression with GetElseFunction
+	expr, ok := q.Where[1].(*query.Expression)
+	if !ok {
+		t.Fatalf("Expected *query.Expression, got %T", q.Where[1])
+	}
+	if _, ok := expr.Function.(*query.GetElseFunction); !ok {
+		t.Errorf("Expected GetElseFunction, got %T", expr.Function)
+	}
+}
+
+// TestMissingPredicateInQuery tests using Missing as a predicate in a query
+func TestMissingPredicateInQuery(t *testing.T) {
+	e := NewVar()
+	name := NewVar()
+	PersonName := Kw(":person/name")
+	PersonEmail := Kw(":person/email")
+
+	q, err := Query().
+		Find(name).
+		Where(
+			Pat(e, PersonName, name),
+			Missing(e, PersonEmail),
+		).
+		Build()
+
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Should have 2 where clauses
+	if len(q.Where) != 2 {
+		t.Errorf("Expected 2 where clauses, got %d", len(q.Where))
+	}
+
+	// Second clause should be DatabaseFunctionPredicate
+	if _, ok := q.Where[1].(*query.DatabaseFunctionPredicate); !ok {
+		t.Errorf("Expected *query.DatabaseFunctionPredicate, got %T", q.Where[1])
+	}
+}
+
+// TestComparisonBindingInQuery tests using comparison binding in a complete query
+func TestComparisonBindingInQuery(t *testing.T) {
+	e := NewVar()
+	count := NewVar()
+	hasItems := NewVar()
+	ItemCount := Kw(":item/count")
+
+	q, err := Query().
+		Find(count, hasItems).
+		Where(
+			Pat(e, ItemCount, count),
+			Gt(count, V(0)).As(hasItems),
+		).
+		Build()
+
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Should have 2 where clauses
+	if len(q.Where) != 2 {
+		t.Errorf("Expected 2 where clauses, got %d", len(q.Where))
+	}
+
+	// Second clause should be an expression with ComparisonFunction
+	expr, ok := q.Where[1].(*query.Expression)
+	if !ok {
+		t.Fatalf("Expected *query.Expression, got %T", q.Where[1])
+	}
+	if _, ok := expr.Function.(*query.ComparisonFunction); !ok {
+		t.Errorf("Expected ComparisonFunction, got %T", expr.Function)
+	}
+}
