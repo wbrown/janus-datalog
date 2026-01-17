@@ -494,8 +494,15 @@ func TestSubqueryWithEmptyOuterQuery(t *testing.T) {
 	}
 
 	// Should get 0 results since outer query produces nothing
-	if result.Size() != 0 {
-		t.Errorf("Expected 0 results, got %d", result.Size())
+	// Use iterator pattern instead of Size() for streaming relations
+	count := 0
+	it := result.Iterator()
+	for it.Next() {
+		count++
+	}
+	it.Close()
+	if count != 0 {
+		t.Errorf("Expected 0 results, got %d", count)
 	}
 }
 

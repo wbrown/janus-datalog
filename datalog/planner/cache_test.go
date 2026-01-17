@@ -10,6 +10,7 @@ import (
 
 func TestPlanCache(t *testing.T) {
 	cache := NewPlanCache(10, 1*time.Minute)
+	opts := PlannerOptions{}
 
 	// Create a sample query
 	q := &query.Query{
@@ -28,26 +29,18 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Create a sample plan
-	plan := &QueryPlan{
-		Phases: []Phase{
+	plan := &RealizedPlan{
+		Query: q,
+		Phases: []RealizedPhase{
 			{
-				Patterns: []PatternPlan{
-					{
-						Pattern: &query.DataPattern{
-							Elements: []query.PatternElement{
-								query.Variable{Name: query.Symbol("?e")},
-								query.Constant{Value: datalog.NewKeyword(":person/name")},
-								query.Constant{Value: "Alice"},
-							},
-						},
-					},
-				},
+				Query: q,
+				Provides: []query.Symbol{"?e"},
 			},
 		},
 	}
 
 	// Test miss
-	cached, ok := cache.Get(q)
+	cached, ok := cache.GetWithOptions(q, opts)
 	if ok {
 		t.Error("Expected cache miss, got hit")
 	}
@@ -56,10 +49,10 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Store the plan
-	cache.Set(q, plan)
+	cache.SetWithOptions(q, plan, opts)
 
 	// Test hit
-	cached, ok = cache.Get(q)
+	cached, ok = cache.GetWithOptions(q, opts)
 	if !ok {
 		t.Error("Expected cache hit, got miss")
 	}
@@ -89,7 +82,7 @@ func TestPlanCache(t *testing.T) {
 	}
 
 	// Getting after clear should miss
-	_, ok = cache.Get(q)
+	_, ok = cache.GetWithOptions(q, opts)
 	if ok {
 		t.Error("Expected cache miss after clear")
 	}
@@ -97,10 +90,11 @@ func TestPlanCache(t *testing.T) {
 
 func TestPlanCacheEviction(t *testing.T) {
 	cache := NewPlanCache(2, 1*time.Hour) // Small cache size
+	opts := PlannerOptions{}
 
 	// Create 3 different queries
 	queries := make([]*query.Query, 3)
-	plans := make([]*QueryPlan, 3)
+	plans := make([]*RealizedPlan, 3)
 
 	for i := 0; i < 3; i++ {
 		queries[i] = &query.Query{
@@ -118,51 +112,50 @@ func TestPlanCacheEviction(t *testing.T) {
 			},
 		}
 
-		plans[i] = &QueryPlan{
-			Phases: []Phase{
+		plans[i] = &RealizedPlan{
+			Query: queries[i],
+			Phases: []RealizedPhase{
 				{
-					Patterns: []PatternPlan{
-						{
-							Pattern: queries[i].Where[0].(*query.DataPattern),
-						},
-					},
+					Query:    queries[i],
+					Provides: []query.Symbol{"?e"},
 				},
 			},
 		}
 	}
 
 	// Add first two queries
-	cache.Set(queries[0], plans[0])
+	cache.SetWithOptions(queries[0], plans[0], opts)
 	time.Sleep(10 * time.Millisecond) // Ensure different timestamps
-	cache.Set(queries[1], plans[1])
+	cache.SetWithOptions(queries[1], plans[1], opts)
 
 	// Both should be in cache
-	if _, ok := cache.Get(queries[0]); !ok {
+	if _, ok := cache.GetWithOptions(queries[0], opts); !ok {
 		t.Error("Expected first query to be cached")
 	}
-	if _, ok := cache.Get(queries[1]); !ok {
+	if _, ok := cache.GetWithOptions(queries[1], opts); !ok {
 		t.Error("Expected second query to be cached")
 	}
 
 	// Add third query, should evict oldest (first)
-	cache.Set(queries[2], plans[2])
+	cache.SetWithOptions(queries[2], plans[2], opts)
 
 	// First should be evicted
-	if _, ok := cache.Get(queries[0]); ok {
+	if _, ok := cache.GetWithOptions(queries[0], opts); ok {
 		t.Error("Expected first query to be evicted")
 	}
 
 	// Second and third should still be cached
-	if _, ok := cache.Get(queries[1]); !ok {
+	if _, ok := cache.GetWithOptions(queries[1], opts); !ok {
 		t.Error("Expected second query to still be cached")
 	}
-	if _, ok := cache.Get(queries[2]); !ok {
+	if _, ok := cache.GetWithOptions(queries[2], opts); !ok {
 		t.Error("Expected third query to be cached")
 	}
 }
 
 func TestPlanCacheTTL(t *testing.T) {
 	cache := NewPlanCache(10, 50*time.Millisecond) // Short TTL for testing
+	opts := PlannerOptions{}
 
 	q := &query.Query{
 		Find: []query.FindElement{
@@ -179,23 +172,21 @@ func TestPlanCacheTTL(t *testing.T) {
 		},
 	}
 
-	plan := &QueryPlan{
-		Phases: []Phase{
+	plan := &RealizedPlan{
+		Query: q,
+		Phases: []RealizedPhase{
 			{
-				Patterns: []PatternPlan{
-					{
-						Pattern: q.Where[0].(*query.DataPattern),
-					},
-				},
+				Query:    q,
+				Provides: []query.Symbol{"?e"},
 			},
 		},
 	}
 
 	// Set the plan
-	cache.Set(q, plan)
+	cache.SetWithOptions(q, plan, opts)
 
 	// Should be in cache immediately
-	if _, ok := cache.Get(q); !ok {
+	if _, ok := cache.GetWithOptions(q, opts); !ok {
 		t.Error("Expected query to be cached")
 	}
 
@@ -203,15 +194,17 @@ func TestPlanCacheTTL(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 
 	// Should be expired now
-	if _, ok := cache.Get(q); ok {
+	if _, ok := cache.GetWithOptions(q, opts); ok {
 		t.Error("Expected query to be expired")
 	}
 }
 
 func TestPlannerWithCache(t *testing.T) {
-	// Create planner with cache
+	// Create planner with cache using ClauseBasedPlanner
 	cache := NewPlanCache(100, 0)
-	planner := NewPlanner(nil, PlannerOptions{Cache: cache})
+	opts := PlannerOptions{}
+	opts.Cache = cache
+	planner := NewClauseBasedPlanner(nil, opts)
 
 	// Create a query
 	q := &query.Query{
@@ -235,10 +228,7 @@ func TestPlannerWithCache(t *testing.T) {
 		t.Fatalf("Failed to plan query: %v", err)
 	}
 
-	hits, misses, size, enabled := planner.CacheStats()
-	if !enabled {
-		t.Error("Expected cache to be enabled")
-	}
+	hits, misses, size := cache.Stats()
 	if hits != 0 {
 		t.Errorf("Expected 0 hits, got %d", hits)
 	}
@@ -255,7 +245,7 @@ func TestPlannerWithCache(t *testing.T) {
 		t.Fatalf("Failed to plan query: %v", err)
 	}
 
-	hits, misses, size, _ = planner.CacheStats()
+	hits, misses, size = cache.Stats()
 	if hits != 1 {
 		t.Errorf("Expected 1 hit, got %d", hits)
 	}
@@ -267,18 +257,10 @@ func TestPlannerWithCache(t *testing.T) {
 	}
 
 	// Clear cache
-	planner.ClearCache()
+	cache.Clear()
 
-	hits, misses, size, _ = planner.CacheStats()
+	hits, misses, size = cache.Stats()
 	if hits != 0 || misses != 0 || size != 0 {
 		t.Error("Expected stats to be reset after clear")
-	}
-
-	// Disable cache
-	planner.SetCache(nil)
-
-	_, _, _, enabled = planner.CacheStats()
-	if enabled {
-		t.Error("Expected cache to be disabled")
 	}
 }

@@ -16,33 +16,24 @@ type TestExecutorVariant struct {
 	Opts planner.PlannerOptions
 }
 
-// DualTestExecutorVariants returns both executor variants for parity testing.
+// DualTestExecutorVariants returns executor variants for testing.
+// Now returns only the QueryExecutor variant since the legacy path was removed.
 // Exported for use by external test packages.
 func DualTestExecutorVariants() []TestExecutorVariant {
 	return []TestExecutorVariant{
 		{
-			Name: "legacy",
-			Opts: planner.PlannerOptions{UseLegacyExecutor: true},
-		},
-		{
 			Name: "query_executor",
-			Opts: planner.PlannerOptions{UseLegacyExecutor: false},
+			Opts: planner.PlannerOptions{},
 		},
 	}
 }
 
 // DualTestExecutorVariantsWithBase returns variants with additional base options applied.
+// Now returns only the QueryExecutor variant since the legacy path was removed.
 // Exported for use by external test packages.
 func DualTestExecutorVariantsWithBase(base planner.PlannerOptions) []TestExecutorVariant {
-	legacyOpts := base
-	legacyOpts.UseLegacyExecutor = true
-
-	newOpts := base
-	newOpts.UseLegacyExecutor = false
-
 	return []TestExecutorVariant{
-		{Name: "legacy", Opts: legacyOpts},
-		{Name: "query_executor", Opts: newOpts},
+		{Name: "query_executor", Opts: base},
 	}
 }
 

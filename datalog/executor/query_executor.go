@@ -1058,79 +1058,31 @@ func (e *DefaultQueryExecutor) executeOrClauseFallback(ctx Context, clause *quer
 		return e.executeOrClauseFallbackGlobal(ctx, clause)
 	}
 
-	// Find the group that provides the needed symbols and materialize it
+	// Find the group that provides ANY of the needed symbols and materialize it
 	// We need to materialize because: (1) we iterate per-tuple for short-circuit evaluation,
 	// and (2) the outer query needs this relation for the final collapse
+	// Note: We use containsAny because neededSymbols may include OUTPUT symbols from
+	// the OR branches (like ?count in [(ground 0) ?count]). We correlate on whatever
+	// symbols ARE available from outer context.
 	var outerBindingIdx int = -1
 	for i, rel := range groups {
-		if containsAll(rel.Columns(), neededSymbols) {
+		if containsAny(rel.Columns(), neededSymbols) {
 			outerBindingIdx = i
 			break
 		}
 	}
 	if outerBindingIdx < 0 {
-		// No group has the needed symbols - try global fallback
+		// No group has any of the needed symbols - try global fallback
 		return e.executeOrClauseFallbackGlobal(ctx, clause)
 	}
 
-	// Materialize and replace in groups so outer query can still use it
+	// Materialize the outer binding so it can be iterated multiple times:
+	// 1. By the OrFallbackRelation internally (per-tuple evaluation)
+	// 2. In the collapse operation after this function returns
+	// The OrFallbackRelation output is still streaming - we only materialize the input.
 	groups[outerBindingIdx] = groups[outerBindingIdx].Materialize()
 	outerBindingRel := groups[outerBindingIdx]
-
-	// Get the columns we'll output (needed symbols + any symbols branches provide)
-	// For now, determine output columns from first branch execution
-	var outputCols []query.Symbol
-	var resultTuples []Tuple
-
-	// Stream through outer tuples one at a time (now safe - materialized relation)
-	outerIter := outerBindingRel.Iterator()
-	defer outerIter.Close()
-
-	for outerIter.Next() {
-		outerTuple := outerIter.Tuple()
-
-		// Build single-tuple relation for this input
-		singleTupleRel := NewMaterializedRelationWithOptions(
-			outerBindingRel.Columns(),
-			[]Tuple{outerTuple},
-			e.options,
-		)
-
-		// Try each branch in order until one returns a result
-		var tupleResult Relation
-		for i, branch := range clause.Branches {
-			branchResult, err := e.executeInnerClauses(ctx, branch, singleTupleRel)
-			if err != nil {
-				return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
-			}
-
-			if branchResult != nil && branchResult.Size() > 0 {
-				tupleResult = branchResult
-				break // Short-circuit: first non-empty result wins
-			}
-		}
-
-		// Collect results from this tuple
-		if tupleResult != nil {
-			// Set output columns from first result
-			if outputCols == nil {
-				outputCols = tupleResult.Columns()
-			}
-
-			// Add all tuples from result
-			resultIter := tupleResult.Iterator()
-			for resultIter.Next() {
-				resultTuples = append(resultTuples, resultIter.Tuple())
-			}
-			resultIter.Close()
-		}
-	}
-
-	if len(resultTuples) == 0 {
-		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
-	}
-
-	return NewMaterializedRelationWithOptions(outputCols, resultTuples, e.options), nil
+	return NewOrFallbackRelation(e, ctx, clause, outerBindingRel, e.options), nil
 }
 
 // findCommonColumns returns columns that exist in all relations
@@ -1266,8 +1218,14 @@ func (e *DefaultQueryExecutor) executeOrClauseFallbackGlobal(ctx Context, clause
 			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
 		}
 
-		if branchResult != nil && branchResult.Size() > 0 {
-			return branchResult, nil
+		if branchResult != nil {
+			// Peek to check if branch has results (works with streaming)
+			it := branchResult.Iterator()
+			if it.Next() {
+				// Branch has results - return it wrapped with the peeked tuple
+				return NewPrependedRelation(branchResult.Columns(), it.Tuple(), it, e.options), nil
+			}
+			it.Close()
 		}
 	}
 

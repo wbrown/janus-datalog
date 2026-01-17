@@ -50,12 +50,21 @@ func TestEntityJoinBug(t *testing.T) {
 	matcher := storage.NewBadgerMatcher(db.Store())
 	exec := executor.NewExecutor(matcher)
 	hresult, _ := exec.Execute(hq)
-	t.Logf("High query found %d results (type=%T)", hresult.Size(), hresult)
-	for i := 0; i < hresult.Size(); i++ {
-		t.Logf("  High result %d: %v", i, hresult.Get(i)[0])
+
+	// Collect results by iterating
+	var htuples []executor.Tuple
+	hIt := hresult.Iterator()
+	for hIt.Next() {
+		htuples = append(htuples, hIt.Tuple())
 	}
-	if hresult.Size() != 5 {
-		t.Fatalf("Expected 5 results from high query, got %d", hresult.Size())
+	hIt.Close()
+
+	t.Logf("High query found %d results (type=%T)", len(htuples), hresult)
+	for i, tuple := range htuples {
+		t.Logf("  High result %d: %v", i, tuple[0])
+	}
+	if len(htuples) != 5 {
+		t.Fatalf("Expected 5 results from high query, got %d", len(htuples))
 	}
 
 	// Now test the Relation directly from the matcher (before executor)
@@ -64,13 +73,13 @@ func TestEntityJoinBug(t *testing.T) {
 	t.Logf("High pattern Match() returned type=%T, columns=%v", highRel, highRel.Columns())
 
 	// Iterate directly to see all tuples
-	hIt := highRel.Iterator()
+	hPatIt := highRel.Iterator()
 	hCount := 0
-	for hIt.Next() {
+	for hPatIt.Next() {
 		hCount++
-		t.Logf("  High pattern tuple %d: %v", hCount, hIt.Tuple())
+		t.Logf("  High pattern tuple %d: %v", hCount, hPatIt.Tuple())
 	}
-	hIt.Close()
+	hPatIt.Close()
 	t.Logf("High pattern iterator returned %d tuples", hCount)
 	if hCount != 5 {
 		t.Fatalf("Expected 5 tuples from high pattern iterator, got %d", hCount)
@@ -79,12 +88,21 @@ func TestEntityJoinBug(t *testing.T) {
 	lowQuery := `[:find ?bar :where [?bar :price/low ?l]]`
 	lq, _ := parser.ParseQuery(lowQuery)
 	lresult, _ := exec.Execute(lq)
-	t.Logf("Low query found %d results (type=%T)", lresult.Size(), lresult)
-	for i := 0; i < lresult.Size(); i++ {
-		t.Logf("  Low result %d: %v", i, lresult.Get(i)[0])
+
+	// Collect results by iterating
+	var ltuples []executor.Tuple
+	lIt := lresult.Iterator()
+	for lIt.Next() {
+		ltuples = append(ltuples, lIt.Tuple())
 	}
-	if lresult.Size() != 5 {
-		t.Fatalf("Expected 5 results from low query, got %d", lresult.Size())
+	lIt.Close()
+
+	t.Logf("Low query found %d results (type=%T)", len(ltuples), lresult)
+	for i, tuple := range ltuples {
+		t.Logf("  Low result %d: %v", i, tuple[0])
+	}
+	if len(ltuples) != 5 {
+		t.Fatalf("Expected 5 results from low query, got %d", len(ltuples))
 	}
 
 	// Now test the low pattern directly
@@ -92,18 +110,14 @@ func TestEntityJoinBug(t *testing.T) {
 	lowRel, _ := matcher.Match(lowPattern, nil)
 	t.Logf("Low pattern Match() returned type=%T, columns=%v", lowRel, lowRel.Columns())
 
-	// Check Size() before iterating - this triggers materialization
-	lowSize := lowRel.Size()
-	t.Logf("Low pattern Size()=%d (type after Size(): %T)", lowSize, lowRel)
-
 	// Iterate directly to see all tuples
-	lIt := lowRel.Iterator()
+	lPatIt := lowRel.Iterator()
 	lCount := 0
-	for lIt.Next() {
+	for lPatIt.Next() {
 		lCount++
-		t.Logf("  Low pattern tuple %d: %v", lCount, lIt.Tuple())
+		t.Logf("  Low pattern tuple %d: %v", lCount, lPatIt.Tuple())
 	}
-	lIt.Close()
+	lPatIt.Close()
 	t.Logf("Low pattern iterator returned %d tuples", lCount)
 	if lCount != 5 {
 		t.Fatalf("Expected 5 tuples from low pattern iterator, got %d", lCount)
@@ -121,12 +135,22 @@ func TestEntityJoinBug(t *testing.T) {
 	annotatedExec := executor.NewExecutor(annotatedMatcher)
 
 	jresult, _ := annotatedExec.Execute(jq)
-	t.Logf("Join query found %d results", jresult.Size())
-	if jresult.Size() != 5 {
-		t.Errorf("BUG REPRODUCED: Join query expected 5 results, got %d", jresult.Size())
+
+	// Collect results by iterating
+	var jtuples []executor.Tuple
+	jIt := jresult.Iterator()
+	for jIt.Next() {
+		jtuples = append(jtuples, jIt.Tuple())
+	}
+	jIt.Close()
+
+	t.Logf("Join query found %d results", len(jtuples))
+	if len(jtuples) != 5 {
+		t.Errorf("BUG REPRODUCED: Join query expected 5 results, got %d", len(jtuples))
 		// Print which bars we got
-		for i := 0; i < jresult.Size(); i++ {
-			t.Logf("  Got bar: %v", jresult.Get(i)[0])
+		for i, tuple := range jtuples {
+			t.Logf("  Got bar: %v", tuple[0])
+			_ = i
 		}
 	}
 }

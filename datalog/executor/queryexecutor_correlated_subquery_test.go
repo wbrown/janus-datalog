@@ -45,66 +45,33 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	// Test with QueryExecutor (Stage B)
-	t.Run("QueryExecutor", func(t *testing.T) {
-		matcher := NewIndexedMemoryMatcher(datoms)
-		opts := planner.PlannerOptions{
+	matcher := NewIndexedMemoryMatcher(datoms)
+	opts := planner.PlannerOptions{}
+	exec := NewExecutorWithOptions(matcher, opts)
+	result, err := exec.Execute(q)
 
-		}
-		exec := NewExecutorWithOptions(matcher, opts)
-		result, err := exec.Execute(q)
+	if err != nil {
+		t.Logf("Error: %v", err)
+		t.Logf("Result columns (if any): %v", result.Columns())
+	}
 
-		if err != nil {
-			t.Logf("Error: %v", err)
-			t.Logf("Result columns (if any): %v", result.Columns())
-		}
+	assert.NoError(t, err, "QueryExecutor should handle correlated subqueries")
 
-		assert.NoError(t, err, "QueryExecutor should handle correlated subqueries")
+	// Collect results
+	it := result.Iterator()
+	defer it.Close()
 
-		// Collect results
-		it := result.Iterator()
-		defer it.Close()
+	results := make(map[string]int64)
+	for it.Next() {
+		tuple := it.Tuple()
+		assert.Len(t, tuple, 2)
+		group := tuple[0].(string)
+		maxAge := tuple[1].(int64)
+		results[group] = maxAge
+	}
 
-		results := make(map[string]int64)
-		for it.Next() {
-			tuple := it.Tuple()
-			assert.Len(t, tuple, 2)
-			group := tuple[0].(string)
-			maxAge := tuple[1].(int64)
-			results[group] = maxAge
-		}
-
-		// Group A has Alice (30) and Bob (25) -> max = 30
-		// Group B has Charlie (35) -> max = 35
-		assert.Equal(t, int64(30), results["A"], "Group A max age should be 30")
-		assert.Equal(t, int64(35), results["B"], "Group B max age should be 35")
-	})
-
-	// Compare with legacy executor
-	t.Run("LegacyExecutor", func(t *testing.T) {
-		matcher := NewIndexedMemoryMatcher(datoms)
-		opts := planner.PlannerOptions{
-			UseLegacyExecutor: true,
-		}
-		exec := NewExecutorWithOptions(matcher, opts)
-		result, err := exec.Execute(q)
-
-		assert.NoError(t, err, "LegacyExecutor should handle correlated subqueries")
-
-		// Collect results
-		it := result.Iterator()
-		defer it.Close()
-
-		results := make(map[string]int64)
-		for it.Next() {
-			tuple := it.Tuple()
-			assert.Len(t, tuple, 2)
-			group := tuple[0].(string)
-			maxAge := tuple[1].(int64)
-			results[group] = maxAge
-		}
-
-		assert.Equal(t, int64(30), results["A"], "Group A max age should be 30")
-		assert.Equal(t, int64(35), results["B"], "Group B max age should be 35")
-	})
+	// Group A has Alice (30) and Bob (25) -> max = 30
+	// Group B has Charlie (35) -> max = 35
+	assert.Equal(t, int64(30), results["A"], "Group A max age should be 30")
+	assert.Equal(t, int64(35), results["B"], "Group B max age should be 35")
 }

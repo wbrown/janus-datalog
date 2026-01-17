@@ -411,9 +411,11 @@ func combineSubqueryResults(allResults []Relation, subqPlan planner.SubqueryPlan
 // executePhasesWithInputs executes query phases with additional input relations.
 // This function needs the full parent executor to inherit its optimizations.
 func executePhasesWithInputs(ctx Context, parentExec *Executor, plan *planner.QueryPlan, inputRelations []Relation) (Relation, error) {
-	// Use the parent executor directly to inherit all its optimizations
+	// Convert QueryPlan to RealizedPlan
+	realizedPlan := plan.Realize()
+	// Use the parent executor's ExecuteRealized to inherit all its optimizations
 	// (parallel execution, predicate pushdown, plan cache, etc.)
-	return parentExec.executePhasesWithInputs(ctx, plan, inputRelations)
+	return parentExec.ExecuteRealized(ctx, realizedPlan, inputRelations)
 }
 
 // getUniqueInputCombinations extracts unique combinations of input values.

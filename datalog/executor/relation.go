@@ -1078,9 +1078,17 @@ func (r *StreamingRelation) Materialize() Relation {
 // Sort returns a new relation sorted by the specified order-by clauses
 // Warning: This materializes the streaming relation
 func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
-	// First materialize, then sort
-	materialized := r.Materialize()
-	return materialized.Sort(orderBy)
+	// Collect all tuples (can't sort without materializing)
+	var tuples []Tuple
+	it := r.Iterator()
+	for it.Next() {
+		tuples = append(tuples, it.Tuple())
+	}
+	it.Close()
+
+	// Create MaterializedRelation and delegate to its Sort
+	mat := NewMaterializedRelationWithOptions(r.columns, tuples, r.options)
+	return mat.Sort(orderBy)
 }
 
 // Filter returns a new relation with only tuples that satisfy the filter

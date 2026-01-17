@@ -47,16 +47,20 @@ func TestExecutorBasicQuery(t *testing.T) {
 		t.Fatalf("execution failed: %v", err)
 	}
 
-	// Should have 2 names
-	if result.Size() != 2 {
-		t.Errorf("expected 2 results, got %d", result.Size())
-	}
-
-	// Check we got the right names
+	// Collect results by iterating (works with streaming)
 	names := make(map[string]bool)
-	for i := 0; i < result.Size(); i++ {
-		name := result.Get(i)[0].(string)
+	it := result.Iterator()
+	count := 0
+	for it.Next() {
+		name := it.Tuple()[0].(string)
 		names[name] = true
+		count++
+	}
+	it.Close()
+
+	// Should have 2 names
+	if count != 2 {
+		t.Errorf("expected 2 results, got %d", count)
 	}
 
 	if !names["Alice"] || !names["Bob"] {

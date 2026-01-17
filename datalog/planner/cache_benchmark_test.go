@@ -9,8 +9,9 @@ import (
 
 // BenchmarkPlannerWithoutCache measures planning performance without cache
 func BenchmarkPlannerWithoutCache(b *testing.B) {
-	planner := NewPlanner(nil, PlannerOptions{})
-	planner.SetCache(nil) // Disable cache
+	opts := PlannerOptions{}
+	opts.Cache = nil // Disable cache
+	planner := NewClauseBasedPlanner(nil, opts)
 
 	// Create a complex query
 	q := createComplexQuery()
@@ -26,8 +27,10 @@ func BenchmarkPlannerWithoutCache(b *testing.B) {
 
 // BenchmarkPlannerWithCache measures planning performance with cache
 func BenchmarkPlannerWithCache(b *testing.B) {
-	planner := NewPlanner(nil, PlannerOptions{})
-	// Cache is enabled by default
+	cache := NewPlanCache(1000, 0)
+	opts := PlannerOptions{}
+	opts.Cache = cache
+	planner := NewClauseBasedPlanner(nil, opts)
 
 	// Create a complex query
 	q := createComplexQuery()
@@ -41,13 +44,16 @@ func BenchmarkPlannerWithCache(b *testing.B) {
 	}
 
 	// Report cache statistics
-	hits, misses, size, _ := planner.CacheStats()
+	hits, misses, size := cache.Stats()
 	b.Logf("Cache stats: hits=%d, misses=%d, size=%d", hits, misses, size)
 }
 
 // BenchmarkPlannerCacheMissOverhead measures the overhead of a cache miss
 func BenchmarkPlannerCacheMissOverhead(b *testing.B) {
-	planner := NewPlanner(nil, PlannerOptions{})
+	cache := NewPlanCache(1000, 0)
+	opts := PlannerOptions{}
+	opts.Cache = cache
+	planner := NewClauseBasedPlanner(nil, opts)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

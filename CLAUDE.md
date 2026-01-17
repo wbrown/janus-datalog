@@ -42,6 +42,26 @@ Before making ANY of these decisions, ASK:
 **The user's job**: Set direction, make architectural choices, review designs
 **Your job**: Implement, follow patterns, propose options (not make choices)
 
+## When Tests Fail
+
+**Failing tests are information, not obstacles.**
+
+When tests fail after you make a change, the correct response is:
+1. Understand WHY the test is failing
+2. Report the failure to the user with context
+3. Ask how they want to proceed
+
+**NEVER change architecture or add code just to make tests pass.** If a test fails, it's telling you something important about the change - maybe:
+- The change has unintended consequences
+- The approach needs to be different
+- The test expectations need updating
+- The feature isn't ready
+
+All of these are decisions for the user, not you.
+
+**Wrong**: "The cache tests are failing, so I'll add a new cache type to make them pass."
+**Right**: "The cache tests are failing because ClauseBasedPlanner doesn't integrate with the cache the same way. How do you want to handle this?"
+
 ## Project Overview
 
 This repository contains a Datomic-style Datalog engine implementation in Go, inspired by memories of previous single-node and distributed implementations.

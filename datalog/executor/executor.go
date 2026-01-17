@@ -2,7 +2,6 @@ package executor
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
@@ -20,10 +19,7 @@ type Executor struct {
 
 // NewExecutor creates a new query executor with default options
 func NewExecutor(matcher PatternMatcher) *Executor {
-	// Use legacy executor by default for backward compatibility with unit tests.
-	// Production code should use storage.DefaultPlannerOptions() which uses QueryExecutor.
 	defaultOpts := planner.PlannerOptions{
-		UseLegacyExecutor:           true, // Unit test compatibility
 		EnableDynamicReordering:     true,
 		EnablePredicatePushdown:     true,
 		EnableSubqueryDecorrelation: true,
@@ -69,7 +65,6 @@ func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions)
 // convertToExecutorOptions extracts executor-specific options from PlannerOptions
 func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
-		UseLegacyExecutor:               opts.UseLegacyExecutor,
 		EnableIteratorComposition:       opts.EnableIteratorComposition,
 		EnableTrueStreaming:             opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
@@ -94,11 +89,6 @@ func (e *Executor) EnableParallelSubqueries(maxWorkers int) {
 // DisableParallelSubqueries disables parallel execution of subquery iterations
 func (e *Executor) DisableParallelSubqueries() {
 	e.enableParallelSubqueries = false
-}
-
-// SetUseLegacyExecutor enables or disables the legacy executor (for testing)
-func (e *Executor) SetUseLegacyExecutor(use bool) {
-	e.options.UseLegacyExecutor = use
 }
 
 // Execute runs a parsed query and returns the results
@@ -128,7 +118,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	executor := &Executor{
 		matcher:                  matcher,
 		planner:                  e.planner,
-		options:                  e.options, // Preserve executor options including UseLegacyExecutor flag
+		options:                  e.options,
 		enableParallelSubqueries: e.enableParallelSubqueries,
 		maxSubqueryWorkers:       e.maxSubqueryWorkers,
 	}
@@ -176,44 +166,20 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 		}
 	}
 
-	// Choose execution path based on options
-	if !executor.options.UseLegacyExecutor {
-		// New path: Use QueryExecutor (Stage B) with RealizedPlan
-		var realizedPlan *planner.RealizedPlan
-		var err error
-		if len(initialBindings) == 0 {
-			realizedPlan, err = executor.planner.PlanQuery(q)
-		} else {
-			realizedPlan, err = executor.planner.PlanQueryWithBindings(q, initialBindings)
-		}
-		if err != nil {
-			ctx.QueryComplete(0, 0, err)
-			return nil, fmt.Errorf("query planning failed: %w", err)
-		}
-		ctx.QueryPlanCreated(realizedPlan.String())
-		return executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
+	// Execute using QueryExecutor (Stage B) with RealizedPlan
+	var realizedPlan *planner.RealizedPlan
+	var err error
+	if len(initialBindings) == 0 {
+		realizedPlan, err = executor.planner.PlanQuery(q)
 	} else {
-		// Old path: Use legacy phase executor (only works with PlannerAdapter)
-		adapter, ok := executor.planner.(*planner.PlannerAdapter)
-		if !ok {
-			return nil, fmt.Errorf("legacy executor path requires old planner; set UseLegacyExecutor=false or UseClauseBasedPlanner=false")
-		}
-
-		oldPlanner := adapter.GetUnderlyingPlanner()
-		var oldPlan *planner.QueryPlan
-		var err error
-		if len(initialBindings) == 0 {
-			oldPlan, err = oldPlanner.Plan(q)
-		} else {
-			oldPlan, err = oldPlanner.PlanWithBindings(q, initialBindings)
-		}
-		if err != nil {
-			ctx.QueryComplete(0, 0, err)
-			return nil, fmt.Errorf("query planning failed: %w", err)
-		}
-		ctx.QueryPlanCreated(oldPlan.String())
-		return executor.executePhasesWithInputs(ctx, oldPlan, inputRelations)
+		realizedPlan, err = executor.planner.PlanQueryWithBindings(q, initialBindings)
 	}
+	if err != nil {
+		ctx.QueryComplete(0, 0, err)
+		return nil, fmt.Errorf("query planning failed: %w", err)
+	}
+	ctx.QueryPlanCreated(realizedPlan.String())
+	return executor.ExecuteRealized(ctx, realizedPlan, inputRelations)
 }
 
 // ExecuteRealized executes a RealizedPlan (Stage B: Query-based execution)
@@ -659,200 +625,6 @@ func (e *Executor) executeRealizedNonIterating(
 		finalResult = finalResult.Sort(plan.Query.OrderBy)
 	}
 
-	return finalResult, nil
-}
-
-// executePhasesWithInputs executes a query plan with input relations
-func (e *Executor) executePhasesWithInputs(ctx Context, plan *planner.QueryPlan, inputRelations []Relation) (Relation, error) {
-	// Pass plan metadata to context for optimization hints (e.g., time ranges)
-	if plan.Metadata != nil {
-		for key, value := range plan.Metadata {
-			ctx.SetMetadata(key, value)
-		}
-	}
-
-	// Check if we need to iterate over a RelationInput
-	if hasRelationInput(plan.Query) && len(inputRelations) > 0 {
-		return e.executeWithRelationInputIteration(ctx, plan, inputRelations)
-	}
-
-	// Keep track of all bindings across phases
-	bindings := make(map[query.Symbol]Relation)
-
-	// Start with input relations if provided
-	var currentResult Relation
-	var inputParameterRelation Relation // Save input parameters for final projection
-	if len(inputRelations) > 0 {
-		// Process :in clause to bind input relations
-		currentResult = BindQueryInputs(plan.Query, inputRelations)
-		inputParameterRelation = currentResult // Save for later
-
-		// Add input bindings to the bindings map
-		for _, col := range currentResult.Columns() {
-			bindings[col] = currentResult
-		}
-	}
-
-	// Execute each phase
-	for i, phase := range plan.Phases {
-		// Use sequential execution with new Relations interface
-		phaseResult, err := e.executePhaseSequential(ctx, &phase, i, currentResult)
-		if err != nil {
-			ctx.QueryComplete(0, 0, err)
-			return nil, fmt.Errorf("phase %d failed: %w", i+1, err)
-		}
-
-		// CRITICAL: Don't call Size() - it consumes streaming iterators!
-		// Empty results will be handled naturally by subsequent phases
-		// The final result will be empty if any phase produces no tuples
-
-		// ARCHITECTURAL NOTE: This materialization is likely unnecessary
-		//
-		// The ProjectIterator fix (commit 5e64b1e) makes relations safely reusable via lazy caching.
-		// applyExpressionsAndPredicates() returns StreamingRelation with shouldCache=true, which means:
-		// 1. First Iterator() call builds cache via CachingIterator
-		// 2. Subsequent Iterator() calls replay from cache
-		// 3. No manual materialization needed
-		//
-		// We could simplify this to: currentResult = phaseResult
-		//
-		// However, this requires careful testing as the legacy executor is the default path.
-		// See: docs/bugs/INVESTIGATION_JOIN_RETURNS_ZERO.md (Architectural Observation section)
-		//
-		// For now, materialize to maintain existing behavior and preserve options
-		var tuples []Tuple
-		it := phaseResult.Iterator()
-		for it.Next() {
-			tuples = append(tuples, it.Tuple())
-		}
-		it.Close()
-
-		opts := phaseResult.Options()
-		currentResult = NewMaterializedRelationWithOptions(phaseResult.Columns(), tuples, opts)
-
-		// Update bindings with new symbols from this phase
-		for _, sym := range phase.Provides {
-			if idx := ColumnIndex(currentResult, sym); idx >= 0 {
-				bindings[sym] = currentResult
-			}
-		}
-	}
-
-	// Check for conditional aggregates from query rewriting
-	// These need to be injected into the Find clause before aggregation
-	findClause := plan.Query.Find
-	hasConditionalAggregates := false
-	var allCondAggs []planner.ConditionalAggregate
-
-	for i, phase := range plan.Phases {
-		if phase.Metadata != nil {
-			if condAggs, ok := phase.Metadata["conditional_aggregates"].([]planner.ConditionalAggregate); ok && len(condAggs) > 0 {
-				hasConditionalAggregates = true
-				allCondAggs = append(allCondAggs, condAggs...)
-				if collector := ctx.Collector(); collector != nil {
-					collector.Add(annotations.Event{
-						Name: "debug/conditional-agg-found",
-						Data: map[string]interface{}{
-							"phase": i,
-							"count": len(condAggs),
-						},
-					})
-				}
-			}
-		}
-	}
-
-	if hasConditionalAggregates {
-		// Create a modified find clause with conditional aggregates
-		findClause = injectConditionalAggregates(findClause, allCondAggs)
-
-		// Annotate the rewriting
-		if collector := ctx.Collector(); collector != nil {
-			data := collector.GetDataMap()
-			data["rewritten.subquery.count"] = len(allCondAggs)
-			data["optimization"] = "conditional-aggregate-rewriting"
-			collector.Add(annotations.Event{
-				Name:  "query/rewrite.conditional-aggregates",
-				Start: time.Now(),
-				Data:  data,
-			})
-		}
-	}
-
-	// Handle aggregations or project to find variables
-	hasAggregates := hasConditionalAggregates
-	if !hasAggregates {
-		for _, elem := range findClause {
-			if elem.IsAggregate() {
-				hasAggregates = true
-				break
-			}
-		}
-	}
-
-	var finalResult Relation
-	if hasAggregates {
-		finalResult = ExecuteAggregationsWithContext(ctx, currentResult, findClause)
-	} else {
-		var findVars []query.Symbol
-		for _, elem := range plan.Query.Find {
-			if v, ok := elem.(query.FindVariable); ok {
-				findVars = append(findVars, v.Symbol)
-			}
-		}
-
-		// Check if any find variables are missing from currentResult but exist in input parameters
-		// This handles the case where input parameters appear in :find but aren't used in patterns
-		var missingFromCurrent []query.Symbol
-		currentCols := make(map[query.Symbol]bool)
-		for _, col := range currentResult.Columns() {
-			currentCols[col] = true
-		}
-		for _, findVar := range findVars {
-			if !currentCols[findVar] {
-				missingFromCurrent = append(missingFromCurrent, findVar)
-			}
-		}
-
-		// If we have missing symbols and they're in input parameters, join them back
-		if len(missingFromCurrent) > 0 && inputParameterRelation != nil {
-			inputCols := make(map[query.Symbol]bool)
-			for _, col := range inputParameterRelation.Columns() {
-				inputCols[col] = true
-			}
-
-			// Check if all missing symbols are in input parameters
-			var inputSymbolsToAdd []query.Symbol
-			for _, missing := range missingFromCurrent {
-				if inputCols[missing] {
-					inputSymbolsToAdd = append(inputSymbolsToAdd, missing)
-				}
-			}
-
-			// If we have input symbols to add, join them back
-			if len(inputSymbolsToAdd) > 0 {
-				// Project input relation to only the symbols we need
-				inputToJoin, err := inputParameterRelation.Project(inputSymbolsToAdd)
-				if err == nil {
-					// Join with current result (cross product since no shared columns)
-					currentResult = currentResult.Join(inputToJoin)
-				}
-			}
-		}
-
-		projected, err := currentResult.Project(findVars)
-		if err != nil {
-			return nil, fmt.Errorf("projection failed: %w", err)
-		}
-		finalResult = projected.Materialize()
-	}
-
-	// Apply ordering if specified
-	if len(plan.Query.OrderBy) > 0 {
-		finalResult = finalResult.Sort(plan.Query.OrderBy)
-	}
-
-	ctx.QueryComplete(len(plan.Phases), finalResult.Size(), nil)
 	return finalResult, nil
 }
 

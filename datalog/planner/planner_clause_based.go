@@ -34,7 +34,7 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query) (*RealizedPlan, error) {
 	// Check cache first
 	if p.cache != nil {
 		if cached, ok := p.cache.GetWithOptions(q, p.options); ok {
-			return cached.Realize(), nil
+			return cached, nil
 		}
 	}
 
@@ -42,6 +42,11 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query) (*RealizedPlan, error) {
 	plan, err := p.PlanWithBindings(q, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	// Store in cache
+	if p.cache != nil {
+		p.cache.SetWithOptions(q, plan, p.options)
 	}
 
 	return plan, nil
@@ -99,10 +104,12 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	clauses := q.Where
 
 	// Step 2: Apply optimizations as pure clause transformations
-	// TODO: Implement semantic rewriting as pure clause transformation
+	// Semantic rewriting: [(year ?t) ?py] + [(= ?py 2025)] -> [(>= ?t start)] + [(< ?t end)]
+	rewriter := NewSemanticRewriter(p.options)
+	clauses = rewriter.Rewrite(clauses)
+
 	// TODO: Implement decorrelation as pure clause transformation
-	// For now, these complex optimizations are disabled in the clause-based planner
-	// The architectural difference (optimize-first, greedy phasing) is the key change
+	// (Conditional aggregate rewriting is buggy and moved to experimental/)
 
 	// Step 3: Phase the optimized clause list ONCE using greedy algorithm
 	clausePhases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols)
@@ -141,6 +148,17 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 			Keep:      keep,
 			Metadata:  make(map[string]interface{}),
 		}
+
+		// Populate explain fields for detailed plan output
+		// Include both phase-available symbols and input symbols
+		availableSet := make(map[query.Symbol]bool)
+		for sym := range inputSymbols {
+			availableSet[sym] = true
+		}
+		for _, sym := range cp.Available {
+			availableSet[sym] = true
+		}
+		analyzeClausesForExplain(&realizedPhases[i], cp.Clauses, availableSet, p.stats)
 	}
 
 	return &RealizedPlan{
@@ -149,9 +167,10 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	}, nil
 }
 
-// Note: Semantic rewriting and decorrelation are complex optimizations that currently
-// operate on Phase structures. Converting them to pure clause transformations is future work.
-// The key architectural innovation is the greedy phasing algorithm and optimize-first flow.
+// Note: Semantic rewriting is now implemented as pure clause transformation.
+// Decorrelation (conditional aggregate rewriting) is deferred - the implementation
+// was buggy and has been moved to experimental/. The key architectural innovation
+// is the greedy phasing algorithm and optimize-first flow.
 
 // buildFindClause constructs the :find clause for a phase
 func buildFindClause(provides []query.Symbol, originalFind []query.FindElement, isLastPhase bool) []query.FindElement {

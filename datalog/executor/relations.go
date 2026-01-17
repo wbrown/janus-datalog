@@ -216,3 +216,18 @@ func containsAll(cols []query.Symbol, symbols []query.Symbol) bool {
 	}
 	return true
 }
+
+// containsAny checks if cols contains any of the symbols
+func containsAny(cols []query.Symbol, symbols []query.Symbol) bool {
+	colSet := make(map[query.Symbol]bool)
+	for _, col := range cols {
+		colSet[col] = true
+	}
+
+	for _, sym := range symbols {
+		if colSet[sym] {
+			return true
+		}
+	}
+	return false
+}

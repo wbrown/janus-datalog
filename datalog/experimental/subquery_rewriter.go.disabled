@@ -24,7 +24,7 @@
 // - The planner cache must account for optimization options (major bug fixed)
 //
 // The code is kept for reference and future improvements but should remain disabled.
-package planner
+package experimental
 
 import (
 	"fmt"
