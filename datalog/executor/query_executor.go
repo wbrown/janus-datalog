@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -368,7 +369,35 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	}
 
 	if len(relevantRels) == 0 {
-		// No relation has required symbols - skip expression
+		// No relation has required symbols
+		if len(requiredSyms) == 0 && len(groups) > 0 {
+			// Ground expression with existing groups - evaluate once and add column to each tuple
+			// This is used in OR fallback: (or [subquery] [(ground 0) ?count])
+			result, err := expr.Function.Eval(make(map[query.Symbol]interface{}))
+			if err != nil {
+				return nil, err
+			}
+
+			// Add the new column to each relation in groups
+			var resultRels []Relation
+			for _, rel := range groups {
+				// Add the bound variable as a new column with constant value
+				newCols := append(rel.Columns(), expr.Binding)
+				var newTuples []Tuple
+				iter := rel.Iterator()
+				for iter.Next() {
+					oldTuple := iter.Tuple()
+					newTuple := make(Tuple, len(oldTuple)+1)
+					copy(newTuple, oldTuple)
+					newTuple[len(oldTuple)] = result
+					newTuples = append(newTuples, newTuple)
+				}
+				iter.Close()
+				resultRels = append(resultRels, NewMaterializedRelationWithOptions(newCols, newTuples, e.options))
+			}
+			return resultRels, nil
+		}
+		// Skip expression if no relevant relations and expression needs symbols
 		return groups, nil
 	}
 
@@ -946,49 +975,350 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 
 // executeOrClause performs union of OR branches, or fallback semantics for expression branches
 func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
+	start := time.Now()
+	collector := ctx.Collector()
+
 	if len(clause.Branches) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 	}
 
-	// Check if any branch has expressions - use fallback semantics if so
-	if query.OrHasExpressions(clause.Branches) {
-		return e.executeOrClauseFallback(ctx, clause, groups)
+	// Emit begin event
+	if collector != nil {
+		collector.Add(annotations.Event{
+			Name:  annotations.OrClauseBegin,
+			Start: start,
+			Data: map[string]interface{}{
+				"branch_count":    len(clause.Branches),
+				"has_expressions": query.OrHasExpressions(clause.Branches),
+			},
+		})
 	}
 
-	// Standard union semantics for pattern-only OR
-	return e.executeOrClauseUnion(ctx, clause, groups)
+	var result Relation
+	var err error
+	var semantics string
+
+	// Check if any branch has expressions - use fallback semantics if so
+	if query.OrHasExpressions(clause.Branches) {
+		semantics = "fallback"
+		result, err = e.executeOrClauseFallback(ctx, clause, groups)
+	} else {
+		// Standard union semantics for pattern-only OR
+		semantics = "union"
+		result, err = e.executeOrClauseUnion(ctx, clause, groups)
+	}
+
+	// Emit complete event
+	if collector != nil {
+		end := time.Now()
+		data := map[string]interface{}{
+			"semantics": semantics,
+			"success":   err == nil,
+		}
+		if err != nil {
+			data["error"] = err.Error()
+		} else if result != nil {
+			data["result_size"] = result.Size()
+		}
+		collector.Add(annotations.Event{
+			Name:    annotations.OrClauseComplete,
+			Start:   start,
+			End:     end,
+			Latency: end.Sub(start),
+			Data:    data,
+		})
+	}
+
+	return result, err
 }
 
 // executeOrClauseFallback implements Clojure-style fallback semantics:
-// Try each branch in order, return first non-empty result
+// For each input tuple, try branches in order until one returns a result.
+// This is truly streaming - we process one tuple at a time with short-circuit evaluation.
 func (e *DefaultQueryExecutor) executeOrClauseFallback(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
+	collector := ctx.Collector()
+
+	// Emit fallback mode annotation
+	if collector != nil {
+		collector.Add(annotations.Event{
+			Name:  annotations.OrClauseFallback,
+			Start: time.Now(),
+			Data: map[string]interface{}{
+				"branch_count": len(clause.Branches),
+				"groups_count": len(groups),
+			},
+		})
+	}
+
+	// Find which symbols the OR branches need from outer context
+	neededSymbols := collectOrBranchRequiredSymbols(clause)
+
+	// If no outer bindings needed, do global fallback
+	if len(neededSymbols) == 0 || len(groups) == 0 {
+		return e.executeOrClauseFallbackGlobal(ctx, clause)
+	}
+
+	// Find the group that provides the needed symbols and materialize it
+	// We need to materialize because: (1) we iterate per-tuple for short-circuit evaluation,
+	// and (2) the outer query needs this relation for the final collapse
+	var outerBindingIdx int = -1
+	for i, rel := range groups {
+		if containsAll(rel.Columns(), neededSymbols) {
+			outerBindingIdx = i
+			break
+		}
+	}
+	if outerBindingIdx < 0 {
+		// No group has the needed symbols - try global fallback
+		return e.executeOrClauseFallbackGlobal(ctx, clause)
+	}
+
+	// Materialize and replace in groups so outer query can still use it
+	groups[outerBindingIdx] = groups[outerBindingIdx].Materialize()
+	outerBindingRel := groups[outerBindingIdx]
+
+	// Get the columns we'll output (needed symbols + any symbols branches provide)
+	// For now, determine output columns from first branch execution
+	var outputCols []query.Symbol
+	var resultTuples []Tuple
+
+	// Stream through outer tuples one at a time (now safe - materialized relation)
+	outerIter := outerBindingRel.Iterator()
+	defer outerIter.Close()
+
+	for outerIter.Next() {
+		outerTuple := outerIter.Tuple()
+
+		// Build single-tuple relation for this input
+		singleTupleRel := NewMaterializedRelationWithOptions(
+			outerBindingRel.Columns(),
+			[]Tuple{outerTuple},
+			e.options,
+		)
+
+		// Try each branch in order until one returns a result
+		var tupleResult Relation
+		for i, branch := range clause.Branches {
+			branchResult, err := e.executeInnerClauses(ctx, branch, singleTupleRel)
+			if err != nil {
+				return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
+			}
+
+			if branchResult != nil && branchResult.Size() > 0 {
+				tupleResult = branchResult
+				break // Short-circuit: first non-empty result wins
+			}
+		}
+
+		// Collect results from this tuple
+		if tupleResult != nil {
+			// Set output columns from first result
+			if outputCols == nil {
+				outputCols = tupleResult.Columns()
+			}
+
+			// Add all tuples from result
+			resultIter := tupleResult.Iterator()
+			for resultIter.Next() {
+				resultTuples = append(resultTuples, resultIter.Tuple())
+			}
+			resultIter.Close()
+		}
+	}
+
+	if len(resultTuples) == 0 {
+		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
+	}
+
+	return NewMaterializedRelationWithOptions(outputCols, resultTuples, e.options), nil
+}
+
+// findCommonColumns returns columns that exist in all relations
+func findCommonColumns(relations []Relation) []query.Symbol {
+	if len(relations) == 0 {
+		return nil
+	}
+
+	// Start with first relation's columns
+	colSet := make(map[query.Symbol]bool)
+	for _, col := range relations[0].Columns() {
+		colSet[col] = true
+	}
+
+	// Intersect with each subsequent relation
+	for i := 1; i < len(relations); i++ {
+		relCols := make(map[query.Symbol]bool)
+		for _, col := range relations[i].Columns() {
+			relCols[col] = true
+		}
+		// Keep only columns that exist in both
+		for col := range colSet {
+			if !relCols[col] {
+				delete(colSet, col)
+			}
+		}
+	}
+
+	// Preserve order from first relation
+	var result []query.Symbol
+	for _, col := range relations[0].Columns() {
+		if colSet[col] {
+			result = append(result, col)
+		}
+	}
+	return result
+}
+
+// antiJoinOnSymbols returns tuples from left that have no matching tuple in right on the given symbols
+func antiJoinOnSymbols(left, right Relation, symbols []query.Symbol) Relation {
+	if left == nil || right == nil || len(symbols) == 0 {
+		return left
+	}
+
+	// Build set of key values from right
+	rightKeys := make(map[string]bool)
+	rightIter := right.Iterator()
+	rightCols := right.Columns()
+	for rightIter.Next() {
+		tuple := rightIter.Tuple()
+		key := extractKeyFromTuple(tuple, rightCols, symbols)
+		rightKeys[key] = true
+	}
+	rightIter.Close()
+
+	// Filter left to only tuples not in right
+	var remaining []Tuple
+	leftIter := left.Iterator()
+	leftCols := left.Columns()
+	for leftIter.Next() {
+		tuple := leftIter.Tuple()
+		key := extractKeyFromTuple(tuple, leftCols, symbols)
+		if !rightKeys[key] {
+			remaining = append(remaining, tuple)
+		}
+	}
+	leftIter.Close()
+
+	return NewMaterializedRelationWithOptions(leftCols, remaining, left.Options())
+}
+
+// extractKeyFromTuple extracts a string key from tuple for the given symbols
+func extractKeyFromTuple(tuple Tuple, cols []query.Symbol, symbols []query.Symbol) string {
+	colIdx := make(map[query.Symbol]int)
+	for i, col := range cols {
+		colIdx[col] = i
+	}
+
+	var key string
+	for _, sym := range symbols {
+		if idx, ok := colIdx[sym]; ok && idx < len(tuple) {
+			key += fmt.Sprintf("%v|", tuple[idx])
+		}
+	}
+	return key
+}
+
+// crossJoinWithOuter produces the cross product of outer tuples with branch result tuples
+// Used when a fallback branch (like ground expression) doesn't include outer context
+func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
+	if outer == nil || branch == nil {
+		return branch
+	}
+
+	outerCols := outer.Columns()
+	branchCols := branch.Columns()
+
+	// Combined columns: outer columns + branch columns
+	combinedCols := make([]query.Symbol, 0, len(outerCols)+len(branchCols))
+	combinedCols = append(combinedCols, outerCols...)
+	combinedCols = append(combinedCols, branchCols...)
+
+	// Materialize branch result (usually small, like a single ground value)
+	var branchTuples []Tuple
+	branchIter := branch.Iterator()
+	for branchIter.Next() {
+		branchTuples = append(branchTuples, branchIter.Tuple())
+	}
+	branchIter.Close()
+
+	// Cross join: for each outer tuple, combine with each branch tuple
+	var resultTuples []Tuple
+	outerIter := outer.Iterator()
+	for outerIter.Next() {
+		outerTuple := outerIter.Tuple()
+		for _, branchTuple := range branchTuples {
+			combined := make(Tuple, len(outerTuple)+len(branchTuple))
+			copy(combined, outerTuple)
+			copy(combined[len(outerTuple):], branchTuple)
+			resultTuples = append(resultTuples, combined)
+		}
+	}
+	outerIter.Close()
+
+	return NewMaterializedRelationWithOptions(combinedCols, resultTuples, opts)
+}
+
+// executeOrClauseFallbackGlobal does global fallback when no outer bindings needed
+func (e *DefaultQueryExecutor) executeOrClauseFallbackGlobal(ctx Context, clause *query.OrClause) (Relation, error) {
 	for i, branch := range clause.Branches {
 		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
 		if err != nil {
 			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
 		}
 
-		// Return first non-empty result (fallback semantics)
 		if branchResult != nil && branchResult.Size() > 0 {
 			return branchResult, nil
 		}
 	}
 
-	// All branches empty
 	return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 }
 
 // executeOrClauseUnion implements standard Datalog union semantics
 func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
+	collector := ctx.Collector()
+
+	// Emit union mode annotation
+	if collector != nil {
+		collector.Add(annotations.Event{
+			Name:  annotations.OrClauseUnion,
+			Start: time.Now(),
+			Data: map[string]interface{}{
+				"branch_count": len(clause.Branches),
+			},
+		})
+	}
+
 	// Execute each branch and collect results
 	var branchResults []Relation
 	var commonCols []query.Symbol
 
 	for i, branch := range clause.Branches {
+		branchStart := time.Now()
 		// Execute this branch's clauses against storage (no prior bindings)
 		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
 		if err != nil {
 			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
+		}
+
+		// Emit branch complete annotation
+		if collector != nil {
+			branchEnd := time.Now()
+			resultSize := 0
+			if branchResult != nil {
+				resultSize = branchResult.Size()
+			}
+			collector.Add(annotations.Event{
+				Name:    annotations.OrClauseBranchComplete,
+				Start:   branchStart,
+				End:     branchEnd,
+				Latency: branchEnd.Sub(branchStart),
+				Data: map[string]interface{}{
+					"branch_index": i,
+					"result_size":  resultSize,
+					"mode":         "union",
+				},
+			})
 		}
 
 		if branchResult == nil {
@@ -1079,6 +1409,39 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseFallback(ctx Context, clause *
 
 	// All branches empty
 	return NewMaterializedRelationWithOptions(joinVars, nil, e.options), nil
+}
+
+// collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context
+func collectOrBranchRequiredSymbols(clause *query.OrClause) []query.Symbol {
+	seen := make(map[query.Symbol]bool)
+	var result []query.Symbol
+
+	for _, branch := range clause.Branches {
+		for _, c := range branch {
+			switch clause := c.(type) {
+			case *query.SubqueryPattern:
+				// Subquery needs variable inputs from outer context
+				for _, input := range clause.Inputs {
+					if v, ok := input.(query.Variable); ok {
+						if !seen[v.Name] {
+							seen[v.Name] = true
+							result = append(result, v.Name)
+						}
+					}
+				}
+			case *query.Expression:
+				// Expression needs its required symbols
+				for _, sym := range clause.Function.RequiredSymbols() {
+					if !seen[sym] {
+						seen[sym] = true
+						result = append(result, sym)
+					}
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 // executeNotClause performs anti-join filtering on groups

@@ -938,6 +938,134 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 	}
 }
 
+func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
+	// Test the REAL use case: SubqueryPattern with variable input from outer query
+	// (or [(q [:find (count ?t) :in $ ?s :where ...] $ ?scenario) [[?count]]]
+	//     [(ground 0) ?count])
+	scenario1 := datalog.NewIdentity("scenario:1")
+	scenario2 := datalog.NewIdentity("scenario:2")
+	task1 := datalog.NewIdentity("task:1")
+	task2 := datalog.NewIdentity("task:2")
+
+	scenarioAttr := datalog.NewKeyword(":scenario/name")
+	taskScenarioAttr := datalog.NewKeyword(":task/scenario")
+	taskStatusAttr := datalog.NewKeyword(":task/status")
+	completeStatus := datalog.NewKeyword(":status/complete")
+
+	datoms := []datalog.Datom{
+		// Two scenarios
+		{E: scenario1, A: scenarioAttr, V: "Scenario 1", Tx: 1},
+		{E: scenario2, A: scenarioAttr, V: "Scenario 2", Tx: 1},
+		// Tasks for scenario1 (has completed tasks)
+		{E: task1, A: taskScenarioAttr, V: scenario1, Tx: 1},
+		{E: task1, A: taskStatusAttr, V: completeStatus, Tx: 1},
+		{E: task2, A: taskScenarioAttr, V: scenario1, Tx: 1},
+		{E: task2, A: taskStatusAttr, V: completeStatus, Tx: 1},
+		// No tasks for scenario2 (should fall back to 0)
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
+	ctx := NewContext(nil)
+
+	// Build the query:
+	// [:find ?scenario ?count
+	//  :where [?scenario :scenario/name ?name]
+	//         (or [(q [:find (count ?t)
+	//                  :in $ ?s
+	//                  :where [?t :task/scenario ?s]
+	//                         [?t :task/status :status/complete]]
+	//                $ ?scenario) [[?count]]]
+	//             [(ground 0) ?count])]
+	orClause := &query.OrClause{
+		Branches: [][]query.Clause{
+			{
+				&query.SubqueryPattern{
+					Query: &query.Query{
+						Find: []query.FindElement{
+							query.FindAggregate{Function: "count", Arg: "?t"},
+						},
+						In: []query.InputSpec{
+							query.DatabaseInput{},
+							query.ScalarInput{Symbol: "?s"},
+						},
+						Where: []query.Clause{
+							&query.DataPattern{
+								Elements: []query.PatternElement{
+									query.Variable{Name: "?t"},
+									query.Constant{Value: taskScenarioAttr},
+									query.Variable{Name: "?s"},
+								},
+							},
+							&query.DataPattern{
+								Elements: []query.PatternElement{
+									query.Variable{Name: "?t"},
+									query.Constant{Value: taskStatusAttr},
+									query.Constant{Value: completeStatus},
+								},
+							},
+						},
+					},
+					Inputs: []query.PatternElement{
+						query.Constant{Value: query.Symbol("$")},
+						query.Variable{Name: "?scenario"},
+					},
+					Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+				},
+			},
+			{
+				&query.Expression{
+					Function: &query.GroundFunction{Value: int64(0)},
+					Binding:  "?count",
+				},
+			},
+		},
+	}
+
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?scenario"},
+			query.FindVariable{Symbol: "?count"},
+		},
+		Where: []query.Clause{
+			// First, bind ?scenario from the database
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: "?scenario"},
+					query.Constant{Value: scenarioAttr},
+					query.Variable{Name: "?name"},
+				},
+			},
+			// Then OR with subquery and fallback
+			orClause,
+		},
+	}
+
+	result, err := queryExecutor.Execute(ctx, q, nil)
+	if err != nil {
+		t.Fatalf("query executor failed: %v", err)
+	}
+
+	collapsed := Relations(result).Collapse(ctx)
+	if len(collapsed) != 1 {
+		t.Fatalf("Expected 1 collapsed relation, got %d", len(collapsed))
+	}
+
+	finalRel := collapsed[0]
+	t.Logf("Final: columns=%v, size=%d", finalRel.Columns(), finalRel.Size())
+
+	// Should have 2 results: scenario1 with count=2, scenario2 with count=0
+	if finalRel.Size() != 2 {
+		t.Errorf("Expected 2 results, got %d", finalRel.Size())
+	}
+
+	// Check the actual values
+	for i := 0; i < finalRel.Size(); i++ {
+		tuple := finalRel.Get(i)
+		t.Logf("Result %d: %v", i, tuple)
+	}
+}
+
 func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 	// Test OR with SubqueryPattern that returns empty, falling back to ground
 	matcher := NewMemoryPatternMatcher(nil) // Empty database

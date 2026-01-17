@@ -42,6 +42,14 @@ const (
 	JoinNested = "join/nested"
 	JoinMerge  = "join/merge"
 
+	// OR clause operations
+	OrClauseBegin          = "or/begin"
+	OrClauseComplete       = "or/complete"
+	OrClauseBranchBegin    = "or/branch.begin"
+	OrClauseBranchComplete = "or/branch.complete"
+	OrClauseFallback       = "or/fallback"
+	OrClauseUnion          = "or/union"
+
 	// Aggregation operations
 	AggregationExecuted = "aggregation/executed"
 
