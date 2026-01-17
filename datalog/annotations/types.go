@@ -49,6 +49,8 @@ const (
 	OrClauseBranchComplete = "or/branch.complete"
 	OrClauseFallback       = "or/fallback"
 	OrClauseUnion          = "or/union"
+	OrSubqueryInput        = "or/subquery.input"
+	OrSubqueryResult       = "or/subquery.result"
 
 	// Aggregation operations
 	AggregationExecuted = "aggregation/executed"

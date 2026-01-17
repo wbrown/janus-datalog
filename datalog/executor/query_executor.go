@@ -1417,8 +1417,58 @@ func collectOrBranchRequiredSymbols(clause *query.OrClause) []query.Symbol {
 	var result []query.Symbol
 
 	for _, branch := range clause.Branches {
+		// Track which symbols this branch provides (to distinguish from required)
+		branchProvides := make(map[query.Symbol]bool)
+
+		// First pass: collect what each clause provides
 		for _, c := range branch {
 			switch clause := c.(type) {
+			case *query.DataPattern:
+				for _, elem := range clause.Elements {
+					if v, ok := elem.(query.Variable); ok {
+						branchProvides[v.Name] = true
+					}
+				}
+			case *query.Expression:
+				if clause.Binding != "" {
+					branchProvides[clause.Binding] = true
+				}
+			case *query.SubqueryPattern:
+				// Subquery provides its binding variables
+				switch b := clause.Binding.(type) {
+				case query.ScalarBinding:
+					branchProvides[b.Variable] = true
+				case query.TupleBinding:
+					for _, v := range b.Variables {
+						branchProvides[v] = true
+					}
+				case query.RelationBinding:
+					for _, v := range b.Variables {
+						branchProvides[v] = true
+					}
+				case query.CollectionBinding:
+					branchProvides[b.Variable] = true
+				}
+			}
+		}
+
+		// Second pass: collect symbols that are used but must come from outer context
+		for _, c := range branch {
+			switch clause := c.(type) {
+			case *query.DataPattern:
+				// Variables in patterns that would make the pattern more selective
+				// when bound from outer context (typically entity variables)
+				for _, elem := range clause.Elements {
+					if v, ok := elem.(query.Variable); ok {
+						// If this variable appears in the pattern AND could be bound
+						// from outside (not guaranteed to be provided by this pattern alone),
+						// we should consider it as potentially required
+						if !seen[v.Name] {
+							seen[v.Name] = true
+							result = append(result, v.Name)
+						}
+					}
+				}
 			case *query.SubqueryPattern:
 				// Subquery needs variable inputs from outer context
 				for _, input := range clause.Inputs {

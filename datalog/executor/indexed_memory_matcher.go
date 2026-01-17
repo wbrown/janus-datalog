@@ -18,7 +18,7 @@ type IndexedMemoryMatcher struct {
 	entityIndex    map[string][]int // E.L85() → datom positions
 	attributeIndex map[string][]int // A.String() → datom positions
 	valueIndex     map[uint64][]int // hash(V) → datom positions (NOTE: values are interface{}, indexed by hash; collisions filtered by exact match)
-	eavIndex       map[string]int   // E.L85()+"|"+A.String() → position (latest)
+	eavIndex       map[string][]int // E.L85()+"|"+A.String() → datom positions (all, for cardinality-many)
 
 	// Optional collector for annotations (protected by collectorMutex for concurrent access)
 	collectorMutex sync.RWMutex
@@ -99,7 +99,7 @@ func (m *IndexedMemoryMatcher) buildIndices() {
 		m.entityIndex = make(map[string][]int, estimatedSize)
 		m.attributeIndex = make(map[string][]int, estimatedSize)
 		m.valueIndex = make(map[uint64][]int, estimatedSize)
-		m.eavIndex = make(map[string]int, len(m.datoms))
+		m.eavIndex = make(map[string][]int, estimatedSize)
 
 		for i, datom := range m.datoms {
 			// Entity index: E → [positions]
@@ -117,10 +117,10 @@ func (m *IndexedMemoryMatcher) buildIndices() {
 			vHash := hashDatomValue(datom.V)
 			m.valueIndex[vHash] = append(m.valueIndex[vHash], i)
 
-			// EA index: (E, A) → position
-			// Keep only the latest datom for each (E, A) pair
+			// EA index: (E, A) → [positions]
+			// Store all datoms for each (E, A) pair to support cardinality-many attributes
 			eaKey := eKey + "|" + aKey
-			m.eavIndex[eaKey] = i
+			m.eavIndex[eaKey] = append(m.eavIndex[eaKey], i)
 		}
 	})
 }
@@ -350,12 +350,9 @@ func extractPatternValue(elem query.PatternElement) interface{} {
 func (m *IndexedMemoryMatcher) getCandidates(strategy matchStrategy) []int {
 	switch s := strategy.(type) {
 	case useEAIndex:
-		// O(1) lookup in EA index
+		// O(1) lookup in EA index - returns all positions for cardinality-many
 		key := s.e.L85() + "|" + s.a.String()
-		if pos, ok := m.eavIndex[key]; ok {
-			return []int{pos}
-		}
-		return nil
+		return m.eavIndex[key]
 
 	case useEntityIndex:
 		// O(1) lookup in entity index

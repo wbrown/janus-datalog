@@ -350,6 +350,18 @@ func (e *Executor) applyExpressionsAndPredicates(ctx Context, phase *planner.Pha
 			}
 		}
 
+		// Debug annotation: trace what columns we're returning
+		if collector := ctx.Collector(); collector != nil {
+			collector.Add(annotations.Event{
+				Name: "debug/applyExpressionsAndPredicates.return",
+				Data: map[string]interface{}{
+					"result.columns": result.Columns(),
+					"result.size":    result.Size(),
+					"keepCols":       keepCols,
+				},
+			})
+		}
+
 		return result, nil
 	}
 

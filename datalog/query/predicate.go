@@ -113,6 +113,8 @@ func (c Comparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 	switch c.Op {
 	case OpEQ:
 		return cmp == 0, nil
+	case OpNE:
+		return cmp != 0, nil
 	case OpLT:
 		return cmp < 0, nil
 	case OpLTE:

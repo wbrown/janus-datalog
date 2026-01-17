@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -187,19 +188,180 @@ func (e *Executor) executeOrClause(ctx Context, clause *query.OrClause, availabl
 	return e.executeOrClauseUnion(ctx, clause, available)
 }
 
-// executeOrClauseFallback implements Clojure-style fallback semantics:
-// Try each branch in order, return first non-empty result
+// executeOrClauseFallback implements Clojure-style per-tuple fallback semantics:
+// For each input tuple, try branches in order until one returns a result.
+// This is truly streaming - we process one tuple at a time with short-circuit evaluation.
 func (e *Executor) executeOrClauseFallback(ctx Context, clause *query.OrClause, available Relations) (Relation, error) {
+	// If no available relations, do global fallback
+	if len(available) == 0 {
+		return e.executeOrClauseFallbackGlobal(ctx, clause)
+	}
+
+	// Find which symbols the OR branches need from outer context
+	neededSymbols := collectOrBranchRequiredSymbols(clause)
+
+	// Find the group that provides SOME of the needed symbols for correlation.
+	// We look for any intersection, not ALL symbols, because:
+	// 1. neededSymbols may include symbols the OR clause PROVIDES (not requires)
+	// 2. branches use what's available and provide new symbols
+	var outerBindingIdx int = -1
+	var maxOverlap int
+	for i, rel := range available {
+		relCols := rel.Columns()
+		overlap := countOverlap(relCols, neededSymbols)
+		if overlap > maxOverlap {
+			maxOverlap = overlap
+			outerBindingIdx = i
+		}
+	}
+
+	// If no overlap at all, but we have available relations, still use them
+	// for per-tuple iteration - branches may not need outer symbols at all
+	// but we still want to iterate per outer tuple (e.g., ground expression fallback)
+	if outerBindingIdx < 0 && len(available) > 0 {
+		// Use the first available relation as outer binding
+		outerBindingIdx = 0
+	}
+
+	if outerBindingIdx < 0 {
+		// No relations available - do global fallback
+		return e.executeOrClauseFallbackGlobal(ctx, clause)
+	}
+
+	// Materialize the outer binding relation for iteration
+	outerBindingRel := available[outerBindingIdx].Materialize()
+
+	// Emit begin annotation
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: annotations.OrClauseBegin,
+			Data: map[string]interface{}{
+				"branches":       len(clause.Branches),
+				"outer.columns":  outerBindingRel.Columns(),
+				"outer.size":     outerBindingRel.Size(),
+				"mode":           "fallback",
+			},
+		})
+	}
+
+	// Get the columns we'll output
+	var outputCols []query.Symbol
+	var resultTuples []Tuple
+
+	// Stream through outer tuples one at a time
+	outerIter := outerBindingRel.Iterator()
+	defer outerIter.Close()
+
+	tupleIdx := 0
+	for outerIter.Next() {
+		outerTuple := outerIter.Tuple()
+		tupleIdx++
+
+		// Build single-tuple relation for this input
+		singleTupleRel := NewMaterializedRelationWithOptions(
+			outerBindingRel.Columns(),
+			[]Tuple{outerTuple},
+			e.options,
+		)
+
+		// Try each branch in order until one returns a result
+		var tupleResult Relation
+		var usedBranch int = -1
+		for i, branch := range clause.Branches {
+			branchResult, err := e.executeInnerClauses(ctx, branch, singleTupleRel)
+			if err != nil {
+				return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
+			}
+
+			// Emit branch result annotation
+			if collector := ctx.Collector(); collector != nil {
+				var resultSize int = -1
+				var resultCols []query.Symbol
+				if branchResult != nil {
+					resultSize = branchResult.Size()
+					resultCols = branchResult.Columns()
+				}
+				collector.Add(annotations.Event{
+					Name: annotations.OrClauseBranchComplete,
+					Data: map[string]interface{}{
+						"tuple.index":    tupleIdx,
+						"branch":         i + 1,
+						"result.size":    resultSize,
+						"result.columns": resultCols,
+					},
+				})
+			}
+
+			if branchResult != nil && branchResult.Size() > 0 {
+				tupleResult = branchResult
+				usedBranch = i + 1
+				break // Short-circuit: first non-empty result wins
+			}
+		}
+
+		// Emit tuple result annotation
+		if collector := ctx.Collector(); collector != nil {
+			var resultSize int = -1
+			var resultCols []query.Symbol
+			if tupleResult != nil {
+				resultSize = tupleResult.Size()
+				resultCols = tupleResult.Columns()
+			}
+			collector.Add(annotations.Event{
+				Name: annotations.OrClauseFallback,
+				Data: map[string]interface{}{
+					"tuple.index":    tupleIdx,
+					"used.branch":    usedBranch,
+					"result.size":    resultSize,
+					"result.columns": resultCols,
+				},
+			})
+		}
+
+		// Collect results from this tuple
+		if tupleResult != nil {
+			// Set output columns from first result
+			if outputCols == nil {
+				outputCols = tupleResult.Columns()
+			}
+
+			// Add all tuples from result
+			resultIter := tupleResult.Iterator()
+			for resultIter.Next() {
+				resultTuples = append(resultTuples, resultIter.Tuple())
+			}
+			resultIter.Close()
+		}
+	}
+
+	// Emit complete annotation
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: annotations.OrClauseComplete,
+			Data: map[string]interface{}{
+				"output.columns": outputCols,
+				"output.size":    len(resultTuples),
+			},
+		})
+	}
+
+	if len(resultTuples) == 0 {
+		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
+	}
+
+	return NewMaterializedRelationWithOptions(outputCols, resultTuples, e.options), nil
+}
+
+// executeOrClauseFallbackGlobal does global fallback when no outer bindings needed
+func (e *Executor) executeOrClauseFallbackGlobal(ctx Context, clause *query.OrClause) (Relation, error) {
 	for i, branch := range clause.Branches {
-		// Execute branch with available bindings
 		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
 		if err != nil {
 			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
 		}
 
-		// Check if result is non-empty by collecting tuples
-		// We materialize here because fallback semantics require knowing if a branch
-		// produced results before trying the next branch
+		// Materialize the result to check if non-empty and ensure it can be iterated multiple times
+		// This is necessary because streaming relations may only be iterable once
 		if branchResult != nil {
 			var tuples []Tuple
 			iter := branchResult.Iterator()
@@ -214,7 +376,6 @@ func (e *Executor) executeOrClauseFallback(ctx Context, clause *query.OrClause, 
 		}
 	}
 
-	// All branches empty
 	return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 }
 
@@ -439,6 +600,19 @@ func (e *Executor) executeInnerClauses(ctx Context, clauses []query.Clause, bind
 			predResult := filterWithPredicate(collapsed[0], c)
 			result = Relations{predResult}
 
+		case *query.SubqueryPattern:
+			// Subquery execution within OR/NOT branch
+			subqResult, err := e.executeInnerSubquery(ctx, c, result)
+			if err != nil {
+				return nil, fmt.Errorf("subquery execution failed: %w", err)
+			}
+			if len(result) > 0 {
+				result = append(result, subqResult)
+				result = result.Collapse(ctx)
+			} else {
+				result = Relations{subqResult}
+			}
+
 		default:
 			return nil, fmt.Errorf("unsupported clause type in NOT/OR: %T", clause)
 		}
@@ -480,6 +654,136 @@ func (e *Executor) executeInnerExpression(ctx Context, expr *query.Expression, g
 
 	// Evaluate expression over the relation
 	return evaluateExpressionWithLookup(collapsed[0], expr, nil), nil
+}
+
+// executeInnerSubquery executes a subquery within an OR/NOT branch
+func (e *Executor) executeInnerSubquery(ctx Context, subq *query.SubqueryPattern, groups Relations) (Relation, error) {
+	// Extract input symbols from the subquery
+	var inputSymbols []query.Symbol
+	for _, input := range subq.Inputs {
+		switch inp := input.(type) {
+		case query.Variable:
+			inputSymbols = append(inputSymbols, inp.Name)
+		case query.Constant:
+			// Check if it's the database marker
+			if sym, ok := inp.Value.(query.Symbol); ok && sym == "$" {
+				inputSymbols = append(inputSymbols, sym)
+			}
+			// Other constants don't need extraction
+		}
+	}
+
+	// Collapse groups if needed
+	var inputRel Relation
+	if len(groups) > 0 {
+		collapsed := groups.Collapse(ctx)
+		if len(collapsed) == 1 {
+			inputRel = collapsed[0]
+		} else if len(collapsed) > 1 {
+			// Use product for disjoint groups
+			inputRel = Relations(collapsed).Product()
+		}
+	}
+
+	// Get unique input combinations
+	inputCombinations := getUniqueInputCombinations(inputRel, inputSymbols)
+
+	// If no input combinations but we have variable inputs, this means the subquery
+	// can't execute (no correlation values available)
+	if len(inputCombinations) == 0 && len(inputSymbols) > 0 {
+		// Check if all inputs are non-variable (constants)
+		hasVariableInputs := false
+		for _, input := range subq.Inputs {
+			if _, ok := input.(query.Variable); ok {
+				hasVariableInputs = true
+				break
+			}
+		}
+		if hasVariableInputs {
+			// No input combinations but variable inputs expected - return empty
+			return NewMaterializedRelationWithOptions(extractBindingSymbols(subq.Binding), nil, e.options), nil
+		}
+		// No variable inputs - execute once with no correlation
+		inputCombinations = []map[query.Symbol]interface{}{{}}
+	}
+
+	// Execute the subquery for each input combination
+	var allResults []Tuple
+	var resultCols []query.Symbol
+
+	for _, inputValues := range inputCombinations {
+		// Create input relations for this subquery execution
+		inputRelations := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+
+		// Emit annotation for subquery input
+		if collector := ctx.Collector(); collector != nil {
+			collector.Add(annotations.Event{
+				Name: annotations.OrSubqueryInput,
+				Data: map[string]interface{}{
+					"inputValues":       inputValues,
+					"inputRelationCount": len(inputRelations),
+				},
+			})
+		}
+
+		// Execute the nested query with input relations
+		nestedResult, err := e.ExecuteWithRelations(ctx, subq.Query, inputRelations)
+		if err != nil {
+			return nil, fmt.Errorf("nested query execution failed: %w", err)
+		}
+
+		// Emit annotation for subquery result
+		if collector := ctx.Collector(); collector != nil {
+			size := 0
+			if nestedResult != nil {
+				size = nestedResult.Size()
+			}
+			collector.Add(annotations.Event{
+				Name: annotations.OrSubqueryResult,
+				Data: map[string]interface{}{
+					"resultSize": size,
+				},
+			})
+		}
+
+		if nestedResult == nil || nestedResult.Size() == 0 {
+			continue
+		}
+
+		// Apply binding form to the result
+		boundResult, err := applyBindingForm(nestedResult, subq.Binding, inputValues, inputSymbols)
+		if err != nil {
+			return nil, fmt.Errorf("binding form failed: %w", err)
+		}
+
+		if resultCols == nil {
+			resultCols = boundResult.Columns()
+		}
+
+		// Collect tuples
+		iter := boundResult.Iterator()
+		for iter.Next() {
+			allResults = append(allResults, iter.Tuple())
+		}
+		iter.Close()
+	}
+
+	if len(allResults) == 0 {
+		// Build correct columns: input symbols (excluding $) + binding symbols
+		var realInputSymbols []query.Symbol
+		for _, sym := range inputSymbols {
+			if sym != "$" {
+				realInputSymbols = append(realInputSymbols, sym)
+			}
+		}
+		bindingSyms := extractBindingSymbols(subq.Binding)
+		columns := make([]query.Symbol, len(realInputSymbols)+len(bindingSyms))
+		copy(columns, realInputSymbols)
+		copy(columns[len(realInputSymbols):], bindingSyms)
+		return NewMaterializedRelationWithOptions(columns, nil, e.options), nil
+	}
+
+	return NewMaterializedRelationWithOptions(resultCols, allResults, e.options), nil
 }
 
 // collectInnerVars collects all variables from inner clauses
@@ -571,6 +875,21 @@ func notOrTupleKey(tuple Tuple) string {
 		key += fmt.Sprintf("|%v", tuple[i])
 	}
 	return key
+}
+
+// countOverlap counts how many symbols from syms are present in cols
+func countOverlap(cols, syms []query.Symbol) int {
+	colSet := make(map[query.Symbol]bool, len(cols))
+	for _, col := range cols {
+		colSet[col] = true
+	}
+	count := 0
+	for _, sym := range syms {
+		if colSet[sym] {
+			count++
+		}
+	}
+	return count
 }
 
 // unionRelations creates a union of multiple relations, projecting to common columns

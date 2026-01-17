@@ -332,6 +332,18 @@ func (p *Planner) extractExpressionInputs(expr *query.Expression) []query.Symbol
 				inputs = append(inputs, v.Symbol)
 				seen[v.Symbol] = true
 			}
+		case *query.ComparisonFunction:
+			// Extract inputs from the wrapped Comparison
+			if fn.Comparison != nil {
+				if v, ok := fn.Comparison.Left.(query.VariableTerm); ok && !seen[v.Symbol] {
+					inputs = append(inputs, v.Symbol)
+					seen[v.Symbol] = true
+				}
+				if v, ok := fn.Comparison.Right.(query.VariableTerm); ok && !seen[v.Symbol] {
+					inputs = append(inputs, v.Symbol)
+					seen[v.Symbol] = true
+				}
+			}
 		}
 	}
 

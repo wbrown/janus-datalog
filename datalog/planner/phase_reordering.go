@@ -333,6 +333,21 @@ func updatePhaseSymbols(phases []Phase, findElements []query.FindElement, inputS
 			}
 		}
 
+		// Add OR clause outputs
+		for _, orClause := range phases[i].OrClauses {
+			syms := extractOrClauseSymbols(orClause)
+			for _, sym := range syms.Provides {
+				providesSet[sym] = true
+			}
+		}
+
+		// Add OR-JOIN clause outputs (provides exactly its join vars)
+		for _, orJoinClause := range phases[i].OrJoinClauses {
+			for _, sym := range orJoinClause.JoinVars {
+				providesSet[sym] = true
+			}
+		}
+
 		// Convert back to slice
 		provides := make([]query.Symbol, 0, len(providesSet))
 		for sym := range providesSet {

@@ -49,6 +49,49 @@ func TestParseExpressionPatterns(t *testing.T) {
 			wantArgs: 2,
 			wantBind: "?result",
 		},
+		// Comparison functions with binding
+		{
+			name:     "greater than with binding",
+			input:    `[:find ?x ?flag :where [?x :count ?n] [(> ?n 0) ?flag]]`,
+			wantFunc: ">",
+			wantArgs: 2,
+			wantBind: "?flag",
+		},
+		{
+			name:     "equality with binding",
+			input:    `[:find ?x ?match :where [?x :status ?s] [(= ?s "active") ?match]]`,
+			wantFunc: "=",
+			wantArgs: 2,
+			wantBind: "?match",
+		},
+		{
+			name:     "less than or equal with binding",
+			input:    `[:find ?x ?under :where [?x :price ?p] [(<= ?p 100) ?under]]`,
+			wantFunc: "<=",
+			wantArgs: 2,
+			wantBind: "?under",
+		},
+		{
+			name:     "not equal with binding",
+			input:    `[:find ?x ?diff :where [?x :value ?v] [(!= ?v 0) ?diff]]`,
+			wantFunc: "!=",
+			wantArgs: 2,
+			wantBind: "?diff",
+		},
+		{
+			name:     "less than with binding",
+			input:    `[:find ?x ?small :where [?x :age ?a] [(< ?a 18) ?small]]`,
+			wantFunc: "<",
+			wantArgs: 2,
+			wantBind: "?small",
+		},
+		{
+			name:     "greater than or equal with binding",
+			input:    `[:find ?x ?adult :where [?x :age ?a] [(>= ?a 18) ?adult]]`,
+			wantFunc: ">=",
+			wantArgs: 2,
+			wantBind: "?adult",
+		},
 	}
 
 	for _, tt := range tests {
@@ -101,6 +144,13 @@ func TestParseExpressionPatterns(t *testing.T) {
 				}
 				if tt.wantArgs != 1 {
 					t.Errorf("Identity function should have 1 arg")
+				}
+			case *query.ComparisonFunction:
+				if string(fn.Comparison.Op) != tt.wantFunc {
+					t.Errorf("Comparison Op = %v, want %v", fn.Comparison.Op, tt.wantFunc)
+				}
+				if tt.wantArgs != 2 {
+					t.Errorf("Comparison functions should have 2 args")
 				}
 			default:
 				t.Errorf("Unexpected function type: %T", fn)

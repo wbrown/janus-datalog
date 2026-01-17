@@ -14,6 +14,8 @@ func parseFunction(fn string, args []query.PatternElement) (query.Function, erro
 	switch fn {
 	case "+", "-", "*", "/":
 		return parseArithmetic(fn, args)
+	case "=", "<", "<=", ">", ">=", "!=":
+		return parseComparisonFunction(fn, args)
 	case "str":
 		return parseStringConcat(args)
 	case "year", "month", "day", "hour", "minute", "second":
@@ -56,6 +58,40 @@ func parseArithmetic(fn string, args []query.PatternElement) (query.Function, er
 		Op:    op,
 		Left:  elementToTerm(args[0]),
 		Right: elementToTerm(args[1]),
+	}, nil
+}
+
+// parseComparisonFunction handles comparison operators as functions with bindings
+// Example: [(> ?count 0) ?flag] binds true/false to ?flag
+func parseComparisonFunction(fn string, args []query.PatternElement) (query.Function, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s requires exactly 2 arguments, got %d", fn, len(args))
+	}
+
+	var op query.CompareOp
+	switch fn {
+	case "=":
+		op = query.OpEQ
+	case "<":
+		op = query.OpLT
+	case "<=":
+		op = query.OpLTE
+	case ">":
+		op = query.OpGT
+	case ">=":
+		op = query.OpGTE
+	case "!=":
+		op = query.OpNE
+	}
+
+	comparison := &query.Comparison{
+		Op:    op,
+		Left:  elementToTerm(args[0]),
+		Right: elementToTerm(args[1]),
+	}
+
+	return &query.ComparisonFunction{
+		Comparison: comparison,
 	}, nil
 }
 
