@@ -19,7 +19,8 @@ Janus-datalog implements a substantial subset of Datomic's Datalog query languag
 
 **Go-Specific Ergonomics:**
 - ✅ Struct Reflection API: Go structs ↔ datoms with automatic schema generation
-- ✅ QueryInto API: typed query results directly into Go structs
+- ✅ QueryInto API: typed query results directly into Go structs (including scalars)
+- ✅ Query Builder (qb): compile-time safe query construction with IDE support
 
 **Storage:**
 - ✅ BadgerDB persistent storage with EAVT model and 5 indices
@@ -72,6 +73,12 @@ Basic Datalog queries work as expected:
 [(= ?a ?b)]
 [(!= ?x ?y)]
 [(< 0 ?x 100)]  ; chained comparison
+```
+
+**Comparison binding (bind boolean result to variable):**
+```clojure
+[(> ?count 0) ?has-items]      ; ?has-items = true/false
+[(= ?status "active") ?active] ; ?active = true/false
 ```
 
 **String operations:**
@@ -419,7 +426,7 @@ err := db.QueryInto(&stats, `
 
 // QueryOneInto for single-result queries
 var result TradeResult
-err := db.QueryOneInto(&result, `
+found, err := db.QueryOneInto(&result, `
     [:find ?symbol ?price ?date
      :where [?t :trade/id ?id]
             [(= ?id 12345)]
@@ -427,7 +434,16 @@ err := db.QueryOneInto(&result, `
             [?t :trade/price ?price]
             [?t :trade/date ?date]]
 `)
+
+// Scalar queries - single column, no struct needed
+var names []string
+db.QueryInto(&names, `[:find ?name :where [?e :person/name ?name]]`)
+
+var count int64
+found, err := db.QueryOneInto(&count, `[:find (count ?e) :where [?e :person/name _]]`)
 ```
+
+**Scalar types supported:** `string`, `int64`, `float64`, `bool`, `time.Time`, `datalog.Identity`, `datalog.Keyword`, `[]byte`
 
 **Tag mapping:**
 - Variables: `datalog:"?symbol"` matches `:find ?symbol`
@@ -440,6 +456,52 @@ err := db.QueryOneInto(&result, `
 - `ErrSymbolNotFound` - Tag references symbol not in query
 
 See [docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md) for complete documentation.
+
+### 15. Query Builder (qb) ✅
+
+**Go-specific feature** for compile-time safe query construction:
+
+```go
+import "github.com/wbrown/janus-datalog/datalog/qb"
+
+// Define attributes as constants - typos caught at compile time
+var PersonName = qb.Kw(":person/name")
+var PersonAge = qb.Kw(":person/age")
+
+// Variables created with NewVar() - same pointer = join
+e := qb.NewVar()
+name := qb.NewVar()
+age := qb.NewVar()
+
+q := qb.Query().
+    Find(name, age).
+    Where(
+        qb.Pat(e, PersonName, name),
+        qb.Pat(e, PersonAge, age),  // same e = join!
+        qb.Gt(age, 21),
+    ).
+    MustBuild()
+
+// Use with any query method
+results, err := db.ExecuteQuery(q)
+```
+
+**Key benefits:**
+- Compile-time safety: attribute typos caught immediately
+- IDE support: autocomplete for attributes and functions
+- Variable identity = join semantics (same `*Var` pointer in multiple patterns)
+- Full Datalog support: patterns, predicates, expressions, aggregations, NOT/OR, subqueries
+
+**Available functions:**
+- Patterns: `Pat()` (2-5 elements), `Blank()` for wildcards
+- Predicates: `Lt`, `Gt`, `Eq`, `Ne`, `Lte`, `Gte`, `Range`
+- Expressions: `Add`, `Sub`, `Mul`, `Div`, `Str`, `Ground`, `Identity`
+- Time: `Year`, `Month`, `Day`, `Hour`, `Minute`, `Second`
+- Aggregates: `Sum`, `Count`, `Avg`, `Min`, `Max`
+- Logic: `Not`, `NotJoin`, `Or`, `OrJoin`
+- Inputs: `DB`, `Scalar`, `Collection`, `Tuple`, `Relation`
+
+See [docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md) for complete documentation.
 
 ## Missing Datomic Features
 
