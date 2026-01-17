@@ -37,9 +37,9 @@ type BasePullContext struct{}
 func (c *BasePullContext) PullBegin(entity datalog.Identity, specCount int, resolved bool) {}
 func (c *BasePullContext) PullComplete(entity datalog.Identity, attrCount int, resolved bool, err error) {
 }
-func (c *BasePullContext) EntityBegin(entity datalog.Identity, depth, specCount int)  {}
+func (c *BasePullContext) EntityBegin(entity datalog.Identity, depth, specCount int)    {}
 func (c *BasePullContext) EntityComplete(entity datalog.Identity, depth, attrCount int) {}
-func (c *BasePullContext) CycleDetected(entity datalog.Identity, depth int)            {}
+func (c *BasePullContext) CycleDetected(entity datalog.Identity, depth int)             {}
 
 func (c *BasePullContext) AttributeLookup(entity datalog.Identity, attr datalog.Keyword, found bool, via string, fn func()) {
 	fn()

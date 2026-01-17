@@ -34,10 +34,10 @@ type BoundValues struct {
 // - If it's a Blank or variable not in binding, returns nil
 func (pe *PatternExtractor) Extract(bindingTuple Tuple) BoundValues {
 	return BoundValues{
-		E:  pe.extractElement(pe.pattern.GetE(), bindingTuple),
-		A:  pe.extractElement(pe.pattern.GetA(), bindingTuple),
-		V:  pe.extractElement(pe.pattern.GetV(), bindingTuple),
-		T:  pe.extractElement(pe.pattern.GetT(), bindingTuple),
+		E: pe.extractElement(pe.pattern.GetE(), bindingTuple),
+		A: pe.extractElement(pe.pattern.GetA(), bindingTuple),
+		V: pe.extractElement(pe.pattern.GetV(), bindingTuple),
+		T: pe.extractElement(pe.pattern.GetT(), bindingTuple),
 	}
 }
 

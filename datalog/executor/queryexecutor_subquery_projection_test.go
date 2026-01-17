@@ -47,57 +47,26 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	// Test with legacy executor (should work)
-	t.Run("LegacyExecutor", func(t *testing.T) {
-		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
-		opts := planner.PlannerOptions{
-			UseLegacyExecutor: true, // Legacy executor
-		}
-		exec := NewExecutorWithOptions(matcher, opts)
-		result, err := exec.Execute(q)
-		assert.NoError(t, err)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	opts := planner.PlannerOptions{}
+	exec := NewExecutorWithOptions(matcher, opts)
+	result, err := exec.Execute(q)
+	assert.NoError(t, err, "QueryExecutor should preserve subquery result column names")
 
-		// Should have 3 results (one per person), all with max-age=35 (don't check IsEmpty - may consume first tuple)
-		assert.Equal(t, 3, result.Size())
+	// Collect results (don't check Size() or IsEmpty() - may be streaming and would consume first tuple)
+	it := result.Iterator()
+	defer it.Close()
+	count := 0
+	for it.Next() {
+		tuple := it.Tuple()
+		assert.Len(t, tuple, 2)
+		assert.IsType(t, "", tuple[0])       // name
+		assert.Equal(t, int64(35), tuple[1]) // max-age
+		count++
+	}
 
-		it := result.Iterator()
-		defer it.Close()
-		for it.Next() {
-			tuple := it.Tuple()
-			assert.Len(t, tuple, 2)
-			assert.IsType(t, "", tuple[0]) // name
-			assert.Equal(t, int64(35), tuple[1]) // max-age
-		}
-	})
-
-	// Test with QueryExecutor (Stage B) - this is the bug
-	t.Run("QueryExecutor", func(t *testing.T) {
-		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
-		opts := planner.PlannerOptions{
-
-		}
-		exec := NewExecutorWithOptions(matcher, opts)
-		result, err := exec.Execute(q)
-
-		// BUG: This should succeed but fails with:
-		// "cannot project: column ?max-age not found in relation"
-		assert.NoError(t, err, "QueryExecutor should preserve subquery result column names")
-
-		// Collect results (don't check Size() or IsEmpty() - may be streaming and would consume first tuple)
-		it := result.Iterator()
-		defer it.Close()
-		count := 0
-		for it.Next() {
-			tuple := it.Tuple()
-			assert.Len(t, tuple, 2)
-			assert.IsType(t, "", tuple[0]) // name
-			assert.Equal(t, int64(35), tuple[1]) // max-age
-			count++
-		}
-
-		// Should have 3 results (one per person), all with max-age=35
-		assert.Equal(t, 3, count)
-	})
+	// Should have 3 results (one per person), all with max-age=35
+	assert.Equal(t, 3, count)
 }
 
 // TestQueryExecutorMultipleSubqueryProjections tests multiple subqueries
@@ -184,9 +153,7 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 	// Test with QueryExecutor (Stage B) - this is the bug
 	t.Run("QueryExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
-		opts := planner.PlannerOptions{
-
-		}
+		opts := planner.PlannerOptions{}
 		exec := NewExecutorWithOptions(matcher, opts)
 		result, err := exec.Execute(q)
 
@@ -205,6 +172,6 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 		assert.Equal(t, 103.0, tuple[2]) // last-close (max of all closes)
 		assert.Equal(t, 105.0, tuple[3]) // max-high
 		assert.Equal(t, 99.0, tuple[4])  // min-low
-		assert.False(t, it.Next()) // Should be only 1 result for AAPL
+		assert.False(t, it.Next())       // Should be only 1 result for AAPL
 	})
 }

@@ -720,7 +720,7 @@ func TestSetSemantics_Contract_JoinThenProjectDeduplicates(t *testing.T) {
 			[]query.Symbol{"?person", "?city"},
 			[]Tuple{
 				{"alice", "NYC"},
-				{"bob", "NYC"},   // Same city
+				{"bob", "NYC"}, // Same city
 				{"carol", "LA"},
 			},
 		)

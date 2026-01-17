@@ -3,9 +3,6 @@ package executor
 // ExecutorOptions is a lightweight struct for internal use within executor
 // The main configuration comes from PlannerOptions which includes both planner and executor settings
 type ExecutorOptions struct {
-	// Execution engine selection
-	UseLegacyExecutor bool // If true, use legacy phase-based executor; if false (default), use QueryExecutor
-
 	// Streaming options - control memory vs performance tradeoffs
 	EnableIteratorComposition bool
 	EnableTrueStreaming       bool

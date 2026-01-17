@@ -1,24 +1,25 @@
-package planner
+package experimental
 
 import (
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // DecorrelationGroup represents a group of subqueries that can be optimized together
 type DecorrelationGroup struct {
-	Signature  CorrelationSignature
+	Signature  planner.CorrelationSignature
 	Subqueries []int // Indices in Phase.Subqueries
 }
 
-// extractPatternFingerprint creates a simplified representation for matching
-func extractPatternFingerprint(pattern query.Pattern) PatternFingerprint {
+// extractplanner.PatternFingerprint creates a simplified representation for matching
+func extractplanner.PatternFingerprint(pattern query.Pattern) planner.PatternFingerprint {
 	dp, ok := pattern.(*query.DataPattern)
 	if !ok {
-		return PatternFingerprint{}
+		return planner.PatternFingerprint{}
 	}
 
 	var attributes []string
@@ -38,25 +39,25 @@ func extractPatternFingerprint(pattern query.Pattern) PatternFingerprint {
 		}
 	}
 
-	return PatternFingerprint{
+	return planner.PatternFingerprint{
 		Attributes: attributes,
 		Bound:      bound,
 	}
 }
 
 // Hash creates a unique string representation for comparison
-func (pf PatternFingerprint) Hash() string {
+func (pf planner.PatternFingerprint) Hash() string {
 	return fmt.Sprintf("%v|%v", pf.Attributes, pf.Bound)
 }
 
-// extractCorrelationSignature analyzes a subquery to create its signature
-func extractCorrelationSignature(subqPlan *SubqueryPlan) CorrelationSignature {
-	var basePatterns []PatternFingerprint
+// extractplanner.CorrelationSignature analyzes a subquery to create its signature
+func extractplanner.CorrelationSignature(subqPlan *SubqueryPlan) planner.CorrelationSignature {
+	var basePatterns []planner.PatternFingerprint
 
 	// Analyze patterns in nested query
 	for _, phase := range subqPlan.NestedPlan.Phases {
 		for _, patPlan := range phase.Patterns {
-			fp := extractPatternFingerprint(patPlan.Pattern)
+			fp := extractplanner.PatternFingerprint(patPlan.Pattern)
 			basePatterns = append(basePatterns, fp)
 		}
 	}
@@ -77,7 +78,7 @@ func extractCorrelationSignature(subqPlan *SubqueryPlan) CorrelationSignature {
 	// Only decorrelate GROUPED aggregations, not pure aggregations
 	isGroupedAggregate := hasAggregates && hasNonAggregateVars
 
-	return CorrelationSignature{
+	return planner.CorrelationSignature{
 		BasePatterns:    basePatterns,
 		CorrelationVars: subqPlan.Inputs,
 		IsAggregate:     isGroupedAggregate,
@@ -88,7 +89,7 @@ func extractCorrelationSignature(subqPlan *SubqueryPlan) CorrelationSignature {
 // Note: We only hash correlation vars and aggregate status, NOT base patterns.
 // This allows subqueries that access different attributes but use the same
 // grouping keys to be decorrelated together (which is the whole point!).
-func (cs CorrelationSignature) Hash() string {
+func (cs planner.CorrelationSignature) Hash() string {
 	var varNames []string
 	for _, v := range cs.CorrelationVars {
 		varNames = append(varNames, string(v))
@@ -241,7 +242,7 @@ func groupSubqueriesByFilters(subqueries []*SubqueryPlan, indices []int,
 		var accessedAttributes []string
 		for _, phase := range subq.NestedPlan.Phases {
 			for _, patPlan := range phase.Patterns {
-				fp := extractPatternFingerprint(patPlan.Pattern)
+				fp := extractplanner.PatternFingerprint(patPlan.Pattern)
 				accessedAttributes = append(accessedAttributes, fp.Hash())
 			}
 		}
@@ -289,7 +290,7 @@ func detectDecorrelationOpportunities(phase *Phase) []DecorrelationGroup {
 	for i := range phase.Subqueries {
 		subqPlan := &phase.Subqueries[i]
 
-		sig := extractCorrelationSignature(subqPlan)
+		sig := extractplanner.CorrelationSignature(subqPlan)
 
 		// Only aggregate queries can be decorrelated
 		if !sig.IsAggregate {
@@ -310,7 +311,7 @@ func detectDecorrelationOpportunities(phase *Phase) []DecorrelationGroup {
 	for hash, indices := range signatureGroups {
 		if len(indices) >= 2 {
 			// Get signature from first subquery
-			sig := extractCorrelationSignature(&phase.Subqueries[indices[0]])
+			sig := extractplanner.CorrelationSignature(&phase.Subqueries[indices[0]])
 
 			opportunities = append(opportunities, DecorrelationGroup{
 				Signature:  sig,
@@ -319,7 +320,7 @@ func detectDecorrelationOpportunities(phase *Phase) []DecorrelationGroup {
 		} else if len(indices) == 1 {
 			// Single subquery - not worth decorrelating
 			// This is useful for debugging why subqueries don't group
-			sig := extractCorrelationSignature(&phase.Subqueries[indices[0]])
+			sig := extractplanner.CorrelationSignature(&phase.Subqueries[indices[0]])
 			_ = hash // Annotation could capture hash:indices mapping
 			_ = sig  // Annotation could capture signature details
 		}
@@ -413,7 +414,7 @@ func (p *Planner) createDecorrelatedPlan(phase *Phase, group DecorrelationGroup)
 // mergeSubqueriesInGroup merges subqueries in a filter group into single query
 // Returns: merged query, column mapping, grouping variables, error
 func mergeSubqueriesInGroup(subqueries []*SubqueryPlan, fg FilterGroup,
-	sig CorrelationSignature) (*query.Query, map[int][]int, []query.Symbol, error) {
+	sig planner.CorrelationSignature) (*query.Query, map[int][]int, []query.Symbol, error) {
 
 	// Start with first subquery as base
 	if len(fg.Subqueries) == 0 {
@@ -518,10 +519,10 @@ func mergeSubqueriesInGroup(subqueries []*SubqueryPlan, fg FilterGroup,
 		for _, clause := range subq.NestedPlan.Query.Where {
 			// Check for concrete pattern types
 			if dataPat, ok := clause.(*query.DataPattern); ok {
-				fp := extractPatternFingerprint(dataPat)
+				fp := extractplanner.PatternFingerprint(dataPat)
 				patternSet[fp.Hash()] = clause
 			} else if subqPat, ok := clause.(*query.SubqueryPattern); ok {
-				fp := extractPatternFingerprint(subqPat)
+				fp := extractplanner.PatternFingerprint(subqPat)
 				patternSet[fp.Hash()] = clause
 			}
 		}
@@ -596,7 +597,7 @@ func (p *Planner) detectAndPlanDecorrelation(phase *Phase) error {
 	signatureInfo := make(map[string][]int) // signature hash -> subquery indices
 	for i := range phase.Subqueries {
 		subqPlan := &phase.Subqueries[i]
-		sig := extractCorrelationSignature(subqPlan)
+		sig := extractplanner.CorrelationSignature(subqPlan)
 
 		// Store in metadata for potential annotation
 		if sig.IsAggregate && len(sig.CorrelationVars) > 0 {

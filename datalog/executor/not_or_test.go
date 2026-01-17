@@ -1,9 +1,11 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -363,8 +365,8 @@ func TestOrJoinClause(t *testing.T) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
 		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
 		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: alice, A: userStatusAttr, V: "active", Tx: 1},    // Alice is active user
-		{E: bob, A: adminStatusAttr, V: "enabled", Tx: 1},    // Bob is enabled admin
+		{E: alice, A: userStatusAttr, V: "active", Tx: 1},     // Alice is active user
+		{E: bob, A: adminStatusAttr, V: "enabled", Tx: 1},     // Bob is enabled admin
 		{E: charlie, A: userStatusAttr, V: "inactive", Tx: 1}, // Charlie is inactive
 	}
 
@@ -966,7 +968,15 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 
 	matcher := NewMemoryPatternMatcher(datoms)
 	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
-	ctx := NewContext(nil)
+
+	// Create annotation handler to debug OR fallback behavior
+	var events []annotations.Event
+	handler := func(event annotations.Event) {
+		if strings.HasPrefix(event.Name, "or-fallback/") {
+			events = append(events, event)
+		}
+	}
+	ctx := NewContext(handler)
 
 	// Build the query:
 	// [:find ?scenario ?count
@@ -1063,6 +1073,11 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 	for i := 0; i < finalRel.Size(); i++ {
 		tuple := finalRel.Get(i)
 		t.Logf("Result %d: %v", i, tuple)
+	}
+
+	// Log OR fallback annotations
+	for _, event := range events {
+		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// PlanCache caches query plans to avoid re-planning identical queries
+// PlanCache caches RealizedPlan to avoid re-planning identical queries
 type PlanCache struct {
 	cache map[string]*cachedPlan
 	mu    sync.RWMutex
@@ -26,7 +26,7 @@ type PlanCache struct {
 }
 
 type cachedPlan struct {
-	plan      *QueryPlan
+	plan      *RealizedPlan
 	timestamp time.Time
 }
 
@@ -46,8 +46,8 @@ func NewPlanCache(maxSize int, ttl time.Duration) *PlanCache {
 	}
 }
 
-// Get retrieves a cached plan if it exists and is not expired
-func (c *PlanCache) GetWithOptions(q *query.Query, opts PlannerOptions) (*QueryPlan, bool) {
+// GetWithOptions retrieves a cached RealizedPlan if it exists and is not expired
+func (c *PlanCache) GetWithOptions(q *query.Query, opts PlannerOptions) (*RealizedPlan, bool) {
 	if c == nil {
 		return nil, false
 	}
@@ -74,14 +74,8 @@ func (c *PlanCache) GetWithOptions(q *query.Query, opts PlannerOptions) (*QueryP
 	return cached.plan, true
 }
 
-// Get retrieves a cached plan - deprecated, use GetWithOptions
-func (c *PlanCache) Get(q *query.Query) (*QueryPlan, bool) {
-	// For backward compatibility, use default options
-	return c.GetWithOptions(q, PlannerOptions{})
-}
-
-// Set stores a plan in the cache
-func (c *PlanCache) SetWithOptions(q *query.Query, plan *QueryPlan, opts PlannerOptions) {
+// SetWithOptions stores a RealizedPlan in the cache
+func (c *PlanCache) SetWithOptions(q *query.Query, plan *RealizedPlan, opts PlannerOptions) {
 	if c == nil || plan == nil {
 		return
 	}
@@ -105,12 +99,6 @@ func (c *PlanCache) SetWithOptions(q *query.Query, plan *QueryPlan, opts Planner
 		plan:      plan,
 		timestamp: time.Now(),
 	}
-}
-
-// Set stores a plan in the cache - deprecated, use SetWithOptions
-func (c *PlanCache) Set(q *query.Query, plan *QueryPlan) {
-	// For backward compatibility, use default options
-	c.SetWithOptions(q, plan, PlannerOptions{})
 }
 
 // Clear removes all cached plans
@@ -185,18 +173,9 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 
 	// Hash planner options that affect the plan
 	fmt.Fprintf(h, "OPTIONS:")
-	fmt.Fprintf(h, "DynamicReorder:%v;", opts.EnableDynamicReordering)
-	fmt.Fprintf(h, "PredicatePush:%v;", opts.EnablePredicatePushdown)
-	fmt.Fprintf(h, "CondAggRewrite:%v;", opts.EnableConditionalAggregateRewriting)
-	fmt.Fprintf(h, "SubqueryDecorr:%v;", opts.EnableSubqueryDecorrelation)
+	fmt.Fprintf(h, "SemanticRewrite:%v;", opts.EnableSemanticRewriting)
 
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-// computeKey generates a deterministic key for a query - deprecated
-func (c *PlanCache) computeKey(q *query.Query) string {
-	// For backward compatibility
-	return c.computeKeyWithOptions(q, PlannerOptions{})
 }
 
 // evictExpired removes expired entries from the cache

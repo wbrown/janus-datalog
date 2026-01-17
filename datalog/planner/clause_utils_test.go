@@ -9,8 +9,8 @@ import (
 
 func TestExtractOrClauseSymbols(t *testing.T) {
 	tests := []struct {
-		name            string
-		orClause        *query.OrClause
+		name             string
+		orClause         *query.OrClause
 		expectedProvides []query.Symbol
 	}{
 		{
@@ -108,91 +108,6 @@ func TestExtractOrClauseSymbols(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestOrOnlyQueryPlanning(t *testing.T) {
-	// Test that an OR-only query creates phases correctly
-	planner := NewPlanner(nil, PlannerOptions{})
-
-	q := &query.Query{
-		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?x"},
-		},
-		Where: []query.Clause{
-			&query.OrClause{
-				Branches: [][]query.Clause{
-					{
-						&query.DataPattern{
-							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
-								query.Constant{Value: datalog.NewKeyword(":test/attr")},
-								query.Variable{Name: "?x"},
-							},
-						},
-					},
-					{
-						&query.Expression{
-							Function: &query.GroundFunction{Value: int64(0)},
-							Binding:  "?x",
-						},
-					},
-				},
-			},
-		},
-	}
-
-	plan, err := planner.Plan(q)
-	if err != nil {
-		t.Fatalf("Planning failed: %v", err)
-	}
-
-	if len(plan.Phases) == 0 {
-		t.Fatal("Expected at least 1 phase, got 0")
-	}
-
-	t.Logf("Phases: %d", len(plan.Phases))
-	for i, phase := range plan.Phases {
-		t.Logf("Phase %d: Available=%v, Provides=%v, Keep=%v, OrClauses=%d",
-			i, phase.Available, phase.Provides, phase.Keep, len(phase.OrClauses))
-	}
-
-	// Check that the OR clause is assigned to a phase
-	hasOrClause := false
-	for _, phase := range plan.Phases {
-		if len(phase.OrClauses) > 0 {
-			hasOrClause = true
-		}
-	}
-	if !hasOrClause {
-		t.Error("Expected OR clause to be assigned to a phase")
-	}
-
-	// Check that ?x is in Provides
-	foundX := false
-	for _, phase := range plan.Phases {
-		for _, sym := range phase.Provides {
-			if sym == "?x" {
-				foundX = true
-			}
-		}
-	}
-	if !foundX {
-		t.Error("Expected ?x to be in Provides")
-	}
-
-	// Test the realized plan
-	realized := plan.Realize()
-	t.Logf("Realized phases: %d", len(realized.Phases))
-	for i, rp := range realized.Phases {
-		t.Logf("Realized Phase %d:", i)
-		t.Logf("  Query: %s", rp.Query.String())
-		t.Logf("  Query.Where: %d clauses", len(rp.Query.Where))
-		for j, clause := range rp.Query.Where {
-			t.Logf("    Clause %d: %T - %s", j, clause, clause.String())
-		}
-		t.Logf("  Provides: %v", rp.Provides)
-		t.Logf("  Keep: %v", rp.Keep)
 	}
 }
 
@@ -452,8 +367,8 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 
 func TestExtractExpressionSymbols(t *testing.T) {
 	tests := []struct {
-		name            string
-		expression      *query.Expression
+		name             string
+		expression       *query.Expression
 		expectedProvides []query.Symbol
 		expectedRequires []query.Symbol
 	}{

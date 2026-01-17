@@ -150,9 +150,9 @@ func BenchmarkOHLCQuery(b *testing.B) {
 	b.Run("WithTimeRangeOpt", func(b *testing.B) {
 		matcher := NewBadgerMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
-			EnablePredicatePushdown:  true,
-			EnableSemanticRewriting:  true, // Enables time-range optimization
-			EnableFineGrainedPhases:  true,
+			EnablePredicatePushdown: true,
+			EnableSemanticRewriting: true, // Enables time-range optimization
+			EnableFineGrainedPhases: true,
 		})
 
 		b.ResetTimer()

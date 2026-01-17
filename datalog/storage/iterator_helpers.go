@@ -26,8 +26,8 @@ import (
 // and unboundIterator.
 //
 // Returns true if the datom:
-//   1. Passes transaction time filtering (txID check)
-//   2. Satisfies all storage constraints
+//  1. Passes transaction time filtering (txID check)
+//  2. Satisfies all storage constraints
 //
 // This function is called in the hot path (once per datom scanned) and introduces
 // ~0.2ns overhead per call due to function call costs and inability to inline

@@ -44,13 +44,13 @@ func BenchmarkSubqueryUnionComparison(b *testing.B) {
 	b.Run("streaming_union", func(b *testing.B) {
 		// Create executor with streaming union enabled (default)
 		opts := planner.PlannerOptions{
-			EnableDynamicReordering:     true,
-			EnablePredicatePushdown:     true,
-			UseStreamingSubqueryUnion:   true,
-			EnableIteratorComposition:   true,
-			EnableTrueStreaming:         true,
-			EnableStreamingJoins:        true,
-			EnableParallelSubqueries:    false, // Sequential for cleaner comparison
+			EnableDynamicReordering:   true,
+			EnablePredicatePushdown:   true,
+			UseStreamingSubqueryUnion: true,
+			EnableIteratorComposition: true,
+			EnableTrueStreaming:       true,
+			EnableStreamingJoins:      true,
+			EnableParallelSubqueries:  false, // Sequential for cleaner comparison
 		}
 		exec := NewExecutorWithOptions(matcher, opts)
 
@@ -68,13 +68,13 @@ func BenchmarkSubqueryUnionComparison(b *testing.B) {
 	b.Run("materialized_union", func(b *testing.B) {
 		// Create executor with streaming union disabled
 		opts := planner.PlannerOptions{
-			EnableDynamicReordering:     true,
-			EnablePredicatePushdown:     true,
-			UseStreamingSubqueryUnion:   false, // DISABLED - use materialized
-			EnableIteratorComposition:   true,
-			EnableTrueStreaming:         true,
-			EnableStreamingJoins:        true,
-			EnableParallelSubqueries:    false, // Sequential for cleaner comparison
+			EnableDynamicReordering:   true,
+			EnablePredicatePushdown:   true,
+			UseStreamingSubqueryUnion: false, // DISABLED - use materialized
+			EnableIteratorComposition: true,
+			EnableTrueStreaming:       true,
+			EnableStreamingJoins:      true,
+			EnableParallelSubqueries:  false, // Sequential for cleaner comparison
 		}
 		exec := NewExecutorWithOptions(matcher, opts)
 

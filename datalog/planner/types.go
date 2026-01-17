@@ -332,6 +332,13 @@ type SubqueryPlan struct {
 	Decorrelated bool                   // True if this subquery is part of a decorrelated group
 }
 
+// ConditionalAggregate pairs a subquery binding with its rewritten conditional aggregate
+// (Used by experimental conditional aggregate rewriting - currently disabled)
+type ConditionalAggregate struct {
+	Binding   query.BindingForm
+	Aggregate query.FindAggregate
+}
+
 // DecorrelatedSubqueryPlan represents a group of subqueries optimized together
 type DecorrelatedSubqueryPlan struct {
 	OriginalSubqueries []int             // Indices in Phase.Subqueries
@@ -392,25 +399,22 @@ type Statistics struct {
 
 // PlannerOptions configures both the query planner and executor
 type PlannerOptions struct {
-	// Planner architecture selection
-	UseClauseBasedPlanner bool // Use new clause-based planner instead of old phase-based planner (default: false)
-
-	// Executor architecture selection
-	UseLegacyExecutor bool // Use legacy phase-based executor instead of QueryExecutor (default: false - QueryExecutor is production default)
-
 	// Planner options
-	EnableDynamicReordering             bool       // Enable dynamic join reordering (1-3μs overhead, can prevent cross-products - should be enabled)
-	EnablePredicatePushdown             bool       // Early predicate filtering during pattern matching (not true storage pushdown)
-	EnableConditionalAggregateRewriting bool       // DISABLED: Returns empty results (bug). Rewrite correlated aggregates as conditional aggregates
-	EnableSubqueryDecorrelation         bool       // Enable Selinger-style subquery decorrelation optimization
-	EnableParallelDecorrelation         bool       // Execute decorrelated merged queries in parallel (requires EnableSubqueryDecorrelation)
-	EnableCSE                           bool       // Enable Common Subexpression Elimination for decorrelated subqueries
-	EnableSemanticRewriting             bool       // Rewrite predicates for efficiency (e.g., year(t)=2025 → time range constraint)
-	UseStreamingSubqueryUnion           bool       // Use streaming union for subquery results instead of materializing all (default: true)
-	UseComponentizedSubquery            bool       // Use component-based subquery execution (strategy selector, batcher, worker pool)
-	MaxPhases                           int        // Maximum phases to generate (0 = unlimited)
-	EnableFineGrainedPhases             bool       // Use fine-grained phase creation to avoid cross-products
-	Cache                               *PlanCache // Shared query plan cache (optional)
+	EnableSemanticRewriting bool       // Rewrite predicates for efficiency (e.g., year(t)=2025 → time range constraint)
+	Cache                   *PlanCache // Shared query plan cache (optional)
+
+	// Legacy options (kept for compatibility with tests and executor subquery decorrelation)
+	UseClauseBasedPlanner               bool // Deprecated: always true. Only one planner now.
+	EnableDynamicReordering             bool // Legacy option (ignored by clause-based planner)
+	EnablePredicatePushdown             bool // Early predicate filtering during pattern matching
+	EnableConditionalAggregateRewriting bool // DISABLED: Feature moved to experimental/
+	EnableSubqueryDecorrelation         bool // Enable Selinger-style subquery decorrelation optimization
+	EnableParallelDecorrelation         bool // Execute decorrelated merged queries in parallel (requires EnableSubqueryDecorrelation)
+	EnableCSE                           bool // Enable Common Subexpression Elimination for decorrelated subqueries
+	UseStreamingSubqueryUnion           bool // Use streaming union for subquery results instead of materializing all (default: true)
+	UseComponentizedSubquery            bool // Use component-based subquery execution (strategy selector, batcher, worker pool)
+	MaxPhases                           int  // Legacy option (ignored by clause-based planner)
+	EnableFineGrainedPhases             bool // Legacy option (ignored by clause-based planner)
 
 	// Executor streaming options - control memory vs performance tradeoffs
 	EnableIteratorComposition bool // Use composed iterators for lazy evaluation (default: true)
@@ -548,23 +552,29 @@ type RealizedPhase struct {
 	Provides  []query.Symbol         // Symbols this phase provides
 	Keep      []query.Symbol         // Symbols to keep for next phase
 	Metadata  map[string]interface{} // Phase metadata (decorrelation hints, etc.)
+
+	// Explain fields - populated for detailed plan output, nil during normal execution
+	Patterns    []PatternPlan    // Pattern plans with index selection and selectivity
+	Expressions []ExpressionPlan // Expression plans with inputs/outputs
+	Predicates  []PredicatePlan  // Predicate plans with classification
+	Subqueries  []SubqueryPlan   // Subquery plans with nested queries
 }
 
 // RealizedPlan is the output of the planner in the realized format.
 // The executor operates on RealizedPlan instead of QueryPlan.
 type RealizedPlan struct {
-	Query  *query.Query     // Original user query
-	Phases []RealizedPhase  // Phases as Datalog query fragments
+	Query  *query.Query    // Original user query
+	Phases []RealizedPhase // Phases as Datalog query fragments
 }
 
 // Realize converts a QueryPlan (with Phase structures) into a RealizedPlan
 // (with Query fragments). This is the interchange format between planner and executor.
 //
 // The realized queries preserve EXACT execution order from the current executor:
-//   1. Patterns (pattern matching)
-//   2. Expressions (function evaluation)
-//   3. Predicates (filtering)
-//   4. Subqueries (nested query execution)
+//  1. Patterns (pattern matching)
+//  2. Expressions (function evaluation)
+//  3. Predicates (filtering)
+//  4. Subqueries (nested query execution)
 //
 // This ensures identical results for validation during migration.
 func (qp *QueryPlan) Realize() *RealizedPlan {
@@ -814,6 +824,53 @@ func (rp *RealizedPhase) String() string {
 	sb.WriteString(fmt.Sprintf("Provides: %v\n", rp.Provides))
 	if len(rp.Keep) > 0 {
 		sb.WriteString(fmt.Sprintf("Keep: %v\n", rp.Keep))
+	}
+
+	// Explain fields - only shown when populated
+	if len(rp.Patterns) > 0 {
+		sb.WriteString("Patterns:\n")
+		for _, pat := range rp.Patterns {
+			sb.WriteString(fmt.Sprintf("  %s [%s index, selectivity=%d]\n",
+				pat.Pattern.String(), indexName(pat.Index), pat.Selectivity))
+			if pat.BoundMask.E || pat.BoundMask.A || pat.BoundMask.V || pat.BoundMask.T {
+				sb.WriteString(fmt.Sprintf("    Bound: E=%v A=%v V=%v T=%v\n",
+					pat.BoundMask.E, pat.BoundMask.A, pat.BoundMask.V, pat.BoundMask.T))
+			}
+			if len(pat.Bindings) > 0 {
+				sb.WriteString(fmt.Sprintf("    Binds: %v\n", pat.Bindings))
+			}
+		}
+	}
+
+	if len(rp.Predicates) > 0 {
+		sb.WriteString("Predicates:\n")
+		for _, pred := range rp.Predicates {
+			sb.WriteString(fmt.Sprintf("  %s [%s]\n", pred.Predicate.String(), pred.Type.String()))
+		}
+	}
+
+	if len(rp.Expressions) > 0 {
+		sb.WriteString("Expressions:\n")
+		for _, expr := range rp.Expressions {
+			if expr.IsEquality {
+				sb.WriteString(fmt.Sprintf("  %s (equality filter)\n", expr.Expression.String()))
+			} else {
+				sb.WriteString(fmt.Sprintf("  %s\n", expr.Expression.String()))
+			}
+			if len(expr.Inputs) > 0 {
+				sb.WriteString(fmt.Sprintf("    Inputs: %v\n", expr.Inputs))
+			}
+		}
+	}
+
+	if len(rp.Subqueries) > 0 {
+		sb.WriteString("Subqueries:\n")
+		for _, subq := range rp.Subqueries {
+			sb.WriteString(fmt.Sprintf("  %s\n", subq.Subquery.String()))
+			if len(subq.Inputs) > 0 {
+				sb.WriteString(fmt.Sprintf("    Inputs: %v\n", subq.Inputs))
+			}
+		}
 	}
 
 	return sb.String()

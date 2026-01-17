@@ -263,7 +263,7 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 		}
 		return nil
 
-	// Note: keywordType is handled above before generic pointer handling
+		// Note: keywordType is handled above before generic pointer handling
 	}
 
 	// Handle basic types

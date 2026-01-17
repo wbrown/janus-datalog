@@ -364,7 +364,7 @@ func (c *AnnotatedContext) CombineRelations(oldRels, newRels []Relation, fn func
 
 func (c *AnnotatedContext) JoinRelations(left, right Relation, fn func() Relation) Relation {
 	start := time.Now()
-	leftSize := -1  // Use -1 to indicate unknown size
+	leftSize := -1 // Use -1 to indicate unknown size
 	rightSize := -1
 
 	// CRITICAL FIX: Don't call Size() on StreamingRelations before the join

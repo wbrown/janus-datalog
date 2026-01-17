@@ -37,10 +37,10 @@ type Database struct {
 	txCounter         atomic.Uint64
 	mu                sync.RWMutex
 	activeTx          map[*Transaction]bool
-	useTimeTx         bool                   // Use time-based transaction IDs
-	planCache         *planner.PlanCache     // Shared query plan cache
-	schema            schema.SchemaProvider  // Optional schema for validation
-	annotationHandler annotations.Handler    // Optional handler for query tracing
+	useTimeTx         bool                  // Use time-based transaction IDs
+	planCache         *planner.PlanCache    // Shared query plan cache
+	schema            schema.SchemaProvider // Optional schema for validation
+	annotationHandler annotations.Handler   // Optional handler for query tracing
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -266,7 +266,10 @@ func (d *Database) RetractMode() RetractMode {
 // DefaultPlannerOptions returns the default planner and executor options for the database
 func DefaultPlannerOptions() planner.PlannerOptions {
 	return planner.PlannerOptions{
-		// Planner options
+		// Planner architecture selection
+		UseClauseBasedPlanner: true, // Use new clause-based planner (greedy phasing, pure clause transformations)
+
+		// Planner options (for old planner - kept for compatibility when UseClauseBasedPlanner: false)
 		EnableDynamicReordering:     true, // Phase reordering by symbol connectivity
 		EnablePredicatePushdown:     true, // Early predicate filtering (not storage-level)
 		EnableSubqueryDecorrelation: true, // Selinger's decorrelation optimization
@@ -447,7 +450,7 @@ func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...inte
 //   - Selectivity scores for patterns
 //   - Symbol availability and binding through phases
 //   - Predicate and expression assignment
-func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*planner.QueryPlan, error) {
+func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*planner.RealizedPlan, error) {
 	// Resolve the query (string or *query.Query)
 	q, err := resolveQuery(queryInput)
 	if err != nil {
@@ -464,27 +467,16 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 	exec := d.NewExecutor()
 
 	// Get the query plan from the executor's planner
-	// Use GetUnderlyingPlanner() to get QueryPlan (not RealizedPlan)
 	queryPlanner := exec.GetPlanner()
-	if adapter, ok := queryPlanner.(*planner.PlannerAdapter); ok {
-		return adapter.GetUnderlyingPlanner().Plan(q)
-	}
-
-	// Fallback for other planner types
-	realizedPlan, err := queryPlanner.PlanQuery(q)
-	if err != nil {
-		return nil, fmt.Errorf("failed to plan query: %w", err)
-	}
-	// Return minimal QueryPlan from RealizedPlan
-	return &planner.QueryPlan{Query: realizedPlan.Query}, nil
+	return queryPlanner.PlanQuery(q)
 }
 
 // AnalyzeResult contains the query plan and execution statistics from Analyze().
 type AnalyzeResult struct {
-	Plan      *planner.QueryPlan   // The query plan
-	Result    executor.Relation    // Query result (not materialized)
-	Events    []annotations.Event  // All annotation events from execution
-	TotalTime time.Duration        // Total execution time
+	Plan      *planner.RealizedPlan // The query plan
+	Result    executor.Relation     // Query result (not materialized)
+	Events    []annotations.Event   // All annotation events from execution
+	TotalTime time.Duration         // Total execution time
 }
 
 // String returns a formatted analysis report showing the query plan
@@ -602,22 +594,8 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 	exec := d.NewExecutor()
 
 	// Get the query plan from the executor's planner
-	// Use GetUnderlyingPlanner() to get QueryPlan (not RealizedPlan)
 	queryPlanner := exec.GetPlanner()
-	var plan *planner.QueryPlan
-	if adapter, ok := queryPlanner.(*planner.PlannerAdapter); ok {
-		plan, err = adapter.GetUnderlyingPlanner().Plan(q)
-	} else {
-		// Fallback for other planner types - get RealizedPlan and note it in output
-		// This shouldn't happen with default options, but handles edge cases
-		realizedPlan, planErr := queryPlanner.PlanQuery(q)
-		if planErr != nil {
-			return nil, fmt.Errorf("failed to plan query: %w", planErr)
-		}
-		// Create a minimal QueryPlan from RealizedPlan for display
-		plan = &planner.QueryPlan{Query: realizedPlan.Query}
-		err = nil
-	}
+	plan, err := queryPlanner.PlanQuery(q)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}
@@ -1272,10 +1250,10 @@ func (t *Transaction) validateUniqueness() error {
 		// Create a pattern [?e :attr value _] to find entities with this value
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: query.Symbol("?e")},    // Entity variable
-				query.Constant{Value: d.A},                  // Bound attribute
-				query.Constant{Value: d.V},                  // Bound value
-				query.Blank{},                               // Transaction wildcard
+				query.Variable{Name: query.Symbol("?e")}, // Entity variable
+				query.Constant{Value: d.A},               // Bound attribute
+				query.Constant{Value: d.V},               // Bound value
+				query.Blank{},                            // Transaction wildcard
 			},
 		}
 
