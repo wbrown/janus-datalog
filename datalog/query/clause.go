@@ -117,7 +117,7 @@ type OrJoinClause struct {
 func BranchHasExpressions(branch []Clause) bool {
 	for _, c := range branch {
 		switch c.(type) {
-		case *Expression, *Subquery:
+		case *Expression, *Subquery, *SubqueryPattern:
 			return true
 		case *GroundPredicate:
 			return true

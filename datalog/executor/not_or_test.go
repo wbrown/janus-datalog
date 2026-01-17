@@ -444,8 +444,7 @@ func TestOrJoinClause(t *testing.T) {
 func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 	// Directly test the query executor to isolate the issue
 	matcher := NewMemoryPatternMatcher(nil)
-	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
-	ctx := NewContext(nil)
+	queryExecutor := NewExecutor(matcher)
 
 	// Build the OR clause query directly
 	orClause := &query.OrClause{
@@ -475,27 +474,15 @@ func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 		Where: []query.Clause{orClause},
 	}
 
-	result, err := queryExecutor.Execute(ctx, q, nil)
+	result, err := queryExecutor.Execute(q)
 	if err != nil {
 		t.Fatalf("query executor failed: %v", err)
 	}
 
-	t.Logf("Results: %d", len(result))
-	for i, r := range result {
-		t.Logf("Result %d: columns=%v, size=%d", i, r.Columns(), r.Size())
-	}
+	t.Logf("Final: columns=%v, size=%d", result.Columns(), result.Size())
 
-	// Collapse to single relation
-	collapsed := Relations(result).Collapse(ctx)
-	if len(collapsed) != 1 {
-		t.Fatalf("Expected 1 collapsed relation, got %d", len(collapsed))
-	}
-
-	finalRel := collapsed[0]
-	t.Logf("Final: columns=%v, size=%d", finalRel.Columns(), finalRel.Size())
-
-	if finalRel.Size() != 1 {
-		t.Errorf("Expected 1 result, got %d", finalRel.Size())
+	if result.Size() != 1 {
+		t.Errorf("Expected 1 result, got %d", result.Size())
 	}
 }
 
@@ -868,8 +855,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
-	ctx := NewContext(nil)
+	queryExecutor := NewExecutor(matcher)
 
 	// Build the OR clause with SubqueryPattern and ground fallback
 	// (or [(q [:find (count ?t) :where [?t :task/status :status/complete]] $) [[?count]]]
@@ -912,27 +898,20 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 		Where: []query.Clause{orClause},
 	}
 
-	result, err := queryExecutor.Execute(ctx, q, nil)
+	result, err := queryExecutor.Execute(q)
 	if err != nil {
 		t.Fatalf("query executor failed: %v", err)
 	}
 
-	// Collapse to single relation
-	collapsed := Relations(result).Collapse(ctx)
-	if len(collapsed) != 1 {
-		t.Fatalf("Expected 1 collapsed relation, got %d", len(collapsed))
-	}
-
-	finalRel := collapsed[0]
-	t.Logf("Final: columns=%v, size=%d", finalRel.Columns(), finalRel.Size())
+	t.Logf("Final: columns=%v, size=%d", result.Columns(), result.Size())
 
 	// Should have 1 result with count=1 (one completed task)
-	if finalRel.Size() != 1 {
-		t.Errorf("Expected 1 result, got %d", finalRel.Size())
+	if result.Size() != 1 {
+		t.Errorf("Expected 1 result, got %d", result.Size())
 	}
 
-	if finalRel.Size() > 0 {
-		val := finalRel.Get(0)[0]
+	if result.Size() > 0 {
+		val := result.Get(0)[0]
 		// Count returns int64
 		if val != int64(1) {
 			t.Errorf("Expected count=1, got %v (type %T)", val, val)
@@ -967,7 +946,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
+	queryExecutor := NewExecutor(matcher)
 
 	// Create annotation handler to debug OR fallback behavior
 	var events []annotations.Event
@@ -1051,27 +1030,21 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 		},
 	}
 
-	result, err := queryExecutor.Execute(ctx, q, nil)
+	result, err := queryExecutor.ExecuteWithContext(ctx, q)
 	if err != nil {
 		t.Fatalf("query executor failed: %v", err)
 	}
 
-	collapsed := Relations(result).Collapse(ctx)
-	if len(collapsed) != 1 {
-		t.Fatalf("Expected 1 collapsed relation, got %d", len(collapsed))
-	}
-
-	finalRel := collapsed[0]
-	t.Logf("Final: columns=%v, size=%d", finalRel.Columns(), finalRel.Size())
+	t.Logf("Final: columns=%v, size=%d", result.Columns(), result.Size())
 
 	// Should have 2 results: scenario1 with count=2, scenario2 with count=0
-	if finalRel.Size() != 2 {
-		t.Errorf("Expected 2 results, got %d", finalRel.Size())
+	if result.Size() != 2 {
+		t.Errorf("Expected 2 results, got %d", result.Size())
 	}
 
 	// Check the actual values
-	for i := 0; i < finalRel.Size(); i++ {
-		tuple := finalRel.Get(i)
+	for i := 0; i < result.Size(); i++ {
+		tuple := result.Get(i)
 		t.Logf("Result %d: %v", i, tuple)
 	}
 
@@ -1084,8 +1057,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 	// Test OR with SubqueryPattern that returns empty, falling back to ground
 	matcher := NewMemoryPatternMatcher(nil) // Empty database
-	queryExecutor := NewQueryExecutor(matcher, ExecutorOptions{})
-	ctx := NewContext(nil)
+	queryExecutor := NewExecutor(matcher)
 
 	statusAttr := datalog.NewKeyword(":task/status")
 	completeStatus := datalog.NewKeyword(":status/complete")
@@ -1129,26 +1101,20 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 		Where: []query.Clause{orClause},
 	}
 
-	result, err := queryExecutor.Execute(ctx, q, nil)
+	result, err := queryExecutor.Execute(q)
 	if err != nil {
 		t.Fatalf("query executor failed: %v", err)
 	}
 
-	collapsed := Relations(result).Collapse(ctx)
-	if len(collapsed) != 1 {
-		t.Fatalf("Expected 1 collapsed relation, got %d", len(collapsed))
-	}
-
-	finalRel := collapsed[0]
-	t.Logf("Final: columns=%v, size=%d", finalRel.Columns(), finalRel.Size())
+	t.Logf("Final: columns=%v, size=%d", result.Columns(), result.Size())
 
 	// Should have 1 result with count=0 (fallback)
-	if finalRel.Size() != 1 {
-		t.Errorf("Expected 1 result, got %d", finalRel.Size())
+	if result.Size() != 1 {
+		t.Errorf("Expected 1 result, got %d", result.Size())
 	}
 
-	if finalRel.Size() > 0 {
-		val := finalRel.Get(0)[0]
+	if result.Size() > 0 {
+		val := result.Get(0)[0]
 		if val != int64(0) {
 			t.Errorf("Expected count=0 (fallback), got %v (type %T)", val, val)
 		}

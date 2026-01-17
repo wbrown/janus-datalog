@@ -32,8 +32,14 @@ type DefaultQueryExecutor struct {
 	options ExecutorOptions
 }
 
-// NewQueryExecutor creates a new DefaultQueryExecutor
-func NewQueryExecutor(matcher PatternMatcher, options ExecutorOptions) *DefaultQueryExecutor {
+// newQueryExecutor creates a new DefaultQueryExecutor.
+//
+// INTERNAL USE ONLY: This bypasses the query planner. Tests should use NewExecutor
+// or NewExecutorWithOptions which go through the planner. The only legitimate use
+// of this function in tests is for unit testing internal executor methods like
+// executePattern or executeExpression. End-to-end and integration tests must use
+// the public API to ensure the planner is exercised.
+func newQueryExecutor(matcher PatternMatcher, options ExecutorOptions) *DefaultQueryExecutor {
 	return &DefaultQueryExecutor{
 		matcher: matcher,
 		options: options,

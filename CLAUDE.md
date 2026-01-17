@@ -62,6 +62,21 @@ All of these are decisions for the user, not you.
 **Wrong**: "The cache tests are failing, so I'll add a new cache type to make them pass."
 **Right**: "The cache tests are failing because ClauseBasedPlanner doesn't integrate with the cache the same way. How do you want to handle this?"
 
+## When Asked to Revert
+
+**Revert IMMEDIATELY. Do not defer.**
+
+When the user says "revert", do it as your very next action. Do not:
+- Explain why you made the change
+- Read files to "understand context"
+- Plan what you'll do after
+- Make any other changes first
+
+**Why this matters:** When you defer reverting and wander off making more changes, the original correct state gets buried in context. If context compaction happens, the original code may be lost from the summary entirely. Future Claude inherits a mess with no way to recover.
+
+- **Immediate revert** = recoverable state preserved
+- **Deferred revert** = potentially permanent damage
+
 ## Project Overview
 
 This repository contains a Datomic-style Datalog engine implementation in Go, inspired by memories of previous single-node and distributed implementations.

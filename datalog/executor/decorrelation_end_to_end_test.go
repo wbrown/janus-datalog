@@ -5,6 +5,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -74,23 +75,17 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 	}
 
 	// Create executor with decorrelation enabled
-	executor := NewQueryExecutor(matcher, ExecutorOptions{
+	executor := NewExecutorWithOptions(matcher, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
+		EnableDynamicReordering:     true,
+		EnablePredicatePushdown:     true,
 	})
 
 	// Execute the query
-	ctx := NewContext(nil)
-	results, err := executor.Execute(ctx, q, []Relation{})
+	result, err := executor.Execute(q)
 	if err != nil {
 		t.Fatalf("query execution failed: %v", err)
 	}
-
-	// Should have one result group
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result group, got %d", len(results))
-	}
-
-	result := results[0]
 
 	// Check columns
 	expectedCols := []query.Symbol{"?hour", "?high", "?low"}

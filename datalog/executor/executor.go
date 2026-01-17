@@ -197,7 +197,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 	}
 
 	// Create QueryExecutor
-	queryExecutor := NewQueryExecutor(e.matcher, e.options)
+	queryExecutor := newQueryExecutor(e.matcher, e.options)
 
 	var currentGroups []Relation
 
@@ -539,7 +539,7 @@ func (e *Executor) executeRealizedNonIterating(
 	relationInput query.RelationInput,
 ) (Relation, error) {
 	// Create QueryExecutor
-	queryExecutor := NewQueryExecutor(e.matcher, e.options)
+	queryExecutor := newQueryExecutor(e.matcher, e.options)
 
 	var currentGroups []Relation
 

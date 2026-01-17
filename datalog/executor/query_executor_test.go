@@ -1,5 +1,14 @@
 package executor
 
+// NOTE: These tests use newQueryExecutor (internal API) to unit test individual
+// executor methods like executePattern, executeExpression, and executePredicate.
+// This is intentional - these are unit tests of internal implementation details.
+//
+// DO NOT use this pattern for new tests. End-to-end and integration tests should
+// use NewExecutor or NewExecutorWithOptions which go through the planner. Bypassing
+// the planner in tests caused bugs where planner issues (like clause ordering) were
+// not caught.
+
 import (
 	"testing"
 
@@ -128,7 +137,7 @@ func TestExecutePattern(t *testing.T) {
 		},
 	}
 
-	executor := NewQueryExecutor(matcher, ExecutorOptions{})
+	executor := newQueryExecutor(matcher, ExecutorOptions{})
 	ctx := NewContext(nil)
 
 	pattern := &query.DataPattern{
@@ -152,7 +161,7 @@ func TestExecutePattern(t *testing.T) {
 // TestExecuteExpression tests expression evaluation
 func TestExecuteExpression(t *testing.T) {
 	t.Run("single relation expression", func(t *testing.T) {
-		executor := NewQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Create a relation with ?x
@@ -193,7 +202,7 @@ func TestExecuteExpression(t *testing.T) {
 	})
 
 	t.Run("multi-relation expression (Cartesian product)", func(t *testing.T) {
-		executor := NewQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Two disjoint relations
@@ -236,7 +245,7 @@ func TestExecuteExpression(t *testing.T) {
 // TestExecutePredicate tests predicate filtering
 func TestExecutePredicate(t *testing.T) {
 	t.Run("single relation predicate", func(t *testing.T) {
-		executor := NewQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Create relation with ?x
@@ -285,7 +294,7 @@ func TestExecuteAggregates(t *testing.T) {
 		},
 	}
 
-	executor := NewQueryExecutor(matcher, ExecutorOptions{})
+	executor := newQueryExecutor(matcher, ExecutorOptions{})
 	ctx := NewContext(nil)
 
 	t.Run("grouped aggregation", func(t *testing.T) {
@@ -376,7 +385,7 @@ func TestEndToEndQueries(t *testing.T) {
 		},
 	}
 
-	executor := NewQueryExecutor(matcher, ExecutorOptions{})
+	executor := newQueryExecutor(matcher, ExecutorOptions{})
 	ctx := NewContext(nil)
 
 	t.Run("pattern + predicate query", func(t *testing.T) {

@@ -322,6 +322,122 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 	})
 }
 
+func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
+	// This test verifies that OR clauses with correlated subqueries
+	// correctly report their required input symbols.
+	// This was the root cause of the v0.5.1 regression where OR clauses
+	// were scheduled before the patterns that provide their inputs.
+
+	t.Run("SubqueryPattern with variable input requires that variable", func(t *testing.T) {
+		orClause := &query.OrClause{
+			Branches: [][]query.Clause{
+				{
+					&query.SubqueryPattern{
+						Query: &query.Query{
+							Find: []query.FindElement{
+								query.FindAggregate{Function: "count", Arg: "?t"},
+							},
+						},
+						Inputs: []query.PatternElement{
+							query.Constant{Value: "db"},
+							query.Variable{Name: "?scenario"}, // This is a correlated input
+						},
+						Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+					},
+				},
+				{
+					&query.Expression{
+						Function: &query.GroundFunction{Value: int64(0)},
+						Binding:  "?count",
+					},
+				},
+			},
+		}
+
+		syms := extractOrClauseSymbols(orClause)
+
+		// The OR clause MUST require ?scenario because the subquery needs it
+		requiresSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Requires {
+			requiresSet[sym] = true
+		}
+
+		if !requiresSet["?scenario"] {
+			t.Errorf("OR clause with correlated subquery must require ?scenario, got Requires: %v", syms.Requires)
+		}
+
+		// Should still provide ?count
+		providesSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Provides {
+			providesSet[sym] = true
+		}
+
+		if !providesSet["?count"] {
+			t.Errorf("OR clause should provide ?count, got Provides: %v", syms.Provides)
+		}
+	})
+
+	t.Run("Ground-only branch requires nothing", func(t *testing.T) {
+		orClause := &query.OrClause{
+			Branches: [][]query.Clause{
+				{
+					&query.Expression{
+						Function: &query.GroundFunction{Value: int64(0)},
+						Binding:  "?x",
+					},
+				},
+				{
+					&query.Expression{
+						Function: &query.GroundFunction{Value: int64(1)},
+						Binding:  "?x",
+					},
+				},
+			},
+		}
+
+		syms := extractOrClauseSymbols(orClause)
+
+		if len(syms.Requires) != 0 {
+			t.Errorf("OR with only ground expressions should require nothing, got: %v", syms.Requires)
+		}
+	})
+
+	t.Run("Expression requiring variable propagates requirement", func(t *testing.T) {
+		// Branch with arithmetic that needs ?input
+		orClause := &query.OrClause{
+			Branches: [][]query.Clause{
+				{
+					&query.Expression{
+						Function: &query.ArithmeticFunction{
+							Op:    query.OpAdd,
+							Left:  query.VariableTerm{Symbol: "?input"},
+							Right: query.ConstantTerm{Value: int64(1)},
+						},
+						Binding: "?output",
+					},
+				},
+				{
+					&query.Expression{
+						Function: &query.GroundFunction{Value: int64(0)},
+						Binding:  "?output",
+					},
+				},
+			},
+		}
+
+		syms := extractOrClauseSymbols(orClause)
+
+		requiresSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Requires {
+			requiresSet[sym] = true
+		}
+
+		if !requiresSet["?input"] {
+			t.Errorf("OR clause should require ?input from arithmetic expression, got: %v", syms.Requires)
+		}
+	})
+}
+
 func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 	// This test verifies the fix for the planner not recognizing
 	// that SubqueryPattern provides symbols in OR fallback branches
@@ -363,6 +479,120 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 	if !foundOpeningCount {
 		t.Errorf("Expected ?openingCount to be provided by OR clause, but got: %v", syms.Provides)
 	}
+}
+
+func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
+	// Verify OR-JOIN also correctly propagates requirements from branches
+	t.Run("OR-JOIN with correlated subquery requires input variable", func(t *testing.T) {
+		orJoin := &query.OrJoinClause{
+			JoinVars: []query.Symbol{"?count"},
+			Branches: [][]query.Clause{
+				{
+					&query.SubqueryPattern{
+						Query: &query.Query{
+							Find: []query.FindElement{
+								query.FindAggregate{Function: "count", Arg: "?t"},
+							},
+						},
+						Inputs: []query.PatternElement{
+							query.Constant{Value: "db"},
+							query.Variable{Name: "?entity"}, // Correlated input
+						},
+						Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+					},
+				},
+				{
+					&query.Expression{
+						Function: &query.GroundFunction{Value: int64(0)},
+						Binding:  "?count",
+					},
+				},
+			},
+		}
+
+		syms := extractOrJoinClauseSymbols(orJoin)
+
+		requiresSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Requires {
+			requiresSet[sym] = true
+		}
+
+		if !requiresSet["?entity"] {
+			t.Errorf("OR-JOIN with correlated subquery must require ?entity, got Requires: %v", syms.Requires)
+		}
+
+		// Should provide the JoinVars
+		providesSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Provides {
+			providesSet[sym] = true
+		}
+
+		if !providesSet["?count"] {
+			t.Errorf("OR-JOIN should provide ?count (from JoinVars), got Provides: %v", syms.Provides)
+		}
+	})
+}
+
+func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
+	// Verify NOT clauses require all variables from inner clauses
+	t.Run("NOT requires variables from inner pattern", func(t *testing.T) {
+		notClause := &query.NotClause{
+			Clauses: []query.Clause{
+				&query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Variable{Name: "?e"},
+						query.Constant{Value: datalog.NewKeyword(":user/archived")},
+						query.Constant{Value: true},
+					},
+				},
+			},
+		}
+
+		syms := extractNotClauseSymbols(notClause)
+
+		requiresSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Requires {
+			requiresSet[sym] = true
+		}
+
+		if !requiresSet["?e"] {
+			t.Errorf("NOT clause must require ?e from inner pattern, got Requires: %v", syms.Requires)
+		}
+
+		if len(syms.Provides) != 0 {
+			t.Errorf("NOT clause should not provide any symbols, got Provides: %v", syms.Provides)
+		}
+	})
+
+	t.Run("NOT requires variables from inner expression", func(t *testing.T) {
+		notClause := &query.NotClause{
+			Clauses: []query.Clause{
+				&query.Expression{
+					Function: &query.ArithmeticFunction{
+						Op:    query.OpAdd,
+						Left:  query.VariableTerm{Symbol: "?count"},
+						Right: query.ConstantTerm{Value: int64(10)},
+					},
+					Binding: "?result",
+				},
+			},
+		}
+
+		syms := extractNotClauseSymbols(notClause)
+
+		requiresSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Requires {
+			requiresSet[sym] = true
+		}
+
+		// Should require ?count (input to expression) and ?result (output of expression)
+		if !requiresSet["?count"] {
+			t.Errorf("NOT clause must require ?count, got Requires: %v", syms.Requires)
+		}
+		if !requiresSet["?result"] {
+			t.Errorf("NOT clause must require ?result, got Requires: %v", syms.Requires)
+		}
+	})
 }
 
 func TestExtractExpressionSymbols(t *testing.T) {

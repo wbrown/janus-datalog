@@ -218,19 +218,25 @@ func extractNotJoinClauseSymbols(n *query.NotJoinClause) ClauseSymbols {
 // extractOrClauseSymbols extracts symbols from an OR clause
 // - For union semantics (pattern-only): provides intersection of all branches
 // - For fallback semantics (has expressions): provides union of all branches
+// - Requires: symbols needed by branches but not provided within those branches
 func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 	if len(o.Branches) == 0 {
 		return ClauseSymbols{}
 	}
 
-	// Collect symbols from each branch
-	branchSymbols := make([]map[query.Symbol]bool, len(o.Branches))
+	// Collect provides and requires from each branch
+	branchProvides := make([]map[query.Symbol]bool, len(o.Branches))
+	branchRequires := make([]map[query.Symbol]bool, len(o.Branches))
 	for i, branch := range o.Branches {
-		branchSymbols[i] = make(map[query.Symbol]bool)
+		branchProvides[i] = make(map[query.Symbol]bool)
+		branchRequires[i] = make(map[query.Symbol]bool)
 		for _, clause := range branch {
 			clauseSyms := extractClauseSymbols(clause)
 			for _, sym := range clauseSyms.Provides {
-				branchSymbols[i][sym] = true
+				branchProvides[i][sym] = true
+			}
+			for _, sym := range clauseSyms.Requires {
+				branchRequires[i][sym] = true
 			}
 		}
 	}
@@ -242,7 +248,7 @@ func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 		// Fallback semantics: only one branch executes, so use UNION
 		// Any symbol that any branch provides will be provided
 		allSymbols := make(map[query.Symbol]bool)
-		for _, syms := range branchSymbols {
+		for _, syms := range branchProvides {
 			for sym := range syms {
 				allSymbols[sym] = true
 			}
@@ -253,10 +259,10 @@ func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 	} else {
 		// Union semantics: all branches execute, so use INTERSECTION
 		// Only symbols that ALL branches provide are guaranteed
-		for sym := range branchSymbols[0] {
+		for sym := range branchProvides[0] {
 			inAll := true
-			for i := 1; i < len(branchSymbols); i++ {
-				if !branchSymbols[i][sym] {
+			for i := 1; i < len(branchProvides); i++ {
+				if !branchProvides[i][sym] {
 					inAll = false
 					break
 				}
@@ -267,17 +273,68 @@ func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 		}
 	}
 
+	// Collect required symbols: any symbol required by any branch
+	// that isn't provided within that branch needs to come from outside
+	allRequires := make(map[query.Symbol]bool)
+	for i, reqs := range branchRequires {
+		for sym := range reqs {
+			// Only require if this branch doesn't self-provide it
+			if !branchProvides[i][sym] {
+				allRequires[sym] = true
+			}
+		}
+	}
+
+	var requires []query.Symbol
+	for sym := range allRequires {
+		requires = append(requires, sym)
+	}
+
 	return ClauseSymbols{
-		Requires: nil, // OR branches provide data, don't require prior bindings
+		Requires: requires,
 		Provides: provides,
 	}
 }
 
 // extractOrJoinClauseSymbols extracts symbols from an OR-JOIN clause
-// OR-JOIN provides exactly the JoinVars
+// OR-JOIN provides exactly the JoinVars and requires external symbols used by branches
 func extractOrJoinClauseSymbols(o *query.OrJoinClause) ClauseSymbols {
+	// Collect requires from each branch
+	branchProvides := make([]map[query.Symbol]bool, len(o.Branches))
+	branchRequires := make([]map[query.Symbol]bool, len(o.Branches))
+	for i, branch := range o.Branches {
+		branchProvides[i] = make(map[query.Symbol]bool)
+		branchRequires[i] = make(map[query.Symbol]bool)
+		for _, clause := range branch {
+			clauseSyms := extractClauseSymbols(clause)
+			for _, sym := range clauseSyms.Provides {
+				branchProvides[i][sym] = true
+			}
+			for _, sym := range clauseSyms.Requires {
+				branchRequires[i][sym] = true
+			}
+		}
+	}
+
+	// Collect required symbols: any symbol required by any branch
+	// that isn't provided within that branch needs to come from outside
+	allRequires := make(map[query.Symbol]bool)
+	for i, reqs := range branchRequires {
+		for sym := range reqs {
+			// Only require if this branch doesn't self-provide it
+			if !branchProvides[i][sym] {
+				allRequires[sym] = true
+			}
+		}
+	}
+
+	var requires []query.Symbol
+	for sym := range allRequires {
+		requires = append(requires, sym)
+	}
+
 	return ClauseSymbols{
-		Requires: nil, // OR-JOIN provides data, doesn't require prior bindings
+		Requires: requires,
 		Provides: o.JoinVars,
 	}
 }
