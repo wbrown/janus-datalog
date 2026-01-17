@@ -25,12 +25,12 @@ func BenchmarkExpressionEvaluation(b *testing.B) {
 			Left:  query.VariableTerm{Symbol: "?x"},
 			Right: query.VariableTerm{Symbol: "?y"},
 		},
-		Binding: "?sum",
+		Binding: query.Symbol("?sum"),
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		result := rel.EvaluateFunction(expr.Function, expr.Binding)
+		result := rel.EvaluateFunction(expr.Function, expr.Binding.(query.Symbol))
 		_ = result.Size()
 	}
 }

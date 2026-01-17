@@ -55,12 +55,12 @@ func (p *Phase) combineTimeExtractions() {
 		if exprPlan.Expression != nil {
 			// Check if this is a time extraction function
 			if tef, ok := exprPlan.Expression.Function.(*query.TimeExtractionFunction); ok {
-				// This is a time extraction expression
-				if exprPlan.Output != "" {
-					timeExtractionOutputs[exprPlan.Output] = tef.Field
+				// Time extraction only supports scalar binding
+				if outputSym, ok := exprPlan.Output.(query.Symbol); ok && outputSym != "" {
+					timeExtractionOutputs[outputSym] = tef.Field
 					// The input is typically the first argument
 					if len(exprPlan.Inputs) > 0 {
-						timeExtractionInputs[exprPlan.Output] = exprPlan.Inputs[0]
+						timeExtractionInputs[outputSym] = exprPlan.Inputs[0]
 					}
 				}
 			}
@@ -301,7 +301,7 @@ type PredicatePlan struct {
 type ExpressionPlan struct {
 	Expression *query.Expression      // Use the new Expression type
 	Inputs     []query.Symbol         // Symbols this expression needs
-	Output     query.Symbol           // The binding it produces
+	Output     interface{}            // Symbol (scalar) or TupleBinding (tuple)
 	IsEquality bool                   // True if this is an equality check (no binding)
 	Metadata   map[string]interface{} // Additional metadata (e.g., optimized_by_constraint)
 }
@@ -609,12 +609,13 @@ func reconstructPredicatesFromConstraints(phase Phase) []query.Clause {
 			if tef, ok := expr.Expression.Function.(*query.TimeExtractionFunction); ok {
 				// Found time extraction expression: [(day ?t) ?d]
 				// We need to map field="day" + input var ?t -> output var ?d
-				if len(expr.Inputs) > 0 {
+				// Time extraction only supports scalar binding
+				if outputSym, ok := expr.Output.(query.Symbol); ok && len(expr.Inputs) > 0 {
 					inputVar := expr.Inputs[0]
 					if timeExtractionVars[tef.Field] == nil {
 						timeExtractionVars[tef.Field] = make(map[string]query.Symbol)
 					}
-					timeExtractionVars[tef.Field][string(inputVar)] = expr.Output
+					timeExtractionVars[tef.Field][string(inputVar)] = outputSym
 				}
 			}
 		}

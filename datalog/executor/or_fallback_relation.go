@@ -123,9 +123,19 @@ func collectBranchOutputSymbols(branch []query.Clause) []query.Symbol {
 				}
 			}
 		case *query.Expression:
-			if clause.Binding != "" && !seen[clause.Binding] {
-				seen[clause.Binding] = true
-				outputs = append(outputs, clause.Binding)
+			switch b := clause.Binding.(type) {
+			case query.Symbol:
+				if b != "" && !seen[b] {
+					seen[b] = true
+					outputs = append(outputs, b)
+				}
+			case query.TupleBinding:
+				for _, v := range b.Variables {
+					if !seen[v] {
+						seen[v] = true
+						outputs = append(outputs, v)
+					}
+				}
 			}
 		case *query.SubqueryPattern:
 			// Subquery provides its binding variables

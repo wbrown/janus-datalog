@@ -116,19 +116,42 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup) Relation {
 	columns := rel.Columns()
 
-	// Add the binding column if it doesn't exist
-	hasBinding := false
-	for _, col := range columns {
-		if col == expr.Binding {
-			hasBinding = true
-			break
+	// Determine binding symbols and whether they already exist
+	var bindingSymbols []query.Symbol
+	switch b := expr.Binding.(type) {
+	case query.Symbol:
+		if b != "" {
+			bindingSymbols = []query.Symbol{b}
+		}
+	case query.TupleBinding:
+		bindingSymbols = b.Variables
+	}
+
+	// Check which binding columns already exist
+	hasAllBindings := len(bindingSymbols) > 0
+	existingBindingIndices := make(map[query.Symbol]int)
+	for _, bindSym := range bindingSymbols {
+		found := false
+		for i, col := range columns {
+			if col == bindSym {
+				existingBindingIndices[bindSym] = i
+				found = true
+				break
+			}
+		}
+		if !found {
+			hasAllBindings = false
 		}
 	}
 
 	newColumns := columns
-	if !hasBinding && expr.Binding != "" {
+	if !hasAllBindings && len(bindingSymbols) > 0 {
 		newColumns = append([]query.Symbol{}, columns...)
-		newColumns = append(newColumns, expr.Binding)
+		for _, bindSym := range bindingSymbols {
+			if _, exists := existingBindingIndices[bindSym]; !exists {
+				newColumns = append(newColumns, bindSym)
+			}
+		}
 	}
 
 	// Reuse single bindings map to avoid repeated allocations
@@ -175,26 +198,56 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		}
 
 		// Create new tuple with result
-		if hasBinding {
-			// Update existing column
+		if len(bindingSymbols) == 0 {
+			// No binding, just keep original tuple
+			newTuples = append(newTuples, tuple)
+		} else if hasAllBindings {
+			// Update existing columns
 			newTuple := make(Tuple, len(tuple))
 			copy(newTuple, tuple)
-			for i, col := range columns {
-				if col == expr.Binding {
-					newTuple[i] = result
-					break
+			// Handle tuple binding - result should be []interface{}
+			if tb, ok := expr.Binding.(query.TupleBinding); ok {
+				values, ok := result.([]interface{})
+				if ok && len(values) == len(tb.Variables) {
+					for i, bindSym := range tb.Variables {
+						if idx, exists := existingBindingIndices[bindSym]; exists {
+							newTuple[idx] = values[i]
+						}
+					}
+				}
+			} else {
+				// Scalar binding
+				for i, col := range columns {
+					if bindSym, ok := expr.Binding.(query.Symbol); ok && col == bindSym {
+						newTuple[i] = result
+						break
+					}
 				}
 			}
 			newTuples = append(newTuples, newTuple)
-		} else if expr.Binding != "" {
-			// Add new column
-			newTuple := make(Tuple, len(tuple)+1)
-			copy(newTuple, tuple)
-			newTuple[len(tuple)] = result
-			newTuples = append(newTuples, newTuple)
 		} else {
-			// No binding, just keep original tuple (shouldn't happen)
-			newTuples = append(newTuples, tuple)
+			// Add new columns
+			newTuple := make(Tuple, len(newColumns))
+			copy(newTuple, tuple)
+			// Handle tuple binding - result should be []interface{}
+			if tb, ok := expr.Binding.(query.TupleBinding); ok {
+				values, ok := result.([]interface{})
+				if ok && len(values) == len(tb.Variables) {
+					for i, bindSym := range tb.Variables {
+						// Find position of this symbol in newColumns
+						for j := len(columns); j < len(newColumns); j++ {
+							if newColumns[j] == bindSym {
+								newTuple[j] = values[i]
+								break
+							}
+						}
+					}
+				}
+			} else {
+				// Scalar binding - add to end
+				newTuple[len(tuple)] = result
+			}
+			newTuples = append(newTuples, newTuple)
 		}
 	}
 

@@ -268,11 +268,22 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 			return parseSubqueryPattern(list, &node.Nodes[1])
 		}
 
-		// Check if it's an expression [(fn ...) ?binding]
-		if len(node.Nodes) == 2 && node.Nodes[1].Type == edn.NodeSymbol {
-			sym := query.Symbol(node.Nodes[1].Value)
-			if sym.IsVariable() {
-				return parseExpression(&node.Nodes[0], sym)
+		// Check if it's an expression [(fn ...) ?binding] or [(fn ...) [?a ?b ?c]]
+		if len(node.Nodes) == 2 {
+			// Scalar binding: [(fn ...) ?x]
+			if node.Nodes[1].Type == edn.NodeSymbol {
+				sym := query.Symbol(node.Nodes[1].Value)
+				if sym.IsVariable() {
+					return parseExpression(&node.Nodes[0], sym)
+				}
+			}
+			// Tuple binding: [(fn ...) [?a ?b ?c]]
+			if node.Nodes[1].Type == edn.NodeVector {
+				tupleBinding, err := parseTupleBinding(&node.Nodes[1])
+				if err != nil {
+					return nil, fmt.Errorf("error parsing tuple binding: %w", err)
+				}
+				return parseExpressionWithTupleBinding(&node.Nodes[0], tupleBinding)
 			}
 		}
 		// Otherwise it's a predicate function pattern [(fn ...)]
@@ -371,6 +382,58 @@ func parseExpression(node *edn.Node, binding query.Symbol) (*query.Expression, e
 	function, err := parseFunction(fn, args)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing function: %w", err)
+	}
+
+	return &query.Expression{
+		Function: function,
+		Binding:  binding,
+	}, nil
+}
+
+// parseExpressionWithTupleBinding parses an expression with a tuple binding
+// Example: [(ground [1 2 3]) [?a ?b ?c]]
+func parseExpressionWithTupleBinding(node *edn.Node, binding query.TupleBinding) (*query.Expression, error) {
+	if node.Type != edn.NodeList {
+		return nil, fmt.Errorf("expression must be a list")
+	}
+
+	if len(node.Nodes) < 2 {
+		return nil, fmt.Errorf("expression must have at least function name and one argument")
+	}
+
+	// First element must be the function name (symbol)
+	if node.Nodes[0].Type != edn.NodeSymbol {
+		return nil, fmt.Errorf("function name must be a symbol, got %v", node.Nodes[0].Type)
+	}
+
+	fn := node.Nodes[0].Value
+
+	// Parse arguments as PatternElements
+	args := make([]query.PatternElement, len(node.Nodes)-1)
+	for i := 1; i < len(node.Nodes); i++ {
+		arg, err := parsePatternElement(&node.Nodes[i])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing expression argument %d: %w", i, err)
+		}
+		args[i-1] = arg
+	}
+
+	// Try to create a concrete Function
+	function, err := parseFunction(fn, args)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing function: %w", err)
+	}
+
+	// For ground function with tuple binding, validate length match
+	if fn == "ground" {
+		if gf, ok := function.(*query.GroundFunction); ok {
+			if values, ok := gf.Value.([]interface{}); ok {
+				if len(values) != len(binding.Variables) {
+					return nil, fmt.Errorf("tuple ground mismatch: %d values, %d binding variables",
+						len(values), len(binding.Variables))
+				}
+			}
+		}
 	}
 
 	return &query.Expression{
@@ -635,6 +698,35 @@ func parsePatternElement(node *edn.Node) (query.PatternElement, error) {
 		// Boolean values
 		val := node.Value == "true"
 		return query.Constant{Value: val}, nil
+
+	case edn.NodeVector:
+		// Vector of constants - used for tuple ground: [(ground [1 2 3]) [?a ?b ?c]]
+		values := make([]interface{}, len(node.Nodes))
+		for i, elem := range node.Nodes {
+			switch elem.Type {
+			case edn.NodeInt:
+				val, err := strconv.ParseInt(elem.Value, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid integer in vector: %w", err)
+				}
+				values[i] = val
+			case edn.NodeFloat:
+				val, err := strconv.ParseFloat(elem.Value, 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid float in vector: %w", err)
+				}
+				values[i] = val
+			case edn.NodeString:
+				values[i] = elem.Value
+			case edn.NodeBool:
+				values[i] = elem.Value == "true"
+			case edn.NodeKeyword:
+				values[i] = datalog.NewKeyword(elem.Value)
+			default:
+				return nil, fmt.Errorf("unsupported type in vector constant: %v", elem.Type)
+			}
+		}
+		return query.VectorConstant{Values: values}, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported pattern element type: %v", node.Type)

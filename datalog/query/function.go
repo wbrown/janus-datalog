@@ -213,6 +213,19 @@ func (g GroundFunction) Eval(bindings map[Symbol]interface{}) (interface{}, erro
 }
 
 func (g GroundFunction) String() string {
+	// Handle vector values for tuple ground
+	if values, ok := g.Value.([]interface{}); ok {
+		parts := make([]string, len(values))
+		for i, v := range values {
+			parts[i] = fmt.Sprintf("%v", v)
+		}
+		result := "[" + parts[0]
+		for i := 1; i < len(parts); i++ {
+			result += " " + parts[i]
+		}
+		result += "]"
+		return fmt.Sprintf("(ground %s)", result)
+	}
 	return fmt.Sprintf("(ground %v)", g.Value)
 }
 

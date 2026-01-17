@@ -563,7 +563,7 @@ func TestParseSubqueryErrors(t *testing.T) {
 			name: "missing q symbol",
 			input: `[:find ?x
 			         :where [(foo [:find ?y :where [?e :foo ?y]] ?s) ?x]]`,
-			error: "unsupported pattern element type",
+			error: "unsupported type in vector constant",
 		},
 	}
 

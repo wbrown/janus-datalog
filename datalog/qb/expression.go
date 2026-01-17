@@ -118,6 +118,48 @@ func (g *GroundBuilder) As(result *Var) *Expression {
 	}
 }
 
+// TupleGroundBuilder builds a tuple ground expression.
+type TupleGroundBuilder struct {
+	values []interface{}
+}
+
+// TupleGround creates a tuple ground expression that binds multiple constants.
+// Call .As(vars...) to bind to multiple variables.
+//
+// Example:
+//
+//	a, b, c := qb.NewVar(), qb.NewVar(), qb.NewVar()
+//	qb.TupleGround(0, 0, 0).As(a, b, c)  // [(ground [0 0 0]) [?a ?b ?c]]
+func TupleGround(values ...interface{}) *TupleGroundBuilder {
+	return &TupleGroundBuilder{values: values}
+}
+
+// As binds the tuple values to multiple variables.
+func (g *TupleGroundBuilder) As(vars ...*Var) *TupleExpression {
+	return &TupleExpression{
+		fn:       query.GroundFunction{Value: g.values},
+		bindings: vars,
+	}
+}
+
+// TupleExpression represents an expression with tuple binding.
+type TupleExpression struct {
+	fn       query.Function
+	bindings []*Var
+}
+
+// toClause converts TupleExpression to a query.Clause
+func (e *TupleExpression) toClause() query.Clause {
+	vars := make([]query.Symbol, len(e.bindings))
+	for i, v := range e.bindings {
+		vars[i] = v.Symbol()
+	}
+	return &query.Expression{
+		Function: e.fn,
+		Binding:  query.TupleBinding{Variables: vars},
+	}
+}
+
 // IdentityBuilder builds an identity expression (pass-through binding).
 type IdentityBuilder struct {
 	arg interface{}

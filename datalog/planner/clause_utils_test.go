@@ -69,13 +69,13 @@ func TestExtractOrClauseSymbols(t *testing.T) {
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "first"},
-							Binding:  "?x",
+							Binding:  query.Symbol("?x"),
 						},
 					},
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "second"},
-							Binding:  "?x",
+							Binding:  query.Symbol("?x"),
 						},
 					},
 				},
@@ -573,7 +573,7 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 						Left:  query.VariableTerm{Symbol: "?count"},
 						Right: query.ConstantTerm{Value: int64(10)},
 					},
-					Binding: "?result",
+					Binding: query.Symbol("?result"),
 				},
 			},
 		}
@@ -606,7 +606,7 @@ func TestExtractExpressionSymbols(t *testing.T) {
 			name: "Ground function provides binding",
 			expression: &query.Expression{
 				Function: &query.GroundFunction{Value: int64(0)},
-				Binding:  "?x",
+				Binding:  query.Symbol("?x"),
 			},
 			expectedProvides: []query.Symbol{"?x"},
 			expectedRequires: []query.Symbol{},
@@ -619,7 +619,7 @@ func TestExtractExpressionSymbols(t *testing.T) {
 					Left:  query.VariableTerm{Symbol: "?a"},
 					Right: query.VariableTerm{Symbol: "?b"},
 				},
-				Binding: "?sum",
+				Binding: query.Symbol("?sum"),
 			},
 			expectedProvides: []query.Symbol{"?sum"},
 			expectedRequires: []query.Symbol{"?a", "?b"},

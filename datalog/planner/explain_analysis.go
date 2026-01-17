@@ -21,8 +21,15 @@ func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, avai
 			plan := analyzeExprForExplain(c, available)
 			phase.Expressions = append(phase.Expressions, plan)
 			// Add expression output to available
-			if c.Binding != "" {
-				available[c.Binding] = true
+			switch binding := c.Binding.(type) {
+			case query.Symbol:
+				if binding != "" {
+					available[binding] = true
+				}
+			case query.TupleBinding:
+				for _, sym := range binding.Variables {
+					available[sym] = true
+				}
 			}
 
 		case query.Predicate:
@@ -221,11 +228,21 @@ func scorePatternSelectivity(pattern *query.DataPattern, resolved map[query.Symb
 // Named differently to avoid conflict with existing extractExpressionInputs
 func analyzeExprForExplain(expr *query.Expression, available map[query.Symbol]bool) ExpressionPlan {
 	inputs := extractExprInputs(expr)
+	// Check if this is an equality check (no binding)
+	var isEquality bool
+	switch b := expr.Binding.(type) {
+	case query.Symbol:
+		isEquality = b == ""
+	case query.TupleBinding:
+		isEquality = len(b.Variables) == 0
+	default:
+		isEquality = expr.Binding == nil
+	}
 	return ExpressionPlan{
 		Expression: expr,
 		Inputs:     inputs,
 		Output:     expr.Binding,
-		IsEquality: expr.Binding == "",
+		IsEquality: isEquality,
 	}
 }
 

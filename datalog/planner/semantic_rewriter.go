@@ -64,10 +64,16 @@ func (r *SemanticRewriter) rewriteTimeExtractions(clauses []query.Clause) []quer
 			continue
 		}
 
-		timeExprs[expr.Binding] = &timeExtractionInfo{
+		// Time extraction only supports scalar binding
+		bindingSym, ok := expr.Binding.(query.Symbol)
+		if !ok {
+			continue
+		}
+
+		timeExprs[bindingSym] = &timeExtractionInfo{
 			field:     timeFunc.Field,
 			sourceVar: sourceVar,
-			resultVar: expr.Binding,
+			resultVar: bindingSym,
 			exprIndex: i,
 		}
 	}

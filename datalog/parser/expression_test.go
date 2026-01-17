@@ -156,7 +156,7 @@ func TestParseExpressionPatterns(t *testing.T) {
 				t.Errorf("Unexpected function type: %T", fn)
 			}
 
-			if expr.Binding != tt.wantBind {
+			if binding, ok := expr.Binding.(query.Symbol); !ok || binding != tt.wantBind {
 				t.Errorf("Binding = %v, want %v", expr.Binding, tt.wantBind)
 			}
 		})
@@ -224,6 +224,168 @@ func TestParseVariadicComparators(t *testing.T) {
 				t.Errorf("Terms length = %v, want %v", len(chainedComp.Terms), tt.wantArgs)
 			}
 		})
+	}
+}
+
+func TestParseTupleGround(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantValues []interface{}
+		wantVars   []query.Symbol
+		wantError  bool
+	}{
+		{
+			name:       "basic tuple ground",
+			input:      `[:find ?a ?b ?c :where [(ground [1 2 3]) [?a ?b ?c]]]`,
+			wantValues: []interface{}{int64(1), int64(2), int64(3)},
+			wantVars:   []query.Symbol{"?a", "?b", "?c"},
+		},
+		{
+			name:       "tuple ground with zero values",
+			input:      `[:find ?x ?y ?z :where [(ground [0 0 0]) [?x ?y ?z]]]`,
+			wantValues: []interface{}{int64(0), int64(0), int64(0)},
+			wantVars:   []query.Symbol{"?x", "?y", "?z"},
+		},
+		{
+			name:       "tuple ground with mixed types",
+			input:      `[:find ?s ?n :where [(ground ["hello" 42]) [?s ?n]]]`,
+			wantValues: []interface{}{"hello", int64(42)},
+			wantVars:   []query.Symbol{"?s", "?n"},
+		},
+		{
+			name:       "tuple ground with keyword",
+			input:      `[:find ?status ?count :where [(ground [:none 0]) [?status ?count]]]`,
+			wantValues: nil, // Keyword parsing may differ
+			wantVars:   []query.Symbol{"?status", "?count"},
+		},
+		{
+			name:       "single element tuple ground",
+			input:      `[:find ?x :where [(ground [42]) [?x]]]`,
+			wantValues: []interface{}{int64(42)},
+			wantVars:   []query.Symbol{"?x"},
+		},
+		{
+			name:      "tuple ground length mismatch",
+			input:     `[:find ?a ?b ?c :where [(ground [1 2]) [?a ?b ?c]]]`,
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := ParseQuery(tt.input)
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("Expected error but got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseQuery() error = %v", err)
+			}
+
+			// Find the expression
+			var expr *query.Expression
+			for _, clause := range q.Where {
+				if e, ok := clause.(*query.Expression); ok {
+					expr = e
+					break
+				}
+			}
+
+			if expr == nil {
+				t.Fatal("Expected to find an expression")
+			}
+
+			// Check it's a ground function
+			gf, ok := expr.Function.(*query.GroundFunction)
+			if !ok {
+				t.Fatalf("Expected GroundFunction, got %T", expr.Function)
+			}
+
+			// Check value is a slice
+			values, ok := gf.Value.([]interface{})
+			if !ok {
+				t.Fatalf("Expected []interface{} value, got %T", gf.Value)
+			}
+
+			// Check values if expected
+			if tt.wantValues != nil {
+				if len(values) != len(tt.wantValues) {
+					t.Errorf("Values length = %d, want %d", len(values), len(tt.wantValues))
+				} else {
+					for i, v := range tt.wantValues {
+						if values[i] != v {
+							t.Errorf("Values[%d] = %v (%T), want %v (%T)",
+								i, values[i], values[i], v, v)
+						}
+					}
+				}
+			}
+
+			// Check binding is TupleBinding
+			tb, ok := expr.Binding.(query.TupleBinding)
+			if !ok {
+				t.Fatalf("Expected TupleBinding, got %T", expr.Binding)
+			}
+
+			if len(tb.Variables) != len(tt.wantVars) {
+				t.Errorf("Variables length = %d, want %d", len(tb.Variables), len(tt.wantVars))
+			} else {
+				for i, v := range tt.wantVars {
+					if tb.Variables[i] != v {
+						t.Errorf("Variables[%d] = %v, want %v", i, tb.Variables[i], v)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestScalarGroundStillWorks(t *testing.T) {
+	// Ensure backward compatibility - scalar ground should still work
+	q, err := ParseQuery(`[:find ?x :where [(ground 42) ?x]]`)
+	if err != nil {
+		t.Fatalf("ParseQuery() error = %v", err)
+	}
+
+	// Find the expression
+	var expr *query.Expression
+	for _, clause := range q.Where {
+		if e, ok := clause.(*query.Expression); ok {
+			expr = e
+			break
+		}
+	}
+
+	if expr == nil {
+		t.Fatal("Expected to find an expression")
+	}
+
+	// Check it's a ground function
+	gf, ok := expr.Function.(*query.GroundFunction)
+	if !ok {
+		t.Fatalf("Expected GroundFunction, got %T", expr.Function)
+	}
+
+	// Check value is scalar (not slice)
+	if _, isSlice := gf.Value.([]interface{}); isSlice {
+		t.Errorf("Expected scalar value, got slice")
+	}
+
+	if gf.Value != int64(42) {
+		t.Errorf("Value = %v, want 42", gf.Value)
+	}
+
+	// Check binding is Symbol (not TupleBinding)
+	binding, ok := expr.Binding.(query.Symbol)
+	if !ok {
+		t.Fatalf("Expected Symbol binding, got %T", expr.Binding)
+	}
+
+	if binding != "?x" {
+		t.Errorf("Binding = %v, want ?x", binding)
 	}
 }
 

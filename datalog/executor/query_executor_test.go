@@ -177,7 +177,7 @@ func TestExecuteExpression(t *testing.T) {
 				Left:  query.VariableTerm{Symbol: "?x"},
 				Right: query.ConstantTerm{Value: int64(100)},
 			},
-			Binding: "?y",
+			Binding: query.Symbol("?y"),
 		}
 
 		groups, err := executor.executeExpression(ctx, expr, []Relation{r})
@@ -216,7 +216,7 @@ func TestExecuteExpression(t *testing.T) {
 				Left:  query.VariableTerm{Symbol: "?x"},
 				Right: query.VariableTerm{Symbol: "?y"},
 			},
-			Binding: "?z",
+			Binding: query.Symbol("?z"),
 		}
 
 		groups, err := executor.executeExpression(ctx, expr, []Relation{r1, r2})
@@ -424,6 +424,120 @@ func TestEndToEndQueries(t *testing.T) {
 		// Should filter to ages > 26: only Alice (30)
 		if result.Size() != 1 {
 			t.Errorf("Expected 1 tuple after predicate, got %d", result.Size())
+		}
+	})
+}
+
+// TestExecuteTupleGround tests tuple ground expression execution
+func TestExecuteTupleGround(t *testing.T) {
+	t.Run("standalone tuple ground", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		ctx := NewContext(nil)
+
+		// Expression: [(ground [1 2 3]) [?a ?b ?c]]
+		expr := &query.Expression{
+			Function: &query.GroundFunction{
+				Value: []interface{}{int64(1), int64(2), int64(3)},
+			},
+			Binding: query.TupleBinding{Variables: []query.Symbol{"?a", "?b", "?c"}},
+		}
+
+		groups, err := executor.executeExpression(ctx, expr, nil)
+		if err != nil {
+			t.Fatalf("executeExpression failed: %v", err)
+		}
+
+		if len(groups) != 1 {
+			t.Fatalf("Expected 1 group, got %d", len(groups))
+		}
+
+		result := groups[0]
+		if result.Size() != 1 {
+			t.Errorf("Expected 1 tuple, got %d", result.Size())
+		}
+
+		// Check columns
+		cols := result.Columns()
+		if len(cols) != 3 {
+			t.Errorf("Expected 3 columns, got %d", len(cols))
+		}
+		expected := []query.Symbol{"?a", "?b", "?c"}
+		for i, exp := range expected {
+			if cols[i] != exp {
+				t.Errorf("Column %d = %v, want %v", i, cols[i], exp)
+			}
+		}
+
+		// Check values
+		it := result.Iterator()
+		defer it.Close()
+		if !it.Next() {
+			t.Fatal("Expected a tuple")
+		}
+		tuple := it.Tuple()
+		expectedVals := []int64{1, 2, 3}
+		for i, exp := range expectedVals {
+			if tuple[i] != exp {
+				t.Errorf("Value %d = %v, want %v", i, tuple[i], exp)
+			}
+		}
+	})
+
+	t.Run("tuple ground with existing relation", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		ctx := NewContext(nil)
+
+		// Create a relation with ?x
+		r := NewMaterializedRelation(
+			[]query.Symbol{"?x"},
+			[]Tuple{{int64(10)}, {int64(20)}},
+		)
+
+		// Expression: [(ground [0 0]) [?a ?b]]
+		expr := &query.Expression{
+			Function: &query.GroundFunction{
+				Value: []interface{}{int64(0), int64(0)},
+			},
+			Binding: query.TupleBinding{Variables: []query.Symbol{"?a", "?b"}},
+		}
+
+		groups, err := executor.executeExpression(ctx, expr, []Relation{r})
+		if err != nil {
+			t.Fatalf("executeExpression failed: %v", err)
+		}
+
+		if len(groups) != 1 {
+			t.Fatalf("Expected 1 group, got %d", len(groups))
+		}
+
+		result := groups[0]
+		// Should have 2 rows (one for each ?x value) with ?a, ?b added
+		if result.Size() != 2 {
+			t.Errorf("Expected 2 tuples, got %d", result.Size())
+		}
+
+		// Check columns: should have ?x, ?a, ?b
+		cols := result.Columns()
+		if len(cols) != 3 {
+			t.Errorf("Expected 3 columns, got %d", len(cols))
+		}
+	})
+
+	t.Run("tuple ground mismatch error", func(t *testing.T) {
+		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		ctx := NewContext(nil)
+
+		// Expression with mismatched values and bindings
+		expr := &query.Expression{
+			Function: &query.GroundFunction{
+				Value: []interface{}{int64(1), int64(2)}, // 2 values
+			},
+			Binding: query.TupleBinding{Variables: []query.Symbol{"?a", "?b", "?c"}}, // 3 vars
+		}
+
+		_, err := executor.executeExpression(ctx, expr, nil)
+		if err == nil {
+			t.Error("Expected error for mismatched tuple ground")
 		}
 	})
 }

@@ -71,8 +71,13 @@ func extractExpressionSymbols(e *query.Expression) ClauseSymbols {
 	requires := e.Function.RequiredSymbols()
 
 	var provides []query.Symbol
-	if e.Binding != "" {
-		provides = append(provides, e.Binding)
+	switch binding := e.Binding.(type) {
+	case query.Symbol:
+		if binding != "" {
+			provides = append(provides, binding)
+		}
+	case query.TupleBinding:
+		provides = append(provides, binding.Variables...)
 	}
 
 	return ClauseSymbols{
@@ -285,6 +290,30 @@ func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 		}
 	}
 
+	// For fallback semantics, require the "correlation" symbol from pattern branches.
+	// This is the entity variable (first element) of the first pattern in each
+	// pattern branch. It represents the connection to outer context that enables
+	// per-row fallback evaluation.
+	//
+	// Example: (or [?scenario :task ?t] [(ground 0) ?x])
+	// Here ?scenario is the correlation symbol that should be bound from outside.
+	if query.OrHasExpressions(o.Branches) {
+		for _, branch := range o.Branches {
+			// Find the first pattern in this branch
+			for _, clause := range branch {
+				if pattern, ok := clause.(*query.DataPattern); ok {
+					// The entity variable (first element) is the correlation symbol
+					if len(pattern.Elements) > 0 {
+						if v, ok := pattern.Elements[0].(query.Variable); ok {
+							allRequires[v.Name] = true
+						}
+					}
+					break // Only look at the first pattern
+				}
+			}
+		}
+	}
+
 	var requires []query.Symbol
 	for sym := range allRequires {
 		requires = append(requires, sym)
@@ -339,11 +368,58 @@ func extractOrJoinClauseSymbols(o *query.OrJoinClause) ClauseSymbols {
 	}
 }
 
+// computeOtherProvidable computes what symbols could be provided by OTHER clauses
+// (excluding the clause at excludeIdx and already selected clauses)
+func computeOtherProvidable(clauses []query.Clause, selected map[int]bool, excludeIdx int) map[query.Symbol]bool {
+	result := make(map[query.Symbol]bool)
+	for i, clause := range clauses {
+		if i == excludeIdx || selected[i] {
+			continue
+		}
+		symbols := extractClauseSymbols(clause)
+		for _, sym := range symbols.Provides {
+			result[sym] = true
+		}
+	}
+	return result
+}
+
 // canExecuteClause determines if a clause can be executed given available symbols
+// This is the simple version without context about other clauses.
 func canExecuteClause(clause query.Clause, available map[query.Symbol]bool) bool {
+	// Delegate to context-aware version with empty providable set
+	return canExecuteClauseWithContext(clause, available, nil)
+}
+
+// canExecuteClauseWithContext determines if a clause can be executed given:
+// - available: symbols already bound
+// - potentiallyProvidable: symbols that OTHER clauses could provide (used for OR correlation)
+func canExecuteClauseWithContext(clause query.Clause, available map[query.Symbol]bool, potentiallyProvidable map[query.Symbol]bool) bool {
 	symbols := extractClauseSymbols(clause)
 
-	// Check if all required symbols are available
+	// OR clauses with fallback semantics need special handling for correlation symbols.
+	// They should wait for correlation symbols IF those symbols will become available
+	// (i.e., some other clause provides them). If no other clause provides them,
+	// the OR can execute with global fallback.
+	if orClause, ok := clause.(*query.OrClause); ok {
+		if query.OrHasExpressions(orClause.Branches) {
+			for _, req := range symbols.Requires {
+				if available[req] {
+					// Symbol is available - good
+					continue
+				}
+				// Symbol not available - check if it could become available
+				if potentiallyProvidable != nil && potentiallyProvidable[req] {
+					// Another clause could provide this symbol - wait for it
+					return false
+				}
+				// No clause will provide this symbol - global fallback is OK
+			}
+			return true
+		}
+	}
+
+	// Standard check: all required symbols must be available
 	for _, req := range symbols.Requires {
 		if !available[req] {
 			return false

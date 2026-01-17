@@ -123,20 +123,28 @@ func parseTimeExtraction(field string, args []query.PatternElement) (query.Funct
 	}, nil
 }
 
-// parseGroundFunction handles ground function - binds a constant value
+// parseGroundFunction handles ground function - binds constant value(s)
+// Supports both scalar: [(ground 42) ?x] and tuple: [(ground [1 2 3]) [?a ?b ?c]]
 func parseGroundFunction(args []query.PatternElement) (query.Function, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("ground function requires exactly 1 argument, got %d", len(args))
 	}
 
-	// Ground takes a constant value
+	// Vector constant (tuple ground)
+	if vectorConst, ok := args[0].(query.VectorConstant); ok {
+		return &query.GroundFunction{
+			Value: vectorConst.Values,
+		}, nil
+	}
+
+	// Scalar constant
 	if constant, ok := args[0].(query.Constant); ok {
 		return &query.GroundFunction{
 			Value: constant.Value,
 		}, nil
 	}
 
-	return nil, fmt.Errorf("ground function requires a constant value, got %T", args[0])
+	return nil, fmt.Errorf("ground function requires a constant or vector, got %T", args[0])
 }
 
 // parseIdentity handles identity function - passes through a value unchanged

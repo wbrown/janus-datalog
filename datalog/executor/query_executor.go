@@ -348,9 +348,34 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		if err != nil {
 			return nil, err
 		}
-		columns := []query.Symbol{expr.Binding}
-		tuples := []Tuple{{result}}
-		return []Relation{NewMaterializedRelationWithOptions(columns, tuples, e.options)}, nil
+
+		// Handle both scalar and tuple bindings
+		switch binding := expr.Binding.(type) {
+		case query.TupleBinding:
+			values, ok := result.([]interface{})
+			if !ok {
+				return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+			}
+			if len(values) != len(binding.Variables) {
+				return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
+					len(values), len(binding.Variables))
+			}
+			columns := binding.Variables
+			tuple := make(Tuple, len(values))
+			copy(tuple, values)
+			return []Relation{NewMaterializedRelationWithOptions(columns, []Tuple{tuple}, e.options)}, nil
+
+		case query.Symbol:
+			if binding == "" {
+				return groups, nil
+			}
+			columns := []query.Symbol{binding}
+			tuples := []Tuple{{result}}
+			return []Relation{NewMaterializedRelationWithOptions(columns, tuples, e.options)}, nil
+
+		default:
+			return nil, fmt.Errorf("unsupported binding type: %T", expr.Binding)
+		}
 	}
 
 	for _, rel := range groups {
@@ -377,25 +402,46 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	if len(relevantRels) == 0 {
 		// No relation has required symbols
 		if len(requiredSyms) == 0 && len(groups) > 0 {
-			// Ground expression with existing groups - evaluate once and add column to each tuple
+			// Ground expression with existing groups - evaluate once and add column(s) to each tuple
 			// This is used in OR fallback: (or [subquery] [(ground 0) ?count])
 			result, err := expr.Function.Eval(make(map[query.Symbol]interface{}))
 			if err != nil {
 				return nil, err
 			}
 
-			// Add the new column to each relation in groups
+			// Determine binding columns and values
+			var bindingCols []query.Symbol
+			var bindingValues []interface{}
+			switch binding := expr.Binding.(type) {
+			case query.TupleBinding:
+				bindingCols = binding.Variables
+				values, ok := result.([]interface{})
+				if !ok {
+					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+				}
+				if len(values) != len(binding.Variables) {
+					return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
+						len(values), len(binding.Variables))
+				}
+				bindingValues = values
+			case query.Symbol:
+				if binding != "" {
+					bindingCols = []query.Symbol{binding}
+					bindingValues = []interface{}{result}
+				}
+			}
+
+			// Add the new columns to each relation in groups
 			var resultRels []Relation
 			for _, rel := range groups {
-				// Add the bound variable as a new column with constant value
-				newCols := append(rel.Columns(), expr.Binding)
+				newCols := append(rel.Columns(), bindingCols...)
 				var newTuples []Tuple
 				iter := rel.Iterator()
 				for iter.Next() {
 					oldTuple := iter.Tuple()
-					newTuple := make(Tuple, len(oldTuple)+1)
+					newTuple := make(Tuple, len(oldTuple)+len(bindingValues))
 					copy(newTuple, oldTuple)
-					newTuple[len(oldTuple)] = result
+					copy(newTuple[len(oldTuple):], bindingValues)
 					newTuples = append(newTuples, newTuple)
 				}
 				iter.Close()
@@ -1394,8 +1440,15 @@ func collectOrBranchRequiredSymbols(clause *query.OrClause) []query.Symbol {
 					}
 				}
 			case *query.Expression:
-				if clause.Binding != "" {
-					branchProvides[clause.Binding] = true
+				switch b := clause.Binding.(type) {
+				case query.Symbol:
+					if b != "" {
+						branchProvides[b] = true
+					}
+				case query.TupleBinding:
+					for _, v := range b.Variables {
+						branchProvides[v] = true
+					}
 				}
 			case *query.SubqueryPattern:
 				// Subquery provides its binding variables

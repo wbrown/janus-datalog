@@ -461,7 +461,7 @@ func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  "?x",
+					Binding:  query.Symbol("?x"),
 				},
 			},
 		},
@@ -513,7 +513,7 @@ func TestOrFallbackWithGroundExpression(t *testing.T) {
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: int64(0)},
-							Binding:  "?x",
+							Binding:  query.Symbol("?x"),
 						},
 					},
 				},
@@ -572,7 +572,7 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "fallback"},
-							Binding:  "?x",
+							Binding:  query.Symbol("?x"),
 						},
 					},
 				},
@@ -635,7 +635,7 @@ func TestOrFallbackMultipleBranches(t *testing.T) {
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "default"},
-							Binding:  "?x",
+							Binding:  query.Symbol("?x"),
 						},
 					},
 				},
@@ -698,7 +698,7 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 								Left:  query.ConstantTerm{Value: int64(1)},
 								Right: query.ConstantTerm{Value: int64(1)},
 							},
-							Binding: "?x",
+							Binding: query.Symbol("?x"),
 						},
 					},
 				},
@@ -819,7 +819,7 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "fallback"},
-							Binding:  "?x",
+							Binding:  query.Symbol("?x"),
 						},
 					},
 				},
@@ -885,7 +885,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  "?count",
+					Binding:  query.Symbol("?count"),
 				},
 			},
 		},
@@ -1005,7 +1005,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  "?count",
+					Binding:  query.Symbol("?count"),
 				},
 			},
 		},
@@ -1054,6 +1054,245 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 	}
 }
 
+// TestOrFallbackWithPatternAndTupleGround tests the critical case where:
+// - Outer relation has multiple rows
+// - First OR branch is pattern-only (matches some rows, not others)
+// - Second OR branch is tuple ground fallback
+// This is the exact scenario from TestTupleGroundQBInOr
+func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
+	// Setup: two scenarios, only one has tasks
+	scenario1 := datalog.NewIdentity("scenario:1")
+	scenario2 := datalog.NewIdentity("scenario:2")
+	task1 := datalog.NewIdentity("task:1")
+
+	nameAttr := datalog.NewKeyword(":scenario/name")
+	taskAttr := datalog.NewKeyword(":scenario/task")
+	countAttr := datalog.NewKeyword(":task/count")
+
+	datoms := []datalog.Datom{
+		{E: scenario1, A: nameAttr, V: "Scenario One", Tx: 1},
+		{E: scenario2, A: nameAttr, V: "Scenario Two", Tx: 1},
+		{E: scenario1, A: taskAttr, V: task1, Tx: 1},
+		{E: task1, A: countAttr, V: int64(5), Tx: 1},
+		// Note: scenario2 has NO tasks
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+
+	// Add annotation handler to see what's happening
+	var events []annotations.Event
+	handler := func(event annotations.Event) {
+		events = append(events, event)
+	}
+	ctx := NewContext(handler)
+	executor := NewExecutor(matcher)
+
+	// Query:
+	// [:find ?scenario ?name ?taskCount
+	//  :where [?scenario :scenario/name ?name]
+	//         (or (and [?scenario :scenario/task ?task]
+	//                  [?task :task/count ?taskCount])
+	//             [(ground [0]) [?taskCount]])]
+	orClause := &query.OrClause{
+		Branches: [][]query.Clause{
+			// Branch 1: pattern-only (matches scenario1, not scenario2)
+			{
+				&query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Variable{Name: "?scenario"},
+						query.Constant{Value: taskAttr},
+						query.Variable{Name: "?task"},
+					},
+				},
+				&query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Variable{Name: "?task"},
+						query.Constant{Value: countAttr},
+						query.Variable{Name: "?taskCount"},
+					},
+				},
+			},
+			// Branch 2: tuple ground fallback
+			{
+				&query.Expression{
+					Function: &query.GroundFunction{Value: []interface{}{int64(0)}},
+					Binding:  query.TupleBinding{Variables: []query.Symbol{"?taskCount"}},
+				},
+			},
+		},
+	}
+
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?scenario"},
+			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: "?taskCount"},
+		},
+		Where: []query.Clause{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: "?scenario"},
+					query.Constant{Value: nameAttr},
+					query.Variable{Name: "?name"},
+				},
+			},
+			orClause,
+		},
+	}
+
+	result, err := executor.ExecuteWithContext(ctx, q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	t.Logf("Result columns: %v", result.Columns())
+	t.Logf("Result size: %d", result.Size())
+	for i := 0; i < result.Size(); i++ {
+		t.Logf("Row %d: %v", i, result.Get(i))
+	}
+
+	// Log relevant annotations
+	for _, event := range events {
+		// Log all events for debugging
+		t.Logf("[%s] %v", event.Name, event.Data)
+	}
+
+	// Should have 2 results:
+	// - scenario1 with taskCount=5 (from pattern branch)
+	// - scenario2 with taskCount=0 (from tuple ground fallback)
+	if result.Size() != 2 {
+		t.Errorf("Expected 2 results, got %d", result.Size())
+	}
+
+	// Build result map
+	resultMap := make(map[string]int64)
+	for i := 0; i < result.Size(); i++ {
+		tuple := result.Get(i)
+		name := tuple[1].(string)
+		taskCount := tuple[2].(int64)
+		resultMap[name] = taskCount
+	}
+
+	// Verify scenario1 has count 5
+	if count, ok := resultMap["Scenario One"]; !ok {
+		t.Error("Missing Scenario One")
+	} else if count != 5 {
+		t.Errorf("Scenario One: expected taskCount=5, got %d", count)
+	}
+
+	// Verify scenario2 has count 0 (from fallback)
+	if count, ok := resultMap["Scenario Two"]; !ok {
+		t.Error("Missing Scenario Two - tuple ground fallback did not trigger")
+	} else if count != 0 {
+		t.Errorf("Scenario Two: expected taskCount=0, got %d", count)
+	}
+}
+
+func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
+	// Setup: two scenarios, only one has tasks
+	scenario1 := datalog.NewIdentity("scenario:1")
+	scenario2 := datalog.NewIdentity("scenario:2")
+	task1 := datalog.NewIdentity("task:1")
+
+	nameAttr := datalog.NewKeyword(":scenario/name")
+	taskAttr := datalog.NewKeyword(":scenario/task")
+	countAttr := datalog.NewKeyword(":task/count")
+
+	datoms := []datalog.Datom{
+		{E: scenario1, A: nameAttr, V: "Scenario One", Tx: 1},
+		{E: scenario2, A: nameAttr, V: "Scenario Two", Tx: 1},
+		{E: scenario1, A: taskAttr, V: task1, Tx: 1},
+		{E: task1, A: countAttr, V: int64(5), Tx: 1},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	executor := NewExecutor(matcher)
+
+	// Same as TestOrFallbackWithPatternAndTupleGround but with SCALAR ground
+	orClause := &query.OrClause{
+		Branches: [][]query.Clause{
+			{
+				&query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Variable{Name: "?scenario"},
+						query.Constant{Value: taskAttr},
+						query.Variable{Name: "?task"},
+					},
+				},
+				&query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Variable{Name: "?task"},
+						query.Constant{Value: countAttr},
+						query.Variable{Name: "?taskCount"},
+					},
+				},
+			},
+			// Branch 2: SCALAR ground fallback
+			{
+				&query.Expression{
+					Function: &query.GroundFunction{Value: int64(0)},
+					Binding:  query.Symbol("?taskCount"),
+				},
+			},
+		},
+	}
+
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: "?scenario"},
+			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: "?taskCount"},
+		},
+		Where: []query.Clause{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: "?scenario"},
+					query.Constant{Value: nameAttr},
+					query.Variable{Name: "?name"},
+				},
+			},
+			orClause,
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	t.Logf("Result columns: %v", result.Columns())
+	t.Logf("Result size: %d", result.Size())
+	for i := 0; i < result.Size(); i++ {
+		t.Logf("Row %d: %v", i, result.Get(i))
+	}
+
+	// Should have 2 results
+	if result.Size() != 2 {
+		t.Errorf("Expected 2 results, got %d", result.Size())
+	}
+
+	// Build result map
+	resultMap := make(map[string]int64)
+	for i := 0; i < result.Size(); i++ {
+		tuple := result.Get(i)
+		name := tuple[1].(string)
+		taskCount := tuple[2].(int64)
+		resultMap[name] = taskCount
+	}
+
+	if count, ok := resultMap["Scenario One"]; !ok {
+		t.Error("Missing Scenario One")
+	} else if count != 5 {
+		t.Errorf("Scenario One: expected taskCount=5, got %d", count)
+	}
+
+	if count, ok := resultMap["Scenario Two"]; !ok {
+		t.Error("Missing Scenario Two - scalar ground fallback did not trigger")
+	} else if count != 0 {
+		t.Errorf("Scenario Two: expected taskCount=0, got %d", count)
+	}
+}
+
 func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 	// Test OR with SubqueryPattern that returns empty, falling back to ground
 	matcher := NewMemoryPatternMatcher(nil) // Empty database
@@ -1088,7 +1327,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  "?count",
+					Binding:  query.Symbol("?count"),
 				},
 			},
 		},

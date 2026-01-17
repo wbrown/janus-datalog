@@ -53,8 +53,8 @@ func TestParserCreatesClauseStructure(t *testing.T) {
 	}
 
 	if expr, ok := q.Where[3].(*query.Expression); ok {
-		if expr.Binding != "?sum" {
-			t.Errorf("Expected binding ?sum, got %s", expr.Binding)
+		if binding, ok := expr.Binding.(query.Symbol); !ok || binding != "?sum" {
+			t.Errorf("Expected binding ?sum, got %v", expr.Binding)
 		}
 		if _, ok := expr.Function.(*query.ArithmeticFunction); !ok {
 			t.Errorf("Expected ArithmeticFunction, got %T", expr.Function)

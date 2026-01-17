@@ -20,15 +20,24 @@ func (*NotJoinClause) clause()     {}
 func (*OrClause) clause()          {}
 func (*OrJoinClause) clause()      {}
 
-// Expression wraps a Function with an optional binding variable
+// Expression wraps a Function with an optional binding
 type Expression struct {
-	Function Function // The function to evaluate
-	Binding  Symbol   // Variable to bind result to (optional for equality checks)
+	Function Function    // The function to evaluate
+	Binding  interface{} // Symbol (scalar) or TupleBinding (tuple)
 }
 
 func (e *Expression) String() string {
 	// Functions format themselves as (fn ...), we add the brackets and binding
-	return "[" + e.Function.String() + " " + e.Binding.String() + "]"
+	var bindingStr string
+	switch b := e.Binding.(type) {
+	case Symbol:
+		bindingStr = b.String()
+	case TupleBinding:
+		bindingStr = b.String()
+	default:
+		bindingStr = ""
+	}
+	return "[" + e.Function.String() + " " + bindingStr + "]"
 }
 
 // Subquery represents a nested query with bindings

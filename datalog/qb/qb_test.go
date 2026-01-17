@@ -339,6 +339,106 @@ func TestGround(t *testing.T) {
 	}
 }
 
+// TestTupleGround tests tuple ground expression
+func TestTupleGround(t *testing.T) {
+	a, b, c := NewVar(), NewVar(), NewVar()
+
+	expr := TupleGround(0, 0, 0).As(a, b, c)
+
+	clause := expr.toClause()
+	e := clause.(*query.Expression)
+
+	// Verify GroundFunction with []interface{}
+	gf, ok := e.Function.(query.GroundFunction)
+	if !ok {
+		t.Fatalf("Expected GroundFunction, got %T", e.Function)
+	}
+
+	values, ok := gf.Value.([]interface{})
+	if !ok {
+		t.Fatalf("Expected []interface{}, got %T", gf.Value)
+	}
+	if len(values) != 3 {
+		t.Errorf("Expected 3 values, got %d", len(values))
+	}
+
+	// Verify TupleBinding
+	tb, ok := e.Binding.(query.TupleBinding)
+	if !ok {
+		t.Fatalf("Expected TupleBinding, got %T", e.Binding)
+	}
+	if len(tb.Variables) != 3 {
+		t.Errorf("Expected 3 variables, got %d", len(tb.Variables))
+	}
+}
+
+// TestTupleGroundMixedTypes tests tuple ground with different value types
+func TestTupleGroundMixedTypes(t *testing.T) {
+	s, n := NewVar(), NewVar()
+
+	expr := TupleGround("hello", 42).As(s, n)
+
+	clause := expr.toClause()
+	e := clause.(*query.Expression)
+	gf := e.Function.(query.GroundFunction)
+
+	values := gf.Value.([]interface{})
+	if values[0] != "hello" {
+		t.Errorf("Expected 'hello', got %v", values[0])
+	}
+	if values[1] != 42 {
+		t.Errorf("Expected 42, got %v", values[1])
+	}
+}
+
+// TestTupleGroundInOr tests tuple ground in Or clause (primary use case)
+func TestTupleGroundInOr(t *testing.T) {
+	count, total := NewVar(), NewVar()
+
+	// Build an OR clause with a tuple ground fallback
+	orClause := Or(
+		[]interface{}{
+			// First branch: some pattern
+			Pat(NewVar(), Kw(":dummy/attr"), NewVar()),
+		},
+		[]interface{}{
+			// Second branch: tuple ground fallback
+			TupleGround(0, 0).As(count, total),
+		},
+	)
+
+	clause := orClause.toClause()
+	oc, ok := clause.(*query.OrClause)
+	if !ok {
+		t.Fatalf("Expected OrClause, got %T", clause)
+	}
+
+	if len(oc.Branches) != 2 {
+		t.Errorf("Expected 2 branches, got %d", len(oc.Branches))
+	}
+
+	// Second branch should have the tuple ground expression
+	if len(oc.Branches[1]) != 1 {
+		t.Fatalf("Expected 1 clause in second branch, got %d", len(oc.Branches[1]))
+	}
+
+	expr, ok := oc.Branches[1][0].(*query.Expression)
+	if !ok {
+		t.Fatalf("Expected Expression in second branch, got %T", oc.Branches[1][0])
+	}
+
+	// Verify it's a ground function with tuple binding
+	_, ok = expr.Function.(query.GroundFunction)
+	if !ok {
+		t.Errorf("Expected GroundFunction, got %T", expr.Function)
+	}
+
+	_, ok = expr.Binding.(query.TupleBinding)
+	if !ok {
+		t.Errorf("Expected TupleBinding, got %T", expr.Binding)
+	}
+}
+
 // TestIdentity tests identity expression
 func TestIdentity(t *testing.T) {
 	original := NewVar()
@@ -900,8 +1000,8 @@ func TestComparisonBindingAs(t *testing.T) {
 			}
 
 			// Check binding
-			if expr.Binding != result.Symbol() {
-				t.Errorf("Expected binding %s, got %s", result.Symbol(), expr.Binding)
+			if binding, ok := expr.Binding.(query.Symbol); !ok || binding != result.Symbol() {
+				t.Errorf("Expected binding %s, got %v", result.Symbol(), expr.Binding)
 			}
 		})
 	}
@@ -971,8 +1071,8 @@ func TestChainedComparisonBindingAs(t *testing.T) {
 	if len(chainFn.ChainedComparison.Terms) != 3 {
 		t.Errorf("Expected 3 terms, got %d", len(chainFn.ChainedComparison.Terms))
 	}
-	if expr.Binding != result.Symbol() {
-		t.Errorf("Expected binding %s, got %s", result.Symbol(), expr.Binding)
+	if binding, ok := expr.Binding.(query.Symbol); !ok || binding != result.Symbol() {
+		t.Errorf("Expected binding %s, got %v", result.Symbol(), expr.Binding)
 	}
 }
 

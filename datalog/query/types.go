@@ -57,6 +57,26 @@ func (c Constant) IsVariable() bool { return false }
 func (c Constant) IsBlank() bool    { return false }
 func (c Constant) String() string   { return fmt.Sprintf("%v", c.Value) }
 
+// VectorConstant represents a vector of constant values in a pattern
+// Used for tuple ground: [(ground [1 2 3]) [?a ?b ?c]]
+type VectorConstant struct {
+	Values []interface{}
+}
+
+func (v VectorConstant) IsVariable() bool { return false }
+func (v VectorConstant) IsBlank() bool    { return false }
+func (v VectorConstant) String() string {
+	result := "["
+	for i, val := range v.Values {
+		if i > 0 {
+			result += " "
+		}
+		result += fmt.Sprintf("%v", val)
+	}
+	result += "]"
+	return result
+}
+
 // Pattern represents a single pattern in a where clause
 type Pattern interface {
 	String() string

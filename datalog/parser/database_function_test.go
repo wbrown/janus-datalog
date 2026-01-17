@@ -38,8 +38,8 @@ func TestParseGetElse(t *testing.T) {
 				if getElse.Default != "Unknown" {
 					t.Errorf("expected default 'Unknown', got %v", getElse.Default)
 				}
-				if expr.Binding != "?name" {
-					t.Errorf("expected binding ?name, got %s", expr.Binding)
+				if binding, ok := expr.Binding.(query.Symbol); !ok || binding != "?name" {
+					t.Errorf("expected binding ?name, got %v", expr.Binding)
 				}
 			},
 		},
@@ -170,8 +170,8 @@ func TestParseMissingAttr(t *testing.T) {
 				if missing.Attr.String() != ":entity/name" {
 					t.Errorf("expected attr :entity/name, got %s", missing.Attr.String())
 				}
-				if expr.Binding != "?is_missing" {
-					t.Errorf("expected binding ?is_missing, got %s", expr.Binding)
+				if binding, ok := expr.Binding.(query.Symbol); !ok || binding != "?is_missing" {
+					t.Errorf("expected binding ?is_missing, got %v", expr.Binding)
 				}
 			},
 		},

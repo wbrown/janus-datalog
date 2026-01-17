@@ -73,7 +73,9 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 				continue
 			}
 
-			if !canExecuteClause(clause, available) {
+			// Compute what OTHER clauses could provide (excluding this one)
+			otherProvidable := computeOtherProvidable(remaining, selected, i)
+			if !canExecuteClauseWithContext(clause, available, otherProvidable) {
 				continue
 			}
 
