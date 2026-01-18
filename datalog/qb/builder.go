@@ -21,7 +21,7 @@ type QueryBuilder struct {
 //
 // Example:
 //
-//	e, name, age := qb.NewVar(), qb.NewVar(), qb.NewVar()
+//	e, name, age := qb.NewVar("e"), qb.NewVar("name"), qb.NewVar("age")
 //	q := qb.Query().
 //	    Find(name, age).
 //	    Where(
@@ -60,7 +60,7 @@ func (b *QueryBuilder) Find(elements ...interface{}) *QueryBuilder {
 //
 // Example:
 //
-//	minAge := qb.NewVar()
+//	minAge := qb.NewVar("minAge")
 //	qb.Query().
 //	    Find(name).
 //	    In(qb.DB, qb.Scalar(minAge)).
@@ -234,9 +234,9 @@ func toClause(c interface{}) (query.Clause, error) {
 		return x.toClause(), nil
 	case *NotJoinClause:
 		return x.toClause(), nil
-	case *OrClause:
+	case *OrBuilder:
 		return x.toClause(), nil
-	case *OrJoinClause:
+	case *OrJoinBuilder:
 		return x.toClause(), nil
 	case *SubqueryBuilder:
 		return x.toClause(), nil

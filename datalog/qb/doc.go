@@ -16,9 +16,9 @@
 //
 // # Basic Usage
 //
-//	e := qb.NewVar()
-//	name := qb.NewVar()
-//	age := qb.NewVar()
+//	e := qb.NewVar("e")
+//	name := qb.NewVar("name")
+//	age := qb.NewVar("age")
 //
 //	q := qb.Query().
 //	    Find(name, age).
@@ -35,8 +35,8 @@
 //
 // Variables represent unknowns in queries. Same pointer = same logical variable:
 //
-//	e := qb.NewVar()
-//	name := qb.NewVar()
+//	e := qb.NewVar("e")
+//	name := qb.NewVar("name")
 //	// Using same variable in multiple patterns creates a join
 //
 // # Patterns
@@ -89,8 +89,54 @@
 //
 //	qb.Not(clauses...)
 //	qb.NotJoin(joinVars, clauses...)
-//	qb.Or(branch1, branch2, ...)
-//	qb.OrJoin(joinVars, branch1, branch2, ...)
+//	qb.Or().Branch(clauses...).Branch(clauses...)
+//	qb.OrJoin(joinVars...).Branch(clauses...).Branch(clauses...)
+//
+// # Subqueries
+//
+//	innerQ := qb.Query().
+//	    Find(qb.Max(salary)).
+//	    In(qb.DB, qb.Scalar(dept)).
+//	    Where(qb.Pat(e, EmpDept, dept), qb.Pat(e, EmpSalary, salary))
+//
+//	qb.Subquery(innerQ, dept).BindTuple(maxSalary)
+//
+// Subqueries have lexical scoping - reuse variable names like ?t across subqueries:
+//
+//	t, s := qb.NewVar("t"), qb.NewVar("s")
+//	subquery1 := qb.Query().Find(qb.Count(t)).In(qb.DB, qb.Scalar(s)).Where(...)
+//
+//	t, s = qb.NewVar("t"), qb.NewVar("s")  // reassign Go vars, same Datalog names
+//	subquery2 := qb.Query().Find(qb.Count(t)).In(qb.DB, qb.Scalar(s)).Where(...)
+//
+// # Type-Safe Variables with QueryFor[T]
+//
+// QueryFor[T] derives query variables from struct tags, ensuring they match
+// what QueryInto expects. No more manual string synchronization:
+//
+//	// Define result struct once - tags drive both query building AND result mapping
+//	type PersonResult struct {
+//	    Name string `datalog:"?name"`
+//	    Age  int64  `datalog:"?age"`
+//	}
+//
+//	// Build query with type-safe field references
+//	q := qb.QueryFor[PersonResult]()
+//	f := &q.F
+//	e := qb.NewVar("e")
+//
+//	query := q.Where(
+//	    qb.Pat(e, PersonName, q.Find(&f.Name)),  // &f.Name -> ?name
+//	    qb.Pat(e, PersonAge, q.Find(&f.Age)),    // &f.Age -> ?age
+//	    qb.Gt(q.V(&f.Age), 21),                  // V() references without adding to Find
+//	).MustBuild()
+//
+//	// Results map directly to struct - tags guaranteed to match
+//	var results []PersonResult
+//	db.QueryInto(&results, query)
+//
+// q.Find(&f.Field) adds to Find clause, q.V(&f.Field) references only.
+// Rename a struct field -> compile error. Typo in tag -> caught by QueryInto tests.
 //
 // See docs/reference/QUERY_BUILDER.md for complete documentation.
 package qb

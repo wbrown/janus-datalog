@@ -30,7 +30,7 @@ type ArithBuilder struct {
 //
 // Example:
 //
-//	total := qb.NewVar()
+//	total := qb.NewVar("total")
 //	qb.Add(price, tax).As(total)  // [(+ ?price ?tax) ?total]
 func Add(left, right interface{}) *ArithBuilder {
 	return &ArithBuilder{op: query.OpAdd, left: left, right: right}
@@ -76,7 +76,7 @@ type StrBuilder struct {
 //
 // Example:
 //
-//	fullName := qb.NewVar()
+//	fullName := qb.NewVar("fullName")
 //	qb.Str(firstName, " ", lastName).As(fullName)
 func Str(parts ...interface{}) *StrBuilder {
 	return &StrBuilder{parts: parts}
@@ -104,7 +104,7 @@ type GroundBuilder struct {
 //
 // Example:
 //
-//	taxRate := qb.NewVar()
+//	taxRate := qb.NewVar("taxRate")
 //	qb.Ground(0.08).As(taxRate)  // [(ground 0.08) ?taxRate]
 func Ground(value interface{}) *GroundBuilder {
 	return &GroundBuilder{value: value}
@@ -128,7 +128,7 @@ type TupleGroundBuilder struct {
 //
 // Example:
 //
-//	a, b, c := qb.NewVar(), qb.NewVar(), qb.NewVar()
+//	a, b, c := qb.NewVar("a"), qb.NewVar("b"), qb.NewVar("c")
 //	qb.TupleGround(0, 0, 0).As(a, b, c)  // [(ground [0 0 0]) [?a ?b ?c]]
 func TupleGround(values ...interface{}) *TupleGroundBuilder {
 	return &TupleGroundBuilder{values: values}
@@ -190,7 +190,7 @@ type TimeBuilder struct {
 //
 // Example:
 //
-//	year := qb.NewVar()
+//	year := qb.NewVar("year")
 //	qb.Year(createdAt).As(year)
 func Year(timeVar *Var) *TimeBuilder {
 	return &TimeBuilder{field: "year", timeVar: timeVar}

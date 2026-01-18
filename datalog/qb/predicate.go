@@ -68,7 +68,7 @@ func (c *Comparison) toClause() query.Clause {
 //
 // Example:
 //
-//	hasItems := qb.NewVar()
+//	hasItems := qb.NewVar("hasItems")
 //	qb.Gt(count, 0).As(hasItems)  // [(> ?count 0) ?has-items]
 //
 // The result is a boolean: true if the comparison passes, false otherwise.
@@ -139,7 +139,7 @@ func (c *ChainedComparison) toClause() query.Clause {
 //
 // Example:
 //
-//	inRange := qb.NewVar()
+//	inRange := qb.NewVar("inRange")
 //	qb.Range(0, price, 100).As(inRange)  // [(< 0 ?price 100) ?in-range]
 //
 // The result is a boolean: true if all adjacent pairs satisfy the comparison.

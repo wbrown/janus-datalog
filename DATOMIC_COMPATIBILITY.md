@@ -469,9 +469,9 @@ var PersonName = qb.Kw(":person/name")
 var PersonAge = qb.Kw(":person/age")
 
 // Variables created with NewVar() - same pointer = join
-e := qb.NewVar()
-name := qb.NewVar()
-age := qb.NewVar()
+e := qb.NewVar("e")
+name := qb.NewVar("name")
+age := qb.NewVar("age")
 
 q := qb.Query().
     Find(name, age).

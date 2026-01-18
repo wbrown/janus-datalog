@@ -85,8 +85,8 @@ func TestIntegration_BasicQuery(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
 
 	q := qb.Query().
 		Find(name).
@@ -124,9 +124,9 @@ func TestIntegration_JoinQuery(t *testing.T) {
 	defer cleanup()
 
 	// Same `e` variable in both patterns = join on entity
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
 
 	q := qb.Query().
 		Find(name, age).
@@ -162,9 +162,9 @@ func TestIntegration_PredicateQuery(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
 
 	// Find people over 30
 	q := qb.Query().
@@ -206,10 +206,10 @@ func TestIntegration_MultiplePredicates(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
-	city := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
+	city := qb.NewVar("city")
 
 	// Find people in NYC who are over 25
 	q := qb.Query().
@@ -239,9 +239,9 @@ func TestIntegration_AggregationQuery(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	dept := qb.NewVar()
-	salary := qb.NewVar()
+	e := qb.NewVar("e")
+	dept := qb.NewVar("dept")
+	salary := qb.NewVar("salary")
 
 	// Sum salary by department
 	q := qb.Query().
@@ -288,9 +288,9 @@ func TestIntegration_CountAggregation(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	dept := qb.NewVar()
-	name := qb.NewVar()
+	e := qb.NewVar("e")
+	dept := qb.NewVar("dept")
+	name := qb.NewVar("name")
 
 	// Count people by department
 	q := qb.Query().
@@ -328,9 +328,9 @@ func TestIntegration_InputParameters(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	inputName := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	inputName := qb.NewVar("inputName")
+	age := qb.NewVar("age")
 
 	// Scalar input used directly in pattern - this is idiomatic Datalog
 	// The input variable is bound to the input value, then used to match patterns
@@ -368,9 +368,9 @@ func TestIntegration_CollectionInput(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	inputName := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	inputName := qb.NewVar("inputName")
+	age := qb.NewVar("age")
 
 	// Collection input - each value is iterated and used to match patterns
 	// [?inputName ...] means: for each value in the collection, bind ?inputName
@@ -410,9 +410,9 @@ func TestIntegration_OrderBy(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
 
 	q := qb.Query().
 		Find(name, age).
@@ -455,9 +455,9 @@ func TestIntegration_QueryInto(t *testing.T) {
 		Age  int64
 	}
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
 
 	q := qb.Query().
 		Find(name, age). // Position 0: Name, Position 1: Age
@@ -497,9 +497,9 @@ func TestIntegration_QueryOneInto(t *testing.T) {
 		Age  int64
 	}
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
 
 	// Query for Alice specifically
 	q := qb.Query().
@@ -539,9 +539,9 @@ func TestIntegration_QueryIntoWithAggregation(t *testing.T) {
 		Count int64   // Position 2: (count e)
 	}
 
-	e := qb.NewVar()
-	dept := qb.NewVar()
-	salary := qb.NewVar()
+	e := qb.NewVar("e")
+	dept := qb.NewVar("dept")
+	salary := qb.NewVar("salary")
 
 	q := qb.Query().
 		Find(dept, qb.Avg(salary), qb.Count(e)).
@@ -605,9 +605,9 @@ func TestIntegration_CompareWithEDN(t *testing.T) {
                   [(> ?age 30)]]`
 
 	// Built query
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
 
 	builtQuery := qb.Query().
 		Find(name, age).
@@ -662,8 +662,8 @@ func TestIntegration_ConstantValue(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
 
 	// Find people in NYC (constant value in pattern)
 	q := qb.Query().
@@ -690,9 +690,9 @@ func TestIntegration_BooleanPredicate(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	active := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	active := qb.NewVar("active")
 
 	// Find active people
 	q := qb.Query().
@@ -720,8 +720,8 @@ func TestIntegration_AvgAggregation(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	age := qb.NewVar("age")
 
 	// Average age of all people
 	q := qb.Query().
@@ -755,8 +755,8 @@ func TestIntegration_MinMaxAggregation(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	salary := qb.NewVar()
+	e := qb.NewVar("e")
+	salary := qb.NewVar("salary")
 
 	// Min and max salary (separate queries since we can't have two aggregates without grouping)
 	minQ := qb.Query().
@@ -799,10 +799,10 @@ func TestIntegration_ThreeWayJoin(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
-	city := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
+	city := qb.NewVar("city")
 
 	q := qb.Query().
 		Find(name, age, city).
@@ -840,9 +840,9 @@ func TestIntegration_Explain(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
 
 	q := qb.Query().
 		Find(name, age).
@@ -887,10 +887,10 @@ func TestIntegration_TupleInput(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	inputName := qb.NewVar()
-	inputAge := qb.NewVar()
-	city := qb.NewVar()
+	e := qb.NewVar("e")
+	inputName := qb.NewVar("inputName")
+	inputAge := qb.NewVar("inputAge")
+	city := qb.NewVar("city")
 
 	// Tuple input - binds a single tuple of values
 	// [[?inputName ?inputAge]] means: bind these two variables from a single input tuple
@@ -932,10 +932,10 @@ func TestIntegration_RelationInput(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	inputName := qb.NewVar()
-	inputCity := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	inputName := qb.NewVar("inputName")
+	inputCity := qb.NewVar("inputCity")
+	age := qb.NewVar("age")
 
 	// Relation input - binds multiple tuples, iterating over each
 	// [[?inputName ?inputCity] ...] means: for each tuple in the relation, bind both variables
@@ -979,10 +979,10 @@ func TestIntegration_RelationInputNoMatch(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	inputName := qb.NewVar()
-	inputCity := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	inputName := qb.NewVar("inputName")
+	inputCity := qb.NewVar("inputCity")
+	age := qb.NewVar("age")
 
 	q := qb.Query().
 		Find(inputName, inputCity, age).
@@ -1014,10 +1014,10 @@ func TestIntegration_MultipleScalarInputs(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	inputName := qb.NewVar()
-	inputCity := qb.NewVar()
-	age := qb.NewVar()
+	e := qb.NewVar("e")
+	inputName := qb.NewVar("inputName")
+	inputCity := qb.NewVar("inputCity")
+	age := qb.NewVar("age")
 
 	// Two scalar inputs
 	q := qb.Query().
@@ -1059,9 +1059,9 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 		              [?e :person/age ?age]]`
 
 		// Built query
-		e := qb.NewVar()
-		inputName := qb.NewVar()
-		age := qb.NewVar()
+		e := qb.NewVar("e")
+		inputName := qb.NewVar("inputName")
+		age := qb.NewVar("age")
 
 		builtQuery := qb.Query().
 			Find(inputName, age).
@@ -1100,9 +1100,9 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 		              [?e :person/age ?age]]`
 
 		// Built query
-		e := qb.NewVar()
-		inputName := qb.NewVar()
-		age := qb.NewVar()
+		e := qb.NewVar("e")
+		inputName := qb.NewVar("inputName")
+		age := qb.NewVar("age")
 
 		builtQuery := qb.Query().
 			Find(inputName, age).
@@ -1142,10 +1142,10 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 		              [?e :person/age ?age]]`
 
 		// Built query
-		e := qb.NewVar()
-		inputName := qb.NewVar()
-		inputCity := qb.NewVar()
-		age := qb.NewVar()
+		e := qb.NewVar("e")
+		inputName := qb.NewVar("inputName")
+		inputCity := qb.NewVar("inputCity")
+		age := qb.NewVar("age")
 
 		builtQuery := qb.Query().
 			Find(inputName, inputCity, age).
@@ -1191,10 +1191,10 @@ func TestIntegration_ComparisonBinding(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
-	isOver30 := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
+	isOver30 := qb.NewVar("isOver30")
 
 	// Bind comparison result to variable
 	q := qb.Query().
@@ -1256,10 +1256,10 @@ func TestIntegration_ComparisonBindingEDNEquivalence(t *testing.T) {
 	              [(> ?age 30) ?flag]]`
 
 	// Built query
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
-	flag := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
+	flag := qb.NewVar("flag")
 
 	builtQuery := qb.Query().
 		Find(name, age, flag).
@@ -1295,10 +1295,10 @@ func TestIntegration_ChainedComparisonBinding(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	age := qb.NewVar()
-	inRange := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	age := qb.NewVar("age")
+	inRange := qb.NewVar("inRange")
 
 	// Check if age is in range 26-34 (exclusive)
 	q := qb.Query().
@@ -1416,9 +1416,9 @@ func TestIntegration_GetElse(t *testing.T) {
 	db, cleanup := setupTestDBWithOptionalAttrs(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	nickname := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	nickname := qb.NewVar("nickname")
 
 	q := qb.Query().
 		Find(name, nickname).
@@ -1476,9 +1476,9 @@ func TestIntegration_GetElseEDNEquivalence(t *testing.T) {
 	              [(get-else $ ?e :person/nickname "Anonymous") ?nick]]`
 
 	// Built query
-	e := qb.NewVar()
-	name := qb.NewVar()
-	nick := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	nick := qb.NewVar("nick")
 
 	builtQuery := qb.Query().
 		Find(name, nick).
@@ -1513,8 +1513,8 @@ func TestIntegration_MissingPredicate(t *testing.T) {
 	db, cleanup := setupTestDBWithOptionalAttrs(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
 
 	// Find people who don't have email
 	q := qb.Query().
@@ -1561,8 +1561,8 @@ func TestIntegration_MissingPredicateEDNEquivalence(t *testing.T) {
 	              [(missing? $ ?e :person/email)]]`
 
 	// Built query
-	e := qb.NewVar()
-	name := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
 
 	builtQuery := qb.Query().
 		Find(name).
@@ -1597,9 +1597,9 @@ func TestIntegration_MissingExpression(t *testing.T) {
 	db, cleanup := setupTestDBWithOptionalAttrs(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	needsEmail := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	needsEmail := qb.NewVar("needsEmail")
 
 	// Bind missing? result to variable
 	q := qb.Query().
@@ -1651,9 +1651,9 @@ func TestIntegration_GetSome(t *testing.T) {
 	db, cleanup := setupTestDBWithOptionalAttrs(t)
 	defer cleanup()
 
-	e := qb.NewVar()
-	name := qb.NewVar()
-	displayName := qb.NewVar()
+	e := qb.NewVar("e")
+	name := qb.NewVar("name")
+	displayName := qb.NewVar("displayName")
 
 	// Get nickname, fallback to name, fallback to email
 	q := qb.Query().

@@ -57,9 +57,9 @@ func (c collectionBind) toBindingForm() query.BindingForm {
 // Example:
 //
 //	// Inner query: find max salary for a department
-//	dept := qb.NewVar()
-//	maxSalary := qb.NewVar()
-//	innerSalary := qb.NewVar()
+//	dept := qb.NewVar("dept")
+//	maxSalary := qb.NewVar("maxSalary")
+//	innerSalary := qb.NewVar("innerSalary")
 //
 //	innerQ := qb.Query().
 //	    Find(qb.Max(innerSalary)).
@@ -113,10 +113,26 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 		panic("subquery build failed: " + err.Error())
 	}
 
+	// Check if the inner query expects database input ($)
+	needsDB := false
+	for _, in := range innerQ.In {
+		if _, ok := in.(query.DatabaseInput); ok {
+			needsDB = true
+			break
+		}
+	}
+
 	// Convert input variables to pattern elements
-	inputs := make([]query.PatternElement, len(s.inputs))
-	for i, v := range s.inputs {
-		inputs[i] = query.Variable{Name: v.Symbol()}
+	// If the subquery expects DB, prepend $ to the inputs
+	var inputs []query.PatternElement
+	if needsDB {
+		inputs = make([]query.PatternElement, 0, len(s.inputs)+1)
+		inputs = append(inputs, query.Constant{Value: query.Symbol("$")})
+	} else {
+		inputs = make([]query.PatternElement, 0, len(s.inputs))
+	}
+	for _, v := range s.inputs {
+		inputs = append(inputs, query.Variable{Name: v.Symbol()})
 	}
 
 	// Convert binding form

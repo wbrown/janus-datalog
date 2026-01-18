@@ -1,9 +1,9 @@
-// Package qb provides a fluent query builder for constructing Datalog queries
-// without string-based variable names. Go variable identity IS the join condition.
+// Package qb provides a fluent query builder for constructing Datalog queries.
+// Variable names are explicit and match struct tags for QueryInto compatibility.
 //
 // Example:
 //
-//	e, name, age := qb.NewVar(), qb.NewVar(), qb.NewVar()
+//	e, name, age := qb.NewVar("e"), qb.NewVar("name"), qb.NewVar("age")
 //	q := qb.Query().
 //	    Find(name, age).
 //	    Where(
@@ -14,7 +14,6 @@
 package qb
 
 import (
-	"fmt"
 	"sync/atomic"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -28,7 +27,7 @@ var varCounter atomic.Uint64
 //
 // Variables are created with NewVar() and reused across patterns:
 //
-//	e := qb.NewVar()
+//	e := qb.NewVar("e")
 //	qb.Pat(e, PersonName, name)  // e bound here
 //	qb.Pat(e, PersonAge, age)    // same e = implicit join
 type Var struct {
@@ -36,14 +35,22 @@ type Var struct {
 	name query.Symbol
 }
 
-// NewVar creates a new query variable with a unique identity.
-// The variable name is auto-generated (e.g., ?v1, ?v2).
+// NewVar creates a new query variable with the given name.
+// The name can be provided with or without the "?" prefix:
+//
+//	qb.NewVar("name")    // becomes ?name
+//	qb.NewVar("?name")   // also becomes ?name
+//
 // Join semantics come from using the same *Var instance in multiple places.
-func NewVar() *Var {
+func NewVar(name string) *Var {
 	id := varCounter.Add(1)
+	// Normalize: ensure name starts with ?
+	if len(name) > 0 && name[0] != '?' {
+		name = "?" + name
+	}
 	return &Var{
 		id:   id,
-		name: query.Symbol(fmt.Sprintf("?v%d", id)),
+		name: query.Symbol(name),
 	}
 }
 

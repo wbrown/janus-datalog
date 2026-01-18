@@ -375,7 +375,7 @@ func (d *Database) ClearPlanCache() {
 //
 // Example with query builder:
 //
-//	e, name := qb.NewVar(), qb.NewVar()
+//	e, name := qb.NewVar("e"), qb.NewVar("name")
 //	q := qb.Query().Find(name).Where(qb.Pat(e, PersonName, name)).MustBuild()
 //	results, err := db.ExecuteQuery(q)
 func (d *Database) ExecuteQuery(q interface{}) ([][]interface{}, error) {
@@ -401,7 +401,7 @@ func (d *Database) ExecuteQuery(q interface{}) ([][]interface{}, error) {
 //	)
 //
 //	// Scalar input with query builder
-//	e, name, minAge := qb.NewVar(), qb.NewVar(), qb.NewVar()
+//	e, name, minAge := qb.NewVar("e"), qb.NewVar("name"), qb.NewVar("minAge")
 //	q := qb.Query().Find(e).In(qb.DB, qb.Scalar(minAge)).Where(...).MustBuild()
 //	results, err := db.ExecuteQueryWithInputs(q, 25)
 //
@@ -640,7 +640,7 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 //
 // Example with query builder:
 //
-//	e, name, age := qb.NewVar(), qb.NewVar(), qb.NewVar()
+//	e, name, age := qb.NewVar("e"), qb.NewVar("name"), qb.NewVar("age")
 //	q := qb.Query().Find(name, age).Where(qb.Pat(e, PersonName, name), qb.Pat(e, PersonAge, age)).MustBuild()
 //	err := db.QueryInto(&results, q)
 //

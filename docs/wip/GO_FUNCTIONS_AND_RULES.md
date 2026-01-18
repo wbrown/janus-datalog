@@ -45,8 +45,8 @@ func InRange(a, b Vec3, r float64) bool {
     return a.DistanceTo(b) < r
 }
 
-playerPos := qb.NewVar()
-rangeVar := qb.NewVar()
+playerPos := qb.NewVar("playerPos")
+rangeVar := qb.NewVar("rangeVar")
 
 q := qb.Query().
     Find(e).
@@ -68,7 +68,7 @@ func CalculateDamage(base, armor int64, multiplier float64) int64 {
     return int64(float64(base-armor) * multiplier)
 }
 
-finalDamage := qb.NewVar()
+finalDamage := qb.NewVar("finalDamage")
 
 q := qb.Query().
     Find(target, finalDamage).
@@ -171,11 +171,11 @@ func ApplyDamage(current, damage int64) int64 {
     return current - damage
 }
 
-attack := qb.NewVar()
-target := qb.NewVar()
-damage := qb.NewVar()
-currentHealth := qb.NewVar()
-newHealth := qb.NewVar()
+attack := qb.NewVar("attack")
+target := qb.NewVar("target")
+damage := qb.NewVar("damage")
+currentHealth := qb.NewVar("currentHealth")
+newHealth := qb.NewVar("newHealth")
 
 damageRule := qb.Rule().
     When(
@@ -194,8 +194,8 @@ damageRule := qb.Rule().
 **Death detection rule**:
 
 ```go
-entity := qb.NewVar()
-health := qb.NewVar()
+entity := qb.NewVar("entity")
+health := qb.NewVar("health")
 
 deathRule := qb.Rule().
     When(
@@ -476,7 +476,7 @@ qb.Rule().
 ### New Entity Creation
 
 ```go
-newEntity := qb.NewVar()
+newEntity := qb.NewVar("newEntity")
 
 qb.Rule().
     When(...).

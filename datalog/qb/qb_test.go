@@ -9,9 +9,9 @@ import (
 
 // TestNewVar tests that variables get unique IDs
 func TestNewVar(t *testing.T) {
-	v1 := NewVar()
-	v2 := NewVar()
-	v3 := NewVar()
+	v1 := NewVar("v1")
+	v2 := NewVar("v2")
+	v3 := NewVar("v3")
 
 	if v1.id == v2.id {
 		t.Error("v1 and v2 should have different IDs")
@@ -20,10 +20,10 @@ func TestNewVar(t *testing.T) {
 		t.Error("v2 and v3 should have different IDs")
 	}
 
-	// Symbol should start with ?v
+	// Symbol should be ?v1
 	sym1 := v1.Symbol()
-	if sym1[0] != '?' {
-		t.Errorf("Symbol should start with ?, got %s", sym1)
+	if sym1 != "?v1" {
+		t.Errorf("Symbol should be ?v1, got %s", sym1)
 	}
 }
 
@@ -77,8 +77,8 @@ func TestBlank(t *testing.T) {
 
 // TestPat tests 3-element pattern creation
 func TestPat(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
 	PersonName := Kw(":person/name")
 
 	pat := Pat(e, PersonName, name)
@@ -96,9 +96,9 @@ func TestPat(t *testing.T) {
 
 // TestPat4 tests 4-element pattern creation (with tx)
 func TestPat4(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
-	tx := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
+	tx := NewVar("tx")
 	PersonName := Kw(":person/name")
 
 	pat := Pat(e, PersonName, name, tx)
@@ -115,10 +115,10 @@ func TestPat4(t *testing.T) {
 
 // TestPat5 tests 5-element pattern creation (history with op)
 func TestPat5(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
-	tx := NewVar()
-	op := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
+	tx := NewVar("tx")
+	op := NewVar("op")
 	PersonName := Kw(":person/name")
 
 	pat := Pat(e, PersonName, name, tx, op)
@@ -135,7 +135,7 @@ func TestPat5(t *testing.T) {
 
 // TestPatternWithValues tests pattern with constant values
 func TestPatternWithValues(t *testing.T) {
-	e := NewVar()
+	e := NewVar("e")
 	PersonName := Kw(":person/name")
 
 	pat := Pat(e, PersonName, V("Alice"))
@@ -161,8 +161,8 @@ func TestPatInvalidArity(t *testing.T) {
 
 // TestPat2 tests 2-element pattern (for input relations)
 func TestPat2(t *testing.T) {
-	name := NewVar()
-	age := NewVar()
+	name := NewVar("name")
+	age := NewVar("age")
 
 	pat := Pat(name, age)
 
@@ -178,7 +178,7 @@ func TestPat2(t *testing.T) {
 
 // TestPredicates tests comparison predicates
 func TestPredicates(t *testing.T) {
-	age := NewVar()
+	age := NewVar("age")
 
 	tests := []struct {
 		name string
@@ -209,7 +209,7 @@ func TestPredicates(t *testing.T) {
 
 // TestChainedComparison tests range predicates
 func TestChainedComparison(t *testing.T) {
-	x := NewVar()
+	x := NewVar("x")
 
 	// Range: 0 < x < 100
 	chain := Chained(query.OpLT, V(0), x, V(100))
@@ -229,7 +229,7 @@ func TestChainedComparison(t *testing.T) {
 
 // TestRange tests convenience range function
 func TestRange(t *testing.T) {
-	x := NewVar()
+	x := NewVar("x")
 
 	// Range: 10 < x < 20
 	chain := Range(V(10), x, V(20))
@@ -243,7 +243,7 @@ func TestRange(t *testing.T) {
 
 // TestAggregations tests aggregation functions
 func TestAggregations(t *testing.T) {
-	salary := NewVar()
+	salary := NewVar("salary")
 
 	tests := []struct {
 		name string
@@ -273,9 +273,9 @@ func TestAggregations(t *testing.T) {
 
 // TestArithmeticExpressions tests arithmetic expression builders
 func TestArithmeticExpressions(t *testing.T) {
-	a := NewVar()
-	b := NewVar()
-	result := NewVar()
+	a := NewVar("a")
+	b := NewVar("b")
+	result := NewVar("result")
 
 	tests := []struct {
 		name string
@@ -308,9 +308,9 @@ func TestArithmeticExpressions(t *testing.T) {
 
 // TestStrConcat tests string concatenation expression
 func TestStrConcat(t *testing.T) {
-	firstName := NewVar()
-	lastName := NewVar()
-	fullName := NewVar()
+	firstName := NewVar("firstName")
+	lastName := NewVar("lastName")
+	fullName := NewVar("fullName")
 
 	expr := Str(firstName, V(" "), lastName).As(fullName)
 
@@ -324,7 +324,7 @@ func TestStrConcat(t *testing.T) {
 
 // TestGround tests ground expression
 func TestGround(t *testing.T) {
-	taxRate := NewVar()
+	taxRate := NewVar("taxRate")
 
 	expr := Ground(0.08).As(taxRate)
 
@@ -341,7 +341,7 @@ func TestGround(t *testing.T) {
 
 // TestTupleGround tests tuple ground expression
 func TestTupleGround(t *testing.T) {
-	a, b, c := NewVar(), NewVar(), NewVar()
+	a, b, c := NewVar("a"), NewVar("b"), NewVar("c")
 
 	expr := TupleGround(0, 0, 0).As(a, b, c)
 
@@ -374,7 +374,7 @@ func TestTupleGround(t *testing.T) {
 
 // TestTupleGroundMixedTypes tests tuple ground with different value types
 func TestTupleGroundMixedTypes(t *testing.T) {
-	s, n := NewVar(), NewVar()
+	s, n := NewVar("s"), NewVar("n")
 
 	expr := TupleGround("hello", 42).As(s, n)
 
@@ -393,19 +393,18 @@ func TestTupleGroundMixedTypes(t *testing.T) {
 
 // TestTupleGroundInOr tests tuple ground in Or clause (primary use case)
 func TestTupleGroundInOr(t *testing.T) {
-	count, total := NewVar(), NewVar()
+	count, total := NewVar("count"), NewVar("total")
 
 	// Build an OR clause with a tuple ground fallback
-	orClause := Or(
-		[]interface{}{
+	orClause := Or().
+		Branch(
 			// First branch: some pattern
-			Pat(NewVar(), Kw(":dummy/attr"), NewVar()),
-		},
-		[]interface{}{
+			Pat(NewVar("e"), Kw(":dummy/attr"), NewVar("v")),
+		).
+		Branch(
 			// Second branch: tuple ground fallback
 			TupleGround(0, 0).As(count, total),
-		},
-	)
+		)
 
 	clause := orClause.toClause()
 	oc, ok := clause.(*query.OrClause)
@@ -441,8 +440,8 @@ func TestTupleGroundInOr(t *testing.T) {
 
 // TestIdentity tests identity expression
 func TestIdentity(t *testing.T) {
-	original := NewVar()
-	alias := NewVar()
+	original := NewVar("original")
+	alias := NewVar("alias")
 
 	expr := Identity(original).As(alias)
 
@@ -456,8 +455,8 @@ func TestIdentity(t *testing.T) {
 
 // TestTimeExtraction tests time extraction functions
 func TestTimeExtraction(t *testing.T) {
-	createdAt := NewVar()
-	y := NewVar()
+	createdAt := NewVar("createdAt")
+	y := NewVar("y")
 
 	tests := []struct {
 		name  string
@@ -496,21 +495,21 @@ func TestInputSpecs(t *testing.T) {
 	}
 
 	// Test Scalar input
-	minAge := NewVar()
+	minAge := NewVar("minAge")
 	scalarSpec := Scalar(minAge).toInputSpec()
 	if _, ok := scalarSpec.(query.ScalarInput); !ok {
 		t.Errorf("Scalar should produce ScalarInput, got %T", scalarSpec)
 	}
 
 	// Test Collection input
-	id := NewVar()
+	id := NewVar("id")
 	collSpec := Collection(id).toInputSpec()
 	if _, ok := collSpec.(query.CollectionInput); !ok {
 		t.Errorf("Collection should produce CollectionInput, got %T", collSpec)
 	}
 
 	// Test Tuple input
-	x, y := NewVar(), NewVar()
+	x, y := NewVar("x"), NewVar("y")
 	tupleSpec := Tuple(x, y).toInputSpec()
 	if _, ok := tupleSpec.(query.TupleInput); !ok {
 		t.Errorf("Tuple should produce TupleInput, got %T", tupleSpec)
@@ -525,7 +524,7 @@ func TestInputSpecs(t *testing.T) {
 
 // TestNotClause tests NOT clause
 func TestNotClause(t *testing.T) {
-	e := NewVar()
+	e := NewVar("e")
 	PersonCity := Kw(":person/city")
 
 	notClause := Not(Pat(e, PersonCity, V("NYC")))
@@ -542,7 +541,7 @@ func TestNotClause(t *testing.T) {
 
 // TestNotJoinClause tests NOT-JOIN clause
 func TestNotJoinClause(t *testing.T) {
-	e := NewVar()
+	e := NewVar("e")
 	PersonStatus := Kw(":person/status")
 
 	notJoin := NotJoin([]*Var{e}, Pat(e, PersonStatus, V("banned")))
@@ -559,12 +558,11 @@ func TestNotJoinClause(t *testing.T) {
 
 // TestOrClause tests OR clause
 func TestOrClause(t *testing.T) {
-	status := NewVar()
+	status := NewVar("status")
 
-	orClause := Or(
-		[]interface{}{Eq(status, V("active"))},
-		[]interface{}{Eq(status, V("pending"))},
-	)
+	orClause := Or().
+		Branch(Eq(status, V("active"))).
+		Branch(Eq(status, V("pending")))
 
 	clause := orClause.toClause()
 	oc, ok := clause.(*query.OrClause)
@@ -578,15 +576,14 @@ func TestOrClause(t *testing.T) {
 
 // TestOrJoinClause tests OR-JOIN clause
 func TestOrJoinClause(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
 	PersonNickname := Kw(":person/nickname")
 	PersonName := Kw(":person/name")
 
-	orJoin := OrJoin([]*Var{name},
-		[]interface{}{Pat(e, PersonNickname, name)},
-		[]interface{}{Pat(e, PersonName, name)},
-	)
+	orJoin := OrJoin(name).
+		Branch(Pat(e, PersonNickname, name)).
+		Branch(Pat(e, PersonName, name))
 
 	clause := orJoin.toClause()
 	ojc, ok := clause.(*query.OrJoinClause)
@@ -603,7 +600,7 @@ func TestOrJoinClause(t *testing.T) {
 
 // TestOrderSpecs tests ordering specifications
 func TestOrderSpecs(t *testing.T) {
-	name := NewVar()
+	name := NewVar("name")
 
 	// Test Asc
 	ascSpec := Asc(name)
@@ -620,9 +617,9 @@ func TestOrderSpecs(t *testing.T) {
 
 // TestQueryBuilder tests the main query builder
 func TestQueryBuilder(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
-	age := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
+	age := NewVar("age")
 	PersonName := Kw(":person/name")
 	PersonAge := Kw(":person/age")
 
@@ -658,10 +655,10 @@ func TestQueryBuilder(t *testing.T) {
 
 // TestQueryBuilderWithInputs tests query builder with input parameters
 func TestQueryBuilderWithInputs(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
-	age := NewVar()
-	minAge := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
+	age := NewVar("age")
+	minAge := NewVar("minAge")
 	PersonName := Kw(":person/name")
 	PersonAge := Kw(":person/age")
 
@@ -687,9 +684,9 @@ func TestQueryBuilderWithInputs(t *testing.T) {
 
 // TestQueryBuilderWithAggregation tests query builder with aggregation
 func TestQueryBuilderWithAggregation(t *testing.T) {
-	e := NewVar()
-	dept := NewVar()
-	salary := NewVar()
+	e := NewVar("e")
+	dept := NewVar("dept")
+	salary := NewVar("salary")
 	EmpDept := Kw(":employee/dept")
 	EmpSalary := Kw(":employee/salary")
 
@@ -731,13 +728,13 @@ func TestQueryBuilderMustBuild(t *testing.T) {
 // TestQueryBuilderValidation tests build validation
 func TestQueryBuilderValidation(t *testing.T) {
 	// No find elements
-	_, err := Query().Where(Eq(NewVar(), V(1))).Build()
+	_, err := Query().Where(Eq(NewVar("x"), V(1))).Build()
 	if err == nil {
 		t.Error("Expected error for query without find elements")
 	}
 
 	// No where clauses
-	_, err = Query().Find(NewVar()).Build()
+	_, err = Query().Find(NewVar("x")).Build()
 	if err == nil {
 		t.Error("Expected error for query without where clauses")
 	}
@@ -746,10 +743,10 @@ func TestQueryBuilderValidation(t *testing.T) {
 // TestSubquery tests subquery builder
 func TestSubquery(t *testing.T) {
 	// Inner query: find max salary for a department
-	dept := NewVar()
-	maxSalary := NewVar()
-	innerSalary := NewVar()
-	innerE := NewVar()
+	dept := NewVar("dept")
+	maxSalary := NewVar("maxSalary")
+	innerSalary := NewVar("innerSalary")
+	innerE := NewVar("innerE")
 	EmpDept := Kw(":employee/dept")
 	EmpSalary := Kw(":employee/salary")
 
@@ -770,9 +767,10 @@ func TestSubquery(t *testing.T) {
 		t.Fatalf("Expected *query.SubqueryPattern, got %T", clause)
 	}
 
-	// Should have 1 input
-	if len(sqp.Inputs) != 1 {
-		t.Errorf("Expected 1 input, got %d", len(sqp.Inputs))
+	// Should have 2 inputs: $ (database) and ?dept (scalar)
+	// The inner query declares In(DB, Scalar(dept)), so both must be passed
+	if len(sqp.Inputs) != 2 {
+		t.Errorf("Expected 2 inputs ($ and ?dept), got %d", len(sqp.Inputs))
 	}
 
 	// Should have tuple binding
@@ -783,9 +781,9 @@ func TestSubquery(t *testing.T) {
 
 // TestSubqueryRelationBinding tests subquery with relation binding
 func TestSubqueryRelationBinding(t *testing.T) {
-	dept := NewVar()
-	empName := NewVar()
-	innerE := NewVar()
+	dept := NewVar("dept")
+	empName := NewVar("empName")
+	innerE := NewVar("innerE")
 	EmpDept := Kw(":employee/dept")
 	EmpName := Kw(":employee/name")
 
@@ -809,9 +807,9 @@ func TestSubqueryRelationBinding(t *testing.T) {
 
 // TestSubqueryCollectionBinding tests subquery with collection binding
 func TestSubqueryCollectionBinding(t *testing.T) {
-	dept := NewVar()
-	empName := NewVar()
-	innerE := NewVar()
+	dept := NewVar("dept")
+	empName := NewVar("empName")
+	innerE := NewVar("innerE")
 	EmpDept := Kw(":employee/dept")
 	EmpName := Kw(":employee/name")
 
@@ -823,7 +821,7 @@ func TestSubqueryCollectionBinding(t *testing.T) {
 			Pat(innerE, EmpName, empName),
 		)
 
-	names := NewVar()
+	names := NewVar("names")
 	sub := Subquery(innerQ, dept).BindCollection(names)
 
 	clause := sub.toClause()
@@ -838,9 +836,9 @@ func TestSubqueryCollectionBinding(t *testing.T) {
 func TestVariableIdentityIsJoin(t *testing.T) {
 	// This is the key insight: using the same Go variable in multiple patterns
 	// creates a join condition
-	e := NewVar() // <-- This single variable
-	name := NewVar()
-	age := NewVar()
+	e := NewVar("e") // <-- This single variable
+	name := NewVar("name")
+	age := NewVar("age")
 	PersonName := Kw(":person/name")
 	PersonAge := Kw(":person/age")
 
@@ -872,8 +870,8 @@ func TestVariableIdentityIsJoin(t *testing.T) {
 
 // TestPatternWithDatalogKeyword tests pattern with datalog.Keyword directly
 func TestPatternWithDatalogKeyword(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
 
 	// Can use datalog.Keyword directly
 	directKw := datalog.NewKeyword(":person/name")
@@ -890,7 +888,7 @@ func TestPatternWithDatalogKeyword(t *testing.T) {
 
 // TestPatternWithDatalogIdentity tests pattern with datalog.Identity directly
 func TestPatternWithDatalogIdentity(t *testing.T) {
-	name := NewVar()
+	name := NewVar("name")
 	PersonName := Kw(":person/name")
 
 	// Can use datalog.Identity directly for entity
@@ -909,20 +907,20 @@ func TestPatternWithDatalogIdentity(t *testing.T) {
 // TestComplexQuery tests a realistic complex query
 func TestComplexQuery(t *testing.T) {
 	// Find employees who earn more than the average in their department
-	e := NewVar()
-	dept := NewVar()
-	salary := NewVar()
-	name := NewVar()
-	avgSalary := NewVar()
+	e := NewVar("e")
+	dept := NewVar("dept")
+	salary := NewVar("salary")
+	name := NewVar("name")
+	avgSalary := NewVar("avgSalary")
 
 	EmpName := Kw(":employee/name")
 	EmpDept := Kw(":employee/dept")
 	EmpSalary := Kw(":employee/salary")
 
 	// Inner query to compute average salary per department
-	innerE := NewVar()
-	innerSalary := NewVar()
-	innerDept := NewVar()
+	innerE := NewVar("innerE")
+	innerSalary := NewVar("innerSalary")
+	innerDept := NewVar("innerDept")
 
 	innerQ := Query().
 		Find(Avg(innerSalary)).
@@ -966,8 +964,8 @@ func TestComplexQuery(t *testing.T) {
 
 // TestComparisonBindingAs tests all comparison operators with .As() binding
 func TestComparisonBindingAs(t *testing.T) {
-	a := NewVar()
-	result := NewVar()
+	a := NewVar("a")
+	result := NewVar("result")
 
 	tests := []struct {
 		name string
@@ -1009,9 +1007,9 @@ func TestComparisonBindingAs(t *testing.T) {
 
 // TestComparisonBindingTerms tests comparison binding with different term combinations
 func TestComparisonBindingTerms(t *testing.T) {
-	x := NewVar()
-	y := NewVar()
-	result := NewVar()
+	x := NewVar("x")
+	y := NewVar("y")
+	result := NewVar("result")
 
 	// Var vs Constant
 	expr1 := Gt(x, V(0)).As(result)
@@ -1049,8 +1047,8 @@ func TestComparisonBindingTerms(t *testing.T) {
 
 // TestChainedComparisonBindingAs tests chained comparison with .As() binding
 func TestChainedComparisonBindingAs(t *testing.T) {
-	x := NewVar()
-	result := NewVar()
+	x := NewVar("x")
+	result := NewVar("result")
 
 	// Chained with OpLT
 	chain := Chained(query.OpLT, V(0), x, V(100)).As(result)
@@ -1078,8 +1076,8 @@ func TestChainedComparisonBindingAs(t *testing.T) {
 
 // TestRangeBindingAs tests Range convenience function with .As() binding
 func TestRangeBindingAs(t *testing.T) {
-	x := NewVar()
-	inRange := NewVar()
+	x := NewVar("x")
+	inRange := NewVar("inRange")
 
 	// Range: 0 < x < 100
 	chain := Range(V(0), x, V(100)).As(inRange)
@@ -1094,8 +1092,8 @@ func TestRangeBindingAs(t *testing.T) {
 
 // TestRangeInclusiveBindingAs tests RangeInclusive convenience function with .As() binding
 func TestRangeInclusiveBindingAs(t *testing.T) {
-	rating := NewVar()
-	valid := NewVar()
+	rating := NewVar("rating")
+	valid := NewVar("valid")
 
 	// Range: 1 <= rating <= 5
 	chain := RangeInclusive(V(1), rating, V(5)).As(valid)
@@ -1110,8 +1108,8 @@ func TestRangeInclusiveBindingAs(t *testing.T) {
 
 // TestComparisonDualUse tests that comparisons work both as predicate and expression
 func TestComparisonDualUse(t *testing.T) {
-	x := NewVar()
-	flag := NewVar()
+	x := NewVar("x")
+	flag := NewVar("flag")
 
 	// As predicate (filter)
 	pred := Gt(x, V(0))
@@ -1130,8 +1128,8 @@ func TestComparisonDualUse(t *testing.T) {
 
 // TestChainedComparisonDualUse tests that chained comparisons work both as predicate and expression
 func TestChainedComparisonDualUse(t *testing.T) {
-	x := NewVar()
-	flag := NewVar()
+	x := NewVar("x")
+	flag := NewVar("flag")
 
 	// As predicate (filter)
 	pred := Range(V(0), x, V(100))
@@ -1154,8 +1152,8 @@ func TestChainedComparisonDualUse(t *testing.T) {
 
 // TestGetElse tests GetElse function builder
 func TestGetElse(t *testing.T) {
-	entity := NewVar()
-	result := NewVar()
+	entity := NewVar("entity")
+	result := NewVar("result")
 	PersonNickname := Kw(":person/nickname")
 
 	// GetElse with string default
@@ -1198,8 +1196,8 @@ func TestGetElse(t *testing.T) {
 
 // TestGetElseWithDifferentDefaults tests GetElse with various default value types
 func TestGetElseWithDifferentDefaults(t *testing.T) {
-	entity := NewVar()
-	result := NewVar()
+	entity := NewVar("entity")
+	result := NewVar("result")
 	attr := Kw(":test/attr")
 
 	tests := []struct {
@@ -1228,7 +1226,7 @@ func TestGetElseWithDifferentDefaults(t *testing.T) {
 
 // TestMissingAsPredicate tests Missing as a filter predicate (without .As())
 func TestMissingAsPredicate(t *testing.T) {
-	entity := NewVar()
+	entity := NewVar("entity")
 	PersonEmail := Kw(":person/email")
 
 	missing := Missing(entity, PersonEmail)
@@ -1258,8 +1256,8 @@ func TestMissingAsPredicate(t *testing.T) {
 
 // TestMissingAsExpression tests Missing as an expression (with .As())
 func TestMissingAsExpression(t *testing.T) {
-	entity := NewVar()
-	needsEmail := NewVar()
+	entity := NewVar("entity")
+	needsEmail := NewVar("needsEmail")
 	PersonEmail := Kw(":person/email")
 
 	missing := Missing(entity, PersonEmail).As(needsEmail)
@@ -1288,8 +1286,8 @@ func TestMissingAsExpression(t *testing.T) {
 
 // TestGetSome tests GetSome function builder
 func TestGetSome(t *testing.T) {
-	entity := NewVar()
-	displayName := NewVar()
+	entity := NewVar("entity")
+	displayName := NewVar("displayName")
 	PersonNickname := Kw(":person/nickname")
 	PersonFullName := Kw(":person/fullname")
 	PersonEmail := Kw(":person/email")
@@ -1335,8 +1333,8 @@ func TestGetSome(t *testing.T) {
 
 // TestGetSomeWithTwoAttrs tests GetSome with minimum required attributes
 func TestGetSomeWithTwoAttrs(t *testing.T) {
-	entity := NewVar()
-	result := NewVar()
+	entity := NewVar("entity")
+	result := NewVar("result")
 	AttrA := Kw(":attr/a")
 	AttrB := Kw(":attr/b")
 
@@ -1351,9 +1349,9 @@ func TestGetSomeWithTwoAttrs(t *testing.T) {
 
 // TestDatabaseFunctionInQuery tests using database functions in a complete query
 func TestDatabaseFunctionInQuery(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
-	nickname := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
+	nickname := NewVar("nickname")
 	PersonName := Kw(":person/name")
 	PersonNickname := Kw(":person/nickname")
 
@@ -1386,8 +1384,8 @@ func TestDatabaseFunctionInQuery(t *testing.T) {
 
 // TestMissingPredicateInQuery tests using Missing as a predicate in a query
 func TestMissingPredicateInQuery(t *testing.T) {
-	e := NewVar()
-	name := NewVar()
+	e := NewVar("e")
+	name := NewVar("name")
 	PersonName := Kw(":person/name")
 	PersonEmail := Kw(":person/email")
 
@@ -1416,9 +1414,9 @@ func TestMissingPredicateInQuery(t *testing.T) {
 
 // TestComparisonBindingInQuery tests using comparison binding in a complete query
 func TestComparisonBindingInQuery(t *testing.T) {
-	e := NewVar()
-	count := NewVar()
-	hasItems := NewVar()
+	e := NewVar("e")
+	count := NewVar("count")
+	hasItems := NewVar("hasItems")
 	ItemCount := Kw(":item/count")
 
 	q, err := Query().
@@ -1445,5 +1443,216 @@ func TestComparisonBindingInQuery(t *testing.T) {
 	}
 	if _, ok := expr.Function.(*query.ComparisonFunction); !ok {
 		t.Errorf("Expected ComparisonFunction, got %T", expr.Function)
+	}
+}
+
+// TestQueryForBasic tests basic QueryFor usage
+func TestQueryForBasic(t *testing.T) {
+	type Result struct {
+		Name string `datalog:"?name"`
+		Age  int64  `datalog:"?age"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	PersonName := Kw(":person/name")
+	PersonAge := Kw(":person/age")
+	e := NewVar("e")
+
+	built, err := q.Where(
+		Pat(e, PersonName, q.Find(&f.Name)),
+		Pat(e, PersonAge, q.Find(&f.Age)),
+	).Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Verify Find clause has 2 elements
+	if len(built.Find) != 2 {
+		t.Errorf("Expected 2 find elements, got %d", len(built.Find))
+	}
+
+	// Verify find elements are ?name and ?age
+	fv0, ok := built.Find[0].(query.FindVariable)
+	if !ok {
+		t.Fatalf("Expected FindVariable, got %T", built.Find[0])
+	}
+	if fv0.Symbol != "?name" {
+		t.Errorf("Expected ?name, got %s", fv0.Symbol)
+	}
+
+	fv1, ok := built.Find[1].(query.FindVariable)
+	if !ok {
+		t.Fatalf("Expected FindVariable, got %T", built.Find[1])
+	}
+	if fv1.Symbol != "?age" {
+		t.Errorf("Expected ?age, got %s", fv1.Symbol)
+	}
+}
+
+// TestQueryForVvsFind tests that V() doesn't add to Find but Find() does
+func TestQueryForVvsFind(t *testing.T) {
+	type Result struct {
+		Person string `datalog:"?person"`
+		Name   string `datalog:"?name"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	PersonName := Kw(":person/name")
+
+	// Use V() for person (not in results), Find() for name
+	built, err := q.Where(
+		Pat(q.V(&f.Person), PersonName, q.Find(&f.Name)),
+	).Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Find should only have ?name, not ?person
+	if len(built.Find) != 1 {
+		t.Errorf("Expected 1 find element, got %d", len(built.Find))
+	}
+
+	fv, ok := built.Find[0].(query.FindVariable)
+	if !ok {
+		t.Fatalf("Expected FindVariable, got %T", built.Find[0])
+	}
+	if fv.Symbol != "?name" {
+		t.Errorf("Expected ?name, got %s", fv.Symbol)
+	}
+}
+
+// TestQueryForJoinSemantics tests that same field returns same *Var
+func TestQueryForJoinSemantics(t *testing.T) {
+	type Result struct {
+		Person string `datalog:"?person"`
+		Name   string `datalog:"?name"`
+		Age    int64  `datalog:"?age"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	// Same V(&f.Person) call should return same *Var
+	v1 := q.V(&f.Person)
+	v2 := q.V(&f.Person)
+
+	if v1 != v2 {
+		t.Error("Same field should return same *Var for join semantics")
+	}
+
+	// Same for Find
+	f1 := q.Find(&f.Name)
+	f2 := q.Find(&f.Name)
+
+	if f1 != f2 {
+		t.Error("Same field should return same *Var for join semantics")
+	}
+}
+
+// TestQueryForFindOrder tests that Find order matches call order
+func TestQueryForFindOrder(t *testing.T) {
+	type Result struct {
+		A string `datalog:"?a"`
+		B string `datalog:"?b"`
+		C string `datalog:"?c"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	// Call Find in order: C, A, B
+	q.Find(&f.C)
+	q.Find(&f.A)
+	q.Find(&f.B)
+
+	Dummy := Kw(":dummy")
+	e := NewVar("e")
+
+	built, err := q.Where(
+		Pat(e, Dummy, q.V(&f.A)),
+	).Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Find should be [?c, ?a, ?b] - call order, not struct order
+	if len(built.Find) != 3 {
+		t.Fatalf("Expected 3 find elements, got %d", len(built.Find))
+	}
+
+	expected := []string{"?c", "?a", "?b"}
+	for i, exp := range expected {
+		fv, ok := built.Find[i].(query.FindVariable)
+		if !ok {
+			t.Fatalf("Expected FindVariable at %d, got %T", i, built.Find[i])
+		}
+		if string(fv.Symbol) != exp {
+			t.Errorf("Find[%d]: expected %s, got %s", i, exp, fv.Symbol)
+		}
+	}
+}
+
+// TestQueryForIgnoresAggregateTag tests that aggregate tags are ignored
+func TestQueryForIgnoresAggregateTag(t *testing.T) {
+	type Result struct {
+		Dept   string  `datalog:"?dept"`
+		Salary int64   `datalog:"?salary"`
+		Avg    float64 `datalog:"(avg ?salary)"` // Should be ignored
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	// Should be able to get ?dept and ?salary
+	dept := q.V(&f.Dept)
+	salary := q.V(&f.Salary)
+
+	if dept.Symbol() != "?dept" {
+		t.Errorf("Expected ?dept, got %s", dept.Symbol())
+	}
+	if salary.Symbol() != "?salary" {
+		t.Errorf("Expected ?salary, got %s", salary.Symbol())
+	}
+
+	// Trying to get Avg should panic (no variable tag)
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("Expected panic when accessing field with aggregate tag")
+		}
+	}()
+	q.V(&f.Avg) // Should panic
+}
+
+// TestQueryForFindNoDuplicate tests that Find() doesn't duplicate
+func TestQueryForFindNoDuplicate(t *testing.T) {
+	type Result struct {
+		Name string `datalog:"?name"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	// Call Find multiple times
+	q.Find(&f.Name)
+	q.Find(&f.Name)
+	q.Find(&f.Name)
+
+	Dummy := Kw(":dummy")
+	e := NewVar("e")
+
+	built, err := q.Where(
+		Pat(e, Dummy, q.V(&f.Name)),
+	).Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Should still only have 1 find element
+	if len(built.Find) != 1 {
+		t.Errorf("Expected 1 find element, got %d", len(built.Find))
 	}
 }

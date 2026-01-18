@@ -314,13 +314,13 @@ func TestTupleGroundQB(t *testing.T) {
 	}
 
 	// Build query using qb with TupleGround
-	a, b, c := qb.NewVar(), qb.NewVar(), qb.NewVar()
+	a, b, c := qb.NewVar("a"), qb.NewVar("b"), qb.NewVar("c")
 	TestName := qb.Kw(":test/name")
 
 	q := qb.Query().
 		Find(a, b, c).
 		Where(
-			qb.Pat(qb.NewVar(), TestName, qb.Blank()),
+			qb.Pat(qb.NewVar("_e"), TestName, qb.Blank()),
 			qb.TupleGround(int64(1), int64(2), int64(3)).As(a, b, c),
 		).MustBuild()
 
@@ -403,9 +403,9 @@ func TestTupleGroundQBInOr(t *testing.T) {
 	}
 
 	// Build query with OR fallback using TupleGround
-	scenario, name := qb.NewVar(), qb.NewVar()
-	taskCount := qb.NewVar()
-	task := qb.NewVar() // Shared task variable
+	scenario, name := qb.NewVar("scenario"), qb.NewVar("name")
+	taskCount := qb.NewVar("taskCount")
+	task := qb.NewVar("task") // Shared task variable
 
 	ScenarioName := qb.Kw(":scenario/name")
 	ScenarioTask := qb.Kw(":scenario/task")
@@ -415,17 +415,16 @@ func TestTupleGroundQBInOr(t *testing.T) {
 		Find(scenario, name, taskCount).
 		Where(
 			qb.Pat(scenario, ScenarioName, name),
-			qb.Or(
-				// Branch 1: scenario has task with count
-				[]interface{}{
+			qb.Or().
+				Branch(
+					// Branch 1: scenario has task with count
 					qb.Pat(scenario, ScenarioTask, task),
 					qb.Pat(task, TaskCount, taskCount),
-				},
-				// Branch 2: fallback with tuple ground
-				[]interface{}{
+				).
+				Branch(
+					// Branch 2: fallback with tuple ground
 					qb.TupleGround(int64(0)).As(taskCount),
-				},
-			),
+				),
 		).MustBuild()
 
 	t.Logf("Query built: %s", q.String())
