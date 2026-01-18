@@ -396,16 +396,15 @@ func TestTupleGroundInOr(t *testing.T) {
 	count, total := NewVar("count"), NewVar("total")
 
 	// Build an OR clause with a tuple ground fallback
-	orClause := Or(
-		[]interface{}{
+	orClause := Or().
+		Branch(
 			// First branch: some pattern
 			Pat(NewVar("e"), Kw(":dummy/attr"), NewVar("v")),
-		},
-		[]interface{}{
+		).
+		Branch(
 			// Second branch: tuple ground fallback
 			TupleGround(0, 0).As(count, total),
-		},
-	)
+		)
 
 	clause := orClause.toClause()
 	oc, ok := clause.(*query.OrClause)
@@ -561,10 +560,9 @@ func TestNotJoinClause(t *testing.T) {
 func TestOrClause(t *testing.T) {
 	status := NewVar("status")
 
-	orClause := Or(
-		[]interface{}{Eq(status, V("active"))},
-		[]interface{}{Eq(status, V("pending"))},
-	)
+	orClause := Or().
+		Branch(Eq(status, V("active"))).
+		Branch(Eq(status, V("pending")))
 
 	clause := orClause.toClause()
 	oc, ok := clause.(*query.OrClause)
@@ -583,10 +581,9 @@ func TestOrJoinClause(t *testing.T) {
 	PersonNickname := Kw(":person/nickname")
 	PersonName := Kw(":person/name")
 
-	orJoin := OrJoin([]*Var{name},
-		[]interface{}{Pat(e, PersonNickname, name)},
-		[]interface{}{Pat(e, PersonName, name)},
-	)
+	orJoin := OrJoin(name).
+		Branch(Pat(e, PersonNickname, name)).
+		Branch(Pat(e, PersonName, name))
 
 	clause := orJoin.toClause()
 	ojc, ok := clause.(*query.OrJoinClause)

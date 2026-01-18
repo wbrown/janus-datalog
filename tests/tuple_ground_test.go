@@ -415,17 +415,16 @@ func TestTupleGroundQBInOr(t *testing.T) {
 		Find(scenario, name, taskCount).
 		Where(
 			qb.Pat(scenario, ScenarioName, name),
-			qb.Or(
-				// Branch 1: scenario has task with count
-				[]interface{}{
+			qb.Or().
+				Branch(
+					// Branch 1: scenario has task with count
 					qb.Pat(scenario, ScenarioTask, task),
 					qb.Pat(task, TaskCount, taskCount),
-				},
-				// Branch 2: fallback with tuple ground
-				[]interface{}{
+				).
+				Branch(
+					// Branch 2: fallback with tuple ground
 					qb.TupleGround(int64(0)).As(taskCount),
-				},
-			),
+				),
 		).MustBuild()
 
 	t.Logf("Query built: %s", q.String())

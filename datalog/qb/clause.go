@@ -79,25 +79,30 @@ func (n *NotJoinClause) toClause() query.Clause {
 	}
 }
 
-// OrClause represents an OR (disjunction) clause.
-type OrClause struct {
+// OrBuilder accumulates branches for an OR clause.
+type OrBuilder struct {
 	branches [][]interface{}
 }
 
-// Or creates a disjunction clause (union).
-// Each branch is a slice of clauses; a match in any branch satisfies the OR.
+// Or starts building an OR clause.
+// Use Branch() to add branches.
 //
 // Example:
 //
-//	qb.Or(
-//	    []interface{}{qb.Eq(status, qb.V("active"))},
-//	    []interface{}{qb.Eq(status, qb.V("pending"))},
-//	)
-func Or(branches ...[]interface{}) *OrClause {
-	return &OrClause{branches: branches}
+//	qb.Or().
+//	    Branch(qb.Eq(status, qb.V("active"))).
+//	    Branch(qb.Eq(status, qb.V("pending")))
+func Or() *OrBuilder {
+	return &OrBuilder{}
 }
 
-func (o *OrClause) toClause() query.Clause {
+// Branch adds a branch with one or more clauses.
+func (o *OrBuilder) Branch(clauses ...interface{}) *OrBuilder {
+	o.branches = append(o.branches, clauses)
+	return o
+}
+
+func (o *OrBuilder) toClause() query.Clause {
 	qbranches := make([][]query.Clause, len(o.branches))
 	for i, branch := range o.branches {
 		qbranches[i] = make([]query.Clause, len(branch))
@@ -112,30 +117,31 @@ func (o *OrClause) toClause() query.Clause {
 	return &query.OrClause{Branches: qbranches}
 }
 
-// OrJoinClause represents an OR-JOIN clause with explicit join variables.
-type OrJoinClause struct {
+// OrJoinBuilder accumulates branches for an OR-JOIN clause.
+type OrJoinBuilder struct {
 	joinVars []*Var
 	branches [][]interface{}
 }
 
-// OrJoin creates a disjunction clause with explicit join variables.
+// OrJoin starts building an OR-JOIN clause with explicit join variables.
 // Only the specified variables are exposed from the union.
 //
 // Example:
 //
-//	qb.OrJoin([]*qb.Var{name},
-//	    []interface{}{
-//	        qb.Pat(e, PersonNickname, name),
-//	    },
-//	    []interface{}{
-//	        qb.Pat(e, PersonName, name),
-//	    },
-//	)
-func OrJoin(joinVars []*Var, branches ...[]interface{}) *OrJoinClause {
-	return &OrJoinClause{joinVars: joinVars, branches: branches}
+//	qb.OrJoin(name).
+//	    Branch(qb.Pat(e, PersonNickname, name)).
+//	    Branch(qb.Pat(e, PersonName, name))
+func OrJoin(joinVars ...*Var) *OrJoinBuilder {
+	return &OrJoinBuilder{joinVars: joinVars}
 }
 
-func (o *OrJoinClause) toClause() query.Clause {
+// Branch adds a branch with one or more clauses.
+func (o *OrJoinBuilder) Branch(clauses ...interface{}) *OrJoinBuilder {
+	o.branches = append(o.branches, clauses)
+	return o
+}
+
+func (o *OrJoinBuilder) toClause() query.Clause {
 	joinSyms := make([]query.Symbol, len(o.joinVars))
 	for i, v := range o.joinVars {
 		joinSyms[i] = v.Symbol()

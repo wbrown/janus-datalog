@@ -234,9 +234,9 @@ func toClause(c interface{}) (query.Clause, error) {
 		return x.toClause(), nil
 	case *NotJoinClause:
 		return x.toClause(), nil
-	case *OrClause:
+	case *OrBuilder:
 		return x.toClause(), nil
-	case *OrJoinClause:
+	case *OrJoinBuilder:
 		return x.toClause(), nil
 	case *SubqueryBuilder:
 		return x.toClause(), nil

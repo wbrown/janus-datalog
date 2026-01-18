@@ -89,8 +89,8 @@
 //
 //	qb.Not(clauses...)
 //	qb.NotJoin(joinVars, clauses...)
-//	qb.Or(branch1, branch2, ...)
-//	qb.OrJoin(joinVars, branch1, branch2, ...)
+//	qb.Or().Branch(clauses...).Branch(clauses...)
+//	qb.OrJoin(joinVars...).Branch(clauses...).Branch(clauses...)
 //
 // See docs/reference/QUERY_BUILDER.md for complete documentation.
 package qb

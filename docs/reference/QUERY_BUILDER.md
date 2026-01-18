@@ -440,16 +440,14 @@ Match any of several alternatives:
 
 ```go
 // Match NYC or LA
-qb.Or(
-    []interface{}{qb.Pat(e, PersonCity, qb.V("NYC"))},
-    []interface{}{qb.Pat(e, PersonCity, qb.V("LA"))},
-)
+qb.Or().
+    Branch(qb.Pat(e, PersonCity, qb.V("NYC"))).
+    Branch(qb.Pat(e, PersonCity, qb.V("LA")))
 
 // OR with join variables
-qb.OrJoin([]*qb.Var{e, city},
-    []interface{}{qb.Pat(e, PersonCity, city), qb.Eq(city, "NYC")},
-    []interface{}{qb.Pat(e, PersonCity, city), qb.Eq(city, "LA")},
-)
+qb.OrJoin(e, city).
+    Branch(qb.Pat(e, PersonCity, city), qb.Eq(city, "NYC")).
+    Branch(qb.Pat(e, PersonCity, city), qb.Eq(city, "LA"))
 ```
 
 ## Ordering
@@ -750,8 +748,8 @@ func main() {
 |----------|----------------|
 | `qb.Not(clauses...)` | `(not ...)` |
 | `qb.NotJoin(vars, clauses...)` | `(not-join [vars] ...)` |
-| `qb.Or(branch1, branch2)` | `(or ...)` |
-| `qb.OrJoin(vars, branch1, branch2)` | `(or-join [vars] ...)` |
+| `qb.Or().Branch(...).Branch(...)` | `(or ...)` |
+| `qb.OrJoin(vars...).Branch(...).Branch(...)` | `(or-join [vars] ...)` |
 
 ### Ordering
 

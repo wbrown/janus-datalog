@@ -57,12 +57,9 @@ Without tuple ground, the fallback requires N separate expressions:
 ```go
 count, tokens, duration := qb.NewVar("count"), qb.NewVar("tokens"), qb.NewVar("duration")
 
-qb.Or(
-    []interface{}{/* subquery branch */},
-    []interface{}{
-        qb.TupleGround(0, 0, 0).As(count, tokens, duration),
-    },
-)
+qb.Or().
+    Branch(/* subquery branch */).
+    Branch(qb.TupleGround(0, 0, 0).As(count, tokens, duration))
 ```
 
 ## Scalar Ground (unchanged)
