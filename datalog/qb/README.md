@@ -28,10 +28,10 @@ var (
 
 // 2. Build queries with Go variables
 func FindAdultsInCity(db *storage.Database, city string) ([][]interface{}, error) {
-    e := qb.NewVar()
-    name := qb.NewVar()
-    age := qb.NewVar()
-    inputCity := qb.NewVar()
+    e := qb.NewVar("e")
+    name := qb.NewVar("name")
+    age := qb.NewVar("age")
+    inputCity := qb.NewVar("inputCity")
 
     q := qb.Query().
         Find(name, age).
@@ -53,9 +53,9 @@ func FindAdultsInCity(db *storage.Database, city string) ([][]interface{}, error
 **Go variable identity IS the join condition.**
 
 ```go
-e := qb.NewVar()    // This pointer...
-name := qb.NewVar()
-age := qb.NewVar()
+e := qb.NewVar("e")    // This pointer...
+name := qb.NewVar("name")
+age := qb.NewVar("age")
 
 qb.Pat(e, PersonName, name)  // ...used here
 qb.Pat(e, PersonAge, age)    // ...and here = JOIN
@@ -73,9 +73,9 @@ var (
     PersonAge  = qb.Kw(":person/age")
 )
 
-e := qb.NewVar()
-name := qb.NewVar()
-age := qb.NewVar()
+e := qb.NewVar("e")
+name := qb.NewVar("name")
+age := qb.NewVar("age")
 
 q := qb.Query().
     Find(name, age).

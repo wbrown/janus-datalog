@@ -18,7 +18,7 @@ type GetElseBuilder struct {
 //
 // Example:
 //
-//	nickname := qb.NewVar()
+//	nickname := qb.NewVar("nickname")
 //	qb.GetElse(entity, PersonNickname, "Anonymous").As(nickname)
 //	// [(get-else $ ?entity :person/nickname "Anonymous") ?nickname]
 func GetElse(entity *Var, attr Attr, defaultVal interface{}) *GetElseBuilder {
@@ -53,7 +53,7 @@ type MissingBuilder struct {
 //
 // As an expression (bind boolean):
 //
-//	needsEmail := qb.NewVar()
+//	needsEmail := qb.NewVar("needsEmail")
 //	qb.Missing(entity, PersonEmail).As(needsEmail)
 //	// [(missing? $ ?entity :person/email) ?needs-email]
 func Missing(entity *Var, attr Attr) *MissingBuilder {
@@ -93,7 +93,7 @@ type GetSomeBuilder struct {
 //
 // Example:
 //
-//	displayName := qb.NewVar()
+//	displayName := qb.NewVar("displayName")
 //	qb.GetSome(entity, PersonNickname, PersonFullName, PersonEmail).As(displayName)
 //	// [(get-some $ ?entity :person/nickname :person/fullname :person/email) ?display-name]
 //

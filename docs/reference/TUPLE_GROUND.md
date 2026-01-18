@@ -55,7 +55,7 @@ Without tuple ground, the fallback requires N separate expressions:
 ## Query Builder (qb)
 
 ```go
-count, tokens, duration := qb.NewVar(), qb.NewVar(), qb.NewVar()
+count, tokens, duration := qb.NewVar("count"), qb.NewVar("tokens"), qb.NewVar("duration")
 
 qb.Or(
     []interface{}{/* subquery branch */},

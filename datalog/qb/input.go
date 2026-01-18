@@ -37,7 +37,7 @@ type scalarInput struct {
 //
 // Example:
 //
-//	minAge := qb.NewVar()
+//	minAge := qb.NewVar("minAge")
 //	q := qb.Query().
 //	    Find(name, age).
 //	    In(qb.DB, qb.Scalar(minAge)).
@@ -67,7 +67,7 @@ type collectionInput struct {
 //
 // Example:
 //
-//	id := qb.NewVar()
+//	id := qb.NewVar("id")
 //	q := qb.Query().
 //	    Find(name).
 //	    In(qb.DB, qb.Collection(id)).
@@ -93,7 +93,7 @@ type tupleInput struct {
 //
 // Example:
 //
-//	x, y := qb.NewVar(), qb.NewVar()
+//	x, y := qb.NewVar("x"), qb.NewVar("y")
 //	q := qb.Query().
 //	    Find(name).
 //	    In(qb.DB, qb.Tuple(x, y)).
@@ -123,7 +123,7 @@ type relationInput struct {
 //
 // Example:
 //
-//	x, y := qb.NewVar(), qb.NewVar()
+//	x, y := qb.NewVar("x"), qb.NewVar("y")
 //	q := qb.Query().
 //	    Find(name).
 //	    In(qb.DB, qb.Relation(x, y)).

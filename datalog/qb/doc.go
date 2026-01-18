@@ -16,9 +16,9 @@
 //
 // # Basic Usage
 //
-//	e := qb.NewVar()
-//	name := qb.NewVar()
-//	age := qb.NewVar()
+//	e := qb.NewVar("e")
+//	name := qb.NewVar("name")
+//	age := qb.NewVar("age")
 //
 //	q := qb.Query().
 //	    Find(name, age).
@@ -35,8 +35,8 @@
 //
 // Variables represent unknowns in queries. Same pointer = same logical variable:
 //
-//	e := qb.NewVar()
-//	name := qb.NewVar()
+//	e := qb.NewVar("e")
+//	name := qb.NewVar("name")
 //	// Using same variable in multiple patterns creates a join
 //
 // # Patterns

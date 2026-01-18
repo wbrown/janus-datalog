@@ -16,9 +16,9 @@ var (
 
 func FindAdults(db *storage.Database) ([][]interface{}, error) {
     // Variables are created per-query - same pointer = same logical variable
-    e := qb.NewVar()
-    name := qb.NewVar()
-    age := qb.NewVar()
+    e := qb.NewVar("e")
+    name := qb.NewVar("name")
+    age := qb.NewVar("age")
 
     q := qb.Query().
         Find(name, age).
@@ -86,9 +86,9 @@ q := qb.Query().
 Variables represent unknowns in your query. The same `*Var` pointer used in multiple places creates a join condition.
 
 ```go
-e := qb.NewVar()
-name := qb.NewVar()
-age := qb.NewVar()
+e := qb.NewVar("e")
+name := qb.NewVar("name")
+age := qb.NewVar("age")
 
 // Same variable in multiple patterns = join
 qb.Pat(e, PersonName, name)
@@ -167,7 +167,7 @@ qb.Chained(query.OpLT, a, b, c, d)  // a < b < c < d
 Comparisons can also **bind their boolean result** to a variable using `.As()`:
 
 ```go
-hasItems := qb.NewVar()
+hasItems := qb.NewVar("hasItems")
 
 q := qb.Query().
     Find(name, count, hasItems).
@@ -217,7 +217,7 @@ Expressions compute values and bind them to variables:
 ### Arithmetic
 
 ```go
-total := qb.NewVar()
+total := qb.NewVar("total")
 qb.Add(price, tax).As(total)
 qb.Sub(gross, deductions).As(net)
 qb.Mul(quantity, unitPrice).As(lineTotal)
@@ -227,21 +227,21 @@ qb.Div(total, count).As(average)
 ### String Concatenation
 
 ```go
-fullName := qb.NewVar()
+fullName := qb.NewVar("fullName")
 qb.Str(firstName, " ", lastName).As(fullName)
 ```
 
 ### Ground Values
 
 ```go
-constant := qb.NewVar()
+constant := qb.NewVar("constant")
 qb.Ground(42).As(constant)
 ```
 
 ### Time Extraction
 
 ```go
-y := qb.NewVar()
+y := qb.NewVar("y")
 qb.Year(timestamp).As(y)
 qb.Month(timestamp).As(m)
 qb.Day(timestamp).As(d)
@@ -259,7 +259,7 @@ Database functions access entity attributes with special semantics for missing v
 Returns an attribute value, or a default if the attribute is missing:
 
 ```go
-nickname := qb.NewVar()
+nickname := qb.NewVar("nickname")
 
 q := qb.Query().
     Find(name, nickname).
@@ -295,7 +295,7 @@ Equivalent EDN: `[(missing? $ ?e :person/email)]`
 **As an expression** (bind boolean result):
 
 ```go
-needsEmail := qb.NewVar()
+needsEmail := qb.NewVar("needsEmail")
 
 q := qb.Query().
     Find(name, needsEmail).
@@ -317,7 +317,7 @@ Equivalent EDN: `[(missing? $ ?e :person/email) ?needs-email]`
 Returns the first available attribute from a list (useful for display names, fallbacks):
 
 ```go
-displayName := qb.NewVar()
+displayName := qb.NewVar("displayName")
 
 q := qb.Query().
     Find(name, displayName).
@@ -357,8 +357,8 @@ qb.Relation(nameVar, ageVar)
 ### Scalar Input Example
 
 ```go
-inputName := qb.NewVar()
-age := qb.NewVar()
+inputName := qb.NewVar("inputName")
+age := qb.NewVar("age")
 
 q := qb.Query().
     Find(inputName, age).
@@ -376,8 +376,8 @@ results, err := db.ExecuteQueryWithInputs(q, "Alice")
 ### Collection Input Example
 
 ```go
-inputName := qb.NewVar()
-age := qb.NewVar()
+inputName := qb.NewVar("inputName")
+age := qb.NewVar("age")
 
 q := qb.Query().
     Find(inputName, age).
@@ -395,9 +395,9 @@ results, err := db.ExecuteQueryWithInputs(q, []string{"Alice", "Bob", "Charlie"}
 ### Relation Input Example
 
 ```go
-inputName := qb.NewVar()
-inputCity := qb.NewVar()
-age := qb.NewVar()
+inputName := qb.NewVar("inputName")
+inputCity := qb.NewVar("inputCity")
+age := qb.NewVar("age")
 
 q := qb.Query().
     Find(inputName, inputCity, age).
@@ -475,7 +475,7 @@ innerQ := qb.Query().
     )
 
 // Outer query uses subquery
-maxSalary := qb.NewVar()
+maxSalary := qb.NewVar("maxSalary")
 q := qb.Query().
     Find(name, maxSalary).
     Where(
@@ -541,9 +541,9 @@ type PersonResult struct {
 }
 
 func FindAdults(db *storage.Database) ([]PersonResult, error) {
-    e := qb.NewVar()
-    name := qb.NewVar()
-    age := qb.NewVar()
+    e := qb.NewVar("e")
+    name := qb.NewVar("name")
+    age := qb.NewVar("age")
 
     q := qb.Query().
         Find(name, age).
@@ -566,9 +566,9 @@ For queries that return exactly one result:
 
 ```go
 func FindPerson(db *storage.Database, personName string) (*PersonResult, error) {
-    e := qb.NewVar()
-    name := qb.NewVar()
-    age := qb.NewVar()
+    e := qb.NewVar("e")
+    name := qb.NewVar("name")
+    age := qb.NewVar("age")
 
     q := qb.Query().
         Find(name, age).
@@ -603,9 +603,9 @@ type DeptStats struct {
 }
 
 func GetDeptStats(db *storage.Database) ([]DeptStats, error) {
-    emp := qb.NewVar()
-    dept := qb.NewVar()
-    salary := qb.NewVar()
+    emp := qb.NewVar("emp")
+    dept := qb.NewVar("dept")
+    salary := qb.NewVar("salary")
 
     q := qb.Query().
         Find(dept, qb.Avg(salary), qb.Count(emp)).
@@ -644,10 +644,10 @@ func main() {
     defer db.Close()
 
     // Find adults in specific cities
-    e := qb.NewVar()
-    name := qb.NewVar()
-    age := qb.NewVar()
-    city := qb.NewVar()
+    e := qb.NewVar("e")
+    name := qb.NewVar("name")
+    age := qb.NewVar("age")
+    city := qb.NewVar("city")
 
     q := qb.Query().
         Find(name, age, city).
@@ -678,7 +678,7 @@ func main() {
 
 | Type | Purpose | Example |
 |------|---------|---------|
-| `*Var` | Query variable | `e := qb.NewVar()` |
+| `*Var` | Query variable | `e := qb.NewVar("e")` |
 | `Attr` | Keyword attribute | `PersonName := qb.Kw(":person/name")` |
 | `Val` | Constant value | `qb.V("NYC")`, `qb.V(42)` |
 

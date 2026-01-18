@@ -64,9 +64,9 @@ tx.Commit()
 **Query it (Go-native):**
 
 ```go
-e := qb.NewVar()
-name := qb.NewVar()
-age := qb.NewVar()
+e := qb.NewVar("e")
+name := qb.NewVar("name")
+age := qb.NewVar("age")
 
 q := qb.Query().
     Find(name, age).
@@ -102,9 +102,9 @@ var (
     PersonAge  = qb.Kw(":person/age")
 )
 
-e := qb.NewVar()
-name := qb.NewVar()
-age := qb.NewVar()
+e := qb.NewVar("e")
+name := qb.NewVar("name")
+age := qb.NewVar("age")
 
 q := qb.Query().
     Find(name, age).
