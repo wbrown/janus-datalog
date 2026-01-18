@@ -109,5 +109,34 @@
 //	t, s = qb.NewVar("t"), qb.NewVar("s")  // reassign Go vars, same Datalog names
 //	subquery2 := qb.Query().Find(qb.Count(t)).In(qb.DB, qb.Scalar(s)).Where(...)
 //
+// # Type-Safe Variables with QueryFor[T]
+//
+// QueryFor[T] derives query variables from struct tags, ensuring they match
+// what QueryInto expects. No more manual string synchronization:
+//
+//	// Define result struct once - tags drive both query building AND result mapping
+//	type PersonResult struct {
+//	    Name string `datalog:"?name"`
+//	    Age  int64  `datalog:"?age"`
+//	}
+//
+//	// Build query with type-safe field references
+//	q := qb.QueryFor[PersonResult]()
+//	f := &q.F
+//	e := qb.NewVar("e")
+//
+//	query := q.Where(
+//	    qb.Pat(e, PersonName, q.Find(&f.Name)),  // &f.Name -> ?name
+//	    qb.Pat(e, PersonAge, q.Find(&f.Age)),    // &f.Age -> ?age
+//	    qb.Gt(q.V(&f.Age), 21),                  // V() references without adding to Find
+//	).MustBuild()
+//
+//	// Results map directly to struct - tags guaranteed to match
+//	var results []PersonResult
+//	db.QueryInto(&results, query)
+//
+// q.Find(&f.Field) adds to Find clause, q.V(&f.Field) references only.
+// Rename a struct field -> compile error. Typo in tag -> caught by QueryInto tests.
+//
 // See docs/reference/QUERY_BUILDER.md for complete documentation.
 package qb

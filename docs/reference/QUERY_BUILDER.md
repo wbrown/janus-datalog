@@ -660,6 +660,79 @@ func GetDeptStats(db *storage.Database) ([]DeptStats, error) {
 }
 ```
 
+### QueryFor[T] - Type-Safe Variables
+
+The manual approach above has a subtle problem: variable names in `qb.NewVar()` must exactly match the `datalog` struct tags, but nothing enforces this at compile time. Typos cause silent failures.
+
+**QueryFor[T]** solves this by deriving variables directly from struct tags:
+
+```go
+// Define result struct once - tags drive BOTH query building AND result mapping
+type PersonResult struct {
+    Name string `datalog:"?name"`
+    Age  int64  `datalog:"?age"`
+}
+
+func FindAdults(db *storage.Database) ([]PersonResult, error) {
+    // QueryFor derives variables from struct tags
+    q := qb.QueryFor[PersonResult]()
+    f := &q.F
+    e := qb.NewVar("e")
+
+    query := q.Where(
+        qb.Pat(e, PersonName, q.Find(&f.Name)),  // &f.Name -> ?name
+        qb.Pat(e, PersonAge, q.Find(&f.Age)),    // &f.Age -> ?age
+        qb.Gt(q.V(&f.Age), 18),                  // V() references without adding to Find
+    ).MustBuild()
+
+    // Results map directly to struct - tags guaranteed to match
+    var results []PersonResult
+    err := db.QueryInto(&results, query)
+    return results, err
+}
+```
+
+**Key methods:**
+- `q.Find(&f.Field)` - Returns `*Var` AND adds to Find clause
+- `q.V(&f.Field)` - Returns `*Var` without adding to Find (for predicates, join patterns)
+
+**Why this is safer:**
+- Rename struct field → compile error forces you to update all usages
+- Typo in `datalog` tag → caught when QueryInto tests fail
+- No string duplication between query and result mapping
+
+**With aggregations:**
+
+```go
+type DeptStats struct {
+    Dept      string  `datalog:"?dept"`
+    Salary    int64   `datalog:"?salary"`  // base variable
+    AvgSalary float64 // no tag - positional mapping from Find order
+    Count     int64   // no tag - positional mapping from Find order
+    Emp       int64   `datalog:"?emp"`     // base variable
+}
+
+func GetDeptStats(db *storage.Database) ([]DeptStats, error) {
+    q := qb.QueryFor[DeptStats]()
+    f := &q.F
+    e := qb.NewVar("e")
+
+    // V() gives the variable, you wrap it in aggregation
+    query := qb.Query().
+        Find(q.V(&f.Dept), qb.Avg(q.V(&f.Salary)), qb.Count(q.V(&f.Emp))).
+        Where(
+            qb.Pat(e, EmpDept, q.V(&f.Dept)),
+            qb.Pat(e, EmpSalary, q.V(&f.Salary)),
+            qb.Pat(e, EmpID, q.V(&f.Emp)),
+        ).
+        MustBuild()
+
+    var stats []DeptStats
+    err := db.QueryInto(&stats, query)
+    return stats, err
+}
+```
+
 ## Complete Example
 
 ```go
@@ -720,6 +793,7 @@ func main() {
 | `*Var` | Query variable | `e := qb.NewVar("e")` |
 | `Attr` | Keyword attribute | `PersonName := qb.Kw(":person/name")` |
 | `Val` | Constant value | `qb.V("NYC")`, `qb.V(42)` |
+| `*TypedQueryBuilder[T]` | Type-safe builder | `q := qb.QueryFor[PersonResult]()` |
 
 ### Pattern Building
 

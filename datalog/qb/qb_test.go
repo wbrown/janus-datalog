@@ -1445,3 +1445,214 @@ func TestComparisonBindingInQuery(t *testing.T) {
 		t.Errorf("Expected ComparisonFunction, got %T", expr.Function)
 	}
 }
+
+// TestQueryForBasic tests basic QueryFor usage
+func TestQueryForBasic(t *testing.T) {
+	type Result struct {
+		Name string `datalog:"?name"`
+		Age  int64  `datalog:"?age"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	PersonName := Kw(":person/name")
+	PersonAge := Kw(":person/age")
+	e := NewVar("e")
+
+	built, err := q.Where(
+		Pat(e, PersonName, q.Find(&f.Name)),
+		Pat(e, PersonAge, q.Find(&f.Age)),
+	).Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Verify Find clause has 2 elements
+	if len(built.Find) != 2 {
+		t.Errorf("Expected 2 find elements, got %d", len(built.Find))
+	}
+
+	// Verify find elements are ?name and ?age
+	fv0, ok := built.Find[0].(query.FindVariable)
+	if !ok {
+		t.Fatalf("Expected FindVariable, got %T", built.Find[0])
+	}
+	if fv0.Symbol != "?name" {
+		t.Errorf("Expected ?name, got %s", fv0.Symbol)
+	}
+
+	fv1, ok := built.Find[1].(query.FindVariable)
+	if !ok {
+		t.Fatalf("Expected FindVariable, got %T", built.Find[1])
+	}
+	if fv1.Symbol != "?age" {
+		t.Errorf("Expected ?age, got %s", fv1.Symbol)
+	}
+}
+
+// TestQueryForVvsFind tests that V() doesn't add to Find but Find() does
+func TestQueryForVvsFind(t *testing.T) {
+	type Result struct {
+		Person string `datalog:"?person"`
+		Name   string `datalog:"?name"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	PersonName := Kw(":person/name")
+
+	// Use V() for person (not in results), Find() for name
+	built, err := q.Where(
+		Pat(q.V(&f.Person), PersonName, q.Find(&f.Name)),
+	).Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Find should only have ?name, not ?person
+	if len(built.Find) != 1 {
+		t.Errorf("Expected 1 find element, got %d", len(built.Find))
+	}
+
+	fv, ok := built.Find[0].(query.FindVariable)
+	if !ok {
+		t.Fatalf("Expected FindVariable, got %T", built.Find[0])
+	}
+	if fv.Symbol != "?name" {
+		t.Errorf("Expected ?name, got %s", fv.Symbol)
+	}
+}
+
+// TestQueryForJoinSemantics tests that same field returns same *Var
+func TestQueryForJoinSemantics(t *testing.T) {
+	type Result struct {
+		Person string `datalog:"?person"`
+		Name   string `datalog:"?name"`
+		Age    int64  `datalog:"?age"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	// Same V(&f.Person) call should return same *Var
+	v1 := q.V(&f.Person)
+	v2 := q.V(&f.Person)
+
+	if v1 != v2 {
+		t.Error("Same field should return same *Var for join semantics")
+	}
+
+	// Same for Find
+	f1 := q.Find(&f.Name)
+	f2 := q.Find(&f.Name)
+
+	if f1 != f2 {
+		t.Error("Same field should return same *Var for join semantics")
+	}
+}
+
+// TestQueryForFindOrder tests that Find order matches call order
+func TestQueryForFindOrder(t *testing.T) {
+	type Result struct {
+		A string `datalog:"?a"`
+		B string `datalog:"?b"`
+		C string `datalog:"?c"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	// Call Find in order: C, A, B
+	q.Find(&f.C)
+	q.Find(&f.A)
+	q.Find(&f.B)
+
+	Dummy := Kw(":dummy")
+	e := NewVar("e")
+
+	built, err := q.Where(
+		Pat(e, Dummy, q.V(&f.A)),
+	).Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Find should be [?c, ?a, ?b] - call order, not struct order
+	if len(built.Find) != 3 {
+		t.Fatalf("Expected 3 find elements, got %d", len(built.Find))
+	}
+
+	expected := []string{"?c", "?a", "?b"}
+	for i, exp := range expected {
+		fv, ok := built.Find[i].(query.FindVariable)
+		if !ok {
+			t.Fatalf("Expected FindVariable at %d, got %T", i, built.Find[i])
+		}
+		if string(fv.Symbol) != exp {
+			t.Errorf("Find[%d]: expected %s, got %s", i, exp, fv.Symbol)
+		}
+	}
+}
+
+// TestQueryForIgnoresAggregateTag tests that aggregate tags are ignored
+func TestQueryForIgnoresAggregateTag(t *testing.T) {
+	type Result struct {
+		Dept   string  `datalog:"?dept"`
+		Salary int64   `datalog:"?salary"`
+		Avg    float64 `datalog:"(avg ?salary)"` // Should be ignored
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	// Should be able to get ?dept and ?salary
+	dept := q.V(&f.Dept)
+	salary := q.V(&f.Salary)
+
+	if dept.Symbol() != "?dept" {
+		t.Errorf("Expected ?dept, got %s", dept.Symbol())
+	}
+	if salary.Symbol() != "?salary" {
+		t.Errorf("Expected ?salary, got %s", salary.Symbol())
+	}
+
+	// Trying to get Avg should panic (no variable tag)
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("Expected panic when accessing field with aggregate tag")
+		}
+	}()
+	q.V(&f.Avg) // Should panic
+}
+
+// TestQueryForFindNoDuplicate tests that Find() doesn't duplicate
+func TestQueryForFindNoDuplicate(t *testing.T) {
+	type Result struct {
+		Name string `datalog:"?name"`
+	}
+
+	q := QueryFor[Result]()
+	f := &q.F
+
+	// Call Find multiple times
+	q.Find(&f.Name)
+	q.Find(&f.Name)
+	q.Find(&f.Name)
+
+	Dummy := Kw(":dummy")
+	e := NewVar("e")
+
+	built, err := q.Where(
+		Pat(e, Dummy, q.V(&f.Name)),
+	).Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// Should still only have 1 find element
+	if len(built.Find) != 1 {
+		t.Errorf("Expected 1 find element, got %d", len(built.Find))
+	}
+}
