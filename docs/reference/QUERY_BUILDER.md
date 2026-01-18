@@ -489,6 +489,47 @@ Binding forms:
 - `BindRelation(vars...)` - multiple rows `[[?a ?b] ...]`
 - `BindCollection(v)` - single column `[?a ...]`
 
+### Variable Scoping in Subqueries
+
+Datalog subqueries have **lexical scoping** - variables inside a subquery are independent of variables in other subqueries, even if they have the same name. This means you can reuse natural variable names like `?t` and `?s` across subqueries:
+
+```go
+// Good: Reuse Datalog variable names, reassign Go variables between subqueries
+t, s := qb.NewVar("t"), qb.NewVar("s")
+tok, dur := qb.NewVar("tok"), qb.NewVar("dur")
+
+taskStatsQuery := qb.Query().
+    Find(qb.Count(t), qb.Sum(tok), qb.Sum(dur)).
+    In(qb.DB, qb.Scalar(s)).
+    Where(
+        qb.Pat(t, TaskScenario, s),
+        qb.Pat(t, TaskTokens, tok),
+        qb.Pat(t, TaskDuration, dur),
+    )
+
+// Reassign Go variables for second subquery - Datalog names stay the same
+t, s = qb.NewVar("t"), qb.NewVar("s")
+
+openingCountQuery := qb.Query().
+    Find(qb.Count(t)).
+    In(qb.DB, qb.Scalar(s)).
+    Where(
+        qb.Pat(t, TaskScenario, s),
+        qb.Pat(t, TaskKey, KeyOpening),
+    )
+```
+
+Both subqueries generate `?t` and `?s` in their EDN. Datalog's lexical scoping keeps them separate.
+
+**Avoid** creating artificial unique names - this is unnecessary and clutters code:
+
+```go
+// Bad: Unnecessary unique variable names
+t1, s1 := qb.NewVar("t1"), qb.NewVar("s1")
+t2, s2 := qb.NewVar("t2"), qb.NewVar("s2")
+t3, s3 := qb.NewVar("t3"), qb.NewVar("s3")
+```
+
 ## Building Queries
 
 ```go

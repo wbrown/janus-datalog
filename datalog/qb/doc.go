@@ -92,5 +92,22 @@
 //	qb.Or().Branch(clauses...).Branch(clauses...)
 //	qb.OrJoin(joinVars...).Branch(clauses...).Branch(clauses...)
 //
+// # Subqueries
+//
+//	innerQ := qb.Query().
+//	    Find(qb.Max(salary)).
+//	    In(qb.DB, qb.Scalar(dept)).
+//	    Where(qb.Pat(e, EmpDept, dept), qb.Pat(e, EmpSalary, salary))
+//
+//	qb.Subquery(innerQ, dept).BindTuple(maxSalary)
+//
+// Subqueries have lexical scoping - reuse variable names like ?t across subqueries:
+//
+//	t, s := qb.NewVar("t"), qb.NewVar("s")
+//	subquery1 := qb.Query().Find(qb.Count(t)).In(qb.DB, qb.Scalar(s)).Where(...)
+//
+//	t, s = qb.NewVar("t"), qb.NewVar("s")  // reassign Go vars, same Datalog names
+//	subquery2 := qb.Query().Find(qb.Count(t)).In(qb.DB, qb.Scalar(s)).Where(...)
+//
 // See docs/reference/QUERY_BUILDER.md for complete documentation.
 package qb
