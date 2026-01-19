@@ -713,3 +713,177 @@ func TestQueryOneInto_ScalarMultipleResults(t *testing.T) {
 		t.Errorf("expected ErrMultipleResults, got %v", err)
 	}
 }
+
+// =============================================================================
+// Pull Mapping Tests - QueryInto with pull expressions
+// =============================================================================
+
+// PullResult maps attributes from a pull expression result
+type PullResult struct {
+	ID   datalog.Identity `datalog:"db/id"`
+	Name string           `datalog:"person/name"`
+	Age  int64            `datalog:"person/age"`
+}
+
+// MixedModeResult combines query variables with pull attributes
+type MixedModeResult struct {
+	// Query variable - comes from tuple column
+	PersonName string `datalog:"?name"`
+	// Attribute tags - come from pull result map in tuple
+	ID  datalog.Identity `datalog:"db/id"`
+	Age int64            `datalog:"person/age"`
+}
+
+func TestQueryInto_PullExpression(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	// Query with pull expression - returns entity attributes as map
+	var results []PullResult
+	err := db.QueryInto(&results, `
+		[:find (pull ?e [:db/id :person/name :person/age])
+		 :where [?e :person/name ?name]
+		        [(= ?name "Alice")]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	result := results[0]
+	if result.Name != "Alice" {
+		t.Errorf("expected Name='Alice', got %q", result.Name)
+	}
+	if result.Age != 30 {
+		t.Errorf("expected Age=30, got %d", result.Age)
+	}
+	if result.ID == nil {
+		t.Error("expected ID to be non-nil")
+	}
+}
+
+func TestQueryInto_PullWildcard(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	// Query with pull wildcard - returns all entity attributes
+	var results []PullResult
+	err := db.QueryInto(&results, `
+		[:find (pull ?e [*])
+		 :where [?e :person/name "Bob"]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	result := results[0]
+	if result.Name != "Bob" {
+		t.Errorf("expected Name='Bob', got %q", result.Name)
+	}
+	if result.Age != 25 {
+		t.Errorf("expected Age=25, got %d", result.Age)
+	}
+}
+
+func TestQueryInto_MixedMode(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	// Mixed mode: query variable + pull expression
+	// This tests the full flow: query -> executor -> pull -> struct mapping
+	var results []MixedModeResult
+	err := db.QueryInto(&results, `
+		[:find ?name (pull ?e [:db/id :person/age])
+		 :where [?e :person/name ?name]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	// Check that both query variable and pull attributes are mapped
+	foundAlice := false
+	for _, r := range results {
+		if r.PersonName == "Alice" {
+			foundAlice = true
+			if r.Age != 30 {
+				t.Errorf("Alice: expected Age=30, got %d", r.Age)
+			}
+			if r.ID == nil {
+				t.Error("Alice: expected ID to be non-nil")
+			}
+		}
+	}
+
+	if !foundAlice {
+		t.Error("expected to find Alice in results")
+	}
+}
+
+func TestQueryOneInto_PullExpression(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var result PullResult
+	found, err := db.QueryOneInto(&result, `
+		[:find (pull ?e [*])
+		 :where [?e :person/name "Alice"]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryOneInto failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true")
+	}
+
+	if result.Name != "Alice" {
+		t.Errorf("expected Name='Alice', got %q", result.Name)
+	}
+	if result.Age != 30 {
+		t.Errorf("expected Age=30, got %d", result.Age)
+	}
+	if result.ID == nil {
+		t.Error("expected ID to be non-nil")
+	}
+}
+
+func TestQueryOneInto_MixedMode(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	var result MixedModeResult
+	found, err := db.QueryOneInto(&result, `
+		[:find ?name (pull ?e [:db/id :person/age])
+		 :where [?e :person/name ?name]
+		        [(= ?name "Bob")]]
+	`)
+	if err != nil {
+		t.Fatalf("QueryOneInto failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true")
+	}
+
+	// Check query variable
+	if result.PersonName != "Bob" {
+		t.Errorf("expected PersonName='Bob', got %q", result.PersonName)
+	}
+
+	// Check pull attributes
+	if result.Age != 25 {
+		t.Errorf("expected Age=25, got %d", result.Age)
+	}
+	if result.ID == nil {
+		t.Error("expected ID to be non-nil")
+	}
+}

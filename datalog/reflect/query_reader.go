@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // Errors for query result mapping
@@ -33,13 +34,26 @@ type QueryFieldMapping struct {
 
 // QueryResultMapper handles query result -> struct conversion
 type QueryResultMapper struct {
-	elemType reflect.Type
-	mappings []QueryFieldMapping
+	elemType      reflect.Type
+	mappings      []QueryFieldMapping // Query variable mappings (with ColIndex set)
+	pullMappings  []QueryFieldMapping // Attribute tag mappings (for pull result maps)
+	isPullMapping bool                // true if struct uses ONLY attribute-style tags
 }
 
 // NewQueryResultMapper creates a mapper from struct type and :find column names.
 // The findColumns should be the string representations of FindElements
 // (e.g., "?name", "(sum ?salary)").
+//
+// The mapper supports three modes:
+// 1. Query-style tags only (`datalog:"?name"`) - maps query result columns to struct fields
+// 2. Attribute-style tags only (`datalog:"person/name"`) - maps pull result maps to struct fields
+// 3. Mixed mode - both query-style AND attribute-style tags in the same struct
+//
+// For pure attribute-style structs, the query should return a pull expression column
+// like `[:find (pull ?e [*]) :where ...]`.
+//
+// For mixed mode, use queries like `[:find ?name (pull ?e [:person/age]) :where ...]`
+// where query variables map to their columns and attribute tags map from the pull result.
 func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryResultMapper, error) {
 	// Handle pointer to struct
 	if elemType.Kind() == reflect.Ptr {
@@ -56,10 +70,10 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 		colIndex[col] = i
 	}
 
-	// Parse struct fields
-	mappings := make([]QueryFieldMapping, 0)
-	hasTagged := false
-	hasUntagged := false
+	// Parse struct fields into query mappings and attribute (pull) mappings
+	queryMappings := make([]QueryFieldMapping, 0)
+	pullMappings := make([]QueryFieldMapping, 0)
+	untaggedMappings := make([]QueryFieldMapping, 0)
 
 	for i := 0; i < elemType.NumField(); i++ {
 		field := elemType.Field(i)
@@ -71,8 +85,8 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 
 		tag := field.Tag.Get("datalog")
 
-		// Skip fields marked with "-" or ID fields
-		if tag == "-" || strings.HasSuffix(tag, ",id") {
+		// Skip fields marked with "-" or starting with "-," (e.g., "-,id" for legacy compat)
+		if tag == "-" || strings.HasPrefix(tag, "-,") {
 			continue
 		}
 
@@ -86,7 +100,6 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 		// Check if this is a query symbol tag (starts with ? or ()
 		if isQueryTag(tag) {
 			mapping.Tag = tag
-			hasTagged = true
 
 			// Look up column index
 			idx, found := colIndex[tag]
@@ -95,37 +108,81 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 					ErrSymbolNotFound, field.Name, tag, findColumns)
 			}
 			mapping.ColIndex = idx
+			queryMappings = append(queryMappings, mapping)
 		} else if tag == "" {
 			// No tag - will use positional mapping
-			hasUntagged = true
+			untaggedMappings = append(untaggedMappings, mapping)
 		} else {
-			// Has a tag but it's an attribute tag (e.g., "person/name"), not a query tag
-			// Skip this field for query mapping
-			continue
+			// Has an attribute-style tag (e.g., "person/name", "db/id")
+			// These are used for pull result mapping
+			mapping.Tag = tag
+			pullMappings = append(pullMappings, mapping)
 		}
-
-		mappings = append(mappings, mapping)
 	}
 
-	// Check for mixed tags
-	if hasTagged && hasUntagged {
+	hasQueryTags := len(queryMappings) > 0
+	hasAttributeTags := len(pullMappings) > 0
+	hasUntagged := len(untaggedMappings) > 0
+
+	// Check for mixed query tags and untagged fields (not allowed)
+	if hasQueryTags && hasUntagged {
 		return nil, fmt.Errorf("%w: either all fields should have query tags (e.g., `datalog:\"?name\"`) or none",
 			ErrMixedTags)
 	}
 
-	// Apply positional mapping if no tags
-	if hasUntagged {
-		for i := range mappings {
-			if i < len(findColumns) {
-				mappings[i].ColIndex = i
-				mappings[i].Tag = findColumns[i] // For error messages
-			}
-		}
+	// Pure pull mapping mode: only attribute-style tags
+	if hasAttributeTags && !hasQueryTags && !hasUntagged {
+		return &QueryResultMapper{
+			elemType:      elemType,
+			mappings:      nil,
+			pullMappings:  pullMappings,
+			isPullMapping: true,
+		}, nil
 	}
 
+	// Mixed mode: query tags AND attribute tags
+	// Query variables map from tuple columns, attribute tags map from pull result in tuple
+	if hasQueryTags && hasAttributeTags {
+		return &QueryResultMapper{
+			elemType:      elemType,
+			mappings:      queryMappings,
+			pullMappings:  pullMappings,
+			isPullMapping: false,
+		}, nil
+	}
+
+	// Pure query mode: only query tags
+	if hasQueryTags {
+		return &QueryResultMapper{
+			elemType:      elemType,
+			mappings:      queryMappings,
+			pullMappings:  nil,
+			isPullMapping: false,
+		}, nil
+	}
+
+	// Positional mapping: no tags at all
+	if hasUntagged {
+		for i := range untaggedMappings {
+			if i < len(findColumns) {
+				untaggedMappings[i].ColIndex = i
+				untaggedMappings[i].Tag = findColumns[i] // For error messages
+			}
+		}
+		return &QueryResultMapper{
+			elemType:      elemType,
+			mappings:      untaggedMappings,
+			pullMappings:  nil,
+			isPullMapping: false,
+		}, nil
+	}
+
+	// No fields to map
 	return &QueryResultMapper{
-		elemType: elemType,
-		mappings: mappings,
+		elemType:      elemType,
+		mappings:      nil,
+		pullMappings:  nil,
+		isPullMapping: false,
 	}, nil
 }
 
@@ -159,6 +216,19 @@ func (m *QueryResultMapper) MapTuple(tuple []interface{}, dest reflect.Value) er
 		return fmt.Errorf("expected struct, got %s", dest.Kind())
 	}
 
+	// Pure pull mapping mode: expect a map value in the tuple
+	if m.isPullMapping {
+		if len(tuple) == 0 {
+			return fmt.Errorf("pull mapping expects at least one column, got empty tuple")
+		}
+		pullMap := m.findPullMap(tuple)
+		if pullMap == nil {
+			return fmt.Errorf("pull mapping expects map[string]interface{} in tuple, got %T", tuple[0])
+		}
+		return m.mapPullResult(pullMap, dest)
+	}
+
+	// Map query variable fields from tuple columns
 	for _, mapping := range m.mappings {
 		if mapping.ColIndex < 0 || mapping.ColIndex >= len(tuple) {
 			continue // Skip unmapped or out-of-range columns
@@ -169,6 +239,53 @@ func (m *QueryResultMapper) MapTuple(tuple []interface{}, dest reflect.Value) er
 
 		if err := setQueryValue(fieldVal, mapping.FieldType, value); err != nil {
 			return fmt.Errorf("field %s (tag %s): %w", mapping.FieldName, mapping.Tag, err)
+		}
+	}
+
+	// Mixed mode: also map attribute-tagged fields from pull result in tuple
+	if len(m.pullMappings) > 0 {
+		pullMap := m.findPullMap(tuple)
+		if pullMap != nil {
+			if err := m.mapPullResult(pullMap, dest); err != nil {
+				return err
+			}
+		}
+		// If no pull map found but we have pull mappings, leave those fields as zero values
+		// This is lenient - user might have attribute tags but no pull in this particular query
+	}
+
+	return nil
+}
+
+// findPullMap searches for the first map[string]interface{} in the tuple
+func (m *QueryResultMapper) findPullMap(tuple []interface{}) map[string]interface{} {
+	for _, val := range tuple {
+		if pm, ok := val.(map[string]interface{}); ok {
+			return pm
+		}
+	}
+	return nil
+}
+
+// mapPullResult populates a struct from a pull result map using attribute-style tags.
+// All attributes are treated uniformly - the entity ID uses tag "db/id" or ":db/id"
+// just like any other attribute (e.g., "person/name" or ":person/name").
+func (m *QueryResultMapper) mapPullResult(pullMap map[string]interface{}, dest reflect.Value) error {
+	for _, mapping := range m.pullMappings {
+		// Normalize the tag to map key format (strip leading colon if present)
+		// This matches how pull results store keys via query.KeyName()
+		attrKey := query.KeyNameFromString(mapping.Tag)
+
+		// Look up value in pull map
+		val, ok := pullMap[attrKey]
+		if !ok {
+			// Field not in pull result - leave as zero value
+			continue
+		}
+
+		fieldVal := dest.Field(mapping.FieldIndex)
+		if err := setQueryValue(fieldVal, mapping.FieldType, val); err != nil {
+			return fmt.Errorf("field %s (attr %s): %w", mapping.FieldName, attrKey, err)
 		}
 	}
 
@@ -340,9 +457,40 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 				return fmt.Errorf("expected []byte, got %T", value)
 			}
 			fieldVal.SetBytes(b)
-		} else {
-			return fmt.Errorf("unsupported slice type: %s", fieldType)
+			return nil
 		}
+
+		// Handle slice values from pull results (cardinality-many attributes)
+		// Pull returns []interface{} that we need to convert to the target type
+		srcSlice, ok := value.([]interface{})
+		if !ok {
+			// Value might already be the correct slice type
+			srcVal := reflect.ValueOf(value)
+			if srcVal.Kind() == reflect.Slice {
+				// Try direct assignment if types match
+				if srcVal.Type().AssignableTo(fieldType) {
+					fieldVal.Set(srcVal)
+					return nil
+				}
+				// Convert element by element
+				srcSlice = make([]interface{}, srcVal.Len())
+				for i := 0; i < srcVal.Len(); i++ {
+					srcSlice[i] = srcVal.Index(i).Interface()
+				}
+			} else {
+				return fmt.Errorf("expected slice, got %T", value)
+			}
+		}
+
+		// Create new slice and populate
+		elemType := fieldType.Elem()
+		newSlice := reflect.MakeSlice(fieldType, len(srcSlice), len(srcSlice))
+		for i, elem := range srcSlice {
+			if err := setQueryValue(newSlice.Index(i), elemType, elem); err != nil {
+				return fmt.Errorf("slice element %d: %w", i, err)
+			}
+		}
+		fieldVal.Set(newSlice)
 
 	default:
 		return fmt.Errorf("unsupported type: %s", fieldType)
