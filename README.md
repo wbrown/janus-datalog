@@ -495,6 +495,35 @@ err := db.QueryOneInto(&result, `[:find ?symbol ?price ?volume :where ...]`)
 // Returns ErrNotFound if no results, ErrMultipleResults if >1
 ```
 
+**Type-safe queries with QueryFor[T]:**
+
+The query builder can derive variables directly from your result struct, eliminating string synchronization between `NewVar()` calls and struct tags:
+
+```go
+type PersonResult struct {
+    Name string `datalog:"?name"`
+    Age  int64  `datalog:"?age"`
+}
+
+q := qb.QueryFor[PersonResult]()
+f := &q.F
+e := qb.NewVar("e")
+
+query := q.Where(
+    qb.Pat(e, PersonName, q.Find(&f.Name)),  // &f.Name -> ?name
+    qb.Pat(e, PersonAge, q.Find(&f.Age)),    // &f.Age -> ?age
+    qb.Gt(q.V(&f.Age), 21),
+).MustBuild()
+
+var results []PersonResult
+db.QueryInto(&results, query)  // tags guaranteed to match
+```
+
+- `q.Find(&f.Field)` - returns `*Var` and adds to Find clause
+- `q.V(&f.Field)` - returns `*Var` without adding to Find (for predicates)
+- Rename a struct field → compile error forces you to update usages
+- Typo in tag → caught when QueryInto tests fail
+
 See [docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md) for complete documentation.
 
 ## What Makes Janus Different
