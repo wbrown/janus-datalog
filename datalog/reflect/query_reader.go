@@ -115,7 +115,13 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 		} else {
 			// Has an attribute-style tag (e.g., "person/name", "db/id")
 			// These are used for pull result mapping
-			mapping.Tag = tag
+			// Strip modifiers (e.g., "db/id,id" -> "db/id") since the pull map
+			// keys only contain the attribute name without modifiers
+			attrName := tag
+			if idx := strings.Index(tag, ","); idx > 0 {
+				attrName = tag[:idx]
+			}
+			mapping.Tag = attrName
 			pullMappings = append(pullMappings, mapping)
 		}
 	}

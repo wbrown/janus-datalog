@@ -145,6 +145,11 @@ func parseFieldTag(field reflect.StructField, index int, namespace string) (*Fie
 		// Extract local name
 		idx := strings.LastIndex(name, "/")
 		info.AttrName = name[idx+1:]
+
+		// Recognize :db/id as the ID field (consistent with pull results)
+		if info.FullAttr == ":db/id" {
+			info.IsID = true
+		}
 	} else {
 		// Local name only - add namespace
 		info.AttrName = name
