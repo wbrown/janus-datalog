@@ -484,7 +484,9 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 					srcSlice[i] = srcVal.Index(i).Interface()
 				}
 			} else {
-				return fmt.Errorf("expected slice, got %T", value)
+				// Wildcard pull may return single value for cardinality-many
+				// attributes that have only one value - wrap it in a slice
+				srcSlice = []interface{}{value}
 			}
 		}
 

@@ -733,6 +733,54 @@ func TestMapTuple_PullResult_WithSlices(t *testing.T) {
 	}
 }
 
+// TestMapTuple_PullResult_SingleValueToSlice tests that a single value from
+// wildcard pull is correctly wrapped into a slice field. This happens when a
+// cardinality-many attribute has only one value - the pull executor returns
+// the value directly instead of as a slice.
+func TestMapTuple_PullResult_SingleValueToSlice(t *testing.T) {
+	findColumns := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityWithSlices{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Simulate wildcard pull result where cardinality-many has single value
+	// Pull executor returns single value, not []interface{} with one element
+	id := datalog.NewIdentity("test:single")
+	ref := datalog.NewIdentity("test:ref1")
+	pullMap := map[string]interface{}{
+		"db/id":       id,
+		"person/name": "SingleTag",
+		"person/tags": "only-one-tag", // Single string, not slice
+		"person/refs": ref,            // Single identity, not slice
+	}
+
+	tuple := []interface{}{pullMap}
+	var result EntityWithSlices
+	if err := mapper.MapTuple(tuple, reflect.ValueOf(&result).Elem()); err != nil {
+		t.Fatalf("MapTuple failed: %v", err)
+	}
+
+	if result.ID != id {
+		t.Errorf("ID mismatch: expected %v, got %v", id, result.ID)
+	}
+	if result.Name != "SingleTag" {
+		t.Errorf("Name mismatch: expected SingleTag, got %s", result.Name)
+	}
+	// Single value should be wrapped into slice
+	if len(result.Tags) != 1 {
+		t.Errorf("Tags length mismatch: expected 1, got %d", len(result.Tags))
+	} else if result.Tags[0] != "only-one-tag" {
+		t.Errorf("Tags[0] mismatch: expected 'only-one-tag', got %s", result.Tags[0])
+	}
+	// Single ref should be wrapped into slice
+	if len(result.Refs) != 1 {
+		t.Errorf("Refs length mismatch: expected 1, got %d", len(result.Refs))
+	} else if result.Refs[0] != ref {
+		t.Errorf("Refs[0] mismatch: expected %v, got %v", ref, result.Refs[0])
+	}
+}
+
 func TestMapAll_PullResults(t *testing.T) {
 	findColumns := []string{"(pull ?e [*])"}
 	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)

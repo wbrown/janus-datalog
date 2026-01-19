@@ -103,6 +103,72 @@ func TestPullExecutor_Wildcard(t *testing.T) {
 	}
 }
 
+// TestPullExecutor_Wildcard_CardinalityMany tests that wildcard pull correctly
+// accumulates multiple values for the same attribute into a slice.
+func TestPullExecutor_Wildcard_CardinalityMany(t *testing.T) {
+	// Create test data with cardinality-many attribute (multiple tags)
+	alice := datalog.NewIdentity("user:alice")
+	nameAttr := datalog.NewKeyword(":user/name")
+	tagAttr := datalog.NewKeyword(":user/tag")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: tagAttr, V: "admin", Tx: 1},
+		{E: alice, A: tagAttr, V: "developer", Tx: 2},
+		{E: alice, A: tagAttr, V: "reviewer", Tx: 3},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	puller := NewPullExecutor(matcher)
+
+	// Parse wildcard pattern
+	pattern, err := parser.ParsePullPattern(`[*]`)
+	if err != nil {
+		t.Fatalf("failed to parse pattern: %v", err)
+	}
+
+	// Execute pull
+	result, err := puller.Pull(alice, pattern)
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Name should be single value
+	if result["user/name"] != "Alice" {
+		t.Errorf("expected name=Alice, got %v", result["user/name"])
+	}
+
+	// Tags should be accumulated into a slice, not overwritten
+	tags, ok := result["user/tag"]
+	if !ok {
+		t.Fatal("expected user/tag in result")
+	}
+
+	tagSlice, ok := tags.([]interface{})
+	if !ok {
+		t.Fatalf("expected tags to be []interface{}, got %T (value: %v)", tags, tags)
+	}
+
+	if len(tagSlice) != 3 {
+		t.Errorf("expected 3 tags, got %d: %v", len(tagSlice), tagSlice)
+	}
+
+	// Check all tags are present (order may vary)
+	tagSet := make(map[string]bool)
+	for _, tag := range tagSlice {
+		tagSet[tag.(string)] = true
+	}
+	for _, expected := range []string{"admin", "developer", "reviewer"} {
+		if !tagSet[expected] {
+			t.Errorf("expected tag %q in result, got %v", expected, tagSlice)
+		}
+	}
+}
+
 func TestPullExecutor_NestedReference(t *testing.T) {
 	// Create test data with references
 	region := datalog.NewIdentity("region:us-west")

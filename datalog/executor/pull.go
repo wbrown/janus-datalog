@@ -102,7 +102,18 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 			return fmt.Errorf("wildcard pull failed: %w", err)
 		}
 		for _, datom := range datoms {
-			result[query.KeyName(datom.A)] = datom.V
+			key := query.KeyName(datom.A)
+			if existing, ok := result[key]; ok {
+				// Attribute already seen - accumulate into slice (cardinality-many)
+				switch v := existing.(type) {
+				case []interface{}:
+					result[key] = append(v, datom.V)
+				default:
+					result[key] = []interface{}{v, datom.V}
+				}
+			} else {
+				result[key] = datom.V
+			}
 		}
 
 	case *query.PullMapSpec:
@@ -380,7 +391,18 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 			return fmt.Errorf("wildcard pull failed: %w", err)
 		}
 		for _, datom := range datoms {
-			result[query.KeyName(datom.A)] = datom.V
+			key := query.KeyName(datom.A)
+			if existing, ok := result[key]; ok {
+				// Attribute already seen - accumulate into slice (cardinality-many)
+				switch v := existing.(type) {
+				case []interface{}:
+					result[key] = append(v, datom.V)
+				default:
+					result[key] = []interface{}{v, datom.V}
+				}
+			} else {
+				result[key] = datom.V
+			}
 		}
 
 	case *query.ResolvedPullMapSpec:
