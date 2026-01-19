@@ -116,6 +116,20 @@ func KeyName(k datalog.Keyword) string {
 	return s
 }
 
+// KeyNameFromString returns the attribute name without the leading colon
+// e.g., ":entity/name" -> "entity/name", "entity/name" -> "entity/name"
+func KeyNameFromString(s string) string {
+	if len(s) > 0 && s[0] == ':' {
+		return s[1:]
+	}
+	return s
+}
+
+// DBIDKey is the map key for entity ID in pull results.
+// This corresponds to the :db/id attribute but without the leading colon,
+// consistent with how all pull result keys are formatted.
+const DBIDKey = "db/id"
+
 // ============================================================================
 // Resolved Pull Types
 // ============================================================================

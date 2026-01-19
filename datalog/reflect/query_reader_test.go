@@ -166,21 +166,35 @@ func TestNewQueryResultMapper_SymbolNotFound(t *testing.T) {
 	}
 }
 
-func TestNewQueryResultMapper_SkipsAttributeTags(t *testing.T) {
+func TestNewQueryResultMapper_MixedMode(t *testing.T) {
+	// WithAttrTag has: ID (skipped with "-,id"), Name (attribute tag), Age (query tag)
+	// This tests mixed mode: query tags in mappings, attribute tags in pullMappings
 	findColumns := []string{"?age"}
 	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithAttrTag{}), findColumns)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should only have 1 mapping (the ?age field)
-	// The "person/name" field should be skipped (attribute tag, not query tag)
-	// The "-,id" field should be skipped
+	// Should have 1 query mapping (the ?age field)
 	if len(mapper.mappings) != 1 {
 		t.Errorf("expected 1 mapping, got %d", len(mapper.mappings))
 	}
 	if mapper.mappings[0].Tag != "?age" {
 		t.Errorf("expected ?age mapping, got %s", mapper.mappings[0].Tag)
+	}
+
+	// Should have 1 pull mapping (the "person/name" field)
+	// The "-,id" field is skipped because of the "-" prefix
+	if len(mapper.pullMappings) != 1 {
+		t.Errorf("expected 1 pullMapping, got %d", len(mapper.pullMappings))
+	}
+	if len(mapper.pullMappings) > 0 && mapper.pullMappings[0].Tag != "person/name" {
+		t.Errorf("expected person/name pullMapping, got %s", mapper.pullMappings[0].Tag)
+	}
+
+	// Not pure pull mode since we have query tags
+	if mapper.isPullMapping {
+		t.Error("expected isPullMapping=false for mixed mode struct")
 	}
 }
 
@@ -574,6 +588,381 @@ func TestKeywordPtrTypeMatch(t *testing.T) {
 
 	if result.Keyword != kw {
 		t.Errorf("Keyword pointers should match: input=%p result=%p", kw, result.Keyword)
+	}
+}
+
+// =============================================================================
+// Pull Mapping Tests
+// =============================================================================
+
+// EntityStruct simulates an entity struct with attribute-style tags (for pull result mapping)
+// Note: ID uses "db/id" (or ":db/id") like any other attribute - no special handling needed
+type EntityStruct struct {
+	ID       datalog.Identity `datalog:"db/id"`
+	Name     string           `datalog:"person/name"`
+	Age      int64            `datalog:"person/age"`
+	Email    string           `datalog:"person/email"`
+	Active   bool             `datalog:"person/active"`
+	Category datalog.Keyword  `datalog:"person/category"`
+}
+
+// EntityWithSlices tests cardinality-many attributes
+type EntityWithSlices struct {
+	ID   datalog.Identity   `datalog:"db/id"`
+	Name string             `datalog:"person/name"`
+	Tags []string           `datalog:"person/tags"`
+	Refs []datalog.Identity `datalog:"person/refs"`
+}
+
+func TestNewQueryResultMapper_PullMapping(t *testing.T) {
+	// When struct has only attribute-style tags, isPullMapping should be true
+	findColumns := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !mapper.isPullMapping {
+		t.Error("expected isPullMapping=true for attribute-tagged struct")
+	}
+
+	// Should have pull mappings for all fields (stored in pullMappings, not mappings)
+	if len(mapper.pullMappings) != 6 {
+		t.Errorf("expected 6 pullMappings (ID, Name, Age, Email, Active, Category), got %d", len(mapper.pullMappings))
+	}
+
+	// mappings should be empty for pure pull mode
+	if len(mapper.mappings) != 0 {
+		t.Errorf("expected 0 mappings in pure pull mode, got %d", len(mapper.mappings))
+	}
+}
+
+func TestMapTuple_PullResult(t *testing.T) {
+	findColumns := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Simulate a pull result map
+	// Pull executor uses keys WITHOUT colon prefix (e.g., "person/name" not ":person/name")
+	id := datalog.NewIdentity("test:alice")
+	category := datalog.NewKeyword(":category/admin")
+	pullMap := map[string]interface{}{
+		"db/id":          id,
+		"person/name":    "Alice",
+		"person/age":     int64(30),
+		"person/email":   "alice@example.com",
+		"person/active":  true,
+		"person/category": category,
+	}
+
+	tuple := []interface{}{pullMap}
+	var result EntityStruct
+	if err := mapper.MapTuple(tuple, reflect.ValueOf(&result).Elem()); err != nil {
+		t.Fatalf("MapTuple failed: %v", err)
+	}
+
+	if result.ID != id {
+		t.Errorf("ID mismatch: expected %v, got %v", id, result.ID)
+	}
+	if result.Name != "Alice" {
+		t.Errorf("Name mismatch: expected Alice, got %s", result.Name)
+	}
+	if result.Age != 30 {
+		t.Errorf("Age mismatch: expected 30, got %d", result.Age)
+	}
+	if result.Email != "alice@example.com" {
+		t.Errorf("Email mismatch: expected alice@example.com, got %s", result.Email)
+	}
+	if result.Active != true {
+		t.Errorf("Active mismatch: expected true, got %v", result.Active)
+	}
+	if result.Category != category {
+		t.Errorf("Category mismatch: expected %v, got %v", category, result.Category)
+	}
+}
+
+func TestMapTuple_PullResult_WithSlices(t *testing.T) {
+	findColumns := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityWithSlices{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Simulate a pull result with cardinality-many values
+	// Pull executor uses keys WITHOUT colon prefix
+	id := datalog.NewIdentity("test:bob")
+	ref1 := datalog.NewIdentity("test:ref1")
+	ref2 := datalog.NewIdentity("test:ref2")
+	pullMap := map[string]interface{}{
+		"db/id":       id,
+		"person/name": "Bob",
+		"person/tags": []interface{}{"admin", "developer", "reviewer"},
+		"person/refs": []interface{}{ref1, ref2},
+	}
+
+	tuple := []interface{}{pullMap}
+	var result EntityWithSlices
+	if err := mapper.MapTuple(tuple, reflect.ValueOf(&result).Elem()); err != nil {
+		t.Fatalf("MapTuple failed: %v", err)
+	}
+
+	if result.ID != id {
+		t.Errorf("ID mismatch: expected %v, got %v", id, result.ID)
+	}
+	if result.Name != "Bob" {
+		t.Errorf("Name mismatch: expected Bob, got %s", result.Name)
+	}
+	if len(result.Tags) != 3 {
+		t.Errorf("Tags length mismatch: expected 3, got %d", len(result.Tags))
+	} else {
+		expected := []string{"admin", "developer", "reviewer"}
+		for i, tag := range expected {
+			if result.Tags[i] != tag {
+				t.Errorf("Tag[%d] mismatch: expected %s, got %s", i, tag, result.Tags[i])
+			}
+		}
+	}
+	if len(result.Refs) != 2 {
+		t.Errorf("Refs length mismatch: expected 2, got %d", len(result.Refs))
+	} else {
+		if result.Refs[0] != ref1 || result.Refs[1] != ref2 {
+			t.Errorf("Refs mismatch: expected [%v, %v], got %v", ref1, ref2, result.Refs)
+		}
+	}
+}
+
+func TestMapAll_PullResults(t *testing.T) {
+	findColumns := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Pull executor uses keys WITHOUT colon prefix
+	id1 := datalog.NewIdentity("test:alice")
+	id2 := datalog.NewIdentity("test:bob")
+	tuples := [][]interface{}{
+		{map[string]interface{}{
+			"db/id":       id1,
+			"person/name": "Alice",
+			"person/age":  int64(30),
+		}},
+		{map[string]interface{}{
+			"db/id":       id2,
+			"person/name": "Bob",
+			"person/age":  int64(25),
+		}},
+	}
+
+	var results []EntityStruct
+	sliceVal := reflect.ValueOf(&results).Elem()
+	if err := mapper.MapAll(tuples, sliceVal); err != nil {
+		t.Fatalf("MapAll failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Name != "Alice" || results[0].Age != 30 {
+		t.Errorf("first result incorrect: %+v", results[0])
+	}
+	if results[1].Name != "Bob" || results[1].Age != 25 {
+		t.Errorf("second result incorrect: %+v", results[1])
+	}
+}
+
+func TestMapTuple_PullResult_MissingFields(t *testing.T) {
+	// Test that missing fields in pull result are left as zero values
+	findColumns := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Pull result with only some fields
+	// Pull executor uses keys WITHOUT colon prefix
+	id := datalog.NewIdentity("test:charlie")
+	pullMap := map[string]interface{}{
+		"db/id":       id,
+		"person/name": "Charlie",
+		// age, email, active, category are missing
+	}
+
+	tuple := []interface{}{pullMap}
+	var result EntityStruct
+	if err := mapper.MapTuple(tuple, reflect.ValueOf(&result).Elem()); err != nil {
+		t.Fatalf("MapTuple failed: %v", err)
+	}
+
+	if result.ID != id {
+		t.Errorf("ID mismatch: expected %v, got %v", id, result.ID)
+	}
+	if result.Name != "Charlie" {
+		t.Errorf("Name mismatch: expected Charlie, got %s", result.Name)
+	}
+	if result.Age != 0 {
+		t.Errorf("Age should be zero value, got %d", result.Age)
+	}
+	if result.Email != "" {
+		t.Errorf("Email should be empty, got %s", result.Email)
+	}
+	if result.Active != false {
+		t.Errorf("Active should be false, got %v", result.Active)
+	}
+}
+
+// =============================================================================
+// Mixed Mode Tests - Query variables AND attribute tags in same struct
+// =============================================================================
+
+// MixedModeStruct has both query variable tags and attribute tags
+type MixedModeStruct struct {
+	// Query variable - comes from tuple column
+	Name string `datalog:"?name"`
+	// Attribute tags - come from pull result map in tuple
+	ID  datalog.Identity `datalog:"db/id"`
+	Age int64            `datalog:"person/age"`
+}
+
+func TestMapTuple_MixedMode(t *testing.T) {
+	// Simulates: [:find ?name (pull ?e [:db/id :person/age]) :where [?e :person/name ?name]]
+	findColumns := []string{"?name", "(pull ?e [:db/id :person/age])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify mapper state
+	if mapper.isPullMapping {
+		t.Error("expected isPullMapping=false for mixed mode")
+	}
+	if len(mapper.mappings) != 1 {
+		t.Errorf("expected 1 query mapping, got %d", len(mapper.mappings))
+	}
+	if len(mapper.pullMappings) != 2 {
+		t.Errorf("expected 2 pull mappings, got %d", len(mapper.pullMappings))
+	}
+
+	// Create a tuple with query value and pull result map
+	id := datalog.NewIdentity("test:alice")
+	pullMap := map[string]interface{}{
+		"db/id":      id,
+		"person/age": int64(30),
+	}
+	tuple := []interface{}{"Alice", pullMap}
+
+	var result MixedModeStruct
+	if err := mapper.MapTuple(tuple, reflect.ValueOf(&result).Elem()); err != nil {
+		t.Fatalf("MapTuple failed: %v", err)
+	}
+
+	// Verify query variable was mapped
+	if result.Name != "Alice" {
+		t.Errorf("Name: expected 'Alice', got %q", result.Name)
+	}
+
+	// Verify pull attributes were mapped
+	if result.ID != id {
+		t.Errorf("ID: expected %v, got %v", id, result.ID)
+	}
+	if result.Age != 30 {
+		t.Errorf("Age: expected 30, got %d", result.Age)
+	}
+}
+
+func TestMapTuple_MixedMode_NoPullMap(t *testing.T) {
+	// Test that mixed mode gracefully handles tuple without pull map
+	findColumns := []string{"?name"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Tuple with only query value, no pull map
+	tuple := []interface{}{"Bob"}
+
+	var result MixedModeStruct
+	if err := mapper.MapTuple(tuple, reflect.ValueOf(&result).Elem()); err != nil {
+		t.Fatalf("MapTuple failed: %v", err)
+	}
+
+	// Query variable should be mapped
+	if result.Name != "Bob" {
+		t.Errorf("Name: expected 'Bob', got %q", result.Name)
+	}
+
+	// Pull attributes should remain zero values (no pull map in tuple)
+	if result.ID != nil {
+		t.Errorf("ID: expected nil, got %v", result.ID)
+	}
+	if result.Age != 0 {
+		t.Errorf("Age: expected 0, got %d", result.Age)
+	}
+}
+
+func TestMapTuple_MixedMode_PullMapFirst(t *testing.T) {
+	// Test with pull map as first column: [:find (pull ?e [*]) ?name ...]
+	findColumns := []string{"(pull ?e [*])", "?name"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	id := datalog.NewIdentity("test:charlie")
+	pullMap := map[string]interface{}{
+		"db/id":      id,
+		"person/age": int64(25),
+	}
+	// Pull map first, then query value
+	tuple := []interface{}{pullMap, "Charlie"}
+
+	var result MixedModeStruct
+	if err := mapper.MapTuple(tuple, reflect.ValueOf(&result).Elem()); err != nil {
+		t.Fatalf("MapTuple failed: %v", err)
+	}
+
+	if result.Name != "Charlie" {
+		t.Errorf("Name: expected 'Charlie', got %q", result.Name)
+	}
+	if result.ID != id {
+		t.Errorf("ID: expected %v, got %v", id, result.ID)
+	}
+	if result.Age != 25 {
+		t.Errorf("Age: expected 25, got %d", result.Age)
+	}
+}
+
+func TestMapAll_MixedMode(t *testing.T) {
+	findColumns := []string{"?name", "(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	id1 := datalog.NewIdentity("test:alice")
+	id2 := datalog.NewIdentity("test:bob")
+	tuples := [][]interface{}{
+		{"Alice", map[string]interface{}{"db/id": id1, "person/age": int64(30)}},
+		{"Bob", map[string]interface{}{"db/id": id2, "person/age": int64(25)}},
+	}
+
+	var results []MixedModeStruct
+	sliceVal := reflect.ValueOf(&results).Elem()
+	if err := mapper.MapAll(tuples, sliceVal); err != nil {
+		t.Fatalf("MapAll failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	if results[0].Name != "Alice" || results[0].Age != 30 || results[0].ID != id1 {
+		t.Errorf("first result incorrect: %+v", results[0])
+	}
+	if results[1].Name != "Bob" || results[1].Age != 25 || results[1].ID != id2 {
+		t.Errorf("second result incorrect: %+v", results[1])
 	}
 }
 

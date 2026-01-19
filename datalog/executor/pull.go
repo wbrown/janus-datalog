@@ -130,10 +130,14 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 		}
 
 	case *query.PullLimitExpr:
-		// For cardinality-many (future), limit results
-		// Currently just lookup single value
-		if val, ok := pe.lookupAttribute(entity, s.Attr); ok {
-			result[query.KeyName(s.Attr)] = val
+		// Get all values and apply limit
+		// Using limit implies cardinality-many expectation
+		values := pe.lookupAllValues(entity, s.Attr)
+		if len(values) > s.Limit && s.Limit > 0 {
+			values = values[:s.Limit]
+		}
+		if len(values) > 0 {
+			result[query.KeyName(s.Attr)] = values
 		}
 
 	case *query.PullDefaultExpr:

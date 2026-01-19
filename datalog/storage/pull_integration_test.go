@@ -121,6 +121,45 @@ func TestPullIntegration_StandaloneAPI(t *testing.T) {
 		}
 	})
 
+	// Test limit on cardinality-many attribute
+	t.Run("LimitCardinalityMany", func(t *testing.T) {
+		// Create entity with multiple tags
+		taggedEntity := datalog.NewIdentity("user:tagged")
+		tx2 := db.NewTransaction()
+		tx2.Add(taggedEntity, datalog.NewKeyword(":user/name"), "Tagged User")
+		tx2.Add(taggedEntity, datalog.NewKeyword(":user/tag"), "tag1")
+		tx2.Add(taggedEntity, datalog.NewKeyword(":user/tag"), "tag2")
+		tx2.Add(taggedEntity, datalog.NewKeyword(":user/tag"), "tag3")
+		tx2.Add(taggedEntity, datalog.NewKeyword(":user/tag"), "tag4")
+		tx2.Add(taggedEntity, datalog.NewKeyword(":user/tag"), "tag5")
+		if _, err := tx2.Commit(); err != nil {
+			t.Fatalf("failed to commit: %v", err)
+		}
+
+		// Pull with limit
+		result, err := db.Pull(taggedEntity, `[:user/name (limit :user/tag 2)]`)
+		if err != nil {
+			t.Fatalf("pull failed: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil result")
+		}
+
+		// Check name
+		if result["user/name"] != "Tagged User" {
+			t.Errorf("expected name='Tagged User', got %v", result["user/name"])
+		}
+
+		// Check tags are limited to 2
+		tags, ok := result["user/tag"].([]interface{})
+		if !ok {
+			t.Fatalf("expected tags to be []interface{}, got %T", result["user/tag"])
+		}
+		if len(tags) != 2 {
+			t.Errorf("expected 2 tags (limited), got %d: %v", len(tags), tags)
+		}
+	})
+
 	// Test non-existent entity
 	t.Run("NonExistentEntity", func(t *testing.T) {
 		nonExistent := datalog.NewIdentity("user:nonexistent")

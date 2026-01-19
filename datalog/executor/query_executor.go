@@ -1009,6 +1009,12 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 				return nil, fmt.Errorf("pull failed for %s: %w", pull.Variable, err)
 			}
 
+			// Add the entity ID to the pull result so it can be mapped to struct fields
+			// tagged with datalog:"db/id" or datalog:":db/id"
+			if pulled != nil {
+				pulled[query.DBIDKey] = entity
+			}
+
 			// Replace entity with pulled map (nil if entity not found)
 			newTuple[colIdx] = pulled
 		}
