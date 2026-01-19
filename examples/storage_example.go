@@ -20,11 +20,11 @@ func main() {
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	
+
 	fmt.Println("BadgerDB Storage Example")
 	fmt.Println("========================\n")
 	fmt.Printf("Database directory: %s\n\n", dir)
-	
+
 	// Open the store with L85 encoding for human-readable keys
 	encoder := storage.NewKeyEncoder(storage.L85Strategy)
 	store, err := storage.NewBadgerStore(dir, encoder)
@@ -32,22 +32,22 @@ func main() {
 		log.Fatal(err)
 	}
 	defer store.Close()
-	
+
 	// Create query builder with same encoder
 	qb := storage.NewQueryBuilder(store, encoder)
-	
+
 	// Create entities
 	alice := datalog.NewIdentity("user:alice")
 	bob := datalog.NewIdentity("user:bob")
 	charlie := datalog.NewIdentity("user:charlie")
 	post1 := datalog.NewIdentity("post:2024-06-19:alice:1")
 	post2 := datalog.NewIdentity("post:2024-06-19:bob:1")
-	
+
 	// Transaction times
 	tx1 := uint64(time.Date(2024, 6, 19, 10, 0, 0, 0, time.UTC).UnixNano())
 	tx2 := uint64(time.Date(2024, 6, 19, 11, 0, 0, 0, time.UTC).UnixNano())
 	tx3 := uint64(time.Date(2024, 6, 19, 12, 0, 0, 0, time.UTC).UnixNano())
-	
+
 	// Create initial datoms
 	fmt.Println("1. Asserting initial facts...")
 	initialDatoms := []datalog.Datom{
@@ -69,17 +69,17 @@ func main() {
 		{E: post2, A: datalog.NewKeyword(":post/author"), V: bob, Tx: tx3},
 		{E: post2, A: datalog.NewKeyword(":post/content"), V: "BadgerDB is fast!", Tx: tx3},
 	}
-	
+
 	err = store.Assert(initialDatoms)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("✓ Asserted", len(initialDatoms), "facts\n")
-	
+
 	// Query examples
 	fmt.Println("2. Query Examples")
 	fmt.Println("-----------------")
-	
+
 	// Get all facts about Alice
 	fmt.Println("\n2.1 All facts about Alice:")
 	aliceFacts, err := qb.GetEntity(alice)
@@ -89,7 +89,7 @@ func main() {
 	for _, d := range aliceFacts {
 		fmt.Printf("  %s = %v (at %s)\n", d.A, d.V, d.Tx)
 	}
-	
+
 	// Find all users
 	fmt.Println("\n2.2 All users (by name attribute):")
 	nameAttr := datalog.NewKeyword(":user/name")
@@ -100,7 +100,7 @@ func main() {
 	for _, d := range users {
 		fmt.Printf("  Entity %x: %v\n", d.E.ID(), d.V)
 	}
-	
+
 	// Find who follows Bob
 	fmt.Println("\n2.3 Who follows Bob:")
 	followsAttr := datalog.NewKeyword(":user/follows")
@@ -115,7 +115,7 @@ func main() {
 			fmt.Printf("  %v follows Bob\n", nameDatoms[0].V)
 		}
 	}
-	
+
 	// Find all posts
 	fmt.Println("\n2.4 All posts with authors:")
 	postAttr := datalog.NewKeyword(":post/content")
@@ -129,7 +129,7 @@ func main() {
 		authorDatoms, _ := qb.GetEntityAttribute(d.E, authorAttr)
 		if len(authorDatoms) > 0 {
 			authorEntity := authorDatoms[0].V.(datalog.Identity)
-			
+
 			// Get author name
 			authorName, _ := qb.GetEntityAttribute(authorEntity, nameAttr)
 			if len(authorName) > 0 {
@@ -137,7 +137,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	// Time-based query
 	fmt.Println("\n2.5 Facts added between tx1 and tx2:")
 	timeRangeFacts, err := qb.GetTimeRange(tx1, tx2)
@@ -145,16 +145,16 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("  Found %d facts in time range\n", len(timeRangeFacts))
-	
+
 	// Transaction example
 	fmt.Println("\n3. Transaction Example")
 	fmt.Println("----------------------")
-	
+
 	tx, err := store.BeginTx()
 	if err != nil {
 		log.Fatal(err)
 	}
-	
+
 	// Add a like in a transaction
 	tx4 := uint64(time.Date(2024, 6, 19, 13, 0, 0, 0, time.UTC).UnixNano())
 	err = tx.Assert([]datalog.Datom{
@@ -165,13 +165,13 @@ func main() {
 		tx.Rollback()
 		log.Fatal(err)
 	}
-	
+
 	err = tx.Commit()
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("✓ Transaction committed: Bob liked Alice's post")
-	
+
 	// Verify the transaction worked
 	likes, err := qb.GetEntityAttribute(post1, datalog.NewKeyword(":post/likes"))
 	if err != nil {
@@ -180,11 +180,11 @@ func main() {
 	if len(likes) > 0 {
 		fmt.Printf("  Post now has %v likes\n", likes[0].V)
 	}
-	
+
 	// References query
 	fmt.Println("\n4. Reference Queries")
 	fmt.Println("--------------------")
-	
+
 	fmt.Println("\n4.1 All references to Alice:")
 	aliceRefs, err := qb.GetReferences(alice)
 	if err != nil {
@@ -193,11 +193,11 @@ func main() {
 	for _, d := range aliceRefs {
 		fmt.Printf("  Entity %x has %s pointing to Alice\n", d.E.ID(), d.A)
 	}
-	
+
 	// Retraction example
 	fmt.Println("\n5. Retraction Example")
 	fmt.Println("---------------------")
-	
+
 	// Retract Charlie's email (oops, typo!)
 	err = store.Retract([]datalog.Datom{
 		{E: charlie, A: datalog.NewKeyword(":user/email"), V: "charlie@example.com", Tx: tx1},
@@ -215,6 +215,6 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println("✓ Added Charlie's correct email")
-	
+
 	fmt.Println("\nStorage example complete!")
 }

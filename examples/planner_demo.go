@@ -138,7 +138,7 @@ func main() {
 				fmt.Printf("          Binds: %v\n", getBindings(pattern.Bindings))
 				fmt.Printf("          Selectivity score: %d\n", pattern.Selectivity)
 			}
-			
+
 			if len(phase.Predicates) > 0 {
 				fmt.Printf("    Predicates (%d):\n", len(phase.Predicates))
 				for j, pred := range phase.Predicates {
@@ -152,7 +152,7 @@ func main() {
 				fmt.Printf("    Keep for later: %v\n", phase.Keep)
 			}
 		}
-		
+
 		fmt.Println("\n" + strings.Repeat("-", 70) + "\n")
 	}
 }

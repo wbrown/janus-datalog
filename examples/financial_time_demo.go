@@ -40,7 +40,7 @@ func main() {
 	tx.Commit()
 
 	// Now add historical price data with specific timestamps
-	
+
 	// Market close on 2024-01-02
 	marketClose1 := time.Date(2024, 1, 2, 16, 0, 0, 0, time.UTC)
 	tx1 := db.NewTransaction()
@@ -101,12 +101,12 @@ func main() {
 	// Query: Get prices on a specific date
 	targetDate := marketClose2.UnixNano()
 	fmt.Printf("\nPrices on 2024-01-03 (tx=%d):\n", targetDate)
-	
+
 	query2 := `[:find ?ticker ?price
 	            :where [?s :security/ticker ?ticker]
 	                   [?s :price/close ?price ?tx]
 	                   [(= ?tx %d)]]`
-	
+
 	q2, _ := parser.ParseQuery(fmt.Sprintf(query2, targetDate))
 	result2, _ := exec.Execute(q2)
 

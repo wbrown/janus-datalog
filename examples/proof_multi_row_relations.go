@@ -136,9 +136,9 @@ func main() {
 		bindingRel := executor.NewMaterializedRelation(
 			[]query.Symbol{"?p", "?attr"},
 			[]executor.Tuple{
-				{alice, nameAttr},    // Get Alice's name
-				{bob, ageAttr},       // Get Bob's age
-				{charlie, cityAttr},  // Get Charlie's city
+				{alice, nameAttr},   // Get Alice's name
+				{bob, ageAttr},      // Get Bob's age
+				{charlie, cityAttr}, // Get Charlie's city
 			},
 		)
 		fmt.Printf("Binding relation has %d rows with 2 columns each\n", bindingRel.Size())

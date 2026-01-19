@@ -17,11 +17,11 @@ func main() {
 	alice := datalog.NewIdentity("user:alice")
 	bob := datalog.NewIdentity("user:bob")
 	charlie := datalog.NewIdentity("user:charlie")
-	
+
 	nameAttr := datalog.NewKeyword(":user/name")
 	ageAttr := datalog.NewKeyword(":user/age")
 	friendAttr := datalog.NewKeyword(":user/friend")
-	
+
 	datoms := []datalog.Datom{
 		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
 		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
@@ -35,7 +35,7 @@ func main() {
 
 	// Create a pattern matcher with the data
 	matcher := executor.NewMemoryPatternMatcher(datoms)
-	
+
 	// Create the executor
 	exec := executor.NewExecutor(matcher)
 
@@ -73,7 +73,7 @@ func runQuery(exec *executor.Executor, queryStr string) {
 	if err != nil {
 		log.Fatalf("Failed to parse query: %v", err)
 	}
-	
+
 	// Display the formatted query
 	fmt.Printf("\nQuery:\n%s\n\n", parser.FormatQuery(q))
 

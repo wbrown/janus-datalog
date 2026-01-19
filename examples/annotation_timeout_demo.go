@@ -25,13 +25,13 @@ func main() {
 
 	// Create annotation handler
 	handler := annotations.NewOutputFormatter(os.Stdout)
-	
+
 	// Create a transaction
 	tx := db.NewTransaction()
 
 	// Add some test data
 	fmt.Println("Adding financial data...")
-	
+
 	// Add symbols
 	symbol := datalog.NewIdentity("symbol:CRWV")
 	err = tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), "CRWV")
@@ -44,14 +44,14 @@ func main() {
 	for day := 0; day < 30; day++ {
 		for minute := 570; minute <= 960; minute += 30 { // 9:30 AM to 4:00 PM
 			priceEntity := datalog.NewIdentity(fmt.Sprintf("price:%d:%d", day, minute))
-			
+
 			// Price entity with all attributes
 			tx.Add(priceEntity, datalog.NewKeyword(":price/symbol"), symbol)
-			tx.Add(priceEntity, datalog.NewKeyword(":price/time"), baseTime + int64(day*86400 + minute*60))
+			tx.Add(priceEntity, datalog.NewKeyword(":price/time"), baseTime+int64(day*86400+minute*60))
 			tx.Add(priceEntity, datalog.NewKeyword(":price/minute-of-day"), int64(minute))
-			tx.Add(priceEntity, datalog.NewKeyword(":price/high"), 100.0 + float64(minute%10))
-			tx.Add(priceEntity, datalog.NewKeyword(":price/low"), 95.0 + float64(minute%10))
-			
+			tx.Add(priceEntity, datalog.NewKeyword(":price/high"), 100.0+float64(minute%10))
+			tx.Add(priceEntity, datalog.NewKeyword(":price/low"), 95.0+float64(minute%10))
+
 			// Add open/close for specific minutes
 			if minute == 570 {
 				tx.Add(priceEntity, datalog.NewKeyword(":price/open"), 98.0)
@@ -112,7 +112,7 @@ func main() {
 
 	// Execute with annotated matcher
 	exec := executor.NewExecutor(annotatedMatcher)
-	
+
 	fmt.Println("\nExecuting complex financial query with annotations...")
 	fmt.Println("========================================")
 

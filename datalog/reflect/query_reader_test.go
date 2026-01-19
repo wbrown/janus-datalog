@@ -649,11 +649,11 @@ func TestMapTuple_PullResult(t *testing.T) {
 	id := datalog.NewIdentity("test:alice")
 	category := datalog.NewKeyword(":category/admin")
 	pullMap := map[string]interface{}{
-		"db/id":          id,
-		"person/name":    "Alice",
-		"person/age":     int64(30),
-		"person/email":   "alice@example.com",
-		"person/active":  true,
+		"db/id":           id,
+		"person/name":     "Alice",
+		"person/age":      int64(30),
+		"person/email":    "alice@example.com",
+		"person/active":   true,
 		"person/category": category,
 	}
 

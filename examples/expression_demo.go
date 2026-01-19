@@ -105,7 +105,7 @@ func matchesValue(actual, expected interface{}) bool {
 
 func runQuery(name string, queryStr string, datoms []datalog.Datom) {
 	fmt.Printf("\n=== %s ===\n", name)
-	
+
 	// Parse the query
 	q, err := parser.ParseQuery(queryStr)
 	if err != nil {
@@ -155,31 +155,31 @@ func main() {
 		{E: datalog.NewIdentity("product1"), A: datalog.NewKeyword(":name"), V: "Widget"},
 		{E: datalog.NewIdentity("product1"), A: datalog.NewKeyword(":price"), V: int64(100)},
 		{E: datalog.NewIdentity("product1"), A: datalog.NewKeyword(":tax"), V: int64(10)},
-		
+
 		{E: datalog.NewIdentity("product2"), A: datalog.NewKeyword(":name"), V: "Gadget"},
 		{E: datalog.NewIdentity("product2"), A: datalog.NewKeyword(":price"), V: int64(200)},
 		{E: datalog.NewIdentity("product2"), A: datalog.NewKeyword(":tax"), V: int64(20)},
-		
+
 		{E: datalog.NewIdentity("product3"), A: datalog.NewKeyword(":name"), V: "Doohickey"},
 		{E: datalog.NewIdentity("product3"), A: datalog.NewKeyword(":price"), V: int64(50)},
 		{E: datalog.NewIdentity("product3"), A: datalog.NewKeyword(":tax"), V: int64(5)},
-		
+
 		// Person data
 		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword(":first"), V: "John"},
 		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword(":last"), V: "Doe"},
 		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword(":age"), V: int64(25)},
-		
+
 		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword(":first"), V: "Jane"},
 		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword(":last"), V: "Smith"},
 		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword(":age"), V: int64(30)},
-		
+
 		// Score data for range testing
 		{E: datalog.NewIdentity("score1"), A: datalog.NewKeyword(":student"), V: "Alice"},
 		{E: datalog.NewIdentity("score1"), A: datalog.NewKeyword(":value"), V: int64(85)},
-		
+
 		{E: datalog.NewIdentity("score2"), A: datalog.NewKeyword(":student"), V: "Bob"},
 		{E: datalog.NewIdentity("score2"), A: datalog.NewKeyword(":value"), V: int64(92)},
-		
+
 		{E: datalog.NewIdentity("score3"), A: datalog.NewKeyword(":student"), V: "Charlie"},
 		{E: datalog.NewIdentity("score3"), A: datalog.NewKeyword(":value"), V: int64(105)}, // Out of range
 	}

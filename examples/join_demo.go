@@ -17,36 +17,36 @@ func main() {
 	alice := datalog.NewIdentity("person:alice")
 	bob := datalog.NewIdentity("person:bob")
 	charlie := datalog.NewIdentity("person:charlie")
-	
+
 	eng := datalog.NewIdentity("dept:engineering")
 	sales := datalog.NewIdentity("dept:sales")
-	
+
 	// Attributes
 	nameAttr := datalog.NewKeyword(":name")
 	deptAttr := datalog.NewKeyword(":person/department")
 	managerAttr := datalog.NewKeyword(":dept/manager")
 	budgetAttr := datalog.NewKeyword(":dept/budget")
-	
+
 	// Create datoms that require joining
 	datoms := []datalog.Datom{
 		// People and their names
 		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
 		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
 		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		
+
 		// People's departments
 		{E: alice, A: deptAttr, V: eng, Tx: 1},
 		{E: bob, A: deptAttr, V: sales, Tx: 1},
 		{E: charlie, A: deptAttr, V: eng, Tx: 1},
-		
+
 		// Department names
 		{E: eng, A: nameAttr, V: "Engineering", Tx: 1},
 		{E: sales, A: nameAttr, V: "Sales", Tx: 1},
-		
+
 		// Department managers
 		{E: eng, A: managerAttr, V: alice, Tx: 1},
 		{E: sales, A: managerAttr, V: bob, Tx: 1},
-		
+
 		// Department budgets
 		{E: eng, A: budgetAttr, V: int64(1000000), Tx: 1},
 		{E: sales, A: budgetAttr, V: int64(500000), Tx: 1},
@@ -99,11 +99,11 @@ func main() {
 	fmt.Println("\nStep 1 - People pattern [?person :name ?person-name]:")
 	runQuery(exec, `[:find ?person ?person-name
 	                 :where [?person :name ?person-name]]`)
-	
+
 	fmt.Println("\nStep 2 - Department pattern [?person :person/department ?dept]:")
 	runQuery(exec, `[:find ?person ?dept
 	                 :where [?person :person/department ?dept]]`)
-	
+
 	fmt.Println("\nStep 3 - Joined result:")
 	runQuery(exec, `[:find ?person ?person-name ?dept
 	                 :where [?person :name ?person-name]
@@ -115,7 +115,7 @@ func runQuery(exec *executor.Executor, queryStr string) {
 	if err != nil {
 		log.Fatalf("Failed to parse query: %v", err)
 	}
-	
+
 	// Display the formatted query
 	fmt.Printf("\nQuery:\n%s\n\n", parser.FormatQuery(q))
 

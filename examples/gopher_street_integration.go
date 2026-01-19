@@ -31,10 +31,10 @@ func main() {
 
 	// Initialize reference data
 	initReferenceData(db)
-	
+
 	// Load market data
 	loadMarketData(db)
-	
+
 	// Create query executor
 	exec := executor.NewExecutor(db.Matcher())
 
@@ -45,7 +45,7 @@ func main() {
 		 :where [?p :position/symbol ?symbol]
 		        [?p :position/quantity ?position]
 		        [?p :position/avg-price ?avgPrice]]`)
-	
+
 	result, _ := exec.Execute(positionQuery)
 	fmt.Println("Symbol | Position | Avg Price")
 	fmt.Println("-------|----------|----------")
@@ -65,12 +65,12 @@ func main() {
 		        [?s :price/last ?lastPrice]
 		        [(- ?lastPrice ?avgPrice) ?priceDiff]
 		        [(* ?position ?priceDiff) ?pnl]]`)
-	
+
 	if err != nil {
 		fmt.Printf("Error parsing P&L query: %v\n", err)
 		return
 	}
-	
+
 	result, err = exec.Execute(pnlQuery)
 	if err != nil {
 		fmt.Printf("Error executing P&L query: %v\n", err)
@@ -83,7 +83,7 @@ func main() {
 		tuple := result.Get(i)
 		pnl := tuple[4].(float64)
 		totalPnL += pnl
-		fmt.Printf("%-6s | %8.0f | $%8.2f | $%9.2f | $%8.2f\n", 
+		fmt.Printf("%-6s | %8.0f | $%8.2f | $%9.2f | $%8.2f\n",
 			tuple[0], tuple[1], tuple[2], tuple[3], pnl)
 	}
 	fmt.Printf("\nTotal P&L: $%.2f\n", totalPnL)
@@ -98,7 +98,7 @@ func main() {
 		        [?s :security/sector ?sector]
 		        [?s :price/last ?price]
 		        [(* ?qty ?price) ?exposure]]`)
-	
+
 	result, _ = exec.Execute(sectorQuery)
 	fmt.Println("Sector     | Exposure")
 	fmt.Println("-----------|------------")
@@ -114,7 +114,7 @@ func main() {
 		 :where [?t :trade/timestamp ?time]
 		        [?t :trade/volume ?volume]
 		        [(hour ?time) ?hour]]`)
-	
+
 	result, _ = exec.Execute(volumeQuery)
 	fmt.Println("Hour | Avg Volume | Trade Count")
 	fmt.Println("-----|------------|------------")
@@ -149,7 +149,7 @@ func main() {
 		        [(* ?qty ?price) ?exposure]
 		        [(* ?exposure 100) ?exposurex100]
 		        [(/ ?exposurex100 1000000) ?pctx100]]`)
-	
+
 	if err != nil {
 		fmt.Printf("Error parsing concentration query: %v\n", err)
 	} else {
@@ -168,7 +168,7 @@ func main() {
 	yesterday := time.Now().Add(-24 * time.Hour)
 	asOfMatcher := db.AsOf(uint64(yesterday.UnixNano()))
 	asOfExec := executor.NewExecutor(asOfMatcher)
-	
+
 	fmt.Printf("Positions as of %s:\n", yesterday.Format("2006-01-02"))
 	result, _ = asOfExec.Execute(positionQuery)
 	fmt.Println("Symbol | Position | Avg Price")
@@ -186,7 +186,7 @@ func main() {
 		        [?c :correlation/symbol2 ?symbol2]
 		        [?c :correlation/value ?correlation]
 		        [(> ?correlation 0.7)]]`)
-	
+
 	result, _ = exec.Execute(correlationQuery)
 	fmt.Println("Symbol 1 | Symbol 2 | Correlation")
 	fmt.Println("---------|----------|------------")
@@ -205,7 +205,7 @@ func main() {
 		        [?t :trade/price ?price]
 		        [?t :trade/volume ?volume]
 		        [(* ?price ?volume) ?dollarVolume]]`)
-	
+
 	result, _ = exec.Execute(vwapQuery)
 	fmt.Println("Symbol | VWAP")
 	fmt.Println("-------|--------")
@@ -216,7 +216,7 @@ func main() {
 		vwap := dollarVol / vol
 		fmt.Printf("%-6s | $%.2f\n", tuple[0], vwap)
 	}
-	
+
 	// Example 9: Alert generation based on rules
 	fmt.Println("\n=== Example 9: Risk Alerts ===")
 	alertQuery, _ := parser.ParseQuery(`
@@ -228,7 +228,7 @@ func main() {
 		        [(* ?qty ?price) ?exposure]
 		        [(> ?exposure 100000)]
 		        [(str "High exposure warning: " ?symbol) ?message]]`)
-	
+
 	result, _ = exec.Execute(alertQuery)
 	for i := 0; i < result.Size(); i++ {
 		tuple := result.Get(i)

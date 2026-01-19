@@ -41,35 +41,35 @@ func main() {
 	// Opening prices (minute 570 = 9:30 AM)
 	// Closing prices (minute 960 = 4:00 PM)
 	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	
+
 	for day := 0; day < 3; day++ {
 		dayTime := baseTime.AddDate(0, 0, day)
-		
+
 		// Symbol A prices
 		openPriceA := datalog.NewIdentity(fmt.Sprintf("price-A-open-%d", day))
 		tx.Add(openPriceA, datalog.NewKeyword(":price/symbol"), symA)
 		tx.Add(openPriceA, datalog.NewKeyword(":price/minute-of-day"), int64(570))
-		tx.Add(openPriceA, datalog.NewKeyword(":price/time"), dayTime.Add(9*time.Hour + 30*time.Minute))
-		tx.Add(openPriceA, datalog.NewKeyword(":price/open"), float64(100.0 + float64(day)))
+		tx.Add(openPriceA, datalog.NewKeyword(":price/time"), dayTime.Add(9*time.Hour+30*time.Minute))
+		tx.Add(openPriceA, datalog.NewKeyword(":price/open"), float64(100.0+float64(day)))
 
 		closePriceA := datalog.NewIdentity(fmt.Sprintf("price-A-close-%d", day))
 		tx.Add(closePriceA, datalog.NewKeyword(":price/symbol"), symA)
 		tx.Add(closePriceA, datalog.NewKeyword(":price/minute-of-day"), int64(960))
-		tx.Add(closePriceA, datalog.NewKeyword(":price/time"), dayTime.Add(16 * time.Hour))
-		tx.Add(closePriceA, datalog.NewKeyword(":price/close"), float64(105.0 + float64(day)))
+		tx.Add(closePriceA, datalog.NewKeyword(":price/time"), dayTime.Add(16*time.Hour))
+		tx.Add(closePriceA, datalog.NewKeyword(":price/close"), float64(105.0+float64(day)))
 
 		// Symbol B prices
 		openPriceB := datalog.NewIdentity(fmt.Sprintf("price-B-open-%d", day))
 		tx.Add(openPriceB, datalog.NewKeyword(":price/symbol"), symB)
 		tx.Add(openPriceB, datalog.NewKeyword(":price/minute-of-day"), int64(570))
-		tx.Add(openPriceB, datalog.NewKeyword(":price/time"), dayTime.Add(9*time.Hour + 30*time.Minute))
-		tx.Add(openPriceB, datalog.NewKeyword(":price/open"), float64(200.0 + float64(day)))
+		tx.Add(openPriceB, datalog.NewKeyword(":price/time"), dayTime.Add(9*time.Hour+30*time.Minute))
+		tx.Add(openPriceB, datalog.NewKeyword(":price/open"), float64(200.0+float64(day)))
 
 		closePriceB := datalog.NewIdentity(fmt.Sprintf("price-B-close-%d", day))
 		tx.Add(closePriceB, datalog.NewKeyword(":price/symbol"), symB)
 		tx.Add(closePriceB, datalog.NewKeyword(":price/minute-of-day"), int64(960))
-		tx.Add(closePriceB, datalog.NewKeyword(":price/time"), dayTime.Add(16 * time.Hour))
-		tx.Add(closePriceB, datalog.NewKeyword(":price/close"), float64(205.0 + float64(day)))
+		tx.Add(closePriceB, datalog.NewKeyword(":price/time"), dayTime.Add(16*time.Hour))
+		tx.Add(closePriceB, datalog.NewKeyword(":price/close"), float64(205.0+float64(day)))
 	}
 
 	_, err = tx.Commit()
@@ -109,7 +109,7 @@ func main() {
 	// Create executor with annotations
 	matcher := db.Matcher()
 	exec := executor.NewExecutor(matcher)
-	
+
 	// Create annotation handler
 	formatter := annotations.NewOutputFormatter(os.Stdout)
 	handler := annotations.Handler(formatter.Handle)
@@ -127,7 +127,7 @@ func main() {
 		tuple := result.Get(i)
 		timeOpen := tuple[2].(time.Time)
 		timeClose := tuple[3].(time.Time)
-		fmt.Printf("  ?open = %.2f, ?close = %.2f (open: %s, close: %s)\n", 
+		fmt.Printf("  ?open = %.2f, ?close = %.2f (open: %s, close: %s)\n",
 			tuple[0], tuple[1], timeOpen.Format("Jan 2"), timeClose.Format("Jan 2"))
 	}
 

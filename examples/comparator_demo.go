@@ -96,7 +96,7 @@ func main() {
 		fmt.Printf("=== %s ===\n", example.name)
 		fmt.Printf("Description: %s\n", example.description)
 		fmt.Printf("\nQuery:\n%s\n\n", example.query)
-		
+
 		q, err := parser.ParseQuery(example.query)
 		if err != nil {
 			log.Printf("Parse error: %v\n", err)
@@ -112,7 +112,7 @@ func main() {
 		fmt.Printf("Parsed successfully!\n")
 		fmt.Printf("Find variables: %v\n", q.Find)
 		fmt.Printf("Pattern breakdown:\n")
-		
+
 		for i, pattern := range q.Where {
 			switch p := pattern.(type) {
 			case *query.DataPattern:
@@ -124,10 +124,10 @@ func main() {
 
 		fmt.Println("\n" + strings.Repeat("-", 60) + "\n")
 	}
-	
+
 	// Show some error cases
 	fmt.Println("=== Error Cases ===\n")
-	
+
 	errorCases := []struct {
 		name  string
 		query string
@@ -145,11 +145,11 @@ func main() {
 			query: `[:find ?x :where [?x :foo ?y] [()]]`,
 		},
 	}
-	
+
 	for _, tc := range errorCases {
 		fmt.Printf("=== %s ===\n", tc.name)
 		fmt.Printf("Query: %s\n", tc.query)
-		
+
 		q, err := parser.ParseQuery(tc.query)
 		if err != nil {
 			fmt.Printf("Parse error (as expected): %v\n", err)

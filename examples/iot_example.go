@@ -14,7 +14,7 @@ func main() {
 	// Example: IoT sensor data modeling
 	fmt.Println("IoT Sensor Data Example")
 	fmt.Println("=======================\n")
-	
+
 	// Sensor entities
 	tempSensor1 := datalog.NewIdentity("sensor:temp:kitchen:1")
 	tempSensor2 := datalog.NewIdentity("sensor:temp:bedroom:1")
@@ -25,10 +25,10 @@ func main() {
 	kitchen := datalog.NewIdentity("location:kitchen")
 	bedroom := datalog.NewIdentity("location:bedroom")
 	entrance := datalog.NewIdentity("location:entrance")
-	
+
 	// Base time for our readings
 	baseTime := time.Date(2024, 6, 19, 14, 0, 0, 0, time.UTC)
-	
+
 	// Static facts about sensors
 	baseTx := uint64(baseTime.Unix())
 	sensorFacts := []datalog.Datom{
@@ -54,20 +54,20 @@ func main() {
 		{E: bedroom, A: datalog.NewKeyword(":location/name"), V: "Master Bedroom", Tx: baseTx},
 		{E: entrance, A: datalog.NewKeyword(":location/name"), V: "Front Entrance", Tx: baseTx},
 	}
-	
+
 	fmt.Println("Sensor Configuration:")
 	for _, d := range sensorFacts {
 		fmt.Printf("  %s\n", d)
 	}
-	
+
 	// Time-series sensor readings
 	fmt.Println("\nSensor Readings (Time-Series):")
-	
+
 	// Temperature readings every 5 minutes
 	readings := []datalog.Datom{}
 	for i := 0; i < 5; i++ {
 		readTime := baseTime.Add(time.Duration(i*5) * time.Minute)
-		
+
 		// Kitchen temperature
 		readings = append(readings, datalog.Datom{
 			E:  tempSensor1,
@@ -94,11 +94,11 @@ func main() {
 			})
 		}
 	}
-	
+
 	for _, d := range readings {
 		fmt.Printf("  %s\n", d)
 	}
-	
+
 	// Alert entities based on conditions
 	fmt.Println("\nAlerts Generated:")
 
@@ -113,14 +113,14 @@ func main() {
 		{E: alert1, A: datalog.NewKeyword(":alert/value"), V: 23.7, Tx: alertTx},
 		{E: alert1, A: datalog.NewKeyword(":alert/message"), V: "Kitchen temperature exceeds threshold", Tx: alertTx},
 	}
-	
+
 	for _, d := range alertDatoms {
 		fmt.Printf("  %s\n", d)
 	}
-	
+
 	fmt.Println("\nExample Queries for IoT Data:")
 	fmt.Println("=============================")
-	
+
 	fmt.Println(`
 1. Get latest temperature from all sensors:
    [:find ?sensor ?location ?value ?time
@@ -163,7 +163,7 @@ func main() {
            [?motion-sensor :reading/detected true ?motion-time]
            [(within-minutes ?t1 ?motion-time 5)]]
 `)
-	
+
 	fmt.Println("\nThis same Datalog engine handles IoT data just as naturally as")
 	fmt.Println("financial data, social networks, or any other domain!")
 }

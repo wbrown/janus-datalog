@@ -104,7 +104,7 @@ func demoQueryParser() {
 		fmt.Printf("Parsed Query:\n")
 		fmt.Printf("  Find: %v\n", q.Find)
 		fmt.Printf("  Where (%d patterns):\n", len(q.Where))
-		
+
 		for i, clause := range q.Where {
 			fmt.Printf("    Clause %d: ", i+1)
 			// Type-assert to DataPattern if it is one
@@ -128,7 +128,7 @@ func demoQueryParser() {
 			}
 			fmt.Println()
 		}
-		
+
 		// Validate the query
 		if err := parser.ValidateQuery(q); err != nil {
 			fmt.Printf("  Validation Error: %v\n", err)

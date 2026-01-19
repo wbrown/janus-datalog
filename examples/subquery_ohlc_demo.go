@@ -30,29 +30,29 @@ func main() {
 	// Create annotation output handler that prints events as they happen
 	formatter := annotations.NewOutputFormatter(os.Stdout)
 	handler := annotations.Handler(formatter.Handle)
-	
+
 	// Add some test data
 	fmt.Println("Loading test data...")
-	
+
 	// Add multiple symbols
 	symbols := []string{"AAPL", "GOOGL", "MSFT"}
-	
+
 	tx := db.NewTransaction()
 	for _, ticker := range symbols {
 		symbol := datalog.NewIdentity(fmt.Sprintf("symbol:%s", ticker))
 		tx.Add(symbol, datalog.NewKeyword(":symbol/ticker"), ticker)
 		tx.Add(symbol, datalog.NewKeyword(":symbol/name"), fmt.Sprintf("%s Inc.", ticker))
 	}
-	
+
 	// Commit symbols first
 	_, err = tx.Commit()
 	if err != nil {
 		log.Fatal("Failed to commit symbols:", err)
 	}
-	
+
 	// Add OHLC price data
 	baseTime := time.Date(2024, 1, 1, 9, 30, 0, 0, time.UTC)
-	
+
 	// Price data for 5 days with intraday data
 	priceData := map[string][]struct {
 		day    int
@@ -116,17 +116,17 @@ func main() {
 			{2, 15, 30, 391.5, 392.5, 391.0, 392.0, 820000},
 		},
 	}
-	
+
 	tx = db.NewTransaction()
 	for ticker, prices := range priceData {
 		symbol := datalog.NewIdentity(fmt.Sprintf("symbol:%s", ticker))
-		
+
 		for _, price := range prices {
 			priceEntity := datalog.NewIdentity(fmt.Sprintf("price:%s:%d:%d:%d", ticker, price.day, price.hour, price.minute))
-			priceTime := baseTime.Add(time.Duration(price.day)*24*time.Hour + 
-				time.Duration(price.hour-9)*time.Hour + 
+			priceTime := baseTime.Add(time.Duration(price.day)*24*time.Hour +
+				time.Duration(price.hour-9)*time.Hour +
 				time.Duration(price.minute)*time.Minute)
-			
+
 			tx.Add(priceEntity, datalog.NewKeyword(":price/symbol"), symbol)
 			tx.Add(priceEntity, datalog.NewKeyword(":price/time"), priceTime)
 			tx.Add(priceEntity, datalog.NewKeyword(":price/open"), price.open)
@@ -136,20 +136,20 @@ func main() {
 			tx.Add(priceEntity, datalog.NewKeyword(":price/volume"), price.volume)
 		}
 	}
-	
+
 	// Commit price data
 	_, err = tx.Commit()
 	if err != nil {
 		log.Fatal("Failed to commit prices:", err)
 	}
-	
+
 	fmt.Println("Data loaded successfully!")
 	fmt.Println()
 
 	// Demo 1: Find daily OHLC using subqueries
 	fmt.Println("Demo 1: Daily OHLC using subqueries")
 	fmt.Println("====================================")
-	
+
 	query1 := `[:find ?ticker ?year ?month ?day ?daily-high ?daily-low ?daily-volume
 	           :where
 	           [?s :symbol/ticker ?ticker]
@@ -227,7 +227,7 @@ func main() {
 	// Demo 2: Find stocks with highest intraday volatility using subqueries
 	fmt.Println("\n\nDemo 2: Intraday volatility analysis using subqueries")
 	fmt.Println("=====================================================")
-	
+
 	query2 := `[:find ?ticker ?date-str ?volatility
 	           :where
 	           [?s :symbol/ticker ?ticker]
@@ -296,7 +296,7 @@ func main() {
 	// Demo 3: Find all high prices for AAPL using relation binding
 	fmt.Println("\n\nDemo 3: All AAPL high prices using relation binding")
 	fmt.Println("===================================================")
-	
+
 	query3 := `[:find ?ticker ?time ?high
 	           :where
 	           [?s :symbol/ticker ?ticker]

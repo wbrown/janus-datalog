@@ -28,27 +28,27 @@ func main() {
 
 	// Add test data
 	fmt.Println("Loading test data...")
-	
+
 	// Add symbols
 	tx := db.NewTransaction()
 	aapl := datalog.NewIdentity("symbol:aapl")
 	goog := datalog.NewIdentity("symbol:goog")
 	msft := datalog.NewIdentity("symbol:msft")
-	
+
 	tx.Add(aapl, datalog.NewKeyword(":symbol/ticker"), "AAPL")
 	tx.Add(goog, datalog.NewKeyword(":symbol/ticker"), "GOOG")
 	tx.Add(msft, datalog.NewKeyword(":symbol/ticker"), "MSFT")
-	
+
 	_, err = tx.Commit()
 	if err != nil {
 		log.Fatal("Failed to commit symbols:", err)
 	}
-	
+
 	// Add OHLC price data - proper daily OHLC bars
 	baseTime := time.Date(2024, 1, 1, 16, 0, 0, 0, time.UTC) // Market close
-	
+
 	tx = db.NewTransaction()
-	
+
 	// Daily bars for 3 days
 	dailyData := []struct {
 		symbol string
@@ -72,11 +72,11 @@ func main() {
 		{"MSFT", 1, 383.5, 388.0, 383.0, 387.0, 8500000},
 		{"MSFT", 2, 387.5, 392.0, 387.0, 391.0, 9000000},
 	}
-	
+
 	for _, bar := range dailyData {
 		barId := datalog.NewIdentity(fmt.Sprintf("bar:%s:%d", bar.symbol, bar.day))
 		barTime := baseTime.Add(time.Duration(bar.day) * 24 * time.Hour)
-		
+
 		var symbolId datalog.Identity
 		switch bar.symbol {
 		case "AAPL":
@@ -86,7 +86,7 @@ func main() {
 		case "MSFT":
 			symbolId = msft
 		}
-		
+
 		tx.Add(barId, datalog.NewKeyword(":bar/symbol"), symbolId)
 		tx.Add(barId, datalog.NewKeyword(":bar/time"), barTime)
 		tx.Add(barId, datalog.NewKeyword(":bar/open"), bar.open)
@@ -95,12 +95,12 @@ func main() {
 		tx.Add(barId, datalog.NewKeyword(":bar/close"), bar.close)
 		tx.Add(barId, datalog.NewKeyword(":bar/volume"), bar.volume)
 	}
-	
+
 	_, err = tx.Commit()
 	if err != nil {
 		log.Fatal("Failed to commit bars:", err)
 	}
-	
+
 	fmt.Println("Data loaded successfully!")
 	fmt.Println()
 
@@ -109,7 +109,7 @@ func main() {
 	// Demo 1: Find the highest closing price for each symbol
 	fmt.Println("Demo 1: Highest closing price per symbol")
 	fmt.Println("========================================")
-	
+
 	query1 := `[:find ?ticker ?max-close
 	           :where
 	           [?s :symbol/ticker ?ticker]
@@ -138,7 +138,7 @@ func main() {
 	// Demo 2: Find average daily volume for each symbol
 	fmt.Println("\n\nDemo 2: Average daily volume per symbol")
 	fmt.Println("=======================================")
-	
+
 	query2 := `[:find ?ticker ?avg-volume
 	           :where
 	           [?s :symbol/ticker ?ticker]
@@ -167,7 +167,7 @@ func main() {
 	// Demo 3: Find trading days where close > open (bullish days) per symbol
 	fmt.Println("\n\nDemo 3: Count of bullish days per symbol")
 	fmt.Println("=========================================")
-	
+
 	query3 := `[:find ?ticker ?bullish-days
 	           :where
 	           [?s :symbol/ticker ?ticker]
@@ -198,7 +198,7 @@ func main() {
 	// Demo 4: Get all bars for AAPL using relation binding
 	fmt.Println("\n\nDemo 4: All AAPL bars (using relation binding)")
 	fmt.Println("===============================================")
-	
+
 	query4 := `[:find ?ticker ?date ?high ?low
 	           :where
 	           [?s :symbol/ticker ?ticker]
@@ -230,7 +230,7 @@ func main() {
 	// Demo 5: Count high-volume bars
 	fmt.Println("\n\nDemo 5: High-volume bars per symbol")
 	fmt.Println("===================================")
-	
+
 	query5 := `[:find ?ticker (count ?bar)
 	           :where
 	           [?s :symbol/ticker ?ticker]
@@ -260,10 +260,10 @@ func main() {
 	fmt.Println("==================================================================")
 	fmt.Println("This query demonstrates how subqueries solve the Cartesian product")
 	fmt.Println("problem when combining aggregated and non-aggregated values.")
-	
+
 	// First add some intraday data to make it more realistic
 	tx = db.NewTransaction()
-	
+
 	// Add minute-of-day attribute to the first and last bars of each day
 	// 9:30 AM = 570 minutes from midnight, 4:00 PM = 960 minutes
 	for _, bar := range dailyData {
@@ -271,40 +271,40 @@ func main() {
 			// Morning bar (open)
 			morningBar := datalog.NewIdentity(fmt.Sprintf("bar:%s:%d:morning", bar.symbol, bar.day))
 			tx.Add(morningBar, datalog.NewKeyword(":bar/symbol"), aapl)
-			tx.Add(morningBar, datalog.NewKeyword(":bar/time"), baseTime.Add(time.Duration(bar.day) * 24 * time.Hour))
+			tx.Add(morningBar, datalog.NewKeyword(":bar/time"), baseTime.Add(time.Duration(bar.day)*24*time.Hour))
 			tx.Add(morningBar, datalog.NewKeyword(":bar/minute-of-day"), int64(570)) // 9:30 AM
 			tx.Add(morningBar, datalog.NewKeyword(":bar/open"), bar.open)
-			tx.Add(morningBar, datalog.NewKeyword(":bar/high"), bar.open + 1.0)
-			tx.Add(morningBar, datalog.NewKeyword(":bar/low"), bar.open - 0.5)
-			tx.Add(morningBar, datalog.NewKeyword(":bar/close"), bar.open + 0.8)
-			
+			tx.Add(morningBar, datalog.NewKeyword(":bar/high"), bar.open+1.0)
+			tx.Add(morningBar, datalog.NewKeyword(":bar/low"), bar.open-0.5)
+			tx.Add(morningBar, datalog.NewKeyword(":bar/close"), bar.open+0.8)
+
 			// Midday bar
 			middayBar := datalog.NewIdentity(fmt.Sprintf("bar:%s:%d:midday", bar.symbol, bar.day))
 			tx.Add(middayBar, datalog.NewKeyword(":bar/symbol"), aapl)
-			tx.Add(middayBar, datalog.NewKeyword(":bar/time"), baseTime.Add(time.Duration(bar.day) * 24 * time.Hour))
+			tx.Add(middayBar, datalog.NewKeyword(":bar/time"), baseTime.Add(time.Duration(bar.day)*24*time.Hour))
 			tx.Add(middayBar, datalog.NewKeyword(":bar/minute-of-day"), int64(720)) // 12:00 PM
-			tx.Add(middayBar, datalog.NewKeyword(":bar/open"), bar.low + 2.0)
+			tx.Add(middayBar, datalog.NewKeyword(":bar/open"), bar.low+2.0)
 			tx.Add(middayBar, datalog.NewKeyword(":bar/high"), bar.high) // Daily high happens midday
 			tx.Add(middayBar, datalog.NewKeyword(":bar/low"), bar.low)   // Daily low also happens midday
-			tx.Add(middayBar, datalog.NewKeyword(":bar/close"), bar.high - 0.5)
-			
+			tx.Add(middayBar, datalog.NewKeyword(":bar/close"), bar.high-0.5)
+
 			// Afternoon bar (close)
 			afternoonBar := datalog.NewIdentity(fmt.Sprintf("bar:%s:%d:afternoon", bar.symbol, bar.day))
 			tx.Add(afternoonBar, datalog.NewKeyword(":bar/symbol"), aapl)
-			tx.Add(afternoonBar, datalog.NewKeyword(":bar/time"), baseTime.Add(time.Duration(bar.day) * 24 * time.Hour))
+			tx.Add(afternoonBar, datalog.NewKeyword(":bar/time"), baseTime.Add(time.Duration(bar.day)*24*time.Hour))
 			tx.Add(afternoonBar, datalog.NewKeyword(":bar/minute-of-day"), int64(960)) // 4:00 PM
-			tx.Add(afternoonBar, datalog.NewKeyword(":bar/open"), bar.close - 0.5)
-			tx.Add(afternoonBar, datalog.NewKeyword(":bar/high"), bar.close + 0.2)
-			tx.Add(afternoonBar, datalog.NewKeyword(":bar/low"), bar.close - 0.3)
+			tx.Add(afternoonBar, datalog.NewKeyword(":bar/open"), bar.close-0.5)
+			tx.Add(afternoonBar, datalog.NewKeyword(":bar/high"), bar.close+0.2)
+			tx.Add(afternoonBar, datalog.NewKeyword(":bar/low"), bar.close-0.3)
 			tx.Add(afternoonBar, datalog.NewKeyword(":bar/close"), bar.close)
 		}
 	}
-	
+
 	_, err = tx.Commit()
 	if err != nil {
 		log.Fatal("Failed to commit intraday data:", err)
 	}
-	
+
 	query6 := `[:find ?date ?daily-high ?daily-low ?open-price ?close-price
 	           :where
 	           [?s :symbol/ticker "AAPL"]

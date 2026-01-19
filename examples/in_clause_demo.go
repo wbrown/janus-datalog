@@ -15,20 +15,20 @@ func main() {
 	            :in $ ?age
 	            :where [?e :person/name ?name]
 	                   [?e :person/age ?age]]`
-	
+
 	fmt.Println("=== Example 1: Basic :in clause ===")
 	fmt.Println("Original:")
 	fmt.Println(query1)
-	
+
 	q1, err := parser.ParseQuery(query1)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	
+
 	fmt.Println("\nFormatted:")
 	fmt.Println(parser.FormatQuery(q1))
-	
+
 	// Example 2: Multiple input types
 	query2 := `[:find ?e ?name ?food
 	            :in $ [?food ...] [[?min-age ?max-age]]
@@ -37,20 +37,20 @@ func main() {
 	                   [(>= ?age ?min-age)]
 	                   [(<= ?age ?max-age)]
 	                   [?e :person/likes ?food]]`
-	
+
 	fmt.Println("\n=== Example 2: Multiple input types ===")
 	fmt.Println("Original:")
 	fmt.Println(query2)
-	
+
 	q2, err := parser.ParseQuery(query2)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	
+
 	fmt.Println("\nFormatted:")
 	fmt.Println(parser.FormatQuery(q2))
-	
+
 	// Example 3: Subquery with :in clause
 	query3 := `[:find ?date ?high ?low
 	            :where 
@@ -72,20 +72,20 @@ func main() {
 	                          [(same-date? ?t ?date)]
 	                          [?p :price/low ?l]]
 	                  ?s ?date) [[?low]]]]`
-	
+
 	fmt.Println("\n=== Example 3: Subquery with :in clause ===")
 	fmt.Println("Original:")
 	fmt.Println(query3)
-	
+
 	q3, err := parser.ParseQuery(query3)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	
+
 	fmt.Println("\nFormatted:")
 	fmt.Println(parser.FormatQuery(q3))
-	
+
 	// Show input specs
 	fmt.Println("\n=== Input Specifications ===")
 	for _, q := range []*query.Query{q1, q2, q3} {

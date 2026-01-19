@@ -58,7 +58,7 @@ func main() {
 	for _, tc := range errorCases {
 		fmt.Printf("=== %s ===\n", tc.name)
 		fmt.Printf("Query: %s\n", tc.query)
-		
+
 		q, err := parser.ParseQuery(tc.query)
 		if err != nil {
 			fmt.Printf("Parse Error: %v\n", err)
@@ -81,18 +81,18 @@ func main() {
                            [?person :person/address ?addr]
                            [?addr :address/city ?city]
                            [?addr :address/country "USA"]]`
-	
+
 	fmt.Printf("Query:\n%s\n\n", validQuery)
-	
+
 	q, err := parser.ParseQuery(validQuery)
 	if err != nil {
 		log.Fatalf("Unexpected parse error: %v", err)
 	}
-	
+
 	if err := parser.ValidateQuery(q); err != nil {
 		log.Fatalf("Unexpected validation error: %v", err)
 	}
-	
+
 	fmt.Println("✓ Query parsed and validated successfully!")
 	fmt.Printf("\nExtracted variables: %v\n", parser.ExtractVariables(q.Where))
 }

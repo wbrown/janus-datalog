@@ -40,8 +40,8 @@ func main() {
 		},
 		// Long value - no problem!
 		{
-			E:  article,
-			A:  datalog.NewKeyword(":article/content"),
+			E: article,
+			A: datalog.NewKeyword(":article/content"),
 			V: strings.Repeat("This is a long article about technology trends. ", 10) +
 				"The content can be any size without restrictions. " +
 				"This demonstrates how the Datalog engine handles large values efficiently.",

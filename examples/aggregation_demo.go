@@ -103,7 +103,7 @@ func main() {
 		 :where [?s :trade/close ?close]]`)
 
 	result4, _ := exec.Execute(q4)
-	fmt.Printf("Min price: $%.2f, Max price: $%.2f\n\n", 
+	fmt.Printf("Min price: $%.2f, Max price: $%.2f\n\n",
 		result4.Get(0)[0], result4.Get(0)[1])
 
 	// Test 5: Group by sector with aggregations

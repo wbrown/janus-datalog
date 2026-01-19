@@ -28,7 +28,7 @@ func main() {
 
 	// Add some time-series data
 	fmt.Println("Loading time-series data...")
-	
+
 	// Add trades for different dates and times
 	trades := []struct {
 		symbol    string
@@ -80,7 +80,7 @@ func main() {
 		tuple := result1.Get(i)
 		t := tuple[1].(time.Time)
 		fmt.Printf("%-6s | %s UTC | %4d | %5d | %3d | %4d\n",
-			tuple[0], t.UTC().Format("2006-01-02 15:04"), 
+			tuple[0], t.UTC().Format("2006-01-02 15:04"),
 			tuple[2], tuple[3], tuple[4], tuple[5])
 	}
 
@@ -134,7 +134,7 @@ func main() {
 	fmt.Println("-----------|-------------")
 	for i := 0; i < result4.Size(); i++ {
 		tuple := result4.Get(i)
-		fmt.Printf("%4d-%02d-%02d | %12.0f\n", 
+		fmt.Printf("%4d-%02d-%02d | %12.0f\n",
 			tuple[0], tuple[1], tuple[2], tuple[3])
 	}
 
@@ -154,7 +154,7 @@ func main() {
 	for i := 0; i < result5.Size(); i++ {
 		tuple := result5.Get(i)
 		t := tuple[1].(time.Time)
-		fmt.Printf("%-6s | %s UTC | $%.2f\n", 
+		fmt.Printf("%-6s | %s UTC | $%.2f\n",
 			tuple[0], t.UTC().Format("2006-01-02 15:04"), tuple[2])
 	}
 }
