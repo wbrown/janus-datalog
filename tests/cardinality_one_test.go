@@ -23,12 +23,12 @@ type EntityWithLore struct {
 // when using tx.Add vs SaveStruct for updates.
 //
 // Key findings:
-// 1. tx.Add is a low-level primitive that just adds a datom - it does NOT
-//    automatically retract existing values for cardinality-one attributes
-// 2. SaveStruct properly handles cardinality-one upserts (retracts old, adds new)
-// 3. If an entity is created with SaveStruct and has empty string fields,
-//    those empty strings ARE persisted to the database
-// 4. Later using tx.Add to update that field will result in MULTIPLE values
+//  1. tx.Add is a low-level primitive that just adds a datom - it does NOT
+//     automatically retract existing values for cardinality-one attributes
+//  2. SaveStruct properly handles cardinality-one upserts (retracts old, adds new)
+//  3. If an entity is created with SaveStruct and has empty string fields,
+//     those empty strings ARE persisted to the database
+//  4. Later using tx.Add to update that field will result in MULTIPLE values
 //
 // Correct pattern for updates: Load entity → modify fields → SaveStruct
 // Incorrect pattern: tx.Add directly on existing entities

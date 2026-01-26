@@ -434,6 +434,28 @@ func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...inte
 	return relationToSlice(result), nil
 }
 
+// ExecuteQueryRelation executes a query and returns the Relation directly.
+// This preserves column names (via Symbols()) which are lost in ExecuteQuery.
+func (d *Database) ExecuteQueryRelation(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
+	q, err := resolveQuery(queryInput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve query: %w", err)
+	}
+
+	inputRelations, err := d.convertInputsToRelations(q, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	exec := d.NewExecutor()
+	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	return result, nil
+}
+
 // Explain returns the query plan for a query without executing it.
 // The query can be either an EDN string or a *query.Query from the query builder.
 // This is useful for understanding index selection, phase structure, and
