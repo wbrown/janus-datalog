@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestStreamingPerformanceDemo demonstrates the performance impact of streaming
@@ -96,7 +98,7 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 	for i := 0; i < size; i++ {
 		tuples = append(tuples, Tuple{i, fmt.Sprintf("name%d", i), i * 10, i * 100})
 	}
-	columns := []query.Symbol{"?id", "?name", "?score", "?value"}
+	columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?value")}
 
 	// Create initial relation with options
 	source := newMockIterator(tuples)
@@ -123,7 +125,7 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 
 		case "project":
 			// Project to subset of columns
-			projected, err := current.Project([]query.Symbol{"?id", "?score"})
+			projected, err := current.Project([]query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?score")})
 			assert.NoError(t, err)
 			current = projected
 
@@ -136,8 +138,8 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 				}
 			}
 			joinIter := newMockIterator(joinTuples)
-			joinRel := NewStreamingRelation([]query.Symbol{"?id", "?city"}, joinIter)
-			current = HashJoin(current, joinRel, []query.Symbol{"?id"})
+			joinRel := NewStreamingRelation([]query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?city")}, joinIter)
+			current = HashJoin(current, joinRel, []query.Symbol{datalog.NewSymbol("?id")})
 		}
 	}
 
@@ -202,7 +204,7 @@ func benchmarkScenarioWithOpts(b *testing.B, size int, filterRatio float64, opts
 	for i := 0; i < size; i++ {
 		tuples = append(tuples, Tuple{i, i * 10, i * 100})
 	}
-	columns := []query.Symbol{"?x", "?y", "?z"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 	source := newMockIterator(tuples)
 	rel := NewStreamingRelationWithOptions(columns, source, opts)
@@ -214,7 +216,7 @@ func benchmarkScenarioWithOpts(b *testing.B, size int, filterRatio float64, opts
 	}))
 
 	// Project
-	projected, _ := filtered.Project([]query.Symbol{"?x", "?z"})
+	projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")})
 
 	// Consume
 	it := projected.Iterator()

@@ -68,7 +68,7 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 	// Patterns for testing
 	symbolPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
 			query.Constant{Value: symbolEntity},
 		},
@@ -76,9 +76,9 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 
 	timePattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/time")},
-			query.Variable{Name: query.Symbol("?t")},
+			query.Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 
@@ -107,7 +107,7 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 				tuple := it.Tuple()
 				// Find the time value
 				for i, col := range timeRel.Columns() {
-					if col == "?t" {
+					if col == datalog.NewSymbol("?t") {
 						if t, ok := tuple[i].(time.Time); ok {
 							if t.Day() == 5 {
 								count++
@@ -190,7 +190,7 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 				for it.Next() {
 					tuple := it.Tuple()
 					for i, col := range timeRel.Columns() {
-						if col == "?t" {
+						if col == datalog.NewSymbol("?t") {
 							if t, ok := tuple[i].(time.Time); ok {
 								if t.Day() == 5 {
 									count++
@@ -273,7 +273,7 @@ func BenchmarkPredicatePushdownAllocs(b *testing.B) {
 
 	symbolPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
 			query.Constant{Value: symbolEntity},
 		},
@@ -281,9 +281,9 @@ func BenchmarkPredicatePushdownAllocs(b *testing.B) {
 
 	timePattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/time")},
-			query.Variable{Name: query.Symbol("?t")},
+			query.Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 
@@ -301,7 +301,7 @@ func BenchmarkPredicatePushdownAllocs(b *testing.B) {
 			for it.Next() {
 				tuple := it.Tuple()
 				for i, col := range timeRel.Columns() {
-					if col == "?t" {
+					if col == datalog.NewSymbol("?t") {
 						if t, ok := tuple[i].(time.Time); ok {
 							_ = t.Day() == 5
 						}

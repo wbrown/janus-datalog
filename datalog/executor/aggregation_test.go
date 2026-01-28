@@ -5,11 +5,13 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestExecuteAggregations(t *testing.T) {
 	// Create test data
-	columns := []query.Symbol{"?name", "?age", "?score"}
+	columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?score")}
 	tuples := []Tuple{
 		{"Alice", int64(30), 85.5},
 		{"Bob", int64(25), 92.0},
@@ -28,10 +30,10 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "no aggregates - just projection",
 			findElements: []query.FindElement{
-				query.FindVariable{Symbol: "?name"},
-				query.FindVariable{Symbol: "?age"},
+				query.FindVariable{Symbol: datalog.NewSymbol("?name")},
+				query.FindVariable{Symbol: datalog.NewSymbol("?age")},
 			},
-			expectedCols: []query.Symbol{"?name", "?age"},
+			expectedCols: []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age")},
 			expectedRows: 4,
 			validate: func(t *testing.T, result Relation) {
 				// Should have all 4 rows with just name and age
@@ -43,9 +45,9 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "single aggregation - count",
 			findElements: []query.FindElement{
-				query.FindAggregate{Function: "count", Arg: "?name"},
+				query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?name")},
 			},
-			expectedCols: []query.Symbol{"(count ?name)"},
+			expectedCols: []query.Symbol{datalog.NewSymbol("(count ?name)")},
 			expectedRows: 1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
@@ -61,9 +63,9 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "single aggregation - avg",
 			findElements: []query.FindElement{
-				query.FindAggregate{Function: "avg", Arg: "?age"},
+				query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?age")},
 			},
-			expectedCols: []query.Symbol{"(avg ?age)"},
+			expectedCols: []query.Symbol{datalog.NewSymbol("(avg ?age)")},
 			expectedRows: 1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
@@ -79,9 +81,9 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "single aggregation - max",
 			findElements: []query.FindElement{
-				query.FindAggregate{Function: "max", Arg: "?score"},
+				query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?score")},
 			},
-			expectedCols: []query.Symbol{"(max ?score)"},
+			expectedCols: []query.Symbol{datalog.NewSymbol("(max ?score)")},
 			expectedRows: 1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
@@ -97,11 +99,11 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "grouped aggregation - age groups",
 			findElements: []query.FindElement{
-				query.FindVariable{Symbol: "?age"},
-				query.FindAggregate{Function: "count", Arg: "?name"},
-				query.FindAggregate{Function: "avg", Arg: "?score"},
+				query.FindVariable{Symbol: datalog.NewSymbol("?age")},
+				query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?name")},
+				query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?score")},
 			},
-			expectedCols: []query.Symbol{"?age", "(count ?name)", "(avg ?score)"},
+			expectedCols: []query.Symbol{datalog.NewSymbol("?age"), datalog.NewSymbol("(count ?name)"), datalog.NewSymbol("(avg ?score)")},
 			expectedRows: 3, // 3 unique ages: 25, 30, 35
 			validate: func(t *testing.T, result Relation) {
 				// Find the row for age 25 (should have count=2, avg=90)
@@ -128,11 +130,11 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "multiple aggregates",
 			findElements: []query.FindElement{
-				query.FindAggregate{Function: "min", Arg: "?age"},
-				query.FindAggregate{Function: "max", Arg: "?age"},
-				query.FindAggregate{Function: "sum", Arg: "?score"},
+				query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?age")},
+				query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?age")},
+				query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?score")},
 			},
-			expectedCols: []query.Symbol{"(min ?age)", "(max ?age)", "(sum ?score)"},
+			expectedCols: []query.Symbol{datalog.NewSymbol("(min ?age)"), datalog.NewSymbol("(max ?age)"), datalog.NewSymbol("(sum ?score)")},
 			expectedRows: 1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
@@ -176,7 +178,7 @@ func TestExecuteAggregations(t *testing.T) {
 }
 
 func TestProjectColumns(t *testing.T) {
-	columns := []query.Symbol{"?a", "?b", "?c", "?d"}
+	columns := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")}
 	tuples := []Tuple{
 		{1, 2, 3, 4},
 		{5, 6, 7, 8},
@@ -192,8 +194,8 @@ func TestProjectColumns(t *testing.T) {
 	}{
 		{
 			name:         "project subset",
-			projectCols:  []query.Symbol{"?a", "?c"},
-			expectedCols: []query.Symbol{"?a", "?c"},
+			projectCols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?c")},
+			expectedCols: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?c")},
 			expectedVals: [][]interface{}{
 				{1, 3},
 				{5, 7},
@@ -202,8 +204,8 @@ func TestProjectColumns(t *testing.T) {
 		},
 		{
 			name:         "project reordered",
-			projectCols:  []query.Symbol{"?d", "?b"},
-			expectedCols: []query.Symbol{"?d", "?b"},
+			projectCols:  []query.Symbol{datalog.NewSymbol("?d"), datalog.NewSymbol("?b")},
+			expectedCols: []query.Symbol{datalog.NewSymbol("?d"), datalog.NewSymbol("?b")},
 			expectedVals: [][]interface{}{
 				{4, 2},
 				{8, 6},
@@ -212,8 +214,8 @@ func TestProjectColumns(t *testing.T) {
 		},
 		{
 			name:         "project all",
-			projectCols:  []query.Symbol{"?a", "?b", "?c", "?d"},
-			expectedCols: []query.Symbol{"?a", "?b", "?c", "?d"},
+			projectCols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")},
+			expectedCols: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")},
 			expectedVals: [][]interface{}{
 				{1, 2, 3, 4},
 				{5, 6, 7, 8},
@@ -274,7 +276,7 @@ func TestAggregationWithTimeValues(t *testing.T) {
 	date2 := time.Date(2023, 6, 10, 0, 0, 0, 0, time.UTC)
 	date3 := time.Date(2023, 3, 20, 0, 0, 0, 0, time.UTC)
 
-	columns := []query.Symbol{"?name", "?date"}
+	columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?date")}
 	tuples := []Tuple{
 		{"Alice", date1},
 		{"Bob", date2},
@@ -284,8 +286,8 @@ func TestAggregationWithTimeValues(t *testing.T) {
 
 	// Test min/max with dates
 	result := ExecuteAggregations(rel, []query.FindElement{
-		query.FindAggregate{Function: "min", Arg: "?date"},
-		query.FindAggregate{Function: "max", Arg: "?date"},
+		query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?date")},
+		query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?date")},
 	})
 
 	if result.Size() != 1 {
@@ -329,12 +331,12 @@ func TestStringifyValue(t *testing.T) {
 func TestEmptyRelationAggregation(t *testing.T) {
 	// Test aggregation on empty relation
 	// Following relational theory (C.J. Date): empty input → empty output (no NULL)
-	emptyRel := NewMaterializedRelation([]query.Symbol{"?x"}, []Tuple{})
+	emptyRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{})
 
 	// Following pure relational theory, aggregates on empty relations return empty results
 	// This is consistent with Datomic philosophy: attributes exist or don't exist, no NULL placeholders
 	result := ExecuteAggregations(emptyRel, []query.FindElement{
-		query.FindAggregate{Function: "count", Arg: "?x"},
+		query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?x")},
 	})
 
 	if result.Size() != 0 {
@@ -343,10 +345,10 @@ func TestEmptyRelationAggregation(t *testing.T) {
 
 	// Other aggregates on empty also return empty results
 	result = ExecuteAggregations(emptyRel, []query.FindElement{
-		query.FindAggregate{Function: "sum", Arg: "?x"},
-		query.FindAggregate{Function: "avg", Arg: "?x"},
-		query.FindAggregate{Function: "min", Arg: "?x"},
-		query.FindAggregate{Function: "max", Arg: "?x"},
+		query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?x")},
 	})
 
 	if result.Size() != 0 {

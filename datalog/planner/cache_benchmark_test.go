@@ -60,12 +60,12 @@ func BenchmarkPlannerCacheMissOverhead(b *testing.B) {
 		// Create a unique query each time to force cache miss
 		q := &query.Query{
 			Find: []query.FindElement{
-				query.FindVariable{Symbol: query.Symbol("?e")},
+				query.FindVariable{Symbol: datalog.NewSymbol("?e")},
 			},
 			Where: []query.Clause{
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: query.Symbol("?e")},
+						query.Variable{Name: datalog.NewSymbol("?e")},
 						query.Constant{Value: datalog.NewKeyword(":test/id")},
 						query.Constant{Value: int64(i)}, // Different value each time
 					},
@@ -84,59 +84,59 @@ func BenchmarkPlannerCacheMissOverhead(b *testing.B) {
 func createComplexQuery() *query.Query {
 	return &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: query.Symbol("?p")},
-			query.FindVariable{Symbol: query.Symbol("?name")},
-			query.FindVariable{Symbol: query.Symbol("?age")},
-			query.FindVariable{Symbol: query.Symbol("?city")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?p")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?age")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?city")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?p")},
+					query.Variable{Name: datalog.NewSymbol("?p")},
 					query.Constant{Value: datalog.NewKeyword(":person/name")},
-					query.Variable{Name: query.Symbol("?name")},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?p")},
+					query.Variable{Name: datalog.NewSymbol("?p")},
 					query.Constant{Value: datalog.NewKeyword(":person/age")},
-					query.Variable{Name: query.Symbol("?age")},
+					query.Variable{Name: datalog.NewSymbol("?age")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?p")},
+					query.Variable{Name: datalog.NewSymbol("?p")},
 					query.Constant{Value: datalog.NewKeyword(":person/address")},
-					query.Variable{Name: query.Symbol("?addr")},
+					query.Variable{Name: datalog.NewSymbol("?addr")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?addr")},
+					query.Variable{Name: datalog.NewSymbol("?addr")},
 					query.Constant{Value: datalog.NewKeyword(":address/city")},
-					query.Variable{Name: query.Symbol("?city")},
+					query.Variable{Name: datalog.NewSymbol("?city")},
 				},
 			},
 			// Add some predicates
 			&query.Comparison{
 				Op:    query.OpGT,
-				Left:  query.VariableTerm{Symbol: query.Symbol("?age")},
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 				Right: query.ConstantTerm{Value: int64(18)},
 			},
 			&query.Comparison{
 				Op:    query.OpNE,
-				Left:  query.VariableTerm{Symbol: query.Symbol("?city")},
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?city")},
 				Right: query.ConstantTerm{Value: "Unknown"},
 			},
 			// Add an expression
 			&query.Expression{
 				Function: query.ArithmeticFunction{
 					Op:    query.OpAdd,
-					Left:  query.VariableTerm{Symbol: query.Symbol("?age")},
+					Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 					Right: query.ConstantTerm{Value: int64(10)},
 				},
-				Binding: query.Symbol("?future_age"),
+				Binding: datalog.NewSymbol("?future_age"),
 			},
 		},
 	}

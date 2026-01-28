@@ -62,15 +62,15 @@ func TestAEVTMatcherBug(t *testing.T) {
 	// This is the problematic pattern when ?e is bound
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":person/age")},
-			query.Variable{Name: "?age"},
+			query.Variable{Name: datalog.NewSymbol("?age")},
 		},
 	}
 
 	// Create binding relation with 3 entities
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e"},
+		[]query.Symbol{datalog.NewSymbol("?e")},
 		[]executor.Tuple{
 			{entities[0]},
 			{entities[5]},

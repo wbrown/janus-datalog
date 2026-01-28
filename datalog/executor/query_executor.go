@@ -366,7 +366,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			return []Relation{NewMaterializedRelationWithOptions(columns, []Tuple{tuple}, e.options)}, nil
 
 		case query.Symbol:
-			if binding == "" {
+			if binding == nil {
 				return groups, nil
 			}
 			columns := []query.Symbol{binding}
@@ -425,7 +425,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				}
 				bindingValues = values
 			case query.Symbol:
-				if binding != "" {
+				if binding != nil {
 					bindingCols = []query.Symbol{binding}
 					bindingValues = []interface{}{result}
 				}
@@ -561,7 +561,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			inputSymbols = append(inputSymbols, inp.Name)
 		case query.Constant:
 			// Check if it's a source marker
-			if sym, ok := inp.Value.(query.Symbol); ok && IsSourceSymbol(sym) {
+			if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
 				inputSymbols = append(inputSymbols, sym)
 			}
 			// Other constants don't need extraction
@@ -1432,7 +1432,7 @@ func collectOrBranchRequiredSymbols(clause *query.OrClause) []query.Symbol {
 			case *query.Expression:
 				switch b := clause.Binding.(type) {
 				case query.Symbol:
-					if b != "" {
+					if b != nil {
 						branchProvides[b] = true
 					}
 				case query.TupleBinding:

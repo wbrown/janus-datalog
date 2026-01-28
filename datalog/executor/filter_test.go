@@ -19,66 +19,66 @@ func TestComparisonFilter(t *testing.T) {
 			name: "less than integer - true",
 			filter: ComparisonFilter{
 				Function: "<",
-				Symbol:   "?age",
+				Symbol:   datalog.NewSymbol("?age"),
 				Value:    int64(30),
 			},
 			tuple:    Tuple{int64(25)},
-			columns:  []query.Symbol{"?age"},
+			columns:  []query.Symbol{datalog.NewSymbol("?age")},
 			expected: true,
 		},
 		{
 			name: "less than integer - false",
 			filter: ComparisonFilter{
 				Function: "<",
-				Symbol:   "?age",
+				Symbol:   datalog.NewSymbol("?age"),
 				Value:    int64(30),
 			},
 			tuple:    Tuple{int64(35)},
-			columns:  []query.Symbol{"?age"},
+			columns:  []query.Symbol{datalog.NewSymbol("?age")},
 			expected: false,
 		},
 		{
 			name: "equals string",
 			filter: ComparisonFilter{
 				Function: "=",
-				Symbol:   "?name",
+				Symbol:   datalog.NewSymbol("?name"),
 				Value:    "Alice",
 			},
 			tuple:    Tuple{"Alice"},
-			columns:  []query.Symbol{"?name"},
+			columns:  []query.Symbol{datalog.NewSymbol("?name")},
 			expected: true,
 		},
 		{
 			name: "not equals string",
 			filter: ComparisonFilter{
 				Function: "!=",
-				Symbol:   "?name",
+				Symbol:   datalog.NewSymbol("?name"),
 				Value:    "Alice",
 			},
 			tuple:    Tuple{"Bob"},
-			columns:  []query.Symbol{"?name"},
+			columns:  []query.Symbol{datalog.NewSymbol("?name")},
 			expected: true,
 		},
 		{
 			name: "symbol not in columns",
 			filter: ComparisonFilter{
 				Function: "<",
-				Symbol:   "?missing",
+				Symbol:   datalog.NewSymbol("?missing"),
 				Value:    int64(30),
 			},
 			tuple:    Tuple{int64(25)},
-			columns:  []query.Symbol{"?age"},
+			columns:  []query.Symbol{datalog.NewSymbol("?age")},
 			expected: false,
 		},
 		{
 			name: "multiple columns",
 			filter: ComparisonFilter{
 				Function: ">=",
-				Symbol:   "?score",
+				Symbol:   datalog.NewSymbol("?score"),
 				Value:    3.5,
 			},
 			tuple:    Tuple{"Alice", 4.0},
-			columns:  []query.Symbol{"?name", "?score"},
+			columns:  []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score")},
 			expected: true,
 		},
 	}
@@ -105,55 +105,55 @@ func TestBinaryFilterEvaluate(t *testing.T) {
 			name: "less than - true",
 			filter: BinaryFilter{
 				Function: "<",
-				Left:     "?x",
-				Right:    "?y",
+				Left:     datalog.NewSymbol("?x"),
+				Right:    datalog.NewSymbol("?y"),
 			},
 			tuple:    Tuple{int64(10), int64(20)},
-			columns:  []query.Symbol{"?x", "?y"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: true,
 		},
 		{
 			name: "greater than - false",
 			filter: BinaryFilter{
 				Function: ">",
-				Left:     "?x",
-				Right:    "?y",
+				Left:     datalog.NewSymbol("?x"),
+				Right:    datalog.NewSymbol("?y"),
 			},
 			tuple:    Tuple{int64(10), int64(20)},
-			columns:  []query.Symbol{"?x", "?y"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: false,
 		},
 		{
 			name: "equals - true",
 			filter: BinaryFilter{
 				Function: "=",
-				Left:     "?a",
-				Right:    "?b",
+				Left:     datalog.NewSymbol("?a"),
+				Right:    datalog.NewSymbol("?b"),
 			},
 			tuple:    Tuple{"test", "test"},
-			columns:  []query.Symbol{"?a", "?b"},
+			columns:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 			expected: true,
 		},
 		{
 			name: "mixed types",
 			filter: BinaryFilter{
 				Function: "<",
-				Left:     "?x",
-				Right:    "?y",
+				Left:     datalog.NewSymbol("?x"),
+				Right:    datalog.NewSymbol("?y"),
 			},
 			tuple:    Tuple{int64(10), 20.5},
-			columns:  []query.Symbol{"?x", "?y"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: true,
 		},
 		{
 			name: "missing left symbol",
 			filter: BinaryFilter{
 				Function: "<",
-				Left:     "?missing",
-				Right:    "?y",
+				Left:     datalog.NewSymbol("?missing"),
+				Right:    datalog.NewSymbol("?y"),
 			},
 			tuple:    Tuple{int64(10)},
-			columns:  []query.Symbol{"?x"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x")},
 			expected: false,
 		},
 	}
@@ -171,7 +171,7 @@ func TestBinaryFilterEvaluate(t *testing.T) {
 func TestFilterRelation(t *testing.T) {
 	// Create a test relation
 	rel := NewMaterializedRelation(
-		[]query.Symbol{"?person", "?age", "?city"},
+		[]query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?age"), datalog.NewSymbol("?city")},
 		[]Tuple{
 			{"Alice", int64(30), "NYC"},
 			{"Bob", int64(25), "SF"},
@@ -184,7 +184,7 @@ func TestFilterRelation(t *testing.T) {
 	// Test with comparison filter
 	ageFilter := ComparisonFilter{
 		Function: "<",
-		Symbol:   "?age",
+		Symbol:   datalog.NewSymbol("?age"),
 		Value:    int64(30),
 	}
 
@@ -198,7 +198,7 @@ func TestFilterRelation(t *testing.T) {
 	// Test with missing symbol
 	missingFilter := ComparisonFilter{
 		Function: "=",
-		Symbol:   "?missing",
+		Symbol:   datalog.NewSymbol("?missing"),
 		Value:    "test",
 	}
 
@@ -259,24 +259,24 @@ func TestRequiredSymbols(t *testing.T) {
 	// Test ComparisonFilter
 	cf := ComparisonFilter{
 		Function: "<",
-		Symbol:   "?age",
+		Symbol:   datalog.NewSymbol("?age"),
 		Value:    30,
 	}
 
 	cfSyms := cf.RequiredSymbols()
-	if len(cfSyms) != 1 || cfSyms[0] != "?age" {
+	if len(cfSyms) != 1 || cfSyms[0] != datalog.NewSymbol("?age") {
 		t.Errorf("ComparisonFilter.RequiredSymbols() = %v, want [?age]", cfSyms)
 	}
 
 	// Test BinaryFilter
 	bf := BinaryFilter{
 		Function: ">",
-		Left:     "?x",
-		Right:    "?y",
+		Left:     datalog.NewSymbol("?x"),
+		Right:    datalog.NewSymbol("?y"),
 	}
 
 	bfSyms := bf.RequiredSymbols()
-	if len(bfSyms) != 2 || bfSyms[0] != "?x" || bfSyms[1] != "?y" {
+	if len(bfSyms) != 2 || bfSyms[0] != datalog.NewSymbol("?x") || bfSyms[1] != datalog.NewSymbol("?y") {
 		t.Errorf("BinaryFilter.RequiredSymbols() = %v, want [?x ?y]", bfSyms)
 	}
 }

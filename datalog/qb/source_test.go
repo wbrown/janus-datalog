@@ -3,12 +3,13 @@ package qb
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 func TestSource(t *testing.T) {
 	users := Source("$users")
-	if users.Symbol() != query.Symbol("$users") {
+	if users.Symbol() != datalog.NewSymbol("$users") {
 		t.Errorf("expected Symbol $users, got %s", users.Symbol())
 	}
 
@@ -17,7 +18,7 @@ func TestSource(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected DatabaseInput, got %T", spec)
 	}
-	if db.Name != query.Symbol("$users") {
+	if db.Name != datalog.NewSymbol("$users") {
 		t.Errorf("expected Name $users, got %s", db.Name)
 	}
 }
@@ -40,7 +41,7 @@ func TestSourceInQuery(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected DatabaseInput, got %T", q.In[0])
 	}
-	if db.Name != query.Symbol("$users") {
+	if db.Name != datalog.NewSymbol("$users") {
 		t.Errorf("expected Name $users, got %s", db.Name)
 	}
 }
@@ -57,7 +58,7 @@ func TestPatFrom(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *query.DataPattern, got %T", clause)
 	}
-	if pat.Source != query.Symbol("$users") {
+	if pat.Source != datalog.NewSymbol("$users") {
 		t.Errorf("expected Source $users, got %s", pat.Source)
 	}
 	if len(pat.Elements) != 3 {
@@ -89,7 +90,7 @@ func TestPatFromInQuery(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected DatabaseInput for first input, got %T", q.In[0])
 	}
-	if db1.Name != query.Symbol("$users") {
+	if db1.Name != datalog.NewSymbol("$users") {
 		t.Errorf("expected $users, got %s", db1.Name)
 	}
 
@@ -97,7 +98,7 @@ func TestPatFromInQuery(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected DatabaseInput for second input, got %T", q.In[1])
 	}
-	if db2.Name != query.Symbol("$perms") {
+	if db2.Name != datalog.NewSymbol("$perms") {
 		t.Errorf("expected $perms, got %s", db2.Name)
 	}
 
@@ -109,7 +110,7 @@ func TestPatFromInQuery(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *query.DataPattern for first clause, got %T", q.Where[0])
 	}
-	if pat1.Source != query.Symbol("$users") {
+	if pat1.Source != datalog.NewSymbol("$users") {
 		t.Errorf("expected $users source, got %s", pat1.Source)
 	}
 
@@ -117,7 +118,7 @@ func TestPatFromInQuery(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *query.DataPattern for second clause, got %T", q.Where[1])
 	}
-	if pat2.Source != query.Symbol("$perms") {
+	if pat2.Source != datalog.NewSymbol("$perms") {
 		t.Errorf("expected $perms source, got %s", pat2.Source)
 	}
 }
@@ -132,8 +133,8 @@ func TestPatWithoutSource(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *query.DataPattern, got %T", clause)
 	}
-	if pat.Source != "" {
-		t.Errorf("expected empty Source for plain Pat, got %s", pat.Source)
+	if pat.Source != nil {
+		t.Errorf("expected nil Source for plain Pat, got %s", pat.Source)
 	}
 }
 
@@ -161,7 +162,7 @@ func TestSourceWithDBAndNamedSources(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected DatabaseInput for DB, got %T", q.In[0])
 	}
-	if db1.Name != query.Symbol("$") {
+	if db1.Name != datalog.NewSymbol("$") {
 		t.Errorf("expected $, got %s", db1.Name)
 	}
 
@@ -170,7 +171,7 @@ func TestSourceWithDBAndNamedSources(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected DatabaseInput for $cache, got %T", q.In[1])
 	}
-	if db2.Name != query.Symbol("$cache") {
+	if db2.Name != datalog.NewSymbol("$cache") {
 		t.Errorf("expected $cache, got %s", db2.Name)
 	}
 
@@ -179,8 +180,8 @@ func TestSourceWithDBAndNamedSources(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *query.DataPattern, got %T", q.Where[0])
 	}
-	if pat1.Source != "" {
-		t.Errorf("expected empty source for default pattern, got %s", pat1.Source)
+	if pat1.Source != nil {
+		t.Errorf("expected nil source for default pattern, got %s", pat1.Source)
 	}
 
 	// Second where clause has $cache source
@@ -188,7 +189,7 @@ func TestSourceWithDBAndNamedSources(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *query.DataPattern, got %T", q.Where[1])
 	}
-	if pat2.Source != query.Symbol("$cache") {
+	if pat2.Source != datalog.NewSymbol("$cache") {
 		t.Errorf("expected $cache source, got %s", pat2.Source)
 	}
 }
@@ -223,7 +224,7 @@ func TestSubqueryWithNamedSource(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Constant for source input, got %T", sq.Inputs[0])
 	}
-	if firstInput.Value != query.Symbol("$users") {
+	if firstInput.Value != datalog.NewSymbol("$users") {
 		t.Errorf("expected $users source input, got %v", firstInput.Value)
 	}
 }

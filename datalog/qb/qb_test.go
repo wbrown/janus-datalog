@@ -22,7 +22,7 @@ func TestNewVar(t *testing.T) {
 
 	// Symbol should be ?v1
 	sym1 := v1.Symbol()
-	if sym1 != "?v1" {
+	if sym1 != datalog.NewSymbol("?v1") {
 		t.Errorf("Symbol should be ?v1, got %s", sym1)
 	}
 }
@@ -1478,7 +1478,7 @@ func TestQueryForBasic(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected FindVariable, got %T", built.Find[0])
 	}
-	if fv0.Symbol != "?name" {
+	if fv0.Symbol != datalog.NewSymbol("?name") {
 		t.Errorf("Expected ?name, got %s", fv0.Symbol)
 	}
 
@@ -1486,7 +1486,7 @@ func TestQueryForBasic(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected FindVariable, got %T", built.Find[1])
 	}
-	if fv1.Symbol != "?age" {
+	if fv1.Symbol != datalog.NewSymbol("?age") {
 		t.Errorf("Expected ?age, got %s", fv1.Symbol)
 	}
 }
@@ -1520,7 +1520,7 @@ func TestQueryForVvsFind(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected FindVariable, got %T", built.Find[0])
 	}
-	if fv.Symbol != "?name" {
+	if fv.Symbol != datalog.NewSymbol("?name") {
 		t.Errorf("Expected ?name, got %s", fv.Symbol)
 	}
 }
@@ -1590,7 +1590,7 @@ func TestQueryForFindOrder(t *testing.T) {
 		if !ok {
 			t.Fatalf("Expected FindVariable at %d, got %T", i, built.Find[i])
 		}
-		if string(fv.Symbol) != exp {
+		if fv.Symbol.String() != exp {
 			t.Errorf("Find[%d]: expected %s, got %s", i, exp, fv.Symbol)
 		}
 	}
@@ -1611,10 +1611,10 @@ func TestQueryForIgnoresAggregateTag(t *testing.T) {
 	dept := q.V(&f.Dept)
 	salary := q.V(&f.Salary)
 
-	if dept.Symbol() != "?dept" {
+	if dept.Symbol() != datalog.NewSymbol("?dept") {
 		t.Errorf("Expected ?dept, got %s", dept.Symbol())
 	}
-	if salary.Symbol() != "?salary" {
+	if salary.Symbol() != datalog.NewSymbol("?salary") {
 		t.Errorf("Expected ?salary, got %s", salary.Symbol())
 	}
 

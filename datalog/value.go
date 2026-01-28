@@ -18,6 +18,7 @@ type Value interface{}
 // - []byte
 // - Identity (for references to other entities)
 // - Keyword (when used as a value, e.g., storing :status/active)
+// - Symbol (when used as a value, e.g., storing function references or rule names)
 
 // Reference is an alias for Identity when used as a value
 // This makes it clear when we're storing an entity reference
@@ -32,3 +33,4 @@ func Time(t time.Time) Value       { return t }
 func Bytes(b []byte) Value         { return b }
 func Ref(id Identity) Value        { return Reference(id) }
 func KeywordValue(k Keyword) Value { return k }
+func SymbolValue(s Symbol) Value   { return s }

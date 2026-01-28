@@ -4,10 +4,12 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestMaterializedRelation(t *testing.T) {
-	columns := []query.Symbol{"?name", "?age", "?city"}
+	columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?city")}
 	tuples := []Tuple{
 		{"Alice", 30, "NYC"},
 		{"Bob", 25, "LA"},
@@ -27,7 +29,7 @@ func TestMaterializedRelation(t *testing.T) {
 
 	// Test columns
 	cols := rel.Columns()
-	if len(cols) != 3 || cols[0] != "?name" || cols[1] != "?age" || cols[2] != "?city" {
+	if len(cols) != 3 || cols[0] != datalog.NewSymbol("?name") || cols[1] != datalog.NewSymbol("?age") || cols[2] != datalog.NewSymbol("?city") {
 		t.Errorf("unexpected columns: %v", cols)
 	}
 
@@ -50,7 +52,7 @@ func TestMaterializedRelation(t *testing.T) {
 }
 
 func TestEmptyRelation(t *testing.T) {
-	columns := []query.Symbol{"?x", "?y"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	rel := NewMaterializedRelation(columns, nil)
 
 	if !rel.IsEmpty() {
@@ -68,17 +70,17 @@ func TestEmptyRelation(t *testing.T) {
 }
 
 func TestColumnIndex(t *testing.T) {
-	columns := []query.Symbol{"?a", "?b", "?c"}
+	columns := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
 	rel := NewMaterializedRelation(columns, nil)
 
 	tests := []struct {
 		symbol   query.Symbol
 		expected int
 	}{
-		{"?a", 0},
-		{"?b", 1},
-		{"?c", 2},
-		{"?d", -1}, // not found
+		{datalog.NewSymbol("?a"), 0},
+		{datalog.NewSymbol("?b"), 1},
+		{datalog.NewSymbol("?c"), 2},
+		{datalog.NewSymbol("?d"), -1}, // not found
 	}
 
 	for _, tt := range tests {
@@ -90,8 +92,8 @@ func TestColumnIndex(t *testing.T) {
 }
 
 func TestCommonColumns(t *testing.T) {
-	rel1 := NewMaterializedRelation([]query.Symbol{"?a", "?b", "?c"}, nil)
-	rel2 := NewMaterializedRelation([]query.Symbol{"?b", "?c", "?d"}, nil)
+	rel1 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}, nil)
+	rel2 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")}, nil)
 
 	common := CommonColumns(rel1, rel2)
 
@@ -105,13 +107,13 @@ func TestCommonColumns(t *testing.T) {
 		commonSet[col] = true
 	}
 
-	if !commonSet["?b"] || !commonSet["?c"] {
+	if !commonSet[datalog.NewSymbol("?b")] || !commonSet[datalog.NewSymbol("?c")] {
 		t.Errorf("expected ?b and ?c in common columns, got %v", common)
 	}
 }
 
 func TestProject(t *testing.T) {
-	columns := []query.Symbol{"?name", "?age", "?city"}
+	columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?city")}
 	tuples := []Tuple{
 		{"Alice", 30, "NYC"},
 		{"Bob", 25, "LA"},
@@ -120,14 +122,14 @@ func TestProject(t *testing.T) {
 	rel := NewMaterializedRelation(columns, tuples)
 
 	// Project to subset of columns using method
-	projected, err := rel.Project([]query.Symbol{"?name", "?city"})
+	projected, err := rel.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")})
 	if err != nil {
 		t.Fatalf("Project failed: %v", err)
 	}
 
 	// Check columns
 	projCols := projected.Columns()
-	if len(projCols) != 2 || projCols[0] != "?name" || projCols[1] != "?city" {
+	if len(projCols) != 2 || projCols[0] != datalog.NewSymbol("?name") || projCols[1] != datalog.NewSymbol("?city") {
 		t.Errorf("unexpected projected columns: %v", projCols)
 	}
 
@@ -153,14 +155,14 @@ func TestProject(t *testing.T) {
 	}
 
 	// Test projecting non-existent column using method
-	_, err = rel.Project([]query.Symbol{"?nonexistent"})
+	_, err = rel.Project([]query.Symbol{datalog.NewSymbol("?nonexistent")})
 	if err == nil {
 		t.Fatal("Expected error when projecting non-existent column")
 	}
 }
 
 func TestSelect(t *testing.T) {
-	columns := []query.Symbol{"?name", "?age", "?city"}
+	columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?city")}
 	tuples := []Tuple{
 		{"Alice", 30, "NYC"},
 		{"Bob", 25, "LA"},
@@ -209,7 +211,7 @@ func TestStreamingRelation(t *testing.T) {
 	}
 
 	it := &sliceIterator{tuples: tuples, pos: -1}
-	columns := []query.Symbol{"?letter", "?number"}
+	columns := []query.Symbol{datalog.NewSymbol("?letter"), datalog.NewSymbol("?number")}
 
 	rel := NewStreamingRelation(columns, it)
 

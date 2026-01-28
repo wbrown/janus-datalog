@@ -29,7 +29,7 @@ func (b *SubqueryBatcher) BuildBatchedInput(
 		// Filter source markers from columns
 		var columns []query.Symbol
 		for _, sym := range inputSymbols {
-			if !IsSourceSymbol(sym) {
+			if !sym.IsSource() {
 				columns = append(columns, sym)
 			}
 		}
@@ -39,7 +39,7 @@ func (b *SubqueryBatcher) BuildBatchedInput(
 	// Filter to only the symbols we're passing (exclude source markers)
 	var columns []query.Symbol
 	for _, sym := range inputSymbols {
-		if !IsSourceSymbol(sym) {
+		if !sym.IsSource() {
 			columns = append(columns, sym)
 		}
 	}

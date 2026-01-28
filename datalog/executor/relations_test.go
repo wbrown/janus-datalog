@@ -5,20 +5,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestRelationsProject(t *testing.T) {
 	// Create test relations
 	r1 := NewMaterializedRelation(
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{{1, 2}, {3, 4}},
 	)
 	r2 := NewMaterializedRelation(
-		[]query.Symbol{"?x", "?y", "?z"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
 		[]Tuple{{1, 2, 3}, {4, 5, 6}},
 	)
 	r3 := NewMaterializedRelation(
-		[]query.Symbol{"?a", "?b"},
+		[]query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 		[]Tuple{{7, 8}},
 	)
 
@@ -31,22 +33,22 @@ func TestRelationsProject(t *testing.T) {
 	}{
 		{
 			name:     "exact match prefers fewer columns",
-			symbols:  []query.Symbol{"?x", "?y"},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: r1, // r1 has exactly these columns, r2 has extra
 		},
 		{
 			name:     "requires all symbols",
-			symbols:  []query.Symbol{"?x", "?z"},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")},
 			expected: r2, // only r2 has both ?x and ?z
 		},
 		{
 			name:     "no match returns nil",
-			symbols:  []query.Symbol{"?x", "?b"},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?b")},
 			expected: nil, // no single relation has both
 		},
 		{
 			name:     "single symbol matches smallest relation",
-			symbols:  []query.Symbol{"?x"},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x")},
 			expected: r1, // both r1 and r2 have ?x, but r1 has fewer columns
 		},
 	}
@@ -62,19 +64,19 @@ func TestRelationsProject(t *testing.T) {
 func TestRelationsFindBestForPattern(t *testing.T) {
 	// Create test relations
 	rEntity := NewMaterializedRelation(
-		[]query.Symbol{"?e"},
+		[]query.Symbol{datalog.NewSymbol("?e")},
 		[]Tuple{{1}, {2}, {3}}, // 3 rows
 	)
 	rAttribute := NewMaterializedRelation(
-		[]query.Symbol{"?a"},
+		[]query.Symbol{datalog.NewSymbol("?a")},
 		[]Tuple{{1}, {2}}, // 2 rows
 	)
 	rValue := NewMaterializedRelation(
-		[]query.Symbol{"?v"},
+		[]query.Symbol{datalog.NewSymbol("?v")},
 		[]Tuple{{1}, {2}, {3}, {4}}, // 4 rows
 	)
 	rEntityValue := NewMaterializedRelation(
-		[]query.Symbol{"?e", "?v"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
 		[]Tuple{{1, 10}, {2, 20}}, // 2 rows
 	)
 
@@ -88,7 +90,7 @@ func TestRelationsFindBestForPattern(t *testing.T) {
 			name: "prefers E binding",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: ":foo/bar"},
 					query.Constant{Value: 123},
 				},
@@ -101,8 +103,8 @@ func TestRelationsFindBestForPattern(t *testing.T) {
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
 					query.Constant{Value: 123},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			relations: Relations{rAttribute, rValue},
@@ -112,9 +114,9 @@ func TestRelationsFindBestForPattern(t *testing.T) {
 			name: "prefers smaller relation on tie",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: ":foo/bar"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			relations: Relations{rEntity, rEntityValue},
@@ -124,9 +126,9 @@ func TestRelationsFindBestForPattern(t *testing.T) {
 			name: "returns nil for no matches",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?x"},
-					query.Variable{Name: "?y"},
-					query.Variable{Name: "?z"},
+					query.Variable{Name: datalog.NewSymbol("?x")},
+					query.Variable{Name: datalog.NewSymbol("?y")},
+					query.Variable{Name: datalog.NewSymbol("?z")},
 				},
 			},
 			relations: Relations{rEntity, rAttribute},
@@ -143,9 +145,9 @@ func TestRelationsFindBestForPattern(t *testing.T) {
 }
 
 func TestRelationsFindRelationsForSymbols(t *testing.T) {
-	r1 := NewMaterializedRelation([]query.Symbol{"?x", "?y"}, nil)
-	r2 := NewMaterializedRelation([]query.Symbol{"?y", "?z"}, nil)
-	r3 := NewMaterializedRelation([]query.Symbol{"?a", "?b"}, nil)
+	r1 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}, nil)
+	r2 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}, nil)
+	r3 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")}, nil)
 
 	relations := Relations{r1, r2, r3}
 
@@ -156,17 +158,17 @@ func TestRelationsFindRelationsForSymbols(t *testing.T) {
 	}{
 		{
 			name:     "finds relations with any symbol",
-			symbols:  []query.Symbol{"?x", "?z"},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")},
 			expected: 2, // r1 has ?x, r2 has ?z
 		},
 		{
 			name:     "finds overlapping relations",
-			symbols:  []query.Symbol{"?y"},
+			symbols:  []query.Symbol{datalog.NewSymbol("?y")},
 			expected: 2, // both r1 and r2 have ?y
 		},
 		{
 			name:     "returns empty for no matches",
-			symbols:  []query.Symbol{"?missing"},
+			symbols:  []query.Symbol{datalog.NewSymbol("?missing")},
 			expected: 0,
 		},
 	}
@@ -183,7 +185,7 @@ func TestRelationsCollapse(t *testing.T) {
 	t.Run("joins relations with shared columns", func(t *testing.T) {
 		// R1: ?person -> ?dept
 		r1 := NewMaterializedRelation(
-			[]query.Symbol{"?person", "?dept"},
+			[]query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept")},
 			[]Tuple{
 				{"Alice", "Engineering"},
 				{"Bob", "Sales"},
@@ -192,7 +194,7 @@ func TestRelationsCollapse(t *testing.T) {
 
 		// R2: ?dept -> ?building
 		r2 := NewMaterializedRelation(
-			[]query.Symbol{"?dept", "?building"},
+			[]query.Symbol{datalog.NewSymbol("?dept"), datalog.NewSymbol("?building")},
 			[]Tuple{
 				{"Engineering", "A"},
 				{"Sales", "B"},
@@ -202,7 +204,7 @@ func TestRelationsCollapse(t *testing.T) {
 
 		// R3: ?building -> ?floor
 		r3 := NewMaterializedRelation(
-			[]query.Symbol{"?building", "?floor"},
+			[]query.Symbol{datalog.NewSymbol("?building"), datalog.NewSymbol("?floor")},
 			[]Tuple{
 				{"A", 1},
 				{"B", 2},
@@ -228,17 +230,17 @@ func TestRelationsCollapse(t *testing.T) {
 	t.Run("returns multiple groups for disjoint relations", func(t *testing.T) {
 		// R1 and R3 share ?y, but R2 is disjoint
 		r1 := NewMaterializedRelation(
-			[]query.Symbol{"?x", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			[]Tuple{{1, 2}, {3, 4}},
 		)
 
 		r2 := NewMaterializedRelation(
-			[]query.Symbol{"?a", "?b"},
+			[]query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 			[]Tuple{{"foo", "bar"}, {"baz", "qux"}},
 		)
 
 		r3 := NewMaterializedRelation(
-			[]query.Symbol{"?y", "?z"},
+			[]query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
 			[]Tuple{{2, 5}, {4, 6}},
 		)
 
@@ -268,12 +270,12 @@ func TestRelationsCollapse(t *testing.T) {
 	t.Run("returns empty for non-matching join", func(t *testing.T) {
 		// Relations share columns but values don't match
 		r1 := NewMaterializedRelation(
-			[]query.Symbol{"?x", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			[]Tuple{{1, 2}},
 		)
 
 		r2 := NewMaterializedRelation(
-			[]query.Symbol{"?y", "?z"},
+			[]query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
 			[]Tuple{{3, 4}}, // ?y=3 doesn't match ?y=2
 		)
 
@@ -293,7 +295,7 @@ func TestRelationsCollapse(t *testing.T) {
 
 	t.Run("handles single relation", func(t *testing.T) {
 		r1 := NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{1}, {2}},
 		)
 

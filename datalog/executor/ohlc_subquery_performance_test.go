@@ -378,7 +378,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 			}
 		}
 	}
-	inputRel := NewMaterializedRelation([]query.Symbol{"?n", "?y", "?m"}, inputTuples)
+	inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
 	b.Run("Sequential", func(b *testing.B) {
 		seqExec := NewExecutor(matcher)

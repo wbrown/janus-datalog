@@ -12,9 +12,9 @@ import (
 func TestConvertPlannerConstraints(t *testing.T) {
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?b"},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/volume")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 

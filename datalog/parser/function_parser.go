@@ -290,13 +290,13 @@ func parseGetSome(args []query.PatternElement) (query.Function, error) {
 func validateDatabaseRef(arg query.PatternElement) error {
 	switch a := arg.(type) {
 	case query.Variable:
-		if a.Name == "$" {
+		if a.Name == datalog.SymDollar {
 			return nil
 		}
 		return fmt.Errorf("expected database reference ($), got variable %s", a.Name)
 	case query.Constant:
 		// $ is parsed as Constant{Value: Symbol("$")}
-		if sym, ok := a.Value.(query.Symbol); ok && sym == "$" {
+		if sym, ok := a.Value.(query.Symbol); ok && sym == datalog.SymDollar {
 			return nil
 		}
 		if str, ok := a.Value.(string); ok && str == "$" {

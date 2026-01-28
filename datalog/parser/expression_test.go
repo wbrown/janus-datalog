@@ -3,6 +3,7 @@ package parser
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -19,35 +20,35 @@ func TestParseExpressionPatterns(t *testing.T) {
 			input:    `[:find ?total :where [?item :price ?price] [?item :tax ?tax] [(+ ?price ?tax) ?total]]`,
 			wantFunc: "+",
 			wantArgs: 2,
-			wantBind: "?total",
+			wantBind: datalog.NewSymbol("?total"),
 		},
 		{
 			name:     "string concatenation",
 			input:    `[:find ?fullname :where [?person :first ?first] [?person :last ?last] [(str ?first " " ?last) ?fullname]]`,
 			wantFunc: "str",
 			wantArgs: 3,
-			wantBind: "?fullname",
+			wantBind: datalog.NewSymbol("?fullname"),
 		},
 		{
 			name:     "ground value",
 			input:    `[:find ?x ?answer :where [?x :age 42] [(ground 42) ?answer]]`,
 			wantFunc: "ground",
 			wantArgs: 1,
-			wantBind: "?answer",
+			wantBind: datalog.NewSymbol("?answer"),
 		},
 		{
 			name:     "identity binding",
 			input:    `[:find ?x ?y :where [?x :name "Alice"] [(identity ?x) ?y]]`,
 			wantFunc: "identity",
 			wantArgs: 1,
-			wantBind: "?y",
+			wantBind: datalog.NewSymbol("?y"),
 		},
 		{
 			name:     "complex arithmetic",
 			input:    `[:find ?result :where [?x :value ?v] [(* ?v 2) ?temp] [(+ ?temp 10) ?result]]`,
 			wantFunc: "+", // Testing the second expression
 			wantArgs: 2,
-			wantBind: "?result",
+			wantBind: datalog.NewSymbol("?result"),
 		},
 		// Comparison functions with binding
 		{
@@ -55,42 +56,42 @@ func TestParseExpressionPatterns(t *testing.T) {
 			input:    `[:find ?x ?flag :where [?x :count ?n] [(> ?n 0) ?flag]]`,
 			wantFunc: ">",
 			wantArgs: 2,
-			wantBind: "?flag",
+			wantBind: datalog.NewSymbol("?flag"),
 		},
 		{
 			name:     "equality with binding",
 			input:    `[:find ?x ?match :where [?x :status ?s] [(= ?s "active") ?match]]`,
 			wantFunc: "=",
 			wantArgs: 2,
-			wantBind: "?match",
+			wantBind: datalog.NewSymbol("?match"),
 		},
 		{
 			name:     "less than or equal with binding",
 			input:    `[:find ?x ?under :where [?x :price ?p] [(<= ?p 100) ?under]]`,
 			wantFunc: "<=",
 			wantArgs: 2,
-			wantBind: "?under",
+			wantBind: datalog.NewSymbol("?under"),
 		},
 		{
 			name:     "not equal with binding",
 			input:    `[:find ?x ?diff :where [?x :value ?v] [(!= ?v 0) ?diff]]`,
 			wantFunc: "!=",
 			wantArgs: 2,
-			wantBind: "?diff",
+			wantBind: datalog.NewSymbol("?diff"),
 		},
 		{
 			name:     "less than with binding",
 			input:    `[:find ?x ?small :where [?x :age ?a] [(< ?a 18) ?small]]`,
 			wantFunc: "<",
 			wantArgs: 2,
-			wantBind: "?small",
+			wantBind: datalog.NewSymbol("?small"),
 		},
 		{
 			name:     "greater than or equal with binding",
 			input:    `[:find ?x ?adult :where [?x :age ?a] [(>= ?a 18) ?adult]]`,
 			wantFunc: ">=",
 			wantArgs: 2,
-			wantBind: "?adult",
+			wantBind: datalog.NewSymbol("?adult"),
 		},
 	}
 
@@ -239,31 +240,31 @@ func TestParseTupleGround(t *testing.T) {
 			name:       "basic tuple ground",
 			input:      `[:find ?a ?b ?c :where [(ground [1 2 3]) [?a ?b ?c]]]`,
 			wantValues: []interface{}{int64(1), int64(2), int64(3)},
-			wantVars:   []query.Symbol{"?a", "?b", "?c"},
+			wantVars:   []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
 		},
 		{
 			name:       "tuple ground with zero values",
 			input:      `[:find ?x ?y ?z :where [(ground [0 0 0]) [?x ?y ?z]]]`,
 			wantValues: []interface{}{int64(0), int64(0), int64(0)},
-			wantVars:   []query.Symbol{"?x", "?y", "?z"},
+			wantVars:   []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
 		},
 		{
 			name:       "tuple ground with mixed types",
 			input:      `[:find ?s ?n :where [(ground ["hello" 42]) [?s ?n]]]`,
 			wantValues: []interface{}{"hello", int64(42)},
-			wantVars:   []query.Symbol{"?s", "?n"},
+			wantVars:   []query.Symbol{datalog.NewSymbol("?s"), datalog.NewSymbol("?n")},
 		},
 		{
 			name:       "tuple ground with keyword",
 			input:      `[:find ?status ?count :where [(ground [:none 0]) [?status ?count]]]`,
 			wantValues: nil, // Keyword parsing may differ
-			wantVars:   []query.Symbol{"?status", "?count"},
+			wantVars:   []query.Symbol{datalog.NewSymbol("?status"), datalog.NewSymbol("?count")},
 		},
 		{
 			name:       "single element tuple ground",
 			input:      `[:find ?x :where [(ground [42]) [?x]]]`,
 			wantValues: []interface{}{int64(42)},
-			wantVars:   []query.Symbol{"?x"},
+			wantVars:   []query.Symbol{datalog.NewSymbol("?x")},
 		},
 		{
 			name:      "tuple ground length mismatch",
@@ -384,7 +385,7 @@ func TestScalarGroundStillWorks(t *testing.T) {
 		t.Fatalf("Expected Symbol binding, got %T", expr.Binding)
 	}
 
-	if binding != "?x" {
+	if binding != datalog.NewSymbol("?x") {
 		t.Errorf("Binding = %v, want ?x", binding)
 	}
 }

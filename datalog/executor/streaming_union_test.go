@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestUnionBuilder_Streaming(t *testing.T) {
@@ -14,7 +16,7 @@ func TestUnionBuilder_Streaming(t *testing.T) {
 
 	// Create test relations
 	rel1 := NewMaterializedRelation(
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{
 			{1, 2},
 			{3, 4},
@@ -22,7 +24,7 @@ func TestUnionBuilder_Streaming(t *testing.T) {
 	)
 
 	rel2 := NewMaterializedRelation(
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{
 			{5, 6},
 			{7, 8},
@@ -30,7 +32,7 @@ func TestUnionBuilder_Streaming(t *testing.T) {
 	)
 
 	rel3 := NewMaterializedRelation(
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{
 			{9, 10},
 		},
@@ -45,7 +47,7 @@ func TestUnionBuilder_Streaming(t *testing.T) {
 	}
 
 	// Verify columns
-	expectedColumns := []query.Symbol{"?x", "?y"}
+	expectedColumns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	if !symbolsEqual(result.Columns(), expectedColumns) {
 		t.Errorf("Expected columns %v, got %v", expectedColumns, result.Columns())
 	}
@@ -85,12 +87,12 @@ func TestUnionBuilder_Materialized(t *testing.T) {
 
 	// Create test relations
 	rel1 := NewMaterializedRelation(
-		[]query.Symbol{"?x"},
+		[]query.Symbol{datalog.NewSymbol("?x")},
 		[]Tuple{{1}, {2}},
 	)
 
 	rel2 := NewMaterializedRelation(
-		[]query.Symbol{"?x"},
+		[]query.Symbol{datalog.NewSymbol("?x")},
 		[]Tuple{{3}, {4}},
 	)
 
@@ -124,7 +126,7 @@ func TestUnionBuilder_SingleRelation(t *testing.T) {
 	builder := NewStreamingUnionBuilder(opts)
 
 	rel := NewMaterializedRelation(
-		[]query.Symbol{"?x"},
+		[]query.Symbol{datalog.NewSymbol("?x")},
 		[]Tuple{{1}, {2}},
 	)
 
@@ -158,19 +160,19 @@ func TestUnionBuilder_WithColumns_Matching(t *testing.T) {
 
 	// Relations with matching columns
 	rel1 := NewMaterializedRelation(
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{{1, 2}},
 	)
 
 	rel2 := NewMaterializedRelation(
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{{3, 4}},
 	)
 
 	// Union with matching columns
 	result, err := builder.UnionWithColumns(
 		[]Relation{rel1, rel2},
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 	)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -181,7 +183,7 @@ func TestUnionBuilder_WithColumns_Matching(t *testing.T) {
 	}
 
 	// Verify columns
-	if !symbolsEqual(result.Columns(), []query.Symbol{"?x", "?y"}) {
+	if !symbolsEqual(result.Columns(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
 		t.Errorf("Columns mismatch: %v", result.Columns())
 	}
 }
@@ -194,19 +196,19 @@ func TestUnionBuilder_WithColumns_NeedProjection(t *testing.T) {
 
 	// Relations with different column order
 	rel1 := NewMaterializedRelation(
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{{1, 2}},
 	)
 
 	rel2 := NewMaterializedRelation(
-		[]query.Symbol{"?y", "?x"}, // Different order
+		[]query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?x")}, // Different order
 		[]Tuple{{4, 3}},
 	)
 
 	// Union with specific column order
 	result, err := builder.UnionWithColumns(
 		[]Relation{rel1, rel2},
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 	)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -217,7 +219,7 @@ func TestUnionBuilder_WithColumns_NeedProjection(t *testing.T) {
 	}
 
 	// Verify columns are in requested order
-	if !symbolsEqual(result.Columns(), []query.Symbol{"?x", "?y"}) {
+	if !symbolsEqual(result.Columns(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
 		t.Errorf("Columns mismatch: %v", result.Columns())
 	}
 
@@ -242,7 +244,7 @@ func TestUnionBuilder_WithColumns_Empty(t *testing.T) {
 	// Empty relations with column spec
 	result, err := builder.UnionWithColumns(
 		[]Relation{},
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 	)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -253,7 +255,7 @@ func TestUnionBuilder_WithColumns_Empty(t *testing.T) {
 	}
 
 	// Should have correct columns
-	if !symbolsEqual(result.Columns(), []query.Symbol{"?x", "?y"}) {
+	if !symbolsEqual(result.Columns(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
 		t.Errorf("Columns mismatch: %v", result.Columns())
 	}
 }
@@ -265,20 +267,20 @@ func TestUnionBuilder_WithColumns_SingleRelation(t *testing.T) {
 	builder := NewStreamingUnionBuilder(opts)
 
 	rel := NewMaterializedRelation(
-		[]query.Symbol{"?y", "?x"}, // Different order
+		[]query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?x")}, // Different order
 		[]Tuple{{2, 1}},
 	)
 
 	// Should project single relation to match columns
 	result, err := builder.UnionWithColumns(
 		[]Relation{rel},
-		[]query.Symbol{"?x", "?y"},
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 	)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if !symbolsEqual(result.Columns(), []query.Symbol{"?x", "?y"}) {
+	if !symbolsEqual(result.Columns(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
 		t.Errorf("Columns mismatch: %v", result.Columns())
 	}
 
@@ -297,20 +299,20 @@ func TestSymbolsEqual(t *testing.T) {
 	}{
 		{
 			name:     "equal",
-			a:        []query.Symbol{"?x", "?y"},
-			b:        []query.Symbol{"?x", "?y"},
+			a:        []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+			b:        []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: true,
 		},
 		{
 			name:     "different_order",
-			a:        []query.Symbol{"?x", "?y"},
-			b:        []query.Symbol{"?y", "?x"},
+			a:        []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+			b:        []query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?x")},
 			expected: false,
 		},
 		{
 			name:     "different_length",
-			a:        []query.Symbol{"?x", "?y"},
-			b:        []query.Symbol{"?x"},
+			a:        []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+			b:        []query.Symbol{datalog.NewSymbol("?x")},
 			expected: false,
 		},
 		{

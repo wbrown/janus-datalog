@@ -221,12 +221,12 @@ func parseMissingAttrPredicate(args []query.PatternElement) (query.Predicate, er
 func validateDatabaseRefPredicate(arg query.PatternElement) error {
 	switch a := arg.(type) {
 	case query.Variable:
-		if a.Name == "$" {
+		if a.Name == datalog.SymDollar {
 			return nil
 		}
 		return fmt.Errorf("expected database reference ($), got variable %s", a.Name)
 	case query.Constant:
-		if sym, ok := a.Value.(query.Symbol); ok && sym == "$" {
+		if sym, ok := a.Value.(query.Symbol); ok && sym == datalog.SymDollar {
 			return nil
 		}
 		if str, ok := a.Value.(string); ok && str == "$" {

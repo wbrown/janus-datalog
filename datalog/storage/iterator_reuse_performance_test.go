@@ -45,9 +45,9 @@ func TestIteratorReusePerformance(t *testing.T) {
 	// Pattern: [?b :price/symbol ?s] with ?s bound to multiple symbols
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?b"},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-			query.Variable{Name: "?s"},
+			query.Variable{Name: datalog.NewSymbol("?s")},
 		},
 	}
 
@@ -63,7 +63,7 @@ func TestIteratorReusePerformance(t *testing.T) {
 				tuples = append(tuples, executor.Tuple{symbolEntity})
 			}
 			bindingRel := executor.NewMaterializedRelation(
-				[]query.Symbol{"?s"},
+				[]query.Symbol{datalog.NewSymbol("?s")},
 				tuples,
 			)
 

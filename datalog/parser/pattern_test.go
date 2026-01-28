@@ -3,6 +3,7 @@ package parser
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -16,25 +17,25 @@ func TestParseSourceQualifiedPattern(t *testing.T) {
 		{
 			name:       "unqualified 3-tuple",
 			query:      `[:find ?e :where [?e :attr ?v]]`,
-			wantSource: "",
+			wantSource: nil,
 			wantElems:  3,
 		},
 		{
 			name:       "source-qualified 3-tuple",
 			query:      `[:find ?e :in $users :where [$users ?e :user/name ?n]]`,
-			wantSource: "$users",
+			wantSource: datalog.NewSymbol("$users"),
 			wantElems:  3,
 		},
 		{
 			name:       "source-qualified 4-tuple",
 			query:      `[:find ?e :in $db :where [$db ?e :attr ?v ?tx]]`,
-			wantSource: "$db",
+			wantSource: datalog.NewSymbol("$db"),
 			wantElems:  4,
 		},
 		{
 			name:       "default source qualified",
 			query:      `[:find ?e :in $ :where [$ ?e :attr ?v]]`,
-			wantSource: "$",
+			wantSource: datalog.NewSymbol("$"),
 			wantElems:  3,
 		},
 	}

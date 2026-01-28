@@ -18,22 +18,22 @@ func TestFormatQueryEDN(t *testing.T) {
 			name: "simple query with variables",
 			query: &query.Query{
 				Find: []query.FindElement{
-					query.FindVariable{Symbol: "?name"},
-					query.FindVariable{Symbol: "?age"},
+					query.FindVariable{Symbol: datalog.NewSymbol("?name")},
+					query.FindVariable{Symbol: datalog.NewSymbol("?age")},
 				},
 				Where: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":user/name")},
-							query.Variable{Name: "?name"},
+							query.Variable{Name: datalog.NewSymbol("?name")},
 						},
 					},
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":user/age")},
-							query.Variable{Name: "?age"},
+							query.Variable{Name: datalog.NewSymbol("?age")},
 						},
 					},
 				},
@@ -46,12 +46,12 @@ func TestFormatQueryEDN(t *testing.T) {
 			name: "query with constants",
 			query: &query.Query{
 				Find: []query.FindElement{
-					query.FindVariable{Symbol: "?name"},
+					query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 				},
 				Where: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":user/name")},
 							query.Constant{Value: "Alice"},
 						},
@@ -65,27 +65,27 @@ func TestFormatQueryEDN(t *testing.T) {
 			name: "query with function pattern",
 			query: &query.Query{
 				Find: []query.FindElement{
-					query.FindVariable{Symbol: "?name"},
-					query.FindVariable{Symbol: "?age"},
+					query.FindVariable{Symbol: datalog.NewSymbol("?name")},
+					query.FindVariable{Symbol: datalog.NewSymbol("?age")},
 				},
 				Where: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":user/name")},
-							query.Variable{Name: "?name"},
+							query.Variable{Name: datalog.NewSymbol("?name")},
 						},
 					},
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":user/age")},
-							query.Variable{Name: "?age"},
+							query.Variable{Name: datalog.NewSymbol("?age")},
 						},
 					},
 					&query.Comparison{
 						Op:    query.OpLT,
-						Left:  query.VariableTerm{Symbol: "?age"},
+						Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 						Right: query.ConstantTerm{Value: int64(30)},
 					},
 				},
@@ -99,14 +99,14 @@ func TestFormatQueryEDN(t *testing.T) {
 			name: "query with blanks",
 			query: &query.Query{
 				Find: []query.FindElement{
-					query.FindVariable{Symbol: "?name"},
+					query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 				},
 				Where: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":user/name")},
-							query.Variable{Name: "?name"},
+							query.Variable{Name: datalog.NewSymbol("?name")},
 							query.Blank{},
 						},
 					},
@@ -119,21 +119,21 @@ func TestFormatQueryEDN(t *testing.T) {
 			name: "query with entity reference",
 			query: &query.Query{
 				Find: []query.FindElement{
-					query.FindVariable{Symbol: "?name"},
+					query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 				},
 				Where: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":user/friend")},
 							query.Constant{Value: datalog.NewIdentity("user:alice")},
 						},
 					},
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":user/name")},
-							query.Variable{Name: "?name"},
+							query.Variable{Name: datalog.NewSymbol("?name")},
 						},
 					},
 				},
@@ -146,12 +146,12 @@ func TestFormatQueryEDN(t *testing.T) {
 			name: "query with escaped strings",
 			query: &query.Query{
 				Find: []query.FindElement{
-					query.FindVariable{Symbol: "?msg"},
+					query.FindVariable{Symbol: datalog.NewSymbol("?msg")},
 				},
 				Where: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":message")},
 							query.Constant{Value: "Hello \"world\"\nNew line\t\tTab"},
 						},
@@ -165,26 +165,26 @@ func TestFormatQueryEDN(t *testing.T) {
 			name: "query with numeric types",
 			query: &query.Query{
 				Find: []query.FindElement{
-					query.FindVariable{Symbol: "?val"},
+					query.FindVariable{Symbol: datalog.NewSymbol("?val")},
 				},
 				Where: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":int-val")},
 							query.Constant{Value: int64(42)},
 						},
 					},
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":float-val")},
 							query.Constant{Value: 3.14159},
 						},
 					},
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":bool-val")},
 							query.Constant{Value: true},
 						},

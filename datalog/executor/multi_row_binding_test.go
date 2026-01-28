@@ -31,7 +31,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 	t.Run("MultipleEntityBinding", func(t *testing.T) {
 		// Create a relation with multiple entities
 		bindingRel := NewMaterializedRelation(
-			[]query.Symbol{"?user"},
+			[]query.Symbol{datalog.NewSymbol("?user")},
 			[]Tuple{
 				{alice},
 				{bob},
@@ -42,9 +42,9 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		// Pattern: [?user :user/age ?age]
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?user"},
+				query.Variable{Name: datalog.NewSymbol("?user")},
 				query.Constant{Value: ageAttr},
-				query.Variable{Name: "?age"},
+				query.Variable{Name: datalog.NewSymbol("?age")},
 			},
 		}
 
@@ -54,7 +54,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 
 		// Check columns
 		cols := results.Columns()
-		assert.Equal(t, []query.Symbol{"?user", "?age"}, cols)
+		assert.Equal(t, []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?age")}, cols)
 
 		// Check we got the right data
 		foundUsers := make(map[string]int64)
@@ -86,7 +86,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 	t.Run("MultipleValueBinding", func(t *testing.T) {
 		// Create a relation with ages to look for
 		bindingRel := NewMaterializedRelation(
-			[]query.Symbol{"?age"},
+			[]query.Symbol{datalog.NewSymbol("?age")},
 			[]Tuple{
 				{int64(25)},
 				{int64(35)},
@@ -96,9 +96,9 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		// Pattern: [?user :user/age ?age]
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?user"},
+				query.Variable{Name: datalog.NewSymbol("?user")},
 				query.Constant{Value: ageAttr},
-				query.Variable{Name: "?age"},
+				query.Variable{Name: datalog.NewSymbol("?age")},
 			},
 		}
 
@@ -154,7 +154,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 
 		// Create a binding relation with category and price range
 		bindingRel := NewMaterializedRelation(
-			[]query.Symbol{"?category", "?minPrice"},
+			[]query.Symbol{datalog.NewSymbol("?category"), datalog.NewSymbol("?minPrice")},
 			[]Tuple{
 				{"Electronics", 150.0}, // Only expensive electronics
 				{"Books", 10.0},        // All books over $10
@@ -164,9 +164,9 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		// First pattern: [?p :product/category ?category]
 		catPattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?p"},
+				query.Variable{Name: datalog.NewSymbol("?p")},
 				query.Constant{Value: categoryAttr},
-				query.Variable{Name: "?category"},
+				query.Variable{Name: datalog.NewSymbol("?category")},
 			},
 		}
 
@@ -188,9 +188,9 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		// Now match prices
 		pricePattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?p"},
+				query.Variable{Name: datalog.NewSymbol("?p")},
 				query.Constant{Value: priceAttr},
-				query.Variable{Name: "?price"},
+				query.Variable{Name: datalog.NewSymbol("?price")},
 			},
 		}
 
@@ -223,9 +223,9 @@ func TestRelationBasedPatternMatching(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":foo")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 

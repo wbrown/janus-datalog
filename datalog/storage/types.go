@@ -238,6 +238,8 @@ func toStorageValue(v interface{}) datalog.Value {
 		return datalog.Float(val)
 	case bool:
 		return datalog.Bool(val)
+	case datalog.Symbol:
+		return datalog.SymbolValue(val)
 	default:
 		// Fall back to string representation
 		return datalog.String(fmt.Sprintf("%v", v))

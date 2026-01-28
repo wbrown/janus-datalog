@@ -45,9 +45,9 @@ func TestDatabaseMatch(t *testing.T) {
 	// Use Database.Match directly (PatternMatcher interface)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":user/name")},
-			query.Variable{Name: "?name"},
+			query.Variable{Name: datalog.NewSymbol("?name")},
 		},
 	}
 
@@ -100,8 +100,8 @@ func TestDatabaseMatchWithConstantEntity(t *testing.T) {
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: alice},
-			query.Variable{Name: "?a"},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?a")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 

@@ -424,7 +424,7 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) []map
 	// Find column indices for input symbols
 	indices := make([]int, len(inputSymbols))
 	for i, sym := range inputSymbols {
-		if IsSourceSymbol(sym) {
+		if sym.IsSource() {
 			// Source marker - not a column, use special index
 			indices[i] = -1
 		} else {
@@ -451,10 +451,10 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) []map
 		keyParts := make([]string, len(inputSymbols))
 
 		for i, sym := range inputSymbols {
-			if IsSourceSymbol(sym) {
+			if sym.IsSource() {
 				// Source marker - pass it through as-is
 				values[sym] = sym
-				keyParts[i] = string(sym)
+				keyParts[i] = sym.String()
 			} else {
 				idx := indices[i]
 				if idx < len(tuple) {
@@ -496,7 +496,7 @@ func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, out
 			}
 		case query.Constant:
 			// Check if it's a source marker
-			if sym, ok := inp.Value.(query.Symbol); ok && IsSourceSymbol(sym) {
+			if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
 				// Source marker - pass through
 				orderedValues = append(orderedValues, sym)
 			} else {
@@ -552,7 +552,7 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 			// Expect an explicit $ symbol at this position
 			if valueIndex < len(orderedValues) {
 				// Check if it's a source marker
-				if sym, ok := orderedValues[valueIndex].(query.Symbol); ok && IsSourceSymbol(sym) {
+				if sym, ok := orderedValues[valueIndex].(query.Symbol); ok && sym.IsSource() {
 					// Source marker present - skip it
 					valueIndex++
 				} else {
@@ -687,7 +687,7 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		// Filter out source markers from input symbols - they're not real variables
 		var realInputSymbols []query.Symbol
 		for _, sym := range inputSymbols {
-			if !IsSourceSymbol(sym) {
+			if !sym.IsSource() {
 				realInputSymbols = append(realInputSymbols, sym)
 			}
 		}
@@ -750,7 +750,7 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		// Filter out source markers from input symbols
 		var realInputSymbols []query.Symbol
 		for _, sym := range inputSymbols {
-			if !IsSourceSymbol(sym) {
+			if !sym.IsSource() {
 				realInputSymbols = append(realInputSymbols, sym)
 			}
 		}
@@ -798,7 +798,7 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		// Filter out source markers from input symbols - they're not real variables
 		var realInputSymbols []query.Symbol
 		for _, sym := range inputSymbols {
-			if !IsSourceSymbol(sym) {
+			if !sym.IsSource() {
 				realInputSymbols = append(realInputSymbols, sym)
 			}
 		}
@@ -1026,7 +1026,7 @@ func executeBatchedSubqueryWithCombinations(ctx Context, parentExec *Executor, s
 			columns = append(columns, inp.Name)
 		case query.Constant:
 			// Skip source markers like $, $users, etc.
-			if sym, ok := inp.Value.(query.Symbol); ok && IsSourceSymbol(sym) {
+			if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
 				continue
 			}
 		}

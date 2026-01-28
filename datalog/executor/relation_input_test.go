@@ -54,7 +54,7 @@ func TestRelationInputIteration(t *testing.T) {
 
 		// Create input relation with name-year pairs
 		inputRel := NewMaterializedRelation(
-			[]query.Symbol{"?n", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
 			[]Tuple{
 				{"Alice", int64(2020)},
 				{"Alice", int64(2021)},
@@ -178,7 +178,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 
 		// Create input relation with name-year pairs
 		inputRel := NewMaterializedRelation(
-			[]query.Symbol{"?n", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
 			[]Tuple{
 				{"Alice", int64(2020)},
 				{"Alice", int64(2021)},
@@ -244,7 +244,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 
 		// Create input relation with name-year pairs
 		inputRel := NewMaterializedRelation(
-			[]query.Symbol{"?n", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
 			[]Tuple{
 				{"Alice", int64(2020)},
 				{"Alice", int64(2021)},
@@ -352,7 +352,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 		}
 
 		// Empty input relation
-		emptyRel := NewMaterializedRelation([]query.Symbol{"?n", "?y"}, []Tuple{})
+		emptyRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")}, []Tuple{})
 
 		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{emptyRel})
 		if err != nil {
@@ -381,7 +381,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 
 		// Single tuple
 		singleRel := NewMaterializedRelation(
-			[]query.Symbol{"?n", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
 			[]Tuple{{"Alice", int64(2020)}},
 		)
 
@@ -412,7 +412,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 
 		// Non-matching tuples
 		noMatchRel := NewMaterializedRelation(
-			[]query.Symbol{"?n", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
 			[]Tuple{
 				{"Bob", int64(2020)},
 				{"Charlie", int64(2021)},
@@ -446,7 +446,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 
 		// Mix of matching and non-matching
 		mixedRel := NewMaterializedRelation(
-			[]query.Symbol{"?n", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
 			[]Tuple{
 				{"Alice", int64(2020)}, // matches
 				{"Bob", int64(2020)},   // no match
@@ -482,7 +482,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 
 		// Only 1 tuple with 100 workers (tests that excess workers don't cause issues)
 		smallRel := NewMaterializedRelation(
-			[]query.Symbol{"?n", "?y"},
+			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
 			[]Tuple{
 				{"Alice", int64(2020)},
 			},
@@ -554,7 +554,7 @@ func TestRelationInputParallelStress(t *testing.T) {
 				}
 			}
 		}
-		inputRel := NewMaterializedRelation([]query.Symbol{"?n", "?y", "?m"}, inputTuples)
+		inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
 		// Execute and verify
 		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
@@ -607,7 +607,7 @@ func TestRelationInputParallelStress(t *testing.T) {
 				inputTuples = append(inputTuples, Tuple{name, int64(year)})
 			}
 		}
-		inputRel := NewMaterializedRelation([]query.Symbol{"?n", "?y"}, inputTuples)
+		inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")}, inputTuples)
 
 		// Run 10 queries concurrently with parallel execution
 		errCh := make(chan error, 10)

@@ -141,7 +141,7 @@ func parseOrderByClause(node *edn.Node) (query.OrderByClause, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
 		// Simple variable (defaults to ascending)
-		sym := query.Symbol(node.Value)
+		sym := datalog.NewSymbol(node.Value)
 		if !sym.IsVariable() {
 			return query.OrderByClause{}, fmt.Errorf("order-by must use variables, got %s", sym)
 		}
@@ -160,7 +160,7 @@ func parseOrderByClause(node *edn.Node) (query.OrderByClause, error) {
 			return query.OrderByClause{}, fmt.Errorf("order-by variable must be a symbol")
 		}
 
-		sym := query.Symbol(node.Nodes[0].Value)
+		sym := datalog.NewSymbol(node.Nodes[0].Value)
 		if !sym.IsVariable() {
 			return query.OrderByClause{}, fmt.Errorf("order-by must use variables, got %s", sym)
 		}
@@ -194,7 +194,7 @@ func parseFindElement(node *edn.Node) (query.FindElement, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
 		// Simple variable
-		sym := query.Symbol(node.Value)
+		sym := datalog.NewSymbol(node.Value)
 		if !sym.IsVariable() {
 			return nil, fmt.Errorf("find clause must contain variables, got %s", sym)
 		}
@@ -226,7 +226,7 @@ func parseFindElement(node *edn.Node) (query.FindElement, error) {
 			return nil, fmt.Errorf("aggregate argument must be a symbol")
 		}
 
-		argSym := query.Symbol(node.Nodes[1].Value)
+		argSym := datalog.NewSymbol(node.Nodes[1].Value)
 
 		if !argSym.IsVariable() {
 			return nil, fmt.Errorf("aggregate argument must be a variable, got %s", argSym)
@@ -272,7 +272,7 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 		if len(node.Nodes) == 2 {
 			// Scalar binding: [(fn ...) ?x]
 			if node.Nodes[1].Type == edn.NodeSymbol {
-				sym := query.Symbol(node.Nodes[1].Value)
+				sym := datalog.NewSymbol(node.Nodes[1].Value)
 				if sym.IsVariable() {
 					return parseExpression(&node.Nodes[0], sym)
 				}
@@ -303,7 +303,7 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 	var source query.Symbol
 	if len(node.Nodes) >= 1 && node.Nodes[0].Type == edn.NodeSymbol {
 		if strings.HasPrefix(node.Nodes[0].Value, "$") {
-			source = query.Symbol(node.Nodes[0].Value)
+			source = datalog.NewSymbol(node.Nodes[0].Value)
 			sourceOffset = 1
 		}
 	}
@@ -514,7 +514,7 @@ func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
 		// Scalar binding: ?var (expects one row, one column)
-		sym := query.Symbol(node.Value)
+		sym := datalog.NewSymbol(node.Value)
 		if !sym.IsVariable() {
 			return nil, fmt.Errorf("scalar binding must be a variable, got %s", sym)
 		}
@@ -529,7 +529,7 @@ func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 		if len(node.Nodes) == 2 &&
 			node.Nodes[0].Type == edn.NodeSymbol &&
 			node.Nodes[1].Type == edn.NodeSymbol && node.Nodes[1].Value == "..." {
-			sym := query.Symbol(node.Nodes[0].Value)
+			sym := datalog.NewSymbol(node.Nodes[0].Value)
 			if !sym.IsVariable() {
 				return nil, fmt.Errorf("collection binding must be a variable, got %s", sym)
 			}
@@ -569,7 +569,7 @@ func parseTupleBinding(node *edn.Node) (query.TupleBinding, error) {
 		if elem.Type != edn.NodeSymbol {
 			return query.TupleBinding{}, fmt.Errorf("tuple binding element %d must be a symbol", i)
 		}
-		sym := query.Symbol(elem.Value)
+		sym := datalog.NewSymbol(elem.Value)
 		if !sym.IsVariable() {
 			return query.TupleBinding{}, fmt.Errorf("tuple binding element %d must be a variable, got %s", i, sym)
 		}
@@ -590,7 +590,7 @@ func parseRelationBinding(node *edn.Node) (query.RelationBinding, error) {
 		if elem.Type != edn.NodeSymbol {
 			return query.RelationBinding{}, fmt.Errorf("relation binding element %d must be a symbol", i)
 		}
-		sym := query.Symbol(elem.Value)
+		sym := datalog.NewSymbol(elem.Value)
 		if !sym.IsVariable() {
 			return query.RelationBinding{}, fmt.Errorf("relation binding element %d must be a variable, got %s", i, sym)
 		}
@@ -606,9 +606,9 @@ func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 	case edn.NodeSymbol:
 		// Either $name (database source) or ?var (scalar input)
 		if strings.HasPrefix(node.Value, "$") {
-			return query.DatabaseInput{Name: query.Symbol(node.Value)}, nil
+			return query.DatabaseInput{Name: datalog.NewSymbol(node.Value)}, nil
 		}
-		sym := query.Symbol(node.Value)
+		sym := datalog.NewSymbol(node.Value)
 		if !sym.IsVariable() {
 			return nil, fmt.Errorf("input must be $name or a variable, got %s", node.Value)
 		}
@@ -630,7 +630,7 @@ func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 				if elem.Type != edn.NodeSymbol {
 					return nil, fmt.Errorf("tuple input element %d must be a symbol", i)
 				}
-				sym := query.Symbol(elem.Value)
+				sym := datalog.NewSymbol(elem.Value)
 				if !sym.IsVariable() {
 					return nil, fmt.Errorf("tuple input element %d must be a variable, got %s", i, sym)
 				}
@@ -653,7 +653,7 @@ func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 			if node.Nodes[0].Type != edn.NodeSymbol {
 				return nil, fmt.Errorf("collection input must contain a variable")
 			}
-			sym := query.Symbol(node.Nodes[0].Value)
+			sym := datalog.NewSymbol(node.Nodes[0].Value)
 			if !sym.IsVariable() {
 				return nil, fmt.Errorf("collection input must contain a variable, got %s", sym)
 			}
@@ -671,16 +671,17 @@ func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 func parsePatternElement(node *edn.Node) (query.PatternElement, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
-		sym := query.Symbol(node.Value)
+		sym := datalog.NewSymbol(node.Value)
 		if sym.IsVariable() {
 			return query.Variable{Name: sym}, nil
 		} else if node.Value == "_" {
 			return query.Blank{}, nil
 		} else if node.Value == "$" {
 			// Database marker - treat as a special constant
-			return query.Constant{Value: query.Symbol("$")}, nil
+			return query.Constant{Value: datalog.SymDollar}, nil
 		} else {
-			return nil, fmt.Errorf("invalid symbol in pattern: %s", node.Value)
+			// Bare symbols are Symbol values (function references, rule names, etc.)
+			return query.Constant{Value: datalog.NewSymbol(node.Value)}, nil
 		}
 
 	case edn.NodeKeyword:
@@ -735,6 +736,8 @@ func parsePatternElement(node *edn.Node) (query.PatternElement, error) {
 				values[i] = elem.Value == "true"
 			case edn.NodeKeyword:
 				values[i] = datalog.NewKeyword(elem.Value)
+			case edn.NodeSymbol:
+				values[i] = datalog.NewSymbol(elem.Value)
 			default:
 				return nil, fmt.Errorf("unsupported type in vector constant: %v", elem.Type)
 			}
@@ -926,7 +929,7 @@ func parseJoinVars(node *edn.Node) ([]query.Symbol, error) {
 		if elem.Type != edn.NodeSymbol {
 			return nil, fmt.Errorf("join variable %d must be a symbol, got %v", i, elem.Type)
 		}
-		sym := query.Symbol(elem.Value)
+		sym := datalog.NewSymbol(elem.Value)
 		if !sym.IsVariable() {
 			return nil, fmt.Errorf("join variable %d must start with ?, got %s", i, sym)
 		}
@@ -1181,11 +1184,11 @@ func formatQueryWithIndent(q *query.Query, indent string) string {
 			}
 			if clause.Direction == query.OrderDesc {
 				sb.WriteString("[")
-				sb.WriteString(string(clause.Variable))
+				sb.WriteString(clause.Variable.String())
 				sb.WriteString(" :desc]")
 			} else {
 				// For ascending (default), just write the variable
-				sb.WriteString(string(clause.Variable))
+				sb.WriteString(clause.Variable.String())
 			}
 		}
 		sb.WriteString("]")
@@ -1263,7 +1266,7 @@ func formatSubqueryPattern(sb *strings.Builder, p *query.SubqueryPattern, indent
 func formatPatternElement(sb *strings.Builder, elem query.PatternElement) {
 	switch e := elem.(type) {
 	case query.Variable:
-		sb.WriteString(string(e.Name))
+		sb.WriteString(e.Name.String())
 
 	case query.Blank:
 		sb.WriteString("_")

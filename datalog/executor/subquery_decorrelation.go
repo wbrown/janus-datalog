@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -347,7 +348,7 @@ func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbo
 	var filteredLeftKeys, filteredRightKeys []query.Symbol
 	rightIdx := 0
 	for _, key := range leftKeys {
-		if IsSourceSymbol(key) {
+		if key.IsSource() {
 			continue
 		}
 		filteredLeftKeys = append(filteredLeftKeys, key)
@@ -584,16 +585,25 @@ func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) (
 	}
 
 	// Find column indices for time components
+	symYear := datalog.NewSymbol("?year")
+	symY := datalog.NewSymbol("?y")
+	symMonth := datalog.NewSymbol("?month")
+	symM := datalog.NewSymbol("?m")
+	symDay := datalog.NewSymbol("?day")
+	symD := datalog.NewSymbol("?d")
+	symHour := datalog.NewSymbol("?hour")
+	symH := datalog.NewSymbol("?h")
+	symHr := datalog.NewSymbol("?hr")
+
 	var colYearIdx, colMonthIdx, colDayIdx, colHourIdx int = -1, -1, -1, -1
 	for i, col := range cols {
-		colStr := string(col)
-		if colStr == "?year" || colStr == "?y" {
+		if col == symYear || col == symY {
 			colYearIdx = i
-		} else if colStr == "?month" || colStr == "?m" {
+		} else if col == symMonth || col == symM {
 			colMonthIdx = i
-		} else if colStr == "?day" || colStr == "?d" {
+		} else if col == symDay || col == symD {
 			colDayIdx = i
-		} else if colStr == "?hour" || colStr == "?h" || colStr == "?hr" {
+		} else if col == symHour || col == symH || col == symHr {
 			colHourIdx = i
 		}
 	}

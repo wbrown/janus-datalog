@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // mockIterator provides test data for iterator composition tests
@@ -45,7 +47,7 @@ func TestFilterIterator(t *testing.T) {
 		{4, "diana", 35},
 		{5, "eve", 30},
 	}
-	columns := []query.Symbol{"?id", "?name", "?age"}
+	columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
 
 	// Test filtering by age
 	source := newMockIterator(tuples)
@@ -77,8 +79,8 @@ func TestProjectIterator(t *testing.T) {
 		{2, "bob", 30, "LA"},
 		{3, "charlie", 25, "Chicago"},
 	}
-	sourceColumns := []query.Symbol{"?id", "?name", "?age", "?city"}
-	targetColumns := []query.Symbol{"?name", "?city"} // Project name and city only
+	sourceColumns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?city")}
+	targetColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")} // Project name and city only
 
 	// Create projection iterator
 	// Wrap tuples in a relation for ProjectIterator
@@ -207,7 +209,7 @@ func TestComposedIterators(t *testing.T) {
 		{3, "charlie", 25, 1200},
 		{4, "diana", 35, 2000},
 	}
-	columns := []query.Symbol{"?id", "?name", "?age", "?salary"}
+	columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?salary")}
 
 	// Step 1: Filter by age >= 30
 	source := newMockIterator(tuples)
@@ -217,7 +219,7 @@ func TestComposedIterators(t *testing.T) {
 	filterIter := NewFilterIterator(source, columns, filter)
 
 	// Step 2: Project name and salary only
-	projectedColumns := []query.Symbol{"?name", "?salary"}
+	projectedColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?salary")}
 	projIndices := []int{1, 3} // Manually specify indices for test
 	projIter := &ProjectIterator{
 		source:     filterIter,
@@ -266,7 +268,7 @@ func TestStreamingRelationWithComposition(t *testing.T) {
 		{3, "charlie", 25},
 		{4, "diana", 35},
 	}
-	columns := []query.Symbol{"?id", "?name", "?age"}
+	columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
 
 	// Create a StreamingRelation
 	source := newMockIterator(tuples)
@@ -286,7 +288,7 @@ func TestStreamingRelationWithComposition(t *testing.T) {
 	assert.IsType(t, &StreamingRelation{}, filtered)
 
 	// Project columns
-	projected, err := filtered.Project([]query.Symbol{"?name", "?age"})
+	projected, err := filtered.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age")})
 	assert.NoError(t, err)
 	assert.IsType(t, &StreamingRelation{}, projected)
 
@@ -317,12 +319,12 @@ func TestPredicateFilterIterator(t *testing.T) {
 		{3, 30},
 		{4, 40},
 	}
-	columns := []query.Symbol{"?x", "?y"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 	// Create a comparison predicate (y > 20)
 	pred := &query.Comparison{
 		Op:    query.OpGT,
-		Left:  query.VariableTerm{Symbol: "?y"},
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
 		Right: query.ConstantTerm{Value: 20},
 	}
 
@@ -352,17 +354,17 @@ func TestFunctionEvaluatorIterator(t *testing.T) {
 		{30, 40},
 		{50, 60},
 	}
-	columns := []query.Symbol{"?x", "?y"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 	// Create an addition function (x + y)
 	fn := query.ArithmeticFunction{
 		Op:    query.OpAdd,
-		Left:  query.VariableTerm{Symbol: "?x"},
-		Right: query.VariableTerm{Symbol: "?y"},
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+		Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
 	}
 
 	source := newMockIterator(tuples)
-	evalIter := NewFunctionEvaluatorIterator(source, columns, fn, "?sum")
+	evalIter := NewFunctionEvaluatorIterator(source, columns, fn, datalog.NewSymbol("?sum"))
 
 	// Collect results with new column
 	var results []Tuple
@@ -389,7 +391,7 @@ func BenchmarkIteratorComposition(b *testing.B) {
 	for i := 0; i < 10000; i++ {
 		tuples = append(tuples, Tuple{i, i * 2, i * 3})
 	}
-	columns := []query.Symbol{"?x", "?y", "?z"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 	b.Run("Composed", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
@@ -403,7 +405,7 @@ func BenchmarkIteratorComposition(b *testing.B) {
 
 			// Wrap in a relation for projection
 			filteredRel := NewStreamingRelation(columns, filterIter)
-			projIter := NewProjectIterator(filteredRel, columns, []query.Symbol{"?x", "?z"})
+			projIter := NewProjectIterator(filteredRel, columns, []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")})
 
 			transform := func(t Tuple) Tuple {
 				return Tuple{t[0], t[1].(int) * 10}

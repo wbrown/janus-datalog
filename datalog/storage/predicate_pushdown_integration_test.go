@@ -93,7 +93,7 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 	// Create a pattern that would fetch all bars for the symbol
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
 			query.Constant{Value: symbolEntity},
 		},
@@ -129,9 +129,9 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 		// Create a second pattern for time
 		timePattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: query.Symbol("?b")},
+				query.Variable{Name: datalog.NewSymbol("?b")},
 				query.Constant{Value: datalog.NewKeyword(":price/time")},
-				query.Variable{Name: query.Symbol("?t")},
+				query.Variable{Name: datalog.NewSymbol("?t")},
 			},
 		}
 
@@ -181,9 +181,9 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 				{Pattern: pattern},
 				{Pattern: &query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: query.Symbol("?b")},
+						query.Variable{Name: datalog.NewSymbol("?b")},
 						query.Constant{Value: datalog.NewKeyword(":price/time")},
-						query.Variable{Name: query.Symbol("?t")},
+						query.Variable{Name: datalog.NewSymbol("?t")},
 					},
 				}},
 			},
@@ -192,13 +192,13 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 					Predicate: &query.FunctionPredicate{
 						Fn: "day",
 						Args: []query.PatternElement{
-							query.Variable{Name: query.Symbol("?t")},
+							query.Variable{Name: datalog.NewSymbol("?t")},
 							query.Constant{Value: int64(20)},
 						},
 					},
 				},
 			},
-			Provides: []query.Symbol{"?b", "?t"},
+			Provides: []query.Symbol{datalog.NewSymbol("?b"), datalog.NewSymbol("?t")},
 		}
 
 		// Use the predicate classifier

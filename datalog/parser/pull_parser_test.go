@@ -243,7 +243,7 @@ func TestParseFindPull_InQuery(t *testing.T) {
 		t.Fatalf("expected FindPull, got %T", q.Find[0])
 	}
 
-	if pull.Variable != "?e" {
+	if pull.Variable != datalog.NewSymbol("?e") {
 		t.Errorf("expected variable ?e, got %s", pull.Variable)
 	}
 
@@ -277,7 +277,7 @@ func TestParseFindPull_MixedWithVariables(t *testing.T) {
 		t.Fatalf("find[1]: expected FindPull, got %T", q.Find[1])
 	}
 
-	if pull.Variable != "?e" {
+	if pull.Variable != datalog.NewSymbol("?e") {
 		t.Errorf("expected variable ?e, got %s", pull.Variable)
 	}
 

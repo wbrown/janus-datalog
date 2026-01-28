@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestAndFunction(t *testing.T) {
@@ -16,20 +17,20 @@ func TestAndFunction(t *testing.T) {
 	}{
 		{
 			name:     "All true",
-			terms:    []Symbol{"?a", "?b", "?c"},
-			bindings: map[Symbol]interface{}{"?a": true, "?b": true, "?c": true},
+			terms:    []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?a"): true, datalog.NewSymbol("?b"): true, datalog.NewSymbol("?c"): true},
 			expected: true,
 		},
 		{
 			name:     "One false",
-			terms:    []Symbol{"?a", "?b", "?c"},
-			bindings: map[Symbol]interface{}{"?a": true, "?b": false, "?c": true},
+			terms:    []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?a"): true, datalog.NewSymbol("?b"): false, datalog.NewSymbol("?c"): true},
 			expected: false,
 		},
 		{
 			name:     "All false",
-			terms:    []Symbol{"?a", "?b"},
-			bindings: map[Symbol]interface{}{"?a": false, "?b": false},
+			terms:    []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?a"): false, datalog.NewSymbol("?b"): false},
 			expected: false,
 		},
 		{
@@ -40,26 +41,26 @@ func TestAndFunction(t *testing.T) {
 		},
 		{
 			name:     "Single true",
-			terms:    []Symbol{"?a"},
-			bindings: map[Symbol]interface{}{"?a": true},
+			terms:    []Symbol{datalog.NewSymbol("?a")},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?a"): true},
 			expected: true,
 		},
 		{
 			name:     "Single false",
-			terms:    []Symbol{"?a"},
-			bindings: map[Symbol]interface{}{"?a": false},
+			terms:    []Symbol{datalog.NewSymbol("?a")},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?a"): false},
 			expected: false,
 		},
 		{
 			name:     "Non-boolean value",
-			terms:    []Symbol{"?a", "?b"},
-			bindings: map[Symbol]interface{}{"?a": true, "?b": 42},
+			terms:    []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?a"): true, datalog.NewSymbol("?b"): 42},
 			expected: false, // Non-boolean treated as false
 		},
 		{
 			name:     "Missing binding",
-			terms:    []Symbol{"?a", "?b"},
-			bindings: map[Symbol]interface{}{"?a": true},
+			terms:    []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?a"): true},
 			hasError: true,
 		},
 	}
@@ -88,12 +89,12 @@ func TestAndFunctionString(t *testing.T) {
 	}{
 		{
 			name:     "Multiple terms",
-			terms:    []Symbol{"?a", "?b", "?c"},
+			terms:    []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
 			expected: "(and ?a ?b ?c)",
 		},
 		{
 			name:     "Single term",
-			terms:    []Symbol{"?filter"},
+			terms:    []Symbol{datalog.NewSymbol("?filter")},
 			expected: "?filter",
 		},
 		{
@@ -113,17 +114,17 @@ func TestAndFunctionString(t *testing.T) {
 
 func TestAndFunctionRequiredSymbols(t *testing.T) {
 	andFunc := AndFunction{
-		Terms: []Symbol{"?a", "?b", "?c"},
+		Terms: []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
 	}
 
 	symbols := andFunc.RequiredSymbols()
 	assert.Equal(t, 3, len(symbols))
-	assert.Contains(t, symbols, Symbol("?a"))
-	assert.Contains(t, symbols, Symbol("?b"))
-	assert.Contains(t, symbols, Symbol("?c"))
+	assert.Contains(t, symbols, datalog.NewSymbol("?a"))
+	assert.Contains(t, symbols, datalog.NewSymbol("?b"))
+	assert.Contains(t, symbols, datalog.NewSymbol("?c"))
 }
 
 func TestAndFunctionReturnType(t *testing.T) {
-	andFunc := AndFunction{Terms: []Symbol{"?a"}}
+	andFunc := AndFunction{Terms: []Symbol{datalog.NewSymbol("?a")}}
 	assert.Equal(t, "boolean", andFunc.ReturnType())
 }

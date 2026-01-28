@@ -22,7 +22,7 @@ func parseFindPull(node *edn.Node) (query.FindPull, error) {
 	if node.Nodes[1].Type != edn.NodeSymbol {
 		return query.FindPull{}, fmt.Errorf("pull first argument must be a variable, got %v", node.Nodes[1].Type)
 	}
-	varSym := query.Symbol(node.Nodes[1].Value)
+	varSym := datalog.NewSymbol(node.Nodes[1].Value)
 	if !varSym.IsVariable() {
 		return query.FindPull{}, fmt.Errorf("pull argument must be a variable (starting with ?), got %s", varSym)
 	}

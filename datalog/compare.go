@@ -57,6 +57,15 @@ func CompareValues(left, right interface{}) int {
 		return -1
 	}
 
+	// Handle Symbol comparison - use the Compare method which handles nil
+	if sym1, ok := left.(Symbol); ok {
+		if sym2, ok := right.(Symbol); ok {
+			return sym1.Compare(sym2)
+		}
+		// Symbol vs non-Symbol: type mismatch
+		return -1
+	}
+
 	// Handle numeric comparisons
 	switch l := left.(type) {
 	case int:
@@ -267,6 +276,14 @@ func ValuesEqual(a, b interface{}) bool {
 		return false
 	}
 
+	// Symbol comparison - pointer equality since all Symbols are interned
+	if sym1, ok := a.(Symbol); ok {
+		if sym2, ok := b.(Symbol); ok {
+			return sym1.Equal(sym2)
+		}
+		return false
+	}
+
 	// Quick check for identity (after dereferencing and special type handling)
 	if a == b {
 		return true
@@ -297,6 +314,8 @@ func stringValue(v interface{}) string {
 	case Identity:
 		return val.String()
 	case Keyword:
+		return val.String()
+	case Symbol:
 		return val.String()
 	default:
 		// Use fmt.Sprintf for other types

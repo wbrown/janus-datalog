@@ -80,7 +80,7 @@ func (n *NotJoinClause) String() string {
 		if i > 0 {
 			result += " "
 		}
-		result += string(v)
+		result += v.String()
 	}
 	result += "]"
 	for _, c := range n.Clauses {
@@ -151,7 +151,7 @@ func (o *OrJoinClause) String() string {
 		if i > 0 {
 			result += " "
 		}
-		result += string(v)
+		result += v.String()
 	}
 	result += "]"
 	for _, branch := range o.Branches {

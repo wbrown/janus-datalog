@@ -85,7 +85,7 @@ func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, columns []qu
 
 	key := pattern.String()
 	for _, col := range columns {
-		key += "|" + string(col)
+		key += "|" + col.String()
 	}
 
 	if val, ok := m.builderCache.Load(key); ok {

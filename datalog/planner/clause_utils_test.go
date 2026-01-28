@@ -20,21 +20,21 @@ func TestExtractOrClauseSymbols(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: datalog.NewKeyword(":test/attr")},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: int64(0)},
-							Binding:  "?x",
+							Binding:  datalog.NewSymbol("?x"),
 						},
 					},
 				},
 			},
-			expectedProvides: []query.Symbol{"?x"},
+			expectedProvides: []query.Symbol{datalog.NewSymbol("?x")},
 		},
 		{
 			name: "Two patterns providing same variables",
@@ -43,24 +43,24 @@ func TestExtractOrClauseSymbols(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: datalog.NewKeyword(":attr1")},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: datalog.NewKeyword(":attr2")},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
 				},
 			},
-			expectedProvides: []query.Symbol{"?e", "?x"},
+			expectedProvides: []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?x")},
 		},
 		{
 			name: "Expression-only branches",
@@ -69,18 +69,18 @@ func TestExtractOrClauseSymbols(t *testing.T) {
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "first"},
-							Binding:  query.Symbol("?x"),
+							Binding:  datalog.NewSymbol("?x"),
 						},
 					},
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "second"},
-							Binding:  query.Symbol("?x"),
+							Binding:  datalog.NewSymbol("?x"),
 						},
 					},
 				},
 			},
-			expectedProvides: []query.Symbol{"?x"},
+			expectedProvides: []query.Symbol{datalog.NewSymbol("?x")},
 		},
 	}
 
@@ -123,31 +123,31 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 			pattern: &query.SubqueryPattern{
 				Query: &query.Query{
 					Find: []query.FindElement{
-						query.FindAggregate{Function: "count", Arg: "?t"},
+						query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
 					},
 				},
 				Inputs: []query.PatternElement{
 					query.Constant{Value: "db"},
-					query.Variable{Name: "?scenario"},
+					query.Variable{Name: datalog.NewSymbol("?scenario")},
 				},
-				Binding: query.TupleBinding{Variables: []query.Symbol{"?openingCount"}},
+				Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?openingCount")}},
 			},
-			expectedProvides: []query.Symbol{"?openingCount"},
-			expectedRequires: []query.Symbol{"?scenario"},
+			expectedProvides: []query.Symbol{datalog.NewSymbol("?openingCount")},
+			expectedRequires: []query.Symbol{datalog.NewSymbol("?scenario")},
 		},
 		{
 			name: "RelationBinding provides multiple variables",
 			pattern: &query.SubqueryPattern{
 				Query: &query.Query{
 					Find: []query.FindElement{
-						query.FindVariable{Symbol: "?a"},
-						query.FindVariable{Symbol: "?b"},
+						query.FindVariable{Symbol: datalog.NewSymbol("?a")},
+						query.FindVariable{Symbol: datalog.NewSymbol("?b")},
 					},
 				},
 				Inputs:  []query.PatternElement{},
-				Binding: query.RelationBinding{Variables: []query.Symbol{"?a", "?b"}},
+				Binding: query.RelationBinding{Variables: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")}},
 			},
-			expectedProvides: []query.Symbol{"?a", "?b"},
+			expectedProvides: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 			expectedRequires: []query.Symbol{},
 		},
 		{
@@ -155,13 +155,13 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 			pattern: &query.SubqueryPattern{
 				Query: &query.Query{
 					Find: []query.FindElement{
-						query.FindVariable{Symbol: "?x"},
+						query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 					},
 				},
 				Inputs:  []query.PatternElement{},
-				Binding: query.ScalarBinding{Variable: "?result"},
+				Binding: query.ScalarBinding{Variable: datalog.NewSymbol("?result")},
 			},
-			expectedProvides: []query.Symbol{"?result"},
+			expectedProvides: []query.Symbol{datalog.NewSymbol("?result")},
 			expectedRequires: []query.Symbol{},
 		},
 	}
@@ -208,18 +208,18 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 				{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":attr1")},
-							query.Variable{Name: "?x"},
+							query.Variable{Name: datalog.NewSymbol("?x")},
 						},
 					},
 				},
 				{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?f"},
+							query.Variable{Name: datalog.NewSymbol("?f")},
 							query.Constant{Value: datalog.NewKeyword(":attr2")},
-							query.Variable{Name: "?x"},
+							query.Variable{Name: datalog.NewSymbol("?x")},
 						},
 					},
 				},
@@ -232,7 +232,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 		if len(syms.Provides) != 1 {
 			t.Errorf("Expected 1 symbol (intersection), got %d: %v", len(syms.Provides), syms.Provides)
 		}
-		if len(syms.Provides) == 1 && syms.Provides[0] != "?x" {
+		if len(syms.Provides) == 1 && syms.Provides[0] != datalog.NewSymbol("?x") {
 			t.Errorf("Expected ?x, got %v", syms.Provides[0])
 		}
 	})
@@ -246,16 +246,16 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 				{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: datalog.NewKeyword(":test/attr")},
-							query.Variable{Name: "?x"},
+							query.Variable{Name: datalog.NewSymbol("?x")},
 						},
 					},
 				},
 				{
 					&query.Expression{
 						Function: &query.GroundFunction{Value: int64(0)},
-						Binding:  "?x",
+						Binding:  datalog.NewSymbol("?x"),
 					},
 				},
 			},
@@ -269,10 +269,10 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			providedSet[sym] = true
 		}
 
-		if !providedSet["?x"] {
+		if !providedSet[datalog.NewSymbol("?x")] {
 			t.Errorf("Expected ?x to be provided, got: %v", syms.Provides)
 		}
-		if !providedSet["?e"] {
+		if !providedSet[datalog.NewSymbol("?e")] {
 			t.Errorf("Expected ?e to be provided (union semantics), got: %v", syms.Provides)
 		}
 	})
@@ -288,20 +288,20 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: "?t"},
+								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{
 							query.Constant{Value: "db"},
-							query.Variable{Name: "?scenario"},
+							query.Variable{Name: datalog.NewSymbol("?scenario")},
 						},
-						Binding: query.TupleBinding{Variables: []query.Symbol{"?openingCount"}},
+						Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?openingCount")}},
 					},
 				},
 				{
 					&query.Expression{
 						Function: &query.GroundFunction{Value: int64(0)},
-						Binding:  "?openingCount",
+						Binding:  datalog.NewSymbol("?openingCount"),
 					},
 				},
 			},
@@ -311,7 +311,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 
 		foundOpeningCount := false
 		for _, sym := range syms.Provides {
-			if sym == "?openingCount" {
+			if sym == datalog.NewSymbol("?openingCount") {
 				foundOpeningCount = true
 			}
 		}
@@ -335,20 +335,20 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: "?t"},
+								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{
 							query.Constant{Value: "db"},
-							query.Variable{Name: "?scenario"}, // This is a correlated input
+							query.Variable{Name: datalog.NewSymbol("?scenario")}, // This is a correlated input
 						},
-						Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+						Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 					},
 				},
 				{
 					&query.Expression{
 						Function: &query.GroundFunction{Value: int64(0)},
-						Binding:  "?count",
+						Binding:  datalog.NewSymbol("?count"),
 					},
 				},
 			},
@@ -362,7 +362,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			requiresSet[sym] = true
 		}
 
-		if !requiresSet["?scenario"] {
+		if !requiresSet[datalog.NewSymbol("?scenario")] {
 			t.Errorf("OR clause with correlated subquery must require ?scenario, got Requires: %v", syms.Requires)
 		}
 
@@ -372,7 +372,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			providesSet[sym] = true
 		}
 
-		if !providesSet["?count"] {
+		if !providesSet[datalog.NewSymbol("?count")] {
 			t.Errorf("OR clause should provide ?count, got Provides: %v", syms.Provides)
 		}
 	})
@@ -383,13 +383,13 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 				{
 					&query.Expression{
 						Function: &query.GroundFunction{Value: int64(0)},
-						Binding:  "?x",
+						Binding:  datalog.NewSymbol("?x"),
 					},
 				},
 				{
 					&query.Expression{
 						Function: &query.GroundFunction{Value: int64(1)},
-						Binding:  "?x",
+						Binding:  datalog.NewSymbol("?x"),
 					},
 				},
 			},
@@ -410,16 +410,16 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 					&query.Expression{
 						Function: &query.ArithmeticFunction{
 							Op:    query.OpAdd,
-							Left:  query.VariableTerm{Symbol: "?input"},
+							Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?input")},
 							Right: query.ConstantTerm{Value: int64(1)},
 						},
-						Binding: "?output",
+						Binding: datalog.NewSymbol("?output"),
 					},
 				},
 				{
 					&query.Expression{
 						Function: &query.GroundFunction{Value: int64(0)},
-						Binding:  "?output",
+						Binding:  datalog.NewSymbol("?output"),
 					},
 				},
 			},
@@ -432,7 +432,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 			requiresSet[sym] = true
 		}
 
-		if !requiresSet["?input"] {
+		if !requiresSet[datalog.NewSymbol("?input")] {
 			t.Errorf("OR clause should require ?input from arithmetic expression, got: %v", syms.Requires)
 		}
 	})
@@ -447,20 +447,20 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: "?t"},
+							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
 						},
 					},
 					Inputs: []query.PatternElement{
 						query.Constant{Value: "db"},
-						query.Variable{Name: "?scenario"},
+						query.Variable{Name: datalog.NewSymbol("?scenario")},
 					},
-					Binding: query.TupleBinding{Variables: []query.Symbol{"?openingCount"}},
+					Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?openingCount")}},
 				},
 			},
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  "?openingCount",
+					Binding:  datalog.NewSymbol("?openingCount"),
 				},
 			},
 		},
@@ -471,7 +471,7 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 	// Both branches provide ?openingCount, so the OR should provide it
 	foundOpeningCount := false
 	for _, sym := range syms.Provides {
-		if sym == "?openingCount" {
+		if sym == datalog.NewSymbol("?openingCount") {
 			foundOpeningCount = true
 		}
 	}
@@ -485,26 +485,26 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 	// Verify OR-JOIN also correctly propagates requirements from branches
 	t.Run("OR-JOIN with correlated subquery requires input variable", func(t *testing.T) {
 		orJoin := &query.OrJoinClause{
-			JoinVars: []query.Symbol{"?count"},
+			JoinVars: []query.Symbol{datalog.NewSymbol("?count")},
 			Branches: [][]query.Clause{
 				{
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: "?t"},
+								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{
 							query.Constant{Value: "db"},
-							query.Variable{Name: "?entity"}, // Correlated input
+							query.Variable{Name: datalog.NewSymbol("?entity")}, // Correlated input
 						},
-						Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+						Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 					},
 				},
 				{
 					&query.Expression{
 						Function: &query.GroundFunction{Value: int64(0)},
-						Binding:  "?count",
+						Binding:  datalog.NewSymbol("?count"),
 					},
 				},
 			},
@@ -517,7 +517,7 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 			requiresSet[sym] = true
 		}
 
-		if !requiresSet["?entity"] {
+		if !requiresSet[datalog.NewSymbol("?entity")] {
 			t.Errorf("OR-JOIN with correlated subquery must require ?entity, got Requires: %v", syms.Requires)
 		}
 
@@ -527,7 +527,7 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 			providesSet[sym] = true
 		}
 
-		if !providesSet["?count"] {
+		if !providesSet[datalog.NewSymbol("?count")] {
 			t.Errorf("OR-JOIN should provide ?count (from JoinVars), got Provides: %v", syms.Provides)
 		}
 	})
@@ -540,7 +540,7 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 			Clauses: []query.Clause{
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?e"},
+						query.Variable{Name: datalog.NewSymbol("?e")},
 						query.Constant{Value: datalog.NewKeyword(":user/archived")},
 						query.Constant{Value: true},
 					},
@@ -555,7 +555,7 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 			requiresSet[sym] = true
 		}
 
-		if !requiresSet["?e"] {
+		if !requiresSet[datalog.NewSymbol("?e")] {
 			t.Errorf("NOT clause must require ?e from inner pattern, got Requires: %v", syms.Requires)
 		}
 
@@ -570,10 +570,10 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 				&query.Expression{
 					Function: &query.ArithmeticFunction{
 						Op:    query.OpAdd,
-						Left:  query.VariableTerm{Symbol: "?count"},
+						Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?count")},
 						Right: query.ConstantTerm{Value: int64(10)},
 					},
-					Binding: query.Symbol("?result"),
+					Binding: datalog.NewSymbol("?result"),
 				},
 			},
 		}
@@ -586,10 +586,10 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 		}
 
 		// Should require ?count (input to expression) and ?result (output of expression)
-		if !requiresSet["?count"] {
+		if !requiresSet[datalog.NewSymbol("?count")] {
 			t.Errorf("NOT clause must require ?count, got Requires: %v", syms.Requires)
 		}
-		if !requiresSet["?result"] {
+		if !requiresSet[datalog.NewSymbol("?result")] {
 			t.Errorf("NOT clause must require ?result, got Requires: %v", syms.Requires)
 		}
 	})
@@ -606,9 +606,9 @@ func TestExtractExpressionSymbols(t *testing.T) {
 			name: "Ground function provides binding",
 			expression: &query.Expression{
 				Function: &query.GroundFunction{Value: int64(0)},
-				Binding:  query.Symbol("?x"),
+				Binding:  datalog.NewSymbol("?x"),
 			},
-			expectedProvides: []query.Symbol{"?x"},
+			expectedProvides: []query.Symbol{datalog.NewSymbol("?x")},
 			expectedRequires: []query.Symbol{},
 		},
 		{
@@ -616,13 +616,13 @@ func TestExtractExpressionSymbols(t *testing.T) {
 			expression: &query.Expression{
 				Function: &query.ArithmeticFunction{
 					Op:    query.OpAdd,
-					Left:  query.VariableTerm{Symbol: "?a"},
-					Right: query.VariableTerm{Symbol: "?b"},
+					Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?a")},
+					Right: query.VariableTerm{Symbol: datalog.NewSymbol("?b")},
 				},
-				Binding: query.Symbol("?sum"),
+				Binding: datalog.NewSymbol("?sum"),
 			},
-			expectedProvides: []query.Symbol{"?sum"},
-			expectedRequires: []query.Symbol{"?a", "?b"},
+			expectedProvides: []query.Symbol{datalog.NewSymbol("?sum")},
+			expectedRequires: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 		},
 	}
 

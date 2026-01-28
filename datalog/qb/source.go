@@ -1,6 +1,7 @@
 package qb
 
 import (
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -31,7 +32,7 @@ type sourceInput struct {
 //	        qb.PatFrom(perms, e, qb.Kw(":perm/role"), role),
 //	    ).MustBuild()
 func Source(name string) *sourceInput {
-	return &sourceInput{sym: query.Symbol(name)}
+	return &sourceInput{sym: datalog.NewSymbol(name)}
 }
 
 // Symbol returns the underlying query.Symbol for this source.

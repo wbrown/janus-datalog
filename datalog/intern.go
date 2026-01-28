@@ -7,15 +7,15 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/codec"
 )
 
-// KeywordIntern provides keyword interning to avoid repeated allocations
+// keywordInternCache provides keyword interning to avoid repeated allocations
 // Uses sync.Map for lock-free concurrent reads
 // Cache key is [32]byte (null-padded) to match storage format
-type KeywordIntern struct {
+type keywordInternCache struct {
 	cache sync.Map // map[[32]byte]Keyword
 }
 
 // Global keyword intern instance
-var keywordIntern = &KeywordIntern{}
+var keywordIntern = &keywordInternCache{}
 
 // InternKeyword returns an interned keyword instance.
 // Pads the string to 32 bytes for cache key lookup.
@@ -70,14 +70,14 @@ func Kws(strs ...string) []Keyword {
 	return result
 }
 
-// IdentityIntern provides identity interning to avoid repeated allocations
+// identityInternCache provides identity interning to avoid repeated allocations
 // Uses sync.Map for lock-free concurrent reads
-type IdentityIntern struct {
+type identityInternCache struct {
 	cache sync.Map // map[[20]byte]Identity (Identity is *identity)
 }
 
 // Global identity intern instance
-var identityIntern = &IdentityIntern{}
+var identityIntern = &identityInternCache{}
 
 // InternIdentity returns an interned identity instance.
 // Since all Identity constructors now intern automatically, this is effectively
@@ -120,9 +120,39 @@ func InternIdentityFromHash(hash [20]byte) Identity {
 	return actual.(Identity)
 }
 
-// ClearInterns clears both keyword and identity intern caches
+// symbolInternCache provides symbol interning to avoid repeated allocations
+// Uses sync.Map for lock-free concurrent reads
+// Cache key is string (no storage format constraint for symbols)
+type symbolInternCache struct {
+	cache sync.Map // map[string]Symbol
+}
+
+// Global symbol intern instance
+var symbolIntern = &symbolInternCache{}
+
+// internSymbol returns an interned symbol instance.
+// Uses string keys since symbols have no storage format constraint.
+func internSymbol(s string) Symbol {
+	// Fast path: load existing (lock-free)
+	if val, ok := symbolIntern.cache.Load(s); ok {
+		return val.(Symbol)
+	}
+
+	// Slow path: create and store
+	sym := &symbol{value: s}
+	actual, _ := symbolIntern.cache.LoadOrStore(s, sym)
+	return actual.(Symbol)
+}
+
+// Pre-interned common symbols for hot paths
+var SymDollar = internSymbol("$")
+
+// ClearInterns clears keyword, identity, and symbol intern caches
 // Useful for testing or when memory needs to be reclaimed
 func ClearInterns() {
-	keywordIntern = &KeywordIntern{}
-	identityIntern = &IdentityIntern{}
+	keywordIntern = &keywordInternCache{}
+	identityIntern = &identityInternCache{}
+	symbolIntern = &symbolInternCache{}
+	// Re-intern pre-interned symbols so they remain valid
+	SymDollar = internSymbol("$")
 }

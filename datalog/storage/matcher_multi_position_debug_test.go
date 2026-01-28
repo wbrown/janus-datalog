@@ -33,16 +33,16 @@ func TestMultiPositionDebug(t *testing.T) {
 	// Create pattern: [?e :attr/code ?code]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":attr/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 	t.Logf("Pattern: %s", pattern.String())
 
 	// Create binding relation: entity1 with code="A"
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		[]executor.Tuple{
 			{entity1, "A"},
 		},

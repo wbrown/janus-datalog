@@ -23,7 +23,7 @@ func analyzeClausesForExplain(phase *RealizedPhase, clauses []query.Clause, avai
 			// Add expression output to available
 			switch binding := c.Binding.(type) {
 			case query.Symbol:
-				if binding != "" {
+				if binding != nil {
 					available[binding] = true
 				}
 			case query.TupleBinding:
@@ -232,7 +232,7 @@ func analyzeExprForExplain(expr *query.Expression, available map[query.Symbol]bo
 	var isEquality bool
 	switch b := expr.Binding.(type) {
 	case query.Symbol:
-		isEquality = b == ""
+		isEquality = b == nil
 	case query.TupleBinding:
 		isEquality = len(b.Variables) == 0
 	default:

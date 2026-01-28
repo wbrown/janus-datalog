@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // BenchmarkSymmetricVsAsymmetricHashJoin compares symmetric and asymmetric hash joins
@@ -13,8 +15,8 @@ func BenchmarkSymmetricVsAsymmetricHashJoin(b *testing.B) {
 	sizes := []int{100, 1000, 5000}
 
 	for _, size := range sizes {
-		leftCols := []query.Symbol{"?x", "?name"}
-		rightCols := []query.Symbol{"?x", "?value"}
+		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -107,8 +109,8 @@ func BenchmarkSymmetricHashJoinTableSize(b *testing.B) {
 	for _, dataSize := range sizes {
 		for _, tableSize := range tableSizes {
 			b.Run(fmt.Sprintf("data_%d/table_%d", dataSize, tableSize), func(b *testing.B) {
-				leftCols := []query.Symbol{"?x", "?name"}
-				rightCols := []query.Symbol{"?x", "?value"}
+				leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+				rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 				leftTuples := make([]Tuple, dataSize)
 				rightTuples := make([]Tuple, dataSize)

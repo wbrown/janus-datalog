@@ -2,18 +2,10 @@ package executor
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
-
-// IsSourceSymbol returns true if the symbol is a data source marker (starts with "$").
-// All source symbols ($, $users, $perms, etc.) are database/source references,
-// not regular query variables or input columns.
-func IsSourceSymbol(sym query.Symbol) bool {
-	return strings.HasPrefix(string(sym), "$")
-}
 
 // SourceRouter routes pattern queries to PatternMatchers based on pattern.Source.
 // It implements PatternMatcher, so it can be used anywhere a PatternMatcher is expected.
@@ -39,8 +31,8 @@ func NewSourceRouter(sources map[query.Symbol]PatternMatcher) *SourceRouter {
 // based on pattern.Source. Empty source routes to "$" (the default).
 func (sr *SourceRouter) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
 	sourceSym := pattern.Source
-	if sourceSym == "" {
-		sourceSym = query.Symbol("$")
+	if sourceSym == nil {
+		sourceSym = datalog.SymDollar
 	}
 
 	source, ok := sr.sources[sourceSym]
@@ -56,8 +48,8 @@ func (sr *SourceRouter) Match(pattern *query.DataPattern, bindings Relations) (R
 // if it supports predicate pushdown. Falls back to Match if it doesn't.
 func (sr *SourceRouter) MatchWithConstraints(pattern *query.DataPattern, bindings Relations, constraints []StorageConstraint) (Relation, error) {
 	sourceSym := pattern.Source
-	if sourceSym == "" {
-		sourceSym = query.Symbol("$")
+	if sourceSym == nil {
+		sourceSym = datalog.SymDollar
 	}
 
 	source, ok := sr.sources[sourceSym]
@@ -75,7 +67,7 @@ func (sr *SourceRouter) MatchWithConstraints(pattern *query.DataPattern, binding
 // source ($) for entity attribute lookups used by database functions
 // (get-else, missing?, get-some).
 func (sr *SourceRouter) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
-	source, ok := sr.sources[query.Symbol("$")]
+	source, ok := sr.sources[datalog.SymDollar]
 	if !ok {
 		return nil, false
 	}

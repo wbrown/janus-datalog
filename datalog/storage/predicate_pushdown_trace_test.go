@@ -41,7 +41,7 @@ func TestPredicatePushdownTrace(t *testing.T) {
 	// Patterns
 	symbolPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
 			query.Constant{Value: symbolEntity},
 		},
@@ -49,9 +49,9 @@ func TestPredicatePushdownTrace(t *testing.T) {
 
 	timePattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/time")},
-			query.Variable{Name: query.Symbol("?t")},
+			query.Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 

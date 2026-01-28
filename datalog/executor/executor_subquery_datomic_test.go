@@ -155,7 +155,7 @@ func TestSubqueryDatabaseAsConstant(t *testing.T) {
 
 			// Check if it's a constant with value $
 			if c, ok := firstInput.(query.Constant); ok {
-				if sym, ok := c.Value.(query.Symbol); ok && sym == "$" {
+				if sym, ok := c.Value.(query.Symbol); ok && sym == datalog.NewSymbol("$") {
 					// Good - $ is recognized as a constant symbol
 					t.Log("$ correctly recognized as constant symbol")
 				} else {

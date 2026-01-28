@@ -257,7 +257,7 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 	resultColumns := make([]query.Symbol, len(aggregates))
 	for i, agg := range aggregates {
 		// Use String() method which handles conditional vs unconditional formatting
-		resultColumns[i] = query.Symbol(agg.String())
+		resultColumns[i] = datalog.NewSymbol(agg.String())
 	}
 
 	// Relational theory: empty input → empty output
@@ -401,7 +401,7 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 				i, agg.Function, agg.Arg, agg.Predicate, agg.IsConditional(), agg.String())
 		}
 		// Use String() method which handles conditional vs unconditional formatting
-		resultColumns[len(groupByVars)+i] = query.Symbol(agg.String())
+		resultColumns[len(groupByVars)+i] = datalog.NewSymbol(agg.String())
 	}
 
 	opts := rel.Options()
@@ -562,7 +562,7 @@ func (r *StreamingAggregateRelation) Columns() []query.Symbol {
 	copy(resultColumns, r.groupByVars)
 	for i, agg := range r.aggregates {
 		// Use String() method which handles conditional vs unconditional formatting
-		resultColumns[len(r.groupByVars)+i] = query.Symbol(agg.String())
+		resultColumns[len(r.groupByVars)+i] = datalog.NewSymbol(agg.String())
 	}
 	return resultColumns
 }

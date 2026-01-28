@@ -120,7 +120,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	var bindingSymbols []query.Symbol
 	switch b := expr.Binding.(type) {
 	case query.Symbol:
-		if b != "" {
+		if b != nil {
 			bindingSymbols = []query.Symbol{b}
 		}
 	case query.TupleBinding:

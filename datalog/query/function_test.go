@@ -3,6 +3,8 @@ package query
 import (
 	"testing"
 	"time"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestArithmeticFunction(t *testing.T) {
@@ -16,30 +18,30 @@ func TestArithmeticFunction(t *testing.T) {
 			name: "Addition int",
 			fn: ArithmeticFunction{
 				Op:    OpAdd,
-				Left:  VariableTerm{Symbol: "?x"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(10)},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(5)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5)},
 			expected: int64(15),
 		},
 		{
 			name: "Subtraction float",
 			fn: ArithmeticFunction{
 				Op:    OpSubtract,
-				Left:  VariableTerm{Symbol: "?x"},
-				Right: VariableTerm{Symbol: "?y"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 			},
-			bindings: map[Symbol]interface{}{"?x": 10.5, "?y": 3.5},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): 10.5, datalog.NewSymbol("?y"): 3.5},
 			expected: 7.0,
 		},
 		{
 			name: "Multiplication mixed",
 			fn: ArithmeticFunction{
 				Op:    OpMultiply,
-				Left:  VariableTerm{Symbol: "?x"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: 2.5},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(4)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(4)},
 			expected: 10.0,
 		},
 		{
@@ -47,9 +49,9 @@ func TestArithmeticFunction(t *testing.T) {
 			fn: ArithmeticFunction{
 				Op:    OpDivide,
 				Left:  ConstantTerm{Value: int64(10)},
-				Right: VariableTerm{Symbol: "?x"},
+				Right: VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(2)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(2)},
 			expected: 5.0,
 		},
 	}
@@ -72,13 +74,13 @@ func TestStringConcatFunction(t *testing.T) {
 	fn := StringConcatFunction{
 		Terms: []Term{
 			ConstantTerm{Value: "Hello "},
-			VariableTerm{Symbol: "?name"},
+			VariableTerm{Symbol: datalog.NewSymbol("?name")},
 			ConstantTerm{Value: "!"},
 		},
 	}
 
 	bindings := map[Symbol]interface{}{
-		"?name": "World",
+		datalog.NewSymbol("?name"): "World",
 	}
 
 	result, err := fn.Eval(bindings)
@@ -111,11 +113,11 @@ func TestTimeExtractionFunction(t *testing.T) {
 		t.Run(tt.field, func(t *testing.T) {
 			fn := TimeExtractionFunction{
 				Field:    tt.field,
-				TimeTerm: VariableTerm{Symbol: "?t"},
+				TimeTerm: VariableTerm{Symbol: datalog.NewSymbol("?t")},
 			}
 
 			bindings := map[Symbol]interface{}{
-				"?t": testTime,
+				datalog.NewSymbol("?t"): testTime,
 			}
 
 			result, err := fn.Eval(bindings)
@@ -140,27 +142,27 @@ func TestAggregates(t *testing.T) {
 	}{
 		{
 			name:     "Count",
-			agg:      CountAggregate{Var: "?x"},
+			agg:      CountAggregate{Var: datalog.NewSymbol("?x")},
 			expected: int64(4),
 		},
 		{
 			name:     "Sum",
-			agg:      SumAggregate{Var: "?x"},
+			agg:      SumAggregate{Var: datalog.NewSymbol("?x")},
 			expected: int64(100),
 		},
 		{
 			name:     "Avg",
-			agg:      AvgAggregate{Var: "?x"},
+			agg:      AvgAggregate{Var: datalog.NewSymbol("?x")},
 			expected: 25.0,
 		},
 		{
 			name:     "Min",
-			agg:      MinAggregate{Var: "?x"},
+			agg:      MinAggregate{Var: datalog.NewSymbol("?x")},
 			expected: int64(10),
 		},
 		{
 			name:     "Max",
-			agg:      MaxAggregate{Var: "?x"},
+			agg:      MaxAggregate{Var: datalog.NewSymbol("?x")},
 			expected: int64(40),
 		},
 	}

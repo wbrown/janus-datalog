@@ -16,28 +16,28 @@ func TestGroundPredicate(t *testing.T) {
 		{
 			name: "All variables bound",
 			pred: &GroundPredicate{
-				Variables: []Symbol{"?x", "?y"},
+				Variables: []Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
-				"?y": "hello",
+				datalog.NewSymbol("?x"): int64(5),
+				datalog.NewSymbol("?y"): "hello",
 			},
 			expected: true,
 		},
 		{
 			name: "Some variables missing",
 			pred: &GroundPredicate{
-				Variables: []Symbol{"?x", "?y"},
+				Variables: []Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
+				datalog.NewSymbol("?x"): int64(5),
 			},
 			expected: false,
 		},
 		{
 			name: "Empty bindings",
 			pred: &GroundPredicate{
-				Variables: []Symbol{"?x"},
+				Variables: []Symbol{datalog.NewSymbol("?x")},
 			},
 			bindings: map[Symbol]interface{}{},
 			expected: false,
@@ -67,41 +67,41 @@ func TestMissingPredicate(t *testing.T) {
 		{
 			name: "Variable is missing",
 			pred: &MissingPredicate{
-				Variables: []Symbol{"?z"},
+				Variables: []Symbol{datalog.NewSymbol("?z")},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
-				"?y": "hello",
+				datalog.NewSymbol("?x"): int64(5),
+				datalog.NewSymbol("?y"): "hello",
 			},
 			expected: true,
 		},
 		{
 			name: "Variable is present",
 			pred: &MissingPredicate{
-				Variables: []Symbol{"?x"},
+				Variables: []Symbol{datalog.NewSymbol("?x")},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
+				datalog.NewSymbol("?x"): int64(5),
 			},
 			expected: false,
 		},
 		{
 			name: "Multiple variables all missing",
 			pred: &MissingPredicate{
-				Variables: []Symbol{"?a", "?b"},
+				Variables: []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
+				datalog.NewSymbol("?x"): int64(5),
 			},
 			expected: true,
 		},
 		{
 			name: "One variable present",
 			pred: &MissingPredicate{
-				Variables: []Symbol{"?a", "?x"},
+				Variables: []Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?x")},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
+				datalog.NewSymbol("?x"): int64(5),
 			},
 			expected: false,
 		},
@@ -132,13 +132,13 @@ func TestNotEqualPredicate(t *testing.T) {
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
 					Op:    OpEQ,
-					Left:  VariableTerm{Symbol: "?x"},
-					Right: VariableTerm{Symbol: "?y"},
+					Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 				},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
-				"?y": int64(10),
+				datalog.NewSymbol("?x"): int64(5),
+				datalog.NewSymbol("?y"): int64(10),
 			},
 			expected: true,
 		},
@@ -147,13 +147,13 @@ func TestNotEqualPredicate(t *testing.T) {
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
 					Op:    OpEQ,
-					Left:  VariableTerm{Symbol: "?x"},
-					Right: VariableTerm{Symbol: "?y"},
+					Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 				},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
-				"?y": int64(5),
+				datalog.NewSymbol("?x"): int64(5),
+				datalog.NewSymbol("?y"): int64(5),
 			},
 			expected: false,
 		},
@@ -162,12 +162,12 @@ func TestNotEqualPredicate(t *testing.T) {
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
 					Op:    OpEQ,
-					Left:  VariableTerm{Symbol: "?x"},
+					Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					Right: ConstantTerm{Value: int64(10)},
 				},
 			},
 			bindings: map[Symbol]interface{}{
-				"?x": int64(5),
+				datalog.NewSymbol("?x"): int64(5),
 			},
 			expected: true,
 		},
@@ -176,12 +176,12 @@ func TestNotEqualPredicate(t *testing.T) {
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
 					Op:    OpEQ,
-					Left:  VariableTerm{Symbol: "?attr"},
+					Left:  VariableTerm{Symbol: datalog.NewSymbol("?attr")},
 					Right: ConstantTerm{Value: datalog.NewKeyword(":symbol/ticker")},
 				},
 			},
 			bindings: map[Symbol]interface{}{
-				"?attr": datalog.NewKeyword(":symbol/name"),
+				datalog.NewSymbol("?attr"): datalog.NewKeyword(":symbol/name"),
 			},
 			expected: true,
 		},
@@ -190,12 +190,12 @@ func TestNotEqualPredicate(t *testing.T) {
 			pred: &NotEqualPredicate{
 				Comparison: Comparison{
 					Op:    OpEQ,
-					Left:  VariableTerm{Symbol: "?attr"},
+					Left:  VariableTerm{Symbol: datalog.NewSymbol("?attr")},
 					Right: ConstantTerm{Value: datalog.NewKeyword(":symbol/ticker")},
 				},
 			},
 			bindings: map[Symbol]interface{}{
-				"?attr": datalog.NewKeyword(":symbol/ticker"),
+				datalog.NewSymbol("?attr"): datalog.NewKeyword(":symbol/ticker"),
 			},
 			expected: false,
 		},

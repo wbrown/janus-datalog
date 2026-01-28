@@ -59,7 +59,7 @@ func (m *AnnotatedMatcher) Match(pattern *query.DataPattern, bindings Relations)
 			bindingCols := bindingRel.Columns()
 			bindingColumns = make([]string, len(bindingCols))
 			for i, col := range bindingCols {
-				bindingColumns[i] = string(col)
+				bindingColumns[i] = col.String()
 			}
 			bindingSize = bindingRel.Size()
 		}
@@ -86,7 +86,7 @@ func (m *AnnotatedMatcher) Match(pattern *query.DataPattern, bindings Relations)
 		// Add symbol order information for rendering
 		symbolOrder := make([]string, len(result.Columns()))
 		for i, col := range result.Columns() {
-			symbolOrder[i] = string(col)
+			symbolOrder[i] = col.String()
 		}
 		data["symbol.order"] = symbolOrder
 	}
@@ -121,7 +121,7 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 				bindingCols := bindingRel.Columns()
 				bindingColumns = make([]string, len(bindingCols))
 				for i, col := range bindingCols {
-					bindingColumns[i] = string(col)
+					bindingColumns[i] = col.String()
 				}
 				bindingSize = bindingRel.Size()
 			}
@@ -148,7 +148,7 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 
 			symbolOrder := make([]string, len(result.Columns()))
 			for i, col := range result.Columns() {
-				symbolOrder[i] = string(col)
+				symbolOrder[i] = col.String()
 			}
 			data["symbol.order"] = symbolOrder
 		}

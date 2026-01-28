@@ -103,14 +103,14 @@ func TestJoinStrategySelection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create mock binding relation with specified size
-			bindingRel := createMockRelation(tt.bindingSize, []query.Symbol{"?e"})
+			bindingRel := createMockRelation(tt.bindingSize, []query.Symbol{datalog.NewSymbol("?e")})
 
 			// Create pattern - attribute is bound to control cardinality estimate
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword(":test/attr")},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			}
 
@@ -221,20 +221,20 @@ func TestMergeJoinCorrectness(t *testing.T) {
 				tuples[i] = executor.Tuple{e}
 			}
 			bindingRel := executor.NewMaterializedRelationNoDedupe(
-				[]query.Symbol{"?e"},
+				[]query.Symbol{datalog.NewSymbol("?e")},
 				tuples,
 			)
 
 			// Create pattern: [?e :test/value ?v]
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword(":test/value")},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			}
 
-			columns := []query.Symbol{"?e", "?v"}
+			columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 			// Call merge join directly
 			result, err := matcher.matchWithMergeJoin(
@@ -330,18 +330,18 @@ func TestMergeJoinVsHashJoin(t *testing.T) {
 				tuples[i] = executor.Tuple{entities[i]}
 			}
 			bindingRel := executor.NewMaterializedRelationNoDedupe(
-				[]query.Symbol{"?e"},
+				[]query.Symbol{datalog.NewSymbol("?e")},
 				tuples,
 			)
 
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword(":test/value")},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			}
-			columns := []query.Symbol{"?e", "?v"}
+			columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 			// Call hash join
 			hashResult, err := matcher.matchWithHashJoin(
@@ -443,18 +443,18 @@ func TestMergeJoinPerformance(t *testing.T) {
 		tuples[i] = executor.Tuple{entities[i]}
 	}
 	bindingRel := executor.NewMaterializedRelationNoDedupe(
-		[]query.Symbol{"?e"},
+		[]query.Symbol{datalog.NewSymbol("?e")},
 		tuples,
 	)
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":test/value")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	columns := []query.Symbol{"?e", "?v"}
+	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 	start := time.Now()
 	result, err := matcher.matchWithMergeJoin(

@@ -63,9 +63,9 @@ func TestBatchScanPerformance(t *testing.T) {
 	// Pattern: [?bar :price/time ?time]
 	timePattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("bar")},
+			query.Variable{Name: datalog.NewSymbol("bar")},
 			query.Constant{Value: datalog.NewKeyword(":price/time")},
-			query.Variable{Name: query.Symbol("time")},
+			query.Variable{Name: datalog.NewSymbol("time")},
 		},
 	}
 
@@ -75,7 +75,7 @@ func TestBatchScanPerformance(t *testing.T) {
 		tuples[i] = executor.Tuple{bar}
 	}
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{query.Symbol("bar")},
+		[]query.Symbol{datalog.NewSymbol("bar")},
 		tuples,
 	)
 

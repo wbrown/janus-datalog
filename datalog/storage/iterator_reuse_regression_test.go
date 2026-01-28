@@ -50,9 +50,9 @@ func TestIteratorReuseRegression(t *testing.T) {
 	testMatcher := NewBadgerMatcherWithOptions(db.store, opts)
 	testPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":price/minute-of-day")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 	testResult, err := testMatcher.Match(testPattern, nil)
@@ -64,9 +64,9 @@ func TestIteratorReuseRegression(t *testing.T) {
 	// Check what's stored for :price/symbol
 	symbolPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 	symbolResult, err := testMatcher.Match(symbolPattern, nil)
@@ -95,7 +95,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 	// Check specifically for minute 570
 	test570Pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":price/minute-of-day")},
 			query.Constant{Value: int64(570)},
 		},
@@ -110,7 +110,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 	for _, testVal := range []int64{570, 571, 959, 960} {
 		testPattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: datalog.NewKeyword(":price/minute-of-day")},
 				query.Constant{Value: testVal},
 			},
@@ -135,7 +135,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		// Note: This pattern doesn't use the binding, so we expect just 1 iterator open
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?bar"},
+				query.Variable{Name: datalog.NewSymbol("?bar")},
 				query.Constant{Value: datalog.NewKeyword(":price/minute-of-day")},
 				query.Constant{Value: int64(570)}, // 9:30 AM
 			},
@@ -148,7 +148,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			tuples = append(tuples, executor.Tuple{e})
 		}
 		symbolRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?s"},
+			[]query.Symbol{datalog.NewSymbol("?s")},
 			tuples,
 		)
 
@@ -213,7 +213,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?bar"},
+				query.Variable{Name: datalog.NewSymbol("?bar")},
 				query.Constant{Value: datalog.NewKeyword(":price/minute-of-day")},
 				query.Constant{Value: int64(570)},
 			},
@@ -225,7 +225,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			tuples = append(tuples, executor.Tuple{e})
 		}
 		symbolRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?s"},
+			[]query.Symbol{datalog.NewSymbol("?s")},
 			tuples,
 		)
 
@@ -275,7 +275,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			Elements: []query.PatternElement{
 				query.Constant{Value: datalog.NewIdentity("bar:AAPL:0:0")}, // Try a specific bar
 				query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 		regularMatcher := NewBadgerMatcherWithOptions(db.store, opts)
@@ -305,7 +305,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		// Now try the direct query
 		checkPattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?b"},
+				query.Variable{Name: datalog.NewSymbol("?b")},
 				query.Constant{Value: datalog.NewKeyword(":price/symbol")},
 				query.Constant{Value: datalog.NewIdentity("symbol:AAPL")},
 			},
@@ -319,14 +319,14 @@ func TestIteratorReuseRegression(t *testing.T) {
 		// Now test with binding
 		testPattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?b"},
+				query.Variable{Name: datalog.NewSymbol("?b")},
 				query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-				query.Variable{Name: "?s"}, // This will be bound
+				query.Variable{Name: datalog.NewSymbol("?s")}, // This will be bound
 			},
 		}
 		testSymbol := datalog.NewIdentity("symbol:AAPL")
 		testRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?s"},
+			[]query.Symbol{datalog.NewSymbol("?s")},
 			[]executor.Tuple{{testSymbol}},
 		)
 		testResult, err := regularMatcher.Match(testPattern, executor.Relations{testRel})
@@ -353,9 +353,9 @@ func TestIteratorReuseRegression(t *testing.T) {
 		// find all bars for a specific date
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?b"},
+				query.Variable{Name: datalog.NewSymbol("?b")},
 				query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-				query.Variable{Name: "?s"}, // This will be bound
+				query.Variable{Name: datalog.NewSymbol("?s")}, // This will be bound
 			},
 		}
 
@@ -366,7 +366,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			symbolTuples = append(symbolTuples, executor.Tuple{symbolEntity})
 		}
 		symbolRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?s"},
+			[]query.Symbol{datalog.NewSymbol("?s")},
 			symbolTuples,
 		)
 

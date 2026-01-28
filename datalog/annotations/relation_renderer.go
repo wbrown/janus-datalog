@@ -29,7 +29,7 @@ func (r *RelationRenderer) RenderRelation(rel RelationInfo) string {
 	// Build attribute list
 	attrStrs := make([]string, len(rel.Attrs))
 	for i, attr := range rel.Attrs {
-		attrStrs[i] = string(attr)
+		attrStrs[i] = attr.String()
 	}
 	attrList := strings.Join(attrStrs, " ")
 

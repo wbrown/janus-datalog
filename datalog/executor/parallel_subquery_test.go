@@ -6,6 +6,8 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestParallelSubqueryConfiguration tests configuration flags
@@ -34,10 +36,10 @@ func Skip_TestParallelSubqueryConfiguration(t *testing.T) {
 func TestCombineSubqueryResults(t *testing.T) {
 	// Create test subquery plan
 	subqPlan := planner.SubqueryPlan{
-		Inputs: []query.Symbol{"?x"},
+		Inputs: []query.Symbol{datalog.NewSymbol("?x")},
 		Subquery: &query.SubqueryPattern{
 			Binding: query.TupleBinding{
-				Variables: []query.Symbol{"?result"},
+				Variables: []query.Symbol{datalog.NewSymbol("?result")},
 			},
 		},
 	}
@@ -56,7 +58,7 @@ func TestCombineSubqueryResults(t *testing.T) {
 			name: "single result",
 			results: []Relation{
 				NewMaterializedRelation(
-					[]query.Symbol{"?x", "?result"},
+					[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?result")},
 					[]Tuple{{1, "a"}},
 				),
 			},
@@ -66,15 +68,15 @@ func TestCombineSubqueryResults(t *testing.T) {
 			name: "multiple results",
 			results: []Relation{
 				NewMaterializedRelation(
-					[]query.Symbol{"?x", "?result"},
+					[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?result")},
 					[]Tuple{{1, "a"}},
 				),
 				NewMaterializedRelation(
-					[]query.Symbol{"?x", "?result"},
+					[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?result")},
 					[]Tuple{{2, "b"}},
 				),
 				NewMaterializedRelation(
-					[]query.Symbol{"?x", "?result"},
+					[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?result")},
 					[]Tuple{{3, "c"}},
 				),
 			},
@@ -84,11 +86,11 @@ func TestCombineSubqueryResults(t *testing.T) {
 			name: "results with multiple tuples",
 			results: []Relation{
 				NewMaterializedRelation(
-					[]query.Symbol{"?x", "?result"},
+					[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?result")},
 					[]Tuple{{1, "a"}, {1, "a2"}},
 				),
 				NewMaterializedRelation(
-					[]query.Symbol{"?x", "?result"},
+					[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?result")},
 					[]Tuple{{2, "b"}, {2, "b2"}},
 				),
 			},
@@ -98,12 +100,12 @@ func TestCombineSubqueryResults(t *testing.T) {
 			name: "with nil results",
 			results: []Relation{
 				NewMaterializedRelation(
-					[]query.Symbol{"?x", "?result"},
+					[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?result")},
 					[]Tuple{{1, "a"}},
 				),
 				nil,
 				NewMaterializedRelation(
-					[]query.Symbol{"?x", "?result"},
+					[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?result")},
 					[]Tuple{{2, "b"}},
 				),
 			},

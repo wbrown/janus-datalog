@@ -488,6 +488,7 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 		{E: entity, A: datalog.NewKeyword(":test/bytes"), V: []byte("binary data"), Tx: 6},
 		{E: entity, A: datalog.NewKeyword(":test/ref"), V: refEntity, Tx: 7},
 		{E: entity, A: datalog.NewKeyword(":test/keyword"), V: datalog.NewKeyword(":status/active"), Tx: 8},
+		{E: entity, A: datalog.NewKeyword(":test/symbol"), V: datalog.NewSymbol("my-function"), Tx: 9},
 	}
 
 	// Assert all datoms
@@ -599,6 +600,10 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 					case datalog.Keyword:
 						if kv, ok := kd.V.(datalog.Keyword); !ok || rv != kv {
 							t.Errorf("Keyword value mismatch: regular=%v, key-only=%v", rv, kd.V)
+						}
+					case datalog.Symbol:
+						if kv, ok := kd.V.(datalog.Symbol); !ok || rv != kv {
+							t.Errorf("Symbol value mismatch: regular=%v, key-only=%v", rv, kd.V)
 						}
 					}
 				}

@@ -16,6 +16,7 @@ package qb
 import (
 	"sync/atomic"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -50,7 +51,7 @@ func NewVar(name string) *Var {
 	}
 	return &Var{
 		id:   id,
-		name: query.Symbol(name),
+		name: datalog.NewSymbol(name),
 	}
 }
 
@@ -62,7 +63,7 @@ func (v *Var) Symbol() query.Symbol {
 
 // String returns the variable name for debugging.
 func (v *Var) String() string {
-	return string(v.name)
+	return v.name.String()
 }
 
 // toPatternElement converts Var to a query.PatternElement

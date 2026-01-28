@@ -44,7 +44,7 @@ func TestMultiSource_MemorySourceWithDatabase(t *testing.T) {
 		         [$cache ?c :cache/user-id ?uid]
 		         [$cache ?c :cache/score ?score]]`,
 		WithSources(map[query.Symbol]executor.PatternMatcher{
-			query.Symbol("$cache"): cache,
+			datalog.NewSymbol("$cache"): cache,
 		}),
 	)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestMultiSource_MemorySourceOnly(t *testing.T) {
 		  :in $items
 		  :where [$items ?e :item/name ?name]]`,
 		WithSources(map[query.Symbol]executor.PatternMatcher{
-			query.Symbol("$items"): items,
+			datalog.NewSymbol("$items"): items,
 		}),
 	)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
 
 	results, err := db.ExecuteQueryWithInputs(q,
 		WithSources(map[query.Symbol]executor.PatternMatcher{
-			query.Symbol("$rules"): ruleSource,
+			datalog.NewSymbol("$rules"): ruleSource,
 		}),
 	)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 		  :where [$rules ?r :rule/key ?key]
 		         [$rules ?r :rule/depends-on ?dep]]`,
 		WithSources(map[query.Symbol]executor.PatternMatcher{
-			query.Symbol("$rules"): ruleSource,
+			datalog.NewSymbol("$rules"): ruleSource,
 		}),
 		"region-lore",
 	)
@@ -276,8 +276,8 @@ func TestMultiSource_CrossDatabaseJoin(t *testing.T) {
 		         [$perms ?p :perm/user-id ?uid]
 		         [$perms ?p :perm/role ?role]]`,
 		WithSources(map[query.Symbol]executor.PatternMatcher{
-			query.Symbol("$users"): usersDB,
-			query.Symbol("$perms"): permsDB,
+			datalog.NewSymbol("$users"): usersDB,
+			datalog.NewSymbol("$perms"): permsDB,
 		}),
 	)
 	if err != nil {

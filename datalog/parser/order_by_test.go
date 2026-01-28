@@ -3,6 +3,7 @@ package parser
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -23,7 +24,7 @@ func TestOrderByParsing(t *testing.T) {
 				if len(q.OrderBy) != 1 {
 					t.Errorf("expected 1 order-by clause, got %d", len(q.OrderBy))
 				}
-				if q.OrderBy[0].Variable != "?age" {
+				if q.OrderBy[0].Variable != datalog.NewSymbol("?age") {
 					t.Errorf("expected ?age, got %s", q.OrderBy[0].Variable)
 				}
 				if q.OrderBy[0].Direction != query.OrderAsc {
@@ -41,7 +42,7 @@ func TestOrderByParsing(t *testing.T) {
 				if len(q.OrderBy) != 1 {
 					t.Errorf("expected 1 order-by clause, got %d", len(q.OrderBy))
 				}
-				if q.OrderBy[0].Variable != "?score" {
+				if q.OrderBy[0].Variable != datalog.NewSymbol("?score") {
 					t.Errorf("expected ?score, got %s", q.OrderBy[0].Variable)
 				}
 				if q.OrderBy[0].Direction != query.OrderDesc {
@@ -60,10 +61,10 @@ func TestOrderByParsing(t *testing.T) {
 				if len(q.OrderBy) != 2 {
 					t.Errorf("expected 2 order-by clauses, got %d", len(q.OrderBy))
 				}
-				if q.OrderBy[0].Variable != "?dept" || q.OrderBy[0].Direction != query.OrderAsc {
+				if q.OrderBy[0].Variable != datalog.NewSymbol("?dept") || q.OrderBy[0].Direction != query.OrderAsc {
 					t.Errorf("first clause should be ?dept asc")
 				}
-				if q.OrderBy[1].Variable != "?salary" || q.OrderBy[1].Direction != query.OrderDesc {
+				if q.OrderBy[1].Variable != datalog.NewSymbol("?salary") || q.OrderBy[1].Direction != query.OrderDesc {
 					t.Errorf("second clause should be ?salary desc")
 				}
 			},

@@ -78,7 +78,7 @@ func TestIndexedMatcher_StrategySelection(t *testing.T) {
 				Elements: []query.PatternElement{
 					query.Constant{Value: datalog.NewIdentity("e1")},
 					query.Constant{Value: datalog.NewKeyword("name")},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			expectedType: "EA-index",
@@ -88,8 +88,8 @@ func TestIndexedMatcher_StrategySelection(t *testing.T) {
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
 					query.Constant{Value: datalog.NewIdentity("e1")},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			expectedType: "E-index",
@@ -98,9 +98,9 @@ func TestIndexedMatcher_StrategySelection(t *testing.T) {
 			// [?e :name ?v] - A bound
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword("name")},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			expectedType: "A-index",
@@ -109,8 +109,8 @@ func TestIndexedMatcher_StrategySelection(t *testing.T) {
 			// [?e ?a "Alice"] - V bound
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
 					query.Constant{Value: "Alice"},
 				},
 			},
@@ -120,9 +120,9 @@ func TestIndexedMatcher_StrategySelection(t *testing.T) {
 			// [?e ?a ?v] - Nothing bound
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			expectedType: "linear-scan",
@@ -165,7 +165,7 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 				Elements: []query.PatternElement{
 					query.Constant{Value: datalog.NewIdentity("person1")},
 					query.Constant{Value: datalog.NewKeyword("name")},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 		},
@@ -174,8 +174,8 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
 					query.Constant{Value: datalog.NewIdentity("person1")},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 		},
@@ -183,9 +183,9 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 			name: "A bound",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword("name")},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 		},
@@ -193,8 +193,8 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 			name: "V bound (string)",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
 					query.Constant{Value: "Alice"},
 				},
 			},
@@ -203,8 +203,8 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 			name: "V bound (int64)",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
 					query.Constant{Value: int64(30)},
 				},
 			},
@@ -213,8 +213,8 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 			name: "V bound (bool)",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
 					query.Constant{Value: true},
 				},
 			},
@@ -223,9 +223,9 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 			name: "Nothing bound (full scan)",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 		},
@@ -274,9 +274,9 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher([]datalog.Datom{})
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
-				query.Variable{Name: "?a"},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Variable{Name: datalog.NewSymbol("?a")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
@@ -298,9 +298,9 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms)
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: datalog.NewKeyword("name")},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
@@ -335,8 +335,8 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 		// Search for specific value - should only match exact value
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
-				query.Variable{Name: "?a"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Variable{Name: datalog.NewSymbol("?a")},
 				query.Constant{Value: "test1"},
 			},
 		}
@@ -389,15 +389,15 @@ func TestIndexedMatcher_WithBindings(t *testing.T) {
 		{datalog.NewIdentity("p1")},
 	}
 	bindings := Relations{
-		NewMaterializedRelation([]query.Symbol{"?e"}, bindingTuples),
+		NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, bindingTuples),
 	}
 
 	// Pattern: [?e :age ?v]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword("age")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -450,9 +450,9 @@ func TestIndexedMatcher_WithConstraints(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword("timestamp")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 

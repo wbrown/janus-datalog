@@ -61,7 +61,7 @@ func extractFindColumns(findElements []query.FindElement) []query.Symbol {
 		case query.FindVariable:
 			columns = append(columns, e.Symbol)
 		case query.FindAggregate:
-			columns = append(columns, query.Symbol(e.String()))
+			columns = append(columns, datalog.NewSymbol(e.String()))
 		}
 	}
 	return columns

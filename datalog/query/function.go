@@ -403,12 +403,12 @@ func (a AndFunction) String() string {
 		return "(and)"
 	}
 	if len(a.Terms) == 1 {
-		return string(a.Terms[0])
+		return a.Terms[0].String()
 	}
 
 	result := "(and"
 	for _, term := range a.Terms {
-		result += " " + string(term)
+		result += " " + term.String()
 	}
 	result += ")"
 	return result

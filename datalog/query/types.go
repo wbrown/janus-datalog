@@ -11,18 +11,9 @@ import (
 // It's used throughout the executor and storage layers for query results
 type Tuple []interface{}
 
-// Symbol represents a variable in a query (e.g., ?x, ?name)
-type Symbol string
-
-// IsVariable returns true if this is a variable symbol (starts with ?)
-func (s Symbol) IsVariable() bool {
-	return len(s) > 0 && s[0] == '?'
-}
-
-// String returns the string representation
-func (s Symbol) String() string {
-	return string(s)
-}
+// Symbol is an interned pointer type for query variables, source names, etc.
+// Alias for datalog.Symbol — construction via datalog.NewSymbol("?x").
+type Symbol = datalog.Symbol
 
 // PatternElement represents an element in a pattern
 // It can be a concrete value, a variable, or a blank
@@ -86,7 +77,7 @@ type Pattern interface {
 // For multi-source queries, Source identifies which data source to query
 // (e.g., Symbol("$users")). Empty Source means the default source ($).
 type DataPattern struct {
-	Source   Symbol           // Source identifier (e.g., "$users"); empty for default
+	Source   Symbol // Source identifier (e.g., "$users"); empty for default
 	Elements []PatternElement
 }
 
@@ -166,8 +157,8 @@ func (r RelationBinding) String() string {
 // String returns a string representation of the data pattern
 func (p DataPattern) String() string {
 	result := "["
-	if p.Source != "" {
-		result += string(p.Source) + " "
+	if p.Source != nil {
+		result += p.Source.String() + " "
 	}
 	for i, elem := range p.Elements {
 		if i > 0 {
@@ -353,7 +344,7 @@ type DatabaseInput struct {
 }
 
 func (d DatabaseInput) isInputSpec()   {}
-func (d DatabaseInput) String() string { return string(d.Name) }
+func (d DatabaseInput) String() string { return d.Name.String() }
 
 // ScalarInput represents a single value input (?x)
 type ScalarInput struct {
@@ -435,7 +426,7 @@ type FindAggregate struct {
 
 // IsConditional returns true if this is a conditional aggregate (has a predicate)
 func (f FindAggregate) IsConditional() bool {
-	return f.Predicate != ""
+	return f.Predicate != nil
 }
 
 func (f FindAggregate) String() string {
@@ -594,7 +585,7 @@ const (
 // String returns the string representation of an OrderByClause
 func (o OrderByClause) String() string {
 	if o.Direction == "" || o.Direction == OrderAsc {
-		return string(o.Variable)
+		return o.Variable.String()
 	}
 	return fmt.Sprintf("[%s :%s]", o.Variable, o.Direction)
 }

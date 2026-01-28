@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // BenchmarkTimeToFirstResult measures how quickly each join strategy produces the first result
@@ -15,8 +17,8 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 	sizes := []int{1000, 10000}
 
 	for _, size := range sizes {
-		leftCols := []query.Symbol{"?x", "?name"}
-		rightCols := []query.Symbol{"?x", "?value"}
+		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -108,8 +110,8 @@ func BenchmarkLimitQueries(b *testing.B) {
 	dataSize := 10000
 	limits := []int{10, 100, 1000}
 
-	leftCols := []query.Symbol{"?x", "?name"}
-	rightCols := []query.Symbol{"?x", "?value"}
+	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, dataSize)
 	rightTuples := make([]Tuple, dataSize)
@@ -201,8 +203,8 @@ func BenchmarkLimitQueries(b *testing.B) {
 func BenchmarkPeakMemory(b *testing.B) {
 	size := 50000 // Large dataset to see memory difference
 
-	leftCols := []query.Symbol{"?x", "?name"}
-	rightCols := []query.Symbol{"?x", "?value"}
+	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, size)
 	rightTuples := make([]Tuple, size)
@@ -330,8 +332,8 @@ func BenchmarkPeakMemory(b *testing.B) {
 func BenchmarkMultiStagePipeline(b *testing.B) {
 	size := 10000
 
-	leftCols := []query.Symbol{"?x", "?name"}
-	rightCols := []query.Symbol{"?x", "?value"}
+	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, size)
 	rightTuples := make([]Tuple, size)
@@ -379,7 +381,7 @@ func BenchmarkMultiStagePipeline(b *testing.B) {
 			})
 
 			// Project: drop the ID column
-			projected, err := filtered.Project([]query.Symbol{"?name", "?value"})
+			projected, err := filtered.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?value")})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -431,7 +433,7 @@ func BenchmarkMultiStagePipeline(b *testing.B) {
 			})
 
 			// Project: drop the ID column
-			projected, err := filtered.Project([]query.Symbol{"?name", "?value"})
+			projected, err := filtered.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?value")})
 			if err != nil {
 				b.Fatal(err)
 			}

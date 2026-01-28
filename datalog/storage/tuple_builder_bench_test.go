@@ -19,18 +19,18 @@ func BenchmarkTupleBuilding(b *testing.B) {
 	// Create a pattern with all variables
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?e")},
-			query.Variable{Name: query.Symbol("?a")},
-			query.Variable{Name: query.Symbol("?v")},
-			query.Variable{Name: query.Symbol("?t")},
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Variable{Name: datalog.NewSymbol("?a")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+			query.Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 
 	columns := []query.Symbol{
-		query.Symbol("?e"),
-		query.Symbol("?a"),
-		query.Symbol("?v"),
-		query.Symbol("?t"),
+		datalog.NewSymbol("?e"),
+		datalog.NewSymbol("?a"),
+		datalog.NewSymbol("?v"),
+		datalog.NewSymbol("?t"),
 	}
 
 	b.Run("DatomToTuple", func(b *testing.B) {
@@ -112,46 +112,46 @@ func BenchmarkTupleBuildingScenarios(b *testing.B) {
 			name: "2_vars",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword(":test/attr")},
-					query.Variable{Name: query.Symbol("?v")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			columns: []query.Symbol{
-				query.Symbol("?e"),
-				query.Symbol("?v"),
+				datalog.NewSymbol("?e"),
+				datalog.NewSymbol("?v"),
 			},
 		},
 		{
 			name: "3_vars",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?e")},
-					query.Variable{Name: query.Symbol("?a")},
-					query.Variable{Name: query.Symbol("?v")},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			columns: []query.Symbol{
-				query.Symbol("?e"),
-				query.Symbol("?a"),
-				query.Symbol("?v"),
+				datalog.NewSymbol("?e"),
+				datalog.NewSymbol("?a"),
+				datalog.NewSymbol("?v"),
 			},
 		},
 		{
 			name: "4_vars",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?e")},
-					query.Variable{Name: query.Symbol("?a")},
-					query.Variable{Name: query.Symbol("?v")},
-					query.Variable{Name: query.Symbol("?t")},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
+					query.Variable{Name: datalog.NewSymbol("?t")},
 				},
 			},
 			columns: []query.Symbol{
-				query.Symbol("?e"),
-				query.Symbol("?a"),
-				query.Symbol("?v"),
-				query.Symbol("?t"),
+				datalog.NewSymbol("?e"),
+				datalog.NewSymbol("?a"),
+				datalog.NewSymbol("?v"),
+				datalog.NewSymbol("?t"),
 			},
 		},
 	}

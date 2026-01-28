@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestLazyMaterializationBasic tests basic lazy materialization behavior
 func TestLazyMaterializationBasic(t *testing.T) {
 	// Create a streaming relation with 10 tuples
-	columns := []query.Symbol{"?x"}
+	columns := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := make([]Tuple, 10)
 	for i := 0; i < 10; i++ {
 		tuples[i] = Tuple{int64(i)}
@@ -81,7 +83,7 @@ func TestLazyMaterializationBasic(t *testing.T) {
 // TestConcurrentAccess tests that multiple goroutines can safely access a materialized relation
 func TestConcurrentAccess(t *testing.T) {
 	// Create a streaming relation with 1000 tuples
-	columns := []query.Symbol{"?x"}
+	columns := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := make([]Tuple, 1000)
 	for i := 0; i < 1000; i++ {
 		tuples[i] = Tuple{int64(i)}
@@ -164,7 +166,7 @@ func TestMaterializeAfterIterationPanics(t *testing.T) {
 	}()
 
 	// Create a streaming relation
-	columns := []query.Symbol{"?x"}
+	columns := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := []Tuple{{int64(1)}, {int64(2)}}
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
@@ -189,7 +191,7 @@ func TestDoubleIterationWithoutMaterializePanics(t *testing.T) {
 	}()
 
 	// Create a streaming relation
-	columns := []query.Symbol{"?x"}
+	columns := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := []Tuple{{int64(1)}, {int64(2)}}
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
@@ -208,7 +210,7 @@ func TestDoubleIterationWithoutMaterializePanics(t *testing.T) {
 // TestSizeBlocksWhileCaching tests that Size() blocks while caching is in progress
 func TestSizeBlocksWhileCaching(t *testing.T) {
 	// Create a streaming relation with 100 tuples
-	columns := []query.Symbol{"?x"}
+	columns := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := make([]Tuple, 100)
 	for i := 0; i < 100; i++ {
 		tuples[i] = Tuple{int64(i)}
