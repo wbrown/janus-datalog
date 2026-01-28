@@ -352,6 +352,12 @@ qb.Tuple(nameVar, ageVar)
 
 // Relation input - multiple rows
 qb.Relation(nameVar, ageVar)
+
+// Named source - additional database or PatternMatcher
+qb.Source("$users")
+
+// Source-qualified pattern
+qb.PatFrom(source, e, attr, val)
 ```
 
 ### Scalar Input Example
@@ -415,6 +421,56 @@ results, err := db.ExecuteQueryWithInputs(q, [][]interface{}{
     {"Bob", "LA"},
 })
 ```
+
+### Source Input Example
+
+Named sources let you query across multiple data sources. Use `qb.Source()` to declare a source and `qb.PatFrom()` to create source-qualified patterns:
+
+```go
+users := qb.Source("$users")
+perms := qb.Source("$perms")
+e := qb.NewVar("e")
+name := qb.NewVar("name")
+uid := qb.NewVar("uid")
+p := qb.NewVar("p")
+role := qb.NewVar("role")
+
+q := qb.Query().
+    Find(name, role).
+    In(users, perms).
+    Where(
+        qb.PatFrom(users, e, qb.Kw(":user/name"), name),
+        qb.PatFrom(users, e, qb.Kw(":user/id"), uid),
+        qb.PatFrom(perms, p, qb.Kw(":perm/user-id"), uid),
+        qb.PatFrom(perms, p, qb.Kw(":perm/role"), role),
+    ).
+    MustBuild()
+
+// Execute with named sources
+results, err := db.ExecuteQueryWithInputs(q,
+    storage.WithSources(map[query.Symbol]executor.PatternMatcher{
+        query.Symbol("$users"): usersDB,
+        query.Symbol("$perms"): permsDB,
+    }),
+)
+```
+
+To mix the default database with named sources, include `qb.DB`:
+
+```go
+cache := qb.Source("$cache")
+
+q := qb.Query().
+    Find(name, score).
+    In(qb.DB, cache).
+    Where(
+        qb.Pat(e, qb.Kw(":user/name"), name),       // default database
+        qb.PatFrom(cache, e, qb.Kw(":score"), score), // named source
+    ).
+    MustBuild()
+```
+
+See [MULTI_SOURCE.md](MULTI_SOURCE.md) for the complete multi-source reference.
 
 ## Logical Clauses
 
@@ -802,6 +858,7 @@ func main() {
 | `qb.Pat(e, a, v)` | `[?e ?a ?v]` | 3-element pattern |
 | `qb.Pat(e, a, v, tx)` | `[?e ?a ?v ?tx]` | With transaction |
 | `qb.Pat(e, a, v, tx, op)` | `[?e ?a ?v ?tx ?op]` | History pattern |
+| `qb.PatFrom(src, e, a, v)` | `[$src ?e ?a ?v]` | Source-qualified pattern |
 | `qb.Blank()` | `_` | Wildcard |
 
 ### Comparisons
@@ -851,7 +908,8 @@ func main() {
 
 | Function | EDN Equivalent | Description |
 |----------|----------------|-------------|
-| `qb.DB` | `$` | Database source |
+| `qb.DB` | `$` | Default database source |
+| `qb.Source("$name")` | `$name` | Named source |
 | `qb.Scalar(v)` | `?v` | Single value |
 | `qb.Collection(v)` | `[?v ...]` | Multiple values |
 | `qb.Tuple(a, b)` | `[?a ?b]` | Single tuple |

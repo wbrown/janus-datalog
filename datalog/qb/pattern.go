@@ -13,6 +13,7 @@ type Clause interface {
 
 // Pattern represents a data pattern clause being constructed.
 type Pattern struct {
+	source   query.Symbol // Source identifier (e.g., "$users"); empty for default
 	elements []query.PatternElement
 }
 
@@ -54,7 +55,7 @@ func Pat(args ...interface{}) *Pattern {
 
 // toClause converts Pattern to a query.Clause
 func (p *Pattern) toClause() query.Clause {
-	return &query.DataPattern{Elements: p.elements}
+	return &query.DataPattern{Source: p.source, Elements: p.elements}
 }
 
 // patternElementer is implemented by types that can convert to PatternElement

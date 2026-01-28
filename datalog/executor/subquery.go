@@ -424,8 +424,8 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) []map
 	// Find column indices for input symbols
 	indices := make([]int, len(inputSymbols))
 	for i, sym := range inputSymbols {
-		if sym == "$" {
-			// Database marker - not a column, use special index
+		if IsSourceSymbol(sym) {
+			// Source marker - not a column, use special index
 			indices[i] = -1
 		} else {
 			indices[i] = ColumnIndex(rel, sym)
@@ -451,10 +451,10 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) []map
 		keyParts := make([]string, len(inputSymbols))
 
 		for i, sym := range inputSymbols {
-			if sym == "$" {
-				// Database marker - pass it through as-is
-				values[sym] = query.Symbol("$")
-				keyParts[i] = "$"
+			if IsSourceSymbol(sym) {
+				// Source marker - pass it through as-is
+				values[sym] = sym
+				keyParts[i] = string(sym)
 			} else {
 				idx := indices[i]
 				if idx < len(tuple) {
@@ -495,9 +495,9 @@ func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, out
 				orderedValues = append(orderedValues, nil)
 			}
 		case query.Constant:
-			// Check if it's the database marker
-			if sym, ok := inp.Value.(query.Symbol); ok && sym == "$" {
-				// Database marker - pass through
+			// Check if it's a source marker
+			if sym, ok := inp.Value.(query.Symbol); ok && IsSourceSymbol(sym) {
+				// Source marker - pass through
 				orderedValues = append(orderedValues, sym)
 			} else {
 				// Regular constant - pass the value directly
@@ -551,9 +551,9 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 		case query.DatabaseInput:
 			// Expect an explicit $ symbol at this position
 			if valueIndex < len(orderedValues) {
-				// Check if it's the database marker
-				if sym, ok := orderedValues[valueIndex].(query.Symbol); ok && sym == "$" {
-					// Database marker present - skip it
+				// Check if it's a source marker
+				if sym, ok := orderedValues[valueIndex].(query.Symbol); ok && IsSourceSymbol(sym) {
+					// Source marker present - skip it
 					valueIndex++
 				} else {
 					// Not a database marker - this is an error
@@ -684,10 +684,10 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 	case query.TupleBinding:
 		// [[?var]] - expect single result, bind to variable
 
-		// Filter out $ (database marker) from input symbols - it's not a real variable
+		// Filter out source markers from input symbols - they're not real variables
 		var realInputSymbols []query.Symbol
 		for _, sym := range inputSymbols {
-			if sym != "$" {
+			if !IsSourceSymbol(sym) {
 				realInputSymbols = append(realInputSymbols, sym)
 			}
 		}
@@ -747,10 +747,10 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		// ?var - expect single result with single column, bind to variable
 		// This is the Datomic scalar binding pattern used with scalar find spec
 
-		// Filter out $ (database marker) from input symbols
+		// Filter out source markers from input symbols
 		var realInputSymbols []query.Symbol
 		for _, sym := range inputSymbols {
-			if sym != "$" {
+			if !IsSourceSymbol(sym) {
 				realInputSymbols = append(realInputSymbols, sym)
 			}
 		}
@@ -795,15 +795,15 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 			return nil, fmt.Errorf("relation binding expects %d columns, got %d", len(b.Variables), len(resultCols))
 		}
 
-		// Filter out $ (database marker) from input symbols - it's not a real variable
+		// Filter out source markers from input symbols - they're not real variables
 		var realInputSymbols []query.Symbol
 		for _, sym := range inputSymbols {
-			if sym != "$" {
+			if !IsSourceSymbol(sym) {
 				realInputSymbols = append(realInputSymbols, sym)
 			}
 		}
 
-		// Create relation with input columns + binding columns (excluding $)
+		// Create relation with input columns + binding columns (excluding source markers)
 		columns := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
 		copy(columns, realInputSymbols)
 		copy(columns[len(realInputSymbols):], b.Variables)
@@ -1025,8 +1025,8 @@ func executeBatchedSubqueryWithCombinations(ctx Context, parentExec *Executor, s
 		case query.Variable:
 			columns = append(columns, inp.Name)
 		case query.Constant:
-			// Skip constants like $
-			if sym, ok := inp.Value.(query.Symbol); ok && sym == "$" {
+			// Skip source markers like $, $users, etc.
+			if sym, ok := inp.Value.(query.Symbol); ok && IsSourceSymbol(sym) {
 				continue
 			}
 		}

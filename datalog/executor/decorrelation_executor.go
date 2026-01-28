@@ -503,8 +503,8 @@ func extractInputSymbols(subq *query.SubqueryPattern) []query.Symbol {
 		case query.Variable:
 			symbols = append(symbols, inp.Name)
 		case query.Constant:
-			// Check if it's the database marker
-			if sym, ok := inp.Value.(query.Symbol); ok && sym == "$" {
+			// Check if it's a source marker
+			if sym, ok := inp.Value.(query.Symbol); ok && IsSourceSymbol(sym) {
 				symbols = append(symbols, sym)
 			}
 		}
@@ -526,10 +526,10 @@ func combineGroups(groups []Relation) Relation {
 
 // createBatchedInputRelation creates a relation containing all input combinations
 func createBatchedInputRelation(inputSymbols []query.Symbol, combinations []map[query.Symbol]interface{}) Relation {
-	// Filter out database marker from columns
+	// Filter out source markers from columns
 	var columns []query.Symbol
 	for _, sym := range inputSymbols {
-		if sym != "$" {
+		if !IsSourceSymbol(sym) {
 			columns = append(columns, sym)
 		}
 	}

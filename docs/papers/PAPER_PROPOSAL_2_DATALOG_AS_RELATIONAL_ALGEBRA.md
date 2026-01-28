@@ -731,23 +731,3 @@ This closes the 40-year theory-practice gap for non-recursive Datalog.
 
 Rich Hickey (Datomic), LookingGlass team, CoreWeave infrastructure
 
----
-
-## Why This Paper Matters
-
-**For academia:**
-- Demonstrates theory IS practical
-- Connects 40 years of separate research
-- Simplifies Datalog semantics
-
-**For industry:**
-- Enables simpler implementations
-- Leverages existing DB knowledge
-- Reduces development cost
-
-**For Wes:**
-- Validates architectural decision
-- Documents production experience
-- Establishes technical credibility
-
-**This paper would make SIGMOD/VLDB and influence next-generation Datalog systems.** 🎯

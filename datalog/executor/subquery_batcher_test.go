@@ -143,7 +143,7 @@ func TestBatcher_ExtractInputSymbols_ScalarInputs(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{},
+		query.DatabaseInput{Name: query.Symbol("$")},
 		query.ScalarInput{Symbol: "?sym"},
 		query.ScalarInput{Symbol: "?hour"},
 	}
@@ -166,7 +166,7 @@ func TestBatcher_ExtractInputSymbols_RelationInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{},
+		query.DatabaseInput{Name: query.Symbol("$")},
 		query.RelationInput{
 			Symbols: []query.Symbol{"?sym", "?hour"},
 		},
@@ -190,7 +190,7 @@ func TestBatcher_ExtractInputSymbols_TupleInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{},
+		query.DatabaseInput{Name: query.Symbol("$")},
 		query.TupleInput{
 			Symbols: []query.Symbol{"?x", "?y"},
 		},
@@ -214,7 +214,7 @@ func TestBatcher_ExtractInputSymbols_CollectionInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{},
+		query.DatabaseInput{Name: query.Symbol("$")},
 		query.CollectionInput{Symbol: "?values"},
 	}
 
@@ -236,7 +236,7 @@ func TestBatcher_ExtractInputSymbols_Mixed(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{},
+		query.DatabaseInput{Name: query.Symbol("$")},
 		query.ScalarInput{Symbol: "?x"},
 		query.CollectionInput{Symbol: "?ys"},
 		query.TupleInput{Symbols: []query.Symbol{"?a", "?b"}},
@@ -272,7 +272,7 @@ func TestBatcher_ExtractRelationSymbols_WithRelationInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{},
+		query.DatabaseInput{Name: query.Symbol("$")},
 		query.RelationInput{
 			Symbols: []query.Symbol{"?sym", "?hour"},
 		},
@@ -296,7 +296,7 @@ func TestBatcher_ExtractRelationSymbols_WithoutRelationInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{},
+		query.DatabaseInput{Name: query.Symbol("$")},
 		query.ScalarInput{Symbol: "?sym"},
 	}
 

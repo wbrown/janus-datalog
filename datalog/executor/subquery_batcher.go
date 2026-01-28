@@ -26,20 +26,20 @@ func (b *SubqueryBatcher) BuildBatchedInput(
 	inputSymbols []query.Symbol,
 ) Relation {
 	if len(combinations) == 0 {
-		// Filter $ from columns
+		// Filter source markers from columns
 		var columns []query.Symbol
 		for _, sym := range inputSymbols {
-			if sym != "$" {
+			if !IsSourceSymbol(sym) {
 				columns = append(columns, sym)
 			}
 		}
 		return NewMaterializedRelation(columns, []Tuple{})
 	}
 
-	// Filter to only the symbols we're passing (exclude $)
+	// Filter to only the symbols we're passing (exclude source markers)
 	var columns []query.Symbol
 	for _, sym := range inputSymbols {
-		if sym != "$" {
+		if !IsSourceSymbol(sym) {
 			columns = append(columns, sym)
 		}
 	}
@@ -73,8 +73,8 @@ func (b *SubqueryBatcher) ExtractInputSymbols(inputs []query.InputSpec) []query.
 	for _, input := range inputs {
 		switch inp := input.(type) {
 		case query.DatabaseInput:
-			// Include $ marker for filtering later
-			symbols = append(symbols, "$")
+			// Include source marker for filtering later
+			symbols = append(symbols, inp.Name)
 		case query.ScalarInput:
 			// Single variable like ?sym
 			symbols = append(symbols, inp.Symbol)

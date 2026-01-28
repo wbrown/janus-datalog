@@ -150,6 +150,52 @@ func TestParseInputClause(t *testing.T) {
 	}
 }
 
+func TestParseNamedDatabaseInput(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		wantIn []string // String representations of InputSpecs
+	}{
+		{
+			name:   "default database",
+			query:  `[:find ?e :in $ :where [?e :a ?v]]`,
+			wantIn: []string{"$"},
+		},
+		{
+			name:   "named database",
+			query:  `[:find ?e :in $users :where [?e :a ?v]]`,
+			wantIn: []string{"$users"},
+		},
+		{
+			name:   "multiple named databases",
+			query:  `[:find ?e :in $users $perms :where [?e :a ?v]]`,
+			wantIn: []string{"$users", "$perms"},
+		},
+		{
+			name:   "mixed inputs",
+			query:  `[:find ?e :in $db ?name [?ids ...] :where [?e :a ?v]]`,
+			wantIn: []string{"$db", "?name", "[?ids ...]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := ParseQuery(tt.query)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(q.In) != len(tt.wantIn) {
+				t.Fatalf("expected %d inputs, got %d", len(tt.wantIn), len(q.In))
+			}
+			for i, want := range tt.wantIn {
+				got := q.In[i].String()
+				if got != want {
+					t.Errorf("input[%d]: expected %q, got %q", i, want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestParseInputClauseErrors(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -161,7 +207,7 @@ func TestParseInputClauseErrors(t *testing.T) {
 			input: `[:find ?e
 			         :in foo
 			         :where [?e :bar ?v]]`,
-			error: "input must be $ or a variable",
+			error: "input must be $name or a variable",
 		},
 		{
 			name: "empty input vector",

@@ -191,12 +191,12 @@ func buildFindClause(provides []query.Symbol, originalFind []query.FindElement, 
 func buildInClause(available []query.Symbol) []query.InputSpec {
 	if len(available) == 0 {
 		// First phase with no inputs - just database
-		return []query.InputSpec{query.DatabaseInput{}}
+		return []query.InputSpec{query.DatabaseInput{Name: query.Symbol("$")}}
 	}
 
 	// Create relation input with all available symbols
 	inClause := []query.InputSpec{
-		query.DatabaseInput{},
+		query.DatabaseInput{Name: query.Symbol("$")},
 		query.RelationInput{Symbols: available},
 	}
 	return inClause
