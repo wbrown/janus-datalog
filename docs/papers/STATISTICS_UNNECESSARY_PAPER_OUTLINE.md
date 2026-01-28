@@ -608,24 +608,3 @@ We have demonstrated that greedy join ordering without statistics **suffices** f
 
 **Old:** "We rediscovered classical results"
 **New:** "We characterized a query class where statistics are unnecessary"
-
----
-
-## Why These Changes Matter
-
-**Academic contribution:**
-- Characterization of when statistics are unnecessary (novel contribution)
-- Not claiming empirical superiority over cost-based (honest about what we measured)
-- Production validation strengthens theoretical argument
-
-**Practical impact:**
-- Guides system builders on when to use greedy vs cost-based
-- Demonstrates viability of simpler approaches for DSLs
-- Validated with real production experience (7+ years)
-
-**Clarity and honesty:**
-- Clear distinction from Selinger (different query class, not competing approach)
-- Accurate performance claims (clause-based vs phase-based greedy)
-- Honest about evidence (theoretical + production, not empirical comparison)
-
-This is about **characterizing when simpler suffices**, not claiming we're better than cost-based.

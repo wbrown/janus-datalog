@@ -343,11 +343,11 @@ func joinDecorrelatedResults(results []Relation, keys []query.Symbol) (Relation,
 // leftKeys: key column names in left relation
 // rightKeys: key column names in right relation (must correspond positionally to leftKeys)
 func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbol) Relation {
-	// Filter out $ from keys
+	// Filter out source markers from keys
 	var filteredLeftKeys, filteredRightKeys []query.Symbol
 	rightIdx := 0
 	for _, key := range leftKeys {
-		if key == "$" {
+		if IsSourceSymbol(key) {
 			continue
 		}
 		filteredLeftKeys = append(filteredLeftKeys, key)

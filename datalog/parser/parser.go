@@ -298,19 +298,32 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 	}
 
 	// Otherwise it's a data pattern
+	// Check if first element is a source marker ($name)
+	var sourceOffset int
+	var source query.Symbol
+	if len(node.Nodes) >= 1 && node.Nodes[0].Type == edn.NodeSymbol {
+		if strings.HasPrefix(node.Nodes[0].Value, "$") {
+			source = query.Symbol(node.Nodes[0].Value)
+			sourceOffset = 1
+		}
+	}
+
+	// Data pattern elements (after source marker):
 	// 3 elements: [e a v]
 	// 4 elements: [e a v tx]
 	// 5 elements: [e a v tx op] (history queries)
-	if len(node.Nodes) < 3 || len(node.Nodes) > 5 {
-		return nil, fmt.Errorf("data pattern must have 3, 4, or 5 elements, got %d", len(node.Nodes))
+	elemCount := len(node.Nodes) - sourceOffset
+	if elemCount < 3 || elemCount > 5 {
+		return nil, fmt.Errorf("data pattern must have 3, 4, or 5 elements, got %d", elemCount)
 	}
 
 	pattern := &query.DataPattern{
-		Elements: make([]query.PatternElement, len(node.Nodes)),
+		Source:   source,
+		Elements: make([]query.PatternElement, elemCount),
 	}
 
-	for i, elem := range node.Nodes {
-		patternElem, err := parsePatternElement(&elem)
+	for i := 0; i < elemCount; i++ {
+		patternElem, err := parsePatternElement(&node.Nodes[i+sourceOffset])
 		if err != nil {
 			return nil, fmt.Errorf("error parsing pattern element %d: %w", i, err)
 		}
@@ -591,13 +604,13 @@ func parseRelationBinding(node *edn.Node) (query.RelationBinding, error) {
 func parseInputSpec(node *edn.Node) (query.InputSpec, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
-		// Either $ (database) or ?var (scalar input)
-		if node.Value == "$" {
-			return query.DatabaseInput{}, nil
+		// Either $name (database source) or ?var (scalar input)
+		if strings.HasPrefix(node.Value, "$") {
+			return query.DatabaseInput{Name: query.Symbol(node.Value)}, nil
 		}
 		sym := query.Symbol(node.Value)
 		if !sym.IsVariable() {
-			return nil, fmt.Errorf("input must be $ or a variable, got %s", node.Value)
+			return nil, fmt.Errorf("input must be $name or a variable, got %s", node.Value)
 		}
 		return query.ScalarInput{Symbol: sym}, nil
 

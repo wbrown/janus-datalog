@@ -560,8 +560,8 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		case query.Variable:
 			inputSymbols = append(inputSymbols, inp.Name)
 		case query.Constant:
-			// Check if it's the database marker
-			if sym, ok := inp.Value.(query.Symbol); ok && sym == "$" {
+			// Check if it's a source marker
+			if sym, ok := inp.Value.(query.Symbol); ok && IsSourceSymbol(sym) {
 				inputSymbols = append(inputSymbols, sym)
 			}
 			// Other constants don't need extraction

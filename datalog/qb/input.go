@@ -24,7 +24,7 @@ type dbInput struct{}
 var DB InputSpec = dbInput{}
 
 func (d dbInput) toInputSpec() query.InputSpec {
-	return query.DatabaseInput{}
+	return query.DatabaseInput{Name: query.Symbol("$")}
 }
 
 // scalarInput represents a scalar input parameter (?x).

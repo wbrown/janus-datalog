@@ -787,7 +787,7 @@ func realizePhase(phase Phase, isLastPhase bool, prevKeep []query.Symbol) Realiz
 	// First phase has no :in, subsequent phases receive previous Keep
 	var in []query.InputSpec
 	if len(prevKeep) > 0 {
-		in = append(in, query.DatabaseInput{})
+		in = append(in, query.DatabaseInput{Name: query.Symbol("$")})
 		in = append(in, query.RelationInput{Symbols: prevKeep})
 	}
 

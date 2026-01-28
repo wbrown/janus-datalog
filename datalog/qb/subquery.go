@@ -113,23 +113,20 @@ func (s *SubqueryBuilder) toClause() query.Clause {
 		panic("subquery build failed: " + err.Error())
 	}
 
-	// Check if the inner query expects database input ($)
-	needsDB := false
+	// Collect all database source inputs from the inner query
+	var dbInputSyms []query.Symbol
 	for _, in := range innerQ.In {
-		if _, ok := in.(query.DatabaseInput); ok {
-			needsDB = true
-			break
+		if dbIn, ok := in.(query.DatabaseInput); ok {
+			dbInputSyms = append(dbInputSyms, dbIn.Name)
 		}
 	}
 
-	// Convert input variables to pattern elements
-	// If the subquery expects DB, prepend $ to the inputs
+	// Convert input variables to pattern elements.
+	// Prepend all database source references from the inner query's :in clause.
 	var inputs []query.PatternElement
-	if needsDB {
-		inputs = make([]query.PatternElement, 0, len(s.inputs)+1)
-		inputs = append(inputs, query.Constant{Value: query.Symbol("$")})
-	} else {
-		inputs = make([]query.PatternElement, 0, len(s.inputs))
+	inputs = make([]query.PatternElement, 0, len(s.inputs)+len(dbInputSyms))
+	for _, sym := range dbInputSyms {
+		inputs = append(inputs, query.Constant{Value: sym})
 	}
 	for _, v := range s.inputs {
 		inputs = append(inputs, query.Variable{Name: v.Symbol()})

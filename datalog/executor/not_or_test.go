@@ -975,7 +975,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 							query.FindAggregate{Function: "count", Arg: "?t"},
 						},
 						In: []query.InputSpec{
-							query.DatabaseInput{},
+							query.DatabaseInput{Name: query.Symbol("$")},
 							query.ScalarInput{Symbol: "?s"},
 						},
 						Where: []query.Clause{

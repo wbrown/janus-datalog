@@ -225,6 +225,14 @@ The storage layer connects the query engine to BadgerDB:
   - Special handling for Identity references to preserve join semantics
   - Fixed bugs where entity IDs were decoded incorrectly
 
+### Multi-Source Query Architecture
+- **One interface**: `PatternMatcher` is the sole interface for all data sources. No separate `DataSource` type.
+- **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source) and `EntityLookupMatcher` (delegates to default `$` source for `get-else`, `missing?`, `get-some`).
+- **Source threading**: Sources are an execution context built once at the top level. `ExecuteQueryWithInputs` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
+- **IsSourceSymbol**: Helper `strings.HasPrefix(string(sym), "$")` replacing all hardcoded `sym == "$"` checks.
+- **Adding new source types**: Implement `PatternMatcher`. Optionally implement `PredicateAwareMatcher` for predicate pushdown. Pass via `WithSources`.
+- **Key files**: `executor/source_router.go`, `executor/slice_source.go`, `storage/database.go` (`WithSources`, `buildSourceMap`, `validateQuerySources`), `qb/source.go`
+
 ## Implementation Status
 
 ### ✅ Recent Updates (October 2025)
@@ -285,6 +293,7 @@ The storage layer connects the query engine to BadgerDB:
 24. **History mode** - Datomic-style retractions with `RetractHistory` mode; full audit trail via `ExecuteHistoryQuery`; 5-element patterns `[?e ?a ?v ?tx ?op]`
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics; OR supports fallback expressions for default values
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates
+27. **Multi-source queries** - Named sources (`$name`), `SourceRouter`, cross-source joins, `MemoryPatternMatcher`, `SliceSource[T]`, query builder `Source()`/`PatFrom()`
 
 ### 📋 TODO (Priority Order)
 
@@ -532,6 +541,7 @@ Note: While our planner is explicit and feature-complete, the **information flow
 - **[docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md)** - QueryInto API: typed query results into Go structs
 - **[docs/INPUT_PARAMETER_SEMANTICS.md](docs/INPUT_PARAMETER_SEMANTICS.md)** - Comprehensive guide to input parameter handling
 - **[docs/reference/PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
+- **[docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Multi-source queries: cross-database joins, in-memory sources, SliceSource, custom sources
 
 ### Historical Context
 - **[docs/archive/early-design/DATALOG_GO_NOTES_HISTORICAL_INSIGHTS.md](docs/archive/early-design/DATALOG_GO_NOTES_HISTORICAL_INSIGHTS.md)** - Architectural insights and lessons learned

@@ -863,25 +863,3 @@ Functional programming principles—immutability, lazy evaluation, and compositi
 ## 11. Availability
 
 **Open source:** github.com/wbrown/janus-datalog
-**Production use:** Gopher-Street financial analysis ($10M+ decisions)
-
----
-
-## Why This Paper Matters
-
-**For databases:**
-- Modernizes 30-year-old Volcano model
-- Shows FP principles improve performance
-- Simplifies implementation dramatically
-
-**For FP community:**
-- Validates FP techniques in systems context
-- Shows lazy sequences work for databases
-- Proves immutability doesn't sacrifice performance
-
-**For Wes:**
-- Documents architectural innovation
-- Connects to broader CS trends (FP adoption)
-- Shows practical benefits of theory
-
-**This paper bridges databases and FP, showing that better abstractions → better performance.** 🚀

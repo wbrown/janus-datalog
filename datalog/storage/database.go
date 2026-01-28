@@ -202,6 +202,15 @@ func (d *Database) Matcher() executor.PatternMatcher {
 	return NewBadgerMatcherWithOptions(d.store, execOpts)
 }
 
+// Match implements executor.PatternMatcher — the Database itself can answer pattern queries.
+// This delegates to the Database's Matcher(), which uses the full BadgerDB index infrastructure.
+func (d *Database) Match(pattern *query.DataPattern, bindings executor.Relations) (executor.Relation, error) {
+	return d.Matcher().Match(pattern, bindings)
+}
+
+// Compile-time verification that Database implements PatternMatcher
+var _ executor.PatternMatcher = (*Database)(nil)
+
 // AsOf returns a PatternMatcher for a specific transaction
 func (d *Database) AsOf(txID uint64) executor.PatternMatcher {
 	// Convert default planner options to executor options
@@ -366,6 +375,70 @@ func (d *Database) ClearPlanCache() {
 	}
 }
 
+// QueryOption configures query execution.
+type QueryOption func(*queryOptions)
+
+type queryOptions struct {
+	sources map[query.Symbol]executor.PatternMatcher
+}
+
+// WithSources adds additional data sources for multi-source queries.
+// The default source ($) is always the database itself.
+func WithSources(sources map[query.Symbol]executor.PatternMatcher) QueryOption {
+	return func(o *queryOptions) {
+		for k, v := range sources {
+			o.sources[k] = v
+		}
+	}
+}
+
+// buildSourceMap creates the full source map for query execution.
+// The provided map contains user-supplied sources. The default source ($)
+// is set to the database's matcher if not explicitly overridden.
+func buildSourceMap(
+	provided map[query.Symbol]executor.PatternMatcher,
+	dbMatcher executor.PatternMatcher,
+) map[query.Symbol]executor.PatternMatcher {
+	sources := make(map[query.Symbol]executor.PatternMatcher)
+	for sym, src := range provided {
+		sources[sym] = src
+	}
+	if _, ok := sources[query.Symbol("$")]; !ok {
+		sources[query.Symbol("$")] = dbMatcher
+	}
+	return sources
+}
+
+// validateQuerySources checks that all sources declared in the query's :in clause
+// are available in the source map.
+func validateQuerySources(q *query.Query, available map[query.Symbol]executor.PatternMatcher) error {
+	for _, inp := range q.In {
+		if dbInput, ok := inp.(query.DatabaseInput); ok {
+			if _, ok := available[dbInput.Name]; !ok {
+				return fmt.Errorf("source %s declared in :in clause but not provided", dbInput.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// extractQueryOptions separates QueryOption values from regular inputs.
+func extractQueryOptions(inputs []interface{}) (queryOptions, []interface{}) {
+	var opts queryOptions
+	opts.sources = make(map[query.Symbol]executor.PatternMatcher)
+	var regularInputs []interface{}
+
+	for _, arg := range inputs {
+		if opt, ok := arg.(QueryOption); ok {
+			opt(&opts)
+		} else {
+			regularInputs = append(regularInputs, arg)
+		}
+	}
+
+	return opts, regularInputs
+}
+
 // ExecuteQuery executes a Datalog query and returns results as a slice of tuples.
 // The query can be either an EDN string or a *query.Query from the query builder.
 //
@@ -411,20 +484,36 @@ func (d *Database) ExecuteQuery(q interface{}) ([][]interface{}, error) {
 //	    []string{"pizza", "pasta"},
 //	)
 func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...interface{}) ([][]interface{}, error) {
+	// Separate QueryOptions from regular inputs
+	opts, regularInputs := extractQueryOptions(inputs)
+
 	// Resolve the query (string or *query.Query)
 	q, err := resolveQuery(queryInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
+	// Build source map — database is always $
+	sources := buildSourceMap(opts.sources, d.Matcher())
+
+	// Validate declared sources exist
+	if err := validateQuerySources(q, sources); err != nil {
+		return nil, err
+	}
+
+	// Create SourceRouter with full source map
+	router := executor.NewSourceRouter(sources)
+
 	// Convert inputs to Relations based on :in clause
-	inputRelations, err := d.convertInputsToRelations(q, inputs)
+	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
 	}
 
-	// Execute the query with annotation handler if set
-	exec := d.NewExecutor()
+	// Execute with the SourceRouter as the PatternMatcher
+	planOpts := DefaultPlannerOptions()
+	planOpts.Cache = d.planCache
+	exec := executor.NewExecutorWithOptions(router, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
@@ -437,17 +526,34 @@ func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...inte
 // ExecuteQueryRelation executes a query and returns the Relation directly.
 // This preserves column names (via Symbols()) which are lost in ExecuteQuery.
 func (d *Database) ExecuteQueryRelation(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
+	// Separate QueryOptions from regular inputs
+	opts, regularInputs := extractQueryOptions(inputs)
+
 	q, err := resolveQuery(queryInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	inputRelations, err := d.convertInputsToRelations(q, inputs)
+	// Build source map — database is always $
+	sources := buildSourceMap(opts.sources, d.Matcher())
+
+	// Validate declared sources exist
+	if err := validateQuerySources(q, sources); err != nil {
+		return nil, err
+	}
+
+	// Create SourceRouter with full source map
+	router := executor.NewSourceRouter(sources)
+
+	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
 	if err != nil {
 		return nil, err
 	}
 
-	exec := d.NewExecutor()
+	// Execute with the SourceRouter as the PatternMatcher
+	planOpts := DefaultPlannerOptions()
+	planOpts.Cache = d.planCache
+	exec := executor.NewExecutorWithOptions(router, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
@@ -1358,7 +1464,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 	for _, inputSpec := range q.In {
 		switch spec := inputSpec.(type) {
 		case query.DatabaseInput:
-			// Skip $ - doesn't consume an input
+			// Skip source markers ($, $users, etc.) - don't consume a regular input
 			continue
 
 		case query.ScalarInput:

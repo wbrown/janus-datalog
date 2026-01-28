@@ -343,6 +343,52 @@ When you need scoped aggregations:
 
 The `q` function runs a sub-query with its own `:find` and `:where` clauses. Results bind to the outer query.
 
+### Multi-Source Queries
+
+Query across multiple data sources — databases, in-memory facts, or Go slices — in a single query. Sources are declared in `:in` and referenced in `:where` patterns:
+
+```go
+[:find ?name ?role
+ :in $users $perms
+ :where [$users ?u :user/name ?name]
+        [$users ?u :user/id ?uid]
+        [$perms ?p :perm/user-id ?uid]
+        [$perms ?p :perm/role ?role]]
+```
+
+Shared variables (`?uid`) create joins across sources automatically.
+
+**Execution with `WithSources`:**
+
+```go
+results, err := usersDB.ExecuteQueryWithInputs(query,
+    storage.WithSources(map[query.Symbol]executor.PatternMatcher{
+        query.Symbol("$users"): usersDB,
+        query.Symbol("$perms"): permsDB,
+    }),
+)
+```
+
+**Query builder:**
+
+```go
+users := qb.Source("$users")
+e, name := qb.NewVar("e"), qb.NewVar("name")
+
+q := qb.Query().
+    Find(name).
+    In(users).
+    Where(qb.PatFrom(users, e, qb.Kw(":user/name"), name)).
+    MustBuild()
+```
+
+**Source types:**
+- `*storage.Database` — cross-database joins
+- `executor.NewMemoryPatternMatcher(datoms)` — in-memory facts
+- `executor.NewSliceSource(items, schema)` — Go slices via attribute schema
+
+See [docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md) for the complete reference.
+
 ### Schema (Optional)
 
 Schema is **completely optional** but provides type safety and cardinality-many support:
@@ -796,6 +842,7 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 
 ### Deep Dives
 
+- **[docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Multi-source queries: cross-database joins, in-memory sources, Go slices
 - **[RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md)** - How queries become algebra
 - **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** - Measured performance and benchmarks
 - **[docs/reference/PLANNER_COMPARISON.md](docs/reference/PLANNER_COMPARISON.md)** - Phase-based vs clause-based planning
@@ -880,6 +927,7 @@ Janus implements **~70% of Datomic's feature set** (weighted by typical usage), 
 - Schema: Type validation, cardinality, uniqueness constraints
 - Storage: Persistent BadgerDB backend
 - NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with fallback expressions
+- Multi-source queries: Named sources (`$name`), cross-source joins, in-memory and slice sources
 - Go-specific: Struct reflection API, QueryInto for typed results
 
 **Not implemented:**

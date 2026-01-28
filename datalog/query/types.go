@@ -82,8 +82,11 @@ type Pattern interface {
 	String() string
 }
 
-// DataPattern represents a data pattern [e a v] or [e a v t]
+// DataPattern represents a data pattern [e a v] or [e a v t].
+// For multi-source queries, Source identifies which data source to query
+// (e.g., Symbol("$users")). Empty Source means the default source ($).
 type DataPattern struct {
+	Source   Symbol           // Source identifier (e.g., "$users"); empty for default
 	Elements []PatternElement
 }
 
@@ -163,6 +166,9 @@ func (r RelationBinding) String() string {
 // String returns a string representation of the data pattern
 func (p DataPattern) String() string {
 	result := "["
+	if p.Source != "" {
+		result += string(p.Source) + " "
+	}
 	for i, elem := range p.Elements {
 		if i > 0 {
 			result += " "
@@ -339,11 +345,15 @@ type InputSpec interface {
 	String() string
 }
 
-// DatabaseInput represents the database input ($)
-type DatabaseInput struct{}
+// DatabaseInput represents a database input ($ or $name)
+// For single-source queries, Name is Symbol("$").
+// For multi-source queries, Name identifies the source (e.g., Symbol("$users")).
+type DatabaseInput struct {
+	Name Symbol
+}
 
 func (d DatabaseInput) isInputSpec()   {}
-func (d DatabaseInput) String() string { return "$" }
+func (d DatabaseInput) String() string { return string(d.Name) }
 
 // ScalarInput represents a single value input (?x)
 type ScalarInput struct {
