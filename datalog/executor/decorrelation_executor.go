@@ -30,7 +30,7 @@ type SubqueryGroup struct {
 func (cs CorrelationSignature) Hash() string {
 	varStrs := make([]string, len(cs.InputVars))
 	for i, v := range cs.InputVars {
-		varStrs[i] = string(v)
+		varStrs[i] = v.String()
 	}
 	sort.Strings(varStrs)
 
@@ -108,7 +108,7 @@ func extractCorrelationSignature(subq *query.SubqueryPattern) CorrelationSignatu
 	sortedVars := make([]query.Symbol, len(inputVars))
 	copy(sortedVars, inputVars)
 	sort.Slice(sortedVars, func(i, j int) bool {
-		return sortedVars[i] < sortedVars[j]
+		return sortedVars[i].Compare(sortedVars[j]) < 0
 	})
 
 	// Create pattern fingerprint from the nested query
@@ -504,7 +504,7 @@ func extractInputSymbols(subq *query.SubqueryPattern) []query.Symbol {
 			symbols = append(symbols, inp.Name)
 		case query.Constant:
 			// Check if it's a source marker
-			if sym, ok := inp.Value.(query.Symbol); ok && IsSourceSymbol(sym) {
+			if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
 				symbols = append(symbols, sym)
 			}
 		}
@@ -529,7 +529,7 @@ func createBatchedInputRelation(inputSymbols []query.Symbol, combinations []map[
 	// Filter out source markers from columns
 	var columns []query.Symbol
 	for _, sym := range inputSymbols {
-		if !IsSourceSymbol(sym) {
+		if !sym.IsSource() {
 			columns = append(columns, sym)
 		}
 	}

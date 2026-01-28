@@ -15,12 +15,12 @@ func TestPlanCache(t *testing.T) {
 	// Create a sample query
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: query.Symbol("?e")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?e")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword(":person/name")},
 					query.Constant{Value: "Alice"},
 				},
@@ -34,7 +34,7 @@ func TestPlanCache(t *testing.T) {
 		Phases: []RealizedPhase{
 			{
 				Query:    q,
-				Provides: []query.Symbol{"?e"},
+				Provides: []query.Symbol{datalog.NewSymbol("?e")},
 			},
 		},
 	}
@@ -99,12 +99,12 @@ func TestPlanCacheEviction(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		queries[i] = &query.Query{
 			Find: []query.FindElement{
-				query.FindVariable{Symbol: query.Symbol("?e")},
+				query.FindVariable{Symbol: datalog.NewSymbol("?e")},
 			},
 			Where: []query.Clause{
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: query.Symbol("?e")},
+						query.Variable{Name: datalog.NewSymbol("?e")},
 						query.Constant{Value: datalog.NewKeyword(":person/id")},
 						query.Constant{Value: int64(i)},
 					},
@@ -117,7 +117,7 @@ func TestPlanCacheEviction(t *testing.T) {
 			Phases: []RealizedPhase{
 				{
 					Query:    queries[i],
-					Provides: []query.Symbol{"?e"},
+					Provides: []query.Symbol{datalog.NewSymbol("?e")},
 				},
 			},
 		}
@@ -159,12 +159,12 @@ func TestPlanCacheTTL(t *testing.T) {
 
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: query.Symbol("?e")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?e")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword(":person/name")},
 					query.Constant{Value: "Bob"},
 				},
@@ -177,7 +177,7 @@ func TestPlanCacheTTL(t *testing.T) {
 		Phases: []RealizedPhase{
 			{
 				Query:    q,
-				Provides: []query.Symbol{"?e"},
+				Provides: []query.Symbol{datalog.NewSymbol("?e")},
 			},
 		},
 	}
@@ -209,12 +209,12 @@ func TestPlannerWithCache(t *testing.T) {
 	// Create a query
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: query.Symbol("?e")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?e")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: query.Symbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword(":person/name")},
 					query.Constant{Value: "Charlie"},
 				},

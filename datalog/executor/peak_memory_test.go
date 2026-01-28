@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestPeakMemoryFullConsumption measures actual peak memory for full consumption
@@ -15,8 +17,8 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
-			leftCols := []query.Symbol{"?x", "?name"}
-			rightCols := []query.Symbol{"?x", "?value"}
+			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)

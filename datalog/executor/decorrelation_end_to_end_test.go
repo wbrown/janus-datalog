@@ -88,7 +88,7 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 	}
 
 	// Check columns
-	expectedCols := []query.Symbol{"?hour", "?high", "?low"}
+	expectedCols := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?high"), datalog.NewSymbol("?low")}
 	if !columnsEqualTest(result.Columns(), expectedCols) {
 		t.Errorf("column mismatch:\n  got=%v\n  want=%v",
 			result.Columns(), expectedCols)

@@ -38,7 +38,7 @@ func TestParseGetElse(t *testing.T) {
 				if getElse.Default != "Unknown" {
 					t.Errorf("expected default 'Unknown', got %v", getElse.Default)
 				}
-				if binding, ok := expr.Binding.(query.Symbol); !ok || binding != "?name" {
+				if binding, ok := expr.Binding.(query.Symbol); !ok || binding != datalog.NewSymbol("?name") {
 					t.Errorf("expected binding ?name, got %v", expr.Binding)
 				}
 			},
@@ -170,7 +170,7 @@ func TestParseMissingAttr(t *testing.T) {
 				if missing.Attr.String() != ":entity/name" {
 					t.Errorf("expected attr :entity/name, got %s", missing.Attr.String())
 				}
-				if binding, ok := expr.Binding.(query.Symbol); !ok || binding != "?is_missing" {
+				if binding, ok := expr.Binding.(query.Symbol); !ok || binding != datalog.NewSymbol("?is_missing") {
 					t.Errorf("expected binding ?is_missing, got %v", expr.Binding)
 				}
 			},
@@ -302,33 +302,33 @@ func TestParseGetSome(t *testing.T) {
 func TestDatabaseFunctionRequiredSymbols(t *testing.T) {
 	// Test that RequiredSymbols correctly identifies the entity variable
 	getElse := &query.GetElseFunction{
-		Entity:  query.VariableTerm{Symbol: "?e"},
+		Entity:  query.VariableTerm{Symbol: datalog.NewSymbol("?e")},
 		Attr:    datalog.NewKeyword(":entity/name"),
 		Default: "",
 	}
 	syms := getElse.RequiredSymbols()
-	if len(syms) != 1 || syms[0] != "?e" {
+	if len(syms) != 1 || syms[0] != datalog.NewSymbol("?e") {
 		t.Errorf("expected [?e], got %v", syms)
 	}
 
 	missing := &query.MissingFunction{
-		Entity: query.VariableTerm{Symbol: "?person"},
+		Entity: query.VariableTerm{Symbol: datalog.NewSymbol("?person")},
 		Attr:   datalog.NewKeyword(":person/email"),
 	}
 	syms = missing.RequiredSymbols()
-	if len(syms) != 1 || syms[0] != "?person" {
+	if len(syms) != 1 || syms[0] != datalog.NewSymbol("?person") {
 		t.Errorf("expected [?person], got %v", syms)
 	}
 
 	getSome := &query.GetSomeFunction{
-		Entity: query.VariableTerm{Symbol: "?user"},
+		Entity: query.VariableTerm{Symbol: datalog.NewSymbol("?user")},
 		Attrs: []datalog.Keyword{
 			datalog.NewKeyword(":user/nickname"),
 			datalog.NewKeyword(":user/name"),
 		},
 	}
 	syms = getSome.RequiredSymbols()
-	if len(syms) != 1 || syms[0] != "?user" {
+	if len(syms) != 1 || syms[0] != datalog.NewSymbol("?user") {
 		t.Errorf("expected [?user], got %v", syms)
 	}
 }
@@ -336,7 +336,7 @@ func TestDatabaseFunctionRequiredSymbols(t *testing.T) {
 func TestDatabaseFunctionString(t *testing.T) {
 	// Test String() methods for debugging output
 	getElse := &query.GetElseFunction{
-		Entity:  query.VariableTerm{Symbol: "?e"},
+		Entity:  query.VariableTerm{Symbol: datalog.NewSymbol("?e")},
 		Attr:    datalog.NewKeyword(":entity/name"),
 		Default: "Unknown",
 	}
@@ -346,7 +346,7 @@ func TestDatabaseFunctionString(t *testing.T) {
 	}
 
 	missing := &query.MissingFunction{
-		Entity: query.VariableTerm{Symbol: "?e"},
+		Entity: query.VariableTerm{Symbol: datalog.NewSymbol("?e")},
 		Attr:   datalog.NewKeyword(":entity/email"),
 	}
 	str = missing.String()
@@ -355,7 +355,7 @@ func TestDatabaseFunctionString(t *testing.T) {
 	}
 
 	getSome := &query.GetSomeFunction{
-		Entity: query.VariableTerm{Symbol: "?e"},
+		Entity: query.VariableTerm{Symbol: datalog.NewSymbol("?e")},
 		Attrs: []datalog.Keyword{
 			datalog.NewKeyword(":a"),
 			datalog.NewKeyword(":b"),

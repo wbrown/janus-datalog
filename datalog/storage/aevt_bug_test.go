@@ -97,7 +97,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 
 	// Bind 3 entities as a RelationInput (this is what triggers the bug)
 	inputRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e"},
+		[]query.Symbol{datalog.NewSymbol("?e")},
 		[]executor.Tuple{{entities[0]}, {entities[5]}, {entities[9]}},
 	)
 

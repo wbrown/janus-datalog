@@ -223,7 +223,7 @@ func chooseBestMultiPositionStrategy(
 			}
 		}
 
-		if varName == "" {
+		if varName == nil {
 			continue
 		}
 

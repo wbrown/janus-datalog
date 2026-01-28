@@ -193,7 +193,7 @@ func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr 
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
 			query.Constant{Value: attr},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -209,8 +209,9 @@ func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr 
 	if it.Next() {
 		tuple := it.Tuple()
 		cols := rel.Columns()
+		symV := datalog.NewSymbol("?v")
 		for i, col := range cols {
-			if col == "?v" && i < len(tuple) {
+			if col == symV && i < len(tuple) {
 				return tuple[i], true
 			}
 		}
@@ -237,8 +238,8 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
-			query.Variable{Name: "?a"},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?a")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -253,12 +254,14 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 
 	// Find column indices
 	cols := rel.Columns()
+	symA := datalog.NewSymbol("?a")
+	symV := datalog.NewSymbol("?v")
 	aIdx := -1
 	vIdx := -1
 	for i, col := range cols {
-		if col == "?a" {
+		if col == symA {
 			aIdx = i
-		} else if col == "?v" {
+		} else if col == symV {
 			vIdx = i
 		}
 	}
@@ -519,7 +522,7 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
 			query.Constant{Value: attr},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -530,9 +533,10 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 
 	// Find value column index
 	cols := rel.Columns()
+	symV := datalog.NewSymbol("?v")
 	vIdx := -1
 	for i, col := range cols {
-		if col == "?v" {
+		if col == symV {
 			vIdx = i
 			break
 		}

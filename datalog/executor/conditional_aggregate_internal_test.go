@@ -5,13 +5,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestConditionalAggregateInternalInfrastructure tests the internal conditional aggregate
 // execution infrastructure (used by query rewriter, NOT exposed to users)
 func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
 	// Create a simple relation with hour, filter, and value columns
-	columns := []query.Symbol{"?hour", "?filter", "?value"}
+	columns := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?filter"), datalog.NewSymbol("?value")}
 	tuples := []Tuple{
 		{int64(10), true, 100.0},
 		{int64(10), true, 102.0},
@@ -22,11 +24,11 @@ func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
 
 	// Create find elements with conditional aggregate (internal use only)
 	findElements := []query.FindElement{
-		query.FindVariable{Symbol: "?hour"},
+		query.FindVariable{Symbol: datalog.NewSymbol("?hour")},
 		query.FindAggregate{
 			Function:  "min",
-			Arg:       "?value",
-			Predicate: "?filter", // Internal: filter on this column
+			Arg:       datalog.NewSymbol("?value"),
+			Predicate: datalog.NewSymbol("?filter"), // Internal: filter on this column
 		},
 	}
 
@@ -52,7 +54,7 @@ func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
 // empty result set when no tuples match the filter predicate (relational theory)
 func TestConditionalAggregateEmptyResult(t *testing.T) {
 	// Create relation where all filter values are false
-	columns := []query.Symbol{"?filter", "?value"}
+	columns := []query.Symbol{datalog.NewSymbol("?filter"), datalog.NewSymbol("?value")}
 	tuples := []Tuple{
 		{false, 10.0},
 		{false, 20.0},
@@ -64,8 +66,8 @@ func TestConditionalAggregateEmptyResult(t *testing.T) {
 	findElements := []query.FindElement{
 		query.FindAggregate{
 			Function:  "min",
-			Arg:       "?value",
-			Predicate: "?filter", // All false - no matches
+			Arg:       datalog.NewSymbol("?value"),
+			Predicate: datalog.NewSymbol("?filter"), // All false - no matches
 		},
 	}
 
@@ -79,7 +81,7 @@ func TestConditionalAggregateEmptyResult(t *testing.T) {
 // TestConditionalAggregateMixedTypes tests multiple aggregates with different predicates
 func TestConditionalAggregateMixedTypes(t *testing.T) {
 	// Create relation with multiple filter columns
-	columns := []query.Symbol{"?early", "?late", "?price"}
+	columns := []query.Symbol{datalog.NewSymbol("?early"), datalog.NewSymbol("?late"), datalog.NewSymbol("?price")}
 	tuples := []Tuple{
 		{true, false, 100.0}, // Early
 		{true, false, 102.0}, // Early
@@ -92,13 +94,13 @@ func TestConditionalAggregateMixedTypes(t *testing.T) {
 	findElements := []query.FindElement{
 		query.FindAggregate{
 			Function:  "min",
-			Arg:       "?price",
-			Predicate: "?early", // Min of early prices
+			Arg:       datalog.NewSymbol("?price"),
+			Predicate: datalog.NewSymbol("?early"), // Min of early prices
 		},
 		query.FindAggregate{
 			Function:  "max",
-			Arg:       "?price",
-			Predicate: "?late", // Max of late prices
+			Arg:       datalog.NewSymbol("?price"),
+			Predicate: datalog.NewSymbol("?late"), // Max of late prices
 		},
 	}
 

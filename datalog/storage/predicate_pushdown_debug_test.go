@@ -51,7 +51,7 @@ func TestPredicatePushdownDebug(t *testing.T) {
 	// Test patterns
 	symbolPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: priceSymbol},
 			query.Constant{Value: symbolEntity},
 		},
@@ -59,9 +59,9 @@ func TestPredicatePushdownDebug(t *testing.T) {
 
 	timePattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: priceTime},
-			query.Variable{Name: query.Symbol("?t")},
+			query.Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 

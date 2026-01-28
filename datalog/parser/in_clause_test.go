@@ -3,6 +3,7 @@ package parser
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -41,7 +42,7 @@ func TestParseInputClause(t *testing.T) {
 				}
 				if scalar, ok := q.In[1].(query.ScalarInput); !ok {
 					t.Errorf("expected ScalarInput at position 1, got %T", q.In[1])
-				} else if scalar.Symbol != "?name" {
+				} else if scalar.Symbol != datalog.NewSymbol("?name") {
 					t.Errorf("expected ?name, got %s", scalar.Symbol)
 				}
 				return nil
@@ -58,7 +59,7 @@ func TestParseInputClause(t *testing.T) {
 				}
 				if coll, ok := q.In[1].(query.CollectionInput); !ok {
 					t.Errorf("expected CollectionInput at position 1, got %T", q.In[1])
-				} else if coll.Symbol != "?food" {
+				} else if coll.Symbol != datalog.NewSymbol("?food") {
 					t.Errorf("expected ?food, got %s", coll.Symbol)
 				}
 				return nil
@@ -80,7 +81,7 @@ func TestParseInputClause(t *testing.T) {
 					if len(tuple.Symbols) != 2 {
 						t.Errorf("expected 2 symbols in tuple, got %d", len(tuple.Symbols))
 					}
-					if tuple.Symbols[0] != "?name" || tuple.Symbols[1] != "?age" {
+					if tuple.Symbols[0] != datalog.NewSymbol("?name") || tuple.Symbols[1] != datalog.NewSymbol("?age") {
 						t.Errorf("expected [?name ?age], got %v", tuple.Symbols)
 					}
 				}
@@ -103,7 +104,7 @@ func TestParseInputClause(t *testing.T) {
 					if len(rel.Symbols) != 2 {
 						t.Errorf("expected 2 symbols in relation, got %d", len(rel.Symbols))
 					}
-					if rel.Symbols[0] != "?name" || rel.Symbols[1] != "?email" {
+					if rel.Symbols[0] != datalog.NewSymbol("?name") || rel.Symbols[1] != datalog.NewSymbol("?email") {
 						t.Errorf("expected [?name ?email], got %v", rel.Symbols)
 					}
 				}
@@ -127,7 +128,7 @@ func TestParseInputClause(t *testing.T) {
 				for i, expected := range expectedVars {
 					if scalar, ok := q.In[i+1].(query.ScalarInput); !ok {
 						t.Errorf("expected ScalarInput at position %d, got %T", i+1, q.In[i+1])
-					} else if scalar.Symbol != query.Symbol(expected) {
+					} else if scalar.Symbol != datalog.NewSymbol(expected) {
 						t.Errorf("expected %s at position %d, got %s", expected, i+1, scalar.Symbol)
 					}
 				}
@@ -313,10 +314,10 @@ func TestSubqueryWithInputClause(t *testing.T) {
 	if _, ok := subq.Query.In[0].(query.DatabaseInput); !ok {
 		t.Errorf("expected DatabaseInput at position 0")
 	}
-	if scalar, ok := subq.Query.In[1].(query.ScalarInput); !ok || scalar.Symbol != "?symbol" {
+	if scalar, ok := subq.Query.In[1].(query.ScalarInput); !ok || scalar.Symbol != datalog.NewSymbol("?symbol") {
 		t.Errorf("expected ScalarInput ?symbol at position 1")
 	}
-	if scalar, ok := subq.Query.In[2].(query.ScalarInput); !ok || scalar.Symbol != "?date" {
+	if scalar, ok := subq.Query.In[2].(query.ScalarInput); !ok || scalar.Symbol != datalog.NewSymbol("?date") {
 		t.Errorf("expected ScalarInput ?date at position 2")
 	}
 }
@@ -348,14 +349,14 @@ func TestNestedQueryInputParsing(t *testing.T) {
 	// Check first scalar input
 	if scalar, ok := q.In[1].(query.ScalarInput); !ok {
 		t.Errorf("Input 1: expected ScalarInput, got %T", q.In[1])
-	} else if scalar.Symbol != "?sym" {
+	} else if scalar.Symbol != datalog.NewSymbol("?sym") {
 		t.Errorf("Input 1: expected symbol ?sym, got %s", scalar.Symbol)
 	}
 
 	// Check second scalar input
 	if scalar, ok := q.In[2].(query.ScalarInput); !ok {
 		t.Errorf("Input 2: expected ScalarInput, got %T", q.In[2])
-	} else if scalar.Symbol != "?d" {
+	} else if scalar.Symbol != datalog.NewSymbol("?d") {
 		t.Errorf("Input 2: expected symbol ?d, got %s", scalar.Symbol)
 	}
 }

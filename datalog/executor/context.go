@@ -254,7 +254,7 @@ func (c *AnnotatedContext) MatchPattern(pattern query.Pattern, fn func() ([]data
 		// Check each element for variables
 		for _, elem := range dp.Elements {
 			if v, ok := elem.(query.Variable); ok {
-				symbolOrder = append(symbolOrder, string(v.Name))
+				symbolOrder = append(symbolOrder, v.Name.String())
 			}
 		}
 
@@ -291,7 +291,7 @@ func (c *AnnotatedContext) MatchPatternWithBindings(pattern query.Pattern, input
 		// Check each element for variables
 		for _, elem := range dp.Elements {
 			if v, ok := elem.(query.Variable); ok {
-				symbolOrder = append(symbolOrder, string(v.Name))
+				symbolOrder = append(symbolOrder, v.Name.String())
 			}
 		}
 
@@ -410,21 +410,21 @@ func (c *AnnotatedContext) JoinRelations(left, right Relation, fn func() Relatio
 	if left != nil {
 		leftAttrs := make([]string, len(left.Columns()))
 		for i, col := range left.Columns() {
-			leftAttrs[i] = string(col)
+			leftAttrs[i] = col.String()
 		}
 		data["left.attrs"] = leftAttrs
 	}
 	if right != nil {
 		rightAttrs := make([]string, len(right.Columns()))
 		for i, col := range right.Columns() {
-			rightAttrs[i] = string(col)
+			rightAttrs[i] = col.String()
 		}
 		data["right.attrs"] = rightAttrs
 	}
 	if result != nil {
 		resultAttrs := make([]string, len(result.Columns()))
 		for i, col := range result.Columns() {
-			resultAttrs[i] = string(col)
+			resultAttrs[i] = col.String()
 		}
 		data["result.attrs"] = resultAttrs
 	}

@@ -4,12 +4,14 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestStreamingRelationSingleUse verifies that StreamingRelation with EnableTrueStreaming
 // panics on second Iterator() call as expected
 func TestStreamingRelationSingleUse(t *testing.T) {
-	cols := []query.Symbol{query.Symbol("?x")}
+	cols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := []Tuple{
 		Tuple{1},
 		Tuple{2},
@@ -47,7 +49,7 @@ func TestStreamingRelationSingleUse(t *testing.T) {
 // TestStreamingRelationSingleUseInJoin tests that joins don't call Iterator() twice
 func TestStreamingRelationSingleUseInJoin(t *testing.T) {
 	// Create two simple streaming relations
-	cols1 := []query.Symbol{query.Symbol("?x"), query.Symbol("?y")}
+	cols1 := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples1 := []Tuple{
 		Tuple{1, "a"},
 		Tuple{2, "b"},
@@ -57,7 +59,7 @@ func TestStreamingRelationSingleUseInJoin(t *testing.T) {
 	opts := ExecutorOptions{EnableTrueStreaming: true}
 	rel1 := NewStreamingRelationWithOptions(cols1, iter1, opts)
 
-	cols2 := []query.Symbol{query.Symbol("?y"), query.Symbol("?z")}
+	cols2 := []query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	tuples2 := []Tuple{
 		Tuple{"a", 10},
 		Tuple{"b", 20},
@@ -67,7 +69,7 @@ func TestStreamingRelationSingleUseInJoin(t *testing.T) {
 	rel2 := NewStreamingRelationWithOptions(cols2, iter2, opts)
 
 	// Join should work without panicking (single Iterator() call per relation)
-	joinCols := []query.Symbol{query.Symbol("?y")}
+	joinCols := []query.Symbol{datalog.NewSymbol("?y")}
 	result := HashJoin(rel1, rel2, joinCols)
 
 	// Verify result

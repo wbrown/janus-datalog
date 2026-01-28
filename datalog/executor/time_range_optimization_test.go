@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestExtractTimeRanges(t *testing.T) {
@@ -24,8 +26,8 @@ func TestExtractTimeRanges(t *testing.T) {
 				{int64(2025), int64(6), int64(20), int64(10)}, // 2025-06-20 10:00
 				{int64(2025), int64(6), int64(20), int64(11)}, // 2025-06-20 11:00
 			},
-			inputColumns:    []query.Symbol{"?year", "?month", "?day", "?hour"},
-			correlationKeys: []query.Symbol{"$", "?s", "?year", "?month", "?day", "?hour"},
+			inputColumns:    []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")},
+			correlationKeys: []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")},
 			expectedRanges:  3,
 			description:     "Should extract 3 hourly ranges",
 		},
@@ -36,8 +38,8 @@ func TestExtractTimeRanges(t *testing.T) {
 				{int64(2025), int64(6), int64(21)}, // 2025-06-21
 				{int64(2025), int64(6), int64(22)}, // 2025-06-22
 			},
-			inputColumns:    []query.Symbol{"?year", "?month", "?day"},
-			correlationKeys: []query.Symbol{"$", "?s", "?year", "?month", "?day"},
+			inputColumns:    []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")},
+			correlationKeys: []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")},
 			expectedRanges:  3,
 			description:     "Should extract 3 daily ranges",
 		},
@@ -48,8 +50,8 @@ func TestExtractTimeRanges(t *testing.T) {
 				{int64(2025), int64(6), int64(20), int64(9)}, // Duplicate
 				{int64(2025), int64(6), int64(20), int64(10)},
 			},
-			inputColumns:    []query.Symbol{"?year", "?month", "?day", "?hour"},
-			correlationKeys: []query.Symbol{"$", "?s", "?year", "?month", "?day", "?hour"},
+			inputColumns:    []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")},
+			correlationKeys: []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")},
 			expectedRanges:  2,
 			description:     "Should deduplicate identical time ranges",
 		},
@@ -58,8 +60,8 @@ func TestExtractTimeRanges(t *testing.T) {
 			inputTuples: []Tuple{
 				{"CRWV", int64(100)},
 			},
-			inputColumns:    []query.Symbol{"?symbol", "?value"},
-			correlationKeys: []query.Symbol{"$", "?symbol", "?value"},
+			inputColumns:    []query.Symbol{datalog.NewSymbol("?symbol"), datalog.NewSymbol("?value")},
+			correlationKeys: []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?symbol"), datalog.NewSymbol("?value")},
 			expectNil:       true,
 			description:     "Should return nil for non-time-based queries",
 		},
@@ -68,8 +70,8 @@ func TestExtractTimeRanges(t *testing.T) {
 			inputTuples: []Tuple{
 				{int64(2025), int64(6)}, // Only year and month
 			},
-			inputColumns:    []query.Symbol{"?year", "?month"},
-			correlationKeys: []query.Symbol{"$", "?s", "?year", "?month"},
+			inputColumns:    []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month")},
+			correlationKeys: []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month")},
 			expectNil:       true,
 			description:     "Should return nil when missing required day component",
 		},
@@ -113,11 +115,11 @@ func TestTimeRangeGranularity(t *testing.T) {
 			{int64(2025), int64(6), int64(20), int64(9)},
 		}
 		inputRel := NewMaterializedRelation(
-			[]query.Symbol{"?year", "?month", "?day", "?hour"},
+			[]query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")},
 			inputTuples,
 		)
 
-		ranges, err := extractTimeRanges(inputRel, []query.Symbol{"$", "?s", "?year", "?month", "?day", "?hour"})
+		ranges, err := extractTimeRanges(inputRel, []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")})
 		if err != nil {
 			t.Fatalf("extractTimeRanges failed: %v", err)
 		}
@@ -143,11 +145,11 @@ func TestTimeRangeGranularity(t *testing.T) {
 			{int64(2025), int64(6), int64(20)},
 		}
 		inputRel := NewMaterializedRelation(
-			[]query.Symbol{"?year", "?month", "?day"},
+			[]query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")},
 			inputTuples,
 		)
 
-		ranges, err := extractTimeRanges(inputRel, []query.Symbol{"$", "?s", "?year", "?month", "?day"})
+		ranges, err := extractTimeRanges(inputRel, []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")})
 		if err != nil {
 			t.Fatalf("extractTimeRanges failed: %v", err)
 		}
@@ -176,11 +178,11 @@ func TestTimeRangeWithIntTypes(t *testing.T) {
 			{int(2025), int(6), int(20), int(9)},
 		}
 		inputRel := NewMaterializedRelation(
-			[]query.Symbol{"?year", "?month", "?day", "?hour"},
+			[]query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")},
 			inputTuples,
 		)
 
-		ranges, err := extractTimeRanges(inputRel, []query.Symbol{"$", "?s", "?year", "?month", "?day", "?hour"})
+		ranges, err := extractTimeRanges(inputRel, []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")})
 		if err != nil {
 			t.Fatalf("extractTimeRanges failed: %v", err)
 		}
@@ -200,11 +202,11 @@ func TestTimeRangeWithIntTypes(t *testing.T) {
 			{int64(2025), int(6), int64(20), int(9)},
 		}
 		inputRel := NewMaterializedRelation(
-			[]query.Symbol{"?year", "?month", "?day", "?hour"},
+			[]query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")},
 			inputTuples,
 		)
 
-		ranges, err := extractTimeRanges(inputRel, []query.Symbol{"$", "?s", "?year", "?month", "?day", "?hour"})
+		ranges, err := extractTimeRanges(inputRel, []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")})
 		if err != nil {
 			t.Fatalf("extractTimeRanges failed: %v", err)
 		}
@@ -232,11 +234,11 @@ func TestTimeRangeOptimization260Hours(t *testing.T) {
 	}
 
 	inputRel := NewMaterializedRelation(
-		[]query.Symbol{"?year", "?month", "?day", "?hour"},
+		[]query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")},
 		inputTuples,
 	)
 
-	ranges, err := extractTimeRanges(inputRel, []query.Symbol{"$", "?s", "?year", "?month", "?day", "?hour"})
+	ranges, err := extractTimeRanges(inputRel, []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")})
 	if err != nil {
 		t.Fatalf("extractTimeRanges failed: %v", err)
 	}

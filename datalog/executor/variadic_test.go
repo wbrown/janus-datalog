@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestVariadicFilter(t *testing.T) {
@@ -19,13 +21,13 @@ func TestVariadicFilter(t *testing.T) {
 			filter: VariadicFilter{
 				Function: "<",
 				Args: []query.PatternElement{
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?b"},
-					query.Variable{Name: "?c"},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?b")},
+					query.Variable{Name: datalog.NewSymbol("?c")},
 				},
 			},
 			tuple:    Tuple{1, 5, 10},
-			columns:  []query.Symbol{"?a", "?b", "?c"},
+			columns:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
 			expected: true,
 		},
 		{
@@ -33,13 +35,13 @@ func TestVariadicFilter(t *testing.T) {
 			filter: VariadicFilter{
 				Function: "<",
 				Args: []query.PatternElement{
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?b"},
-					query.Variable{Name: "?c"},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?b")},
+					query.Variable{Name: datalog.NewSymbol("?c")},
 				},
 			},
 			tuple:    Tuple{10, 5, 1},
-			columns:  []query.Symbol{"?a", "?b", "?c"},
+			columns:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
 			expected: false,
 		},
 		{
@@ -48,12 +50,12 @@ func TestVariadicFilter(t *testing.T) {
 				Function: "<=",
 				Args: []query.PatternElement{
 					query.Constant{Value: int64(0)},
-					query.Variable{Name: "?x"},
+					query.Variable{Name: datalog.NewSymbol("?x")},
 					query.Constant{Value: int64(100)},
 				},
 			},
 			tuple:    Tuple{50},
-			columns:  []query.Symbol{"?x"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x")},
 			expected: true,
 		},
 		{
@@ -62,12 +64,12 @@ func TestVariadicFilter(t *testing.T) {
 				Function: "<=",
 				Args: []query.PatternElement{
 					query.Constant{Value: int64(0)},
-					query.Variable{Name: "?x"},
+					query.Variable{Name: datalog.NewSymbol("?x")},
 					query.Constant{Value: int64(100)},
 				},
 			},
 			tuple:    Tuple{150},
-			columns:  []query.Symbol{"?x"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x")},
 			expected: false,
 		},
 		{
@@ -75,13 +77,13 @@ func TestVariadicFilter(t *testing.T) {
 			filter: VariadicFilter{
 				Function: "=",
 				Args: []query.PatternElement{
-					query.Variable{Name: "?x"},
-					query.Variable{Name: "?y"},
-					query.Variable{Name: "?z"},
+					query.Variable{Name: datalog.NewSymbol("?x")},
+					query.Variable{Name: datalog.NewSymbol("?y")},
+					query.Variable{Name: datalog.NewSymbol("?z")},
 				},
 			},
 			tuple:    Tuple{42, 42, 42},
-			columns:  []query.Symbol{"?x", "?y", "?z"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
 			expected: true,
 		},
 		{
@@ -89,13 +91,13 @@ func TestVariadicFilter(t *testing.T) {
 			filter: VariadicFilter{
 				Function: "=",
 				Args: []query.PatternElement{
-					query.Variable{Name: "?x"},
-					query.Variable{Name: "?y"},
-					query.Variable{Name: "?z"},
+					query.Variable{Name: datalog.NewSymbol("?x")},
+					query.Variable{Name: datalog.NewSymbol("?y")},
+					query.Variable{Name: datalog.NewSymbol("?z")},
 				},
 			},
 			tuple:    Tuple{42, 42, 43},
-			columns:  []query.Symbol{"?x", "?y", "?z"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
 			expected: false,
 		},
 		{
@@ -104,13 +106,13 @@ func TestVariadicFilter(t *testing.T) {
 				Function: "<",
 				Args: []query.PatternElement{
 					query.Constant{Value: int64(0)},
-					query.Variable{Name: "?x"},
-					query.Variable{Name: "?y"},
+					query.Variable{Name: datalog.NewSymbol("?x")},
+					query.Variable{Name: datalog.NewSymbol("?y")},
 					query.Constant{Value: int64(100)},
 				},
 			},
 			tuple:    Tuple{10, 20},
-			columns:  []query.Symbol{"?x", "?y"},
+			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: true,
 		},
 	}
@@ -130,14 +132,14 @@ func TestVariadicFilterRequiredSymbols(t *testing.T) {
 		Function: "<",
 		Args: []query.PatternElement{
 			query.Constant{Value: int64(0)},
-			query.Variable{Name: "?x"},
-			query.Variable{Name: "?y"},
+			query.Variable{Name: datalog.NewSymbol("?x")},
+			query.Variable{Name: datalog.NewSymbol("?y")},
 			query.Constant{Value: int64(100)},
 		},
 	}
 
 	symbols := filter.RequiredSymbols()
-	expected := []query.Symbol{"?x", "?y"}
+	expected := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 	if len(symbols) != len(expected) {
 		t.Fatalf("RequiredSymbols() returned %d symbols, want %d", len(symbols), len(expected))

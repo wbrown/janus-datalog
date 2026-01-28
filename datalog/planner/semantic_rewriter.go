@@ -262,7 +262,7 @@ func getVariableFromTerm(term query.Term) (query.Symbol, bool) {
 	if v, ok := term.(query.VariableTerm); ok {
 		return v.Symbol, true
 	}
-	return "", false
+	return nil, false
 }
 
 // getConstantInt extracts an integer constant from a term

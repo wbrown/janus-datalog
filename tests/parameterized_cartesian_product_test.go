@@ -147,7 +147,7 @@ func TestParameterizedQueryCartesianProduct(t *testing.T) {
 
 		// Create input relation for ?symbol
 		symbolInput := executor.NewMaterializedRelation(
-			[]query.Symbol{"?symbol"},
+			[]query.Symbol{datalog.NewSymbol("?symbol")},
 			[]executor.Tuple{{"AAPL"}},
 		)
 

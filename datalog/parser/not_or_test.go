@@ -3,6 +3,7 @@ package parser
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -85,7 +86,7 @@ func TestParseNotJoinClause(t *testing.T) {
 				if len(notJoinClause.JoinVars) != 1 {
 					t.Fatalf("expected 1 join var, got %d", len(notJoinClause.JoinVars))
 				}
-				if notJoinClause.JoinVars[0] != "?e" {
+				if notJoinClause.JoinVars[0] != datalog.NewSymbol("?e") {
 					t.Fatalf("expected join var ?e, got %s", notJoinClause.JoinVars[0])
 				}
 				if len(notJoinClause.Clauses) != 1 {
@@ -219,7 +220,7 @@ func TestParseOrJoinClause(t *testing.T) {
 				if len(orJoinClause.JoinVars) != 1 {
 					t.Fatalf("expected 1 join var, got %d", len(orJoinClause.JoinVars))
 				}
-				if orJoinClause.JoinVars[0] != "?e" {
+				if orJoinClause.JoinVars[0] != datalog.NewSymbol("?e") {
 					t.Fatalf("expected join var ?e, got %s", orJoinClause.JoinVars[0])
 				}
 				if len(orJoinClause.Branches) != 2 {

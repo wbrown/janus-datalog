@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestStrategySelector_Batched(t *testing.T) {
@@ -12,9 +14,9 @@ func TestStrategySelector_Batched(t *testing.T) {
 	// Query with RelationInput should use batched strategy
 	q := &query.Query{
 		In: []query.InputSpec{
-			query.DatabaseInput{Name: query.Symbol("$")},
+			query.DatabaseInput{Name: datalog.NewSymbol("$")},
 			query.RelationInput{
-				Symbols: []query.Symbol{"?sym"},
+				Symbols: []query.Symbol{datalog.NewSymbol("?sym")},
 			},
 		},
 	}
@@ -35,8 +37,8 @@ func TestStrategySelector_Parallel(t *testing.T) {
 	// Query without RelationInput but with many inputs should use parallel
 	q := &query.Query{
 		In: []query.InputSpec{
-			query.DatabaseInput{Name: query.Symbol("$")},
-			query.ScalarInput{Symbol: "?sym"},
+			query.DatabaseInput{Name: datalog.NewSymbol("$")},
+			query.ScalarInput{Symbol: datalog.NewSymbol("?sym")},
 		},
 	}
 
@@ -56,8 +58,8 @@ func TestStrategySelector_Sequential(t *testing.T) {
 	// Query without RelationInput and few inputs should use sequential
 	q := &query.Query{
 		In: []query.InputSpec{
-			query.DatabaseInput{Name: query.Symbol("$")},
-			query.ScalarInput{Symbol: "?sym"},
+			query.DatabaseInput{Name: datalog.NewSymbol("$")},
+			query.ScalarInput{Symbol: datalog.NewSymbol("?sym")},
 		},
 	}
 
@@ -77,8 +79,8 @@ func TestStrategySelector_ParallelDisabled(t *testing.T) {
 	// Many inputs but parallel disabled should use sequential
 	q := &query.Query{
 		In: []query.InputSpec{
-			query.DatabaseInput{Name: query.Symbol("$")},
-			query.ScalarInput{Symbol: "?sym"},
+			query.DatabaseInput{Name: datalog.NewSymbol("$")},
+			query.ScalarInput{Symbol: datalog.NewSymbol("?sym")},
 		},
 	}
 
@@ -97,8 +99,8 @@ func TestStrategySelector_CustomThreshold(t *testing.T) {
 
 	q := &query.Query{
 		In: []query.InputSpec{
-			query.DatabaseInput{Name: query.Symbol("$")},
-			query.ScalarInput{Symbol: "?sym"},
+			query.DatabaseInput{Name: datalog.NewSymbol("$")},
+			query.ScalarInput{Symbol: datalog.NewSymbol("?sym")},
 		},
 	}
 
@@ -135,9 +137,9 @@ func TestStrategySelector_DefaultThreshold(t *testing.T) {
 func TestCanBatchSubquery_WithRelationInput(t *testing.T) {
 	q := &query.Query{
 		In: []query.InputSpec{
-			query.DatabaseInput{Name: query.Symbol("$")},
+			query.DatabaseInput{Name: datalog.NewSymbol("$")},
 			query.RelationInput{
-				Symbols: []query.Symbol{"?sym", "?hr"},
+				Symbols: []query.Symbol{datalog.NewSymbol("?sym"), datalog.NewSymbol("?hr")},
 			},
 		},
 	}
@@ -152,7 +154,7 @@ func TestCanBatchSubquery_WithoutDatabase(t *testing.T) {
 	q := &query.Query{
 		In: []query.InputSpec{
 			query.RelationInput{
-				Symbols: []query.Symbol{"?sym"},
+				Symbols: []query.Symbol{datalog.NewSymbol("?sym")},
 			},
 		},
 	}
@@ -166,9 +168,9 @@ func TestCanBatchSubquery_OnlyVariables(t *testing.T) {
 	// Query with only scalar variable inputs cannot be batched
 	q := &query.Query{
 		In: []query.InputSpec{
-			query.DatabaseInput{Name: query.Symbol("$")},
-			query.ScalarInput{Symbol: "?sym"},
-			query.ScalarInput{Symbol: "?hr"},
+			query.DatabaseInput{Name: datalog.NewSymbol("$")},
+			query.ScalarInput{Symbol: datalog.NewSymbol("?sym")},
+			query.ScalarInput{Symbol: datalog.NewSymbol("?hr")},
 		},
 	}
 
@@ -220,9 +222,9 @@ func TestStrategySelector_BatchedTakesPrecedence(t *testing.T) {
 	// Query with RelationInput should use batched even if parallel conditions met
 	q := &query.Query{
 		In: []query.InputSpec{
-			query.DatabaseInput{Name: query.Symbol("$")},
+			query.DatabaseInput{Name: datalog.NewSymbol("$")},
 			query.RelationInput{
-				Symbols: []query.Symbol{"?sym"},
+				Symbols: []query.Symbol{datalog.NewSymbol("?sym")},
 			},
 		},
 	}

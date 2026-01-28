@@ -3,6 +3,8 @@ package query
 import (
 	"testing"
 	"time"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestComparison(t *testing.T) {
@@ -16,50 +18,50 @@ func TestComparison(t *testing.T) {
 			name: "Variable equals constant",
 			pred: &Comparison{
 				Op:    OpEQ,
-				Left:  VariableTerm{Symbol: "?x"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(5)},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(5)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5)},
 			expected: true,
 		},
 		{
 			name: "Variable not equals constant",
 			pred: &Comparison{
 				Op:    OpEQ,
-				Left:  VariableTerm{Symbol: "?x"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(5)},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(10)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(10)},
 			expected: false,
 		},
 		{
 			name: "Variable less than constant",
 			pred: &Comparison{
 				Op:    OpLT,
-				Left:  VariableTerm{Symbol: "?x"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(10)},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(5)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5)},
 			expected: true,
 		},
 		{
 			name: "Variable equals variable",
 			pred: &Comparison{
 				Op:    OpEQ,
-				Left:  VariableTerm{Symbol: "?x"},
-				Right: VariableTerm{Symbol: "?y"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(5), "?y": int64(5)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5), datalog.NewSymbol("?y"): int64(5)},
 			expected: true,
 		},
 		{
 			name: "Variable not equals variable",
 			pred: &Comparison{
 				Op:    OpEQ,
-				Left:  VariableTerm{Symbol: "?x"},
-				Right: VariableTerm{Symbol: "?y"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(5), "?y": int64(10)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5), datalog.NewSymbol("?y"): int64(10)},
 			expected: false,
 		},
 		{
@@ -67,39 +69,39 @@ func TestComparison(t *testing.T) {
 			pred: &Comparison{
 				Op:    OpLT,
 				Left:  ConstantTerm{Value: int64(5)},
-				Right: VariableTerm{Symbol: "?x"},
+				Right: VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(10)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(10)},
 			expected: true,
 		},
 		{
 			name: "String comparison",
 			pred: &Comparison{
 				Op:    OpLT,
-				Left:  VariableTerm{Symbol: "?s"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?s")},
 				Right: ConstantTerm{Value: "zebra"},
 			},
-			bindings: map[Symbol]interface{}{"?s": "apple"},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?s"): "apple"},
 			expected: true,
 		},
 		{
 			name: "Time comparison",
 			pred: &Comparison{
 				Op:    OpGT,
-				Left:  VariableTerm{Symbol: "?t"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?t")},
 				Right: ConstantTerm{Value: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)},
 			},
-			bindings: map[Symbol]interface{}{"?t": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?t"): time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
 			expected: true,
 		},
 		{
 			name: "Mixed numeric types",
 			pred: &Comparison{
 				Op:    OpEQ,
-				Left:  VariableTerm{Symbol: "?x"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: float64(5.0)},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(5)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5)},
 			expected: true,
 		},
 	}
@@ -130,11 +132,11 @@ func TestChainedComparison(t *testing.T) {
 				Op: OpLT,
 				Terms: []Term{
 					ConstantTerm{Value: int64(0)},
-					VariableTerm{Symbol: "?x"},
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					ConstantTerm{Value: int64(10)},
 				},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(5)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5)},
 			expected: true,
 		},
 		{
@@ -143,11 +145,11 @@ func TestChainedComparison(t *testing.T) {
 				Op: OpLT,
 				Terms: []Term{
 					ConstantTerm{Value: int64(0)},
-					VariableTerm{Symbol: "?x"},
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					ConstantTerm{Value: int64(10)},
 				},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(15)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(15)},
 			expected: false,
 		},
 		{
@@ -155,12 +157,12 @@ func TestChainedComparison(t *testing.T) {
 			pred: &ChainedComparison{
 				Op: OpLT,
 				Terms: []Term{
-					VariableTerm{Symbol: "?x"},
-					VariableTerm{Symbol: "?y"},
-					VariableTerm{Symbol: "?z"},
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					VariableTerm{Symbol: datalog.NewSymbol("?y")},
+					VariableTerm{Symbol: datalog.NewSymbol("?z")},
 				},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(1), "?y": int64(5), "?z": int64(10)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(1), datalog.NewSymbol("?y"): int64(5), datalog.NewSymbol("?z"): int64(10)},
 			expected: true,
 		},
 		{
@@ -168,12 +170,12 @@ func TestChainedComparison(t *testing.T) {
 			pred: &ChainedComparison{
 				Op: OpLT,
 				Terms: []Term{
-					VariableTerm{Symbol: "?x"},
-					VariableTerm{Symbol: "?y"},
-					VariableTerm{Symbol: "?z"},
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					VariableTerm{Symbol: datalog.NewSymbol("?y")},
+					VariableTerm{Symbol: datalog.NewSymbol("?z")},
 				},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(1), "?y": int64(10), "?z": int64(5)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(1), datalog.NewSymbol("?y"): int64(10), datalog.NewSymbol("?z"): int64(5)},
 			expected: false,
 		},
 		{
@@ -181,12 +183,12 @@ func TestChainedComparison(t *testing.T) {
 			pred: &ChainedComparison{
 				Op: OpEQ,
 				Terms: []Term{
-					VariableTerm{Symbol: "?x"},
-					VariableTerm{Symbol: "?y"},
-					VariableTerm{Symbol: "?z"},
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					VariableTerm{Symbol: datalog.NewSymbol("?y")},
+					VariableTerm{Symbol: datalog.NewSymbol("?z")},
 				},
 			},
-			bindings: map[Symbol]interface{}{"?x": int64(5), "?y": int64(5), "?z": int64(5)},
+			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5), datalog.NewSymbol("?y"): int64(5), datalog.NewSymbol("?z"): int64(5)},
 			expected: true,
 		},
 	}
@@ -214,19 +216,19 @@ func TestRequiredSymbols(t *testing.T) {
 			name: "Variable comparison",
 			pred: &Comparison{
 				Op:    OpEQ,
-				Left:  VariableTerm{Symbol: "?x"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(5)},
 			},
-			expected: []Symbol{"?x"},
+			expected: []Symbol{datalog.NewSymbol("?x")},
 		},
 		{
 			name: "Two variables",
 			pred: &Comparison{
 				Op:    OpEQ,
-				Left:  VariableTerm{Symbol: "?x"},
-				Right: VariableTerm{Symbol: "?y"},
+				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 			},
-			expected: []Symbol{"?x", "?y"},
+			expected: []Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		},
 		{
 			name: "Chained comparison",
@@ -234,12 +236,12 @@ func TestRequiredSymbols(t *testing.T) {
 				Op: OpLT,
 				Terms: []Term{
 					ConstantTerm{Value: int64(0)},
-					VariableTerm{Symbol: "?x"},
-					VariableTerm{Symbol: "?y"},
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					VariableTerm{Symbol: datalog.NewSymbol("?y")},
 					ConstantTerm{Value: int64(100)},
 				},
 			},
-			expected: []Symbol{"?x", "?y"},
+			expected: []Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		},
 	}
 

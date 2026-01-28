@@ -52,7 +52,7 @@ func TestProductionQueryPattern(t *testing.T) {
 
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?bar"},
+				query.Variable{Name: datalog.NewSymbol("?bar")},
 				query.Constant{Value: datalog.NewKeyword(":price/minute-of-day")},
 				query.Constant{Value: int64(570)}, // 9:30 AM
 			},
@@ -94,15 +94,15 @@ func TestProductionQueryPattern(t *testing.T) {
 
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?b"},
+				query.Variable{Name: datalog.NewSymbol("?b")},
 				query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-				query.Variable{Name: "?s"},
+				query.Variable{Name: datalog.NewSymbol("?s")},
 			},
 		}
 
 		// Bind to the symbol
 		symbolRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?s"},
+			[]query.Symbol{datalog.NewSymbol("?s")},
 			[]executor.Tuple{{symbolEntity}},
 		)
 
@@ -149,14 +149,14 @@ func TestProductionQueryPattern(t *testing.T) {
 
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?b"},
+					query.Variable{Name: datalog.NewSymbol("?b")},
 					query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-					query.Variable{Name: "?s"},
+					query.Variable{Name: datalog.NewSymbol("?s")},
 				},
 			}
 
 			symbolRel := executor.NewMaterializedRelation(
-				[]query.Symbol{"?s"},
+				[]query.Symbol{datalog.NewSymbol("?s")},
 				[]executor.Tuple{{symbolEntity}},
 			)
 
@@ -193,9 +193,9 @@ func TestProductionQueryPattern(t *testing.T) {
 		// Pattern with minute-of-day that will be bound
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?bar"},
+				query.Variable{Name: datalog.NewSymbol("?bar")},
 				query.Constant{Value: datalog.NewKeyword(":price/minute-of-day")},
-				query.Variable{Name: "?mod"},
+				query.Variable{Name: datalog.NewSymbol("?mod")},
 			},
 		}
 
@@ -206,7 +206,7 @@ func TestProductionQueryPattern(t *testing.T) {
 			tuples = append(tuples, executor.Tuple{min})
 		}
 		minuteRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?mod"},
+			[]query.Symbol{datalog.NewSymbol("?mod")},
 			tuples,
 		)
 

@@ -23,8 +23,8 @@ func TestDatomIterator(t *testing.T) {
 	}
 
 	// Test extracting just entity and value
-	userSym := query.Symbol("?user")
-	valueSym := query.Symbol("?value")
+	userSym := datalog.NewSymbol("?user")
+	valueSym := datalog.NewSymbol("?value")
 	binding := PatternBinding{
 		EntitySym: &userSym,
 		ValueSym:  &valueSym,
@@ -84,10 +84,10 @@ func TestDatomRelation(t *testing.T) {
 	}
 
 	// Create relation with all fields bound
-	eSym := query.Symbol("?e")
-	aSym := query.Symbol("?a")
-	vSym := query.Symbol("?v")
-	txSym := query.Symbol("?tx")
+	eSym := datalog.NewSymbol("?e")
+	aSym := datalog.NewSymbol("?a")
+	vSym := datalog.NewSymbol("?v")
+	txSym := datalog.NewSymbol("?tx")
 	binding := PatternBinding{
 		EntitySym:    &eSym,
 		AttributeSym: &aSym,
@@ -144,9 +144,9 @@ func TestDatomJoinScenario(t *testing.T) {
 	}
 
 	// Create relations
-	userSym := query.Symbol("?user")
-	nameSym := query.Symbol("?name")
-	ageSym := query.Symbol("?age")
+	userSym := datalog.NewSymbol("?user")
+	nameSym := datalog.NewSymbol("?name")
+	ageSym := datalog.NewSymbol("?age")
 
 	nameRel := NewDatomRelation(namePattern, PatternBinding{
 		EntitySym: &userSym,
@@ -159,7 +159,7 @@ func TestDatomJoinScenario(t *testing.T) {
 	})
 
 	// Join on ?user
-	joined := nameRel.HashJoin(ageRel, []query.Symbol{"?user"})
+	joined := nameRel.HashJoin(ageRel, []query.Symbol{datalog.NewSymbol("?user")})
 
 	// Debug: Check what we have before join
 	t.Logf("nameRel size: %d", nameRel.Size())
@@ -187,7 +187,7 @@ func TestDatomJoinScenario(t *testing.T) {
 
 	// Verify columns
 	cols := joined.Columns()
-	expectedCols := []query.Symbol{"?user", "?name", "?age"}
+	expectedCols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
 	if len(cols) != len(expectedCols) {
 		t.Errorf("expected %d columns, got %d", len(expectedCols), len(cols))
 	}

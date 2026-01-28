@@ -40,16 +40,16 @@ func TestPatternExtractor_Variables(t *testing.T) {
 	// Pattern with all variables: [?e ?a ?v]
 	pattern := &DataPattern{
 		Elements: []PatternElement{
-			Variable{Name: "?e"},
-			Variable{Name: "?a"},
-			Variable{Name: "?v"},
+			Variable{Name: datalog.NewSymbol("?e")},
+			Variable{Name: datalog.NewSymbol("?a")},
+			Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")
 
-	columns := []Symbol{"?e", "?a", "?v"}
+	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice, nameAttr, "Alice"}
 
 	extractor := NewPatternExtractor(pattern, columns)
@@ -75,14 +75,14 @@ func TestPatternExtractor_MixedConstantsAndVariables(t *testing.T) {
 
 	pattern := &DataPattern{
 		Elements: []PatternElement{
-			Variable{Name: "?e"},
+			Variable{Name: datalog.NewSymbol("?e")},
 			Constant{Value: nameAttr},
-			Variable{Name: "?v"},
+			Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
 	alice := datalog.NewIdentity("user:alice")
-	columns := []Symbol{"?e", "?v"}
+	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice, "Alice"}
 
 	extractor := NewPatternExtractor(pattern, columns)
@@ -107,11 +107,11 @@ func TestPatternExtractor_Blanks(t *testing.T) {
 		Elements: []PatternElement{
 			Blank{},
 			Constant{Value: nameAttr},
-			Variable{Name: "?v"},
+			Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
-	columns := []Symbol{"?v"}
+	columns := []Symbol{datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{"Alice"}
 
 	extractor := NewPatternExtractor(pattern, columns)
@@ -132,14 +132,14 @@ func TestPatternExtractor_VariableNotInBinding(t *testing.T) {
 	// Pattern: [?e ?a ?v] but binding only has ?e
 	pattern := &DataPattern{
 		Elements: []PatternElement{
-			Variable{Name: "?e"},
-			Variable{Name: "?a"},
-			Variable{Name: "?v"},
+			Variable{Name: datalog.NewSymbol("?e")},
+			Variable{Name: datalog.NewSymbol("?a")},
+			Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
 	alice := datalog.NewIdentity("user:alice")
-	columns := []Symbol{"?e"}
+	columns := []Symbol{datalog.NewSymbol("?e")}
 	bindingTuple := Tuple{alice}
 
 	extractor := NewPatternExtractor(pattern, columns)
@@ -160,17 +160,17 @@ func TestPatternExtractor_WithTransaction(t *testing.T) {
 	// Pattern with 4 elements: [?e ?a ?v ?t]
 	pattern := &DataPattern{
 		Elements: []PatternElement{
-			Variable{Name: "?e"},
-			Variable{Name: "?a"},
-			Variable{Name: "?v"},
-			Variable{Name: "?t"},
+			Variable{Name: datalog.NewSymbol("?e")},
+			Variable{Name: datalog.NewSymbol("?a")},
+			Variable{Name: datalog.NewSymbol("?v")},
+			Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")
 
-	columns := []Symbol{"?e", "?a", "?v", "?t"}
+	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v"), datalog.NewSymbol("?t")}
 	bindingTuple := Tuple{alice, nameAttr, "Alice", uint64(123)}
 
 	extractor := NewPatternExtractor(pattern, columns)
@@ -197,13 +197,13 @@ func TestPatternExtractor_IndividualExtractors(t *testing.T) {
 
 	pattern := &DataPattern{
 		Elements: []PatternElement{
-			Variable{Name: "?e"},
+			Variable{Name: datalog.NewSymbol("?e")},
 			Constant{Value: nameAttr},
-			Variable{Name: "?v"},
+			Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
-	columns := []Symbol{"?e", "?v"}
+	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice, "Alice"}
 
 	extractor := NewPatternExtractor(pattern, columns)
@@ -230,17 +230,17 @@ func TestPatternExtractor_IndividualExtractors(t *testing.T) {
 }
 
 func TestBuildColumnIndexMap(t *testing.T) {
-	columns := []Symbol{"?e", "?a", "?v"}
+	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
 	colMap := BuildColumnIndexMap(columns)
 
-	if colMap["?e"] != 0 {
-		t.Errorf("Expected ?e at index 0, got %d", colMap["?e"])
+	if colMap[datalog.NewSymbol("?e")] != 0 {
+		t.Errorf("Expected ?e at index 0, got %d", colMap[datalog.NewSymbol("?e")])
 	}
-	if colMap["?a"] != 1 {
-		t.Errorf("Expected ?a at index 1, got %d", colMap["?a"])
+	if colMap[datalog.NewSymbol("?a")] != 1 {
+		t.Errorf("Expected ?a at index 1, got %d", colMap[datalog.NewSymbol("?a")])
 	}
-	if colMap["?v"] != 2 {
-		t.Errorf("Expected ?v at index 2, got %d", colMap["?v"])
+	if colMap[datalog.NewSymbol("?v")] != 2 {
+		t.Errorf("Expected ?v at index 2, got %d", colMap[datalog.NewSymbol("?v")])
 	}
 }
 
@@ -251,13 +251,13 @@ func TestExtractPatternValues_ConvenienceFunction(t *testing.T) {
 
 	pattern := &DataPattern{
 		Elements: []PatternElement{
-			Variable{Name: "?e"},
+			Variable{Name: datalog.NewSymbol("?e")},
 			Constant{Value: nameAttr},
-			Variable{Name: "?v"},
+			Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
-	columns := []Symbol{"?e", "?v"}
+	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice, "Alice"}
 
 	e, a, v, tx := ExtractPatternValues(pattern, columns, bindingTuple)
@@ -280,14 +280,14 @@ func TestPatternExtractor_OutOfBoundsTuple(t *testing.T) {
 	// Pattern expects more columns than the binding tuple has
 	pattern := &DataPattern{
 		Elements: []PatternElement{
-			Variable{Name: "?e"},
-			Variable{Name: "?a"},
-			Variable{Name: "?v"},
+			Variable{Name: datalog.NewSymbol("?e")},
+			Variable{Name: datalog.NewSymbol("?a")},
+			Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
 	alice := datalog.NewIdentity("user:alice")
-	columns := []Symbol{"?e", "?a", "?v"}
+	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice} // Only has 1 value instead of 3
 
 	extractor := NewPatternExtractor(pattern, columns)
@@ -334,14 +334,14 @@ func TestPatternExtractor_ColumnsInDifferentOrder(t *testing.T) {
 
 	pattern := &DataPattern{
 		Elements: []PatternElement{
-			Variable{Name: "?e"},
-			Variable{Name: "?a"},
-			Variable{Name: "?v"},
+			Variable{Name: datalog.NewSymbol("?e")},
+			Variable{Name: datalog.NewSymbol("?a")},
+			Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
 	// Columns in different order: ?v, ?e, ?a
-	columns := []Symbol{"?v", "?e", "?a"}
+	columns := []Symbol{datalog.NewSymbol("?v"), datalog.NewSymbol("?e"), datalog.NewSymbol("?a")}
 	bindingTuple := Tuple{"Alice", alice, nameAttr}
 
 	extractor := NewPatternExtractor(pattern, columns)

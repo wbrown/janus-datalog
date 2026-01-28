@@ -177,6 +177,87 @@ func (k Keyword) Matches(pattern Keyword) bool {
 	return true
 }
 
+// symbol is the unexported base type for query symbols.
+// Symbols represent names that resolve to something: variables (?x),
+// data sources ($users), function references, etc.
+// Unlike keywords, symbols are not persisted to storage — they exist only
+// in query ASTs and execution contexts.
+type symbol struct {
+	value string // The symbol string (e.g., "?x", "$users")
+}
+
+// Symbol is the exported pointer type, always interned.
+type Symbol = *symbol
+
+// NewSymbol creates an interned symbol.
+// Panics on empty string — use nil for absent symbols.
+func NewSymbol(s string) Symbol {
+	if s == "" {
+		panic("NewSymbol: empty string is not a valid symbol (use nil for absent)")
+	}
+	return internSymbol(s)
+}
+
+// String returns the symbol string
+func (s *symbol) String() string {
+	if s == nil {
+		return ""
+	}
+	return s.value
+}
+
+// IsVariable returns true if this symbol represents a query variable (starts with ?)
+func (s *symbol) IsVariable() bool {
+	return s != nil && len(s.value) > 0 && s.value[0] == '?'
+}
+
+// IsSource returns true if this symbol represents a data source (starts with $)
+func (s *symbol) IsSource() bool {
+	return s != nil && len(s.value) > 0 && s.value[0] == '$'
+}
+
+// Compare compares two symbols using pointer equality first.
+// Since all Symbols are interned, pointer equality implies value equality.
+// Panics if two different pointers have the same string (indicates interning bug).
+func (s *symbol) Compare(other Symbol) int {
+	if s == nil && other == nil {
+		return 0
+	}
+	if s == nil {
+		return -1
+	}
+	if other == nil {
+		return 1
+	}
+	// Pointer equality for interned symbols
+	if s == other {
+		return 0
+	}
+	// Different pointers - compare strings for ordering
+	cmp := strings.Compare(s.value, other.value)
+	if cmp == 0 {
+		panic(fmt.Sprintf("BUG: two Symbol pointers with same value %q in Compare - interning failed", s.value))
+	}
+	return cmp
+}
+
+// Equal checks if two symbols are equal using pointer comparison.
+// Since all Symbols are interned, pointer equality implies value equality.
+// Panics if two different pointers have the same string (indicates interning bug).
+func (s *symbol) Equal(other Symbol) bool {
+	if s == other {
+		return true
+	}
+	if s == nil || other == nil {
+		return false
+	}
+	// Different pointers - if they have the same value, interning is broken
+	if s.value == other.value {
+		panic(fmt.Sprintf("BUG: two Symbol pointers with same value %q in Equal - interning failed", s.value))
+	}
+	return false
+}
+
 // String returns a string representation of the Datom
 func (d Datom) String() string {
 	return fmt.Sprintf("[%s %s %v %d]", d.E, d.A, d.V, d.Tx)

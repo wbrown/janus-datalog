@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestStreamingVsMaterializedCorrectness verifies that streaming and materialized
@@ -17,7 +19,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		for i := 0; i < size; i++ {
 			tuples = append(tuples, Tuple{i, i * 2, i * 3})
 		}
-		columns := []query.Symbol{"?x", "?y", "?z"}
+		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 		// Test with materialized (EnableTrueStreaming=false)
 		matOpts := ExecutorOptions{
@@ -34,7 +36,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		}))
 
 		// Project
-		matProjected, err := matFiltered.Project([]query.Symbol{"?x"})
+		matProjected, err := matFiltered.Project([]query.Symbol{datalog.NewSymbol("?x")})
 		assert.NoError(t, err)
 
 		// Collect results
@@ -63,7 +65,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		}))
 
 		// Project
-		streamProjected, err := streamFiltered.Project([]query.Symbol{"?x"})
+		streamProjected, err := streamFiltered.Project([]query.Symbol{datalog.NewSymbol("?x")})
 		assert.NoError(t, err)
 
 		// Collect results
@@ -93,14 +95,14 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 			{2, "bob", 200},
 			{3, "charlie", 300},
 		}
-		leftColumns := []query.Symbol{"?id", "?name", "?score"}
+		leftColumns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
 		rightTuples := []Tuple{
 			{"alice", "NYC"},
 			{"bob", "LA"},
 			{"charlie", "Chicago"},
 		}
-		rightColumns := []query.Symbol{"?name", "?city"}
+		rightColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
 
 		// Test with materialized
 		matOpts := ExecutorOptions{
@@ -111,8 +113,8 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		matLeft := NewStreamingRelationWithOptions(leftColumns, newMockIterator(leftTuples), matOpts)
 		matRight := NewStreamingRelationWithOptions(rightColumns, newMockIterator(rightTuples), matOpts)
 
-		matJoined := HashJoinWithOptions(matLeft, matRight, []query.Symbol{"?name"}, matOpts)
-		matProjected, err := matJoined.Project([]query.Symbol{"?name", "?score", "?city"})
+		matJoined := HashJoinWithOptions(matLeft, matRight, []query.Symbol{datalog.NewSymbol("?name")}, matOpts)
+		matProjected, err := matJoined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
 		assert.NoError(t, err)
 
 		var matResults []Tuple
@@ -134,8 +136,8 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		streamLeft := NewStreamingRelationWithOptions(leftColumns, newMockIterator(leftTuples), streamOpts)
 		streamRight := NewStreamingRelationWithOptions(rightColumns, newMockIterator(rightTuples), streamOpts)
 
-		streamJoined := HashJoinWithOptions(streamLeft, streamRight, []query.Symbol{"?name"}, streamOpts)
-		streamProjected, err := streamJoined.Project([]query.Symbol{"?name", "?score", "?city"})
+		streamJoined := HashJoinWithOptions(streamLeft, streamRight, []query.Symbol{datalog.NewSymbol("?name")}, streamOpts)
+		streamProjected, err := streamJoined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
 		assert.NoError(t, err)
 
 		var streamResults []Tuple

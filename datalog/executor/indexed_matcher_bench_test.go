@@ -58,7 +58,7 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 					Elements: []query.PatternElement{
 						query.Constant{Value: datalog.NewIdentity("bar50")},
 						query.Constant{Value: datalog.NewKeyword("price/open")},
-						query.Variable{Name: "?v"},
+						query.Variable{Name: datalog.NewSymbol("?v")},
 					},
 				},
 			},
@@ -67,8 +67,8 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 				pattern: &query.DataPattern{
 					Elements: []query.PatternElement{
 						query.Constant{Value: datalog.NewIdentity("bar50")},
-						query.Variable{Name: "?a"},
-						query.Variable{Name: "?v"},
+						query.Variable{Name: datalog.NewSymbol("?a")},
+						query.Variable{Name: datalog.NewSymbol("?v")},
 					},
 				},
 			},
@@ -76,9 +76,9 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 				name: "A_bound",
 				pattern: &query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?e"},
+						query.Variable{Name: datalog.NewSymbol("?e")},
 						query.Constant{Value: datalog.NewKeyword("price/open")},
-						query.Variable{Name: "?v"},
+						query.Variable{Name: datalog.NewSymbol("?v")},
 					},
 				},
 			},
@@ -86,8 +86,8 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 				name: "V_bound",
 				pattern: &query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?e"},
-						query.Variable{Name: "?a"},
+						query.Variable{Name: datalog.NewSymbol("?e")},
+						query.Variable{Name: datalog.NewSymbol("?a")},
 						query.Constant{Value: int64(150)},
 					},
 				},
@@ -96,9 +96,9 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 				name: "Nothing_bound",
 				pattern: &query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?e"},
-						query.Variable{Name: "?a"},
-						query.Variable{Name: "?v"},
+						query.Variable{Name: datalog.NewSymbol("?e")},
+						query.Variable{Name: datalog.NewSymbol("?a")},
+						query.Variable{Name: datalog.NewSymbol("?v")},
 					},
 				},
 			},
@@ -182,9 +182,9 @@ func BenchmarkOHLCStyle_LinearVsIndexed(b *testing.B) {
 		// Typical OHLC query pattern: [?bar :price/open ?open]
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?bar"},
+				query.Variable{Name: datalog.NewSymbol("?bar")},
 				query.Constant{Value: datalog.NewKeyword("price/open")},
-				query.Variable{Name: "?open"},
+				query.Variable{Name: datalog.NewSymbol("?open")},
 			},
 		}
 
@@ -233,8 +233,8 @@ func BenchmarkSingleEntityLookup(b *testing.B) {
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
 				query.Constant{Value: datalog.NewIdentity(fmt.Sprintf("bar%d", size/2))},
-				query.Variable{Name: "?a"},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?a")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
@@ -282,9 +282,9 @@ func BenchmarkAttributeScan(b *testing.B) {
 		// Scan by attribute (typical aggregation pattern)
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: datalog.NewKeyword("price/high")},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
@@ -332,9 +332,9 @@ func BenchmarkWorstCase_FullScan(b *testing.B) {
 		// Full scan (nothing bound)
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
-				query.Variable{Name: "?a"},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Variable{Name: datalog.NewSymbol("?a")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 

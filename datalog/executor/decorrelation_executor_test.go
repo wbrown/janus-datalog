@@ -6,6 +6,8 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestShouldDecorrelate(t *testing.T) {
@@ -193,21 +195,21 @@ func TestGetBatchableGroups(t *testing.T) {
 	groups := map[string]*SubqueryGroup{
 		"group1": {
 			Signature: CorrelationSignature{
-				InputVars:          []query.Symbol{"?sym", "?hr"},
+				InputVars:          []query.Symbol{datalog.NewSymbol("?sym"), datalog.NewSymbol("?hr")},
 				IsGroupedAggregate: true,
 			},
 			Indices: []int{0, 1}, // 2 subqueries - batchable
 		},
 		"group2": {
 			Signature: CorrelationSignature{
-				InputVars:          []query.Symbol{"?name"},
+				InputVars:          []query.Symbol{datalog.NewSymbol("?name")},
 				IsGroupedAggregate: false, // Pure aggregation - NOT batchable
 			},
 			Indices: []int{2, 3}, // 2 subqueries but wrong type
 		},
 		"group3": {
 			Signature: CorrelationSignature{
-				InputVars:          []query.Symbol{"?x"},
+				InputVars:          []query.Symbol{datalog.NewSymbol("?x")},
 				IsGroupedAggregate: true,
 			},
 			Indices: []int{4}, // Only 1 subquery - NOT batchable

@@ -32,21 +32,21 @@ func TestNotClause(t *testing.T) {
 	// [:find ?name :where [?e :user/name ?name] (not [?e :user/archived true])]
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.NotClause{
 				Clauses: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: archivedAttr},
 							query.Constant{Value: true},
 						},
@@ -100,21 +100,21 @@ func TestNotClauseNoMatches(t *testing.T) {
 	// Query: Find non-archived users (no one is archived)
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.NotClause{
 				Clauses: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: archivedAttr},
 							query.Constant{Value: true},
 						},
@@ -156,21 +156,21 @@ func TestNotClauseAllMatch(t *testing.T) {
 	// Query: Find non-archived users (everyone is archived)
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.NotClause{
 				Clauses: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: archivedAttr},
 							query.Constant{Value: true},
 						},
@@ -217,29 +217,29 @@ func TestNotJoinClause(t *testing.T) {
 	// [:find ?name :where [?e :user/name ?name] (not-join [?e] [?e :user/archived true] [?e :user/deleted true])]
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.NotJoinClause{
-				JoinVars: []query.Symbol{"?e"},
+				JoinVars: []query.Symbol{datalog.NewSymbol("?e")},
 				Clauses: []query.Clause{
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: archivedAttr},
 							query.Constant{Value: true},
 						},
 					},
 					&query.DataPattern{
 						Elements: []query.PatternElement{
-							query.Variable{Name: "?e"},
+							query.Variable{Name: datalog.NewSymbol("?e")},
 							query.Constant{Value: deletedAttr},
 							query.Constant{Value: true},
 						},
@@ -293,14 +293,14 @@ func TestOrClause(t *testing.T) {
 	// [:find ?name :where [?e :user/name ?name] (or [?e :user/status "active"] [?e :user/status "pending"])]
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.OrClause{
@@ -308,7 +308,7 @@ func TestOrClause(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: statusAttr},
 								query.Constant{Value: "active"},
 							},
@@ -317,7 +317,7 @@ func TestOrClause(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: statusAttr},
 								query.Constant{Value: "pending"},
 							},
@@ -377,23 +377,23 @@ func TestOrJoinClause(t *testing.T) {
 	// [:find ?name :where [?e :user/name ?name] (or-join [?e] [?e :user/status "active"] [?e :admin/status "enabled"])]
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.OrJoinClause{
-				JoinVars: []query.Symbol{"?e"},
+				JoinVars: []query.Symbol{datalog.NewSymbol("?e")},
 				Branches: [][]query.Clause{
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: userStatusAttr},
 								query.Constant{Value: "active"},
 							},
@@ -402,7 +402,7 @@ func TestOrJoinClause(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: adminStatusAttr},
 								query.Constant{Value: "enabled"},
 							},
@@ -452,16 +452,16 @@ func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 			{
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?e"},
+						query.Variable{Name: datalog.NewSymbol("?e")},
 						query.Constant{Value: datalog.NewKeyword(":nonexistent/attr")},
-						query.Variable{Name: "?x"},
+						query.Variable{Name: datalog.NewSymbol("?x")},
 					},
 				},
 			},
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  query.Symbol("?x"),
+					Binding:  datalog.NewSymbol("?x"),
 				},
 			},
 		},
@@ -469,7 +469,7 @@ func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?x"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 		},
 		Where: []query.Clause{orClause},
 	}
@@ -496,7 +496,7 @@ func TestOrFallbackWithGroundExpression(t *testing.T) {
 	// Since no data exists, should fall back to ground(0)
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?x"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 		},
 		Where: []query.Clause{
 			&query.OrClause{
@@ -504,16 +504,16 @@ func TestOrFallbackWithGroundExpression(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: datalog.NewKeyword(":nonexistent/attr")},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: int64(0)},
-							Binding:  query.Symbol("?x"),
+							Binding:  datalog.NewSymbol("?x"),
 						},
 					},
 				},
@@ -555,7 +555,7 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 	// First branch should match, so we should get "Alice", not "fallback"
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?x"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 		},
 		Where: []query.Clause{
 			&query.OrClause{
@@ -563,16 +563,16 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: nameAttr},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "fallback"},
-							Binding:  query.Symbol("?x"),
+							Binding:  datalog.NewSymbol("?x"),
 						},
 					},
 				},
@@ -609,7 +609,7 @@ func TestOrFallbackMultipleBranches(t *testing.T) {
 
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?x"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 		},
 		Where: []query.Clause{
 			&query.OrClause{
@@ -617,25 +617,25 @@ func TestOrFallbackMultipleBranches(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: nonexistent1},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: nonexistent2},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "default"},
-							Binding:  query.Symbol("?x"),
+							Binding:  datalog.NewSymbol("?x"),
 						},
 					},
 				},
@@ -677,7 +677,7 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 	// Pattern won't match, so should get 2 from arithmetic
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?x"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 		},
 		Where: []query.Clause{
 			&query.OrClause{
@@ -685,9 +685,9 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: datalog.NewKeyword(":nonexistent/attr")},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
@@ -698,7 +698,7 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 								Left:  query.ConstantTerm{Value: int64(1)},
 								Right: query.ConstantTerm{Value: int64(1)},
 							},
-							Binding: query.Symbol("?x"),
+							Binding: datalog.NewSymbol("?x"),
 						},
 					},
 				},
@@ -746,7 +746,7 @@ func TestOrFallbackPatternOnlyUnionSemantics(t *testing.T) {
 	// Pattern-only OR should return BOTH Alice and Bob (union semantics)
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?e"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?e")},
 		},
 		Where: []query.Clause{
 			&query.OrClause{
@@ -754,7 +754,7 @@ func TestOrFallbackPatternOnlyUnionSemantics(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: activeAttr},
 								query.Constant{Value: true},
 							},
@@ -763,7 +763,7 @@ func TestOrFallbackPatternOnlyUnionSemantics(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: premiumAttr},
 								query.Constant{Value: true},
 							},
@@ -802,7 +802,7 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 	// Pattern should match, returning "Alice"
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?x"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 		},
 		Where: []query.Clause{
 			&query.OrClause{
@@ -810,16 +810,16 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 					{
 						&query.DataPattern{
 							Elements: []query.PatternElement{
-								query.Variable{Name: "?e"},
+								query.Variable{Name: datalog.NewSymbol("?e")},
 								query.Constant{Value: nameAttr},
-								query.Variable{Name: "?x"},
+								query.Variable{Name: datalog.NewSymbol("?x")},
 							},
 						},
 					},
 					{
 						&query.Expression{
 							Function: &query.GroundFunction{Value: "fallback"},
-							Binding:  query.Symbol("?x"),
+							Binding:  datalog.NewSymbol("?x"),
 						},
 					},
 				},
@@ -866,12 +866,12 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: "?t"},
+							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
 						},
 						Where: []query.Clause{
 							&query.DataPattern{
 								Elements: []query.PatternElement{
-									query.Variable{Name: "?t"},
+									query.Variable{Name: datalog.NewSymbol("?t")},
 									query.Constant{Value: statusAttr},
 									query.Constant{Value: completeStatus},
 								},
@@ -879,13 +879,13 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 						},
 					},
 					Inputs:  []query.PatternElement{query.Constant{Value: "db"}},
-					Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+					Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 				},
 			},
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  query.Symbol("?count"),
+					Binding:  datalog.NewSymbol("?count"),
 				},
 			},
 		},
@@ -893,7 +893,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?count"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?count")},
 		},
 		Where: []query.Clause{orClause},
 	}
@@ -972,23 +972,23 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: "?t"},
+							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
 						},
 						In: []query.InputSpec{
-							query.DatabaseInput{Name: query.Symbol("$")},
-							query.ScalarInput{Symbol: "?s"},
+							query.DatabaseInput{Name: datalog.NewSymbol("$")},
+							query.ScalarInput{Symbol: datalog.NewSymbol("?s")},
 						},
 						Where: []query.Clause{
 							&query.DataPattern{
 								Elements: []query.PatternElement{
-									query.Variable{Name: "?t"},
+									query.Variable{Name: datalog.NewSymbol("?t")},
 									query.Constant{Value: taskScenarioAttr},
-									query.Variable{Name: "?s"},
+									query.Variable{Name: datalog.NewSymbol("?s")},
 								},
 							},
 							&query.DataPattern{
 								Elements: []query.PatternElement{
-									query.Variable{Name: "?t"},
+									query.Variable{Name: datalog.NewSymbol("?t")},
 									query.Constant{Value: taskStatusAttr},
 									query.Constant{Value: completeStatus},
 								},
@@ -996,16 +996,16 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 						},
 					},
 					Inputs: []query.PatternElement{
-						query.Constant{Value: query.Symbol("$")},
-						query.Variable{Name: "?scenario"},
+						query.Constant{Value: datalog.NewSymbol("$")},
+						query.Variable{Name: datalog.NewSymbol("?scenario")},
 					},
-					Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+					Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 				},
 			},
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  query.Symbol("?count"),
+					Binding:  datalog.NewSymbol("?count"),
 				},
 			},
 		},
@@ -1013,16 +1013,16 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?scenario"},
-			query.FindVariable{Symbol: "?count"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?scenario")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?count")},
 		},
 		Where: []query.Clause{
 			// First, bind ?scenario from the database
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?scenario"},
+					query.Variable{Name: datalog.NewSymbol("?scenario")},
 					query.Constant{Value: scenarioAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			// Then OR with subquery and fallback
@@ -1099,16 +1099,16 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 			{
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?scenario"},
+						query.Variable{Name: datalog.NewSymbol("?scenario")},
 						query.Constant{Value: taskAttr},
-						query.Variable{Name: "?task"},
+						query.Variable{Name: datalog.NewSymbol("?task")},
 					},
 				},
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?task"},
+						query.Variable{Name: datalog.NewSymbol("?task")},
 						query.Constant{Value: countAttr},
-						query.Variable{Name: "?taskCount"},
+						query.Variable{Name: datalog.NewSymbol("?taskCount")},
 					},
 				},
 			},
@@ -1116,7 +1116,7 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: []interface{}{int64(0)}},
-					Binding:  query.TupleBinding{Variables: []query.Symbol{"?taskCount"}},
+					Binding:  query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?taskCount")}},
 				},
 			},
 		},
@@ -1124,16 +1124,16 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?scenario"},
-			query.FindVariable{Symbol: "?name"},
-			query.FindVariable{Symbol: "?taskCount"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?scenario")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?taskCount")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?scenario"},
+					query.Variable{Name: datalog.NewSymbol("?scenario")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			orClause,
@@ -1214,16 +1214,16 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 			{
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?scenario"},
+						query.Variable{Name: datalog.NewSymbol("?scenario")},
 						query.Constant{Value: taskAttr},
-						query.Variable{Name: "?task"},
+						query.Variable{Name: datalog.NewSymbol("?task")},
 					},
 				},
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?task"},
+						query.Variable{Name: datalog.NewSymbol("?task")},
 						query.Constant{Value: countAttr},
-						query.Variable{Name: "?taskCount"},
+						query.Variable{Name: datalog.NewSymbol("?taskCount")},
 					},
 				},
 			},
@@ -1231,7 +1231,7 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  query.Symbol("?taskCount"),
+					Binding:  datalog.NewSymbol("?taskCount"),
 				},
 			},
 		},
@@ -1239,16 +1239,16 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?scenario"},
-			query.FindVariable{Symbol: "?name"},
-			query.FindVariable{Symbol: "?taskCount"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?scenario")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?taskCount")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?scenario"},
+					query.Variable{Name: datalog.NewSymbol("?scenario")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			orClause,
@@ -1308,12 +1308,12 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: "?t"},
+							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
 						},
 						Where: []query.Clause{
 							&query.DataPattern{
 								Elements: []query.PatternElement{
-									query.Variable{Name: "?t"},
+									query.Variable{Name: datalog.NewSymbol("?t")},
 									query.Constant{Value: statusAttr},
 									query.Constant{Value: completeStatus},
 								},
@@ -1321,13 +1321,13 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 						},
 					},
 					Inputs:  []query.PatternElement{query.Constant{Value: "db"}},
-					Binding: query.TupleBinding{Variables: []query.Symbol{"?count"}},
+					Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?count")}},
 				},
 			},
 			{
 				&query.Expression{
 					Function: &query.GroundFunction{Value: int64(0)},
-					Binding:  query.Symbol("?count"),
+					Binding:  datalog.NewSymbol("?count"),
 				},
 			},
 		},
@@ -1335,7 +1335,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?count"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?count")},
 		},
 		Where: []query.Clause{orClause},
 	}

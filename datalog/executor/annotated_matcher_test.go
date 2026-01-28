@@ -41,7 +41,7 @@ func TestWrapMatcher_NilHandler(t *testing.T) {
 	// Arrange
 	mock := &testMatcher{
 		matchResult: NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{1}, {2}, {3}},
 		),
 	}
@@ -59,7 +59,7 @@ func TestWrapMatcher_ZeroOverheadWhenDisabled(t *testing.T) {
 	// Arrange
 	mock := &testMatcher{
 		matchResult: NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{1}, {2}, {3}},
 		),
 	}
@@ -69,9 +69,9 @@ func TestWrapMatcher_ZeroOverheadWhenDisabled(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?x"},
+			query.Variable{Name: datalog.NewSymbol("?x")},
 			query.Constant{Value: datalog.NewKeyword(":attr")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -100,7 +100,7 @@ func TestWrapMatcher_BasicAnnotation(t *testing.T) {
 	// Arrange
 	mock := &testMatcher{
 		matchResult: NewMaterializedRelation(
-			[]query.Symbol{"?x", "?v"},
+			[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?v")},
 			[]Tuple{{1, "a"}, {2, "b"}},
 		),
 	}
@@ -118,9 +118,9 @@ func TestWrapMatcher_BasicAnnotation(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?x"},
+			query.Variable{Name: datalog.NewSymbol("?x")},
 			query.Constant{Value: datalog.NewKeyword(":attr")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -185,9 +185,9 @@ func TestWrapMatcher_WithError(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?x"},
+			query.Variable{Name: datalog.NewSymbol("?x")},
 			query.Constant{Value: datalog.NewKeyword(":attr")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -221,7 +221,7 @@ func TestWrapMatcher_WithBindings(t *testing.T) {
 	// Arrange
 	mock := &testMatcher{
 		matchResult: NewMaterializedRelation(
-			[]query.Symbol{"?x", "?v"},
+			[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?v")},
 			[]Tuple{{1, "a"}},
 		),
 	}
@@ -239,15 +239,15 @@ func TestWrapMatcher_WithBindings(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?x"},
+			query.Variable{Name: datalog.NewSymbol("?x")},
 			query.Constant{Value: datalog.NewKeyword(":attr")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
 	// Create binding relation
 	bindingRel := NewMaterializedRelation(
-		[]query.Symbol{"?x"},
+		[]query.Symbol{datalog.NewSymbol("?x")},
 		[]Tuple{{1}, {2}, {3}},
 	)
 
@@ -284,7 +284,7 @@ func TestWrapMatcher_PredicateAwareInterface(t *testing.T) {
 	mock := &testPredicateMatcher{
 		testMatcher: testMatcher{
 			matchResult: NewMaterializedRelation(
-				[]query.Symbol{"?x"},
+				[]query.Symbol{datalog.NewSymbol("?x")},
 				[]Tuple{{1}},
 			),
 		},
@@ -309,7 +309,7 @@ func TestWrapMatcher_PredicateAwareInterface(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?x"},
+			query.Variable{Name: datalog.NewSymbol("?x")},
 			query.Constant{Value: datalog.NewKeyword(":attr")},
 			query.Constant{Value: 42},
 		},
@@ -349,7 +349,7 @@ func TestWrapMatcher_TransparentForAllInterfaces(t *testing.T) {
 
 	mock := &testMatcher{
 		matchResult: NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{1}},
 		),
 	}
@@ -376,16 +376,16 @@ func BenchmarkWrapMatcher_Overhead(b *testing.B) {
 	// Measure the overhead of decoration
 	mock := &testMatcher{
 		matchResult: NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{1}, {2}, {3}},
 		),
 	}
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?x"},
+			query.Variable{Name: datalog.NewSymbol("?x")},
 			query.Constant{Value: datalog.NewKeyword(":attr")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 

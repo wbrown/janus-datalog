@@ -398,7 +398,7 @@ func (r *MaterializedRelation) String() string {
 	// Format as: Relation([?x ?y], N Tuples) with colors
 	var symbols []string
 	for _, col := range r.columns {
-		symbols = append(symbols, string(col))
+		symbols = append(symbols, col.String())
 	}
 
 	// Color the tuple count based on size
@@ -910,7 +910,7 @@ func (r *StreamingRelation) String() string {
 	// Format as: Relation([?x ?y], N Tuples) with colors
 	var symbols []string
 	for _, col := range r.columns {
-		symbols = append(symbols, string(col))
+		symbols = append(symbols, col.String())
 	}
 
 	// For streaming relations, we might not know the size

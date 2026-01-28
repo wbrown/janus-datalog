@@ -35,9 +35,9 @@ func TestBatchIteratorSimple(t *testing.T) {
 	// Pattern: [?e :test/value ?v]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?e")},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: attr},
-			query.Variable{Name: query.Symbol("?v")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -63,7 +63,7 @@ func TestBatchIteratorSimple(t *testing.T) {
 		{e1},
 		{e3},
 	}
-	bindingRel := executor.NewMaterializedRelation([]query.Symbol{"?e"}, bindingTuples)
+	bindingRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, bindingTuples)
 
 	t.Logf("\nBinding relation:")
 	for _, tuple := range bindingTuples {

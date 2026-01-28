@@ -45,9 +45,9 @@ func BenchmarkIteratorReuseClean(b *testing.B) {
 	// Setup pattern and binding
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?b"},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-			query.Variable{Name: "?s"},
+			query.Variable{Name: datalog.NewSymbol("?s")},
 		},
 	}
 
@@ -71,7 +71,7 @@ func BenchmarkIteratorReuseClean(b *testing.B) {
 				tuples = append(tuples, executor.Tuple{symbolEntity})
 			}
 			bindingRel := executor.NewMaterializedRelation(
-				[]query.Symbol{"?s"},
+				[]query.Symbol{datalog.NewSymbol("?s")},
 				tuples,
 			)
 

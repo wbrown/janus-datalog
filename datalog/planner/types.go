@@ -2,8 +2,10 @@ package planner
 
 import (
 	"fmt"
-	"github.com/wbrown/janus-datalog/datalog/query"
 	"strings"
+
+	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // IndexType represents different index orderings (copied to avoid circular import)
@@ -56,7 +58,7 @@ func (p *Phase) combineTimeExtractions() {
 			// Check if this is a time extraction function
 			if tef, ok := exprPlan.Expression.Function.(*query.TimeExtractionFunction); ok {
 				// Time extraction only supports scalar binding
-				if outputSym, ok := exprPlan.Output.(query.Symbol); ok && outputSym != "" {
+				if outputSym, ok := exprPlan.Output.(query.Symbol); ok && outputSym != nil {
 					timeExtractionOutputs[outputSym] = tef.Field
 					// The input is typically the first argument
 					if len(exprPlan.Inputs) > 0 {
@@ -78,7 +80,7 @@ func (p *Phase) combineTimeExtractions() {
 			// Examples: [(= ?year ?year-open)], [(= ?month ?month-close)]
 			result = append(result, pred)
 
-		} else if (pred.Type == PredicateEquality || pred.Type == PredicateComparison) && pred.Variable != "" {
+		} else if (pred.Type == PredicateEquality || pred.Type == PredicateComparison) && pred.Variable != nil {
 			// Single variable with constant - check if it's a time extraction output
 			if timeField, found := timeExtractionOutputs[pred.Variable]; found {
 				// Create a time extraction predicate
@@ -180,7 +182,7 @@ func (pp *PatternPlan) toConstraint(pred PredicatePlan, phase Phase) *StorageCon
 	if pred.Type == PredicateTimeExtraction {
 		// Check if this pattern provides the time variable (pred.Variable contains the time var)
 		for i, elem := range dp.Elements {
-			if v, ok := elem.(query.Variable); ok && query.Symbol(v.Name) == pred.Variable {
+			if v, ok := elem.(query.Variable); ok && v.Name == pred.Variable {
 				// This pattern provides the time variable
 				if i == 2 { // Value position - the time is in the value
 					// Get the attribute
@@ -207,7 +209,7 @@ func (pp *PatternPlan) toConstraint(pred PredicatePlan, phase Phase) *StorageCon
 		// Check if this pattern has the variable in value position
 		if len(dp.Elements) > 2 {
 			if v, ok := dp.Elements[2].(query.Variable); ok {
-				if query.Symbol(v.Name) == pred.Variable {
+				if v.Name == pred.Variable {
 					// This pattern provides the variable in value position
 					// Get the attribute
 					if attrElem, ok := dp.Elements[1].(query.Constant); ok {
@@ -226,7 +228,7 @@ func (pp *PatternPlan) toConstraint(pred PredicatePlan, phase Phase) *StorageCon
 	// Check for equality predicates on the value position
 	if pred.Type == PredicateEquality && len(dp.Elements) > 2 && dp.Elements[2] != nil {
 		if v, ok := dp.Elements[2].(query.Variable); ok {
-			if query.Symbol(v.Name) == pred.Variable {
+			if v.Name == pred.Variable {
 				// Pattern's value variable has an equality constraint
 				if attrElem, ok := dp.Elements[1].(query.Constant); ok {
 					return &StorageConstraint{
@@ -603,7 +605,7 @@ func reconstructPredicatesFromConstraints(phase Phase) []query.Clause {
 
 	// Build a map of time extraction expression outputs
 	// For time extraction constraints, we need to know which variable represents the extraction
-	timeExtractionVars := make(map[string]map[string]query.Symbol) // timeField -> attribute -> output variable
+	timeExtractionVars := make(map[string]map[query.Symbol]query.Symbol) // timeField -> inputVar -> output variable
 	for _, expr := range phase.Expressions {
 		if expr.Expression != nil && expr.Output != "" {
 			if tef, ok := expr.Expression.Function.(*query.TimeExtractionFunction); ok {
@@ -613,9 +615,9 @@ func reconstructPredicatesFromConstraints(phase Phase) []query.Clause {
 				if outputSym, ok := expr.Output.(query.Symbol); ok && len(expr.Inputs) > 0 {
 					inputVar := expr.Inputs[0]
 					if timeExtractionVars[tef.Field] == nil {
-						timeExtractionVars[tef.Field] = make(map[string]query.Symbol)
+						timeExtractionVars[tef.Field] = make(map[query.Symbol]query.Symbol)
 					}
-					timeExtractionVars[tef.Field][string(inputVar)] = outputSym
+					timeExtractionVars[tef.Field][inputVar] = outputSym
 				}
 			}
 		}
@@ -640,7 +642,7 @@ func reconstructPredicatesFromConstraints(phase Phase) []query.Clause {
 				if dp, ok := pattern.Pattern.(*query.DataPattern); ok && len(dp.Elements) >= 3 {
 					if v, ok := dp.Elements[2].(query.Variable); ok {
 						predicates = append(predicates, &query.Comparison{
-							Left:  query.VariableTerm{Symbol: query.Symbol(v.Name)},
+							Left:  query.VariableTerm{Symbol: v.Name},
 							Right: query.ConstantTerm{Value: constraint.Value},
 							Op:    query.OpEQ,
 						})
@@ -652,7 +654,7 @@ func reconstructPredicatesFromConstraints(phase Phase) []query.Clause {
 				if dp, ok := pattern.Pattern.(*query.DataPattern); ok && len(dp.Elements) >= 3 {
 					if v, ok := dp.Elements[2].(query.Variable); ok {
 						predicates = append(predicates, &query.Comparison{
-							Left:  query.VariableTerm{Symbol: query.Symbol(v.Name)},
+							Left:  query.VariableTerm{Symbol: v.Name},
 							Right: query.ConstantTerm{Value: constraint.Value},
 							Op:    constraint.Operator,
 						})
@@ -668,7 +670,7 @@ func reconstructPredicatesFromConstraints(phase Phase) []query.Clause {
 						// v is the time variable from the pattern (e.g., ?t)
 						// Look up the corresponding extraction output variable (e.g., ?d)
 						if fieldMap, found := timeExtractionVars[constraint.TimeField]; found {
-							if outputVar, found := fieldMap[string(v.Name)]; found {
+							if outputVar, found := fieldMap[v.Name]; found {
 								// Found it! Create predicate: [(op ?d value)]
 								predicates = append(predicates, &query.Comparison{
 									Left:  query.VariableTerm{Symbol: outputVar},
@@ -787,7 +789,7 @@ func realizePhase(phase Phase, isLastPhase bool, prevKeep []query.Symbol) Realiz
 	// First phase has no :in, subsequent phases receive previous Keep
 	var in []query.InputSpec
 	if len(prevKeep) > 0 {
-		in = append(in, query.DatabaseInput{Name: query.Symbol("$")})
+		in = append(in, query.DatabaseInput{Name: datalog.SymDollar})
 		in = append(in, query.RelationInput{Symbols: prevKeep})
 	}
 

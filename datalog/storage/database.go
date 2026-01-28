@@ -403,8 +403,8 @@ func buildSourceMap(
 	for sym, src := range provided {
 		sources[sym] = src
 	}
-	if _, ok := sources[query.Symbol("$")]; !ok {
-		sources[query.Symbol("$")] = dbMatcher
+	if _, ok := sources[datalog.SymDollar]; !ok {
+		sources[datalog.SymDollar] = dbMatcher
 	}
 	return sources
 }
@@ -1378,10 +1378,10 @@ func (t *Transaction) validateUniqueness() error {
 		// Create a pattern [?e :attr value _] to find entities with this value
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: query.Symbol("?e")}, // Entity variable
-				query.Constant{Value: d.A},               // Bound attribute
-				query.Constant{Value: d.V},               // Bound value
-				query.Blank{},                            // Transaction wildcard
+				query.Variable{Name: datalog.NewSymbol("?e")}, // Entity variable
+				query.Constant{Value: d.A},                    // Bound attribute
+				query.Constant{Value: d.V},                    // Bound value
+				query.Blank{},                                 // Transaction wildcard
 			},
 		}
 
@@ -1394,7 +1394,7 @@ func (t *Transaction) validateUniqueness() error {
 		columns := results.Columns()
 		eIndex := -1
 		for i, col := range columns {
-			if col == query.Symbol("?e") {
+			if col == datalog.NewSymbol("?e") {
 				eIndex = i
 				break
 			}

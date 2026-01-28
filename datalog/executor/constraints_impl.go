@@ -42,6 +42,11 @@ func (c *equalityConstraint) Evaluate(datom *datalog.Datom) bool {
 			dv, ok := datom.V.(bool)
 			return ok && dv == bv
 		}
+		// Fast path for symbol comparisons (pointer equality via interning)
+		if sv, ok := c.value.(datalog.Symbol); ok {
+			dv, ok := datom.V.(datalog.Symbol)
+			return ok && dv == sv
+		}
 		return datalog.ValuesEqual(datom.V, c.value)
 	case 3: // Transaction
 		if tx, ok := c.value.(uint64); ok {
@@ -226,6 +231,16 @@ func valuesEqual(a, b interface{}) bool {
 		}
 		if s, ok := b.(string); ok {
 			return kw1.String() == s
+		}
+	}
+
+	// Handle Symbol comparison
+	if sym1, ok := a.(datalog.Symbol); ok {
+		if sym2, ok := b.(datalog.Symbol); ok {
+			return sym1.Equal(sym2)
+		}
+		if s, ok := b.(string); ok {
+			return sym1.String() == s
 		}
 	}
 

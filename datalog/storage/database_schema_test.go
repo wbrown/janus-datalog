@@ -132,7 +132,7 @@ func TestSchemaUniquenessValue(t *testing.T) {
 	matcher := NewBadgerMatcher(db.Store())
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?e")},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: email},
 			query.Constant{Value: "alice@example.com"},
 			query.Blank{},

@@ -284,7 +284,7 @@ func (pc *PredicateClassifier) convertFunctionPredicate(fp *query.FunctionPredic
 			return nil
 		}
 
-		position, found := patternVars[query.Symbol(timeVar.Name)]
+		position, found := patternVars[timeVar.Name]
 		if !found {
 			return nil
 		}
@@ -299,7 +299,7 @@ func (pc *PredicateClassifier) convertFunctionPredicate(fp *query.FunctionPredic
 		case query.Variable:
 			// Check if this variable is bound (in Available from previous phases)
 			for _, sym := range pc.phase.Available {
-				if sym == query.Symbol(e.Name) {
+				if sym == e.Name {
 					// Variable is bound from previous phase
 					// We'd need the actual value at execution time
 					// For now, we can't push this down statically

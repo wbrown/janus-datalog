@@ -73,7 +73,7 @@ func extractExpressionSymbols(e *query.Expression) ClauseSymbols {
 	var provides []query.Symbol
 	switch binding := e.Binding.(type) {
 	case query.Symbol:
-		if binding != "" {
+		if binding != nil {
 			provides = append(provides, binding)
 		}
 	case query.TupleBinding:

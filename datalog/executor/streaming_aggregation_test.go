@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestStreamingAggregation verifies that streaming aggregation produces
@@ -11,7 +13,7 @@ import (
 func TestStreamingAggregation(t *testing.T) {
 	// Create a large relation to aggregate
 	// Include an ID to make each tuple unique (avoid deduplication)
-	columns := []query.Symbol{"?id", "?category", "?price"}
+	columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?category"), datalog.NewSymbol("?price")}
 	tuples := make([]Tuple, 0, 10000)
 
 	// Generate 10,000 tuples across 10 categories
@@ -29,12 +31,12 @@ func TestStreamingAggregation(t *testing.T) {
 		rel := NewStreamingRelationWithOptions(columns, baseRel.Iterator(), opts)
 
 		findElements := []query.FindElement{
-			query.FindVariable{Symbol: "?category"},
-			query.FindAggregate{Function: "count", Arg: "?price"},
-			query.FindAggregate{Function: "sum", Arg: "?price"},
-			query.FindAggregate{Function: "avg", Arg: "?price"},
-			query.FindAggregate{Function: "min", Arg: "?price"},
-			query.FindAggregate{Function: "max", Arg: "?price"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?category")},
+			query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?price")},
 		}
 
 		result := ExecuteAggregations(rel, findElements)
@@ -79,8 +81,8 @@ func TestStreamingAggregation(t *testing.T) {
 		rel := NewStreamingRelationWithOptions(columns, baseRel.Iterator(), opts)
 
 		findElements := []query.FindElement{
-			query.FindAggregate{Function: "count", Arg: "?price"},
-			query.FindAggregate{Function: "sum", Arg: "?price"},
+			query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?price")},
+			query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?price")},
 		}
 
 		result := ExecuteAggregations(rel, findElements)
@@ -105,7 +107,7 @@ func TestStreamingAggregation(t *testing.T) {
 // produces identical results to batch aggregation
 func TestStreamingAggregationCorrectness(t *testing.T) {
 	// Create test data
-	columns := []query.Symbol{"?x", "?y"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{"A", 10.0},
 		{"A", 20.0},
@@ -117,12 +119,12 @@ func TestStreamingAggregationCorrectness(t *testing.T) {
 	baseRel := NewMaterializedRelation(columns, tuples)
 
 	findElements := []query.FindElement{
-		query.FindVariable{Symbol: "?x"},
-		query.FindAggregate{Function: "count", Arg: "?y"},
-		query.FindAggregate{Function: "sum", Arg: "?y"},
-		query.FindAggregate{Function: "avg", Arg: "?y"},
-		query.FindAggregate{Function: "min", Arg: "?y"},
-		query.FindAggregate{Function: "max", Arg: "?y"},
+		query.FindVariable{Symbol: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?y")},
+		query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?y")},
 	}
 
 	// Run with streaming
@@ -186,7 +188,7 @@ func TestStreamingAggregationCorrectness(t *testing.T) {
 
 // TestStreamingAggregationThreshold verifies that small relations use batch aggregation
 func TestStreamingAggregationThreshold(t *testing.T) {
-	columns := []query.Symbol{"?x", "?y"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 	// Small relation (below threshold)
 	smallTuples := []Tuple{
@@ -196,8 +198,8 @@ func TestStreamingAggregationThreshold(t *testing.T) {
 	}
 
 	findElements := []query.FindElement{
-		query.FindVariable{Symbol: "?x"},
-		query.FindAggregate{Function: "sum", Arg: "?y"},
+		query.FindVariable{Symbol: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?y")},
 	}
 
 	opts := ExecutorOptions{EnableStreamingAggregation: true}

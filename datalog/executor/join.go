@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -280,8 +281,8 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 	// We'll verify the actual type on the first tuple during iteration
 	txIndex := -1
 	for i, col := range buildRel.Columns() {
-		if col == query.Symbol("?tx") || col == query.Symbol("?t") ||
-			col == query.Symbol("?txid") || col == query.Symbol("?transaction") {
+		if col == datalog.NewSymbol("?tx") || col == datalog.NewSymbol("?t") ||
+			col == datalog.NewSymbol("?txid") || col == datalog.NewSymbol("?transaction") {
 			txIndex = i
 			if opts.EnableDebugLogging {
 				fmt.Printf("[HashJoin] Found potential tx column %s at index %d\n", col, i)

@@ -125,7 +125,7 @@ func collectBranchOutputSymbols(branch []query.Clause) []query.Symbol {
 		case *query.Expression:
 			switch b := clause.Binding.(type) {
 			case query.Symbol:
-				if b != "" && !seen[b] {
+				if b != nil && !seen[b] {
 					seen[b] = true
 					outputs = append(outputs, b)
 				}
@@ -225,7 +225,7 @@ func (r *OrFallbackRelation) Get(i int) Tuple {
 func (r *OrFallbackRelation) String() string {
 	var symbols []string
 	for _, col := range r.Columns() {
-		symbols = append(symbols, string(col))
+		symbols = append(symbols, col.String())
 	}
 	return fmt.Sprintf("OrFallbackRelation([%s], streaming)", strings.Join(symbols, " "))
 }

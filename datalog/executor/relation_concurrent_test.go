@@ -6,12 +6,14 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestConcurrentIteratorAccess verifies that multiple goroutines can safely
 // call Iterator() on the same Relation and iterate independently
 func TestConcurrentIteratorAccess(t *testing.T) {
-	columns := []query.Symbol{"?x", "?y"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{1, "a"},
 		{2, "b"},
@@ -111,7 +113,7 @@ func TestConcurrentIteratorAccess(t *testing.T) {
 // TestConcurrentStreamingMaterialization verifies that concurrent calls to
 // Iterator() on a StreamingRelation all see the same materialized data
 func TestConcurrentStreamingMaterialization(t *testing.T) {
-	columns := []query.Symbol{"?n"}
+	columns := []query.Symbol{datalog.NewSymbol("?n")}
 	tuples := []Tuple{{1}, {2}, {3}, {4}, {5}}
 
 	// Create streaming relation and materialize it for concurrent access

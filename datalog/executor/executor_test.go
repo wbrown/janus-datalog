@@ -29,14 +29,14 @@ func TestExecutorBasicQuery(t *testing.T) {
 	// Query: Find all names
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 		},
@@ -97,36 +97,36 @@ func TestExecutorJoinQuery(t *testing.T) {
 	// [?p3 :user/name ?name3]
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name1"},
-			query.FindVariable{Symbol: "?name3"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name1")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name3")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?p1"},
+					query.Variable{Name: datalog.NewSymbol("?p1")},
 					query.Constant{Value: friendAttr},
-					query.Variable{Name: "?p2"},
+					query.Variable{Name: datalog.NewSymbol("?p2")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?p2"},
+					query.Variable{Name: datalog.NewSymbol("?p2")},
 					query.Constant{Value: friendAttr},
-					query.Variable{Name: "?p3"},
+					query.Variable{Name: datalog.NewSymbol("?p3")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?p1"},
+					query.Variable{Name: datalog.NewSymbol("?p1")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name1"},
+					query.Variable{Name: datalog.NewSymbol("?name1")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?p3"},
+					query.Variable{Name: datalog.NewSymbol("?p3")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name3"},
+					query.Variable{Name: datalog.NewSymbol("?name3")},
 				},
 			},
 		},
@@ -173,26 +173,26 @@ func TestExecutorWithFilter(t *testing.T) {
 	// Query: Find people younger than 30
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: ageAttr},
-					query.Variable{Name: "?age"},
+					query.Variable{Name: datalog.NewSymbol("?age")},
 				},
 			},
 			&query.Comparison{
 				Op:    query.OpLT,
-				Left:  query.VariableTerm{Symbol: "?age"},
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 				Right: query.ConstantTerm{Value: int64(30)},
 			},
 		},
@@ -247,45 +247,45 @@ func TestExecutorMultipleFilters(t *testing.T) {
 	// Query: Find people aged 25-30 with salary > 50000
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?name"},
-			query.FindVariable{Symbol: "?age"},
-			query.FindVariable{Symbol: "?salary"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?age")},
+			query.FindVariable{Symbol: datalog.NewSymbol("?salary")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?name"},
+					query.Variable{Name: datalog.NewSymbol("?name")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: ageAttr},
-					query.Variable{Name: "?age"},
+					query.Variable{Name: datalog.NewSymbol("?age")},
 				},
 			},
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: salaryAttr},
-					query.Variable{Name: "?salary"},
+					query.Variable{Name: datalog.NewSymbol("?salary")},
 				},
 			},
 			&query.Comparison{
 				Op:    query.OpGTE,
-				Left:  query.VariableTerm{Symbol: "?age"},
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 				Right: query.ConstantTerm{Value: int64(25)},
 			},
 			&query.Comparison{
 				Op:    query.OpLTE,
-				Left:  query.VariableTerm{Symbol: "?age"},
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 				Right: query.ConstantTerm{Value: int64(30)},
 			},
 			&query.Comparison{
 				Op:    query.OpGT,
-				Left:  query.VariableTerm{Symbol: "?salary"},
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?salary")},
 				Right: query.ConstantTerm{Value: int64(50000)},
 			},
 		},
@@ -331,14 +331,14 @@ func TestExecutorEmptyResult(t *testing.T) {
 	// Query for non-existent attribute
 	q := &query.Query{
 		Find: []query.FindElement{
-			query.FindVariable{Symbol: "?email"},
+			query.FindVariable{Symbol: datalog.NewSymbol("?email")},
 		},
 		Where: []query.Clause{
 			&query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: datalog.NewKeyword(":user/email")},
-					query.Variable{Name: "?email"},
+					query.Variable{Name: datalog.NewSymbol("?email")},
 				},
 			},
 		},
@@ -357,7 +357,7 @@ func TestExecutorEmptyResult(t *testing.T) {
 
 func TestResultMethods(t *testing.T) {
 	result := NewMaterializedRelation(
-		[]query.Symbol{"?name", "?age"},
+		[]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age")},
 		[]Tuple{
 			{"Alice", int64(30)},
 			{"Bob", int64(25)},
@@ -384,27 +384,27 @@ func TestResultMethods(t *testing.T) {
 	}
 
 	// Test ColumnIndex
-	if idx := result.ColumnIndex("?name"); idx != 0 {
+	if idx := result.ColumnIndex(datalog.NewSymbol("?name")); idx != 0 {
 		t.Errorf("expected index 0 for ?name, got %d", idx)
 	}
-	if idx := result.ColumnIndex("?age"); idx != 1 {
+	if idx := result.ColumnIndex(datalog.NewSymbol("?age")); idx != 1 {
 		t.Errorf("expected index 1 for ?age, got %d", idx)
 	}
-	if idx := result.ColumnIndex("?missing"); idx != -1 {
+	if idx := result.ColumnIndex(datalog.NewSymbol("?missing")); idx != -1 {
 		t.Errorf("expected index -1 for missing column, got %d", idx)
 	}
 
 	// Test GetValue
-	if val, ok := result.GetValue(0, "?name"); !ok || val != "Alice" {
+	if val, ok := result.GetValue(0, datalog.NewSymbol("?name")); !ok || val != "Alice" {
 		t.Errorf("expected Alice, got %v", val)
 	}
-	if val, ok := result.GetValue(1, "?age"); !ok || val != int64(25) {
+	if val, ok := result.GetValue(1, datalog.NewSymbol("?age")); !ok || val != int64(25) {
 		t.Errorf("expected 25, got %v", val)
 	}
-	if _, ok := result.GetValue(0, "?missing"); ok {
+	if _, ok := result.GetValue(0, datalog.NewSymbol("?missing")); ok {
 		t.Error("expected false for missing column")
 	}
-	if _, ok := result.GetValue(2, "?name"); ok {
+	if _, ok := result.GetValue(2, datalog.NewSymbol("?name")); ok {
 		t.Error("expected false for out of bounds row")
 	}
 }

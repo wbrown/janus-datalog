@@ -42,9 +42,9 @@ func TestMultiPositionBindingCorrectness(t *testing.T) {
 	// Create pattern: [?e :attr/code ?code]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":attr/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 
@@ -59,7 +59,7 @@ func TestMultiPositionBindingCorrectness(t *testing.T) {
 		{entities[8], "A"}, // Has code="B" in DB, should NOT match
 	}
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		bindingTuples,
 	)
 
@@ -135,15 +135,15 @@ func TestMultiPositionAllCombinations(t *testing.T) {
 		// Pattern: [?e :attr/name ?name] with ?e and ?name bound
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: datalog.NewKeyword(":attr/name")},
-				query.Variable{Name: "?name"},
+				query.Variable{Name: datalog.NewSymbol("?name")},
 			},
 		}
 
 		// Bindings: entity1 with name="Alice", entity2 with name="Alice" (wrong!)
 		bindingRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?e", "?name"},
+			[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")},
 			[]executor.Tuple{
 				{entity1, "Alice"}, // Matches
 				{entity2, "Alice"}, // entity2 has name="Bob", should NOT match
@@ -162,15 +162,15 @@ func TestMultiPositionAllCombinations(t *testing.T) {
 		// This tests attribute binding (less common but possible)
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
-				query.Variable{Name: "?a"},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Variable{Name: datalog.NewSymbol("?a")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
 		// Bindings: entity1 with :attr/name, entity1 with :attr/age
 		bindingRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?e", "?a"},
+			[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a")},
 			[]executor.Tuple{
 				{entity1, datalog.NewKeyword(":attr/name")},
 				{entity1, datalog.NewKeyword(":attr/age")},
@@ -189,15 +189,15 @@ func TestMultiPositionAllCombinations(t *testing.T) {
 		// Find all entities with :attr/name="Alice"
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
-				query.Variable{Name: "?a"},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Variable{Name: datalog.NewSymbol("?a")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
 		// Bindings: :attr/name with value "Alice"
 		bindingRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?a", "?v"},
+			[]query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?v")},
 			[]executor.Tuple{
 				{datalog.NewKeyword(":attr/name"), "Alice"},
 			},
@@ -242,9 +242,9 @@ func TestMultiPositionAsymmetricCardinality(t *testing.T) {
 	// Pattern: [?e :entity/code ?code]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":entity/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 
@@ -255,7 +255,7 @@ func TestMultiPositionAsymmetricCardinality(t *testing.T) {
 		bindingTuples[i] = executor.Tuple{entities[i], "rare"}
 	}
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		bindingTuples,
 	)
 
@@ -285,16 +285,16 @@ func TestMultiPositionNoMatches(t *testing.T) {
 	// Pattern: [?e :attr/code ?code]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":attr/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 
 	// Bindings with values that don't match
 	nonExistentEntity := datalog.NewIdentity("entity:nonexistent")
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		[]executor.Tuple{
 			{nonExistentEntity, "missing"},
 			{entity1, "missing"}, // entity1 exists but has code="exists", not "missing"
@@ -326,15 +326,15 @@ func TestMultiPositionSingleBinding(t *testing.T) {
 	// Pattern: [?e :attr/code ?code]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":attr/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 
 	// Single binding tuple
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		[]executor.Tuple{
 			{entity1, "A"},
 		},
@@ -371,9 +371,9 @@ func TestMultiPositionResultOrdering(t *testing.T) {
 	// Pattern: [?e :attr/code ?code]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":attr/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 
@@ -385,7 +385,7 @@ func TestMultiPositionResultOrdering(t *testing.T) {
 		bindingTuples1[i] = executor.Tuple{entities[i], "same"}
 	}
 	bindingRel1 := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		bindingTuples1,
 	)
 
@@ -399,7 +399,7 @@ func TestMultiPositionResultOrdering(t *testing.T) {
 		bindingTuples2[i] = executor.Tuple{entities[4-i], "same"}
 	}
 	bindingRel2 := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		bindingTuples2,
 	)
 
@@ -444,9 +444,9 @@ func TestMultiPositionPerformance(t *testing.T) {
 	// Pattern: [?e :entity/code ?code]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":entity/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 
@@ -457,7 +457,7 @@ func TestMultiPositionPerformance(t *testing.T) {
 		bindingTuples[i] = executor.Tuple{entities[i], "target"}
 	}
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		bindingTuples,
 	)
 
@@ -476,7 +476,7 @@ func TestMultiPositionPerformance(t *testing.T) {
 	for i := 0; i < iterations; i++ {
 		// Need fresh binding relation each time since iterator is consumed
 		bindingRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?e", "?code"},
+			[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 			bindingTuples,
 		)
 
@@ -532,9 +532,9 @@ func BenchmarkMultiPositionBinding(b *testing.B) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":entity/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 
@@ -548,7 +548,7 @@ func BenchmarkMultiPositionBinding(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		bindingRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?e", "?code"},
+			[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 			bindingTuples,
 		)
 		result, _ := matcher.Match(pattern, executor.Relations{bindingRel})
@@ -621,9 +621,9 @@ func TestMultiPositionWithStreamingBinding(t *testing.T) {
 	// Create pattern: [?e :attr/code ?code]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":attr/code")},
-			query.Variable{Name: "?code"},
+			query.Variable{Name: datalog.NewSymbol("?code")},
 		},
 	}
 
@@ -638,7 +638,7 @@ func TestMultiPositionWithStreamingBinding(t *testing.T) {
 	// This simulates what happens when binding comes from a previous pattern match
 	tupleIter := &sliceTupleIterator{tuples: bindingTuples, idx: -1}
 	streamingBindingRel := executor.NewStreamingRelation(
-		[]query.Symbol{"?e", "?code"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?code")},
 		tupleIter,
 	)
 

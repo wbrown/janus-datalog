@@ -74,7 +74,7 @@ func (tf *TableFormatter) formatTable(columns []query.Symbol, tuples []Tuple) st
 	// Set headers
 	headers := make([]string, len(columns))
 	for i, col := range columns {
-		headers[i] = string(col)
+		headers[i] = col.String()
 	}
 	table.Header(headers)
 

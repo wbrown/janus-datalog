@@ -147,15 +147,15 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 	t.Run("Match with binding relation returns correct count", func(t *testing.T) {
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: datalog.NewKeyword(":task/scenario")},
-				query.Variable{Name: "?scenario"},
+				query.Variable{Name: datalog.NewSymbol("?scenario")},
 			},
 		}
 
 		opts := getDefaultExecutorOptions()
 		inputRel := executor.NewMaterializedRelationWithOptions(
-			[]query.Symbol{"?scenario"},
+			[]query.Symbol{datalog.NewSymbol("?scenario")},
 			[]executor.Tuple{{scenario2}},
 			opts,
 		)

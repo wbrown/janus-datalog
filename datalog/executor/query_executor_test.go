@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // MockMatcher implements PatternMatcher for testing
@@ -42,7 +44,7 @@ func TestProductRelation(t *testing.T) {
 
 	t.Run("single relation passthrough", func(t *testing.T) {
 		r1 := NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{int64(1)}, {int64(2)}},
 		)
 		product := Relations([]Relation{r1}).Product()
@@ -53,11 +55,11 @@ func TestProductRelation(t *testing.T) {
 
 	t.Run("cartesian product", func(t *testing.T) {
 		r1 := NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{int64(1)}, {int64(2)}},
 		)
 		r2 := NewMaterializedRelation(
-			[]query.Symbol{"?y"},
+			[]query.Symbol{datalog.NewSymbol("?y")},
 			[]Tuple{{int64(10)}, {int64(20)}, {int64(30)}},
 		)
 
@@ -73,7 +75,7 @@ func TestProductRelation(t *testing.T) {
 		if len(cols) != 2 {
 			t.Errorf("Expected 2 columns, got %d", len(cols))
 		}
-		if cols[0] != "?x" || cols[1] != "?y" {
+		if cols[0] != datalog.NewSymbol("?x") || cols[1] != datalog.NewSymbol("?y") {
 			t.Errorf("Expected columns [?x ?y], got %v", cols)
 		}
 
@@ -102,9 +104,9 @@ func TestProductRelation(t *testing.T) {
 	})
 
 	t.Run("three relation product", func(t *testing.T) {
-		r1 := NewMaterializedRelation([]query.Symbol{"?x"}, []Tuple{{int64(1)}, {int64(2)}})
-		r2 := NewMaterializedRelation([]query.Symbol{"?y"}, []Tuple{{int64(10)}, {int64(20)}})
-		r3 := NewMaterializedRelation([]query.Symbol{"?z"}, []Tuple{{int64(100)}})
+		r1 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{{int64(1)}, {int64(2)}})
+		r2 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{int64(10)}, {int64(20)}})
+		r3 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?z")}, []Tuple{{int64(100)}})
 
 		product := Relations([]Relation{r1, r2, r3}).Product()
 
@@ -124,7 +126,7 @@ func TestProductRelation(t *testing.T) {
 // TestExecutePattern tests pattern execution
 func TestExecutePattern(t *testing.T) {
 	mockResult := NewMaterializedRelation(
-		[]query.Symbol{"?e", "?v"},
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
 		[]Tuple{
 			{int64(1), "Alice"},
 			{int64(2), "Bob"},
@@ -142,9 +144,9 @@ func TestExecutePattern(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: ":person/name"},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -166,7 +168,7 @@ func TestExecuteExpression(t *testing.T) {
 
 		// Create a relation with ?x
 		r := NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{int64(5)}, {int64(10)}},
 		)
 
@@ -174,10 +176,10 @@ func TestExecuteExpression(t *testing.T) {
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
 				Op:    query.OpAdd,
-				Left:  query.VariableTerm{Symbol: "?x"},
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: query.ConstantTerm{Value: int64(100)},
 			},
-			Binding: query.Symbol("?y"),
+			Binding: datalog.NewSymbol("?y"),
 		}
 
 		groups, err := executor.executeExpression(ctx, expr, []Relation{r})
@@ -206,17 +208,17 @@ func TestExecuteExpression(t *testing.T) {
 		ctx := NewContext(nil)
 
 		// Two disjoint relations
-		r1 := NewMaterializedRelation([]query.Symbol{"?x"}, []Tuple{{int64(1)}, {int64(2)}})
-		r2 := NewMaterializedRelation([]query.Symbol{"?y"}, []Tuple{{int64(10)}, {int64(20)}})
+		r1 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{{int64(1)}, {int64(2)}})
+		r2 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{int64(10)}, {int64(20)}})
 
 		// Expression: [(+ ?x ?y) ?z] - requires both ?x and ?y
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
 				Op:    query.OpAdd,
-				Left:  query.VariableTerm{Symbol: "?x"},
-				Right: query.VariableTerm{Symbol: "?y"},
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
 			},
-			Binding: query.Symbol("?z"),
+			Binding: datalog.NewSymbol("?z"),
 		}
 
 		groups, err := executor.executeExpression(ctx, expr, []Relation{r1, r2})
@@ -250,14 +252,14 @@ func TestExecutePredicate(t *testing.T) {
 
 		// Create relation with ?x
 		r := NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{int64(5)}, {int64(15)}, {int64(25)}},
 		)
 
 		// Predicate: [(< ?x 20)]
 		pred := &query.Comparison{
 			Op:    query.OpLT,
-			Left:  query.VariableTerm{Symbol: "?x"},
+			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			Right: query.ConstantTerm{Value: int64(20)},
 		}
 
@@ -284,7 +286,7 @@ func TestExecuteAggregates(t *testing.T) {
 		matchFunc: func(pattern *query.DataPattern, bindings Relations) (Relation, error) {
 			// Return test data
 			return NewMaterializedRelation(
-				[]query.Symbol{"?person", "?value"},
+				[]query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?value")},
 				[]Tuple{
 					{"Alice", int64(100)},
 					{"Alice", int64(200)},
@@ -301,18 +303,18 @@ func TestExecuteAggregates(t *testing.T) {
 		// Query: [:find ?person (sum ?value)]
 		q := &query.Query{
 			Find: []query.FindElement{
-				query.FindVariable{Symbol: "?person"},
+				query.FindVariable{Symbol: datalog.NewSymbol("?person")},
 				query.FindAggregate{
 					Function: "sum",
-					Arg:      "?value",
+					Arg:      datalog.NewSymbol("?value"),
 				},
 			},
 			Where: []query.Clause{
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?person"},
+						query.Variable{Name: datalog.NewSymbol("?person")},
 						query.Constant{Value: ":person/value"},
-						query.Variable{Name: "?value"},
+						query.Variable{Name: datalog.NewSymbol("?value")},
 					},
 				},
 			},
@@ -340,21 +342,21 @@ func TestExecuteAggregates(t *testing.T) {
 			Find: []query.FindElement{
 				query.FindAggregate{
 					Function: "sum",
-					Arg:      "?value",
+					Arg:      datalog.NewSymbol("?value"),
 				},
 			},
 			Where: []query.Clause{
 				&query.DataPattern{Elements: []query.PatternElement{
-					query.Variable{Name: "?e1"},
+					query.Variable{Name: datalog.NewSymbol("?e1")},
 					query.Constant{Value: ":person/name"},
-					query.Variable{Name: "?n"},
+					query.Variable{Name: datalog.NewSymbol("?n")},
 				}},
 			},
 		}
 
 		// Manually set up disjoint groups (this simulates the error case)
-		r1 := NewMaterializedRelation([]query.Symbol{"?x"}, []Tuple{{int64(1)}})
-		r2 := NewMaterializedRelation([]query.Symbol{"?y"}, []Tuple{{int64(2)}})
+		r1 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?x")}, []Tuple{{int64(1)}})
+		r2 := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?y")}, []Tuple{{int64(2)}})
 
 		// Try to aggregate with pre-existing disjoint groups
 		_, err := executor.Execute(ctx, q, []Relation{r1, r2})
@@ -373,7 +375,7 @@ func TestEndToEndQueries(t *testing.T) {
 			if c, ok := attr.(query.Constant); ok {
 				if c.Value == ":person/age" {
 					return NewMaterializedRelation(
-						[]query.Symbol{"?person", "?age"},
+						[]query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?age")},
 						[]Tuple{
 							{"Alice", int64(30)},
 							{"Bob", int64(25)},
@@ -392,20 +394,20 @@ func TestEndToEndQueries(t *testing.T) {
 		// Query: [:find ?person ?age :where [?person :person/age ?age] [(> ?age 26)]]
 		q := &query.Query{
 			Find: []query.FindElement{
-				query.FindVariable{Symbol: "?person"},
-				query.FindVariable{Symbol: "?age"},
+				query.FindVariable{Symbol: datalog.NewSymbol("?person")},
+				query.FindVariable{Symbol: datalog.NewSymbol("?age")},
 			},
 			Where: []query.Clause{
 				&query.DataPattern{
 					Elements: []query.PatternElement{
-						query.Variable{Name: "?person"},
+						query.Variable{Name: datalog.NewSymbol("?person")},
 						query.Constant{Value: ":person/age"},
-						query.Variable{Name: "?age"},
+						query.Variable{Name: datalog.NewSymbol("?age")},
 					},
 				},
 				&query.Comparison{
 					Op:    query.OpGT,
-					Left:  query.VariableTerm{Symbol: "?age"},
+					Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 					Right: query.ConstantTerm{Value: int64(26)},
 				},
 			},
@@ -439,7 +441,7 @@ func TestExecuteTupleGround(t *testing.T) {
 			Function: &query.GroundFunction{
 				Value: []interface{}{int64(1), int64(2), int64(3)},
 			},
-			Binding: query.TupleBinding{Variables: []query.Symbol{"?a", "?b", "?c"}},
+			Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}},
 		}
 
 		groups, err := executor.executeExpression(ctx, expr, nil)
@@ -461,7 +463,7 @@ func TestExecuteTupleGround(t *testing.T) {
 		if len(cols) != 3 {
 			t.Errorf("Expected 3 columns, got %d", len(cols))
 		}
-		expected := []query.Symbol{"?a", "?b", "?c"}
+		expected := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
 		for i, exp := range expected {
 			if cols[i] != exp {
 				t.Errorf("Column %d = %v, want %v", i, cols[i], exp)
@@ -489,7 +491,7 @@ func TestExecuteTupleGround(t *testing.T) {
 
 		// Create a relation with ?x
 		r := NewMaterializedRelation(
-			[]query.Symbol{"?x"},
+			[]query.Symbol{datalog.NewSymbol("?x")},
 			[]Tuple{{int64(10)}, {int64(20)}},
 		)
 
@@ -498,7 +500,7 @@ func TestExecuteTupleGround(t *testing.T) {
 			Function: &query.GroundFunction{
 				Value: []interface{}{int64(0), int64(0)},
 			},
-			Binding: query.TupleBinding{Variables: []query.Symbol{"?a", "?b"}},
+			Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")}},
 		}
 
 		groups, err := executor.executeExpression(ctx, expr, []Relation{r})
@@ -532,7 +534,7 @@ func TestExecuteTupleGround(t *testing.T) {
 			Function: &query.GroundFunction{
 				Value: []interface{}{int64(1), int64(2)}, // 2 values
 			},
-			Binding: query.TupleBinding{Variables: []query.Symbol{"?a", "?b", "?c"}}, // 3 vars
+			Binding: query.TupleBinding{Variables: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}}, // 3 vars
 		}
 
 		_, err := executor.executeExpression(ctx, expr, nil)

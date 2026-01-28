@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestDataPatternString(t *testing.T) {
@@ -16,9 +17,9 @@ func TestDataPatternString(t *testing.T) {
 			name: "unqualified",
 			pattern: DataPattern{
 				Elements: []PatternElement{
-					Variable{Name: "?e"},
+					Variable{Name: datalog.NewSymbol("?e")},
 					Constant{Value: ":attr"},
-					Variable{Name: "?v"},
+					Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			want: "[?e :attr ?v]",
@@ -26,11 +27,11 @@ func TestDataPatternString(t *testing.T) {
 		{
 			name: "source-qualified",
 			pattern: DataPattern{
-				Source: Symbol("$users"),
+				Source: datalog.NewSymbol("$users"),
 				Elements: []PatternElement{
-					Variable{Name: "?e"},
+					Variable{Name: datalog.NewSymbol("?e")},
 					Constant{Value: ":attr"},
-					Variable{Name: "?v"},
+					Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			want: "[$users ?e :attr ?v]",
@@ -38,11 +39,11 @@ func TestDataPatternString(t *testing.T) {
 		{
 			name: "empty source same as unqualified",
 			pattern: DataPattern{
-				Source: "",
+				Source: nil,
 				Elements: []PatternElement{
-					Variable{Name: "?e"},
+					Variable{Name: datalog.NewSymbol("?e")},
 					Constant{Value: ":a"},
-					Variable{Name: "?v"},
+					Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			want: "[?e :a ?v]",
@@ -61,9 +62,9 @@ func TestDatabaseInputString(t *testing.T) {
 		input DatabaseInput
 		want  string
 	}{
-		{"default", DatabaseInput{Name: Symbol("$")}, "$"},
-		{"named", DatabaseInput{Name: Symbol("$users")}, "$users"},
-		{"named with underscore", DatabaseInput{Name: Symbol("$foo_bar")}, "$foo_bar"},
+		{"default", DatabaseInput{Name: datalog.NewSymbol("$")}, "$"},
+		{"named", DatabaseInput{Name: datalog.NewSymbol("$users")}, "$users"},
+		{"named with underscore", DatabaseInput{Name: datalog.NewSymbol("$foo_bar")}, "$foo_bar"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

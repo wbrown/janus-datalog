@@ -156,7 +156,8 @@ func (i *HistoryKeyOnlyIterator) Next() bool {
 		return false
 	}
 
-	key := i.it.Item().Key()
+	// Must copy since BadgerDB reuses the key buffer
+	key := i.it.Item().KeyCopy(nil)
 	i.currentDatom, i.currentOp, i.currentError = DatomFromHistoryKey(i.index, key, i.encoder)
 
 	if i.currentError != nil {
@@ -194,8 +195,8 @@ func (i *KeyOnlyIterator) Next() bool {
 		return false
 	}
 
-	// Decode datom from key
-	key := i.it.Item().Key()
+	// Decode datom from key - must copy since BadgerDB reuses the key buffer
+	key := i.it.Item().KeyCopy(nil)
 
 	i.currentDatom, i.currentError = DatomFromKey(i.index, key, i.encoder)
 

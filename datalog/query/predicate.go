@@ -63,7 +63,7 @@ func (v VariableTerm) RequiredSymbols() []Symbol {
 }
 
 func (v VariableTerm) String() string {
-	return string(v.Symbol)
+	return v.Symbol.String()
 }
 
 // ConstantTerm represents a literal value like 5 or "hello"
@@ -159,14 +159,14 @@ func (c *Comparison) extractLeftVar() Symbol {
 	if v, ok := c.Left.(VariableTerm); ok {
 		return v.Symbol
 	}
-	return ""
+	return nil
 }
 
 func (c *Comparison) extractRightVar() Symbol {
 	if v, ok := c.Right.(VariableTerm); ok {
 		return v.Symbol
 	}
-	return ""
+	return nil
 }
 
 func (c *Comparison) extractLeftValue() interface{} {
@@ -318,7 +318,7 @@ func (g GroundPredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
 func (g GroundPredicate) String() string {
 	s := "[(ground"
 	for _, v := range g.Variables {
-		s += " " + string(v)
+		s += " " + v.String()
 	}
 	s += ")]"
 	return s
@@ -354,7 +354,7 @@ func (m MissingPredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
 func (m MissingPredicate) String() string {
 	s := "[(missing"
 	for _, v := range m.Variables {
-		s += " " + string(v)
+		s += " " + v.String()
 	}
 	s += ")]"
 	return s

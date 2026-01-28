@@ -242,8 +242,8 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
 				query.Constant{Value: alice},
-				query.Variable{Name: "?a"},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?a")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
@@ -278,8 +278,8 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
 				query.Constant{Value: alice},
-				query.Variable{Name: "?a"},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?a")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
@@ -299,9 +299,9 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 		aIdx := -1
 		vIdx := -1
 		for i, col := range cols {
-			if col == "?a" {
+			if col == datalog.NewSymbol("?a") {
 				aIdx = i
-			} else if col == "?v" {
+			} else if col == datalog.NewSymbol("?v") {
 				vIdx = i
 			}
 		}

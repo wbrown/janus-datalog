@@ -19,6 +19,7 @@ const (
 	TypeBytes
 	TypeReference
 	TypeKeyword
+	TypeSymbol
 )
 
 // Type returns the type of a value
@@ -29,6 +30,8 @@ func Type(v Value) ValueType {
 		return TypeReference
 	case *Keyword:
 		return TypeKeyword
+	case *Symbol:
+		return TypeSymbol
 	case *uint64:
 		return TypeInt
 	case string:
@@ -47,6 +50,8 @@ func Type(v Value) ValueType {
 		return TypeReference
 	case Keyword:
 		return TypeKeyword
+	case Symbol:
+		return TypeSymbol
 	default:
 		panic(fmt.Sprintf("unknown value type: %T", val))
 	}
@@ -59,6 +64,8 @@ func ValueBytes(v Value) []byte {
 	case Identity:
 		return ptr.Bytes()
 	case Keyword:
+		return []byte(ptr.String())
+	case Symbol:
 		return []byte(ptr.String())
 	case *uint64:
 		buf := make([]byte, 8)
@@ -92,6 +99,8 @@ func ValueBytes(v Value) []byte {
 	case Identity:
 		return val.Bytes()
 	case Keyword:
+		return []byte(val.String())
+	case Symbol:
 		return []byte(val.String())
 	default:
 		panic(fmt.Sprintf("cannot encode value type: %T", v))
@@ -136,6 +145,8 @@ func ValueFromBytes(vType ValueType, data []byte) (Value, error) {
 		return NewIdentityFromHash(hash), nil
 	case TypeKeyword:
 		return NewKeyword(string(data)), nil
+	case TypeSymbol:
+		return NewSymbol(string(data)), nil
 	default:
 		return nil, fmt.Errorf("unknown value type: %v", vType)
 	}

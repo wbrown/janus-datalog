@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestStreamingIntegration(t *testing.T) {
@@ -24,7 +26,7 @@ func TestStreamingIntegration(t *testing.T) {
 			{4, "diana", 400},
 			{5, "eve", 500},
 		}
-		leftColumns := []query.Symbol{"?id", "?name", "?score"}
+		leftColumns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
 		// Create test data for right relation
 		rightTuples := []Tuple{
@@ -33,7 +35,7 @@ func TestStreamingIntegration(t *testing.T) {
 			{"charlie", "Chicago", 35},
 			{"diana", "Boston", 40},
 		}
-		rightColumns := []query.Symbol{"?name", "?city", "?age"}
+		rightColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
 
 		// Create streaming relations with options
 		leftIter := newMockIterator(leftTuples)
@@ -67,7 +69,7 @@ func TestStreamingIntegration(t *testing.T) {
 		assert.True(t, isStreaming, "Filter should return StreamingRelation")
 
 		// Perform join on ?name
-		joinCols := []query.Symbol{"?name"}
+		joinCols := []query.Symbol{datalog.NewSymbol("?name")}
 		joined := SymmetricHashJoin(filteredLeft, filteredRight, joinCols)
 
 		// Verify join returns streaming relation
@@ -75,7 +77,7 @@ func TestStreamingIntegration(t *testing.T) {
 		assert.True(t, isStreaming, "Join should return StreamingRelation")
 
 		// Project to keep only certain columns
-		projected, err := joined.Project([]query.Symbol{"?name", "?score", "?city"})
+		projected, err := joined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
 		assert.NoError(t, err)
 
 		// Verify projection returns streaming relation
@@ -127,17 +129,17 @@ func TestStreamingIntegration(t *testing.T) {
 			{3, "charlie"},
 		}
 		streamIter := newMockIterator(streamTuples)
-		streamRel := NewStreamingRelationWithOptions([]query.Symbol{"?id", "?name"}, streamIter, opts)
+		streamRel := NewStreamingRelationWithOptions([]query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}, streamIter, opts)
 
 		// Create materialized relation with options
 		matTuples := []Tuple{
 			{"alice", 100},
 			{"bob", 200},
 		}
-		matRel := NewMaterializedRelationWithOptions([]query.Symbol{"?name", "?value"}, matTuples, opts)
+		matRel := NewMaterializedRelationWithOptions([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?value")}, matTuples, opts)
 
 		// Join streaming with materialized
-		joinCols := []query.Symbol{"?name"}
+		joinCols := []query.Symbol{datalog.NewSymbol("?name")}
 		joined := HashJoin(streamRel, matRel, joinCols)
 
 		// Iterate results
@@ -168,7 +170,7 @@ func TestStreamingIntegration(t *testing.T) {
 			{50, 60},
 			{70, 80},
 		}
-		columns := []query.Symbol{"?x", "?y"}
+		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 		source := newMockIterator(tuples)
 		rel := NewStreamingRelationWithOptions(columns, source, opts)
@@ -176,7 +178,7 @@ func TestStreamingIntegration(t *testing.T) {
 		// Apply predicate filter (x > 30)
 		pred := &query.Comparison{
 			Op:    query.OpGT,
-			Left:  query.VariableTerm{Symbol: "?x"},
+			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			Right: query.ConstantTerm{Value: 30},
 		}
 
@@ -213,7 +215,7 @@ func TestStreamingIntegration(t *testing.T) {
 			{10, 20},
 			{30, 40},
 		}
-		columns := []query.Symbol{"?x", "?y"}
+		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 		source := newMockIterator(tuples)
 		rel := NewStreamingRelationWithOptions(columns, source, opts)
@@ -221,18 +223,18 @@ func TestStreamingIntegration(t *testing.T) {
 		// Apply function evaluation (x + y)
 		fn := query.ArithmeticFunction{
 			Op:    query.OpAdd,
-			Left:  query.VariableTerm{Symbol: "?x"},
-			Right: query.VariableTerm{Symbol: "?y"},
+			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+			Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
 		}
 
-		withFunction := rel.EvaluateFunction(fn, "?sum")
+		withFunction := rel.EvaluateFunction(fn, datalog.NewSymbol("?sum"))
 
 		// Verify it's still streaming
 		_, isStreaming := withFunction.(*StreamingRelation)
 		assert.True(t, isStreaming)
 
 		// Check columns
-		assert.Equal(t, []query.Symbol{"?x", "?y", "?sum"}, withFunction.Columns())
+		assert.Equal(t, []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?sum")}, withFunction.Columns())
 
 		// Iterate results
 		it := withFunction.Iterator()
@@ -262,7 +264,7 @@ func TestStreamingIntegration(t *testing.T) {
 		for i := 0; i < 1000; i++ {
 			largeTuples = append(largeTuples, Tuple{i, i * 2, i * 3})
 		}
-		columns := []query.Symbol{"?x", "?y", "?z"}
+		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 		source := newMockIterator(largeTuples)
 		rel := NewStreamingRelationWithOptions(columns, source, opts)
@@ -274,7 +276,7 @@ func TestStreamingIntegration(t *testing.T) {
 		filtered := rel.Filter(filter)
 
 		// Project to single column
-		projected, err := filtered.Project([]query.Symbol{"?x"})
+		projected, err := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
 		assert.NoError(t, err)
 
 		// With streaming, this entire pipeline should process lazily
@@ -303,7 +305,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 	for i := 0; i < size; i++ {
 		tuples = append(tuples, Tuple{i, i * 2, i * 3})
 	}
-	columns := []query.Symbol{"?x", "?y", "?z"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 	b.Run("Materialized", func(b *testing.B) {
 		opts := ExecutorOptions{
@@ -322,7 +324,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 			}))
 
 			// Project
-			projected, _ := filtered.Project([]query.Symbol{"?x"})
+			projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
 
 			// Consume
 			it := projected.Iterator()
@@ -350,7 +352,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 			}))
 
 			// Project
-			projected, _ := filtered.Project([]query.Symbol{"?x"})
+			projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
 
 			// Consume
 			it := projected.Iterator()
@@ -381,7 +383,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 			}))
 
 			// Project
-			projected, _ := filtered.Project([]query.Symbol{"?x"})
+			projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
 
 			// Consume
 			it := projected.Iterator()

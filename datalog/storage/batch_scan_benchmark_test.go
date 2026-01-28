@@ -51,7 +51,7 @@ func BenchmarkBatchScanning(b *testing.B) {
 	// Patterns
 	symbolPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: priceSymbol},
 			query.Constant{Value: symbolEntity},
 		},
@@ -59,9 +59,9 @@ func BenchmarkBatchScanning(b *testing.B) {
 
 	timePattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: priceTime},
-			query.Variable{Name: query.Symbol("?t")},
+			query.Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 
@@ -180,17 +180,17 @@ func BenchmarkBatchScanScaling(b *testing.B) {
 
 		pattern1 := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: query.Symbol("?e")},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: datalog.NewKeyword(":test/attr")},
-				query.Variable{Name: query.Symbol("?a")},
+				query.Variable{Name: datalog.NewSymbol("?a")},
 			},
 		}
 
 		pattern2 := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: query.Symbol("?e")},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: datalog.NewKeyword(":test/value")},
-				query.Variable{Name: query.Symbol("?v")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 

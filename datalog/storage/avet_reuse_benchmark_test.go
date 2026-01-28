@@ -57,9 +57,9 @@ func BenchmarkAVETReuse(b *testing.B) {
 	// Pattern: [?b :price/symbol ?s] with multiple symbols bound
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?b"},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-			query.Variable{Name: "?s"},
+			query.Variable{Name: datalog.NewSymbol("?s")},
 		},
 	}
 
@@ -70,7 +70,7 @@ func BenchmarkAVETReuse(b *testing.B) {
 		symbolTuples = append(symbolTuples, executor.Tuple{symbolEntity})
 	}
 	symbolRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?s"},
+		[]query.Symbol{datalog.NewSymbol("?s")},
 		symbolTuples,
 	)
 
@@ -144,9 +144,9 @@ func BenchmarkAVETNoReuse(b *testing.B) {
 	// Pattern: [?b :price/symbol ?s] with multiple symbols bound
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?b"},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-			query.Variable{Name: "?s"},
+			query.Variable{Name: datalog.NewSymbol("?s")},
 		},
 	}
 
@@ -157,7 +157,7 @@ func BenchmarkAVETNoReuse(b *testing.B) {
 		symbolTuples = append(symbolTuples, executor.Tuple{symbolEntity})
 	}
 	symbolRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?s"},
+		[]query.Symbol{datalog.NewSymbol("?s")},
 		symbolTuples,
 	)
 

@@ -4,13 +4,15 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestStreamingHashJoin(t *testing.T) {
 	// Test with streaming enabled - create relations with options
 	opts := ExecutorOptions{EnableStreamingJoins: true}
 	left := NewMaterializedRelationWithOptions(
-		[]query.Symbol{"?user", "?name"},
+		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name")},
 		[]Tuple{
 			{"u1", "Alice"},
 			{"u2", "Bob"},
@@ -19,7 +21,7 @@ func TestStreamingHashJoin(t *testing.T) {
 	)
 
 	right := NewMaterializedRelationWithOptions(
-		[]query.Symbol{"?user", "?age"},
+		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?age")},
 		[]Tuple{
 			{"u1", 25},
 			{"u2", 30},
@@ -27,7 +29,7 @@ func TestStreamingHashJoin(t *testing.T) {
 		opts,
 	)
 
-	result := HashJoin(left, right, []query.Symbol{"?user"})
+	result := HashJoin(left, right, []query.Symbol{datalog.NewSymbol("?user")})
 
 	t.Logf("Result type: %T", result)
 	t.Logf("Result size: %d", result.Size())
@@ -51,7 +53,7 @@ func TestStreamingHashJoinChain(t *testing.T) {
 	// Test with streaming enabled - create relations with options
 	opts := ExecutorOptions{EnableStreamingJoins: true}
 	users := NewMaterializedRelationWithOptions(
-		[]query.Symbol{"?user", "?name"},
+		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name")},
 		[]Tuple{
 			{"u1", "Alice"},
 			{"u2", "Bob"},
@@ -60,7 +62,7 @@ func TestStreamingHashJoinChain(t *testing.T) {
 	)
 
 	ages := NewMaterializedRelationWithOptions(
-		[]query.Symbol{"?user", "?age"},
+		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?age")},
 		[]Tuple{
 			{"u1", 25},
 			{"u2", 30},
@@ -69,7 +71,7 @@ func TestStreamingHashJoinChain(t *testing.T) {
 	)
 
 	depts := NewMaterializedRelationWithOptions(
-		[]query.Symbol{"?user", "?dept"},
+		[]query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?dept")},
 		[]Tuple{
 			{"u1", "Engineering"},
 			{"u2", "Sales"},
@@ -78,11 +80,11 @@ func TestStreamingHashJoinChain(t *testing.T) {
 	)
 
 	// First join
-	result1 := HashJoin(users, ages, []query.Symbol{"?user"})
+	result1 := HashJoin(users, ages, []query.Symbol{datalog.NewSymbol("?user")})
 	t.Logf("After first join: type=%T, size=%d", result1, result1.Size())
 
 	// Second join
-	result2 := HashJoin(result1, depts, []query.Symbol{"?user"})
+	result2 := HashJoin(result1, depts, []query.Symbol{datalog.NewSymbol("?user")})
 	t.Logf("After second join: type=%T, size=%d", result2, result2.Size())
 
 	// Materialize final result

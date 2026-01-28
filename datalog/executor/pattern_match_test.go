@@ -34,9 +34,9 @@ func TestPatternMatching(t *testing.T) {
 			name: "match all with variables",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			expected: 5,
@@ -46,8 +46,8 @@ func TestPatternMatching(t *testing.T) {
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
 					query.Constant{Value: alice},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			expected: 3,
@@ -56,9 +56,9 @@ func TestPatternMatching(t *testing.T) {
 			name: "match specific attribute",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: nameAttr},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			expected: 2,
@@ -67,8 +67,8 @@ func TestPatternMatching(t *testing.T) {
 			name: "match specific value",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
 					query.Constant{Value: "Alice"},
 				},
 			},
@@ -78,7 +78,7 @@ func TestPatternMatching(t *testing.T) {
 			name: "match entity reference value",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Constant{Value: friendAttr},
 					query.Constant{Value: bob},
 				},
@@ -91,7 +91,7 @@ func TestPatternMatching(t *testing.T) {
 				Elements: []query.PatternElement{
 					query.Blank{},
 					query.Constant{Value: ageAttr},
-					query.Variable{Name: "?age"},
+					query.Variable{Name: datalog.NewSymbol("?age")},
 				},
 			},
 			expected: 2,
@@ -100,9 +100,9 @@ func TestPatternMatching(t *testing.T) {
 			name: "match specific transaction",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?e"},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 					query.Constant{Value: uint64(2)},
 				},
 			},
@@ -160,10 +160,10 @@ func TestDatomToRelationExtraction(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?user"},
+			query.Variable{Name: datalog.NewSymbol("?user")},
 			query.Constant{Value: nameAttr},
-			query.Variable{Name: "?name"},
-			query.Variable{Name: "?tx"},
+			query.Variable{Name: datalog.NewSymbol("?name")},
+			query.Variable{Name: datalog.NewSymbol("?tx")},
 		},
 	}
 
@@ -177,7 +177,7 @@ func TestDatomToRelationExtraction(t *testing.T) {
 	}
 
 	// Check column names
-	expectedCols := []query.Symbol{"?user", "?name", "?tx"}
+	expectedCols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?tx")}
 	for i, col := range columns {
 		if col != expectedCols[i] {
 			t.Errorf("expected column %d to be %s, got %s", i, expectedCols[i], col)
@@ -219,9 +219,9 @@ func TestPatternToRelation(t *testing.T) {
 	// Pattern: [?user :user/name ?name]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?user"},
+			query.Variable{Name: datalog.NewSymbol("?user")},
 			query.Constant{Value: nameAttr},
-			query.Variable{Name: "?name"},
+			query.Variable{Name: datalog.NewSymbol("?name")},
 		},
 	}
 
@@ -232,7 +232,7 @@ func TestPatternToRelation(t *testing.T) {
 	if len(cols) != 2 {
 		t.Errorf("expected 2 columns, got %d", len(cols))
 	}
-	if cols[0] != "?user" || cols[1] != "?name" {
+	if cols[0] != datalog.NewSymbol("?user") || cols[1] != datalog.NewSymbol("?name") {
 		t.Errorf("unexpected columns: %v", cols)
 	}
 
@@ -281,7 +281,7 @@ func TestMatchWithStringConstants(t *testing.T) {
 		Elements: []query.PatternElement{
 			query.Constant{Value: "user:alice"}, // String instead of Identity
 			query.Constant{Value: ":user/name"}, // String instead of Keyword
-			query.Variable{Name: "?name"},
+			query.Variable{Name: datalog.NewSymbol("?name")},
 		},
 	}
 

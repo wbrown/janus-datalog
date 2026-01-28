@@ -224,3 +224,43 @@ func TestNilKeywordHandling(t *testing.T) {
 		}
 	})
 }
+
+func TestSymbolCompareValues(t *testing.T) {
+	a := NewSymbol("alpha")
+	b := NewSymbol("beta")
+	a2 := NewSymbol("alpha")
+
+	// Same symbol (interned pointer equality)
+	if cmp := CompareValues(a, a2); cmp != 0 {
+		t.Errorf("CompareValues(alpha, alpha) = %d, want 0", cmp)
+	}
+
+	// Different symbols
+	if cmp := CompareValues(a, b); cmp >= 0 {
+		t.Errorf("CompareValues(alpha, beta) = %d, want < 0", cmp)
+	}
+	if cmp := CompareValues(b, a); cmp <= 0 {
+		t.Errorf("CompareValues(beta, alpha) = %d, want > 0", cmp)
+	}
+
+	// Symbol vs non-Symbol
+	if cmp := CompareValues(a, "alpha"); cmp >= 0 {
+		t.Errorf("CompareValues(symbol, string) = %d, want < 0 (type mismatch)", cmp)
+	}
+}
+
+func TestSymbolValuesEqual(t *testing.T) {
+	a := NewSymbol("test-fn")
+	b := NewSymbol("test-fn")
+	c := NewSymbol("other-fn")
+
+	if !ValuesEqual(a, b) {
+		t.Error("ValuesEqual(same symbol, same symbol) should be true")
+	}
+	if ValuesEqual(a, c) {
+		t.Error("ValuesEqual(different symbols) should be false")
+	}
+	if ValuesEqual(a, "test-fn") {
+		t.Error("ValuesEqual(symbol, string) should be false")
+	}
+}

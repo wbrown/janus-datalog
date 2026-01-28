@@ -44,7 +44,7 @@ func TestBatchScanTrace(t *testing.T) {
 	// First pattern: get all bars for symbol
 	symbolPattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: priceSymbol},
 			query.Constant{Value: symbolEntity},
 		},
@@ -53,9 +53,9 @@ func TestBatchScanTrace(t *testing.T) {
 	// Second pattern: get times
 	timePattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?b")},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: priceTime},
-			query.Variable{Name: query.Symbol("?t")},
+			query.Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 

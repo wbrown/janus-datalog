@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // =============================================================================
@@ -25,8 +27,8 @@ func BenchmarkHashJoinBuildSize(b *testing.B) {
 	for _, buildSize := range buildSizes {
 		for _, dataSize := range dataSizes {
 			b.Run(fmt.Sprintf("build_%d/data_%d", buildSize, dataSize), func(b *testing.B) {
-				leftCols := []query.Symbol{"?x", "?name"}
-				rightCols := []query.Symbol{"?x", "?value"}
+				leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+				rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 				leftTuples := make([]Tuple, dataSize)
 				rightTuples := make([]Tuple, dataSize)
@@ -86,8 +88,8 @@ func BenchmarkHashJoinBuildSizeOptimal(b *testing.B) {
 	for _, buildSize := range buildSizes {
 		for _, dataSize := range dataSizes {
 			b.Run(fmt.Sprintf("build_%d/data_%d", buildSize, dataSize), func(b *testing.B) {
-				leftCols := []query.Symbol{"?x", "?name"}
-				rightCols := []query.Symbol{"?x", "?value"}
+				leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+				rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 				leftTuples := make([]Tuple, dataSize)
 				rightTuples := make([]Tuple, dataSize)
@@ -147,8 +149,8 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 	sizes := []int{100, 1000, 5000}
 
 	for _, size := range sizes {
-		leftCols := []query.Symbol{"?x", "?name"}
-		rightCols := []query.Symbol{"?x", "?value"}
+		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -266,8 +268,8 @@ func BenchmarkHashJoinMaterializedVsStreaming(b *testing.B) {
 	size := 1000
 
 	b.Run("materialized", func(b *testing.B) {
-		leftCols := []query.Symbol{"?x", "?name"}
-		rightCols := []query.Symbol{"?x", "?value"}
+		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -294,8 +296,8 @@ func BenchmarkHashJoinMaterializedVsStreaming(b *testing.B) {
 	})
 
 	b.Run("streaming", func(b *testing.B) {
-		leftCols := []query.Symbol{"?x", "?name"}
-		rightCols := []query.Symbol{"?x", "?value"}
+		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -341,8 +343,8 @@ func BenchmarkHashJoinStreaming(b *testing.B) {
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
 			// Create two relations with common column
-			leftCols := []query.Symbol{"?x", "?name"}
-			rightCols := []query.Symbol{"?x", "?value"}
+			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -382,8 +384,8 @@ func BenchmarkHashJoinStreaming(b *testing.B) {
 // This is the common case - result is consumed once
 func BenchmarkHashJoinSingleIteration(b *testing.B) {
 	size := 1000
-	leftCols := []query.Symbol{"?x", "?name"}
-	rightCols := []query.Symbol{"?x", "?value"}
+	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, size)
 	rightTuples := make([]Tuple, size)
@@ -418,8 +420,8 @@ func BenchmarkHashJoinStreamingInput(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
-			leftCols := []query.Symbol{"?x", "?name"}
-			rightCols := []query.Symbol{"?x", "?value"}
+			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -475,8 +477,8 @@ func BenchmarkHashJoinLargeResult(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
-			leftCols := []query.Symbol{"?x", "?data"}
-			rightCols := []query.Symbol{"?x", "?value"}
+			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?data")}
+			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)

@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestBatcher_BuildBatchedInput(t *testing.T) {
@@ -12,26 +14,26 @@ func TestBatcher_BuildBatchedInput(t *testing.T) {
 	// Create input combinations
 	combinations := []map[query.Symbol]interface{}{
 		{
-			"?sym":  "AAPL",
-			"?hour": int64(10),
+			datalog.NewSymbol("?sym"):  "AAPL",
+			datalog.NewSymbol("?hour"): int64(10),
 		},
 		{
-			"?sym":  "GOOGL",
-			"?hour": int64(11),
+			datalog.NewSymbol("?sym"):  "GOOGL",
+			datalog.NewSymbol("?hour"): int64(11),
 		},
 		{
-			"?sym":  "MSFT",
-			"?hour": int64(12),
+			datalog.NewSymbol("?sym"):  "MSFT",
+			datalog.NewSymbol("?hour"): int64(12),
 		},
 	}
 
-	inputSymbols := []query.Symbol{"$", "?sym", "?hour"}
+	inputSymbols := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")}
 
 	// Build batched input
 	rel := batcher.BuildBatchedInput(combinations, inputSymbols)
 
 	// Verify columns (should exclude $)
-	expectedColumns := []query.Symbol{"?sym", "?hour"}
+	expectedColumns := []query.Symbol{datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")}
 	columns := rel.Columns()
 	if len(columns) != len(expectedColumns) {
 		t.Fatalf("Expected %d columns, got %d", len(expectedColumns), len(columns))
@@ -70,11 +72,11 @@ func TestBatcher_BuildBatchedInput_SingleColumn(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	combinations := []map[query.Symbol]interface{}{
-		{"?sym": "AAPL"},
-		{"?sym": "GOOGL"},
+		{datalog.NewSymbol("?sym"): "AAPL"},
+		{datalog.NewSymbol("?sym"): "GOOGL"},
 	}
 
-	inputSymbols := []query.Symbol{"$", "?sym"}
+	inputSymbols := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?sym")}
 
 	rel := batcher.BuildBatchedInput(combinations, inputSymbols)
 
@@ -82,7 +84,7 @@ func TestBatcher_BuildBatchedInput_SingleColumn(t *testing.T) {
 	if len(rel.Columns()) != 1 {
 		t.Fatalf("Expected 1 column, got %d", len(rel.Columns()))
 	}
-	if rel.Columns()[0] != "?sym" {
+	if rel.Columns()[0] != datalog.NewSymbol("?sym") {
 		t.Errorf("Expected column ?sym, got %v", rel.Columns()[0])
 	}
 
@@ -97,7 +99,7 @@ func TestBatcher_BuildBatchedInput_Empty(t *testing.T) {
 
 	// Empty combinations
 	combinations := []map[query.Symbol]interface{}{}
-	inputSymbols := []query.Symbol{"$", "?sym"}
+	inputSymbols := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?sym")}
 
 	rel := batcher.BuildBatchedInput(combinations, inputSymbols)
 
@@ -116,12 +118,12 @@ func TestBatcher_BuildBatchedInput_MissingValue(t *testing.T) {
 	// Combination missing ?hour value
 	combinations := []map[query.Symbol]interface{}{
 		{
-			"?sym": "AAPL",
+			datalog.NewSymbol("?sym"): "AAPL",
 			// ?hour is missing
 		},
 	}
 
-	inputSymbols := []query.Symbol{"$", "?sym", "?hour"}
+	inputSymbols := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")}
 
 	rel := batcher.BuildBatchedInput(combinations, inputSymbols)
 
@@ -143,14 +145,14 @@ func TestBatcher_ExtractInputSymbols_ScalarInputs(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{Name: query.Symbol("$")},
-		query.ScalarInput{Symbol: "?sym"},
-		query.ScalarInput{Symbol: "?hour"},
+		query.DatabaseInput{Name: datalog.NewSymbol("$")},
+		query.ScalarInput{Symbol: datalog.NewSymbol("?sym")},
+		query.ScalarInput{Symbol: datalog.NewSymbol("?hour")},
 	}
 
 	symbols := batcher.ExtractInputSymbols(inputs)
 
-	expected := []query.Symbol{"$", "?sym", "?hour"}
+	expected := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")}
 	if len(symbols) != len(expected) {
 		t.Fatalf("Expected %d symbols, got %d", len(expected), len(symbols))
 	}
@@ -166,15 +168,15 @@ func TestBatcher_ExtractInputSymbols_RelationInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{Name: query.Symbol("$")},
+		query.DatabaseInput{Name: datalog.NewSymbol("$")},
 		query.RelationInput{
-			Symbols: []query.Symbol{"?sym", "?hour"},
+			Symbols: []query.Symbol{datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")},
 		},
 	}
 
 	symbols := batcher.ExtractInputSymbols(inputs)
 
-	expected := []query.Symbol{"$", "?sym", "?hour"}
+	expected := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")}
 	if len(symbols) != len(expected) {
 		t.Fatalf("Expected %d symbols, got %d", len(expected), len(symbols))
 	}
@@ -190,15 +192,15 @@ func TestBatcher_ExtractInputSymbols_TupleInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{Name: query.Symbol("$")},
+		query.DatabaseInput{Name: datalog.NewSymbol("$")},
 		query.TupleInput{
-			Symbols: []query.Symbol{"?x", "?y"},
+			Symbols: []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		},
 	}
 
 	symbols := batcher.ExtractInputSymbols(inputs)
 
-	expected := []query.Symbol{"$", "?x", "?y"}
+	expected := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	if len(symbols) != len(expected) {
 		t.Fatalf("Expected %d symbols, got %d", len(expected), len(symbols))
 	}
@@ -214,13 +216,13 @@ func TestBatcher_ExtractInputSymbols_CollectionInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{Name: query.Symbol("$")},
-		query.CollectionInput{Symbol: "?values"},
+		query.DatabaseInput{Name: datalog.NewSymbol("$")},
+		query.CollectionInput{Symbol: datalog.NewSymbol("?values")},
 	}
 
 	symbols := batcher.ExtractInputSymbols(inputs)
 
-	expected := []query.Symbol{"$", "?values"}
+	expected := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?values")}
 	if len(symbols) != len(expected) {
 		t.Fatalf("Expected %d symbols, got %d", len(expected), len(symbols))
 	}
@@ -236,15 +238,15 @@ func TestBatcher_ExtractInputSymbols_Mixed(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{Name: query.Symbol("$")},
-		query.ScalarInput{Symbol: "?x"},
-		query.CollectionInput{Symbol: "?ys"},
-		query.TupleInput{Symbols: []query.Symbol{"?a", "?b"}},
+		query.DatabaseInput{Name: datalog.NewSymbol("$")},
+		query.ScalarInput{Symbol: datalog.NewSymbol("?x")},
+		query.CollectionInput{Symbol: datalog.NewSymbol("?ys")},
+		query.TupleInput{Symbols: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")}},
 	}
 
 	symbols := batcher.ExtractInputSymbols(inputs)
 
-	expected := []query.Symbol{"$", "?x", "?ys", "?a", "?b"}
+	expected := []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?x"), datalog.NewSymbol("?ys"), datalog.NewSymbol("?a"), datalog.NewSymbol("?b")}
 	if len(symbols) != len(expected) {
 		t.Fatalf("Expected %d symbols, got %d", len(expected), len(symbols))
 	}
@@ -272,15 +274,15 @@ func TestBatcher_ExtractRelationSymbols_WithRelationInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{Name: query.Symbol("$")},
+		query.DatabaseInput{Name: datalog.NewSymbol("$")},
 		query.RelationInput{
-			Symbols: []query.Symbol{"?sym", "?hour"},
+			Symbols: []query.Symbol{datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")},
 		},
 	}
 
 	symbols := batcher.ExtractRelationSymbols(inputs)
 
-	expected := []query.Symbol{"?sym", "?hour"}
+	expected := []query.Symbol{datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")}
 	if len(symbols) != len(expected) {
 		t.Fatalf("Expected %d symbols, got %d", len(expected), len(symbols))
 	}
@@ -296,8 +298,8 @@ func TestBatcher_ExtractRelationSymbols_WithoutRelationInput(t *testing.T) {
 	batcher := NewSubqueryBatcher()
 
 	inputs := []query.InputSpec{
-		query.DatabaseInput{Name: query.Symbol("$")},
-		query.ScalarInput{Symbol: "?sym"},
+		query.DatabaseInput{Name: datalog.NewSymbol("$")},
+		query.ScalarInput{Symbol: datalog.NewSymbol("?sym")},
 	}
 
 	symbols := batcher.ExtractRelationSymbols(inputs)

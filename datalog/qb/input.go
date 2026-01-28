@@ -1,6 +1,7 @@
 package qb
 
 import (
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -24,7 +25,7 @@ type dbInput struct{}
 var DB InputSpec = dbInput{}
 
 func (d dbInput) toInputSpec() query.InputSpec {
-	return query.DatabaseInput{Name: query.Symbol("$")}
+	return query.DatabaseInput{Name: datalog.SymDollar}
 }
 
 // scalarInput represents a scalar input parameter (?x).

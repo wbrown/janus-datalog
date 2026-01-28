@@ -47,9 +47,9 @@ func BenchmarkIteratorReuse(b *testing.B) {
 	// Pattern: [?b :price/symbol ?s] with ?s bound to 5 symbols
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?b"},
+			query.Variable{Name: datalog.NewSymbol("?b")},
 			query.Constant{Value: datalog.NewKeyword(":price/symbol")},
-			query.Variable{Name: "?s"},
+			query.Variable{Name: datalog.NewSymbol("?s")},
 		},
 	}
 
@@ -60,7 +60,7 @@ func BenchmarkIteratorReuse(b *testing.B) {
 		tuples = append(tuples, executor.Tuple{symbolEntity})
 	}
 	bindingRel := executor.NewMaterializedRelation(
-		[]query.Symbol{"?s"},
+		[]query.Symbol{datalog.NewSymbol("?s")},
 		tuples,
 	)
 
@@ -129,7 +129,7 @@ func BenchmarkNoIteratorReuse(b *testing.B) {
 			symbolEntity := datalog.NewIdentity(fmt.Sprintf("symbol:%s", symbols[j]))
 			pattern := &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?b"},
+					query.Variable{Name: datalog.NewSymbol("?b")},
 					query.Constant{Value: datalog.NewKeyword(":price/symbol")},
 					query.Constant{Value: symbolEntity}, // Constant instead of variable
 				},

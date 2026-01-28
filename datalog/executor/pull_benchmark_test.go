@@ -181,7 +181,7 @@ func BenchmarkPull_VsManualQuery(b *testing.B) {
 					Elements: []query.PatternElement{
 						query.Constant{Value: alice},
 						query.Constant{Value: attr},
-						query.Variable{Name: "?v"},
+						query.Variable{Name: datalog.NewSymbol("?v")},
 					},
 				}
 				rel, err := matcher.Match(pattern, nil)

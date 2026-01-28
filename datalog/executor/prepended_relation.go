@@ -64,7 +64,7 @@ func (r *PrependedRelation) Get(i int) Tuple {
 func (r *PrependedRelation) String() string {
 	var symbols []string
 	for _, col := range r.columns {
-		symbols = append(symbols, string(col))
+		symbols = append(symbols, col.String())
 	}
 	return fmt.Sprintf("PrependedRelation([%s], streaming)", strings.Join(symbols, " "))
 }

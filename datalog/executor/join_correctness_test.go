@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // TestJoinCorrectness validates that asymmetric and symmetric joins produce identical, correct results
@@ -14,8 +16,8 @@ func TestJoinCorrectness(t *testing.T) {
 
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
-			leftCols := []query.Symbol{"?x", "?name"}
-			rightCols := []query.Symbol{"?x", "?value"}
+			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -56,8 +58,8 @@ func TestJoinCorrectness(t *testing.T) {
 
 // TestJoinCorrectnessWithMismatches tests partial joins where not all tuples match
 func TestJoinCorrectnessWithMismatches(t *testing.T) {
-	leftCols := []query.Symbol{"?x", "?name"}
-	rightCols := []query.Symbol{"?x", "?value"}
+	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	// Left has IDs 0-99, Right has IDs 50-149
 	// Expected matches: 50-99 (50 results)
@@ -103,8 +105,8 @@ func TestJoinCorrectnessEarlyTermination(t *testing.T) {
 	size := 10000
 	limit := 100
 
-	leftCols := []query.Symbol{"?x", "?name"}
-	rightCols := []query.Symbol{"?x", "?value"}
+	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, size)
 	rightTuples := make([]Tuple, size)

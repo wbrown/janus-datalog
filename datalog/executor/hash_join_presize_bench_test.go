@@ -6,6 +6,8 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // BenchmarkHashJoinPreSizing compares hash join performance with and without pre-sizing
@@ -15,9 +17,9 @@ func BenchmarkHashJoinPreSizing(b *testing.B) {
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Size_%d", size), func(b *testing.B) {
 			// Create two relations to join
-			leftCols := []query.Symbol{"?a", "?b", "?c"}
-			rightCols := []query.Symbol{"?b", "?d"}
-			joinCols := []query.Symbol{"?b"}
+			leftCols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
+			rightCols := []query.Symbol{datalog.NewSymbol("?b"), datalog.NewSymbol("?d")}
+			joinCols := []query.Symbol{datalog.NewSymbol("?b")}
 
 			// Generate test data
 			leftTuples := make([]Tuple, size)

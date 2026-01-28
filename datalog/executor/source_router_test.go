@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // mockPatternMatcher is a test helper for PatternMatcher
@@ -27,16 +29,16 @@ func TestSourceRouterRoutes(t *testing.T) {
 	mockPerms := &mockPatternMatcher{}
 
 	router := NewSourceRouter(map[query.Symbol]PatternMatcher{
-		query.Symbol("$users"): mockUsers,
-		query.Symbol("$perms"): mockPerms,
+		datalog.NewSymbol("$users"): mockUsers,
+		datalog.NewSymbol("$perms"): mockPerms,
 	})
 
 	pattern := &query.DataPattern{
-		Source: query.Symbol("$users"),
+		Source: datalog.NewSymbol("$users"),
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: ":attr"},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -54,11 +56,11 @@ func TestSourceRouterRoutes(t *testing.T) {
 	// Reset and route to $perms
 	mockUsers.wasCalled = false
 	pattern = &query.DataPattern{
-		Source: query.Symbol("$perms"),
+		Source: datalog.NewSymbol("$perms"),
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: ":attr"},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -78,16 +80,16 @@ func TestSourceRouterDefaultSource(t *testing.T) {
 	mockDefault := &mockPatternMatcher{}
 
 	router := NewSourceRouter(map[query.Symbol]PatternMatcher{
-		query.Symbol("$"): mockDefault,
+		datalog.NewSymbol("$"): mockDefault,
 	})
 
 	// Empty source should route to "$"
 	pattern := &query.DataPattern{
-		Source: "",
+		Source: nil,
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: ":attr"},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -102,15 +104,15 @@ func TestSourceRouterDefaultSource(t *testing.T) {
 
 func TestSourceRouterUnknownSource(t *testing.T) {
 	router := NewSourceRouter(map[query.Symbol]PatternMatcher{
-		query.Symbol("$"): &mockPatternMatcher{},
+		datalog.NewSymbol("$"): &mockPatternMatcher{},
 	})
 
 	pattern := &query.DataPattern{
-		Source: query.Symbol("$nonexistent"),
+		Source: datalog.NewSymbol("$nonexistent"),
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: ":attr"},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 
@@ -124,15 +126,15 @@ func TestSourceRouterImplementsPatternMatcher(t *testing.T) {
 	// Verify SourceRouter can be used as a PatternMatcher
 	mockDefault := &mockPatternMatcher{}
 	router := NewSourceRouter(map[query.Symbol]PatternMatcher{
-		query.Symbol("$"): mockDefault,
+		datalog.NewSymbol("$"): mockDefault,
 	})
 
 	var pm PatternMatcher = router
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: ":attr"},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
 

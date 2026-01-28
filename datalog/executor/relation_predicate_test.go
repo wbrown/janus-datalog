@@ -3,11 +3,13 @@ package executor
 import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"testing"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestFilterWithPredicate(t *testing.T) {
 	// Create a test relation
-	columns := []query.Symbol{"?x", "?y", "?z"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	tuples := []Tuple{
 		{1, 2, 3},
 		{4, 5, 6},
@@ -19,7 +21,7 @@ func TestFilterWithPredicate(t *testing.T) {
 	// Test with a comparison predicate
 	pred := &query.Comparison{
 		Op:    query.OpGT,
-		Left:  query.VariableTerm{Symbol: "?x"},
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 		Right: query.ConstantTerm{Value: int64(5)},
 	}
 
@@ -44,7 +46,7 @@ func TestFilterWithPredicate(t *testing.T) {
 
 func TestEvaluateFunction(t *testing.T) {
 	// Create a test relation
-	columns := []query.Symbol{"?x", "?y"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{int64(10), int64(20)},
 		{int64(5), int64(15)},
@@ -55,11 +57,11 @@ func TestEvaluateFunction(t *testing.T) {
 	// Test with an arithmetic function
 	fn := &query.ArithmeticFunction{
 		Op:    query.OpAdd,
-		Left:  query.VariableTerm{Symbol: "?x"},
-		Right: query.VariableTerm{Symbol: "?y"},
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+		Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
 	}
 
-	result := rel.EvaluateFunction(fn, "?sum")
+	result := rel.EvaluateFunction(fn, datalog.NewSymbol("?sum"))
 
 	// Should have 3 columns now
 	if len(result.Columns()) != 3 {
@@ -85,7 +87,7 @@ func TestEvaluateFunction(t *testing.T) {
 
 func TestChainedComparison(t *testing.T) {
 	// Test the variadic comparison with FilterWithPredicate
-	columns := []query.Symbol{"?x", "?y", "?z"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	tuples := []Tuple{
 		{1, 5, 10},
 		{2, 3, 4}, // This one satisfies 2 < 3 < 4 < 5
@@ -98,9 +100,9 @@ func TestChainedComparison(t *testing.T) {
 	pred := &query.ChainedComparison{
 		Op: query.OpLT,
 		Terms: []query.Term{
-			query.VariableTerm{Symbol: "?x"},
-			query.VariableTerm{Symbol: "?y"},
-			query.VariableTerm{Symbol: "?z"},
+			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+			query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+			query.VariableTerm{Symbol: datalog.NewSymbol("?z")},
 			query.ConstantTerm{Value: int64(5)},
 		},
 	}

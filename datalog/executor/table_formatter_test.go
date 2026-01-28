@@ -21,7 +21,7 @@ func TestTableFormatter(t *testing.T) {
 	})
 
 	t.Run("FormatSimpleRelation", func(t *testing.T) {
-		columns := []query.Symbol{"?name", "?age", "?active"}
+		columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?active")}
 		tuples := []Tuple{
 			{"Alice", int64(30), true},
 			{"Bob", int64(25), false},
@@ -44,7 +44,7 @@ func TestTableFormatter(t *testing.T) {
 	})
 
 	t.Run("FormatWithDifferentTypes", func(t *testing.T) {
-		columns := []query.Symbol{"?entity", "?keyword", "?value", "?time"}
+		columns := []query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?keyword"), datalog.NewSymbol("?value"), datalog.NewSymbol("?time")}
 		testTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
 		tuples := []Tuple{
@@ -89,7 +89,7 @@ func TestTableFormatter(t *testing.T) {
 	t.Run("FormatWithLongStrings", func(t *testing.T) {
 		formatter.MaxWidth = 20
 
-		columns := []query.Symbol{"?id", "?description"}
+		columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?description")}
 		longString := "This is a very long string that should be truncated because it exceeds the maximum width"
 
 		tuples := []Tuple{
@@ -108,7 +108,7 @@ func TestTableFormatter(t *testing.T) {
 	})
 
 	t.Run("FormatMarkdownTable", func(t *testing.T) {
-		columns := []query.Symbol{"?symbol", "?price", "?volume"}
+		columns := []query.Symbol{datalog.NewSymbol("?symbol"), datalog.NewSymbol("?price"), datalog.NewSymbol("?volume")}
 		tuples := []Tuple{
 			{"AAPL", 150.25, int64(1000000)},
 			{"GOOG", 2800.50, int64(500000)},
@@ -131,7 +131,7 @@ func TestTableFormatter(t *testing.T) {
 
 	t.Run("FormatResult", func(t *testing.T) {
 		result := NewMaterializedRelation(
-			[]query.Symbol{"?name", "?count"},
+			[]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?count")},
 			[]Tuple{
 				{"Alice", int64(5)},
 				{"Bob", int64(3)},
@@ -151,7 +151,7 @@ func TestTableFormatter(t *testing.T) {
 
 func TestPrintHelpers(t *testing.T) {
 	// Just test that these don't panic
-	columns := []query.Symbol{"?x", "?y"}
+	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{int64(1), "a"},
 		{int64(2), "b"},
@@ -177,7 +177,7 @@ func TestPrintHelpers(t *testing.T) {
 // This is a regression test for the CLI empty results bug.
 func TestTableFormatterTupleCopying(t *testing.T) {
 	// Create a relation with streaming behavior enabled
-	columns := []query.Symbol{"x", "y", "z"}
+	columns := []query.Symbol{datalog.NewSymbol("x"), datalog.NewSymbol("y"), datalog.NewSymbol("z")}
 	tuples := []Tuple{
 		{int64(1), int64(10), int64(100)},
 		{int64(2), int64(20), int64(200)},

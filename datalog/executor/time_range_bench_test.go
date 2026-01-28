@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // BenchmarkExtractTimeRanges benchmarks the time range extraction with various sizes
@@ -52,11 +54,11 @@ func BenchmarkExtractTimeRanges(b *testing.B) {
 			var columns []query.Symbol
 			var correlationKeys []query.Symbol
 			if bm.daily {
-				columns = []query.Symbol{"?year", "?month", "?day"}
-				correlationKeys = []query.Symbol{"$", "?s", "?year", "?month", "?day"}
+				columns = []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")}
+				correlationKeys = []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")}
 			} else {
-				columns = []query.Symbol{"?year", "?month", "?day", "?hour"}
-				correlationKeys = []query.Symbol{"$", "?s", "?year", "?month", "?day", "?hour"}
+				columns = []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")}
+				correlationKeys = []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")}
 			}
 
 			inputRel := NewMaterializedRelation(columns, inputTuples)

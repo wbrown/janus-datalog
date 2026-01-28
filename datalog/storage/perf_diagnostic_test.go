@@ -81,12 +81,12 @@ func BenchmarkHashJoinIteration(b *testing.B) {
 	matcher := db.Matcher().(*BadgerMatcher)
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":task/scenario")},
-			query.Variable{Name: "?scenario"},
+			query.Variable{Name: datalog.NewSymbol("?scenario")},
 		},
 	}
-	inputCols := []query.Symbol{"?scenario"}
+	inputCols := []query.Symbol{datalog.NewSymbol("?scenario")}
 	inputTuples := []executor.Tuple{{scenario1}}
 	inputRel := executor.NewMaterializedRelationWithOptions(inputCols, inputTuples, getDefaultExecutorOptions())
 

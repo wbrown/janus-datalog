@@ -79,7 +79,7 @@ func TestParallelSubqueryWithBadgerDB(t *testing.T) {
 			}
 		}
 	}
-	inputRel := executor.NewMaterializedRelation([]query.Symbol{"?n", "?y", "?m"}, inputTuples)
+	inputRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
 	t.Run("sequential with BadgerDB", func(t *testing.T) {
 		seqExec := executor.NewExecutor(matcher)

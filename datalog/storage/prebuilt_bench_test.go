@@ -39,9 +39,9 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 			name: "UnboundAttribute_PriceTime",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?bar"},
+					query.Variable{Name: datalog.NewSymbol("?bar")},
 					query.Constant{Value: datalog.NewKeyword("price/time")},
-					query.Variable{Name: "?time"},
+					query.Variable{Name: datalog.NewSymbol("?time")},
 				},
 			},
 		},
@@ -49,9 +49,9 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 			name: "UnboundAttribute_PriceOpen",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?bar"},
+					query.Variable{Name: datalog.NewSymbol("?bar")},
 					query.Constant{Value: datalog.NewKeyword("price/open")},
-					query.Variable{Name: "?open"},
+					query.Variable{Name: datalog.NewSymbol("?open")},
 				},
 			},
 		},
@@ -60,8 +60,8 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
 					query.Constant{Value: datalog.NewIdentity("bar500")},
-					query.Variable{Name: "?attr"},
-					query.Variable{Name: "?value"},
+					query.Variable{Name: datalog.NewSymbol("?attr")},
+					query.Variable{Name: datalog.NewSymbol("?value")},
 				},
 			},
 		},
@@ -69,7 +69,7 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 			name: "BoundSymbol_SpecificStock",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?bar"},
+					query.Variable{Name: datalog.NewSymbol("?bar")},
 					query.Constant{Value: datalog.NewKeyword("price/symbol")},
 					query.Constant{Value: datalog.NewIdentity("TICK0005")},
 				},
@@ -79,9 +79,9 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 			name: "LargeBindingSet_260Entities",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?bar"},
+					query.Variable{Name: datalog.NewSymbol("?bar")},
 					query.Constant{Value: datalog.NewKeyword("price/open")},
-					query.Variable{Name: "?open"},
+					query.Variable{Name: datalog.NewSymbol("?open")},
 				},
 			},
 			setup: func() executor.Relations {
@@ -92,7 +92,7 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 				}
 				return executor.Relations{
 					executor.NewMaterializedRelation(
-						[]query.Symbol{"?bar"},
+						[]query.Symbol{datalog.NewSymbol("?bar")},
 						tuples,
 					),
 				}
@@ -154,7 +154,7 @@ func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 		// Pattern: [?bar :price/symbol ?symbol]
 		symbolPattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?bar"},
+				query.Variable{Name: datalog.NewSymbol("?bar")},
 				query.Constant{Value: datalog.NewKeyword("price/symbol")},
 				query.Constant{Value: datalog.NewIdentity("TICK0001")},
 			},
@@ -181,7 +181,7 @@ func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 					Elements: []query.PatternElement{
 						query.Constant{Value: barEntity},
 						query.Constant{Value: datalog.NewKeyword("price/open")},
-						query.Variable{Name: "?open"},
+						query.Variable{Name: datalog.NewSymbol("?open")},
 					},
 				}
 				openResult, _ := matcher.Match(openPattern, nil)

@@ -62,16 +62,16 @@ func BenchmarkJoinStrategyThreshold(b *testing.B) {
 		}
 
 		bindingRel := executor.NewMaterializedRelation(
-			[]query.Symbol{"?e"},
+			[]query.Symbol{datalog.NewSymbol("?e")},
 			bindingTuples,
 		)
 
 		// Create pattern: [?e :person/age ?age]
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: datalog.NewKeyword(":person/age")},
-				query.Variable{Name: "?age"},
+				query.Variable{Name: datalog.NewSymbol("?age")},
 			},
 		}
 

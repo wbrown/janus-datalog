@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -32,11 +33,11 @@ func TestParseSimpleQuery(t *testing.T) {
 
 		switch i {
 		case 0:
-			if v.Symbol != "?e" {
+			if v.Symbol != datalog.NewSymbol("?e") {
 				t.Errorf("Find[0]: expected ?e, got %s", v.Symbol)
 			}
 		case 1:
-			if v.Symbol != "?name" {
+			if v.Symbol != datalog.NewSymbol("?name") {
 				t.Errorf("Find[1]: expected ?name, got %s", v.Symbol)
 			}
 		}
@@ -282,7 +283,7 @@ func TestExtractVariables(t *testing.T) {
 	}
 
 	vars := ExtractVariables(q.Where)
-	expected := []query.Symbol{"?e", "?name", "?age"}
+	expected := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
 
 	if len(vars) != len(expected) {
 		t.Errorf("expected %d variables, got %d", len(expected), len(vars))
@@ -363,7 +364,7 @@ func TestParseSubqueryPatterns(t *testing.T) {
 					return fmt.Errorf("expected TupleBinding, got %T", subq.Binding)
 				}
 
-				if len(binding.Variables) != 1 || binding.Variables[0] != "?high" {
+				if len(binding.Variables) != 1 || binding.Variables[0] != datalog.NewSymbol("?high") {
 					return fmt.Errorf("expected [[?high]] binding, got %v", binding.Variables)
 				}
 
@@ -373,7 +374,7 @@ func TestParseSubqueryPatterns(t *testing.T) {
 				}
 
 				agg, ok := subq.Query.Find[0].(query.FindAggregate)
-				if !ok || agg.Function != "max" || agg.Arg != "?h" {
+				if !ok || agg.Function != "max" || agg.Arg != datalog.NewSymbol("?h") {
 					return fmt.Errorf("expected (max ?h) in nested query")
 				}
 
@@ -401,7 +402,7 @@ func TestParseSubqueryPatterns(t *testing.T) {
 					return fmt.Errorf("expected ScalarBinding, got %T", subq.Binding)
 				}
 
-				if binding.Variable != "?max-price" {
+				if binding.Variable != datalog.NewSymbol("?max-price") {
 					return fmt.Errorf("expected ?max-price binding, got %s", binding.Variable)
 				}
 
@@ -429,7 +430,7 @@ func TestParseSubqueryPatterns(t *testing.T) {
 					return fmt.Errorf("expected CollectionBinding, got %T", subq.Binding)
 				}
 
-				if binding.Variable != "?prices" {
+				if binding.Variable != datalog.NewSymbol("?prices") {
 					return fmt.Errorf("expected ?prices binding, got %s", binding.Variable)
 				}
 
@@ -462,7 +463,7 @@ func TestParseSubqueryPatterns(t *testing.T) {
 					return fmt.Errorf("expected 2 variables in binding, got %d", len(binding.Variables))
 				}
 
-				if binding.Variables[0] != "?price" || binding.Variables[1] != "?time" {
+				if binding.Variables[0] != datalog.NewSymbol("?price") || binding.Variables[1] != datalog.NewSymbol("?time") {
 					return fmt.Errorf("expected [[?price ?time] ...], got %v", binding.Variables)
 				}
 
@@ -494,13 +495,13 @@ func TestParseSubqueryPatterns(t *testing.T) {
 
 				// First input should be variable ?s
 				v1, ok := subq.Inputs[0].(query.Variable)
-				if !ok || v1.Name != "?s" {
+				if !ok || v1.Name != datalog.NewSymbol("?s") {
 					return fmt.Errorf("expected ?s as first input")
 				}
 
 				// Second input should be variable ?date
 				v2, ok := subq.Inputs[1].(query.Variable)
-				if !ok || v2.Name != "?date" {
+				if !ok || v2.Name != datalog.NewSymbol("?date") {
 					return fmt.Errorf("expected ?date as second input")
 				}
 
@@ -685,5 +686,50 @@ func TestParseScalarFindSpec(t *testing.T) {
 				t.Errorf("expected %d find elements, got %d", tt.findCount, len(q.Find))
 			}
 		})
+	}
+}
+
+func TestParseSymbolValue(t *testing.T) {
+	// Bare symbols in value position should parse as Symbol constants
+	input := `[:find ?e
+              :where [?e :fn/name my-function]]`
+
+	q, err := ParseQuery(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(q.Where) != 1 {
+		t.Fatalf("expected 1 where clause, got %d", len(q.Where))
+	}
+
+	pattern := q.Where[0].(*query.DataPattern)
+	elem := pattern.Elements[2]
+
+	if elem.IsVariable() {
+		t.Fatal("expected constant, got variable")
+	}
+	if elem.IsBlank() {
+		t.Fatal("expected constant, got blank")
+	}
+
+	c, ok := elem.(query.Constant)
+	if !ok {
+		t.Fatalf("expected Constant, got %T", elem)
+	}
+
+	sym, ok := c.Value.(datalog.Symbol)
+	if !ok {
+		t.Fatalf("expected Symbol value, got %T", c.Value)
+	}
+
+	if sym.String() != "my-function" {
+		t.Errorf("expected symbol value 'my-function', got %q", sym.String())
+	}
+
+	// Verify it's interned
+	expected := datalog.NewSymbol("my-function")
+	if sym != expected {
+		t.Error("parsed symbol should be pointer-equal to NewSymbol result (interning)")
 	}
 }

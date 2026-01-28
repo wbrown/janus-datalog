@@ -77,7 +77,7 @@ func TestStringPredicateWithParameter(t *testing.T) {
 
 		// Create input relation for ?symbol
 		symbolInput := executor.NewMaterializedRelation(
-			[]query.Symbol{"?symbol"},
+			[]query.Symbol{datalog.NewSymbol("?symbol")},
 			[]executor.Tuple{{"CRWV"}},
 		)
 
@@ -121,11 +121,11 @@ func TestStringPredicateWithParameter(t *testing.T) {
 		// Create input relations for ?symbol and ?month
 		inputs := []executor.Relation{
 			executor.NewMaterializedRelation(
-				[]query.Symbol{"?symbol"},
+				[]query.Symbol{datalog.NewSymbol("?symbol")},
 				[]executor.Tuple{{"CRWV"}},
 			),
 			executor.NewMaterializedRelation(
-				[]query.Symbol{"?month"},
+				[]query.Symbol{datalog.NewSymbol("?month")},
 				[]executor.Tuple{{"2025-11"}},
 			),
 		}
@@ -170,11 +170,11 @@ func TestStringPredicateWithParameter(t *testing.T) {
 		// Create input relations for ?symbol and ?month
 		inputs := []executor.Relation{
 			executor.NewMaterializedRelation(
-				[]query.Symbol{"?symbol"},
+				[]query.Symbol{datalog.NewSymbol("?symbol")},
 				[]executor.Tuple{{"CRWV"}},
 			),
 			executor.NewMaterializedRelation(
-				[]query.Symbol{"?month"},
+				[]query.Symbol{datalog.NewSymbol("?month")},
 				[]executor.Tuple{{"2025-12"}},
 			),
 		}

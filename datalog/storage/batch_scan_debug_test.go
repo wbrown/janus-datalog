@@ -37,9 +37,9 @@ func TestBatchScanDebug(t *testing.T) {
 	// Pattern: [?e :price/time ?t]
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: query.Symbol("?e")},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: priceTime},
-			query.Variable{Name: query.Symbol("?t")},
+			query.Variable{Name: datalog.NewSymbol("?t")},
 		},
 	}
 
@@ -78,7 +78,7 @@ func TestBatchScanDebug(t *testing.T) {
 			tuples = append(tuples, executor.Tuple{tuple[0]})
 		}
 
-		bindingRel := executor.NewMaterializedRelation([]query.Symbol{"?e"}, tuples)
+		bindingRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, tuples)
 		t.Logf("Binding relation has %d tuples", bindingRel.Size())
 
 		// Now match with constraint

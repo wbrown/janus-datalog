@@ -49,9 +49,9 @@ func TestSliceSource_Match(t *testing.T) {
 			name: "all keys",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?r"},
+					query.Variable{Name: datalog.NewSymbol("?r")},
 					query.Constant{Value: kw(":rule/key")},
-					query.Variable{Name: "?key"},
+					query.Variable{Name: datalog.NewSymbol("?key")},
 				},
 			},
 			wantSize: 2,
@@ -60,7 +60,7 @@ func TestSliceSource_Match(t *testing.T) {
 			name: "specific key",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?r"},
+					query.Variable{Name: datalog.NewSymbol("?r")},
 					query.Constant{Value: kw(":rule/key")},
 					query.Constant{Value: "region-lore"},
 				},
@@ -71,9 +71,9 @@ func TestSliceSource_Match(t *testing.T) {
 			name: "all dependencies",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?r"},
+					query.Variable{Name: datalog.NewSymbol("?r")},
 					query.Constant{Value: kw(":rule/depends-on")},
-					query.Variable{Name: "?dep"},
+					query.Variable{Name: datalog.NewSymbol("?dep")},
 				},
 			},
 			wantSize: 3, // world-lore, region, character
@@ -82,7 +82,7 @@ func TestSliceSource_Match(t *testing.T) {
 			name: "specific dependency",
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
-					query.Variable{Name: "?r"},
+					query.Variable{Name: datalog.NewSymbol("?r")},
 					query.Constant{Value: kw(":rule/depends-on")},
 					query.Constant{Value: "character"},
 				},
@@ -94,8 +94,8 @@ func TestSliceSource_Match(t *testing.T) {
 			pattern: &query.DataPattern{
 				Elements: []query.PatternElement{
 					query.Constant{Value: datalog.NewIdentity("slice:0")},
-					query.Variable{Name: "?a"},
-					query.Variable{Name: "?v"},
+					query.Variable{Name: datalog.NewSymbol("?a")},
+					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
 			wantSize: 3, // key + 2 depends-on values
@@ -127,9 +127,9 @@ func TestSliceSource_EmptySlice(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: kw(":item/name")},
-			query.Variable{Name: "?name"},
+			query.Variable{Name: datalog.NewSymbol("?name")},
 		},
 	}
 
@@ -152,9 +152,9 @@ func TestSliceSourceImplementsPatternMatcher(t *testing.T) {
 	var pm PatternMatcher = source
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: kw(":item/name")},
-			query.Variable{Name: "?name"},
+			query.Variable{Name: datalog.NewSymbol("?name")},
 		},
 	}
 

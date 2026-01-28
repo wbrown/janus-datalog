@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/wbrown/janus-datalog/datalog/query"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestBufferedIterator(t *testing.T) {
@@ -268,7 +270,7 @@ func TestStreamingRelationWithBuffering(t *testing.T) {
 			{1, "alice", 100},
 			{2, "bob", 200},
 		}
-		columns := []query.Symbol{"?id", "?name", "?score"}
+		columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
 		source := newMockIterator(tuples)
 		rel := NewStreamingRelationWithOptions(columns, source, opts)
@@ -306,7 +308,7 @@ func TestStreamingRelationWithBuffering(t *testing.T) {
 
 	t.Run("EfficientIsEmpty", func(t *testing.T) {
 		tuples := []Tuple{{1, "alice"}}
-		columns := []query.Symbol{"?id", "?name"}
+		columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
 
 		source := newMockIterator(tuples)
 		// Use EnableTrueStreaming=true for this test since we're testing that IsEmpty() is efficient

@@ -19,12 +19,12 @@ func TestTupleBuilderCacheConcurrency(t *testing.T) {
 	// Create test pattern and columns
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":test/attr")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	columns := []query.Symbol{"?e", "?v"}
+	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 	// Spawn 1000 goroutines accessing cache concurrently
 	// This should trigger the concurrent map access bug if not fixed
@@ -67,12 +67,12 @@ func TestTupleBuilderCacheSharing(t *testing.T) {
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Variable{Name: "?e"},
+			query.Variable{Name: datalog.NewSymbol("?e")},
 			query.Constant{Value: datalog.NewKeyword(":test/attr")},
-			query.Variable{Name: "?v"},
+			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	columns := []query.Symbol{"?e", "?v"}
+	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 	// Get builder from base matcher
 	builder1 := baseMatcher.getTupleBuilder(pattern, columns)

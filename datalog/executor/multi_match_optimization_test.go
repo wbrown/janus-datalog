@@ -158,9 +158,9 @@ func TestMultiMatchOptimization(t *testing.T) {
 		// Pattern: [?e :entity/value ?v]
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: valueAttr},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
@@ -171,7 +171,7 @@ func TestMultiMatchOptimization(t *testing.T) {
 
 		for _, entity := range entities {
 			// Create single-row relation
-			singleRel := NewMaterializedRelation([]query.Symbol{"?e"}, []Tuple{{entity}})
+			singleRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, []Tuple{{entity}})
 
 			results, err := matcher.MatchWithRelation(pattern, singleRel)
 			if err != nil {
@@ -206,14 +206,14 @@ func TestMultiMatchOptimization(t *testing.T) {
 		}
 
 		// Create multi-row relation with all entities
-		multiRel := NewMaterializedRelation([]query.Symbol{"?e"}, tuples)
+		multiRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, tuples)
 
 		// Pattern: [?e :entity/value ?v]
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: valueAttr},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
@@ -248,16 +248,16 @@ func TestMultiMatchOptimization(t *testing.T) {
 
 		pattern := &query.DataPattern{
 			Elements: []query.PatternElement{
-				query.Variable{Name: "?e"},
+				query.Variable{Name: datalog.NewSymbol("?e")},
 				query.Constant{Value: valueAttr},
-				query.Variable{Name: "?v"},
+				query.Variable{Name: datalog.NewSymbol("?v")},
 			},
 		}
 
 		// Method 1: Individual calls
 		var individualResults []datalog.Datom
 		for _, e := range entities {
-			rel := NewMaterializedRelation([]query.Symbol{"?e"}, []Tuple{{e}})
+			rel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, []Tuple{{e}})
 			results, _ := matcher.MatchWithRelation(pattern, rel)
 			individualResults = append(individualResults, results...)
 		}
@@ -270,7 +270,7 @@ func TestMultiMatchOptimization(t *testing.T) {
 		for _, e := range entities {
 			tuples = append(tuples, Tuple{e})
 		}
-		multiRel := NewMaterializedRelation([]query.Symbol{"?e"}, tuples)
+		multiRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, tuples)
 		multiResults, _ := matcher.MatchWithRelation(pattern, multiRel)
 
 		// Compare results
