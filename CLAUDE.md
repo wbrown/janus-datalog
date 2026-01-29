@@ -39,6 +39,11 @@ Before making ANY of these decisions, ASK:
 - "It's simpler/easier this way" (when deviating from a plan or established pattern)
 - Making a choice between multiple valid approaches without consulting
 
+**Bugs do not authorize design changes:**
+- Discovering a bug does not authorize you to change the agreed design. Report it and ask.
+- If something we agreed on doesn't work, STOP and ask. Do not substitute alternatives.
+- If you're about to do something different from what was discussed/agreed, ASK FIRST. No exceptions.
+
 **The user's job**: Set direction, make architectural choices, review designs
 **Your job**: Implement, follow patterns, propose options (not make choices)
 
@@ -294,6 +299,7 @@ The storage layer connects the query engine to BadgerDB:
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics; OR supports fallback expressions for default values
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates
 27. **Multi-source queries** - Named sources (`$name`), `SourceRouter`, cross-source joins, `MemoryPatternMatcher`, `SliceSource[T]`, query builder `Source()`/`PatFrom()`
+28. **Database export/import** - EDN format export/import for backup and migration; CLI flags `-export` and `-import`; preserves all value types and transaction IDs
 
 ### 📋 TODO (Priority Order)
 

@@ -24,6 +24,7 @@ Janus-datalog implements a substantial subset of Datomic's Datalog query languag
 
 **Storage:**
 - ✅ BadgerDB persistent storage with EAVT model and 5 indices
+- ✅ Export/Import to EDN format for backup and migration
 
 **Not Implemented:**
 - ❌ Rules (recursive queries)
@@ -276,6 +277,7 @@ Every datom includes a transaction ID for temporal queries.
 - **Multiple indices**: EAVT, AEVT, AVET, VAET, TAEV
 - **BadgerDB backend** for persistence
 - **L85 encoding** for sortable, efficient keys
+- **Export/Import** to EDN format for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md))
 
 ### 11. Type System
 

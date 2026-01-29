@@ -23,6 +23,8 @@ func main() {
 	var verbose bool
 	var queryStr string
 	var enableDecorrelation bool
+	var exportPath string
+	var importPath string
 
 	flag.StringVar(&dbPath, "db", "", "database path")
 	flag.BoolVar(&interactive, "i", false, "interactive mode")
@@ -30,6 +32,8 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "verbose mode (show query annotations)")
 	flag.StringVar(&queryStr, "query", "", "run a single query and exit")
 	flag.BoolVar(&enableDecorrelation, "decorrelate", true, "enable subquery decorrelation optimization (default: true)")
+	flag.StringVar(&exportPath, "export", "", "export database to EDN file")
+	flag.StringVar(&importPath, "import", "", "import database from EDN file")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [database_path]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "A Datalog query engine with persistent storage.\n\n")
@@ -44,6 +48,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -verbose           # Verbose mode with query annotations\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -verbose -i        # Interactive mode with annotations\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -query '[:find ?x :where [?x :person/name _]]'  # Run single query\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -export data.edn  # Export database to EDN file\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -db newdata.db -import data.edn # Import EDN file into database\n", os.Args[0])
 	}
 	flag.Parse()
 
@@ -57,9 +63,26 @@ func main() {
 		dbPath = flag.Arg(0)
 	}
 
+	// Check for conflicting flags
+	if exportPath != "" && importPath != "" {
+		log.Fatalf("Cannot specify both -export and -import")
+	}
+
 	// Default to datalog.db if no path specified
 	if dbPath == "" {
 		dbPath = "datalog.db"
+	}
+
+	// Handle export mode
+	if exportPath != "" {
+		runExport(dbPath, exportPath)
+		return
+	}
+
+	// Handle import mode
+	if importPath != "" {
+		runImport(dbPath, importPath)
+		return
 	}
 
 	// Check if database exists
@@ -365,6 +388,64 @@ func isDatabaseEmpty(db *storage.Database) bool {
 	}
 
 	return result.Size() == 0
+}
+
+// runExport exports the database to an EDN file
+func runExport(dbPath, exportPath string) {
+	// Check if database exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		log.Fatalf("Database does not exist: %s", dbPath)
+	}
+
+	// Open database
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create export file
+	f, err := os.Create(exportPath)
+	if err != nil {
+		log.Fatalf("Failed to create export file: %v", err)
+	}
+	defer f.Close()
+
+	// Export database
+	if err := db.Export(f); err != nil {
+		log.Fatalf("Failed to export database: %v", err)
+	}
+
+	fmt.Printf("Exported database to %s\n", exportPath)
+}
+
+// runImport imports an EDN file into the database
+func runImport(dbPath, importPath string) {
+	// Check if import file exists
+	if _, err := os.Stat(importPath); os.IsNotExist(err) {
+		log.Fatalf("Import file does not exist: %s", importPath)
+	}
+
+	// Open/create database
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		log.Fatalf("Failed to open/create database: %v", err)
+	}
+	defer db.Close()
+
+	// Open import file
+	f, err := os.Open(importPath)
+	if err != nil {
+		log.Fatalf("Failed to open import file: %v", err)
+	}
+	defer f.Close()
+
+	// Import into database
+	if err := db.Import(f); err != nil {
+		log.Fatalf("Failed to import: %v", err)
+	}
+
+	fmt.Printf("Imported %s into database %s\n", importPath, dbPath)
 }
 
 // runSingleQuery executes a single query and exits

@@ -1,0 +1,327 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/storage"
+)
+
+// Note: We use db.ExecuteQuery() directly instead of NewExecutor() + Execute()
+// because Database provides a simpler API that handles parsing internally.
+
+// buildCLI builds the CLI binary for testing
+func buildCLI(t *testing.T) string {
+	t.Helper()
+	binPath := filepath.Join(t.TempDir(), "datalog-test")
+	cmd := exec.Command("go", "build", "-o", binPath, ".")
+	cmd.Dir = filepath.Dir(os.Args[0])
+	// Get the actual source directory
+	if wd, err := os.Getwd(); err == nil {
+		cmd.Dir = wd
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build CLI: %v\n%s", err, out)
+	}
+	return binPath
+}
+
+// createTestDatabase creates a database with test data
+func createTestDatabase(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+
+	tx := db.NewTransaction()
+	alice := datalog.NewIdentity("alice")
+	tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice")
+	tx.Add(alice, datalog.NewKeyword(":person/age"), int64(30))
+
+	bob := datalog.NewIdentity("bob")
+	tx.Add(bob, datalog.NewKeyword(":person/name"), "Bob")
+	tx.Add(bob, datalog.NewKeyword(":person/age"), int64(25))
+
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+	db.Close()
+
+	return dbPath
+}
+
+func TestCLI_ExportFlag(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := createTestDatabase(t)
+	exportPath := filepath.Join(t.TempDir(), "export.edn")
+
+	cmd := exec.Command(binPath, "-db", dbPath, "-export", exportPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Export failed: %v\n%s", err, out)
+	}
+
+	// Verify output message
+	if !strings.Contains(string(out), "Exported database to") {
+		t.Errorf("Expected export success message, got: %s", out)
+	}
+
+	// Verify file exists and has content
+	content, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatalf("Failed to read export file: %v", err)
+	}
+
+	if len(content) == 0 {
+		t.Error("Export file is empty")
+	}
+
+	// Verify it contains valid EDN vectors
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "[#identity") {
+			t.Errorf("Line %d doesn't start with [#identity: %s", i+1, line)
+		}
+		if !strings.HasSuffix(line, "]") {
+			t.Errorf("Line %d doesn't end with ]: %s", i+1, line)
+		}
+	}
+}
+
+func TestCLI_ImportFlag(t *testing.T) {
+	binPath := buildCLI(t)
+
+	// Create a source database with test data
+	sourceDir := t.TempDir()
+	sourceDBPath := filepath.Join(sourceDir, "source.db")
+	sourceDB, err := storage.NewDatabase(sourceDBPath)
+	if err != nil {
+		t.Fatalf("Failed to create source database: %v", err)
+	}
+
+	tx := sourceDB.NewTransaction()
+	entity := datalog.NewIdentity("test-entity")
+	tx.Add(entity, datalog.NewKeyword(":test/value"), "hello")
+	tx.Add(entity, datalog.NewKeyword(":test/count"), int64(42))
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// Export the source database to EDN
+	ednPath := filepath.Join(t.TempDir(), "import.edn")
+	ednFile, err := os.Create(ednPath)
+	if err != nil {
+		t.Fatalf("Failed to create EDN file: %v", err)
+	}
+	if err := sourceDB.Export(ednFile); err != nil {
+		t.Fatalf("Failed to export source database: %v", err)
+	}
+	ednFile.Close()
+	sourceDB.Close()
+
+	// Import into new database using CLI
+	dbPath := filepath.Join(t.TempDir(), "imported.db")
+	cmd := exec.Command(binPath, "-db", dbPath, "-import", ednPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Import failed: %v\n%s", err, out)
+	}
+
+	// Verify output message
+	if !strings.Contains(string(out), "Imported") {
+		t.Errorf("Expected import success message, got: %s", out)
+	}
+
+	// Verify database was created and has data
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Error("Database was not created")
+	}
+
+	// Open and verify data
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open imported database: %v", err)
+	}
+	defer db.Close()
+
+	// Query to verify data exists
+	result, err := db.ExecuteQuery(`[:find ?v :where [_ :test/value ?v]]`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if len(result) != 1 {
+		t.Errorf("Expected 1 result, got %d", len(result))
+	}
+}
+
+func TestCLI_ExportImportRoundTrip(t *testing.T) {
+	binPath := buildCLI(t)
+	db1Path := createTestDatabase(t)
+	exportPath := filepath.Join(t.TempDir(), "roundtrip.edn")
+	db2Path := filepath.Join(t.TempDir(), "roundtrip.db")
+
+	// Export db1
+	cmd := exec.Command(binPath, "-db", db1Path, "-export", exportPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Export failed: %v\n%s", err, out)
+	}
+
+	// Import to db2
+	cmd = exec.Command(binPath, "-db", db2Path, "-import", exportPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Import failed: %v\n%s", err, out)
+	}
+
+	// Query both databases and compare
+	db1, err := storage.NewDatabase(db1Path)
+	if err != nil {
+		t.Fatalf("Failed to open db1: %v", err)
+	}
+	defer db1.Close()
+
+	db2, err := storage.NewDatabase(db2Path)
+	if err != nil {
+		t.Fatalf("Failed to open db2: %v", err)
+	}
+	defer db2.Close()
+
+	// Query names from both
+	result1, err := db1.ExecuteQuery(`[:find ?name :where [_ :person/name ?name]]`)
+	if err != nil {
+		t.Fatalf("Query db1 failed: %v", err)
+	}
+
+	result2, err := db2.ExecuteQuery(`[:find ?name :where [_ :person/name ?name]]`)
+	if err != nil {
+		t.Fatalf("Query db2 failed: %v", err)
+	}
+
+	if len(result1) != len(result2) {
+		t.Errorf("Result sizes differ: db1=%d, db2=%d", len(result1), len(result2))
+	}
+}
+
+func TestCLI_ExportNonexistentDB(t *testing.T) {
+	binPath := buildCLI(t)
+	exportPath := filepath.Join(t.TempDir(), "export.edn")
+
+	cmd := exec.Command(binPath, "-db", "/nonexistent/path/db", "-export", exportPath)
+	out, err := cmd.CombinedOutput()
+
+	// Should fail
+	if err == nil {
+		t.Error("Expected error for nonexistent database")
+	}
+
+	// Should mention database doesn't exist
+	if !strings.Contains(string(out), "does not exist") {
+		t.Errorf("Expected 'does not exist' error, got: %s", out)
+	}
+}
+
+func TestCLI_ImportMalformedFile(t *testing.T) {
+	binPath := buildCLI(t)
+
+	// Create a valid database and export one line
+	sourceDir := t.TempDir()
+	sourceDBPath := filepath.Join(sourceDir, "source.db")
+	sourceDB, err := storage.NewDatabase(sourceDBPath)
+	if err != nil {
+		t.Fatalf("Failed to create source database: %v", err)
+	}
+
+	tx := sourceDB.NewTransaction()
+	entity := datalog.NewIdentity("test-entity")
+	tx.Add(entity, datalog.NewKeyword(":test/ok"), int64(1))
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// Export to get valid EDN line
+	var validEDN strings.Builder
+	if err := sourceDB.Export(&validEDN); err != nil {
+		t.Fatalf("Failed to export: %v", err)
+	}
+	sourceDB.Close()
+
+	// Get just the first non-txInstant line (our actual data)
+	lines := strings.Split(strings.TrimSpace(validEDN.String()), "\n")
+	var validLine string
+	for _, line := range lines {
+		if strings.Contains(line, ":test/ok") {
+			validLine = line
+			break
+		}
+	}
+	if validLine == "" {
+		t.Fatal("Could not find valid test line in export")
+	}
+
+	// Create malformed EDN file with valid line, then garbage, then valid line
+	ednPath := filepath.Join(t.TempDir(), "malformed.edn")
+	ednContent := validLine + "\nnot valid edn at all\n" + validLine + "\n"
+	if err := os.WriteFile(ednPath, []byte(ednContent), 0644); err != nil {
+		t.Fatalf("Failed to write EDN file: %v", err)
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "malformed.db")
+	cmd := exec.Command(binPath, "-db", dbPath, "-import", ednPath)
+	out, err := cmd.CombinedOutput()
+
+	// Should fail
+	if err == nil {
+		t.Error("Expected error for malformed file")
+	}
+
+	// Should mention line number
+	if !strings.Contains(string(out), "line 2") {
+		t.Errorf("Expected error to mention line 2, got: %s", out)
+	}
+}
+
+func TestCLI_BothFlagsError(t *testing.T) {
+	binPath := buildCLI(t)
+
+	cmd := exec.Command(binPath, "-db", "test.db", "-export", "out.edn", "-import", "in.edn")
+	out, err := cmd.CombinedOutput()
+
+	// Should fail
+	if err == nil {
+		t.Error("Expected error when both flags specified")
+	}
+
+	// Should mention cannot use both
+	if !strings.Contains(string(out), "Cannot specify both") {
+		t.Errorf("Expected 'Cannot specify both' error, got: %s", out)
+	}
+}
+
+func TestCLI_ImportNonexistentFile(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := exec.Command(binPath, "-db", dbPath, "-import", "/nonexistent/file.edn")
+	out, err := cmd.CombinedOutput()
+
+	// Should fail
+	if err == nil {
+		t.Error("Expected error for nonexistent import file")
+	}
+
+	// Should mention file doesn't exist
+	if !strings.Contains(string(out), "does not exist") {
+		t.Errorf("Expected 'does not exist' error, got: %s", out)
+	}
+}
