@@ -59,22 +59,30 @@ func EncodeL85(src []byte) string {
 	// Handle remainder bytes
 	remainder := len(src) % 4
 	if remainder > 0 {
-		// Pad with zeros
-		padded := [4]byte{}
-		copy(padded[:], src[len(src)-remainder:])
-
-		v := uint32(padded[0])<<24 | uint32(padded[1])<<16 |
-			uint32(padded[2])<<8 | uint32(padded[3])
-
-		// Convert to base85
-		chars := [5]byte{}
-		for j := 4; j >= 0; j-- {
-			chars[j] = L85Alphabet[v%85]
-			v /= 85
+		// Treat remainder bytes as a small integer (big-endian)
+		// 1 byte  -> value 0-255      -> 2 chars (85^2 = 7225 > 256)
+		// 2 bytes -> value 0-65535    -> 3 chars (85^3 = 614125 > 65536)
+		// 3 bytes -> value 0-16777215 -> 4 chars (85^4 = 52200625 > 16777216)
+		offset := len(src) - remainder
+		var v uint32
+		switch remainder {
+		case 1:
+			v = uint32(src[offset])
+		case 2:
+			v = uint32(src[offset])<<8 | uint32(src[offset+1])
+		case 3:
+			v = uint32(src[offset])<<16 | uint32(src[offset+1])<<8 | uint32(src[offset+2])
 		}
 
-		// Append only remainder+1 characters (matching C implementation)
-		result = append(result, chars[:remainder+1]...)
+		// Convert to base85 (remainder+1 chars needed)
+		switch remainder {
+		case 1:
+			result = append(result, L85Alphabet[v/85], L85Alphabet[v%85])
+		case 2:
+			result = append(result, L85Alphabet[v/7225], L85Alphabet[(v/85)%85], L85Alphabet[v%85])
+		case 3:
+			result = append(result, L85Alphabet[v/614125], L85Alphabet[(v/7225)%85], L85Alphabet[(v/85)%85], L85Alphabet[v%85])
+		}
 	}
 
 	return string(result)
@@ -119,31 +127,24 @@ func DecodeL85(src string) ([]byte, error) {
 	if remainder > 0 {
 		// The number of bytes encoded is remainder-1
 		// (2 chars = 1 byte, 3 chars = 2 bytes, 4 chars = 3 bytes)
-		numBytes := remainder - 1
-		if numBytes <= 0 {
+		if remainder == 1 {
 			return nil, errors.New("invalid L85 encoding: incomplete group")
 		}
 
-		// Pad to 5 chars with first alphabet char
-		padded := src[len(src)-remainder:]
-		for len(padded) < 5 {
-			padded += string(L85Alphabet[0])
+		// Convert remainder chars directly to integer (no padding)
+		offset := len(src) - remainder
+		var v uint32
+		switch remainder {
+		case 2:
+			v = uint32(l85Decode[src[offset]]-1)*85 + uint32(l85Decode[src[offset+1]]-1)
+			result = append(result, byte(v))
+		case 3:
+			v = uint32(l85Decode[src[offset]]-1)*7225 + uint32(l85Decode[src[offset+1]]-1)*85 + uint32(l85Decode[src[offset+2]]-1)
+			result = append(result, byte(v>>8), byte(v))
+		case 4:
+			v = uint32(l85Decode[src[offset]]-1)*614125 + uint32(l85Decode[src[offset+1]]-1)*7225 + uint32(l85Decode[src[offset+2]]-1)*85 + uint32(l85Decode[src[offset+3]]-1)
+			result = append(result, byte(v>>16), byte(v>>8), byte(v))
 		}
-
-		// Convert to uint32
-		v := uint32(0)
-		for j := 0; j < 5; j++ {
-			v = v*85 + uint32(l85Decode[padded[j]]-1)
-		}
-
-		// Extract only the needed bytes
-		bytes := [4]byte{
-			byte(v >> 24),
-			byte(v >> 16),
-			byte(v >> 8),
-			byte(v),
-		}
-		result = append(result, bytes[:numBytes]...)
 	}
 
 	return result, nil

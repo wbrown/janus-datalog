@@ -127,6 +127,42 @@ func TestL85VerifyAlphabet(t *testing.T) {
 	}
 }
 
+// TestL85NonAlignedLengths tests encoding/decoding of byte slices that are
+// not multiples of 4 bytes. This is a regression test for a bug where
+// non-aligned lengths would corrupt the last byte during round-trip.
+//
+// Bug example: [1,2,3,4,5] encodes to "!ASD/$Y" but decodes to [1,2,3,4,4]
+func TestL85NonAlignedLengths(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []byte
+	}{
+		{"1 byte", []byte{0x05}},
+		{"2 bytes", []byte{0x01, 0x02}},
+		{"3 bytes", []byte{0x01, 0x02, 0x03}},
+		{"5 bytes", []byte{0x01, 0x02, 0x03, 0x04, 0x05}},
+		{"6 bytes", []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}},
+		{"7 bytes", []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}},
+		{"9 bytes", []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded := EncodeL85(tt.input)
+			decoded, err := DecodeL85(encoded)
+			if err != nil {
+				t.Fatalf("Decode error: %v", err)
+			}
+			if !bytes.Equal(decoded, tt.input) {
+				t.Errorf("Round trip failed for %d bytes", len(tt.input))
+				t.Logf("Input:   %v", tt.input)
+				t.Logf("Encoded: %s (len=%d)", encoded, len(encoded))
+				t.Logf("Decoded: %v", decoded)
+			}
+		})
+	}
+}
+
 func TestL85VerifySpecificBytes(t *testing.T) {
 	// Test specific byte patterns
 	tests := []struct {
