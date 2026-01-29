@@ -28,8 +28,9 @@ type QueryExecutor interface {
 
 // DefaultQueryExecutor implements QueryExecutor using the PatternMatcher interface
 type DefaultQueryExecutor struct {
-	matcher PatternMatcher
-	options ExecutorOptions
+	matcher          PatternMatcher
+	options          ExecutorOptions
+	constantBindings map[query.Symbol]interface{} // Scalar inputs resolved as constants (not relation columns)
 }
 
 // newQueryExecutor creates a new DefaultQueryExecutor.
@@ -378,10 +379,18 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		}
 	}
 
+	// Filter out symbols already resolved as constants
+	var unresolvedExprSyms []query.Symbol
+	for _, sym := range requiredSyms {
+		if _, isConstant := e.constantBindings[sym]; !isConstant {
+			unresolvedExprSyms = append(unresolvedExprSyms, sym)
+		}
+	}
+
 	for _, rel := range groups {
 		hasAny := false
 		relCols := rel.Columns()
-		for _, sym := range requiredSyms {
+		for _, sym := range unresolvedExprSyms {
 			for _, col := range relCols {
 				if col == sym {
 					hasAny = true
@@ -401,10 +410,15 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 
 	if len(relevantRels) == 0 {
 		// No relation has required symbols
-		if len(requiredSyms) == 0 && len(groups) > 0 {
-			// Ground expression with existing groups - evaluate once and add column(s) to each tuple
-			// This is used in OR fallback: (or [subquery] [(ground 0) ?count])
-			result, err := expr.Function.Eval(make(map[query.Symbol]interface{}))
+		if len(unresolvedExprSyms) == 0 && len(groups) > 0 {
+			// Ground expression (or all-constants) with existing groups - evaluate once and add column(s)
+			// This handles OR fallback: (or [subquery] [(ground 0) ?count])
+			// and constant-bindable scalar expressions: [(+ ?age ?bonus) ?adjusted] where ?bonus is constant
+			evalBindings := make(map[query.Symbol]interface{})
+			for sym, val := range e.constantBindings {
+				evalBindings[sym] = val
+			}
+			result, err := expr.Function.Eval(evalBindings)
 			if err != nil {
 				return nil, err
 			}
@@ -449,23 +463,79 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			}
 			return resultRels, nil
 		}
+
+		// Handle all-constants expression with no groups (e.g., get-some with scalar input only)
+		// This occurs when all required symbols are constant-bindable and there are no data patterns.
+		if len(unresolvedExprSyms) == 0 && len(groups) == 0 {
+			evalBindings := make(map[query.Symbol]interface{})
+			for sym, val := range e.constantBindings {
+				evalBindings[sym] = val
+			}
+
+			// Evaluate the expression - check for database function needing lookup
+			var result interface{}
+			var err error
+			if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
+				if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
+					lookup := entityLookupAdapter{lookupMatcher}
+					result, err = dbFunc.EvalWithLookup(evalBindings, lookup)
+				} else {
+					return nil, fmt.Errorf("expression requires database lookup but matcher doesn't support it")
+				}
+			} else {
+				result, err = expr.Function.Eval(evalBindings)
+			}
+			if err != nil {
+				// Expression evaluation failed (e.g., entity doesn't have requested attrs)
+				// Return empty result, not an error
+				return []Relation{}, nil
+			}
+
+			// Handle get-some result type (extracts Value from GetSomeResult)
+			if gsr, ok := result.(*query.GetSomeResult); ok {
+				result = gsr.Value
+			}
+
+			// Create result relation based on binding type
+			switch binding := expr.Binding.(type) {
+			case query.TupleBinding:
+				values, ok := result.([]interface{})
+				if !ok {
+					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
+				}
+				if len(values) != len(binding.Variables) {
+					return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
+						len(values), len(binding.Variables))
+				}
+				return []Relation{NewMaterializedRelationWithOptions(binding.Variables, []Tuple{values}, e.options)}, nil
+			case query.Symbol:
+				if binding != nil {
+					return []Relation{NewMaterializedRelationWithOptions([]query.Symbol{binding}, []Tuple{{result}}, e.options)}, nil
+				}
+			}
+			// No binding - return empty groups (expression evaluated for side effect only)
+			return []Relation{}, nil
+		}
+
 		// Skip expression if no relevant relations and expression needs symbols
 		return groups, nil
 	}
 
-	// Create product of relevant relations (streaming)
-	// Product() handles single relation passthrough
-	joined := Relations(relevantRels).Product()
-
 	// Check if this expression might need database access (database functions)
-	// If the matcher supports EntityLookup, pass it to the expression evaluator
 	var lookup query.EntityLookup
 	if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
 		lookup = entityLookupAdapter{lookupMatcher}
 	}
 
-	// Evaluate expression with optional lookup support
-	result := evaluateExpressionWithLookup(joined, expr, lookup)
+	var result Relation
+	if len(relevantRels) == 1 {
+		// Single relation — evaluate directly, no join needed
+		result = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, e.constantBindings)
+	} else {
+		// Multiple disjoint relations — cross-join with expression evaluation
+		// Uses BufferedIterator for inner re-iteration instead of Product()
+		result = crossJoinWithExpression(relevantRels, expr, lookup, e.constantBindings, e.options)
+	}
 
 	// Return result + unchanged relations
 	return append([]Relation{result}, otherRels...), nil
@@ -484,14 +554,24 @@ func (a entityLookupAdapter) LookupAttribute(entity datalog.Identity, attr datal
 // Predicates TRANSFORM groups - may use Product() for multi-relation predicates
 func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicate, groups []Relation) ([]Relation, error) {
 	// Find relations with ANY required symbols (same logic as executeExpression)
+	// Exclude symbols resolved as constants — they don't need a relation group
 	var relevantRels []Relation
 	var otherRels []Relation
 
 	requiredSyms := pred.RequiredSymbols()
+
+	// Filter out symbols already resolved as constants
+	var unresolvedSyms []query.Symbol
+	for _, sym := range requiredSyms {
+		if _, isConstant := e.constantBindings[sym]; !isConstant {
+			unresolvedSyms = append(unresolvedSyms, sym)
+		}
+	}
+
 	for _, rel := range groups {
 		hasAny := false
 		relCols := rel.Columns()
-		for _, sym := range requiredSyms {
+		for _, sym := range unresolvedSyms {
 			for _, col := range relCols {
 				if col == sym {
 					hasAny = true
@@ -514,19 +594,21 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 		return groups, nil
 	}
 
-	// Create product of relevant relations (streaming)
-	// Product() handles single relation passthrough
-	joined := Relations(relevantRels).Product()
-
 	// Check if this predicate might need database access (DatabaseFunctionPredicate)
-	// If the matcher supports EntityLookup, pass it to the predicate evaluator
 	var lookup query.EntityLookup
 	if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
 		lookup = entityLookupAdapter{lookupMatcher}
 	}
 
-	// Filter using predicate with optional lookup support
-	result := filterWithPredicateAndLookup(joined, pred, lookup)
+	var result Relation
+	if len(relevantRels) == 1 {
+		// Single relation — filter directly, no join needed
+		result = filterWithPredicateAndLookup(relevantRels[0], pred, lookup, e.constantBindings)
+	} else {
+		// Multiple disjoint relations — theta-join with predicate filter
+		// Uses BufferedIterator for inner re-iteration instead of Product()
+		result = thetaJoinWithPredicate(relevantRels, pred, lookup, e.constantBindings, e.options)
+	}
 
 	// Return result + unchanged relations
 	return append([]Relation{result}, otherRels...), nil

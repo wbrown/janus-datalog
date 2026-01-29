@@ -58,7 +58,8 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 }
 
 // filterWithPredicateAndLookup filters a relation using a predicate with optional database lookup.
-func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup) Relation {
+// constantBindings are pre-resolved scalar values that are not present as relation columns.
+func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) Relation {
 	columns := rel.Columns()
 
 	// Pre-allocate filtered only for materialized relations to avoid forcing materialization
@@ -70,7 +71,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	}
 
 	// Reuse single bindings map to avoid repeated allocations
-	bindings := make(map[query.Symbol]interface{}, len(columns))
+	bindings := make(map[query.Symbol]interface{}, len(columns)+len(constantBindings))
 
 	// Check if this is a DatabaseFunctionPredicate that needs lookup
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
@@ -82,6 +83,10 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		// Clear and populate bindings map
 		for k := range bindings {
 			delete(bindings, k)
+		}
+		// Pre-populate with constant bindings
+		for sym, val := range constantBindings {
+			bindings[sym] = val
 		}
 		for i, col := range columns {
 			bindings[col] = tuple[i]
@@ -113,7 +118,8 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 // evaluateExpressionWithLookup evaluates an expression with optional database lookup support.
 // If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
 // Otherwise, it falls back to the standard Eval method.
-func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup) Relation {
+// constantBindings are pre-resolved scalar values that are not present as relation columns.
+func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) Relation {
 	columns := rel.Columns()
 
 	// Determine binding symbols and whether they already exist
@@ -155,7 +161,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	}
 
 	// Reuse single bindings map to avoid repeated allocations
-	bindings := make(map[query.Symbol]interface{}, len(columns))
+	bindings := make(map[query.Symbol]interface{}, len(columns)+len(constantBindings))
 
 	// Pre-allocate newTuples only for materialized relations to avoid forcing materialization
 	var newTuples []Tuple
@@ -172,6 +178,10 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		// Clear and populate bindings map
 		for k := range bindings {
 			delete(bindings, k)
+		}
+		// Pre-populate with constant bindings
+		for sym, val := range constantBindings {
+			bindings[sym] = val
 		}
 		for i, col := range columns {
 			bindings[col] = tuple[i]

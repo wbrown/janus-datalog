@@ -474,3 +474,52 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 
 	return score
 }
+
+// findConstantBindableScalars identifies scalar input symbols that only appear
+// in predicates/expressions, not in any data pattern. These can be resolved as
+// constant bindings rather than creating separate relation groups.
+func findConstantBindableScalars(scalarInputs []query.Symbol, clauses []query.Clause) []query.Symbol {
+	// Collect all symbols that appear in data patterns
+	patternSyms := make(map[query.Symbol]bool)
+	collectDataPatternSymbols(clauses, patternSyms)
+
+	// Return scalar inputs not found in any data pattern
+	var result []query.Symbol
+	for _, sym := range scalarInputs {
+		if !patternSyms[sym] {
+			result = append(result, sym)
+		}
+	}
+	return result
+}
+
+// collectDataPatternSymbols recursively walks clauses and collects all variable
+// symbols that appear in data patterns.
+func collectDataPatternSymbols(clauses []query.Clause, out map[query.Symbol]bool) {
+	for _, clause := range clauses {
+		switch c := clause.(type) {
+		case *query.DataPattern:
+			for _, elem := range c.Elements {
+				if v, ok := elem.(query.Variable); ok {
+					out[v.Name] = true
+				}
+			}
+		case *query.NotClause:
+			collectDataPatternSymbols(c.Clauses, out)
+		case *query.NotJoinClause:
+			collectDataPatternSymbols(c.Clauses, out)
+		case *query.OrClause:
+			for _, branch := range c.Branches {
+				collectDataPatternSymbols(branch, out)
+			}
+		case *query.OrJoinClause:
+			for _, branch := range c.Branches {
+				collectDataPatternSymbols(branch, out)
+			}
+		case *query.SubqueryPattern:
+			collectDataPatternSymbols(c.Query.Where, out)
+		case *query.Subquery:
+			collectDataPatternSymbols(c.Query.Where, out)
+		}
+	}
+}

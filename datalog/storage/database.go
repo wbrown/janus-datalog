@@ -1573,6 +1573,10 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 
 // relationToSlice converts an executor.Relation to [][]interface{}
 func relationToSlice(rel executor.Relation) [][]interface{} {
+	// Handle nil relation (e.g., query returned no results)
+	if rel == nil {
+		return [][]interface{}{}
+	}
 	// Don't preallocate if size is unknown (-1)
 	size := rel.Size()
 	var rows [][]interface{}

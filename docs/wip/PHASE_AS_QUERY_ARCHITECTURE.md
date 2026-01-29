@@ -62,7 +62,6 @@ Execute Phases
 type Phase struct {
     Patterns               []PatternPlan              // Data retrieval
     Predicates             []PredicatePlan            // Filters
-    JoinPredicates         []JoinPredicate            // Equality filters
     Expressions            []ExpressionPlan           // Computations
     Subqueries             []SubqueryPlan             // Nested queries
     DecorrelatedSubqueries []DecorrelatedSubqueryPlan // Optimized subqueries
@@ -395,7 +394,7 @@ type Phase struct {
 }
 ```
 
-**No more**: Patterns, Expressions, Predicates, JoinPredicates, Subqueries, DecorrelatedSubqueries
+**No more**: Patterns, Expressions, Predicates, Subqueries, DecorrelatedSubqueries
 
 **Just**: A Datalog query fragment!
 

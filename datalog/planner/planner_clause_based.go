@@ -55,12 +55,14 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query) (*RealizedPlan, error) {
 
 // PlanWithBindings creates an optimized query plan with initial bindings
 func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings map[query.Symbol]bool) (*RealizedPlan, error) {
-	// Extract input symbols from :in clause
+	// Extract input symbols from :in clause, tracking scalar inputs separately
 	inputSymbols := make(map[query.Symbol]bool)
+	var scalarInputs []query.Symbol
 	for _, input := range q.In {
 		switch inp := input.(type) {
 		case query.ScalarInput:
 			inputSymbols[inp.Symbol] = true
+			scalarInputs = append(scalarInputs, inp.Symbol)
 		case query.CollectionInput:
 			inputSymbols[inp.Symbol] = true
 		case query.TupleInput:
@@ -112,6 +114,11 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	// TODO: Implement decorrelation as pure clause transformation
 	// (Conditional aggregate rewriting is buggy and moved to experimental/)
 
+	// Step 2b: Detect constant-bindable scalar inputs
+	// Scalars that only appear in predicates/expressions (not data patterns)
+	// can be resolved as constants rather than creating separate relation groups.
+	constantBindable := findConstantBindableScalars(scalarInputs, clauses)
+
 	// Step 3: Phase the optimized clause list ONCE using greedy algorithm
 	clausePhases, err := createPhasesGreedy(clauses, findSymbols, inputSymbols)
 	if err != nil {
@@ -148,6 +155,27 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 			Provides:  cp.Provides,
 			Keep:      keep,
 			Metadata:  make(map[string]interface{}),
+		}
+
+		// Store constant-bindable scalars for phases that reference them
+		if len(constantBindable) > 0 {
+			// Check which constant-bindable symbols this phase's clauses use
+			phaseSyms := make(map[query.Symbol]bool)
+			for _, clause := range cp.Clauses {
+				cs := extractClauseSymbols(clause)
+				for _, sym := range cs.Requires {
+					phaseSyms[sym] = true
+				}
+			}
+			var phaseConstBindable []query.Symbol
+			for _, sym := range constantBindable {
+				if phaseSyms[sym] {
+					phaseConstBindable = append(phaseConstBindable, sym)
+				}
+			}
+			if len(phaseConstBindable) > 0 {
+				realizedPhases[i].Metadata["constant_bindable_inputs"] = phaseConstBindable
+			}
 		}
 
 		// Populate explain fields for detailed plan output

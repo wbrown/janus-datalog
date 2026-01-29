@@ -30,7 +30,6 @@ type QueryPlan struct {
 type Phase struct {
 	Patterns               []PatternPlan              // Patterns to execute in this phase
 	Predicates             []PredicatePlan            // Predicates to apply after patterns
-	JoinPredicates         []JoinPredicate            // Equality predicates to push into join
 	Expressions            []ExpressionPlan           // Expressions to evaluate in this phase
 	Subqueries             []SubqueryPlan             // Subqueries to execute in this phase
 	DecorrelatedSubqueries []DecorrelatedSubqueryPlan // Decorrelated subquery groups
@@ -307,24 +306,6 @@ type ExpressionPlan struct {
 	IsEquality bool                   // True if this is an equality check (no binding)
 	Metadata   map[string]interface{} // Additional metadata (e.g., optimized_by_constraint)
 }
-
-// JoinPredicate represents an equality predicate that can be pushed into a join
-type JoinPredicate struct {
-	Predicate   query.Predicate // The predicate (should be Comparison with OpEQ)
-	LeftSymbol  query.Symbol    // Symbol from previous phase result
-	RightSymbol query.Symbol    // Symbol from current phase
-}
-
-// PredicateType classifies predicates for optimization
-type PredicateType int
-
-const (
-	PredicateTypeUnknown         PredicateType = iota
-	PredicateTypeIntraPhase                    // Can be evaluated within a phase
-	PredicateTypeInterPhase                    // Needs symbols from multiple phases
-	PredicateTypeStoragePushable               // Can be pushed to storage
-	PredicateTypeJoinCondition                 // Can be used as join condition
-)
 
 // SubqueryPlan represents a planned subquery to execute in a phase
 type SubqueryPlan struct {
@@ -748,11 +729,6 @@ func realizePhase(phase Phase, isLastPhase bool, prevKeep []query.Symbol) Realiz
 	// but need to appear in the realized query for semantic completeness.
 	reconstructedPredicates := reconstructPredicatesFromConstraints(phase)
 	where = append(where, reconstructedPredicates...)
-
-	// 5b. Add join predicates (optimization hints that are also predicates)
-	for _, jp := range phase.JoinPredicates {
-		where = append(where, jp.Predicate)
-	}
 
 	// 6. Add subqueries (in order)
 	// Note: We include all subqueries, even those marked as Decorrelated.

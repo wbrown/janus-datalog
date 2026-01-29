@@ -208,6 +208,74 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		currentGroups = []Relation{boundRelation}
 	}
 
+	// Extract constant-bindable scalar inputs from phase metadata.
+	// These are scalar inputs that only appear in predicates/expressions, not data patterns.
+	// Resolving them as constants prevents disjoint relation groups and Product() panics.
+	if len(currentGroups) > 0 {
+		allConstBindable := make(map[query.Symbol]bool)
+		for _, phase := range plan.Phases {
+			if cbInputs, ok := phase.Metadata["constant_bindable_inputs"]; ok {
+				if syms, ok := cbInputs.([]query.Symbol); ok {
+					for _, sym := range syms {
+						allConstBindable[sym] = true
+					}
+				}
+			}
+		}
+		if len(allConstBindable) > 0 {
+			// Extract constant values from the bound input relation
+			boundRel := currentGroups[0]
+			cols := boundRel.Columns()
+
+			// Find column indices for constant-bindable symbols
+			constValues := make(map[query.Symbol]interface{})
+			constColIndices := make(map[int]bool)
+			for i, col := range cols {
+				if allConstBindable[col] {
+					constColIndices[i] = true
+				}
+			}
+
+			// Read first tuple to get the constant values (scalar inputs have exactly 1 row)
+			if len(constColIndices) > 0 {
+				it := boundRel.Iterator()
+				if it.Next() {
+					tuple := it.Tuple()
+					for i, col := range cols {
+						if allConstBindable[col] && i < len(tuple) {
+							constValues[col] = tuple[i]
+						}
+					}
+				}
+				it.Close()
+
+				if len(constValues) > 0 {
+					queryExecutor.constantBindings = constValues
+
+					// Project out constant columns from the bound relation
+					var keepCols []query.Symbol
+					for i, col := range cols {
+						if !constColIndices[i] {
+							keepCols = append(keepCols, col)
+						}
+					}
+
+					if len(keepCols) == 0 {
+						// All columns were constants — no input relation needed
+						currentGroups = nil
+					} else if len(keepCols) < len(cols) {
+						// Re-materialize without constant columns
+						projected, err := boundRel.Materialize().Project(keepCols)
+						if err == nil {
+							currentGroups = []Relation{projected}
+						}
+					}
+					// else: no constant columns to remove (shouldn't happen but safe)
+				}
+			}
+		}
+	}
+
 	// Check for conditional aggregates and emit annotation for observability
 	// The planner emits two representations of conditional aggregates:
 	// 1. Metadata: phase.Metadata["conditional_aggregates"] - used by legacy executor
