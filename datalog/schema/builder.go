@@ -81,6 +81,12 @@ func (ab *AttributeBuilder) Many() *AttributeBuilder {
 	return ab
 }
 
+// Vector sets cardinality to vector (ordered collection using RGA CRDT)
+func (ab *AttributeBuilder) Vector() *AttributeBuilder {
+	ab.def.Cardinality = CardinalityVector
+	return ab
+}
+
 // Unique sets the uniqueness constraint
 func (ab *AttributeBuilder) Unique(u Unique) *AttributeBuilder {
 	ab.def.Unique = u

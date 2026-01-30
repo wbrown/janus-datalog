@@ -799,6 +799,109 @@ func TestExportImport_PreservesTxIDs(t *testing.T) {
 }
 
 // =============================================================================
+// Unit Tests: ElementID EDN Formatting and Parsing
+// =============================================================================
+
+func TestFormatValueEDN_ElementID(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    datalog.ElementID
+		expected string
+	}{
+		{"zero/HEAD", datalog.ElementID{Lamport: 0, ReplicaID: 0}, "#eid [0 0]"},
+		{"simple", datalog.ElementID{Lamport: 1234, ReplicaID: 5678}, "#eid [1234 5678]"},
+		{"large", datalog.ElementID{Lamport: 1706745600000000000, ReplicaID: 12345678901234567}, "#eid [1706745600000000000 12345678901234567]"},
+		{"max", datalog.ElementID{Lamport: ^uint64(0), ReplicaID: ^uint64(0)}, "#eid [18446744073709551615 18446744073709551615]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatValueEDN(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestParseValueNode_ElementID(t *testing.T) {
+	tests := []datalog.ElementID{
+		{Lamport: 0, ReplicaID: 0},
+		{Lamport: 1, ReplicaID: 1},
+		{Lamport: 1234, ReplicaID: 5678},
+		{Lamport: 1706745600000000000, ReplicaID: 12345678901234567},
+	}
+
+	for _, input := range tests {
+		t.Run("", func(t *testing.T) {
+			formatted := FormatValueEDN(input)
+			node, err := parseEDNValue(formatted)
+			require.NoError(t, err)
+			result, err := ParseValueNode(node)
+			require.NoError(t, err)
+
+			got, ok := result.(datalog.ElementID)
+			require.True(t, ok, "expected ElementID, got %T", result)
+			assert.Equal(t, input.Lamport, got.Lamport)
+			assert.Equal(t, input.ReplicaID, got.ReplicaID)
+		})
+	}
+}
+
+func TestParseValueNode_ElementID_Errors(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		error string
+	}{
+		{"not vector", `#eid "string"`, "requires [lamport replica-id] vector"},
+		{"one element", `#eid [1]`, "requires exactly 2 elements"},
+		{"three elements", `#eid [1 2 3]`, "requires exactly 2 elements"},
+		{"lamport not int", `#eid ["str" 1]`, "lamport must be integer"},
+		{"replica not int", `#eid [1 "str"]`, "replica-id must be integer"},
+		{"negative lamport", `#eid [-1 1]`, "lamport must be non-negative"},
+		{"negative replica", `#eid [1 -1]`, "replica-id must be non-negative"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node, err := parseEDNValue(tt.input)
+			require.NoError(t, err)
+			_, err = ParseValueNode(node)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.error)
+		})
+	}
+}
+
+func TestDatomEDN_RoundTrip_ElementID(t *testing.T) {
+	id := datalog.NewIdentity("entity1")
+	eid := datalog.ElementID{Lamport: 1234, ReplicaID: 5678}
+
+	datom := datalog.Datom{
+		E:  id,
+		A:  kw(":test/element-id"),
+		V:  eid,
+		Tx: 1,
+	}
+
+	formatted := FormatDatomEDN(&datom)
+	assert.Contains(t, formatted, "#eid")
+	assert.Contains(t, formatted, "1234")
+	assert.Contains(t, formatted, "5678")
+
+	parsed, err := ParseDatomEDN(formatted)
+	require.NoError(t, err)
+
+	assert.Equal(t, datom.E.Hash(), parsed.E.Hash())
+	assert.Equal(t, datom.A, parsed.A)
+	assert.Equal(t, datom.Tx, parsed.Tx)
+
+	gotEID, ok := parsed.V.(datalog.ElementID)
+	require.True(t, ok, "expected ElementID, got %T", parsed.V)
+	assert.Equal(t, eid.Lamport, gotEID.Lamport)
+	assert.Equal(t, eid.ReplicaID, gotEID.ReplicaID)
+}
+
+// =============================================================================
 // Helper functions
 // =============================================================================
 

@@ -282,3 +282,29 @@ func TestSetSchema(t *testing.T) {
 	err = tx.Add(alice, datalog.NewKeyword(":person/age"), "not a number")
 	assert.Error(t, err, "schema should now be enforced")
 }
+
+func TestNilValueRejected(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "db-nil-value-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Create database without schema - nil should still be rejected
+	db, err := NewDatabase(tmpDir)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	nameAttr := datalog.NewKeyword(":person/name")
+
+	// Add with nil value should fail
+	tx := db.NewTransaction()
+	err = tx.Add(alice, nameAttr, nil)
+	assert.Error(t, err, "nil value should be rejected")
+	assert.Contains(t, err.Error(), "nil value not allowed")
+
+	// Retract with nil value should also fail
+	tx2 := db.NewTransaction()
+	err = tx2.Retract(alice, nameAttr, nil)
+	assert.Error(t, err, "nil value should be rejected for retraction")
+	assert.Contains(t, err.Error(), "nil value not allowed")
+}

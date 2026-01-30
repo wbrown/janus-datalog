@@ -264,3 +264,87 @@ func TestSymbolValuesEqual(t *testing.T) {
 		t.Error("ValuesEqual(symbol, string) should be false")
 	}
 }
+
+// TestElementIDCompareValues tests CompareValues with ElementID values
+func TestElementIDCompareValues(t *testing.T) {
+	a := ElementID{Lamport: 100, ReplicaID: 5}
+	b := ElementID{Lamport: 100, ReplicaID: 5}
+	c := ElementID{Lamport: 200, ReplicaID: 5}
+	d := ElementID{Lamport: 100, ReplicaID: 10}
+
+	// Same ElementID
+	if cmp := CompareValues(a, b); cmp != 0 {
+		t.Errorf("CompareValues(equal ElementIDs) = %d, want 0", cmp)
+	}
+
+	// Different Lamport
+	if cmp := CompareValues(a, c); cmp >= 0 {
+		t.Errorf("CompareValues(lower Lamport, higher Lamport) = %d, want < 0", cmp)
+	}
+	if cmp := CompareValues(c, a); cmp <= 0 {
+		t.Errorf("CompareValues(higher Lamport, lower Lamport) = %d, want > 0", cmp)
+	}
+
+	// Same Lamport, different ReplicaID
+	if cmp := CompareValues(a, d); cmp >= 0 {
+		t.Errorf("CompareValues(lower ReplicaID, higher ReplicaID) = %d, want < 0", cmp)
+	}
+	if cmp := CompareValues(d, a); cmp <= 0 {
+		t.Errorf("CompareValues(higher ReplicaID, lower ReplicaID) = %d, want > 0", cmp)
+	}
+
+	// ElementID vs non-ElementID
+	if cmp := CompareValues(a, int64(100)); cmp >= 0 {
+		t.Errorf("CompareValues(ElementID, int64) = %d, want < 0 (type mismatch)", cmp)
+	}
+}
+
+// TestElementIDValuesEqual tests ValuesEqual with ElementID values
+func TestElementIDValuesEqual(t *testing.T) {
+	a := ElementID{Lamport: 100, ReplicaID: 5}
+	b := ElementID{Lamport: 100, ReplicaID: 5}
+	c := ElementID{Lamport: 200, ReplicaID: 5}
+	d := ElementID{Lamport: 100, ReplicaID: 10}
+
+	// Same ElementID
+	if !ValuesEqual(a, b) {
+		t.Error("ValuesEqual(equal ElementIDs) should be true")
+	}
+
+	// Different Lamport
+	if ValuesEqual(a, c) {
+		t.Error("ValuesEqual(different Lamport) should be false")
+	}
+
+	// Different ReplicaID
+	if ValuesEqual(a, d) {
+		t.Error("ValuesEqual(different ReplicaID) should be false")
+	}
+
+	// ElementID vs non-ElementID
+	if ValuesEqual(a, int64(100)) {
+		t.Error("ValuesEqual(ElementID, int64) should be false")
+	}
+}
+
+// TestElementIDZeroValues tests comparison with zero/HEAD ElementID
+func TestElementIDZeroValues(t *testing.T) {
+	zero := ElementIDZero
+	nonZero := ElementID{Lamport: 1, ReplicaID: 0}
+
+	// Zero equals zero
+	if cmp := CompareValues(zero, ElementIDZero); cmp != 0 {
+		t.Errorf("CompareValues(zero, zero) = %d, want 0", cmp)
+	}
+	if !ValuesEqual(zero, ElementIDZero) {
+		t.Error("ValuesEqual(zero, zero) should be true")
+	}
+
+	// Zero < non-zero
+	if cmp := CompareValues(zero, nonZero); cmp >= 0 {
+		t.Errorf("CompareValues(zero, nonZero) = %d, want < 0", cmp)
+	}
+	if cmp := CompareValues(nonZero, zero); cmp <= 0 {
+		t.Errorf("CompareValues(nonZero, zero) = %d, want > 0", cmp)
+	}
+}

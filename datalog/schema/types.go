@@ -23,8 +23,9 @@ const (
 type Cardinality string
 
 const (
-	CardinalityOne  Cardinality = "db.cardinality/one"
-	CardinalityMany Cardinality = "db.cardinality/many"
+	CardinalityOne    Cardinality = "db.cardinality/one"
+	CardinalityMany   Cardinality = "db.cardinality/many"
+	CardinalityVector Cardinality = "db.cardinality/vector" // Ordered collection (RGA)
 )
 
 // Unique represents uniqueness constraints on attribute values
@@ -95,6 +96,21 @@ func (s *Schema) IsRef(attr datalog.Keyword) bool {
 func (s *Schema) IsMany(attr datalog.Keyword) bool {
 	def := s.GetAttribute(attr)
 	return def != nil && def.Cardinality == CardinalityMany
+}
+
+// IsVector returns true if the attribute has cardinality vector (ordered collection)
+func (s *Schema) IsVector(attr datalog.Keyword) bool {
+	def := s.GetAttribute(attr)
+	return def != nil && def.Cardinality == CardinalityVector
+}
+
+// Cardinality returns the cardinality of an attribute, defaulting to CardinalityOne
+func (s *Schema) Cardinality(attr datalog.Keyword) Cardinality {
+	def := s.GetAttribute(attr)
+	if def == nil {
+		return CardinalityOne
+	}
+	return def.Cardinality
 }
 
 // Attributes returns all attribute definitions in the schema

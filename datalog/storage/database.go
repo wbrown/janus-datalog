@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"reflect"
 	"strings"
 	"sync"
@@ -41,6 +42,8 @@ type Database struct {
 	planCache         *planner.PlanCache    // Shared query plan cache
 	schema            schema.SchemaProvider // Optional schema for validation
 	annotationHandler annotations.Handler   // Optional handler for query tracing
+	clock             *LamportClock         // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
+	replicaID         uint64                // CRDT: This database's replica identifier
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -85,6 +88,7 @@ type DatabaseOptions struct {
 	RetractMode       RetractMode           // How retractions are handled
 	Schema            schema.SchemaProvider // Optional schema for validation
 	AnnotationHandler annotations.Handler   // Optional handler for query tracing
+	ReplicaID         uint64                // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -95,6 +99,7 @@ type DatabaseOptions struct {
 //   - UseTimeTx: If true, use nanosecond timestamps as transaction IDs.
 //   - RetractMode: RetractDelete (default) deletes data; RetractHistory preserves full audit trail.
 //   - Schema: Optional schema for validation.
+//   - ReplicaID: For CRDT mode. 0 = auto-generate random; non-zero = use specified.
 //
 // Example:
 //
@@ -113,6 +118,42 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		return nil, fmt.Errorf("failed to create store: %w", err)
 	}
 
+	// Determine ReplicaID: check metadata first (existing DB), then opts, then generate
+	var replicaID uint64
+	storedReplicaID, found, err := store.GetMetadataUint64("replica_id")
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to read replica_id metadata: %w", err)
+	}
+
+	if found {
+		// Existing database: use stored ReplicaID (opts.ReplicaID ignored)
+		replicaID = storedReplicaID
+	} else {
+		// New database: use specified or generate random
+		if opts.ReplicaID != 0 {
+			replicaID = opts.ReplicaID
+		} else {
+			replicaID = rand.Uint64()
+		}
+		// Persist the ReplicaID for future opens
+		if err := store.SetMetadataUint64("replica_id", replicaID); err != nil {
+			store.Close()
+			return nil, fmt.Errorf("failed to persist replica_id metadata: %w", err)
+		}
+	}
+
+	// Create Lamport clock for CRDT ordering
+	clock := NewLamportClock(replicaID)
+
+	// TODO(Phase 2): Restore clock from max ElementID in TAEV index
+	// This requires the new index encoding with ElementID as Tx.
+	// For now, clock starts at 0. After Phase 2, add:
+	//   maxElementID, err := store.MaxElementID()
+	//   if err == nil && !maxElementID.IsZero() {
+	//       clock.Restore(maxElementID)
+	//   }
+
 	return &Database{
 		store:             store,
 		activeTx:          make(map[*Transaction]bool),
@@ -120,6 +161,8 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		useTimeTx:         opts.UseTimeTx,
 		schema:            opts.Schema,
 		annotationHandler: opts.AnnotationHandler,
+		clock:             clock,
+		replicaID:         replicaID,
 	}, nil
 }
 
@@ -136,6 +179,19 @@ func (d *Database) SetSchema(s schema.SchemaProvider) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.schema = s
+}
+
+// ReplicaID returns this database's replica identifier for CRDT operations.
+// Each database instance should have a unique ReplicaID for proper multi-replica
+// merge semantics. The ID is auto-generated if not specified in DatabaseOptions.
+func (d *Database) ReplicaID() uint64 {
+	return d.replicaID
+}
+
+// Clock returns the Lamport clock for CRDT operations.
+// Returns nil if the database was created without CRDT support.
+func (d *Database) Clock() *LamportClock {
+	return d.clock
 }
 
 // AnnotationHandler returns the current annotation handler (may be nil)
@@ -1176,6 +1232,11 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("transaction is closed")
 	}
 
+	// Nil values are not allowed in relational algebra - absence of fact represents "no value"
+	if v == nil {
+		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
+	}
+
 	// Schema validation (if schema present)
 	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
 		return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
@@ -1198,6 +1259,11 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 
 	if t.closed {
 		return fmt.Errorf("transaction is closed")
+	}
+
+	// Nil values are not allowed - must specify exact value to retract
+	if v == nil {
+		return fmt.Errorf("nil value not allowed for retraction of %s: must specify exact value to retract", a.String())
 	}
 
 	t.retracts = append(t.retracts, datalog.Datom{

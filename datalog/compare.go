@@ -66,6 +66,15 @@ func CompareValues(left, right interface{}) int {
 		return -1
 	}
 
+	// Handle ElementID comparison - use the Compare method
+	if eid1, ok := left.(ElementID); ok {
+		if eid2, ok := right.(ElementID); ok {
+			return eid1.Compare(eid2)
+		}
+		// ElementID vs non-ElementID: type mismatch
+		return -1
+	}
+
 	// Handle numeric comparisons
 	switch l := left.(type) {
 	case int:
@@ -280,6 +289,14 @@ func ValuesEqual(a, b interface{}) bool {
 	if sym1, ok := a.(Symbol); ok {
 		if sym2, ok := b.(Symbol); ok {
 			return sym1.Equal(sym2)
+		}
+		return false
+	}
+
+	// ElementID comparison - use the Equal method
+	if eid1, ok := a.(ElementID); ok {
+		if eid2, ok := b.(ElementID); ok {
+			return eid1.Equal(eid2)
 		}
 		return false
 	}

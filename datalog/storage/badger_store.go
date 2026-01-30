@@ -2,11 +2,16 @@ package storage
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/wbrown/janus-datalog/datalog"
 )
+
+// metadataPrefix is used to store database metadata (e.g., ReplicaID)
+// separate from datom indices
+const metadataPrefix = "_meta:"
 
 // BadgerStore implements Store using BadgerDB
 type BadgerStore struct {
@@ -255,6 +260,46 @@ func (s *BadgerStore) BeginTx() (StoreTx, error) {
 // Close closes the store
 func (s *BadgerStore) Close() error {
 	return s.db.Close()
+}
+
+// GetMetadataUint64 retrieves a uint64 metadata value by key.
+// Returns (value, true) if found, (0, false) if not found.
+func (s *BadgerStore) GetMetadataUint64(key string) (uint64, bool, error) {
+	metaKey := []byte(metadataPrefix + key)
+	var result uint64
+	var found bool
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(metaKey)
+		if err == badger.ErrKeyNotFound {
+			return nil // Not found is not an error
+		}
+		if err != nil {
+			return err
+		}
+
+		return item.Value(func(val []byte) error {
+			if len(val) != 8 {
+				return fmt.Errorf("metadata %s has invalid length %d, expected 8", key, len(val))
+			}
+			result = binary.BigEndian.Uint64(val)
+			found = true
+			return nil
+		})
+	})
+
+	return result, found, err
+}
+
+// SetMetadataUint64 stores a uint64 metadata value by key.
+func (s *BadgerStore) SetMetadataUint64(key string, value uint64) error {
+	metaKey := []byte(metadataPrefix + key)
+	val := make([]byte, 8)
+	binary.BigEndian.PutUint64(val, value)
+
+	return s.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(metaKey, val)
+	})
 }
 
 // ScanKeysOnly returns an iterator that decodes datoms from keys without fetching values

@@ -196,6 +196,10 @@ func FormatValueEDN(v interface{}) string {
 	case datalog.Symbol:
 		return val.String()
 
+	case datalog.ElementID:
+		// ElementID as #eid [lamport replica-id]
+		return fmt.Sprintf("#eid [%d %d]", val.Lamport, val.ReplicaID)
+
 	default:
 		// Fallback to string representation
 		return formatStringEDN(fmt.Sprintf("%v", val))
@@ -389,6 +393,43 @@ func parseTaggedValue(node *edn.Node) (interface{}, error) {
 			return nil, fmt.Errorf("invalid L85 in #identity: %w", err)
 		}
 		return datalog.NewIdentityFromHash(hash), nil
+
+	case "eid":
+		// Parse ElementID: #eid [lamport replica-id]
+		if valueNode.Type != edn.NodeVector {
+			return nil, fmt.Errorf("#eid requires [lamport replica-id] vector")
+		}
+		if len(valueNode.Nodes) != 2 {
+			return nil, fmt.Errorf("#eid requires exactly 2 elements [lamport replica-id], got %d", len(valueNode.Nodes))
+		}
+
+		// Parse Lamport
+		lamportNode := valueNode.Nodes[0]
+		if lamportNode.Type != edn.NodeInt {
+			return nil, fmt.Errorf("#eid lamport must be integer, got %s", nodeTypeName(lamportNode.Type))
+		}
+		lamport, err := strconv.ParseInt(lamportNode.Value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("#eid invalid lamport value: %w", err)
+		}
+		if lamport < 0 {
+			return nil, fmt.Errorf("#eid lamport must be non-negative, got %d", lamport)
+		}
+
+		// Parse ReplicaID
+		replicaNode := valueNode.Nodes[1]
+		if replicaNode.Type != edn.NodeInt {
+			return nil, fmt.Errorf("#eid replica-id must be integer, got %s", nodeTypeName(replicaNode.Type))
+		}
+		replicaID, err := strconv.ParseInt(replicaNode.Value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("#eid invalid replica-id value: %w", err)
+		}
+		if replicaID < 0 {
+			return nil, fmt.Errorf("#eid replica-id must be non-negative, got %d", replicaID)
+		}
+
+		return datalog.ElementID{Lamport: uint64(lamport), ReplicaID: uint64(replicaID)}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tag: #%s", tag)
