@@ -6,6 +6,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 func TestPullIntegration_StandaloneAPI(t *testing.T) {
@@ -123,6 +124,16 @@ func TestPullIntegration_StandaloneAPI(t *testing.T) {
 
 	// Test limit on cardinality-many attribute
 	t.Run("LimitCardinalityMany", func(t *testing.T) {
+		// Define schema with cardinality-many for :user/tag
+		// (without schema, attributes default to cardinality-one with CRDT semantics)
+		s := schema.NewSchema()
+		s.Add(&schema.AttributeDefinition{
+			Ident:       datalog.NewKeyword(":user/tag"),
+			ValueType:   schema.TypeString,
+			Cardinality: schema.CardinalityMany,
+		})
+		db.SetSchema(s)
+
 		// Create entity with multiple tags
 		taggedEntity := datalog.NewIdentity("user:tagged")
 		tx2 := db.NewTransaction()

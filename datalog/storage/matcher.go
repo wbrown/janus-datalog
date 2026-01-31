@@ -190,6 +190,26 @@ func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog
 		tx = m.extractValue(elem)
 	}
 
+	// Determine cardinality for CRDT resolution
+	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
+	returnOnlyFirst := false
+	if e != nil && a != nil && v == nil {
+		// E and A are bound, V is unbound - check cardinality
+		card := schema.CardinalityOne // Default for schemaless
+		if m.schema != nil {
+			if aKw, ok := a.(datalog.Keyword); ok {
+				if def := m.schema.GetAttribute(aKw); def != nil {
+					card = def.Cardinality
+				}
+			}
+		}
+		// For cardinality-one (and vector), return only the first (= current) value
+		// For cardinality-many, we need all values for add-wins resolution
+		if card == schema.CardinalityOne || card == schema.CardinalityVector {
+			returnOnlyFirst = true
+		}
+	}
+
 	// Choose index and create scan range
 	index, start, end := m.chooseIndex(e, a, v, tx)
 
@@ -218,6 +238,134 @@ func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog
 		// Check if datom matches all pattern constraints
 		if m.matchesDatom(datom, e, a, v, tx) {
 			results = append(results, *datom)
+
+			// For cardinality-one/vector: first result is current value
+			// EATV index with descending Tx means first = highest ElementID = current
+			if returnOnlyFirst {
+				break
+			}
+		}
+	}
+
+	return results, nil
+}
+
+// MatchWithHistory matches a pattern and returns ALL historical values, not just current.
+// This is used for history queries where the user wants to see all versions of an attribute.
+// Returns all datoms including their ElementIDs for temporal ordering.
+//
+// For cardinality-one: returns all historical versions ordered by descending Tx
+// For cardinality-many: returns all add/remove operations for add-wins analysis
+// For cardinality-vector: returns all RGA elements for reconstruction
+func (m *BadgerMatcher) MatchWithHistory(pattern *query.DataPattern) ([]datalog.Datom, error) {
+	// Extract values from pattern
+	var e, a, v, tx interface{}
+
+	if elem := pattern.GetE(); elem != nil {
+		e = m.extractValue(elem)
+	}
+	if elem := pattern.GetA(); elem != nil {
+		a = m.extractValue(elem)
+	}
+	if elem := pattern.GetV(); elem != nil {
+		v = m.extractValue(elem)
+	}
+	if elem := pattern.GetT(); elem != nil {
+		tx = m.extractValue(elem)
+	}
+
+	// Choose index and create scan range
+	index, start, end := m.chooseIndex(e, a, v, tx)
+
+	// Use key-only scanning since all datom information is encoded in the key
+	iter, err := m.store.ScanKeysOnly(index, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
+	}
+	defer iter.Close()
+
+	var results []datalog.Datom
+
+	// Scan and collect ALL matching datoms (no early termination for history)
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			return nil, err
+		}
+
+		// Check if datom is valid for our transaction view (as-of still applies)
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+			continue
+		}
+
+		// Check if datom matches all pattern constraints
+		if m.matchesDatom(datom, e, a, v, tx) {
+			results = append(results, *datom)
+		}
+	}
+
+	return results, nil
+}
+
+// MatchAsOf matches a pattern and returns the value as of a specific Lamport time.
+// This finds the first entry with Lamport <= targetLamport (the value that was current then).
+// If no value existed at that time, returns nil.
+func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetLamport uint64) ([]datalog.Datom, error) {
+	// Extract values from pattern
+	var e, a, v, tx interface{}
+
+	if elem := pattern.GetE(); elem != nil {
+		e = m.extractValue(elem)
+	}
+	if elem := pattern.GetA(); elem != nil {
+		a = m.extractValue(elem)
+	}
+	if elem := pattern.GetV(); elem != nil {
+		v = m.extractValue(elem)
+	}
+	if elem := pattern.GetT(); elem != nil {
+		tx = m.extractValue(elem)
+	}
+
+	// Choose index and create scan range
+	index, start, end := m.chooseIndex(e, a, v, tx)
+
+	// Use key-only scanning
+	iter, err := m.store.ScanKeysOnly(index, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
+	}
+	defer iter.Close()
+
+	var results []datalog.Datom
+
+	// Find first entry with Lamport <= target (entries are in descending Tx order)
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			return nil, err
+		}
+
+		// Skip entries newer than target time
+		if datom.Tx.Lamport > targetLamport {
+			continue
+		}
+
+		// Also apply as-of filter if set
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+			continue
+		}
+
+		// Check if datom matches all pattern constraints
+		if m.matchesDatom(datom, e, a, v, tx) {
+			results = append(results, *datom)
+
+			// For as-of queries, return only the first matching entry
+			// (which is the value that was current at that Lamport time)
+			if e != nil && a != nil && v == nil {
+				// E and A bound, V unbound - return current value at that time
+				break
+			}
 		}
 	}
 

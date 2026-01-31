@@ -24,9 +24,18 @@ type unboundIterator struct {
 
 	// Optimized tuple builder
 	tupleBuilder *query.InternedTupleBuilder
+
+	// CRDT cardinality-one support: stop after first result
+	returnOnlyFirst bool
+	foundFirst      bool
 }
 
 func (it *unboundIterator) Next() bool {
+	// CRDT cardinality-one: if we already found the first result, stop
+	if it.returnOnlyFirst && it.foundFirst {
+		return false
+	}
+
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
 		if err != nil {
@@ -42,6 +51,7 @@ func (it *unboundIterator) Next() bool {
 				it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
 				if it.currentTuple != nil {
 					it.datomsMatched++
+					it.foundFirst = true
 					return true
 				}
 			}
@@ -94,9 +104,18 @@ type unboundMaskIterator struct {
 
 	// Optimized tuple builder
 	tupleBuilder *query.InternedTupleBuilder
+
+	// CRDT cardinality-one support: stop after first result
+	returnOnlyFirst bool
+	foundFirst      bool
 }
 
 func (it *unboundMaskIterator) Next() bool {
+	// CRDT cardinality-one: if we already found the first result, stop
+	if it.returnOnlyFirst && it.foundFirst {
+		return false
+	}
+
 	// The KeyMaskIterator already handles the filtering
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
@@ -117,6 +136,7 @@ func (it *unboundMaskIterator) Next() bool {
 				it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
 				if it.currentTuple != nil {
 					it.datomsMatched++
+					it.foundFirst = true
 					return true
 				}
 			}

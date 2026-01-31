@@ -248,7 +248,12 @@ func (d *Database) Matcher() executor.PatternMatcher {
 		EnableDebugLogging:              opts.EnableDebugLogging,
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
-	return NewBadgerMatcherWithOptions(d.store, execOpts)
+	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
+	// Set schema for CRDT cardinality-aware resolution
+	if d.schema != nil {
+		matcher.SetSchema(d.schema)
+	}
+	return matcher
 }
 
 // Match implements executor.PatternMatcher — the Database itself can answer pattern queries.
@@ -276,7 +281,12 @@ func (d *Database) AsOf(txID uint64) executor.PatternMatcher {
 		EnableDebugLogging:              opts.EnableDebugLogging,
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
-	return NewBadgerMatcherWithOptions(d.store, execOpts).AsOf(txID)
+	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
+	// Set schema for CRDT cardinality-aware resolution
+	if d.schema != nil {
+		matcher.SetSchema(d.schema)
+	}
+	return matcher.AsOf(txID)
 }
 
 // History returns a PatternMatcher for querying the full history of the database.
@@ -1241,6 +1251,57 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		V:  v,
 		Tx: datalog.ElementID{}, // Will be set on commit
 	})
+
+	return nil
+}
+
+// Set sets a value for a cardinality-one attribute using CRDT LWW semantics.
+// For cardinality-one: just appends the new value. The storage layer handles
+// Last-Writer-Wins resolution - no read-before-write or retraction needed.
+//
+// This method is part of the CRDT implementation:
+// - Cardinality-One: Highest ElementID wins (LWW semantics)
+// - Cardinality-Many: Use Add() and Remove() instead (add-wins semantics)
+// - Cardinality-Vector: Use Append() instead (RGA semantics)
+func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.closed {
+		return fmt.Errorf("transaction is closed")
+	}
+
+	// Nil values are not allowed in relational algebra - absence of fact represents "no value"
+	if v == nil {
+		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
+	}
+
+	// Schema validation (if schema present)
+	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
+		return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
+	}
+
+	// Check cardinality - Set only valid for cardinality-one
+	card := schema.CardinalityOne
+	if s := t.db.Schema(); s != nil {
+		if def := s.GetAttribute(a); def != nil {
+			card = def.Cardinality
+		}
+	}
+
+	switch card {
+	case schema.CardinalityOne:
+		// CRDT LWW semantics: just append, no retraction needed
+		// The storage layer will return only the highest ElementID on read
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:  e,
+			A:  a,
+			V:  v,
+			Tx: datalog.ElementID{}, // Will be set on commit
+		})
+	default:
+		return fmt.Errorf("Set not valid for cardinality %v: use Add/Remove for many, Append for vector", card)
+	}
 
 	return nil
 }

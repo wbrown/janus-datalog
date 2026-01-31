@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // Pattern matching implementation is split across multiple files:
@@ -158,6 +160,26 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 		tx = m.extractValue(elem)
 	}
 
+	// Determine cardinality for CRDT resolution
+	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
+	returnOnlyFirst := false
+	if e != nil && a != nil && v == nil {
+		// E and A are bound, V is unbound - check cardinality
+		card := schema.CardinalityOne // Default for schemaless
+		if m.schema != nil {
+			if aKw, ok := a.(datalog.Keyword); ok {
+				if def := m.schema.GetAttribute(aKw); def != nil {
+					card = def.Cardinality
+				}
+			}
+		}
+		// For cardinality-one (and vector), return only the first (= current) value
+		// For cardinality-many, we need all values for add-wins resolution
+		if card == schema.CardinalityOne || card == schema.CardinalityVector {
+			returnOnlyFirst = true
+		}
+	}
+
 	// Choose index and create scan range
 	index, start, end := m.chooseIndex(e, a, v, tx)
 
@@ -196,19 +218,20 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 	if keyMask != nil {
 		// Use key mask iterator for efficient filtering
 		maskIter := &unboundMaskIterator{
-			matcher:      m,
-			index:        index,
-			start:        start,
-			end:          end,
-			pattern:      pattern,
-			columns:      columns,
-			e:            e,
-			a:            a,
-			v:            v,
-			tx:           tx,
-			keyMask:      keyMask,
-			constraints:  constraints, // Still need for non-mask constraints
-			tupleBuilder: m.getTupleBuilder(pattern, columns),
+			matcher:         m,
+			index:           index,
+			start:           start,
+			end:             end,
+			pattern:         pattern,
+			columns:         columns,
+			e:               e,
+			a:               a,
+			v:               v,
+			tx:              tx,
+			keyMask:         keyMask,
+			constraints:     constraints, // Still need for non-mask constraints
+			tupleBuilder:    m.getTupleBuilder(pattern, columns),
+			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 		}
 
 		// Initialize the key mask iterator using the optimized method
@@ -221,18 +244,19 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 	} else {
 		// Use regular iterator
 		regularIter := &unboundIterator{
-			matcher:      m,
-			index:        index,
-			start:        start,
-			end:          end,
-			pattern:      pattern,
-			columns:      columns,
-			e:            e,
-			a:            a,
-			v:            v,
-			tx:           tx,
-			constraints:  constraints,
-			tupleBuilder: m.getTupleBuilder(pattern, columns),
+			matcher:         m,
+			index:           index,
+			start:           start,
+			end:             end,
+			pattern:         pattern,
+			columns:         columns,
+			e:               e,
+			a:               a,
+			v:               v,
+			tx:              tx,
+			constraints:     constraints,
+			tupleBuilder:    m.getTupleBuilder(pattern, columns),
+			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 		}
 
 		// Initialize the storage iterator using key-only scanning
