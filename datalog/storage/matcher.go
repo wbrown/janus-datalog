@@ -794,6 +794,18 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		return nil, false
 	}
 
+	if card == schema.CardinalityVector {
+		// For cardinality-vector, resolve the entire RGA and return as []any
+		result, err := m.resolveVector(eBytes[:], aStorage[:])
+		if err != nil {
+			return nil, false
+		}
+		if len(result.Elements) == 0 {
+			return nil, false
+		}
+		return result.Elements, true
+	}
+
 	// For cardinality-many, use AEVT and apply add-wins resolution
 	// This is a simplified path - for full resolution, use the set resolution code
 	start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])

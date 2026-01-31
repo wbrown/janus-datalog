@@ -78,6 +78,21 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	// Project the binding relation to only include columns used in the pattern
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 
+	// Check for vector cardinality - requires special handling with bound E from bindings
+	// This intercepts BEFORE normal join paths since vectors need RGA resolution
+	if a := m.extractValue(pattern.GetA()); a != nil {
+		if m.schema != nil {
+			if kw, ok := a.(datalog.Keyword); ok {
+				if attr := m.schema.GetAttribute(kw); attr != nil {
+					if attr.Cardinality == schema.CardinalityVector {
+						// E is bound from bindings, A is a constant - use vector resolution
+						return m.matchVectorWithBindings(pattern, bindingRel, columns, kw)
+					}
+				}
+			}
+		}
+	}
+
 	// Analyze if we can use iterator reuse
 	// For multi-position cases, the relation may be materialized to allow cardinality counting
 	strategy, bindingRel := analyzeReuseStrategy(pattern, bindingRel)
@@ -165,11 +180,13 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
 	// For cardinality-many with E+A+V all bound: membership check
 	// For cardinality-many with A bound, E unbound: scan all entities with add-wins
+	// For cardinality-vector with E+A bound: use vector resolution
 	returnOnlyFirst := false
 	useAddWinsResolution := false
 	useMembershipCheck := false
 	useAddWinsScanAllEntities := false
 	useAddWinsScanAllEntitiesWithValue := false
+	useVectorResolution := false
 	var card schema.Cardinality = schema.CardinalityOne // Default for schemaless
 
 	// Determine cardinality when A is bound (regardless of E)
@@ -189,9 +206,12 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 		if v == nil {
 			// V is unbound
 			switch card {
-			case schema.CardinalityOne, schema.CardinalityVector:
+			case schema.CardinalityOne:
 				// Return only the first (= current) value
 				returnOnlyFirst = true
+			case schema.CardinalityVector:
+				// Use vector resolution (RGA reconstruction)
+				useVectorResolution = true
 			case schema.CardinalityMany:
 				// Use add-wins resolution for set semantics
 				useAddWinsResolution = true
@@ -212,6 +232,11 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			// V bound: find all entities where this value is in the set
 			useAddWinsScanAllEntitiesWithValue = true
 		}
+	}
+
+	// For cardinality-vector with E+A bound: use vector resolution
+	if useVectorResolution {
+		return m.matchCardinalityVectorAsRelation(pattern, columns, e, a)
 	}
 
 	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
@@ -517,6 +542,156 @@ func (m *BadgerMatcher) matchCardinalityManyAsRelation(
 	}
 
 	// Return materialized relation with the resolved set members
+	return executor.NewMaterializedRelation(columns, tuples), nil
+}
+
+// matchCardinalityVectorAsRelation handles cardinality-vector patterns using RGA resolution.
+// Returns the entire reconstructed vector as a single value bound to the V variable.
+func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
+	pattern *query.DataPattern,
+	columns []query.Symbol,
+	e, a interface{},
+) (executor.Relation, error) {
+	// Get entity and attribute bytes
+	var eBytes [20]byte
+	var aBytes [32]byte
+
+	if ident, ok := e.(datalog.Identity); ok {
+		copy(eBytes[:], ident.Bytes())
+	}
+	if kw, ok := a.(datalog.Keyword); ok {
+		copy(aBytes[:], kw.String())
+	}
+
+	// Resolve the vector using RGA reconstruction
+	result, err := m.resolveVector(eBytes[:], aBytes[:])
+	if err != nil {
+		return nil, fmt.Errorf("vector resolution failed: %w", err)
+	}
+
+	// If empty vector, return empty relation
+	if len(result.Elements) == 0 {
+		return executor.NewMaterializedRelation(columns, nil), nil
+	}
+
+	// Build a single tuple with the entire vector as the V value
+	tuple := make(executor.Tuple, len(columns))
+	for i, col := range columns {
+		switch {
+		case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
+			pattern.GetE().(query.Variable).Name == col:
+			tuple[i] = e
+		case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
+			pattern.GetA().(query.Variable).Name == col:
+			tuple[i] = a
+		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
+			pattern.GetV().(query.Variable).Name == col:
+			// Return the entire vector as a []any
+			tuple[i] = result.Elements
+		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+			pattern.GetT().(query.Variable).Name == col:
+			// Use the max ElementID as the "current" transaction
+			tuple[i] = result.MaxElementID
+		}
+	}
+
+	// Return single-row relation with the vector
+	return executor.NewMaterializedRelation(columns, []executor.Tuple{tuple}), nil
+}
+
+// matchVectorWithBindings handles vector patterns when E is bound via join bindings.
+// For each entity in the bindings, it resolves the vector using RGA reconstruction
+// and returns tuples with the reconstructed vector as the V value.
+func (m *BadgerMatcher) matchVectorWithBindings(
+	pattern *query.DataPattern,
+	bindingRel executor.Relation,
+	columns []query.Symbol,
+	attr datalog.Keyword,
+) (executor.Relation, error) {
+	// Find which column in bindings provides the entity
+	var eColIdx int = -1
+	bindingCols := bindingRel.Columns()
+
+	// Find the entity variable in the pattern and match it to binding columns
+	if pattern.GetE() != nil && pattern.GetE().IsVariable() {
+		eVar := pattern.GetE().(query.Variable).Name
+		for i, col := range bindingCols {
+			if col == eVar {
+				eColIdx = i
+				break
+			}
+		}
+	}
+
+	if eColIdx == -1 {
+		// E is not bound from bindings - fall back to normal path
+		// This shouldn't happen if we got here, but be safe
+		return executor.NewMaterializedRelation(columns, nil), nil
+	}
+
+	// Get attribute bytes once
+	var aBytes [32]byte
+	copy(aBytes[:], attr.String())
+
+	// Iterate through bindings and resolve vector for each entity
+	var tuples []executor.Tuple
+	it := bindingRel.Iterator()
+	defer it.Close()
+
+	for it.Next() {
+		bindingTuple := it.Tuple()
+		eVal := bindingTuple[eColIdx]
+
+		// Get entity bytes
+		var eBytes [20]byte
+		if ident, ok := eVal.(datalog.Identity); ok {
+			copy(eBytes[:], ident.Bytes())
+		} else {
+			continue // Skip non-identity values
+		}
+
+		// Resolve the vector using RGA reconstruction
+		result, err := m.resolveVector(eBytes[:], aBytes[:])
+		if err != nil {
+			return nil, fmt.Errorf("vector resolution failed for entity: %w", err)
+		}
+
+		// Skip entities with empty vectors
+		if len(result.Elements) == 0 {
+			continue
+		}
+
+		// Build output tuple
+		tuple := make(executor.Tuple, len(columns))
+		for i, col := range columns {
+			switch {
+			case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
+				pattern.GetE().(query.Variable).Name == col:
+				tuple[i] = eVal
+			case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
+				pattern.GetA().(query.Variable).Name == col:
+				tuple[i] = attr
+			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
+				pattern.GetV().(query.Variable).Name == col:
+				// Return the entire vector as []any
+				tuple[i] = result.Elements
+			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+				pattern.GetT().(query.Variable).Name == col:
+				tuple[i] = result.MaxElementID
+			default:
+				// Check if this column comes from bindings (pass through)
+				for j, bindCol := range bindingCols {
+					if bindCol == col && j < len(bindingTuple) {
+						tuple[i] = bindingTuple[j]
+						break
+					}
+				}
+			}
+		}
+
+		tuples = append(tuples, tuple)
+	}
+
 	return executor.NewMaterializedRelation(columns, tuples), nil
 }
 

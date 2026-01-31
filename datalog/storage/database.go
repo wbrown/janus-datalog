@@ -215,9 +215,10 @@ func (d *Database) NewTransaction() *Transaction {
 	defer d.mu.Unlock()
 
 	tx := &Transaction{
-		db:       d,
-		datoms:   make([]datalog.Datom, 0),
-		retracts: make([]datalog.Datom, 0),
+		db:                d,
+		datoms:            make([]datalog.Datom, 0),
+		retracts:          make([]datalog.Datom, 0),
+		lastVectorElement: make(map[entityAttrKey]datalog.ElementID),
 	}
 
 	d.activeTx[tx] = true
@@ -1208,14 +1209,22 @@ func (d *Database) GetExecutor() *executor.Executor {
 	return d.NewExecutor()
 }
 
+// entityAttrKey is used to track per-(E, A) state within a transaction.
+// Used for vector appends to chain elements correctly.
+type entityAttrKey struct {
+	E [20]byte // Entity hash
+	A string   // Attribute string
+}
+
 // Transaction represents a write transaction
 type Transaction struct {
-	db       *Database
-	datoms   []datalog.Datom
-	retracts []datalog.Datom
-	mu       sync.Mutex
-	closed   bool
-	txTime   *time.Time // Optional custom transaction time
+	db                *Database
+	datoms            []datalog.Datom
+	retracts          []datalog.Datom
+	mu                sync.Mutex
+	closed            bool
+	txTime            *time.Time                      // Optional custom transaction time
+	lastVectorElement map[entityAttrKey]datalog.ElementID // Track last appended element per (E,A) for RGA chaining
 }
 
 // SetTime sets a custom transaction time for this transaction
@@ -1226,17 +1235,16 @@ func (t *Transaction) SetTime(txTime time.Time) {
 	t.txTime = &txTime
 }
 
-// Add adds a value to a cardinality-many set using CRDT add-wins semantics.
-// The value is wrapped in a SetEntry with OpAdd and stored.
+// Add adds a value using schema-aware CRDT semantics.
+// The schema determines the semantics - callers don't need to know the cardinality.
 //
-// This method is part of the CRDT implementation:
-// - Cardinality-Many: Value added to set with add-wins conflict resolution
-// - Cardinality-One: Use Set() instead (LWW semantics)
-// - Cardinality-Vector: Use Append() instead (RGA semantics)
+// Behavior by cardinality:
+// - Cardinality-One: LWW semantics (highest ElementID wins)
+// - Cardinality-Many: Add-wins set semantics (value added with OpCRDTAdd)
+// - Cardinality-Vector: RGA append semantics (element chained after previous in tx)
 //
 // For schemaless attributes (no schema or attribute not defined in schema),
-// Add() stores the raw value for backward compatibility. Queries will treat
-// schemaless attributes as cardinality-one by default.
+// Add() stores the raw value with LWW semantics (cardinality-one behavior).
 func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1291,14 +1299,26 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 				Tx: elemID,
 			})
 		case schema.CardinalityVector:
-			// Phase 5 not implemented - for now, treat as cardinality-one
-			// TODO: Implement Append() semantics when Phase 5 is done
+			// RGA append semantics - chain elements within transaction
+			key := entityAttrKey{E: e.Hash(), A: a.String()}
+			afterRef := t.lastVectorElement[key] // Zero value = HEAD
+
+			rgaElem := RGAElement{
+				ID:       elemID,
+				Value:    v,
+				AfterRef: afterRef,
+			}
+			encodedRGA := EncodeRGAElement(rgaElem)
+
 			t.datoms = append(t.datoms, datalog.Datom{
 				E:  e,
 				A:  a,
-				V:  v,
+				V:  encodedRGA,
 				Tx: elemID,
+				Op: datalog.OpCRDTAdd,
 			})
+
+			t.lastVectorElement[key] = elemID
 		default:
 			// Unknown cardinality - treat as cardinality-one
 			t.datoms = append(t.datoms, datalog.Datom{
@@ -1383,8 +1403,8 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 //
 // This method is part of the CRDT implementation:
 // - Cardinality-One: Highest ElementID wins (LWW semantics)
-// - Cardinality-Many: Use Add() and Remove() instead (add-wins semantics)
-// - Cardinality-Vector: Use Append() instead (RGA semantics)
+// - Cardinality-Many: Replaces entire set (reads current, generates Add/Remove ops)
+// - Cardinality-Vector: Replaces entire vector
 func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1542,8 +1562,88 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
+	case schema.CardinalityVector:
+		// Set() for cardinality-vector replaces the entire vector
+		// This requires reading current elements, tombstoning them, and writing new ones
+		newSlice, ok := v.([]interface{})
+		if !ok {
+			// Try []any (same thing, different spelling)
+			if anySlice, ok2 := v.([]any); ok2 {
+				newSlice = anySlice
+			} else {
+				return fmt.Errorf("Set for cardinality-vector requires []interface{}, got %T", v)
+			}
+		}
+
+		// Schema validation for each element in the slice
+		for _, val := range newSlice {
+			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
+				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
+			}
+		}
+
+		// Load current RGA elements to tombstone them
+		matcher := NewBadgerMatcher(t.db.store)
+		eBytes := e.Hash()
+		var aBytes [32]byte
+		copy(aBytes[:], a.String())
+		currentElements, err := matcher.loadRGAElements(eBytes[:], aBytes[:])
+		if err != nil {
+			return fmt.Errorf("failed to read current vector elements: %w", err)
+		}
+
+		// Tombstone all existing non-tombstoned elements
+		// The tombstone record uses the SAME element ID (stored as Tx) so that
+		// during resolution we see this element is tombstoned.
+		for _, elem := range currentElements {
+			if elem.Tombstone == nil {
+				tombstoneID := t.db.clock.Next()
+				// Create tombstoned version of element - keeps same ID, adds tombstone marker
+				tombstonedElem := RGAElement{
+					ID:        elem.ID,      // Same ID as original
+					Value:     elem.Value,   // Same value
+					AfterRef:  elem.AfterRef, // Same position
+					Tombstone: &tombstoneID, // Mark as deleted at this time
+				}
+				encodedRGA := EncodeRGAElement(tombstonedElem)
+				t.datoms = append(t.datoms, datalog.Datom{
+					E:  e,
+					A:  a,
+					V:  encodedRGA,
+					Tx: elem.ID, // Use ORIGINAL element's ID so resolution sees tombstone
+					Op: datalog.OpCRDTRemove,
+				})
+			}
+		}
+
+		// Write new elements with proper RGA chaining
+		key := entityAttrKey{E: e.Hash(), A: a.String()}
+		t.lastVectorElement[key] = datalog.ElementID{} // Reset to HEAD for new vector
+
+		for _, val := range newSlice {
+			elemID := t.db.clock.Next()
+			afterRef := t.lastVectorElement[key] // Zero value = HEAD
+
+			rgaElem := RGAElement{
+				ID:       elemID,
+				Value:    val,
+				AfterRef: afterRef,
+			}
+			encodedRGA := EncodeRGAElement(rgaElem)
+
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:  e,
+				A:  a,
+				V:  encodedRGA,
+				Tx: elemID,
+				Op: datalog.OpCRDTAdd,
+			})
+
+			t.lastVectorElement[key] = elemID
+		}
+
 	default:
-		return fmt.Errorf("Set not valid for cardinality %v: use Append for vector", card)
+		return fmt.Errorf("Set not valid for unknown cardinality %v", card)
 	}
 
 	return nil

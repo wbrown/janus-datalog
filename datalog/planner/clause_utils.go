@@ -431,14 +431,34 @@ func canExecuteClauseWithContext(clause query.Clause, available map[query.Symbol
 
 // scoreClause assigns a score to a clause for greedy selection
 // Higher score = better to execute now
+//
+// For DataPatterns, we follow the greedy join ordering approach from the paper:
+// "When Greedy Beats Optimal: Join Ordering for Pattern-Based Datalog Queries"
+//
+// Key insight: Selectivity is VISIBLE in pattern syntax, no statistics needed.
+// Priority ordering:
+//   1. Patterns with concrete values (constants) - visible selectivity, run first
+//   2. Patterns with available variable bindings - join hints, run next
+//   3. Unbound patterns - run last
+//
+// Constants are weighted 10× more than available variables because:
+// - Constants FILTER data (selectivity is visible in the pattern)
+// - Available variables ENABLE JOINS (don't filter, just connect)
 func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 	symbols := extractClauseSymbols(clause)
 
 	score := 0
 
-	// Patterns are preferred (data sources)
-	if _, ok := clause.(*query.DataPattern); ok {
+	// Patterns are data sources - use priority-based selectivity scoring
+	if p, ok := clause.(*query.DataPattern); ok {
 		score += 100
+
+		// Count constants (visible selectivity) and available vars (join hints)
+		constants, availableVars := countSelectivityFactors(p, available)
+
+		// Priority ordering: constants >> available variables
+		// Constants have 10× the weight because they actually filter data
+		score += (constants * 100) + (availableVars * 10)
 	}
 
 	// OR clauses that provide symbols are data sources too
@@ -449,22 +469,22 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 		score += 80
 	}
 
-	// Expressions that produce new symbols are valuable
+	// Expressions that produce new symbols are valuable but less than selective patterns
 	if len(symbols.Provides) > 0 {
-		score += 50 * len(symbols.Provides)
+		score += 10 * len(symbols.Provides)
 	}
 
 	// Predicates that filter are less valuable (should come after data loading)
 	if len(symbols.Requires) > 0 && len(symbols.Provides) == 0 {
-		score += 10
+		score += 5
 	}
 
 	// NOT clauses filter - defer until all required symbols are available
 	if _, ok := clause.(*query.NotClause); ok {
-		score += 5 // Lower than regular predicates
+		score += 2
 	}
 	if _, ok := clause.(*query.NotJoinClause); ok {
-		score += 5
+		score += 2
 	}
 
 	// Subqueries are expensive - defer if possible
@@ -473,6 +493,29 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 	}
 
 	return score
+}
+
+// countSelectivityFactors separates constants from available variables in a pattern.
+// This implements the paper's insight that selectivity is visible in pattern syntax:
+// - Constants = visible selectivity (they filter data)
+// - Available variables = join hints (they enable joins, don't filter)
+//
+// The distinction matters: [?e :name "Alice"] has 2 constants (A and V positions),
+// while [?e :skills ?skills] has 1 constant (A only). The former is more selective
+// regardless of what variables are available.
+func countSelectivityFactors(p *query.DataPattern, available map[query.Symbol]bool) (constants, availableVars int) {
+	for _, elem := range p.Elements {
+		switch e := elem.(type) {
+		case query.Constant:
+			constants++ // Constants provide visible selectivity
+		case query.Variable:
+			if available[e.Name] {
+				availableVars++ // Available vars are join hints, not selectivity
+			}
+		// Blanks are unbound (match anything) - neither constants nor join hints
+		}
+	}
+	return constants, availableVars
 }
 
 // findConstantBindableScalars identifies scalar input symbols that only appear
