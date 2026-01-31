@@ -12,7 +12,7 @@ import (
 // This allows us to avoid fetching values since the key contains all information
 func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Datom, error) {
 	// DecodeKey returns fixed-size arrays directly (no heap escape)
-	entity, attr, vBytes, tx, op, err := encoder.DecodeKey(index, key)
+	entity, attr, vBytes, tx, op, afterRef, err := encoder.DecodeKey(index, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode key: %w", err)
 	}
@@ -41,11 +41,12 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Dat
 	// No intermediate copies needed - arrays go straight to intern cache lookup
 	// tx is [16]byte, convert to Tx type then to uint64
 	return &datalog.Datom{
-		E:  datalog.InternIdentityFromHash(entity),
-		A:  datalog.InternKeywordFromBytes(attr),
-		V:  v,
-		Tx: Tx(tx).ToElementID(),
-		Op: datalog.CRDTOp(op),
+		E:        datalog.InternIdentityFromHash(entity),
+		A:        datalog.InternKeywordFromBytes(attr),
+		V:        v,
+		Tx:       Tx(tx).ToElementID(),
+		Op:       datalog.CRDTOp(op),
+		AfterRef: Tx(afterRef).ToElementID(),
 	}, nil
 }
 

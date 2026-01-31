@@ -1,9 +1,28 @@
 # CRDT Vector Storage - Implementation Plan
 
-**Status:** In Progress (Phases 0-5 Core Complete, Query Integration Fixed)
+**Status:** In Progress (Phases 0-5 Complete, Bug #5 Fixed)
 **Based On:** CRDT_VECTOR_STORAGE.md Proposal
 **Created:** 2026-01-30
-**Updated:** 2026-01-31 (Phase 5 core implementation complete, query integration fixed via planner)
+**Updated:** 2026-01-31 (Phase 5 complete; 5.5 merged into Phase 6)
+
+---
+
+## Decision Log
+
+### 2026-01-31: Phase 5.5 Merged into Phase 6
+
+**Decision:** Move "Vector Position Index (Cache-Only)" from Phase 5.5 into Phase 6 (Unified Cache).
+
+**Rationale:** Phase 5.5 defines vector-specific cache fields (`vectorList`, `vectorIndex`) and APIs (`GetVectorNth`, `GetVectorLength`) that depend on Phase 6's `Cache` infrastructure (`CacheEntry`, `GetOrResolve`, `Invalidate`). They are not sequential phases but intertwined aspects of the same feature:
+
+- Phase 5.5 defines **what** to cache for vectors
+- Phase 6 defines **how** caching works for all cardinalities
+
+Implementing 5.5 standalone would require duplicating cache infrastructure. The cleaner design is to implement them together in Phase 6.
+
+**Impact:** Phase 5 (5.1-5.4) is now **COMPLETE**. The core vector/RGA functionality works without caching. Phase 6 will add caching as a performance optimization for all cardinalities, including the vector-specific position index.
+
+---
 
 ---
 
@@ -15,27 +34,38 @@ This section documents significant gaps between the plan and actual implementati
 
 | Gap | Severity | Status | Impact |
 |-----|----------|--------|--------|
-| 1. Phase 5 (Vector/RGA) unimplemented | **CRITICAL** | ✅ CORE COMPLETE | Ordered collections working |
+| 1. Phase 5 (Vector/RGA) unimplemented | **CRITICAL** | ✅ COMPLETE | Core working, Bug #5 fixed |
 | 2. AVET index unused for cardinality-many | **HIGH** | ✅ FIXED | Now O(k) lookups |
-| 3. Vector tests missing | **CRITICAL** | ✅ 13 TESTS PASS | Full test coverage |
+| 3. Vector tests missing | **CRITICAL** | ✅ 21 TESTS PASS | Full test coverage |
 | 4. Set/Add API forces cardinality knowledge | **HIGH** | ✅ FIXED | Add() is now schema-aware |
+| 5. RGAElement wrapper breaks AVET/VAET | **HIGH** | ✅ FIXED | AfterRef now in key, V stores raw values |
 
 ---
 
-### Gap #1: Phase 5 (Cardinality-Vector/RGA) - CORE COMPLETE
+### Gap #1: Phase 5 (Cardinality-Vector/RGA) - COMPLETE
 
-**Severity:** Was CRITICAL → Now ✅ RESOLVED
-**Status:** Core implementation complete (2026-01-31)
+**Severity:** Was CRITICAL → Now ✅ COMPLETE
+**Status:** Fully implemented (2026-01-31)
 
 **What's Implemented:**
 - `rga_element.go` - RGAElement type with encode/decode
 - `rga_reconstruct.go` - RGA reconstruction algorithm with tombstone handling
-- `vector_resolution.go` - Vector resolution for matcher
+- `vector_resolution.go` - Vector resolution for matcher (updated for Bug #5 fix)
 - `database.go` - Add() for RGA append semantics, Set() for vector replacement
 - `matcher.go` - LookupAttribute returns reconstructed vectors
 - `matcher_relations.go` - matchVectorWithBindings for join path vector resolution
 - Pull API - Returns vectors as `[]interface{}`
-- **13 tests passing** in `crdt_vector_test.go`
+- **21 tests passing** across `crdt_vector_test.go` and `afterref_key_test.go`
+
+**Bug #5 Fix (2026-01-31):**
+
+Fixed the RGAElement wrapper issue. Now:
+- V stores raw values (TypeString, TypeLong, etc.) - enables AVET/VAET lookups
+- AfterRef is stored in the key when `Op.HasAfterRef()` is true
+- New Op types: `OpRGAInsert (3)` and `OpRGATombstone (4)`
+- Key format: `[...][V][Tx↓][Op][AfterRef?]` where AfterRef is 16 bytes at end
+
+See Bug #5 section for full implementation details.
 
 **Query Integration Fix (2026-01-31):**
 
@@ -52,10 +82,12 @@ score += (constants * 100) + (availableVars * 10)
 
 Key insight from paper: Selectivity is VISIBLE in pattern syntax - no statistics needed.
 
-**Remaining Work:**
-- E-unbound vector queries (`[?e :attr ?v]` with no E binding) still return raw bytes
-- Cache with position index (Phase 5.5) not yet implemented
-- Vector functions (enumerate, nth, contains?, etc.) not yet implemented
+**Deferred to Phase 6 (Unified Cache):**
+- Cache with position index (moved from Phase 5.5 - see Decision Log)
+- `GetVectorNth()` and `GetVectorLength()` helper APIs
+
+**Deferred to Phase 8 (Query Integration):**
+- Vector functions (enumerate, nth, contains?, etc.)
 
 ---
 
@@ -736,6 +768,14 @@ t.datoms = append(t.datoms, datalog.Datom{
 
 **Status:** ✅ Fixed - Op field replaces SetEntry, Op positioning corrected in all indices
 
+> **⚠️ PENDING REVISION (see Bug #5 Refinement):**
+>
+> The current key format uses `[...][V][Op][Tx]` (Op before Tx). After further analysis during Bug #5 design, we determined that **Tx should come before Op** - we don't need Op-based sorting for add-wins resolution.
+>
+> When implementing Bug #5 fix, revise this to: `[...][V][Tx][Op][AfterRef?]`
+>
+> This is a **consistency improvement**, not a correctness fix - the current implementation works correctly.
+
 ---
 
 ### Testing Gaps Identified (Updated 2026-01-31)
@@ -749,7 +789,324 @@ These bugs revealed missing test coverage. Status after Bug #4 fix:
 | `Set()` with duplicate values in slice | ✅ Fixed | Bug #1 fixed |
 | `Add()` then `Set()` in same transaction | ✅ Added | `TestCardinalityManySetSeesPendingOps` |
 | AVET direct value lookup for cardinality-many | ❌ Missing | See Gap #2 - index unused |
-| Any cardinality-vector tests | ❌ Missing | See Gap #1 - Phase 5 unimplemented |
+| Any cardinality-vector tests | ✅ Added | 13 tests in `crdt_vector_test.go` |
+| AVET/VAET for vector element lookup | ❌ Broken | See Bug #5 - 10 test cases defined |
+
+---
+
+### Bug #5: RGAElement Wrapper Breaks AVET/VAET for Vectors (SAME PATTERN AS BUG #4)
+
+**Discovered:** 2026-01-31 during Phase 5 architectural review
+**Status:** ❌ NOT FIXED - architectural flaw in current implementation
+
+**Problem:** The current vector implementation stores RGA metadata inside V, exactly like the Bug #4 mistake with SetEntry:
+
+```go
+// CURRENT IMPLEMENTATION (WRONG - same mistake as Bug #4)
+rgaElem := RGAElement{
+    ID:       elemID,
+    AfterRef: afterRef,
+    Value:    v,
+}
+encoded := EncodeRGAElement(rgaElem)  // Returns []byte
+datom.V = encoded  // V is now RGAElement bytes, gets TypeBytes
+```
+
+This causes the same index corruption as Bug #4:
+
+```
+Stored AVET key:  [AVET][:skills][TypeBytes][RGAElement bytes...][E][Tx]
+Query looks for:  [AVET][:skills][TypeString]["stealth"][E][Tx]
+
+TypeBytes ≠ TypeString → No matches → Silent wrong answers
+```
+
+**Impact:**
+- AVET lookups broken: `[?e :skills "stealth"]` returns empty (should find entities with that skill)
+- VAET lookups broken: If vectors contain entity references, reverse lookup doesn't work
+- Same silent failure mode as Bug #4
+
+**Root Cause Analysis:**
+
+We fixed Bug #4 by recognizing: **V should contain the value, not metadata about the value.**
+
+- Op (add/remove) is assertion metadata → moved to key
+- V became raw value → AVET works
+
+The same principle applies to vectors:
+
+| Metadata | What it is | Where it belongs |
+|----------|------------|------------------|
+| AfterRef | Ordering metadata (predecessor link) | Key, not V |
+| Tombstone | Deletion metadata | Op field (OpCRDTRemove) |
+| ElementID | Already stored as Tx | Key (Tx field) |
+| **Value** | The actual value | V field |
+
+**The Correct Model:**
+
+Extend the cardinality-many pattern to vectors by adding AfterRef to the key:
+
+| Cardinality | V contains | Key contains |
+|-------------|------------|--------------|
+| One | raw value | E, A, Tx |
+| Many | raw value | E, A, Op, Tx |
+| **Vector** | **raw value** | **E, A, Op, AfterRef, Tx** |
+
+**Key Format for Vectors:**
+
+```
+EAVT: [E][A][V][Op][AfterRef][Tx↓]     ← AfterRef before Tx
+EATV: [E][A][Tx↓][V][Op][AfterRef]     ← Load all elements for (E,A)
+AEVT: [A][E][V][Op][AfterRef][Tx↓]     ← All entities with attribute
+AVET: [A][V][E][Op][AfterRef][Tx↓]     ← Find entities where vector contains X ✓
+VAET: [V][A][E][Op][AfterRef][Tx↓]     ← Reverse ref lookup works ✓
+TAEV: [Tx↓][A][E][V][Op][AfterRef]     ← Transaction log
+```
+
+**Why AfterRef in Key (not separate index):**
+
+1. **Consistency** - Same pattern as Op: metadata in key, value in V
+2. **Atomic writes** - RGA element is one key-value pair, not scattered
+3. **Reconstruction** - Scan by (E,A), get AfterRef from key, build graph
+4. **No V pollution** - V remains raw value, all indices work correctly
+
+**Op Values for Vectors:**
+
+```go
+const (
+    OpNone       CRDTOp = 0  // cardinality-one
+    OpCRDTAdd    CRDTOp = 1  // set add / vector insert
+    OpCRDTRemove CRDTOp = 2  // set remove / vector tombstone
+)
+```
+
+Vector insert uses `OpCRDTAdd`. Vector tombstone uses `OpCRDTRemove`. No new Op values needed.
+
+**Files Requiring Changes:**
+
+| File | Change |
+|------|--------|
+| `datalog/types.go` | Add `AfterRef ElementID` field to Datom |
+| `datalog/storage/types.go` | Add `AfterRef` to StorageDatom |
+| `datalog/storage/key_encoder_binary.go` | Encode AfterRef in all 6 indices |
+| `datalog/storage/key_encoder_l85.go` | Same for L85 encoder |
+| `datalog/storage/key_encoder_interface.go` | DecodeKey returns AfterRef |
+| `datalog/storage/database.go` | Add() for vectors uses AfterRef field |
+| `datalog/storage/rga_element.go` | Remove or simplify (no longer encodes to V) |
+| `datalog/storage/rga_reconstruct.go` | Read AfterRef from datom, not decoded V |
+| `datalog/storage/vector_resolution.go` | Update to use AfterRef from key |
+| `datalog/storage/matcher_relations.go` | Update vector matching |
+
+**Semantic Consistency Achieved:**
+
+After this fix, V **always** means "the value" regardless of cardinality:
+
+```
+Cardinality-One:    [E][:name][Tx]["Alice"]           V = "Alice"
+Cardinality-Many:   [E][:tags]["warrior"][Op][Tx]    V = "warrior"
+Cardinality-Vector: [E][:skills]["stealth"][Op][AfterRef][Tx]  V = "stealth"
+```
+
+This is the principled fix that maintains architectural consistency.
+
+> **⚠️ FOUNDATIONAL CHANGE - EXTREME CARE REQUIRED**
+>
+> This fix modifies the **key encoder**, which is the most foundational component in the storage layer. Every index, every query, every write depends on correct key encoding. A subtle bug here (wrong byte order, off-by-one, incorrect sort order) will cause:
+>
+> - Silent data corruption
+> - Queries returning wrong results
+> - Data that cannot be read back
+> - Failures that only manifest under specific data patterns
+>
+> **Implementation approach:**
+> 1. **Write tests FIRST** - All 10 test cases before any implementation
+> 2. **Change one index at a time** - Verify each index works before moving to next
+> 3. **Verify sort order explicitly** - Add tests that check byte-level sort order
+> 4. **Run full test suite after each change** - No batching changes
+> 5. **Review key encoding byte-by-byte** - No assumptions about "it probably works"
+>
+> This is not a "fix it and move on" task. Budget time for careful verification.
+
+**Test Cases for Bug #5 Fix:**
+
+| Test | Description | Validates |
+|------|-------------|-----------|
+| `TestVectorAVETLookup` | Query `[?e :skills "stealth"]` finds entities with that skill | AVET works for vectors |
+| `TestVectorAVETMultipleEntities` | Multiple entities with same skill value, all returned | AVET grouping correct |
+| `TestVectorAVETAfterTombstone` | Tombstoned element not returned by AVET lookup | Tombstone filtering works |
+| `TestVectorVAETReverseLookup` | Reverse lookup for entity refs in vectors | VAET works for vectors |
+| `TestVectorValueTypePreserved` | V decodes as original type (string, int, etc.) not []byte | Type preservation |
+| `TestVectorKeyEncodingRoundTrip` | Encode/decode preserves E, A, V, Tx, Op, AfterRef | Key encoding correct |
+| `TestVectorKeyEncodingSortOrder` | Keys sort correctly (Tx descending within groups) | Sort order preserved |
+| `TestVectorAfterRefInKey` | AfterRef stored in key, not in V | Architecture correct |
+| `TestVectorRGAReconstructFromKey` | RGA reconstruction works with AfterRef from key | Reconstruction works |
+| `TestBug4KeyFormatRevised` | Cardinality-many uses `[V][Tx][Op]` not `[V][Op][Tx]` | Bug #4 revision applied |
+
+**Success Criteria for Bug #5:**
+
+1. **AVET queries work for vectors:**
+   - `[?e :skills "stealth"]` returns all entities where vector contains "stealth"
+   - Query uses AVET index (O(k) not O(n))
+
+2. **VAET queries work for vectors:**
+   - Reverse reference lookup works when vectors contain entity refs
+   - Query uses VAET index
+
+3. **V contains raw value only:**
+   - `datom.V` decodes to original type (string, int64, etc.)
+   - No RGAElement wrapper in V
+   - Type tag matches original value type
+
+4. **AfterRef in key structure:**
+   - AfterRef encoded in key after Op
+   - Only present when Op ∈ {OpRGAInsert, OpRGATombstone}
+   - Self-describing: decoder reads Op to know if AfterRef follows
+
+5. **RGA reconstruction still works:**
+   - `reconstructRGA()` builds correct ordered list
+   - AfterRef read from key/datom field, not decoded from V
+   - Tombstones correctly excluded
+
+6. **All existing tests pass:**
+   - 13 vector tests in `crdt_vector_test.go` still pass
+   - Cardinality-one and cardinality-many tests unaffected
+   - No regressions
+
+7. **Bug #4 key format revised:**
+   - Cardinality-many keys use `[...][V][Tx][Op]` (Tx before Op)
+   - Consistency across all cardinalities
+
+---
+
+### Bug #5 Refinement: Index Arrangement Discussion (2026-01-31)
+
+**Context:** After documenting Bug #5, we discussed the optimal index arrangement for supporting vectors while maintaining clean semantics for all cardinalities.
+
+#### Initial Proposal (Rejected)
+
+The initial Bug #5 fix proposed this arrangement:
+
+```
+EAVT: [E][A][V][Op][AfterRef][Tx]
+AVET: [A][V][E][Op][AfterRef][Tx]
+...
+```
+
+This put Op before Tx, following the Bug #4 fix which also placed Op before Tx.
+
+#### Critical Question: Do We Need Op-Based Sorting?
+
+The Bug #4 fix put Op before Tx for "add-wins grouping" - grouping all Adds together, then all Removes. But **we don't actually need Op-based sorting** for add-wins resolution:
+
+```go
+// Add-wins resolution scans all entries for a value and tracks:
+// - highestAddTx: highest Tx with Op=Add
+// - highestRemoveTx: highest Tx with Op=Remove
+// Then compares: if addTx >= removeTx, value is in set
+
+// This works regardless of whether entries are sorted by Op!
+```
+
+**Insight:** The algorithm iterates all entries anyway. Op sort order is irrelevant.
+
+#### Refined Arrangement: Tx Before Op
+
+If we don't need Op-based sorting, we can use a cleaner arrangement:
+
+**Principle:** Lookup components → Tx → Op → AfterRef (if Op indicates vector)
+
+| Index | Format | Notes |
+|-------|--------|-------|
+| EAVT | `[E][A][V][Tx][Op][AfterRef?]` | Group by V, then by Tx |
+| EATV | `[E][A][Tx][V][Op][AfterRef?]` | First entry = highest Tx = current |
+| AEVT | `[A][E][V][Tx][Op][AfterRef?]` | All entities with attribute |
+| AVET | `[A][V][E][Tx][Op][AfterRef?]` | Value lookup (critical for queries) |
+| VAET | `[V][A][E][Tx][Op][AfterRef?]` | Reverse reference lookup |
+| TAEV | `[Tx][A][E][V][Op][AfterRef?]` | Transaction log / clock recovery |
+
+Where `AfterRef?` = present only if `Op ∈ {OpRGAInsert, OpRGATombstone}`.
+
+**Benefits:**
+
+1. **Tx-based ordering within groups** - "Most recent first" scans work for all cardinalities
+2. **Self-describing keys** - Decoder reads Op, knows if AfterRef follows
+3. **No wasted space** - Non-vectors don't pay for AfterRef bytes
+4. **Consistent pattern** - Same structure across all 6 indices
+5. **Lookup components always first** - Prefix scans work correctly
+
+#### Self-Describing Keys via Op Values
+
+Op determines whether AfterRef is present in the key:
+
+```go
+const (
+    OpNone         CRDTOp = 0  // cardinality-one: no AfterRef
+    OpCRDTAdd      CRDTOp = 1  // set add: no AfterRef
+    OpCRDTRemove   CRDTOp = 2  // set remove: no AfterRef
+    OpRGAInsert    CRDTOp = 3  // vector insert: AfterRef follows
+    OpRGATombstone CRDTOp = 4  // vector tombstone: AfterRef follows
+)
+```
+
+**Key encoding logic:**
+
+```go
+func encodeKey(index IndexType, datom StorageDatom) []byte {
+    // ... encode lookup components based on index ...
+
+    // Always encode Tx (descending for "highest first")
+    buf = append(buf, EncodeElementIDForKey(datom.Tx)...)
+
+    // Always encode Op
+    buf = append(buf, byte(datom.Op))
+
+    // Conditionally encode AfterRef based on Op
+    if datom.Op == OpRGAInsert || datom.Op == OpRGATombstone {
+        buf = append(buf, EncodeElementIDForKey(datom.AfterRef)...)
+    }
+
+    return buf
+}
+
+func decodeKey(key []byte) (StorageDatom, error) {
+    // ... decode lookup components ...
+
+    // Decode Tx
+    tx := DecodeElementID(key[offset:offset+16])
+    offset += 16
+
+    // Decode Op
+    op := CRDTOp(key[offset])
+    offset++
+
+    // Conditionally decode AfterRef
+    var afterRef ElementID
+    if op == OpRGAInsert || op == OpRGATombstone {
+        afterRef = DecodeElementID(key[offset:offset+16])
+    }
+
+    return StorageDatom{..., Tx: tx, Op: op, AfterRef: afterRef}, nil
+}
+```
+
+#### Correction to Bug #4 Fix
+
+The Bug #4 fix should be revised - Op doesn't need to be before Tx. However, this is a **documentation correction**, not a requirement to change working code. The current implementation with Op before Tx works correctly; it's just not the cleanest arrangement.
+
+**If refactoring:** Change key format to `[...][V][Tx][Op]` for consistency across all indices.
+
+#### Summary of Final Design
+
+1. **V is sacred** - V always contains raw value, never metadata
+2. **Metadata in keys** - Op, AfterRef belong in key structure, not V
+3. **Tx before Op** - We don't need Op-based sorting
+4. **Self-describing keys** - Op value signals AfterRef presence
+5. **New Op values** - OpRGAInsert (3) and OpRGATombstone (4) for vectors
+
+This arrangement supports all three cardinalities with:
+- Clean prefix scans for all query patterns
+- No wasted space for simpler cardinalities
+- Correct AVET/VAET lookups for vector element queries
 
 ---
 
@@ -832,6 +1189,57 @@ This plan details the implementation of CRDT-based storage with native vector su
 ---
 
 ## Design Decisions
+
+### V Is Sacred: Never Wrap Values With Metadata
+
+**This is the most important architectural principle in the storage layer.**
+
+A datom is `[E, A, V, Tx]` - a fact asserting "entity E has attribute A with value V as of transaction Tx."
+
+**V means "the value." Full stop.**
+
+CRDT metadata (Op, AfterRef, Tombstone flags) is not "the value" - it's metadata about how the value relates to other values or about the assertion itself. This metadata belongs in the key structure, not wrapped inside V.
+
+**Why this matters:**
+
+1. **Indices assume V is the value** - AVET enables "find entities where A=V". If V contains wrapped metadata, the type tag changes (e.g., TypeString → TypeBytes) and lookups silently fail.
+
+2. **Type preservation** - The value's type must survive storage round-trips. Wrapping destroys the original type.
+
+3. **Query semantics** - Users query for values, not internal encodings. `[?e :skills "stealth"]` should work.
+
+4. **Uniform decoding** - V should decode the same way regardless of cardinality. Special-case decoding is a code smell.
+
+**The pattern that violates this (DO NOT DO):**
+
+```go
+// WRONG: Wrapping value with metadata
+wrapper := SomeWrapper{Value: v, Metadata: meta}
+datom.V = EncodeWrapper(wrapper)  // V is now []byte, TypeBytes
+```
+
+**The correct pattern:**
+
+```go
+// CORRECT: Metadata in dedicated fields, V is raw value
+datom.V = v           // Raw value, preserves type
+datom.Op = op         // Metadata in separate field
+datom.AfterRef = ref  // Metadata in separate field (for vectors)
+// Key encoder puts metadata in appropriate key positions
+```
+
+**Lessons learned:**
+
+| Bug | Violation | Consequence |
+|-----|-----------|-------------|
+| #4 | SetEntry wrapped value+Op | AVET broken for cardinality-many |
+| #5 | RGAElement wrapped value+AfterRef+Tombstone | AVET/VAET broken for vectors |
+
+Both bugs had the same root cause: treating V as a convenient bucket for "stuff" rather than respecting its semantic meaning.
+
+**The principle:** Extend the key structure to accommodate metadata. Never pollute V.
+
+---
 
 ### LWW Semantics (Not Vector Clocks)
 
@@ -2835,142 +3243,28 @@ Now the name pattern runs first (score 300 > 200), provides `?e`, and the skills
 
 **Remaining Issue:** E-unbound vector queries (`[?e :attr ?v]` with no E binding anywhere in query) still return raw bytes. This requires scanning all entities and resolving each vector - a separate implementation in `matchUnboundAsRelation`.
 
-### 5.5 Vector Position Index (Cache-Only)
+### 5.5 Vector Position Index - MOVED TO PHASE 6
 
-**Goal:** Provide O(1) random access for read-heavy workloads while maintaining CRDT write semantics.
-
-**Key Design Decision:** The position index is **cache-only** - it lives in the `CacheEntry` struct, NOT in the database. This ensures:
-- Reads have no side effects (no database writes)
-- Writes remain simple appends
-- Position index is just a computed view, rebuilt on cache miss
-
-**Storage:** Only RGA elements are stored in the database:
-
-```
-// Source of truth: RGA elements (CRDT, conflict-free)
-// Stored in EATV index - this is ALL that's persisted
-[E][:skills][(L1,N1)] = {value: "stealth", after: HEAD}
-[E][:skills][(L2,N1)] = {value: "archery", after: (L1,N1)}
-[E][:skills][(L3,N1)] = {value: "lockpicking", after: (L2,N1)}
-```
-
-**Cache Entry (includes position index):**
-
-```go
-type CacheEntry struct {
-    version     ElementID
-    cardinality Cardinality
-
-    // ... other fields ...
-
-    // Vector-specific: computed during cache rebuild, NOT persisted
-    vectorList  []any        // Ordered elements after RGA reconstruction
-    vectorIndex []ElementID  // position → ElementID mapping
-}
-```
-
-**Cache Rebuild (computes position index):**
-
-```go
-func (c *Cache) rebuildVector(key CacheKey, store Store) *CacheEntry {
-    // 1. Load all RGA elements from storage
-    elements := loadRGAElements(store, key.E[:], key.A[:])
-
-    // 2. Find max ElementID for version tracking
-    var maxID ElementID
-    for _, elem := range elements {
-        if !elem.ID.Less(maxID) {
-            maxID = elem.ID
-        }
-    }
-
-    // 3. Reconstruct ordered list (filters tombstones)
-    ordered := reconstructRGAWithIDs(elements)  // []struct{ID ElementID, Value any}
-
-    // 4. Build position index in memory
-    vectorList := make([]any, len(ordered))
-    vectorIndex := make([]ElementID, len(ordered))
-    for i, elem := range ordered {
-        vectorList[i] = elem.Value
-        vectorIndex[i] = elem.ID
-    }
-
-    return &CacheEntry{
-        version:     maxID,
-        cardinality: CardinalityVector,
-        vectorList:  vectorList,
-        vectorIndex: vectorIndex,
-    }
-}
-```
-
-**Access via Cache:**
-
-```go
-// GetVectorNth uses cache for O(1) access when fresh
-func (db *Database) GetVectorNth(e, a Identity, n int64) (any, error) {
-    key := CacheKey{e.Hash(), encodeAttribute(a)}
-    entry := db.cache.GetOrResolve(key, db.store, db.schema)
-
-    if entry.cardinality != CardinalityVector {
-        return nil, fmt.Errorf("not a vector attribute")
-    }
-
-    if n < 0 || n >= int64(len(entry.vectorList)) {
-        return nil, nil  // Out of bounds
-    }
-
-    return entry.vectorList[n], nil
-}
-
-// GetVectorLength uses cache
-func (db *Database) GetVectorLength(e, a Identity) (int64, error) {
-    key := CacheKey{e.Hash(), encodeAttribute(a)}
-    entry := db.cache.GetOrResolve(key, db.store, db.schema)
-
-    if entry.cardinality != CardinalityVector {
-        return 0, fmt.Errorf("not a vector attribute")
-    }
-
-    return int64(len(entry.vectorList)), nil
-}
-```
-
-**Performance Characteristics:**
-
-| Operation | Cache hit | Cache miss |
-|-----------|-----------|------------|
-| Get full vector | O(1) return cached | O(n) reconstruct + cache |
-| Get length | O(1) | O(n) reconstruct + cache |
-| Get nth element | O(1) | O(n) reconstruct + cache |
-| Append | O(1) write + invalidate | O(1) write + invalidate |
-
-**Trade-off:** Position index is lost on process restart and rebuilt on first access. This is acceptable because:
-- RGA reconstruction is already O(n)
-- Cache miss only happens once per (E,A) after restart
-- No database write side-effects from reads
-
-**Tests:** `datalog/storage/cache_vector_test.go`
-- [ ] `TestVectorCacheHit` - O(1) access when cached
-- [ ] `TestVectorCacheMiss` - rebuilds correctly on miss
-- [ ] `TestVectorCacheInvalidation` - invalidates on write
-- [ ] `TestVectorNthFromCache` - correct element at each position
-- [ ] `TestVectorLengthFromCache` - correct length
-- [ ] `TestVectorCacheTombstones` - excludes deleted elements
+> **Decision (2026-01-31):** This section has been merged into Phase 6 (Unified Cache).
+> See Decision Log at top of document for rationale.
+>
+> The vector position index (`vectorList`, `vectorIndex`) is part of the cache infrastructure,
+> not a standalone Phase 5 feature. Implementation details are now in Phase 6.
 
 ### 5.6 Phase 5 Implementation Summary (2026-01-31)
 
-**Status:** ✅ Core Complete
+**Status:** ✅ COMPLETE
 
 **Files Implemented:**
 - `datalog/storage/rga_element.go` - RGAElement type with encode/decode
 - `datalog/storage/rga_reconstruct.go` - RGA reconstruction algorithm
-- `datalog/storage/vector_resolution.go` - Vector resolution for matcher
+- `datalog/storage/vector_resolution.go` - Vector resolution for matcher (updated for Bug #5)
 - `datalog/storage/database.go` - Add() for RGA append, Set() for vector replacement
 - `datalog/storage/matcher.go` - LookupAttribute for vectors
 - `datalog/storage/matcher_relations.go` - matchVectorWithBindings for join path
 - `datalog/planner/clause_utils.go` - Priority-based selectivity scoring
-- `datalog/storage/crdt_vector_test.go` - 13 passing tests
+- `datalog/storage/crdt_vector_test.go` - 13 passing vector tests
+- `datalog/storage/afterref_key_test.go` - 8 passing AfterRef key encoding tests
 
 **What Works:**
 - Basic vector Add() and Set() operations
@@ -2978,17 +3272,29 @@ func (db *Database) GetVectorLength(e, a Identity) (int64, error) {
 - LookupAttribute returns reconstructed vectors
 - Pull API returns vectors as `[]interface{}`
 - Query with E bound via join returns reconstructed vectors (fixed via planner)
+- AVET/VAET lookups work for vector element values (Bug #5 fixed)
 
-**What Remains:**
-- E-unbound vector queries return raw bytes (separate implementation needed)
-- Cache with position index (Section 5.5) not yet implemented
-- Vector functions (enumerate, nth, contains?, etc.) not yet implemented
+**Bug #5 Fix Completed:**
+
+Moved AfterRef from V to key. Now:
+- V stores raw values (TypeString, TypeLong, etc.)
+- AfterRef encoded at end of key when `Op.HasAfterRef()` is true
+- Key format: `[...][V][Tx↓][Op][AfterRef?]`
+- New Ops: `OpRGAInsert (3)`, `OpRGATombstone (4)`
+
+**Deferred:**
+- Cache with position index → Phase 6
+- Vector functions (enumerate, nth, etc.) → Phase 8
 
 ---
 
 ## Phase 6: Unified Cache
 
 **Goal:** Implement caching layer for resolved CRDT views.
+
+> **Note (2026-01-31):** This phase now includes the vector position index (formerly Phase 5.5).
+> See Decision Log for rationale. Vector-specific cache fields (`vectorList`, `vectorIndex`)
+> and APIs (`GetVectorNth`, `GetVectorLength`) are documented below.
 
 ### Query Resolution Model
 
@@ -3321,6 +3627,66 @@ if err != nil {
 - [ ] `TestWarmCacheEmptyAttribute` - no error for attributes with no data
 - [ ] `TestWarmCacheUpdatesAttrVersion` - attribute freshness works after warmup
 - [ ] `TestWarmCacheIdempotent` - calling twice is safe
+
+### 6.3 Vector Position Index and Helper APIs (formerly Phase 5.5)
+
+**Goal:** Provide O(1) random access for read-heavy vector workloads.
+
+The vector position index is stored in `CacheEntry.vectorList` and `CacheEntry.vectorIndex`. These are populated by `Cache.rebuild()` when cardinality is Vector (see 6.1 implementation above).
+
+**Helper APIs:**
+
+```go
+// GetVectorNth uses cache for O(1) access when fresh
+func (db *Database) GetVectorNth(e, a Identity, n int64) (any, error) {
+    key := CacheKey{e.Hash(), encodeAttribute(a)}
+    entry := db.cache.GetOrResolve(key, db.store, db.schema)
+
+    if entry.cardinality != CardinalityVector {
+        return nil, fmt.Errorf("not a vector attribute")
+    }
+
+    if n < 0 || n >= int64(len(entry.vectorList)) {
+        return nil, nil  // Out of bounds
+    }
+
+    return entry.vectorList[n], nil
+}
+
+// GetVectorLength uses cache
+func (db *Database) GetVectorLength(e, a Identity) (int64, error) {
+    key := CacheKey{e.Hash(), encodeAttribute(a)}
+    entry := db.cache.GetOrResolve(key, db.store, db.schema)
+
+    if entry.cardinality != CardinalityVector {
+        return 0, fmt.Errorf("not a vector attribute")
+    }
+
+    return int64(len(entry.vectorList)), nil
+}
+```
+
+**Performance Characteristics:**
+
+| Operation | Cache hit | Cache miss |
+|-----------|-----------|------------|
+| Get full vector | O(1) return cached | O(n) reconstruct + cache |
+| Get length | O(1) | O(n) reconstruct + cache |
+| Get nth element | O(1) | O(n) reconstruct + cache |
+| Append | O(1) write + invalidate | O(1) write + invalidate |
+
+**Trade-off:** Position index is lost on process restart and rebuilt on first access. This is acceptable because:
+- RGA reconstruction is already O(n)
+- Cache miss only happens once per (E,A) after restart
+- No database write side-effects from reads
+
+**Tests:** `datalog/storage/cache_vector_test.go`
+- [ ] `TestVectorCacheHit` - O(1) access when cached
+- [ ] `TestVectorCacheMiss` - rebuilds correctly on miss
+- [ ] `TestVectorCacheInvalidation` - invalidates on write
+- [ ] `TestVectorNthFromCache` - correct element at each position
+- [ ] `TestVectorLengthFromCache` - correct length
+- [ ] `TestVectorCacheTombstones` - excludes deleted elements
 
 ---
 

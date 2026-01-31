@@ -45,7 +45,7 @@ func TestKeyEncoders(t *testing.T) {
 				}
 
 				// Decode key
-				e, _, v, tx, _, err := encoder.DecodeKey(idx, key)
+				e, _, v, tx, _, _, err := encoder.DecodeKey(idx, key)
 				if err != nil {
 					t.Errorf("%s: decode error for index %v: %v", tc.name, idx, err)
 					continue

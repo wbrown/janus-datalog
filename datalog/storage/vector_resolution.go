@@ -16,8 +16,9 @@ type VectorResolutionResult struct {
 
 // resolveVector loads all RGA elements for (E, A) and reconstructs the ordered vector.
 //
-// This uses EATV index: E → A → Tx → V
-// Each entry's V is an encoded RGAElement containing AfterRef, optional Tombstone, and Value.
+// This uses EATV index: E → A → Tx → V → Op → AfterRef?
+// V contains the raw value. Op is OpRGAInsert or OpRGATombstone.
+// AfterRef is present only when Op.HasAfterRef() is true.
 // The Tx (ElementID) is the element's ID.
 //
 // After loading all elements, RGA reconstruction builds the final ordered list.
@@ -44,9 +45,14 @@ func (m *BadgerMatcher) resolveVector(eBytes, aBytes []byte) (*VectorResolutionR
 // loadRGAElements loads all RGA elements for (E, A) without reconstruction.
 // Used when you need access to the raw elements (e.g., for building position index).
 //
+// With the new key format:
+// - V is the raw value (not encoded RGAElement)
+// - Op is OpRGAInsert (3) or OpRGATombstone (4)
+// - AfterRef is the position reference for inserts, or the target element ID for tombstones
+//
 // IMPORTANT: Handles deduplication by element ID. When the same element has multiple
 // versions (e.g., original + tombstoned), the tombstoned version takes precedence.
-// This supports Set() which writes a tombstone record with the same element ID.
+// This supports Set() which writes a tombstone record for the element being deleted.
 func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, error) {
 	// Build prefix for E+A on EATV index
 	prefix := make([]byte, 1+20+32) // prefix byte + E + A
@@ -62,7 +68,8 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 	defer iter.Close()
 
 	// Use map to deduplicate by element ID
-	// Tombstoned versions take precedence over non-tombstoned
+	// For inserts: ID is Datom.Tx, AfterRef is position reference
+	// For tombstones: ID is Datom.AfterRef (the element being deleted), TombstoneID is Datom.Tx
 	elemByID := make(map[datalog.ElementID]RGAElement)
 
 	for iter.Next() {
@@ -71,31 +78,56 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 			continue
 		}
 
-		// The V field should be encoded RGA element data ([]byte)
-		encodedRGA, ok := datom.V.([]byte)
-		if !ok {
+		// Only process RGA operations
+		if datom.Op != datalog.OpRGAInsert && datom.Op != datalog.OpRGATombstone {
 			continue
 		}
 
-		// Decode the RGA element
-		rgaElem, err := DecodeRGAElement(datom.Tx, encodedRGA)
-		if err != nil {
-			continue
-		}
+		if datom.Op == datalog.OpRGAInsert {
+			// Insert: ID is Tx, AfterRef is position reference
+			rgaElem := RGAElement{
+				ID:       datom.Tx,
+				Value:    datom.V,
+				AfterRef: datom.AfterRef,
+				// Tombstone is nil for inserts
+			}
 
-		// Deduplication: if we already have this element, prefer tombstoned version
-		existing, exists := elemByID[rgaElem.ID]
-		if !exists {
-			elemByID[rgaElem.ID] = rgaElem
-		} else {
-			// Prefer tombstoned version (element is deleted)
-			if rgaElem.Tombstone != nil && existing.Tombstone == nil {
+			// Check if this element was already tombstoned
+			existing, exists := elemByID[rgaElem.ID]
+			if !exists {
+				elemByID[rgaElem.ID] = rgaElem
+			} else if existing.Tombstone == nil {
+				// Prefer the insert if no tombstone yet
 				elemByID[rgaElem.ID] = rgaElem
 			}
-			// If both have tombstones, keep the one with higher tombstone ID
-			if rgaElem.Tombstone != nil && existing.Tombstone != nil {
-				if existing.Tombstone.Less(*rgaElem.Tombstone) {
-					elemByID[rgaElem.ID] = rgaElem
+			// If existing has tombstone, keep the tombstoned version
+
+		} else if datom.Op == datalog.OpRGATombstone {
+			// Tombstone: AfterRef is the ID of the element being deleted
+			// Tx is the tombstone operation's ID
+			targetID := datom.AfterRef
+			tombstoneID := datom.Tx
+
+			existing, exists := elemByID[targetID]
+			if !exists {
+				// No insert record yet - create tombstoned placeholder
+				elemByID[targetID] = RGAElement{
+					ID:        targetID,
+					Value:     datom.V, // Value from tombstone record
+					AfterRef:  datalog.ElementID{}, // Unknown until we see insert
+					Tombstone: &tombstoneID,
+				}
+			} else {
+				// Update existing with tombstone
+				if existing.Tombstone == nil || existing.Tombstone.Less(tombstoneID) {
+					existing.Tombstone = &tombstoneID
+					// Preserve the value from the original insert if available
+					if existing.Value != nil {
+						// Keep existing value
+					} else {
+						existing.Value = datom.V
+					}
+					elemByID[targetID] = existing
 				}
 			}
 		}

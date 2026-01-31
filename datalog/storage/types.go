@@ -24,11 +24,12 @@ type Tx [16]byte
 // StorageDatom is the internal storage representation
 // It uses fixed-size byte arrays for efficient storage and indexing
 type StorageDatom struct {
-	E  Entity        // Entity identifier (20 bytes)
-	A  Attribute     // Attribute identifier (32 bytes)
-	V  datalog.Value // The actual value (unbounded, stored last)
-	Tx Tx            // Transaction/time identifier (16 bytes = ElementID)
-	Op datalog.CRDTOp // CRDT operation (0=none, 1=add, 2=remove)
+	E        Entity        // Entity identifier (20 bytes)
+	A        Attribute     // Attribute identifier (32 bytes)
+	V        datalog.Value // The actual value (unbounded, stored last)
+	Tx       Tx            // Transaction/time identifier (16 bytes = ElementID)
+	Op       datalog.CRDTOp // CRDT operation (0=none, 1=add, 2=remove, 3=rga-insert, 4=rga-tombstone)
+	AfterRef Tx            // RGA position reference (16 bytes, only used when Op.HasAfterRef() is true)
 }
 
 // NewEntity creates an entity ID from a string identifier
@@ -147,11 +148,12 @@ func ToStorageDatom(d datalog.Datom) StorageDatom {
 	copy(a[:], d.A.String())
 
 	return StorageDatom{
-		E:  e,
-		A:  a,
-		V:  d.V,
-		Tx: NewTxFromElementID(d.Tx),
-		Op: d.Op,
+		E:        e,
+		A:        a,
+		V:        d.V,
+		Tx:       NewTxFromElementID(d.Tx),
+		Op:       d.Op,
+		AfterRef: NewTxFromElementID(d.AfterRef),
 	}
 }
 
@@ -159,11 +161,12 @@ func ToStorageDatom(d datalog.Datom) StorageDatom {
 // This requires a resolver to map hashes back to meaningful names
 func (d StorageDatom) ToDatom(resolver Resolver) datalog.Datom {
 	return datalog.Datom{
-		E:  resolver.ResolveEntity(d.E),
-		A:  resolver.ResolveAttribute(d.A),
-		V:  d.V, // Values are already user-facing
-		Tx: d.Tx.ToElementID(),
-		Op: d.Op,
+		E:        resolver.ResolveEntity(d.E),
+		A:        resolver.ResolveAttribute(d.A),
+		V:        d.V, // Values are already user-facing
+		Tx:       d.Tx.ToElementID(),
+		Op:       d.Op,
+		AfterRef: d.AfterRef.ToElementID(),
 	}
 }
 

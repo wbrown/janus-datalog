@@ -37,7 +37,7 @@ func TestOpFieldInKeyEncoding(t *testing.T) {
 	// Encode and decode for each index type
 	for _, idx := range []IndexType{EAVT, EATV, AEVT, AVET, VAET, TAEV} {
 		key := encoder.EncodeKey(idx, datom)
-		_, _, _, _, op, err := encoder.DecodeKey(idx, key)
+		_, _, _, _, op, _, err := encoder.DecodeKey(idx, key)
 		if err != nil {
 			t.Errorf("%v: DecodeKey error: %v", idx, err)
 			continue
@@ -51,7 +51,7 @@ func TestOpFieldInKeyEncoding(t *testing.T) {
 	datom.Op = datalog.OpCRDTRemove
 	for _, idx := range []IndexType{EAVT, AVET} {
 		key := encoder.EncodeKey(idx, datom)
-		_, _, _, _, op, err := encoder.DecodeKey(idx, key)
+		_, _, _, _, op, _, err := encoder.DecodeKey(idx, key)
 		if err != nil {
 			t.Errorf("%v: DecodeKey error: %v", idx, err)
 			continue
@@ -77,7 +77,7 @@ func TestOpFieldPreservesRawValueType(t *testing.T) {
 
 	// Encode for AVET (value lookup index)
 	key := encoder.EncodeKey(AVET, datom)
-	_, _, vBytes, _, _, err := encoder.DecodeKey(AVET, key)
+	_, _, vBytes, _, _, _, err := encoder.DecodeKey(AVET, key)
 	if err != nil {
 		t.Fatalf("DecodeKey error: %v", err)
 	}

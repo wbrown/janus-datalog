@@ -12,20 +12,34 @@ type CRDTOp uint8
 const (
 	// OpNone indicates no CRDT operation (used for cardinality-one)
 	OpNone CRDTOp = 0
-	// OpAdd indicates a set/vector add operation
+	// OpCRDTAdd indicates a set add operation (cardinality-many)
 	OpCRDTAdd CRDTOp = 1
-	// OpRemove indicates a set remove operation (tombstone)
+	// OpCRDTRemove indicates a set remove operation (cardinality-many tombstone)
 	OpCRDTRemove CRDTOp = 2
+	// OpRGAInsert indicates an RGA insert operation (cardinality-vector)
+	// When this Op is used, the key includes AfterRef to indicate position
+	OpRGAInsert CRDTOp = 3
+	// OpRGATombstone indicates an RGA tombstone operation (cardinality-vector deletion)
+	// When this Op is used, the key includes AfterRef to identify the deleted element
+	OpRGATombstone CRDTOp = 4
 )
+
+// HasAfterRef returns true if this operation type includes an AfterRef in the key.
+// This makes the key format self-describing - the Op value determines whether
+// AfterRef bytes follow in the encoded key.
+func (op CRDTOp) HasAfterRef() bool {
+	return op == OpRGAInsert || op == OpRGATombstone
+}
 
 // Datom is the fundamental unit of data in a Datalog system
 // It represents a single fact: Entity-Attribute-Value-Transaction
 type Datom struct {
-	E  Identity  // Entity identifier
-	A  Keyword   // Attribute keyword (interned pointer)
-	V  Value     // Any value (see value.go for valid types)
-	Tx ElementID // Transaction/CRDT version (Lamport + ReplicaID)
-	Op CRDTOp    // CRDT operation type (0 = none, 1 = add, 2 = remove)
+	E        Identity  // Entity identifier
+	A        Keyword   // Attribute keyword (interned pointer)
+	V        Value     // Any value (see value.go for valid types)
+	Tx       ElementID // Transaction/CRDT version (Lamport + ReplicaID)
+	Op       CRDTOp    // CRDT operation type (0-4, see CRDTOp constants)
+	AfterRef ElementID // RGA position reference (only used when Op.HasAfterRef() is true)
 }
 
 // keyword is the unexported base type for attribute keywords.

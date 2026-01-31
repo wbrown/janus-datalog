@@ -270,9 +270,9 @@ func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
 			key := it.Item().Key()
 			if len(key) > 0 && key[0] == byte(TAEV) {
 				// Found a TAEV key - decode ElementID from Tx position
-				// TAEV layout: [prefix:1][Tx:16][A:32][E:20][V:var][Op:1]
+				// TAEV layout: [prefix:1][Tx:16][A:32][E:20][V:var][Op:1][AfterRef?:16]
 				// DecodeKey handles the bitwise NOT reversal
-				_, _, _, tx, _, err := s.encoder.DecodeKey(TAEV, key)
+				_, _, _, tx, _, _, err := s.encoder.DecodeKey(TAEV, key)
 				if err != nil {
 					return fmt.Errorf("failed to decode TAEV key: %w", err)
 				}
@@ -422,11 +422,12 @@ func (i *BadgerIterator) Next() bool {
 func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 	item := i.it.Item()
 
-	// Get key to decode Op (Op is stored in the key, not the value)
+	// Get key to decode Op and AfterRef (Op and AfterRef are stored in the key, not the value)
 	key := item.Key()
 	var op byte
+	var afterRef [16]byte
 	if i.encoder != nil {
-		_, _, _, _, op, _ = i.encoder.DecodeKey(i.index, key)
+		_, _, _, _, op, afterRef, _ = i.encoder.DecodeKey(i.index, key)
 	}
 
 	var result *datalog.Datom
@@ -438,13 +439,14 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 		// Convert to user-facing datom
 		// Note: StorageDatomFromBytes already decodes the value properly,
 		// so sd.V is already the decoded value
-		// Op is decoded from the key, not the value
+		// Op and AfterRef are decoded from the key, not the value
 		result = &datalog.Datom{
-			E:  datalog.InternIdentityFromHash(sd.E),
-			A:  datalog.InternKeywordFromBytes(sd.A),
-			V:  sd.V,
-			Tx: sd.Tx.ToElementID(),
-			Op: datalog.CRDTOp(op),
+			E:        datalog.InternIdentityFromHash(sd.E),
+			A:        datalog.InternKeywordFromBytes(sd.A),
+			V:        sd.V,
+			Tx:       sd.Tx.ToElementID(),
+			Op:       datalog.CRDTOp(op),
+			AfterRef: Tx(afterRef).ToElementID(),
 		}
 		return nil
 	})

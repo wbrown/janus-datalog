@@ -1300,22 +1300,17 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			})
 		case schema.CardinalityVector:
 			// RGA append semantics - chain elements within transaction
+			// Bug #5 fix: Store raw value in V, AfterRef in datom.AfterRef field
 			key := entityAttrKey{E: e.Hash(), A: a.String()}
 			afterRef := t.lastVectorElement[key] // Zero value = HEAD
 
-			rgaElem := RGAElement{
-				ID:       elemID,
-				Value:    v,
-				AfterRef: afterRef,
-			}
-			encodedRGA := EncodeRGAElement(rgaElem)
-
 			t.datoms = append(t.datoms, datalog.Datom{
-				E:  e,
-				A:  a,
-				V:  encodedRGA,
-				Tx: elemID,
-				Op: datalog.OpCRDTAdd,
+				E:        e,
+				A:        a,
+				V:        v, // Raw value, not RGAElement wrapper
+				Tx:       elemID,
+				Op:       datalog.OpRGAInsert, // New Op type indicates AfterRef present
+				AfterRef: afterRef,
 			})
 
 			t.lastVectorElement[key] = elemID
@@ -1593,30 +1588,23 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		}
 
 		// Tombstone all existing non-tombstoned elements
-		// The tombstone record uses the SAME element ID (stored as Tx) so that
-		// during resolution we see this element is tombstoned.
+		// Bug #5 fix: Store raw value in V, AfterRef = ID of element being tombstoned
 		for _, elem := range currentElements {
 			if elem.Tombstone == nil {
 				tombstoneID := t.db.clock.Next()
-				// Create tombstoned version of element - keeps same ID, adds tombstone marker
-				tombstonedElem := RGAElement{
-					ID:        elem.ID,      // Same ID as original
-					Value:     elem.Value,   // Same value
-					AfterRef:  elem.AfterRef, // Same position
-					Tombstone: &tombstoneID, // Mark as deleted at this time
-				}
-				encodedRGA := EncodeRGAElement(tombstonedElem)
 				t.datoms = append(t.datoms, datalog.Datom{
-					E:  e,
-					A:  a,
-					V:  encodedRGA,
-					Tx: elem.ID, // Use ORIGINAL element's ID so resolution sees tombstone
-					Op: datalog.OpCRDTRemove,
+					E:        e,
+					A:        a,
+					V:        elem.Value,    // Raw value (for verification/debugging)
+					Tx:       tombstoneID,   // New tombstone ID
+					Op:       datalog.OpRGATombstone, // New Op type indicates tombstone with AfterRef
+					AfterRef: elem.ID,       // ID of element being tombstoned
 				})
 			}
 		}
 
 		// Write new elements with proper RGA chaining
+		// Bug #5 fix: Store raw value in V, AfterRef in datom.AfterRef field
 		key := entityAttrKey{E: e.Hash(), A: a.String()}
 		t.lastVectorElement[key] = datalog.ElementID{} // Reset to HEAD for new vector
 
@@ -1624,19 +1612,13 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			elemID := t.db.clock.Next()
 			afterRef := t.lastVectorElement[key] // Zero value = HEAD
 
-			rgaElem := RGAElement{
-				ID:       elemID,
-				Value:    val,
-				AfterRef: afterRef,
-			}
-			encodedRGA := EncodeRGAElement(rgaElem)
-
 			t.datoms = append(t.datoms, datalog.Datom{
-				E:  e,
-				A:  a,
-				V:  encodedRGA,
-				Tx: elemID,
-				Op: datalog.OpCRDTAdd,
+				E:        e,
+				A:        a,
+				V:        val, // Raw value, not RGAElement wrapper
+				Tx:       elemID,
+				Op:       datalog.OpRGAInsert, // New Op type indicates AfterRef present
+				AfterRef: afterRef,
 			})
 
 			t.lastVectorElement[key] = elemID

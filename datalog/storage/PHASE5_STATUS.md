@@ -1,11 +1,90 @@
 # Phase 5 CRDT Vector Implementation - Status
 
-**Date:** 2026-01-31
-**Status:** Query integration FIXED
+**Date:** 2026-01-31 (updated with index arrangement refinement)
+**Status:** Functionally working, Bug #5 solution designed (implementation pending)
 
 > **Note:** This status file has been reconciled with the master implementation plan at
 > `docs/proposals/CRDT_VECTOR_STORAGE_IMPLEMENTATION_PLAN.md` (Section 5.6).
 > This file serves as a quick-reference for Phase 5 development.
+
+---
+
+## Critical: Bug #5 - RGAElement in V Breaks AVET/VAET
+
+> **⚠️ FOUNDATIONAL CHANGE - EXTREME CARE REQUIRED**
+>
+> This fix modifies the **key encoder** - the most foundational storage component.
+> Every index, query, and write depends on correct key encoding.
+>
+> **A bug here causes silent data corruption and wrong query results.**
+>
+> Implementation approach:
+> 1. Write tests FIRST (all 10 before implementation)
+> 2. Change one index at a time, verify each
+> 3. Verify sort order explicitly at byte level
+> 4. Run full test suite after EACH change
+> 5. Review key encoding byte-by-byte
+
+**Same architectural mistake as Bug #4.** Current implementation stores RGA metadata (AfterRef, Tombstone) inside V field. This breaks AVET/VAET index lookups for vector elements.
+
+**The Problem:**
+```
+Stored:  [AVET][:skills][TypeBytes][RGAElement bytes...][E][Tx]
+Query:   [AVET][:skills][TypeString]["stealth"][E][Tx]
+Result:  No match (TypeBytes ≠ TypeString)
+```
+
+**The Fix:** V should contain raw value only. AfterRef belongs in key.
+
+**Refined Index Arrangement (2026-01-31 discussion):**
+
+After further analysis, we determined that **Tx should come before Op** in all indices. We don't need Op-based sorting for add-wins resolution - the algorithm iterates all entries anyway.
+
+```
+Final format: [Lookup components][Tx][Op][AfterRef?]
+
+| Index | Format |
+|-------|--------|
+| EAVT  | [E][A][V][Tx][Op][AfterRef?] |
+| EATV  | [E][A][Tx][V][Op][AfterRef?] |
+| AEVT  | [A][E][V][Tx][Op][AfterRef?] |
+| AVET  | [A][V][E][Tx][Op][AfterRef?] |
+| VAET  | [V][A][E][Tx][Op][AfterRef?] |
+| TAEV  | [Tx][A][E][V][Op][AfterRef?] |
+
+Where AfterRef? = present only if Op ∈ {OpRGAInsert(3), OpRGATombstone(4)}
+```
+
+**Self-describing keys:** Op value determines if AfterRef follows:
+- `OpNone(0)`, `OpCRDTAdd(1)`, `OpCRDTRemove(2)` → no AfterRef
+- `OpRGAInsert(3)`, `OpRGATombstone(4)` → AfterRef follows
+
+See master plan Bug #5 Refinement section for full discussion.
+
+**Bug #5 Test Cases (10 tests):**
+
+| Test | What it validates |
+|------|-------------------|
+| `TestVectorAVETLookup` | AVET finds entities with specific vector element |
+| `TestVectorAVETMultipleEntities` | AVET returns all matching entities |
+| `TestVectorAVETAfterTombstone` | Tombstoned elements excluded from AVET |
+| `TestVectorVAETReverseLookup` | VAET works for entity refs in vectors |
+| `TestVectorValueTypePreserved` | V decodes as original type, not []byte |
+| `TestVectorKeyEncodingRoundTrip` | Key encode/decode preserves all fields |
+| `TestVectorKeyEncodingSortOrder` | Keys sort correctly (Tx descending) |
+| `TestVectorAfterRefInKey` | AfterRef in key, not in V |
+| `TestVectorRGAReconstructFromKey` | RGA reconstruction works with new format |
+| `TestBug4KeyFormatRevised` | Cardinality-many uses [V][Tx][Op] |
+
+**Bug #5 Success Criteria:**
+
+1. ✅ AVET queries work for vectors (O(k) not O(n))
+2. ✅ VAET queries work for vectors
+3. ✅ V contains raw value only (correct type tag)
+4. ✅ AfterRef in key (self-describing via Op)
+5. ✅ RGA reconstruction works
+6. ✅ All 13 existing vector tests pass
+7. ✅ Bug #4 key format revised (Tx before Op)
 
 ---
 
@@ -70,6 +149,42 @@ PASS: TestVectorQueryProjectSkills (returns raw bytes - E-unbound case, separate
 ```
 
 ## Remaining Work
+
+### Bug #5 Implementation (Index Schema Change)
+
+**⚠️ FOUNDATIONAL - See warning at top of document.**
+
+When implementing the Bug #5 fix, these changes are required (IN ORDER):
+
+**Step 0: Write tests FIRST**
+- Write all 10 Bug #5 test cases before any implementation
+- Tests should fail initially (proving they test the right thing)
+
+**Step 1: Add new types/fields**
+- Add `AfterRef ElementID` to Datom and StorageDatom
+- Add `OpRGAInsert (3)` and `OpRGATombstone (4)` constants
+- Run tests → should still pass (no behavior change yet)
+
+**Step 2: Revise Bug #4 key format (ONE INDEX AT A TIME)**
+- Change from `[...][V][Op][Tx]` to `[...][V][Tx][Op]`
+- Start with EAVT, verify, then AEVT, verify, etc.
+- Run FULL test suite after EACH index change
+
+**Step 3: Add AfterRef encoding (ONE INDEX AT A TIME)**
+- Conditionally encode AfterRef when Op ∈ {OpRGAInsert, OpRGATombstone}
+- Same approach: one index, verify, next index, verify
+
+**Step 4: Update vector operations**
+- database.go Add() for vectors uses AfterRef field instead of RGAElement wrapper
+- RGA reconstruction reads AfterRef from datom, not decoded V
+- Run tests → Bug #5 tests should now pass
+
+**Step 5: Cleanup**
+- Remove or simplify RGAElement encoding (no longer needed in V)
+- Verify all 13 existing vector tests still pass
+- Verify all other tests still pass
+
+See master plan "Bug #5 Refinement" section for full design.
 
 ### E-Unbound Vector Queries
 

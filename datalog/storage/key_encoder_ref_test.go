@@ -62,7 +62,7 @@ func TestL85RefValueEncoding(t *testing.T) {
 	}
 
 	// Test decoding
-	_, _, v, _, _, err := encoder.DecodeKey(AVET, avetKey)
+	_, _, v, _, _, _, err := encoder.DecodeKey(AVET, avetKey)
 	if err != nil {
 		t.Fatalf("Decode error: %v", err)
 	}

@@ -10,11 +10,12 @@ type KeyEncoder interface {
 	EncodeKey(index IndexType, d *datalog.Datom) []byte
 
 	// DecodeKey extracts components from an index key (for current-state indices)
-	// Returns fixed-size arrays for e, a, tx to avoid heap allocations from slice escape.
+	// Returns fixed-size arrays for e, a, tx, afterRef to avoid heap allocations from slice escape.
 	// Only v (value) is variable-length.
 	// tx is 16 bytes: Lamport (8) + ReplicaID (8) = ElementID
-	// op is 1 byte: 0=none, 1=add, 2=remove (for CRDT semantics)
-	DecodeKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [16]byte, op byte, err error)
+	// op is 1 byte: 0-4 (see CRDTOp constants)
+	// afterRef is 16 bytes: present only when Op.HasAfterRef() is true, otherwise zero
+	DecodeKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [16]byte, op byte, afterRef [16]byte, err error)
 
 	// EncodePrefix creates a prefix key for range scans
 	EncodePrefix(index IndexType, parts ...[]byte) []byte
