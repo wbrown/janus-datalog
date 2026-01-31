@@ -44,6 +44,7 @@ type Database struct {
 	annotationHandler annotations.Handler   // Optional handler for query tracing
 	clock             *LamportClock         // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
 	replicaID         uint64                // CRDT: This database's replica identifier
+	cache             *Cache                // CRDT: Unified cache for resolved CRDT views
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -156,6 +157,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		annotationHandler: opts.AnnotationHandler,
 		clock:             clock,
 		replicaID:         replicaID,
+		cache:             NewCache(),
 	}, nil
 }
 
@@ -185,6 +187,132 @@ func (d *Database) ReplicaID() uint64 {
 // Returns nil if the database was created without CRDT support.
 func (d *Database) Clock() *LamportClock {
 	return d.clock
+}
+
+// Cache returns the CRDT resolution cache.
+// Used by the matcher for O(1) access to resolved CRDT views.
+func (d *Database) Cache() *Cache {
+	return d.cache
+}
+
+// WarmCache pre-populates cache entries for the specified attributes.
+// Use this after process restart for attributes with high query frequency
+// to avoid cold-start latency on first access.
+//
+// For each attribute, this scans all entities and populates:
+// - Per-(E,A) cache entries with resolved CRDT values
+// - Attribute-level version tracking for freshness checks
+//
+// This is O(n) where n = total datoms for the specified attributes.
+// Call during application startup, not on the hot path.
+func (d *Database) WarmCache(attributes []datalog.Keyword) error {
+	matcher := NewBadgerMatcher(d.store)
+	matcher.SetSchema(d.schema)
+
+	for _, attr := range attributes {
+		var aBytes Attribute
+		copy(aBytes[:], attr.String())
+
+		// Build prefix for this attribute on AEVT index
+		prefix := make([]byte, 1+32) // prefix byte + A
+		prefix[0] = byte(AEVT)
+		copy(prefix[1:33], aBytes[:])
+
+		// Scan AEVT for all entities with this attribute
+		iter, err := d.store.Scan(AEVT, prefix, prefixEnd(prefix))
+		if err != nil {
+			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
+		}
+
+		var maxAttrVersion datalog.ElementID
+		seenEntities := make(map[Entity]bool)
+
+		for iter.Next() {
+			datom, err := iter.Datom()
+			if err != nil {
+				iter.Close()
+				return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
+			}
+
+			// Track max version for attribute-level freshness
+			if datom.Tx.Compare(maxAttrVersion) > 0 {
+				maxAttrVersion = datom.Tx
+			}
+
+			// Get entity bytes
+			eBytes := Entity(datom.E.Hash())
+
+			// Resolve each (E, A) once
+			if !seenEntities[eBytes] {
+				seenEntities[eBytes] = true
+				key := CacheKey{E: eBytes, A: aBytes}
+				d.cache.GetOrResolve(key, matcher)
+			}
+		}
+		iter.Close()
+
+		// Update attribute-level version
+		d.cache.UpdateAttributeVersion(aBytes, maxAttrVersion)
+	}
+
+	return nil
+}
+
+// GetVectorNth returns the nth element of a vector attribute.
+// Uses the cache for O(1) access when the cache is fresh.
+// Returns nil if index is out of bounds or attribute is not a vector.
+func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) (any, error) {
+	eBytes := Entity(e.Hash())
+
+	var aBytes Attribute
+	copy(aBytes[:], a.String())
+
+	key := CacheKey{E: eBytes, A: aBytes}
+
+	matcher := NewBadgerMatcher(d.store)
+	matcher.SetSchema(d.schema)
+
+	entry := d.cache.GetOrResolve(key, matcher)
+	if entry == nil {
+		return nil, nil
+	}
+
+	if entry.Cardinality() != schema.CardinalityVector {
+		return nil, fmt.Errorf("attribute %s is not a vector", a.String())
+	}
+
+	vec := entry.VectorList()
+	if n < 0 || n >= int64(len(vec)) {
+		return nil, nil // Out of bounds
+	}
+
+	return vec[n], nil
+}
+
+// GetVectorLength returns the length of a vector attribute.
+// Uses the cache for O(1) access when the cache is fresh.
+// Returns 0 if the attribute is not a vector or doesn't exist.
+func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64, error) {
+	eBytes := Entity(e.Hash())
+
+	var aBytes Attribute
+	copy(aBytes[:], a.String())
+
+	key := CacheKey{E: eBytes, A: aBytes}
+
+	matcher := NewBadgerMatcher(d.store)
+	matcher.SetSchema(d.schema)
+
+	entry := d.cache.GetOrResolve(key, matcher)
+	if entry == nil {
+		return 0, nil
+	}
+
+	if entry.Cardinality() != schema.CardinalityVector {
+		return 0, fmt.Errorf("attribute %s is not a vector", a.String())
+	}
+
+	return int64(len(entry.VectorList())), nil
 }
 
 // AnnotationHandler returns the current annotation handler (may be nil)
@@ -254,6 +382,10 @@ func (d *Database) Matcher() executor.PatternMatcher {
 	if d.schema != nil {
 		matcher.SetSchema(d.schema)
 	}
+	// Set cache for CRDT resolution O(1) access
+	if d.cache != nil {
+		matcher.SetCache(d.cache)
+	}
 	return matcher
 }
 
@@ -286,6 +418,10 @@ func (d *Database) AsOf(txID uint64) executor.PatternMatcher {
 	// Set schema for CRDT cardinality-aware resolution
 	if d.schema != nil {
 		matcher.SetSchema(d.schema)
+	}
+	// Set cache for CRDT resolution O(1) access
+	if d.cache != nil {
+		matcher.SetCache(d.cache)
 	}
 	return matcher.AsOf(txID)
 }
@@ -1766,6 +1902,43 @@ func (t *Transaction) Commit() (uint64, error) {
 		// Log but don't fail the transaction
 		fmt.Printf("Warning: failed to write transaction metadata: %v\n", err)
 	}
+
+	// Update cache: track max versions and invalidate stale entries
+	touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
+	seenKeys := make(map[CacheKey]bool)
+
+	// Process asserted datoms
+	for _, d := range t.datoms {
+		eBytes := Entity(d.E.Hash())
+
+		var aBytes Attribute
+		copy(aBytes[:], d.A.String())
+
+		key := CacheKey{E: eBytes, A: aBytes}
+		if !seenKeys[key] {
+			seenKeys[key] = true
+			touched = append(touched, key)
+			t.db.cache.UpdateMaxVersion(key, d.Tx)
+		}
+	}
+
+	// Process retracted datoms
+	for _, d := range t.retracts {
+		eBytes := Entity(d.E.Hash())
+
+		var aBytes Attribute
+		copy(aBytes[:], d.A.String())
+
+		key := CacheKey{E: eBytes, A: aBytes}
+		if !seenKeys[key] {
+			seenKeys[key] = true
+			touched = append(touched, key)
+			t.db.cache.UpdateMaxVersion(key, d.Tx)
+		}
+	}
+
+	// Invalidate cache entries for all touched (E, A) pairs
+	t.db.cache.Invalidate(touched)
 
 	// Clean up
 	t.closed = true

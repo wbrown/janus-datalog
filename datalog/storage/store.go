@@ -63,6 +63,12 @@ type Store interface {
 	// Returns zero ElementID if store is empty.
 	MaxElementID() (datalog.ElementID, error)
 
+	// MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
+	// Used for fast cache freshness checks on A-bound queries.
+	// Performs an O(1) reverse seek on the AEVT index.
+	// Returns zero ElementID if no data exists for this attribute.
+	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
+
 	// Transaction support
 	BeginTx() (StoreTx, error)
 

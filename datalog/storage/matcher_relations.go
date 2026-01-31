@@ -93,6 +93,19 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		}
 	}
 
+	// CACHE OPTIMIZATION: When A is a constant and E comes from bindings,
+	// use the cache for each E value instead of storage scans.
+	if m.cache != nil && m.txID == 0 {
+		if a := m.extractValue(pattern.GetA()); a != nil {
+			if aKw, ok := a.(datalog.Keyword); ok {
+				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw)
+				if handled {
+					return cacheResult, nil
+				}
+			}
+		}
+	}
+
 	// Analyze if we can use iterator reuse
 	// For multi-position cases, the relation may be materialized to allow cardinality counting
 	strategy, bindingRel := analyzeReuseStrategy(pattern, bindingRel)
@@ -195,6 +208,19 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			if aKw, ok := a.(datalog.Keyword); ok {
 				if def := m.schema.GetAttribute(aKw); def != nil {
 					card = def.Cardinality
+				}
+			}
+		}
+	}
+
+	// CACHE OPTIMIZATION: When E and A are bound and we're querying latest state,
+	// use the cache for O(1) access instead of storage scans.
+	if m.cache != nil && m.txID == 0 && e != nil && a != nil {
+		if eIdent, ok := e.(datalog.Identity); ok {
+			if aKw, ok := a.(datalog.Keyword); ok {
+				cacheResult, handled := m.matchFromCache(pattern, columns, eIdent, aKw, v, card)
+				if handled {
+					return cacheResult, nil
 				}
 			}
 		}
@@ -489,6 +515,260 @@ func (m *BadgerMatcher) matchWithBatchScanning(
 	// Return streaming relation wrapping the scanner
 	// Note: scanner materializes internally but we avoid secondary materialization
 	return executor.NewStreamingRelationWithOptions(columns, scanner, m.options), nil
+}
+
+// matchFromCache attempts to resolve a pattern using the cache.
+// Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
+// This provides O(1) access for patterns with E and A bound when querying latest state.
+func (m *BadgerMatcher) matchFromCache(
+	pattern *query.DataPattern,
+	columns []query.Symbol,
+	e datalog.Identity,
+	a datalog.Keyword,
+	v interface{}, // nil if V is unbound
+	card schema.Cardinality,
+) (executor.Relation, bool) {
+	// Build cache key
+	eBytes := Entity(e.Hash())
+	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
+	var aAttr Attribute
+	copy(aAttr[:], aStorage[:])
+	key := CacheKey{E: eBytes, A: aAttr}
+
+	// Get or resolve from cache
+	entry := m.cache.GetOrResolve(key, m)
+	if entry == nil {
+		return nil, false // Fallback to storage
+	}
+
+	// Get tuple builder for building tuples
+	tupleBuilder := m.getTupleBuilder(pattern, columns)
+
+	// Helper to build tuple from datom
+	buildTuple := func(val interface{}, tx datalog.ElementID) executor.Tuple {
+		datom := &datalog.Datom{E: e, A: a, V: val, Tx: tx}
+		return tupleBuilder.BuildTupleInterned(datom)
+	}
+
+	switch card {
+	case schema.CardinalityOne:
+		val := entry.OneValue()
+		if val == nil {
+			// No value - return empty relation
+			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+		}
+		if v != nil {
+			// V is bound - check if it matches
+			if !valuesEqual(val, v) {
+				return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+			}
+		}
+		// Build tuple with the cached value
+		tuple := buildTuple(val, entry.Version())
+		return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+
+	case schema.CardinalityMany:
+		set := entry.ManySet()
+		if len(set) == 0 {
+			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+		}
+		if v != nil {
+			// V is bound - membership check
+			if set[v] {
+				tuple := buildTuple(v, entry.Version())
+				return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+			}
+			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+		}
+		// V is unbound - return all set members
+		tuples := make([]executor.Tuple, 0, len(set))
+		for val := range set {
+			tuple := buildTuple(val, entry.Version())
+			tuples = append(tuples, tuple)
+		}
+		return executor.NewMaterializedRelationWithOptions(columns, tuples, m.options), true
+
+	case schema.CardinalityVector:
+		list := entry.VectorList()
+		if len(list) == 0 {
+			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+		}
+		if v != nil {
+			// V is bound - check if vector equals (for vector, V is the whole list)
+			// This is an edge case - usually V is unbound for vectors
+			return nil, false // Fallback to storage for this case
+		}
+		// V is unbound - return the vector as a single value
+		tuple := buildTuple(list, entry.Version())
+		return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+	}
+
+	return nil, false // Unknown cardinality, fallback to storage
+}
+
+// matchWithBindingsFromCache handles patterns where E comes from bindings and A is constant.
+// Uses cache for O(1) lookup per bound E value instead of storage scans.
+// Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
+func (m *BadgerMatcher) matchWithBindingsFromCache(
+	pattern *query.DataPattern,
+	bindingRel executor.Relation,
+	columns []query.Symbol,
+	a datalog.Keyword,
+) (executor.Relation, bool) {
+	// Find which column in the binding relation has E
+	eVar, isVar := pattern.GetE().(query.Variable)
+	if !isVar {
+		return nil, false // E is not a variable, can't get it from bindings
+	}
+
+	bindingColumns := bindingRel.Columns()
+	eColIdx := -1
+	for i, col := range bindingColumns {
+		if col == eVar.Name {
+			eColIdx = i
+			break
+		}
+	}
+	if eColIdx < 0 {
+		return nil, false // E variable not in bindings
+	}
+
+	// Determine cardinality
+	card := schema.CardinalityOne
+	if m.schema != nil {
+		if def := m.schema.GetAttribute(a); def != nil {
+			card = def.Cardinality
+		}
+	}
+
+	// Extract V if bound
+	var v interface{}
+	if elem := pattern.GetV(); elem != nil {
+		v = m.extractValue(elem)
+	}
+
+	// Get storage format for attribute
+	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
+	var aAttr Attribute
+	copy(aAttr[:], aStorage[:])
+
+	// Get tuple builder
+	tupleBuilder := m.getTupleBuilder(pattern, columns)
+	buildTuple := func(e datalog.Identity, val interface{}, tx datalog.ElementID) executor.Tuple {
+		datom := &datalog.Datom{E: e, A: a, V: val, Tx: tx}
+		return tupleBuilder.BuildTupleInterned(datom)
+	}
+
+	// Iterate bindings and collect results from cache
+	var resultTuples []executor.Tuple
+	iter := bindingRel.Iterator()
+	defer iter.Close()
+
+	for iter.Next() {
+		tuple := iter.Tuple()
+		if eColIdx >= len(tuple) {
+			continue
+		}
+
+		// Get E value from binding
+		eVal := tuple[eColIdx]
+		eIdent, ok := eVal.(datalog.Identity)
+		if !ok {
+			// Try to convert if it's a different type
+			if id, ok := eVal.(*datalog.Identity); ok {
+				eIdent = *id
+			} else {
+				continue // Can't use cache for non-Identity E
+			}
+		}
+
+		// Build cache key
+		eBytes := Entity(eIdent.Hash())
+		key := CacheKey{E: eBytes, A: aAttr}
+
+		// Get from cache
+		entry := m.cache.GetOrResolve(key, m)
+		if entry == nil {
+			// Cache miss - fallback to storage for entire query
+			return nil, false
+		}
+
+		// Process based on cardinality
+		switch card {
+		case schema.CardinalityOne:
+			val := entry.OneValue()
+			if val == nil {
+				continue // No value for this E
+			}
+			if v != nil && !valuesEqual(val, v) {
+				continue // Value doesn't match bound V
+			}
+			resultTuples = append(resultTuples, buildTuple(eIdent, val, entry.Version()))
+
+		case schema.CardinalityMany:
+			set := entry.ManySet()
+			if len(set) == 0 {
+				continue
+			}
+			if v != nil {
+				// Membership check
+				if set[v] {
+					resultTuples = append(resultTuples, buildTuple(eIdent, v, entry.Version()))
+				}
+			} else {
+				// Return all set members
+				for val := range set {
+					resultTuples = append(resultTuples, buildTuple(eIdent, val, entry.Version()))
+				}
+			}
+
+		case schema.CardinalityVector:
+			list := entry.VectorList()
+			if len(list) == 0 {
+				continue
+			}
+			if v != nil {
+				// Can't efficiently check vector membership
+				return nil, false
+			}
+			resultTuples = append(resultTuples, buildTuple(eIdent, list, entry.Version()))
+		}
+	}
+
+	return executor.NewMaterializedRelationWithOptions(columns, resultTuples, m.options), true
+}
+
+// valuesEqual compares two values for equality
+func valuesEqual(a, b interface{}) bool {
+	// Handle common types directly for performance
+	switch av := a.(type) {
+	case string:
+		if bv, ok := b.(string); ok {
+			return av == bv
+		}
+	case int64:
+		if bv, ok := b.(int64); ok {
+			return av == bv
+		}
+	case float64:
+		if bv, ok := b.(float64); ok {
+			return av == bv
+		}
+	case bool:
+		if bv, ok := b.(bool); ok {
+			return av == bv
+		}
+	case datalog.Identity:
+		if bv, ok := b.(datalog.Identity); ok {
+			return av.Hash() == bv.Hash()
+		}
+	case datalog.Keyword:
+		if bv, ok := b.(datalog.Keyword); ok {
+			return av == bv
+		}
+	}
+	// Fallback to reflect-based comparison
+	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
 
 // matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution

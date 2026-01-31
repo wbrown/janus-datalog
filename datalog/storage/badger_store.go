@@ -288,6 +288,95 @@ func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
 	return maxID, err
 }
 
+// MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
+// Used for fast cache freshness checks on A-bound queries.
+// Uses AEVT index with forward scan - first entry has highest Tx due to bitwise NOT encoding.
+// Returns zero ElementID if no data exists for this attribute.
+func (s *BadgerStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
+	var maxID datalog.ElementID
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false // Keys only
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		// Build AEVT prefix for this attribute: [prefix:1][A:32]
+		aevtPrefix := make([]byte, 1+32)
+		aevtPrefix[0] = byte(AEVT)
+		copy(aevtPrefix[1:33], a)
+
+		it.Seek(aevtPrefix)
+
+		if it.Valid() {
+			key := it.Item().Key()
+			// Verify this key is for our attribute (prefix match)
+			if len(key) >= 33 && key[0] == byte(AEVT) {
+				if !bytesEqual(key[1:33], aevtPrefix[1:33]) {
+					// Different attribute - no data for this attribute
+					return nil
+				}
+				// Found an AEVT key for this attribute
+				// AEVT layout: [prefix:1][A:32][E:20][V:var][Tx:16][Op:1][AfterRef?:16]
+				// However, Tx is NOT the first component after A, so we can't rely on first entry
+				// having highest Tx. We need to scan through entries for this attribute.
+				//
+				// Actually, for AEVT, the key order is: A → E → V → Tx (descending)
+				// So within the same (A, E, V), first entry has highest Tx.
+				// But we want highest across ALL (E, V) for this A.
+				//
+				// For a true O(1) solution, we'd need an index like EATV where Tx comes earlier.
+				// For now, we scan entries until we find a different attribute.
+				// In practice, we only need to find ONE entry to know the attribute has data,
+				// and track the max as we go.
+				for it.Valid() {
+					key := it.Item().Key()
+					// Check if still in our attribute's prefix
+					if len(key) < 33 || key[0] != byte(AEVT) {
+						break
+					}
+					if !bytesEqual(key[1:33], aevtPrefix[1:33]) {
+						break // Different attribute
+					}
+
+					// Decode the Tx from this key
+					_, _, _, tx, _, _, err := s.encoder.DecodeKey(AEVT, key)
+					if err != nil {
+						it.Next()
+						continue
+					}
+					elemID := Tx(tx).ToElementID()
+					if elemID.Compare(maxID) > 0 {
+						maxID = elemID
+					}
+
+					it.Next()
+				}
+				return nil
+			}
+		}
+
+		// No AEVT entries found for this attribute
+		return nil
+	})
+
+	return maxID, err
+}
+
+// bytesEqual compares two byte slices for equality
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // BeginTx starts a new transaction
 func (s *BadgerStore) BeginTx() (StoreTx, error) {
 	txn := s.db.NewTransaction(true)

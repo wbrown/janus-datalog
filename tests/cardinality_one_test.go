@@ -22,18 +22,18 @@ type EntityWithLore struct {
 // TestCardinalityOneBehavior documents the behavior of cardinality-one attributes
 // when using tx.Add vs SaveStruct for updates.
 //
-// Key findings:
-//  1. tx.Add is a low-level primitive that just adds a datom - it does NOT
-//     automatically retract existing values for cardinality-one attributes
-//  2. SaveStruct properly handles cardinality-one upserts (retracts old, adds new)
+// Key findings (CRDT implementation):
+//  1. tx.Add IS NOW schema-aware - for cardinality-one, it uses LWW semantics
+//     (Last-Writer-Wins), so only the most recent value is returned by queries
+//  2. SaveStruct properly handles cardinality-one upserts (uses LWW internally)
 //  3. If an entity is created with SaveStruct and has empty string fields,
 //     those empty strings ARE persisted to the database
-//  4. Later using tx.Add to update that field will result in MULTIPLE values
+//  4. Later using tx.Add will update the value using LWW (single value returned)
 //
-// Correct pattern for updates: Load entity → modify fields → SaveStruct
-// Incorrect pattern: tx.Add directly on existing entities
+// Both tx.Add and SaveStruct are valid patterns for cardinality-one updates.
+// The CRDT implementation ensures queries always return the latest value.
 func TestCardinalityOneBehavior(t *testing.T) {
-	t.Run("tx.Add does not retract existing values", func(t *testing.T) {
+	t.Run("tx.Add uses LWW semantics for cardinality-one", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "cardinality-one-add-test")
 		require.NoError(t, err)
 		defer os.RemoveAll(tmpDir)
@@ -66,23 +66,25 @@ func TestCardinalityOneBehavior(t *testing.T) {
 		require.Len(t, loreValues1, 1, "Empty string should be saved")
 		assert.Equal(t, "", loreValues1[0][0], "Value should be empty string")
 
-		// Step 2: Use tx.Add to add a new lore value (INCORRECT pattern)
+		// Step 2: Use tx.Add to add a new lore value
+		// With CRDT implementation, Add() uses LWW semantics for cardinality-one
 		tx2 := db.NewTransaction()
 		loreAttr := datalog.NewKeyword(":entity/lore")
 		tx2.Add(id, loreAttr, "A detailed description.")
 		_, err = tx2.Commit()
 		require.NoError(t, err)
 
-		// Step 3: Query for all lore values - we now have TWO values
+		// Step 3: Query for lore values - with LWW, only latest value is returned
 		loreValues2, err := db.ExecuteQueryWithInputs(
 			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
 			id,
 		)
 		require.NoError(t, err)
 
-		// Document the behavior: tx.Add results in multiple values
+		// With CRDT LWW semantics, tx.Add updates the value (highest ElementID wins)
 		t.Logf("After tx.Add: %d lore value(s): %v", len(loreValues2), loreValues2)
-		assert.Len(t, loreValues2, 2, "tx.Add does NOT retract - results in 2 values")
+		assert.Len(t, loreValues2, 1, "LWW semantics: only latest value returned")
+		assert.Equal(t, "A detailed description.", loreValues2[0][0], "Latest value should be returned")
 	})
 
 	t.Run("SaveStruct properly handles cardinality-one upserts", func(t *testing.T) {

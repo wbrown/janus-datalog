@@ -23,6 +23,7 @@ type BadgerMatcher struct {
 	options           executor.ExecutorOptions // Options for creating relations
 	forceJoinStrategy *JoinStrategy            // Override join strategy selection for testing
 	schema            schema.SchemaProvider    // Optional schema for cardinality-aware index selection
+	cache             *Cache                   // CRDT resolution cache for O(1) access to resolved views
 }
 
 // NewBadgerMatcher creates a new pattern matcher for the BadgerStore
@@ -62,6 +63,7 @@ func (m *BadgerMatcher) AsOf(txID uint64) *BadgerMatcher {
 		handler:      m.handler,
 		options:      m.options, // Preserve options
 		schema:       m.schema,  // Preserve schema for cardinality-aware index selection
+		cache:        m.cache,   // Preserve cache for CRDT resolution
 	}
 }
 
@@ -76,6 +78,13 @@ func (m *BadgerMatcher) SetHandler(handler annotations.Handler) {
 // and EAVT for cardinality-many attributes (for add-wins resolution).
 func (m *BadgerMatcher) SetSchema(s schema.SchemaProvider) {
 	m.schema = s
+}
+
+// SetCache sets the CRDT resolution cache for O(1) access to resolved views.
+// When cache is set, LookupAttribute() and related methods check the cache
+// before scanning storage, providing O(1) access for cache hits.
+func (m *BadgerMatcher) SetCache(c *Cache) {
+	m.cache = c
 }
 
 // WithTimeRanges sets the time range constraints and returns self for chaining
@@ -766,6 +775,41 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		}
 	}
 
+	// Try cache first for O(1) access (only for latest state, not as-of queries)
+	if m.cache != nil && m.txID == 0 {
+		eEntity := Entity(eBytes)
+		var aAttr Attribute
+		copy(aAttr[:], aStorage[:])
+		key := CacheKey{E: eEntity, A: aAttr}
+
+		entry := m.cache.GetOrResolve(key, m)
+		if entry != nil {
+			switch card {
+			case schema.CardinalityOne:
+				if entry.OneValue() != nil {
+					return entry.OneValue(), true
+				}
+				return nil, false
+			case schema.CardinalityMany:
+				set := entry.ManySet()
+				if len(set) > 0 {
+					// Return first value from set
+					for v := range set {
+						return v, true
+					}
+				}
+				return nil, false
+			case schema.CardinalityVector:
+				list := entry.VectorList()
+				if len(list) > 0 {
+					return list, true
+				}
+				return nil, false
+			}
+		}
+	}
+
+	// Fallback to storage scan (for as-of queries or when cache is not set)
 	if card == schema.CardinalityOne {
 		// For cardinality-one, use EATV index where Tx comes before V
 		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
@@ -864,6 +908,44 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 	eBytes := entity.Bytes()
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
 
+	// Try cache first for O(1) access (only for latest state, not as-of queries)
+	if m.cache != nil && m.txID == 0 {
+		eEntity := Entity(eBytes)
+		var aAttr Attribute
+		copy(aAttr[:], aStorage[:])
+		key := CacheKey{E: eEntity, A: aAttr}
+
+		entry := m.cache.GetOrResolve(key, m)
+		if entry != nil {
+			// Determine cardinality
+			card := schema.CardinalityOne
+			if m.schema != nil {
+				if def := m.schema.GetAttribute(attr); def != nil {
+					card = def.Cardinality
+				}
+			}
+
+			switch card {
+			case schema.CardinalityMany:
+				set := entry.ManySet()
+				result := make([]interface{}, 0, len(set))
+				for v := range set {
+					result = append(result, v)
+				}
+				return result
+			case schema.CardinalityVector:
+				return entry.VectorList()
+			case schema.CardinalityOne:
+				// For cardinality-one, return single value as slice
+				if entry.OneValue() != nil {
+					return []interface{}{entry.OneValue()}
+				}
+				return nil
+			}
+		}
+	}
+
+	// Fallback to storage scan (for as-of queries or when cache is not set)
 	encoder := m.store.encoder
 
 	// Use AEVT index which orders by A, then E

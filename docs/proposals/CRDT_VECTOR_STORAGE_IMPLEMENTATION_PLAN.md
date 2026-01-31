@@ -3530,6 +3530,8 @@ type Store interface {
 ```
 
 **Tests:** `datalog/storage/cache_test.go`
+
+*Core Cache Mechanics:*
 - [ ] `TestCacheFreshness` - returns cached when fresh
 - [ ] `TestCacheInvalidation` - invalidate removes entry
 - [ ] `TestCacheRebuild` - stale entry triggers rebuild
@@ -3538,6 +3540,25 @@ type Store interface {
 - [ ] `TestCacheAttributeInvalidation` - attribute version updates on write
 - [ ] `TestUpdateMaxVersion` - correctly tracks max ElementID per (E,A)
 - [ ] `TestUpdateMaxVersionConcurrency` - safe under concurrent updates
+
+*Cardinality-Specific Rebuild (Critical - tests the rebuild() switch):*
+- [ ] `TestCacheRebuildCardinalityOne` - LWW resolution: highest ElementID wins
+- [ ] `TestCacheRebuildCardinalityMany` - add-wins resolution: correct set membership
+- [ ] `TestCacheManySetMembership` - verify map[any]bool enables O(1) lookups
+- [ ] `TestCacheManyEmptyAfterRemoves` - all values removed → empty set cached
+
+*Error Handling:*
+- [ ] `TestCacheRebuildStoreError` - handles store scan failures gracefully
+- [ ] `TestCacheRebuildDecodeError` - handles corrupt/invalid data gracefully
+
+*Post-Restart Scenarios:*
+- [ ] `TestCacheAfterRestart` - cold start: maxVersions populated on first access
+- [ ] `TestCacheConcurrentReadWrite` - no stale reads during concurrent updates
+
+**Tests:** `datalog/storage/badger_store_test.go` (ADD - Store interface)
+- [ ] `TestMaxElementIDForAttribute` - returns highest ElementID for attribute
+- [ ] `TestMaxElementIDForAttributeEmpty` - returns zero ElementID when no data
+- [ ] `TestMaxElementIDForAttributeAfterWrites` - updates correctly after writes
 
 ### 6.2 Cache Warmup API
 
@@ -3687,6 +3708,44 @@ func (db *Database) GetVectorLength(e, a Identity) (int64, error) {
 - [ ] `TestVectorNthFromCache` - correct element at each position
 - [ ] `TestVectorLengthFromCache` - correct length
 - [ ] `TestVectorCacheTombstones` - excludes deleted elements
+- [ ] `TestVectorCachePreservesOrder` - RGA order preserved through cache
+- [ ] `TestVectorCacheAfterSet` - Set() replacement invalidates and rebuilds correctly
+
+### 6.4 Matcher-Cache Integration
+
+**Goal:** Verify the matcher uses the cache for CRDT resolution.
+
+The matcher's `Match()` and `LookupAttribute()` methods should call `cache.GetOrResolve()` instead of directly scanning indices for resolved values. This section tests that integration.
+
+**Tests:** `datalog/storage/matcher_cache_test.go` (NEW)
+
+*Integration Tests:*
+- [ ] `TestMatcherUsesCache` - Match() calls GetOrResolve, not raw index scan
+- [ ] `TestMatcherCacheHitPath` - verify cache hit returns without store access
+- [ ] `TestMatcherCacheMissPath` - verify cache miss triggers rebuild
+- [ ] `TestLookupAttributeUsesCache` - LookupAttribute() uses cache for all cardinalities
+
+*Cardinality-Specific:*
+- [ ] `TestMatcherCacheCardinalityOne` - correct LWW value via cache
+- [ ] `TestMatcherCacheCardinalityMany` - correct set membership via cache
+- [ ] `TestMatcherCacheCardinalityVector` - correct ordered vector via cache
+
+*Consistency:*
+- [ ] `TestMatcherCacheConsistentWithDirectScan` - cache result matches direct index scan
+- [ ] `TestMatcherCacheInvalidationOnWrite` - write invalidates, next read sees new value
+
+---
+
+## Phase 6 Test Summary
+
+| Test File | Count | Coverage |
+|-----------|-------|----------|
+| `cache_test.go` | 19 | Core mechanics, cardinality rebuild, errors, restart |
+| `cache_warmup_test.go` | 5 | Warmup API |
+| `cache_vector_test.go` | 8 | Vector-specific cache |
+| `badger_store_test.go` | 3 | MaxElementIDForAttribute |
+| `matcher_cache_test.go` | 9 | Matcher-cache integration |
+| **Total** | **44** | |
 
 ---
 
