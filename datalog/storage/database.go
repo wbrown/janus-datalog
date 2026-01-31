@@ -1226,7 +1226,17 @@ func (t *Transaction) SetTime(txTime time.Time) {
 	t.txTime = &txTime
 }
 
-// Add asserts a new datom
+// Add adds a value to a cardinality-many set using CRDT add-wins semantics.
+// The value is wrapped in a SetEntry with OpAdd and stored.
+//
+// This method is part of the CRDT implementation:
+// - Cardinality-Many: Value added to set with add-wins conflict resolution
+// - Cardinality-One: Use Set() instead (LWW semantics)
+// - Cardinality-Vector: Use Append() instead (RGA semantics)
+//
+// For schemaless attributes (no schema or attribute not defined in schema),
+// Add() stores the raw value for backward compatibility. Queries will treat
+// schemaless attributes as cardinality-one by default.
 func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1245,12 +1255,106 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
 	}
 
-	t.datoms = append(t.datoms, datalog.Datom{
-		E:  e,
-		A:  a,
-		V:  v,
-		Tx: datalog.ElementID{}, // Will be set on commit
-	})
+	// Check cardinality for CRDT semantics
+	var card schema.Cardinality
+	hasSchema := false
+	if s := t.db.Schema(); s != nil {
+		if def := s.GetAttribute(a); def != nil {
+			card = def.Cardinality
+			hasSchema = true
+		}
+	}
+
+	if hasSchema {
+		switch card {
+		case schema.CardinalityMany:
+			// CRDT add-wins semantics: encode value as SetEntry with OpAdd
+			// We encode to bytes here so the storage layer sees []byte
+			// Per-operation Lamport: each Add() gets its own ElementID for causal ordering
+			elemID := t.db.clock.Next()
+			entry := SetEntry{Value: v, Op: OpAdd}
+			encodedEntry := EncodeSetEntry(entry)
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:  e,
+				A:  a,
+				V:  encodedEntry, // Store as []byte
+				Tx: elemID,
+			})
+		case schema.CardinalityOne:
+			return fmt.Errorf("Add not valid for cardinality-one attribute %s: use Set() instead", a.String())
+		case schema.CardinalityVector:
+			return fmt.Errorf("Add not valid for cardinality-vector attribute %s: use Append() instead", a.String())
+		default:
+			return fmt.Errorf("Add not valid for cardinality %v", card)
+		}
+	} else {
+		// Schemaless mode: store raw value for backward compatibility
+		// Queries will treat this as cardinality-one by default
+		// Per-operation Lamport: each Add() gets its own ElementID
+		elemID := t.db.clock.Next()
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:  e,
+			A:  a,
+			V:  v,
+			Tx: elemID,
+		})
+	}
+
+	return nil
+}
+
+// Remove removes a value from a cardinality-many set using CRDT add-wins semantics.
+// The value is wrapped in a SetEntry with OpRemove (tombstone) and stored.
+//
+// This method is part of the CRDT implementation:
+// - Cardinality-Many: Value tombstoned; add-wins resolves conflicts
+// - Cardinality-One: Not applicable (use Set() to replace value)
+// - Cardinality-Vector: Not applicable (use Set() to replace entire vector)
+func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{}) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.closed {
+		return fmt.Errorf("transaction is closed")
+	}
+
+	// Nil values are not allowed
+	if v == nil {
+		return fmt.Errorf("nil value not allowed for Remove on attribute %s", a.String())
+	}
+
+	// Remove requires schema with cardinality-many
+	s := t.db.Schema()
+	if s == nil {
+		return fmt.Errorf("Remove requires schema: attribute %s has no schema defined", a.String())
+	}
+
+	def := s.GetAttribute(a)
+	if def == nil {
+		return fmt.Errorf("Remove requires schema: attribute %s not defined in schema", a.String())
+	}
+
+	switch def.Cardinality {
+	case schema.CardinalityMany:
+		// CRDT add-wins semantics: encode value as SetEntry with OpRemove (tombstone)
+		// We encode to bytes here so the storage layer sees []byte
+		// Per-operation Lamport: each Remove() gets its own ElementID for causal ordering
+		elemID := t.db.clock.Next()
+		entry := SetEntry{Value: v, Op: OpRemove}
+		encodedEntry := EncodeSetEntry(entry)
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:  e,
+			A:  a,
+			V:  encodedEntry, // Store as []byte
+			Tx: elemID,
+		})
+	case schema.CardinalityOne:
+		return fmt.Errorf("Remove not valid for cardinality-one attribute %s: cardinality-one values are replaced via Set()", a.String())
+	case schema.CardinalityVector:
+		return fmt.Errorf("Remove not valid for cardinality-vector attribute %s: use Set() to replace entire vector", a.String())
+	default:
+		return fmt.Errorf("Remove not valid for cardinality %v", def.Cardinality)
+	}
 
 	return nil
 }
@@ -1276,12 +1380,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
 	}
 
-	// Schema validation (if schema present)
-	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
-		return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
-	}
-
-	// Check cardinality - Set only valid for cardinality-one
+	// Check cardinality first - determines validation strategy
 	card := schema.CardinalityOne
 	if s := t.db.Schema(); s != nil {
 		if def := s.GetAttribute(a); def != nil {
@@ -1291,16 +1390,148 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	switch card {
 	case schema.CardinalityOne:
+		// Schema validation for single value
+		if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
+			return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
+		}
 		// CRDT LWW semantics: just append, no retraction needed
 		// The storage layer will return only the highest ElementID on read
+		// Per-operation Lamport: each Set() gets its own ElementID for causal ordering
+		elemID := t.db.clock.Next()
 		t.datoms = append(t.datoms, datalog.Datom{
 			E:  e,
 			A:  a,
 			V:  v,
-			Tx: datalog.ElementID{}, // Will be set on commit
+			Tx: elemID,
 		})
+
+	case schema.CardinalityMany:
+		// Set() for cardinality-many replaces the entire set
+		// This requires reading current membership and diffing
+		newSlice, ok := v.([]interface{})
+		if !ok {
+			// Try []any (same thing, different spelling)
+			if anySlice, ok2 := v.([]any); ok2 {
+				newSlice = anySlice
+			} else {
+				return fmt.Errorf("Set for cardinality-many requires []interface{}, got %T", v)
+			}
+		}
+
+		// Schema validation for each element in the slice
+		for _, val := range newSlice {
+			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
+				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
+			}
+		}
+
+		// Build set of new values for O(1) lookup
+		newSet := make(map[interface{}]bool, len(newSlice))
+		for _, val := range newSlice {
+			newSet[val] = true
+		}
+
+		// Get current set membership from committed state
+		matcher := NewBadgerMatcher(t.db.store)
+		eBytes := e.Hash()
+		var aBytes [32]byte
+		copy(aBytes[:], a.String())
+		currentResult, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+		if err != nil {
+			return fmt.Errorf("failed to read current set membership: %w", err)
+		}
+
+		// Apply pending transaction operations to get effective current set
+		// This ensures Set() sees Add/Remove ops from earlier in the same transaction
+		effectiveSet := make(map[interface{}]bool)
+		for member := range currentResult.Members {
+			effectiveSet[member] = true
+		}
+
+		// Scan pending datoms for this (E, A) pair
+		pendingAdds := make(map[interface{}]datalog.ElementID)
+		pendingRemoves := make(map[interface{}]datalog.ElementID)
+		for _, datom := range t.datoms {
+			if datom.E.Hash() != eBytes || datom.A.String() != a.String() {
+				continue
+			}
+			// Decode the SetEntry to see if it's an Add or Remove
+			if encoded, ok := datom.V.([]byte); ok {
+				entry, err := DecodeSetEntry(encoded)
+				if err != nil {
+					continue
+				}
+				if entry.Op == OpAdd {
+					pendingAdds[entry.Value] = datom.Tx
+				} else if entry.Op == OpRemove {
+					pendingRemoves[entry.Value] = datom.Tx
+				}
+			}
+		}
+
+		// Apply pending ops using add-wins semantics
+		// For each value, compare highest pending add Lamport vs highest pending remove Lamport
+		allPendingValues := make(map[interface{}]bool)
+		for v := range pendingAdds {
+			allPendingValues[v] = true
+		}
+		for v := range pendingRemoves {
+			allPendingValues[v] = true
+		}
+
+		for val := range allPendingValues {
+			addTx, hasAdd := pendingAdds[val]
+			removeTx, hasRemove := pendingRemoves[val]
+
+			if hasAdd && !hasRemove {
+				// Only add pending
+				effectiveSet[val] = true
+			} else if !hasAdd && hasRemove {
+				// Only remove pending
+				delete(effectiveSet, val)
+			} else {
+				// Both add and remove pending - compare Lamport (add-wins at same Lamport)
+				if addTx.Lamport >= removeTx.Lamport {
+					effectiveSet[val] = true
+				} else {
+					delete(effectiveSet, val)
+				}
+			}
+		}
+
+		// Remove members that are in effective set but not in new set
+		for member := range effectiveSet {
+			if !newSet[member] {
+				elemID := t.db.clock.Next()
+				entry := SetEntry{Value: member, Op: OpRemove}
+				encodedEntry := EncodeSetEntry(entry)
+				t.datoms = append(t.datoms, datalog.Datom{
+					E:  e,
+					A:  a,
+					V:  encodedEntry,
+					Tx: elemID,
+				})
+			}
+		}
+
+		// Add members that are in new set but not in effective set
+		// Iterate newSet (deduplicated) to avoid duplicate writes for duplicate slice values
+		for val := range newSet {
+			if !effectiveSet[val] {
+				elemID := t.db.clock.Next()
+				entry := SetEntry{Value: val, Op: OpAdd}
+				encodedEntry := EncodeSetEntry(entry)
+				t.datoms = append(t.datoms, datalog.Datom{
+					E:  e,
+					A:  a,
+					V:  encodedEntry,
+					Tx: elemID,
+				})
+			}
+		}
+
 	default:
-		return fmt.Errorf("Set not valid for cardinality %v: use Add/Remove for many, Append for vector", card)
+		return fmt.Errorf("Set not valid for cardinality %v: use Append for vector", card)
 	}
 
 	return nil
@@ -1396,9 +1627,6 @@ func (t *Transaction) Commit() (uint64, error) {
 		return 0, err
 	}
 
-	// Get transaction ID from Lamport clock
-	elemID := t.db.clock.Next()
-
 	// Record transaction time for metadata
 	var txTime time.Time
 	if t.txTime != nil {
@@ -1407,12 +1635,11 @@ func (t *Transaction) Commit() (uint64, error) {
 		txTime = time.Now()
 	}
 
-	// Set transaction ID on all datoms
-	for i := range t.datoms {
-		t.datoms[i].Tx = elemID
-	}
+	// Per-operation Lamport: datoms already have their Tx set by Add/Remove/Set.
+	// Only legacy Retract() method needs Tx assignment at commit time.
+	// Each retract gets its own per-operation Lamport for causal ordering.
 	for i := range t.retracts {
-		t.retracts[i].Tx = elemID
+		t.retracts[i].Tx = t.db.clock.Next()
 	}
 
 	// Apply retractions first
@@ -1429,14 +1656,16 @@ func (t *Transaction) Commit() (uint64, error) {
 		}
 	}
 
-	// Add transaction metadata
-	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", elemID.Lamport))
+	// Add transaction metadata with its own Lamport timestamp
+	// This is the final operation in the transaction, so its Lamport is the "transaction time"
+	metadataElemID := t.db.clock.Next()
+	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", metadataElemID.Lamport))
 	txMetadata := []datalog.Datom{
 		{
 			E:  txEntity,
 			A:  datalog.NewKeyword(":db/txInstant"),
 			V:  txTime,
-			Tx: elemID,
+			Tx: metadataElemID,
 		},
 	}
 	if err := t.db.store.Assert(txMetadata); err != nil {
@@ -1450,7 +1679,8 @@ func (t *Transaction) Commit() (uint64, error) {
 	delete(t.db.activeTx, t)
 	t.db.mu.Unlock()
 
-	return elemID.Lamport, nil
+	// Return the metadata's Lamport as the "transaction ID" - it's the highest from this tx
+	return metadataElemID.Lamport, nil
 }
 
 // validateUniqueness checks uniqueness constraints for all datoms in the transaction
