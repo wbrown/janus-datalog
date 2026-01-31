@@ -91,7 +91,8 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 
 	t.Run("AVET full attribute scan finds all scenarios", func(t *testing.T) {
 		attr := datalog.NewKeyword(":task/scenario")
-		attrBytes := NewAttribute(attr.String())
+		var attrBytes Attribute
+		copy(attrBytes[:], attr.String())
 
 		// Full attribute scan (no value filter)
 		start := matcher.store.encoder.EncodePrefix(AVET, attrBytes[:])

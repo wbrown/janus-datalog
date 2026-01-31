@@ -9,6 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // BadgerMatcher implements the executor.PatternMatcher interface using BadgerStore
@@ -21,6 +22,7 @@ type BadgerMatcher struct {
 	handler           annotations.Handler      // Set from HandlerProvider for detailed storage events
 	options           executor.ExecutorOptions // Options for creating relations
 	forceJoinStrategy *JoinStrategy            // Override join strategy selection for testing
+	schema            schema.SchemaProvider    // Optional schema for cardinality-aware index selection
 }
 
 // NewBadgerMatcher creates a new pattern matcher for the BadgerStore
@@ -59,6 +61,7 @@ func (m *BadgerMatcher) AsOf(txID uint64) *BadgerMatcher {
 		builderCache: m.builderCache,
 		handler:      m.handler,
 		options:      m.options, // Preserve options
+		schema:       m.schema,  // Preserve schema for cardinality-aware index selection
 	}
 }
 
@@ -66,6 +69,13 @@ func (m *BadgerMatcher) AsOf(txID uint64) *BadgerMatcher {
 // This is called by WrapMatcher during construction.
 func (m *BadgerMatcher) SetHandler(handler annotations.Handler) {
 	m.handler = handler
+}
+
+// SetSchema sets the schema for cardinality-aware index selection.
+// When schema is set, the matcher uses EATV for cardinality-one attributes
+// and EAVT for cardinality-many attributes (for add-wins resolution).
+func (m *BadgerMatcher) SetSchema(s schema.SchemaProvider) {
+	m.schema = s
 }
 
 // WithTimeRanges sets the time range constraints and returns self for chaining
@@ -201,7 +211,7 @@ func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog
 		}
 
 		// Check if datom is valid for our transaction view
-		if m.txID > 0 && datom.Tx > m.txID {
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
 			continue
 		}
 
@@ -257,7 +267,7 @@ func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]
 			}
 
 			// Check transaction filter
-			if m.txID > 0 && datom.Tx > m.txID {
+			if m.txID > 0 && datom.Tx.Lamport > m.txID {
 				continue
 			}
 
@@ -265,15 +275,19 @@ func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]
 			if tx != nil {
 				switch txv := tx.(type) {
 				case uint64:
-					if datom.Tx != txv {
+					if datom.Tx.Lamport != txv {
 						continue
 					}
 				case int64:
-					if datom.Tx != uint64(txv) {
+					if datom.Tx.Lamport != uint64(txv) {
 						continue
 					}
 				case int:
-					if datom.Tx != uint64(txv) {
+					if datom.Tx.Lamport != uint64(txv) {
+						continue
+					}
+				case datalog.ElementID:
+					if datom.Tx != txv {
 						continue
 					}
 				default:
@@ -346,7 +360,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 						E:  eId,
 						A:  aPtr,
 						V:  nil,
-						Tx: 0,
+						Tx: datalog.ElementID{},
 					}
 
 					if v != nil {
@@ -372,11 +386,24 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 						return AEVT, start, end
 					}
 
-					// E and A bound, V unbound - use AEVT prefix
-					// AEVT index order: A + E + V + Tx
-					// We want all datoms with (A, E) prefix
-					start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
-					return AEVT, start, end
+					// E and A bound, V unbound - use cardinality-aware index selection
+					// For CRDT semantics:
+					// - CardinalityMany: EAVT groups by V first, enabling add-wins resolution
+					// - CardinalityOne/Vector: EATV orders by Tx first, first entry is current
+					card := schema.CardinalityOne
+					if m.schema != nil {
+						if attrDef := m.schema.GetAttribute(aPtr); attrDef != nil {
+							card = attrDef.Cardinality
+						}
+					}
+					if card == schema.CardinalityMany {
+						// EAVT: E → A → V → Tx - values grouped together for add-wins
+						start, end := encoder.EncodePrefixRange(EAVT, eBytes[:], aStorage[:])
+						return EAVT, start, end
+					}
+					// EATV: E → A → Tx → V - first entry is current (highest Tx)
+					start, end := encoder.EncodePrefixRange(EATV, eBytes[:], aStorage[:])
+					return EATV, start, end
 				}
 			}
 
@@ -398,7 +425,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 					E:  datalog.NewIdentity(""),
 					A:  aPtr,
 					V:  v,
-					Tx: 0,
+					Tx: datalog.ElementID{},
 				}
 				// Get value bytes with type prefix
 				// Must match how EncodeKey encodes values!
@@ -433,7 +460,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 			E:  datalog.NewIdentity(""),
 			A:  datalog.NewKeyword(""),
 			V:  v,
-			Tx: 0,
+			Tx: datalog.ElementID{},
 		}
 		sDatom := ToStorageDatom(*dummyDatom)
 		vType := byte(datalog.Type(sDatom.V))
@@ -520,15 +547,19 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 	if tx != nil {
 		switch txv := tx.(type) {
 		case uint64:
-			if datom.Tx != txv {
+			if datom.Tx.Lamport != txv {
 				return false
 			}
 		case int64:
-			if datom.Tx != uint64(txv) {
+			if datom.Tx.Lamport != uint64(txv) {
 				return false
 			}
 		case int:
-			if datom.Tx != uint64(txv) {
+			if datom.Tx.Lamport != uint64(txv) {
+				return false
+			}
+		case datalog.ElementID:
+			if datom.Tx != txv {
 				return false
 			}
 		default:
@@ -550,6 +581,8 @@ func indexName(idx IndexType) string {
 	switch idx {
 	case EAVT:
 		return "EAVT"
+	case EATV:
+		return "EATV"
 	case AEVT:
 		return "AEVT"
 	case AVET:
@@ -594,7 +627,7 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		}
 
 		// Check transaction filter for as-of queries
-		if m.txID > 0 && datom.Tx > m.txID {
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
 			continue
 		}
 
@@ -632,7 +665,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 		}
 
 		// Check transaction filter for as-of queries
-		if m.txID > 0 && datom.Tx > m.txID {
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
 			continue
 		}
 

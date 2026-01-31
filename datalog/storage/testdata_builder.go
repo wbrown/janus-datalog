@@ -172,46 +172,46 @@ func generateOHLCData(config TestDataConfig) []datalog.Datom {
 						E:  barEntity,
 						A:  symbolEntity,
 						V:  symbolIdentity,
-						Tx: 1,
+						Tx: datalog.ElementID{Lamport: 1},
 					},
 					// Time
 					datalog.Datom{
 						E:  barEntity,
 						A:  datalog.NewKeyword(fmt.Sprintf("%stime", config.AttributePrefix)),
 						V:  barTime,
-						Tx: 1,
+						Tx: datalog.ElementID{Lamport: 1},
 					},
 					// Minute of day
 					datalog.Datom{
 						E:  barEntity,
 						A:  datalog.NewKeyword(fmt.Sprintf("%sminute-of-day", config.AttributePrefix)),
 						V:  int64(bar * (24 * 60 / config.BarsPerDay)),
-						Tx: 1,
+						Tx: datalog.ElementID{Lamport: 1},
 					},
 					// OHLC values
 					datalog.Datom{
 						E:  barEntity,
 						A:  datalog.NewKeyword(fmt.Sprintf("%sopen", config.AttributePrefix)),
 						V:  open,
-						Tx: 1,
+						Tx: datalog.ElementID{Lamport: 1},
 					},
 					datalog.Datom{
 						E:  barEntity,
 						A:  datalog.NewKeyword(fmt.Sprintf("%shigh", config.AttributePrefix)),
 						V:  high,
-						Tx: 1,
+						Tx: datalog.ElementID{Lamport: 1},
 					},
 					datalog.Datom{
 						E:  barEntity,
 						A:  datalog.NewKeyword(fmt.Sprintf("%slow", config.AttributePrefix)),
 						V:  low,
-						Tx: 1,
+						Tx: datalog.ElementID{Lamport: 1},
 					},
 					datalog.Datom{
 						E:  barEntity,
 						A:  datalog.NewKeyword(fmt.Sprintf("%sclose", config.AttributePrefix)),
 						V:  close,
-						Tx: 1,
+						Tx: datalog.ElementID{Lamport: 1},
 					},
 				)
 			}

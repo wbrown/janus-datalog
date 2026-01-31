@@ -18,16 +18,16 @@ func TestCSEOpportunity(t *testing.T) {
 	for cat := 0; cat < 5; cat++ {
 		catID := datalog.NewIdentity("cat-" + string(rune('A'+cat)))
 		datoms = append(datoms, datalog.Datom{
-			E: catID, A: datalog.NewKeyword(":category/name"), V: string(rune('A' + cat)), Tx: 1,
+			E: catID, A: datalog.NewKeyword(":category/name"), V: string(rune('A' + cat)), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		})
 
 		for prod := 0; prod < 10; prod++ {
 			prodID := datalog.NewIdentity("prod-" + string(rune('A'+cat)) + string(rune('0'+prod)))
 			price := float64(100 + cat*10 + prod)
 			datoms = append(datoms,
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/category"), V: catID, Tx: 1},
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/price"), V: price, Tx: 1},
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/stock"), V: int64(prod * 5), Tx: 1},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/category"), V: catID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/price"), V: price, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/stock"), V: int64(prod * 5), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}
@@ -191,18 +191,18 @@ func TestOHLCCSEOpportunity(t *testing.T) {
 			volume := int64(1000 + hour*100 + minute)
 
 			datoms = append(datoms,
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symbol, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: high, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: low, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(mod), Tx: 1},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symbol, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: high, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: low, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(mod), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}
 
 	datoms = append(datoms,
-		datalog.Datom{E: symbol, A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: 1},
+		datalog.Datom{E: symbol, A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	)
 
 	matcher := NewMemoryPatternMatcher(datoms)

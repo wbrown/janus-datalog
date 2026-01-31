@@ -32,7 +32,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	symbolID := datalog.NewIdentity("symbol-TEST")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -75,14 +75,14 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 				volume := float64(10000 + minute*100)
 
 				datoms = append(datoms,
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/minute-of-day"), V: minuteOfDay, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/high"), V: high, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/low"), V: low, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/close"), V: close, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: 1},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/minute-of-day"), V: minuteOfDay, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/high"), V: high, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/low"), V: low, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/close"), V: close, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 				)
 			}
 		}

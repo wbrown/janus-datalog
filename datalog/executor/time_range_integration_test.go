@@ -21,11 +21,11 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 		barTime := time.Date(2025, 6, 20, 9, minute, 0, 0, time.UTC)
 		barID := datalog.NewIdentity("bar-" + barTime.Format(time.RFC3339))
 		datoms = append(datoms,
-			datalog.Datom{E: symCRWV, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symCRWV, Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: 100.0 + float64(minute), Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: 99.0 + float64(minute), Tx: 1},
+			datalog.Datom{E: symCRWV, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symCRWV, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: 100.0 + float64(minute), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: 99.0 + float64(minute), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		)
 	}
 
@@ -34,10 +34,10 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 		barTime := time.Date(2025, 6, 20, 10, minute, 0, 0, time.UTC)
 		barID := datalog.NewIdentity("bar-" + barTime.Format(time.RFC3339))
 		datoms = append(datoms,
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symCRWV, Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: 110.0 + float64(minute), Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: 109.0 + float64(minute), Tx: 1},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symCRWV, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: 110.0 + float64(minute), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: 109.0 + float64(minute), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		)
 	}
 
@@ -46,10 +46,10 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 		barTime := time.Date(2025, 6, 20, 11, minute, 0, 0, time.UTC)
 		barID := datalog.NewIdentity("bar-" + barTime.Format(time.RFC3339))
 		datoms = append(datoms,
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symCRWV, Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: 120.0 + float64(minute), Tx: 1},
-			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: 119.0 + float64(minute), Tx: 1},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symCRWV, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: 120.0 + float64(minute), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: 119.0 + float64(minute), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		)
 	}
 
@@ -142,7 +142,7 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 
 	symCRWV := datalog.NewIdentity("CRWV")
 	datoms = append(datoms,
-		datalog.Datom{E: symCRWV, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: 1},
+		datalog.Datom{E: symCRWV, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	)
 
 	// Create 5 hours of data: hours 9-13
@@ -154,10 +154,10 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 			low := 99.0 + float64(hour*10) + float64(minute)/10.0
 
 			datoms = append(datoms,
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symCRWV, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: high, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: low, Tx: 1},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symCRWV, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: high, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: low, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}

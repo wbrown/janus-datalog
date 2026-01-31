@@ -16,7 +16,7 @@ func TestKeyMaskConstraint(t *testing.T) {
 		E:  datalog.NewIdentity("person1"),
 		A:  datalog.NewKeyword(":person/age"),
 		V:  int64(25),
-		Tx: 100,
+		Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1},
 	}
 
 	// Encode it as an AEVT key
@@ -53,7 +53,7 @@ func TestKeyMaskConstraint(t *testing.T) {
 		E:  datalog.NewIdentity("person2"),
 		A:  datalog.NewKeyword(":person/age"),
 		V:  int64(30),
-		Tx: 101,
+		Tx: datalog.ElementID{Lamport: 101, ReplicaID: 1},
 	}
 	key2 := encoder.EncodeKey(AEVT, datom2)
 	actualValue2 := key2[valueStart:valueEnd]
@@ -73,7 +73,7 @@ func BenchmarkRawOperations(b *testing.B) {
 			E:  datalog.NewIdentity(fmt.Sprintf("person%d", i)),
 			A:  datalog.NewKeyword(":person/age"),
 			V:  int64(i%100 + 1),
-			Tx: uint64(i),
+			Tx: datalog.ElementID{Lamport: uint64(i)},
 		}
 		keys[i] = encoder.EncodeKey(AEVT, datom)
 	}
@@ -175,7 +175,7 @@ func BenchmarkKeyMaskVsDecoding(b *testing.B) {
 			E:  datalog.NewIdentity(string(rune(i))),
 			A:  datalog.NewKeyword(":person/age"),
 			V:  int64(i%100 + 1),
-			Tx: uint64(i),
+			Tx: datalog.ElementID{Lamport: uint64(i)},
 		}
 		keys[i] = encoder.EncodeKey(AEVT, datom)
 	}

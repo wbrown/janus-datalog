@@ -325,6 +325,11 @@ func (w *KeyMaskFilterWrapper) Stats() (keysScanned, keysMatched, datomsDecoded 
 	return w.keysScanned, w.keysMatched, w.datomsDecoded
 }
 
+// ElementID delegates to the base iterator.
+func (w *KeyMaskFilterWrapper) ElementID() datalog.ElementID {
+	return w.baseIter.ElementID()
+}
+
 // Next advances to the next matching key
 func (i *KeyMaskIterator) Next() bool {
 	for i.BadgerIterator.Next() {

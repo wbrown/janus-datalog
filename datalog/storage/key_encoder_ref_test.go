@@ -20,7 +20,7 @@ func TestL85RefValueEncoding(t *testing.T) {
 		E:  datalog.NewIdentityFromHash(alice),
 		A:  datalog.NewKeyword("follows"),
 		V:  datalog.NewIdentityFromHash(bob),
-		Tx: uint64(1),
+		Tx: datalog.ElementID{Lamport: uint64(1)},
 	}
 
 	encoder := NewKeyEncoder(L85Strategy)
@@ -37,9 +37,9 @@ func TestL85RefValueEncoding(t *testing.T) {
 	// - 1 byte prefix
 	// - 40 chars for attribute (L85 for 32 bytes)
 	// - 26 chars for ref value (1 type byte + 25 L85 chars)
-	// - 25 chars for entity (L85)
-	// - 25 chars for tx (L85)
-	expectedLen := 1 + 40 + 26 + 25 + 25
+	// - 25 chars for entity (L85 for 20 bytes)
+	// - 20 chars for tx (L85 for 16 bytes = ElementID)
+	expectedLen := 1 + 40 + 26 + 25 + 20
 	if len(avetKey) != expectedLen {
 		t.Errorf("AVET key length = %d, want %d", len(avetKey), expectedLen)
 	}

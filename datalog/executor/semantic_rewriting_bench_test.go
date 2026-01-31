@@ -17,7 +17,7 @@ func BenchmarkSemanticRewritingYearFilter(b *testing.B) {
 
 	symbolID := datalog.NewIdentity("symbol-NVDA")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "NVDA", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "NVDA", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -33,9 +33,9 @@ func BenchmarkSemanticRewritingYearFilter(b *testing.B) {
 			open := float64(100 + year - 2023 + day%10)
 
 			datoms = append(datoms,
-				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
+				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}
@@ -105,7 +105,7 @@ func BenchmarkSemanticRewritingMultiComponent(b *testing.B) {
 
 	symbolID := datalog.NewIdentity("symbol-AAPL")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -121,9 +121,9 @@ func BenchmarkSemanticRewritingMultiComponent(b *testing.B) {
 				open := float64(150 + day + hour + minute)
 
 				datoms = append(datoms,
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 				)
 			}
 		}
@@ -201,7 +201,7 @@ func BenchmarkSemanticRewritingOHLCScale(b *testing.B) {
 
 	symbolID := datalog.NewIdentity("symbol-CRWV")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -240,9 +240,9 @@ func BenchmarkSemanticRewritingOHLCScale(b *testing.B) {
 				open := 100.0 + float64(day)*0.5 + float64(hour-9)*0.2
 
 				datoms = append(datoms,
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 				)
 			}
 		}

@@ -8,10 +8,10 @@ import (
 // Datom is the fundamental unit of data in a Datalog system
 // It represents a single fact: Entity-Attribute-Value-Transaction
 type Datom struct {
-	E  Identity // Entity identifier
-	A  Keyword  // Attribute keyword (interned pointer)
-	V  Value    // Any value (see value.go for valid types)
-	Tx uint64   // Transaction ID
+	E  Identity  // Entity identifier
+	A  Keyword   // Attribute keyword (interned pointer)
+	V  Value     // Any value (see value.go for valid types)
+	Tx ElementID // Transaction/CRDT version (Lamport + ReplicaID)
 }
 
 // keyword is the unexported base type for attribute keywords.
@@ -260,5 +260,5 @@ func (s *symbol) Equal(other Symbol) bool {
 
 // String returns a string representation of the Datom
 func (d Datom) String() string {
-	return fmt.Sprintf("[%s %s %v %d]", d.E, d.A, d.V, d.Tx)
+	return fmt.Sprintf("[%s %s %v %s]", d.E, d.A, d.V, d.Tx)
 }

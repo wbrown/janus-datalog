@@ -28,12 +28,12 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	ageKw := datalog.NewKeyword(":person/age")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameKw, V: "Alice", Tx: 1},
-		{E: alice, A: ageKw, V: int64(30), Tx: 1},
-		{E: bob, A: nameKw, V: "Bob", Tx: 1},
-		{E: bob, A: ageKw, V: int64(25), Tx: 1},
-		{E: charlie, A: nameKw, V: "Charlie", Tx: 1},
-		{E: charlie, A: ageKw, V: int64(35), Tx: 1},
+		{E: alice, A: nameKw, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageKw, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameKw, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageKw, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameKw, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: ageKw, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	// Query with subquery that projects a result column
@@ -95,27 +95,27 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 	bar3 := datalog.NewIdentity("bar3")
 
 	datoms := []datalog.Datom{
-		{E: aapl, A: symbolKw, V: "AAPL", Tx: 1},
-		{E: msft, A: symbolKw, V: "MSFT", Tx: 1},
+		{E: aapl, A: symbolKw, V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: msft, A: symbolKw, V: "MSFT", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// AAPL bars
-		{E: bar1, A: priceSymbol, V: aapl, Tx: 1},
-		{E: bar1, A: priceTime, V: t1, Tx: 1},
-		{E: bar1, A: priceOpen, V: 100.0, Tx: 1},
-		{E: bar1, A: priceClose, V: 101.0, Tx: 1},
-		{E: bar1, A: priceHigh, V: 102.0, Tx: 1},
-		{E: bar1, A: priceLow, V: 99.0, Tx: 1},
-		{E: bar2, A: priceSymbol, V: aapl, Tx: 1},
-		{E: bar2, A: priceTime, V: t2, Tx: 1},
-		{E: bar2, A: priceOpen, V: 101.0, Tx: 1},
-		{E: bar2, A: priceClose, V: 103.0, Tx: 1},
-		{E: bar2, A: priceHigh, V: 104.0, Tx: 1},
-		{E: bar2, A: priceLow, V: 100.0, Tx: 1},
-		{E: bar3, A: priceSymbol, V: aapl, Tx: 1},
-		{E: bar3, A: priceTime, V: t3, Tx: 1},
-		{E: bar3, A: priceOpen, V: 103.0, Tx: 1},
-		{E: bar3, A: priceClose, V: 102.0, Tx: 1},
-		{E: bar3, A: priceHigh, V: 105.0, Tx: 1},
-		{E: bar3, A: priceLow, V: 101.0, Tx: 1},
+		{E: bar1, A: priceSymbol, V: aapl, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: priceTime, V: t1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: priceOpen, V: 100.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: priceClose, V: 101.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: priceHigh, V: 102.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: priceLow, V: 99.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: priceSymbol, V: aapl, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: priceTime, V: t2, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: priceOpen, V: 101.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: priceClose, V: 103.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: priceHigh, V: 104.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: priceLow, V: 100.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: priceSymbol, V: aapl, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: priceTime, V: t3, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: priceOpen, V: 103.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: priceClose, V: 102.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: priceHigh, V: 105.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: priceLow, V: 101.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	// Query with multiple subqueries contributing to projection

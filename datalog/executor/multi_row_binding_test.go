@@ -17,12 +17,12 @@ func TestMultiRowRelationBinding(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(25), Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: bob, A: ageAttr, V: int64(30), Tx: 1},
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: charlie, A: ageAttr, V: int64(35), Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: ageAttr, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -142,12 +142,12 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		p3 := datalog.NewIdentity("product:3")
 
 		productDatoms := []datalog.Datom{
-			{E: p1, A: categoryAttr, V: "Electronics", Tx: 1},
-			{E: p1, A: priceAttr, V: 100.0, Tx: 1},
-			{E: p2, A: categoryAttr, V: "Books", Tx: 2},
-			{E: p2, A: priceAttr, V: 20.0, Tx: 2},
-			{E: p3, A: categoryAttr, V: "Electronics", Tx: 3},
-			{E: p3, A: priceAttr, V: 200.0, Tx: 3},
+			{E: p1, A: categoryAttr, V: "Electronics", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			{E: p1, A: priceAttr, V: 100.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			{E: p2, A: categoryAttr, V: "Books", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+			{E: p2, A: priceAttr, V: 20.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+			{E: p3, A: categoryAttr, V: "Electronics", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+			{E: p3, A: priceAttr, V: 200.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 		}
 
 		productMatcher := NewMemoryPatternMatcher(productDatoms)
@@ -215,8 +215,8 @@ func TestMultiRowRelationBinding(t *testing.T) {
 func TestRelationBasedPatternMatching(t *testing.T) {
 	// Test that the new interface properly handles empty bindings
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword(":foo"), V: "bar", Tx: 1},
-		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword(":foo"), V: "baz", Tx: 2},
+		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword(":foo"), V: "bar", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword(":foo"), V: "baz", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)

@@ -22,15 +22,15 @@ func TestSubqueryFindClauseBug(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			`[:symbol/ticker "AAPL"]`: {
-				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1},
+				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			`[:price/symbol _]`: {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 3},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			},
 			`[:price/value _]`: {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: 3},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			},
 		},
 	}
@@ -129,15 +129,15 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			`[:symbol/ticker "AAPL"]`: {
-				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1},
+				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			`[:price/symbol _]`: {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 3},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			},
 			`[:price/value _]`: {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: 3},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			},
 		},
 	}
@@ -213,23 +213,23 @@ func TestSubqueryMultiValueFindClauseBug(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			`[:symbol/ticker "TEST"]`: {
-				{E: datalog.NewIdentity("symbol:test"), A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: 1},
+				{E: datalog.NewIdentity("symbol:test"), A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			`[:price/symbol _]`: {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:test"), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:test"), Tx: 3},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:test"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:test"), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			},
 			`[:price/day _]`: {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/day"), V: int64(15), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/day"), V: int64(15), Tx: 3},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/day"), V: int64(15), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/day"), V: int64(15), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			},
 			`[:price/high _]`: {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/high"), V: 100.0, Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/high"), V: 110.0, Tx: 3},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/high"), V: 100.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/high"), V: 110.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			},
 			`[:price/low _]`: {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/low"), V: 95.0, Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/low"), V: 98.0, Tx: 3},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/low"), V: 95.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/low"), V: 98.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 			},
 		},
 	}

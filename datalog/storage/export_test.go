@@ -382,14 +382,14 @@ func TestFormatDatomEDN(t *testing.T) {
 		E:  id,
 		A:  kw(":person/name"),
 		V:  "Alice",
-		Tx: 12345,
+		Tx: datalog.ElementID{Lamport: 12345, ReplicaID: 1},
 	}
 
 	result := FormatDatomEDN(datom)
 	assert.True(t, strings.HasPrefix(result, "[#identity "))
 	assert.Contains(t, result, ":person/name")
 	assert.Contains(t, result, `"Alice"`)
-	assert.Contains(t, result, "12345]")
+	assert.Contains(t, result, "[12345 1]]") // ElementID format: [Lamport ReplicaID]
 }
 
 func TestParseDatomEDN(t *testing.T) {
@@ -398,7 +398,7 @@ func TestParseDatomEDN(t *testing.T) {
 		E:  id,
 		A:  kw(":person/name"),
 		V:  "Alice",
-		Tx: 12345,
+		Tx: datalog.ElementID{Lamport: 12345, ReplicaID: 1},
 	}
 
 	formatted := FormatDatomEDN(original)
@@ -420,16 +420,16 @@ func TestDatomEDN_RoundTrip(t *testing.T) {
 		name  string
 		datom datalog.Datom
 	}{
-		{"string", datalog.Datom{E: id1, A: kw(":test/string"), V: "hello", Tx: 1}},
-		{"int", datalog.Datom{E: id1, A: kw(":test/int"), V: int64(42), Tx: 1}},
-		{"float", datalog.Datom{E: id1, A: kw(":test/float"), V: 3.14, Tx: 1}},
-		{"bool-true", datalog.Datom{E: id1, A: kw(":test/bool"), V: true, Tx: 1}},
-		{"bool-false", datalog.Datom{E: id1, A: kw(":test/bool"), V: false, Tx: 1}},
-		{"time", datalog.Datom{E: id1, A: kw(":test/time"), V: now, Tx: 1}},
-		{"bytes", datalog.Datom{E: id1, A: kw(":test/bytes"), V: []byte{1, 2, 3, 4, 5}, Tx: 1}},
-		{"ref", datalog.Datom{E: id1, A: kw(":test/ref"), V: id2, Tx: 1}},
-		{"keyword", datalog.Datom{E: id1, A: kw(":test/kw"), V: kw(":status/active"), Tx: 1}},
-		{"symbol", datalog.Datom{E: id1, A: kw(":test/sym"), V: datalog.NewSymbol("my-symbol"), Tx: 1}},
+		{"string", datalog.Datom{E: id1, A: kw(":test/string"), V: "hello", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"int", datalog.Datom{E: id1, A: kw(":test/int"), V: int64(42), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"float", datalog.Datom{E: id1, A: kw(":test/float"), V: 3.14, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"bool-true", datalog.Datom{E: id1, A: kw(":test/bool"), V: true, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"bool-false", datalog.Datom{E: id1, A: kw(":test/bool"), V: false, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"time", datalog.Datom{E: id1, A: kw(":test/time"), V: now, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"bytes", datalog.Datom{E: id1, A: kw(":test/bytes"), V: []byte{1, 2, 3, 4, 5}, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"ref", datalog.Datom{E: id1, A: kw(":test/ref"), V: id2, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"keyword", datalog.Datom{E: id1, A: kw(":test/kw"), V: kw(":status/active"), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
+		{"symbol", datalog.Datom{E: id1, A: kw(":test/sym"), V: datalog.NewSymbol("my-symbol"), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}},
 	}
 
 	for _, tc := range testCases {
@@ -787,10 +787,10 @@ func TestExportImport_PreservesTxIDs(t *testing.T) {
 	for _, line := range lines {
 		datom, err := ParseDatomEDN(line)
 		require.NoError(t, err)
-		if datom.Tx == txID1 {
+		if datom.Tx.Lamport == txID1 {
 			foundTx1 = true
 		}
-		if datom.Tx == txID2 {
+		if datom.Tx.Lamport == txID2 {
 			foundTx2 = true
 		}
 	}
@@ -857,8 +857,8 @@ func TestParseValueNode_ElementID_Errors(t *testing.T) {
 		{"three elements", `#eid [1 2 3]`, "requires exactly 2 elements"},
 		{"lamport not int", `#eid ["str" 1]`, "lamport must be integer"},
 		{"replica not int", `#eid [1 "str"]`, "replica-id must be integer"},
-		{"negative lamport", `#eid [-1 1]`, "lamport must be non-negative"},
-		{"negative replica", `#eid [1 -1]`, "replica-id must be non-negative"},
+		{"negative lamport", `#eid [-1 1]`, "invalid lamport value"},    // ParseUint rejects negative numbers
+		{"negative replica", `#eid [1 -1]`, "invalid replica-id value"}, // ParseUint rejects negative numbers
 	}
 
 	for _, tt := range tests {
@@ -880,7 +880,7 @@ func TestDatomEDN_RoundTrip_ElementID(t *testing.T) {
 		E:  id,
 		A:  kw(":test/element-id"),
 		V:  eid,
-		Tx: 1,
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	}
 
 	formatted := FormatDatomEDN(&datom)

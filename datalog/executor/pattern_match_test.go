@@ -16,11 +16,11 @@ func TestPatternMatching(t *testing.T) {
 	friendAttr := datalog.NewKeyword(":user/friend")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
-		{E: alice, A: friendAttr, V: bob, Tx: 2},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: bob, A: ageAttr, V: int64(25), Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: friendAttr, V: bob, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -103,7 +103,7 @@ func TestPatternMatching(t *testing.T) {
 					query.Variable{Name: datalog.NewSymbol("?e")},
 					query.Variable{Name: datalog.NewSymbol("?a")},
 					query.Variable{Name: datalog.NewSymbol("?v")},
-					query.Constant{Value: uint64(2)},
+					query.Constant{Value: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 				},
 			},
 			expected: 1,
@@ -155,7 +155,7 @@ func TestDatomToRelationExtraction(t *testing.T) {
 		E:  alice,
 		A:  nameAttr,
 		V:  "Alice",
-		Tx: 1,
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	}
 
 	pattern := &query.DataPattern{
@@ -201,8 +201,9 @@ func TestDatomToRelationExtraction(t *testing.T) {
 		t.Errorf("expected ?name to be 'Alice'")
 	}
 
-	if tuple[2] != uint64(1) {
-		t.Errorf("expected ?tx to be 1")
+	expectedTx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
+	if tuple[2] != expectedTx {
+		t.Errorf("expected ?tx to be %v, got %v", expectedTx, tuple[2])
 	}
 }
 
@@ -212,8 +213,8 @@ func TestPatternToRelation(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	// Pattern: [?user :user/name ?name]
@@ -271,7 +272,7 @@ func TestMatchWithStringConstants(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)

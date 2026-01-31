@@ -13,7 +13,7 @@ func TestDatomIterator(t *testing.T) {
 	e2 := datalog.NewIdentity("user:bob")
 	nameAttr := datalog.NewKeyword(":user/name")
 	ageAttr := datalog.NewKeyword(":user/age")
-	tx := uint64(1)
+	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
 
 	datoms := []datalog.Datom{
 		{E: e1, A: nameAttr, V: "Alice", Tx: tx},
@@ -76,7 +76,7 @@ func TestDatomRelation(t *testing.T) {
 	e1 := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")
 	ageAttr := datalog.NewKeyword(":user/age")
-	tx := uint64(1)
+	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
 
 	datoms := []datalog.Datom{
 		{E: e1, A: nameAttr, V: "Alice", Tx: tx},
@@ -129,7 +129,7 @@ func TestDatomJoinScenario(t *testing.T) {
 	e2 := datalog.NewIdentity("user:bob")
 	nameAttr := datalog.NewKeyword(":user/name")
 	ageAttr := datalog.NewKeyword(":user/age")
-	tx := uint64(1)
+	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
 
 	// First pattern: [?user :user/name ?name]
 	namePattern := []datalog.Datom{

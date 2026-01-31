@@ -39,11 +39,12 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Dat
 
 	// Convert to user datom using direct array-based interning
 	// No intermediate copies needed - arrays go straight to intern cache lookup
+	// tx is [16]byte, convert to Tx type then to uint64
 	return &datalog.Datom{
 		E:  datalog.InternIdentityFromHash(entity),
 		A:  datalog.InternKeywordFromBytes(attr),
 		V:  v,
-		Tx: Tx(tx).Uint64(),
+		Tx: Tx(tx).ToElementID(), // Tx is [16]byte, Uint64() returns Lamport
 	}, nil
 }
 
@@ -76,11 +77,12 @@ func DatomFromHistoryKey(index IndexType, key []byte, encoder KeyEncoder) (*data
 	}
 
 	// Convert to user datom using direct array-based interning
+	// tx is [16]byte, convert to Tx type then to uint64
 	return &datalog.Datom{
 		E:  datalog.InternIdentityFromHash(entity),
 		A:  datalog.InternKeywordFromBytes(attr),
 		V:  v,
-		Tx: Tx(tx).Uint64(),
+		Tx: Tx(tx).ToElementID(), // Tx is [16]byte, Uint64() returns Lamport
 	}, op, nil
 }
 

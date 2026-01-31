@@ -151,8 +151,10 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 	}
 }
 
-// TestAEVTPrefixRangeDebug inspects the actual prefix range generated
-func TestAEVTPrefixRangeDebug(t *testing.T) {
+// TestEATVPrefixRangeDebug inspects the actual prefix range generated
+// NOTE: With CRDT semantics, schemaless queries (or cardinality-one) use EATV
+// to get the current value (first entry has highest Tx). AEVT was used historically.
+func TestEATVPrefixRangeDebug(t *testing.T) {
 	// Create temporary database
 	dir, err := os.MkdirTemp("", "aevt-prefix-test-*")
 	if err != nil {
@@ -189,11 +191,12 @@ func TestAEVTPrefixRangeDebug(t *testing.T) {
 	t.Logf("Start key (hex): % x", start)
 	t.Logf("End key (hex): % x", end)
 
-	// For AEVT with A+E bound, the prefix should be 52 bytes: A[32] + E[20]
-	expectedPrefixLen := 32 + 20 // A + E
+	// For EATV with E+A bound, the prefix should be 52 bytes: E[20] + A[32]
+	// (CRDT semantics: schemaless/cardinality-one uses EATV for current value access)
+	expectedPrefixLen := 20 + 32 // E + A
 
-	if index != AEVT {
-		t.Errorf("Expected AEVT index, got %s", indexName(index))
+	if index != EATV {
+		t.Errorf("Expected EATV index (for schemaless/cardinality-one), got %s", indexName(index))
 	}
 
 	// Check if start key has proper length for (A, E) prefix

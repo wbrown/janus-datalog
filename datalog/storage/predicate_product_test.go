@@ -11,8 +11,8 @@ import (
 
 // bridgeTestDB holds a test database and pre-created identities for test cases.
 type bridgeTestDB struct {
-	DB                          *Database
-	Dir                         string
+	DB                              *Database
+	Dir                             string
 	Alice, Bob, Charlie, Diana, Eve datalog.Identity
 }
 

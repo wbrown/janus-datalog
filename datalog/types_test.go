@@ -12,7 +12,7 @@ func TestDatomCreation(t *testing.T) {
 	entity := NewIdentity("user:alice")
 	attr := NewKeyword(":user/name")
 	value := "Alice Smith"
-	tx := uint64(1)
+	tx := ElementID{Lamport: 1, ReplicaID: 1}
 
 	datom := Datom{
 		E:  entity,
@@ -56,7 +56,7 @@ func TestValueTypes(t *testing.T) {
 				E:  NewIdentity("test:1"),
 				A:  NewKeyword(":test/value"),
 				V:  tt.value,
-				Tx: 1,
+				Tx: ElementID{Lamport: 1, ReplicaID: 1},
 			}
 
 			// Test string representation

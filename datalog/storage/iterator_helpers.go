@@ -38,7 +38,7 @@ func validateDatomWithConstraints(
 	constraints []executor.StorageConstraint,
 ) bool {
 	// Check transaction validity
-	if txID > 0 && datom.Tx > txID {
+	if txID > 0 && datom.Tx.Lamport > txID {
 		return false
 	}
 

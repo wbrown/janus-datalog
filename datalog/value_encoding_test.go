@@ -69,8 +69,8 @@ func TestSymbolValueType_Distinct(t *testing.T) {
 
 func TestElementIDValueEncoding_RoundTrip(t *testing.T) {
 	tests := []ElementID{
-		{Lamport: 0, ReplicaID: 0},    // HEAD/zero
-		{Lamport: 1, ReplicaID: 1},    // small values
+		{Lamport: 0, ReplicaID: 0}, // HEAD/zero
+		{Lamport: 1, ReplicaID: 1}, // small values
 		{Lamport: 1234, ReplicaID: 5678},
 		{Lamport: 1706745600000000000, ReplicaID: 12345678901234567}, // realistic values
 		{Lamport: ^uint64(0), ReplicaID: ^uint64(0)},                 // max values

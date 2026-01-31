@@ -175,7 +175,7 @@ func (i *historyIterator) Next() bool {
 		opBool := i.histIter.Op() == OpAssert
 
 		// Filter by txID if as-of is set
-		if i.matcher.txID > 0 && datom.Tx > i.matcher.txID {
+		if i.matcher.txID > 0 && datom.Tx.Lamport > i.matcher.txID {
 			continue
 		}
 

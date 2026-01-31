@@ -176,6 +176,34 @@ func DecodeFixed20(src string) ([20]byte, error) {
 	return result, nil
 }
 
+// EncodeFixed16 encodes a 16-byte array to exactly 20 characters
+// Used for ElementID (Lamport + ReplicaID) encoding in transaction IDs
+func EncodeFixed16(src [16]byte) string {
+	return EncodeL85(src[:])
+}
+
+// DecodeFixed16 decodes exactly 20 characters to a 16-byte array
+// Used for ElementID (Lamport + ReplicaID) decoding in transaction IDs
+func DecodeFixed16(src string) ([16]byte, error) {
+	var result [16]byte
+
+	if len(src) != 20 {
+		return result, fmt.Errorf("expected 20 characters, got %d", len(src))
+	}
+
+	decoded, err := DecodeL85(src)
+	if err != nil {
+		return result, err
+	}
+
+	if len(decoded) != 16 {
+		return result, fmt.Errorf("decoded to %d bytes, expected 16", len(decoded))
+	}
+
+	copy(result[:], decoded)
+	return result, nil
+}
+
 // EncodeFixed32 encodes a 32-byte array to exactly 40 characters
 func EncodeFixed32(src [32]byte) string {
 	return EncodeL85(src[:])

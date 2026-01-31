@@ -14,7 +14,7 @@ func TestSubqueryWithNoResults(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:symbol/ticker \"AAPL\"]": {
-				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1},
+				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			// No prices for AAPL
 			"[:price/symbol _]": {},
@@ -56,22 +56,22 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:symbol/ticker _]": {
-				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1},
+				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			"[:price/symbol _]": {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 			"[:price/time _]": {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC), Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 			"[:price/value _]": {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/value"), V: 152.0, Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/value"), V: 152.0, Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 		},
 	}
@@ -121,22 +121,22 @@ func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:department/name _]": {
-				{E: datalog.NewIdentity("dept:eng"), A: datalog.NewKeyword(":department/name"), V: "Engineering", Tx: 1},
-				{E: datalog.NewIdentity("dept:sales"), A: datalog.NewKeyword(":department/name"), V: "Sales", Tx: 1},
+				{E: datalog.NewIdentity("dept:eng"), A: datalog.NewKeyword(":department/name"), V: "Engineering", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("dept:sales"), A: datalog.NewKeyword(":department/name"), V: "Sales", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			"[:employee/department _]": {
-				{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:eng"), Tx: 2},
-				{E: datalog.NewIdentity("emp:2"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:eng"), Tx: 2},
-				{E: datalog.NewIdentity("emp:3"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:sales"), Tx: 2},
-				{E: datalog.NewIdentity("emp:4"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:sales"), Tx: 2},
-				{E: datalog.NewIdentity("emp:5"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:sales"), Tx: 2},
+				{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:eng"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:2"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:eng"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:3"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:sales"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:4"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:sales"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:5"), A: datalog.NewKeyword(":employee/department"), V: datalog.NewIdentity("dept:sales"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 			},
 			"[:employee/salary _]": {
-				{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/salary"), V: int64(100000), Tx: 2},
-				{E: datalog.NewIdentity("emp:2"), A: datalog.NewKeyword(":employee/salary"), V: int64(120000), Tx: 2},
-				{E: datalog.NewIdentity("emp:3"), A: datalog.NewKeyword(":employee/salary"), V: int64(80000), Tx: 2},
-				{E: datalog.NewIdentity("emp:4"), A: datalog.NewKeyword(":employee/salary"), V: int64(90000), Tx: 2},
-				{E: datalog.NewIdentity("emp:5"), A: datalog.NewKeyword(":employee/salary"), V: int64(85000), Tx: 2},
+				{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/salary"), V: int64(100000), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:2"), A: datalog.NewKeyword(":employee/salary"), V: int64(120000), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:3"), A: datalog.NewKeyword(":employee/salary"), V: int64(80000), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:4"), A: datalog.NewKeyword(":employee/salary"), V: int64(90000), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:5"), A: datalog.NewKeyword(":employee/salary"), V: int64(85000), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 			},
 		},
 	}
@@ -199,27 +199,27 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:product/category _]": {
-				{E: datalog.NewIdentity("prod:1"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: 1},
-				{E: datalog.NewIdentity("prod:2"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: 1},
-				{E: datalog.NewIdentity("prod:3"), A: datalog.NewKeyword(":product/category"), V: "Books", Tx: 1},
+				{E: datalog.NewIdentity("prod:1"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("prod:2"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("prod:3"), A: datalog.NewKeyword(":product/category"), V: "Books", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			"[:sale/product _]": {
-				{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/product"), V: datalog.NewIdentity("prod:1"), Tx: 2},
-				{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/product"), V: datalog.NewIdentity("prod:1"), Tx: 2},
-				{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/product"), V: datalog.NewIdentity("prod:2"), Tx: 2},
-				{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/product"), V: datalog.NewIdentity("prod:3"), Tx: 2},
+				{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/product"), V: datalog.NewIdentity("prod:1"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/product"), V: datalog.NewIdentity("prod:1"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/product"), V: datalog.NewIdentity("prod:2"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/product"), V: datalog.NewIdentity("prod:3"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 			},
 			"[:sale/date _]": {
-				{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/date"), V: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Tx: 2},
-				{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/date"), V: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), Tx: 2},
-				{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/date"), V: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Tx: 2},
-				{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/date"), V: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Tx: 2},
+				{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/date"), V: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/date"), V: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/date"), V: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/date"), V: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 			},
 			"[:sale/amount _]": {
-				{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/amount"), V: 100.0, Tx: 2},
-				{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/amount"), V: 150.0, Tx: 2},
-				{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/amount"), V: 200.0, Tx: 2},
-				{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/amount"), V: 50.0, Tx: 2},
+				{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/amount"), V: 100.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/amount"), V: 150.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/amount"), V: 200.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/amount"), V: 50.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 			},
 		},
 	}
@@ -276,18 +276,18 @@ func TestSubqueryWithNoInput(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:config/key \"max_price\"]": {
-				{E: datalog.NewIdentity("config:1"), A: datalog.NewKeyword(":config/key"), V: "max_price", Tx: 1},
+				{E: datalog.NewIdentity("config:1"), A: datalog.NewKeyword(":config/key"), V: "max_price", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			"[:config/value _]": {
-				{E: datalog.NewIdentity("config:1"), A: datalog.NewKeyword(":config/value"), V: 1000.0, Tx: 1},
+				{E: datalog.NewIdentity("config:1"), A: datalog.NewKeyword(":config/value"), V: 1000.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			"[:product/name _]": {
-				{E: datalog.NewIdentity("prod:1"), A: datalog.NewKeyword(":product/name"), V: "Laptop", Tx: 2},
-				{E: datalog.NewIdentity("prod:2"), A: datalog.NewKeyword(":product/name"), V: "Phone", Tx: 2},
+				{E: datalog.NewIdentity("prod:1"), A: datalog.NewKeyword(":product/name"), V: "Laptop", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("prod:2"), A: datalog.NewKeyword(":product/name"), V: "Phone", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 			},
 			"[:product/price _]": {
-				{E: datalog.NewIdentity("prod:1"), A: datalog.NewKeyword(":product/price"), V: 1200.0, Tx: 2},
-				{E: datalog.NewIdentity("prod:2"), A: datalog.NewKeyword(":product/price"), V: 800.0, Tx: 2},
+				{E: datalog.NewIdentity("prod:1"), A: datalog.NewKeyword(":product/price"), V: 1200.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("prod:2"), A: datalog.NewKeyword(":product/price"), V: 800.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 			},
 		},
 	}
@@ -343,14 +343,14 @@ func TestSubqueryInFilter(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:employee/name _]": {
-				{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/name"), V: "Alice", Tx: 1},
-				{E: datalog.NewIdentity("emp:2"), A: datalog.NewKeyword(":employee/name"), V: "Bob", Tx: 1},
-				{E: datalog.NewIdentity("emp:3"), A: datalog.NewKeyword(":employee/name"), V: "Charlie", Tx: 1},
+				{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:2"), A: datalog.NewKeyword(":employee/name"), V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:3"), A: datalog.NewKeyword(":employee/name"), V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			"[:employee/salary _]": {
-				{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/salary"), V: int64(90000), Tx: 1},
-				{E: datalog.NewIdentity("emp:2"), A: datalog.NewKeyword(":employee/salary"), V: int64(85000), Tx: 1},
-				{E: datalog.NewIdentity("emp:3"), A: datalog.NewKeyword(":employee/salary"), V: int64(95000), Tx: 1},
+				{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/salary"), V: int64(90000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:2"), A: datalog.NewKeyword(":employee/salary"), V: int64(85000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("emp:3"), A: datalog.NewKeyword(":employee/salary"), V: int64(95000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 		},
 	}
@@ -431,14 +431,14 @@ func TestSubqueryErrorHandling(t *testing.T) {
 			matcher := &MockPatternMatcher{
 				data: map[string][]datalog.Datom{
 					"[:product/category _]": {
-						{E: datalog.NewIdentity("prod:1"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: 1},
-						{E: datalog.NewIdentity("prod:2"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: 1},
+						{E: datalog.NewIdentity("prod:1"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+						{E: datalog.NewIdentity("prod:2"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 					},
 					"[:employee/name _]": {
-						{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/name"), V: "Alice", Tx: 1},
+						{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 					},
 					"[:employee/salary _]": {
-						{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/salary"), V: int64(90000), Tx: 1},
+						{E: datalog.NewIdentity("emp:1"), A: datalog.NewKeyword(":employee/salary"), V: int64(90000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 					},
 				},
 			}
@@ -467,7 +467,7 @@ func TestSubqueryWithEmptyOuterQuery(t *testing.T) {
 			"[:symbol/ticker _]": {},
 			"[:price/symbol _]": {
 				// Some prices exist but no matching symbols
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:fake"), Tx: 1},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:fake"), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 		},
 	}
@@ -516,15 +516,15 @@ func TestSubqueryPerformance(t *testing.T) {
 		cat := fmt.Sprintf("cat:%d", i)
 		catName := fmt.Sprintf("Category%d", i)
 		datoms = append(datoms,
-			datalog.Datom{E: datalog.NewIdentity(cat), A: datalog.NewKeyword(":category/name"), V: catName, Tx: 1},
+			datalog.Datom{E: datalog.NewIdentity(cat), A: datalog.NewKeyword(":category/name"), V: catName, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		)
 
 		// Create 100 products per category (1000 total)
 		for j := 0; j < 100; j++ {
 			prod := fmt.Sprintf("prod:%d-%d", i, j)
 			datoms = append(datoms,
-				datalog.Datom{E: datalog.NewIdentity(prod), A: datalog.NewKeyword(":product/category"), V: datalog.NewIdentity(cat), Tx: 2},
-				datalog.Datom{E: datalog.NewIdentity(prod), A: datalog.NewKeyword(":product/price"), V: float64(10 + j), Tx: 2},
+				datalog.Datom{E: datalog.NewIdentity(prod), A: datalog.NewKeyword(":product/category"), V: datalog.NewIdentity(cat), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				datalog.Datom{E: datalog.NewIdentity(prod), A: datalog.NewKeyword(":product/price"), V: float64(10 + j), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 			)
 		}
 	}

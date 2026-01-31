@@ -174,6 +174,10 @@ func (it *reusingIterator) Next() bool {
 						// TAEV: Tx + Attribute + Entity + Value
 						// When transaction changes, we're past this binding
 						if expectedTx, ok := bindingTuple[0].(uint64); ok {
+							if datom.Tx.Lamport != expectedTx {
+								movedPast = true
+							}
+						} else if expectedTx, ok := bindingTuple[0].(datalog.ElementID); ok {
 							if datom.Tx != expectedTx {
 								movedPast = true
 							}

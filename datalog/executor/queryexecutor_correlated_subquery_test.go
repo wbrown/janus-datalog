@@ -21,15 +21,15 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 	groupKw := datalog.NewKeyword(":person/group")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameKw, V: "Alice", Tx: 1},
-		{E: alice, A: ageKw, V: int64(30), Tx: 1},
-		{E: alice, A: groupKw, V: "A", Tx: 1},
-		{E: bob, A: nameKw, V: "Bob", Tx: 1},
-		{E: bob, A: ageKw, V: int64(25), Tx: 1},
-		{E: bob, A: groupKw, V: "A", Tx: 1},
-		{E: charlie, A: nameKw, V: "Charlie", Tx: 1},
-		{E: charlie, A: ageKw, V: int64(35), Tx: 1},
-		{E: charlie, A: groupKw, V: "B", Tx: 1},
+		{E: alice, A: nameKw, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageKw, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: groupKw, V: "A", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameKw, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageKw, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: groupKw, V: "A", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameKw, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: ageKw, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: groupKw, V: "B", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	// Query with correlated subquery:

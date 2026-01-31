@@ -16,7 +16,7 @@ func TestKeyEncoders(t *testing.T) {
 		E:  datalog.NewIdentityFromHash(entity),
 		A:  datalog.NewKeyword("attr1"),
 		V:  "hello world",
-		Tx: uint64(1),
+		Tx: datalog.ElementID{Lamport: uint64(1)},
 	}
 
 	// Test both encoders
@@ -63,8 +63,8 @@ func TestKeyEncoders(t *testing.T) {
 				} else if !bytes.Equal(v[1:], []byte("hello world")) {
 					t.Errorf("%s: value mismatch for index %v", tc.name, idx)
 				}
-				// For tx, verify it's not zero
-				var zeroTx [20]byte
+				// For tx, verify it's not zero (tx is now 16 bytes = ElementID)
+				var zeroTx [16]byte
 				if tx == zeroTx {
 					t.Errorf("%s: tx is zero for index %v", tc.name, idx)
 				}
@@ -100,7 +100,7 @@ func TestKeyEncoderSortOrder(t *testing.T) {
 			E:  datalog.NewIdentityFromHash(entity),
 			A:  datalog.NewKeyword("name"),
 			V:  name,
-			Tx: uint64(1),
+			Tx: datalog.ElementID{Lamport: uint64(1)},
 		}
 		datoms = append(datoms, datom)
 	}

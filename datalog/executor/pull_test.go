@@ -17,9 +17,9 @@ func TestPullExecutor_SimpleAttributes(t *testing.T) {
 	emailAttr := datalog.NewKeyword(":user/email")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
-		{E: alice, A: emailAttr, V: "alice@example.com", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: emailAttr, V: "alice@example.com", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -63,9 +63,9 @@ func TestPullExecutor_Wildcard(t *testing.T) {
 	emailAttr := datalog.NewKeyword(":user/email")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
-		{E: alice, A: emailAttr, V: "alice@example.com", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: emailAttr, V: "alice@example.com", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -112,10 +112,10 @@ func TestPullExecutor_Wildcard_CardinalityMany(t *testing.T) {
 	tagAttr := datalog.NewKeyword(":user/tag")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: tagAttr, V: "admin", Tx: 1},
-		{E: alice, A: tagAttr, V: "developer", Tx: 2},
-		{E: alice, A: tagAttr, V: "reviewer", Tx: 3},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: tagAttr, V: "admin", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: tagAttr, V: "developer", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: alice, A: tagAttr, V: "reviewer", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -181,11 +181,11 @@ func TestPullExecutor_NestedReference(t *testing.T) {
 	entityRegionAttr := datalog.NewKeyword(":entity/region")
 
 	datoms := []datalog.Datom{
-		{E: region, A: regionCodeAttr, V: "US-W", Tx: 1},
-		{E: region, A: regionNameAttr, V: "US West", Tx: 1},
-		{E: entity, A: entityCodeAttr, V: "AAPL", Tx: 1},
-		{E: entity, A: entityNameAttr, V: "Apple Inc.", Tx: 1},
-		{E: entity, A: entityRegionAttr, V: region, Tx: 1}, // Reference to region
+		{E: region, A: regionCodeAttr, V: "US-W", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: region, A: regionNameAttr, V: "US West", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity, A: entityCodeAttr, V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity, A: entityNameAttr, V: "Apple Inc.", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Reference to region
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -238,10 +238,10 @@ func TestPullExecutor_CycleDetection(t *testing.T) {
 	nextAttr := datalog.NewKeyword(":entity/next")
 
 	datoms := []datalog.Datom{
-		{E: entity1, A: nameAttr, V: "Entity 1", Tx: 1},
-		{E: entity1, A: nextAttr, V: entity2, Tx: 1},
-		{E: entity2, A: nameAttr, V: "Entity 2", Tx: 1},
-		{E: entity2, A: nextAttr, V: entity1, Tx: 1}, // Circular reference back to entity1
+		{E: entity1, A: nameAttr, V: "Entity 1", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity1, A: nextAttr, V: entity2, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity2, A: nameAttr, V: "Entity 2", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity2, A: nextAttr, V: entity1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Circular reference back to entity1
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -296,7 +296,7 @@ func TestPullExecutor_MissingAttribute(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// No age attribute
 	}
 
@@ -332,7 +332,7 @@ func TestPullExecutor_DefaultValue(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// No status attribute
 	}
 
@@ -395,8 +395,8 @@ func TestPullExecutor_PullMany(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -439,11 +439,11 @@ func TestPullExecutor_DeeplyNested(t *testing.T) {
 	entityRegionAttr := datalog.NewKeyword(":entity/region")
 
 	datoms := []datalog.Datom{
-		{E: nation, A: nationNameAttr, V: "United States", Tx: 1},
-		{E: region, A: regionCodeAttr, V: "US-W", Tx: 1},
-		{E: region, A: regionNationAttr, V: nation, Tx: 1},
-		{E: entity, A: entityCodeAttr, V: "AAPL", Tx: 1},
-		{E: entity, A: entityRegionAttr, V: region, Tx: 1},
+		{E: nation, A: nationNameAttr, V: "United States", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: region, A: regionCodeAttr, V: "US-W", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: region, A: regionNationAttr, V: nation, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity, A: entityCodeAttr, V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -504,8 +504,8 @@ func TestPullExecutor_AnnotationsEmitted(t *testing.T) {
 	ageAttr := datalog.NewKeyword(":user/age")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -569,7 +569,7 @@ func TestPullExecutor_NoEventsWhenHandlerNil(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -601,10 +601,10 @@ func TestPullExecutor_CycleDetectedEvent(t *testing.T) {
 	nextAttr := datalog.NewKeyword(":entity/next")
 
 	datoms := []datalog.Datom{
-		{E: entity1, A: nameAttr, V: "Entity 1", Tx: 1},
-		{E: entity1, A: nextAttr, V: entity2, Tx: 1},
-		{E: entity2, A: nameAttr, V: "Entity 2", Tx: 1},
-		{E: entity2, A: nextAttr, V: entity1, Tx: 1}, // Circular reference
+		{E: entity1, A: nameAttr, V: "Entity 1", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity1, A: nextAttr, V: entity2, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity2, A: nameAttr, V: "Entity 2", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity2, A: nextAttr, V: entity1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Circular reference
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -652,9 +652,9 @@ func TestPullExecutor_NestedRefsEmitDepthEvents(t *testing.T) {
 	entityRegionAttr := datalog.NewKeyword(":entity/region")
 
 	datoms := []datalog.Datom{
-		{E: region, A: regionNameAttr, V: "US West", Tx: 1},
-		{E: entity, A: entityNameAttr, V: "Apple", Tx: 1},
-		{E: entity, A: entityRegionAttr, V: region, Tx: 1},
+		{E: region, A: regionNameAttr, V: "US West", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity, A: entityNameAttr, V: "Apple", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)

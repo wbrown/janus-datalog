@@ -20,8 +20,8 @@ type InternedTupleBuilder struct {
 	// Reusable workspace for building tuples
 	workspace Tuple
 
-	// Cache for common uint64 values (transaction IDs)
-	txCache map[uint64]*uint64
+	// Cache for common ElementID values (transaction IDs)
+	txCache map[datalog.ElementID]*datalog.ElementID
 }
 
 // NewInternedTupleBuilder creates a tuple builder that uses interning
@@ -37,17 +37,17 @@ func NewInternedTupleBuilder(pattern *DataPattern, columns []Symbol) *InternedTu
 		tIndex:    indexer.TIndex,
 		numVars:   indexer.NumVars,
 		workspace: make(Tuple, len(columns)),
-		txCache:   make(map[uint64]*uint64, 128), // Pre-allocate for common tx IDs
+		txCache:   make(map[datalog.ElementID]*datalog.ElementID, 128), // Pre-allocate for common tx IDs
 	}
 }
 
-// getTxPtr returns a cached pointer to a uint64 value
-func (tb *InternedTupleBuilder) getTxPtr(tx uint64) *uint64 {
+// getTxPtr returns a cached pointer to an ElementID value
+func (tb *InternedTupleBuilder) getTxPtr(tx datalog.ElementID) *datalog.ElementID {
 	if ptr, found := tb.txCache[tx]; found {
 		return ptr
 	}
 	// Create new pointer and cache it
-	ptr := new(uint64)
+	ptr := new(datalog.ElementID)
 	*ptr = tx
 	tb.txCache[tx] = ptr
 	return ptr

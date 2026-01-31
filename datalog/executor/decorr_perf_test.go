@@ -17,7 +17,7 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 	for cat := 0; cat < 100; cat++ {
 		catID := datalog.NewIdentity("cat-" + string(rune('A'+cat)))
 		datoms = append(datoms, datalog.Datom{
-			E: catID, A: datalog.NewKeyword(":category/name"), V: string(rune('A' + cat)), Tx: 1,
+			E: catID, A: datalog.NewKeyword(":category/name"), V: string(rune('A' + cat)), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		})
 
 		// Each category has 10 products
@@ -25,8 +25,8 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 			prodID := datalog.NewIdentity("prod-" + string(rune('A'+cat)) + string(rune('0'+prod)))
 			price := float64(100 + cat + prod)
 			datoms = append(datoms,
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/category"), V: catID, Tx: 1},
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/price"), V: price, Tx: 1},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/category"), V: catID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/price"), V: price, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}
@@ -110,15 +110,15 @@ func TestDecorrelationAnnotations(t *testing.T) {
 	for cat := 0; cat < 10; cat++ {
 		catID := datalog.NewIdentity("cat-" + string(rune('A'+cat)))
 		datoms = append(datoms, datalog.Datom{
-			E: catID, A: datalog.NewKeyword(":category/name"), V: string(rune('A' + cat)), Tx: 1,
+			E: catID, A: datalog.NewKeyword(":category/name"), V: string(rune('A' + cat)), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		})
 
 		for prod := 0; prod < 5; prod++ {
 			prodID := datalog.NewIdentity("prod-" + string(rune('A'+cat)) + string(rune('0'+prod)))
 			price := float64(100 + cat + prod)
 			datoms = append(datoms,
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/category"), V: catID, Tx: 1},
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/price"), V: price, Tx: 1},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/category"), V: catID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/price"), V: price, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}

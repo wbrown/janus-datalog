@@ -235,7 +235,7 @@ func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
 				E:  datalog.InternIdentityFromHash(sd.E),
 				A:  datalog.InternKeywordFromBytes(sd.A),
 				V:  sd.V,
-				Tx: sd.Tx.Uint64(),
+				Tx: sd.Tx.ToElementID(),
 			}
 			return nil
 		})
@@ -246,6 +246,45 @@ func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
 	}
 
 	return result, err
+}
+
+// MaxElementID returns the highest ElementID in the store by scanning TAEV index.
+// With bitwise NOT encoding for Tx, forward scan gives highest Tx first (O(1)).
+// Returns zero ElementID if store is empty.
+func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
+	var maxID datalog.ElementID
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false // Keys only
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		// TAEV prefix - forward scan, first entry has highest Tx due to bitwise NOT encoding
+		taevPrefix := []byte{byte(TAEV)}
+		it.Seek(taevPrefix)
+
+		if it.Valid() {
+			key := it.Item().Key()
+			if len(key) > 0 && key[0] == byte(TAEV) {
+				// Found a TAEV key - decode ElementID from Tx position
+				// TAEV layout: [prefix:1][Tx:16][A:32][E:20][V:var]
+				// DecodeKey handles the bitwise NOT reversal
+				_, _, _, tx, err := s.encoder.DecodeKey(TAEV, key)
+				if err != nil {
+					return fmt.Errorf("failed to decode TAEV key: %w", err)
+				}
+				maxID = Tx(tx).ToElementID()
+				return nil
+			}
+		}
+
+		// No TAEV entries found - store is empty
+		return nil
+	})
+
+	return maxID, err
 }
 
 // BeginTx starts a new transaction
@@ -394,7 +433,7 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 			E:  datalog.InternIdentityFromHash(sd.E),
 			A:  datalog.InternKeywordFromBytes(sd.A),
 			V:  sd.V,
-			Tx: sd.Tx.Uint64(),
+			Tx: sd.Tx.ToElementID(),
 		}
 		return nil
 	})
@@ -416,6 +455,62 @@ func (i *BadgerIterator) Seek(key []byte) {
 	i.start = key
 	// Leave valid=false so Next() positions us correctly
 	i.valid = false
+}
+
+// ElementID extracts the transaction ElementID from the current key.
+// This is more efficient than Datom() when only the ElementID is needed.
+func (i *BadgerIterator) ElementID() datalog.ElementID {
+	if !i.it.Valid() {
+		return datalog.ElementID{}
+	}
+	key := i.it.Item().Key()
+	return extractElementIDFromKey(i.index, key)
+}
+
+// extractElementIDFromKey extracts the ElementID from a key based on index type.
+// The Tx is encoded with bitwise NOT, so we reverse it here.
+func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {
+	const (
+		prefixSize = 1
+		entitySize = 20
+		attrSize   = 32
+		txSize     = 16
+	)
+
+	if len(key) < prefixSize+txSize {
+		return datalog.ElementID{}
+	}
+
+	var txBytes []byte
+
+	switch index {
+	case TAEV:
+		// TAEV: [prefix:1][Tx:16][A:32][E:20][V:var]
+		// Tx is right after prefix
+		txBytes = key[prefixSize : prefixSize+txSize]
+
+	case EATV:
+		// EATV: [prefix:1][E:20][A:32][Tx:16][V:var]
+		// Tx is after E+A
+		offset := prefixSize + entitySize + attrSize
+		if len(key) < offset+txSize {
+			return datalog.ElementID{}
+		}
+		txBytes = key[offset : offset+txSize]
+
+	case EAVT, AEVT, AVET, VAET:
+		// These have Tx at the end: [...][Tx:16]
+		if len(key) < txSize {
+			return datalog.ElementID{}
+		}
+		txBytes = key[len(key)-txSize:]
+
+	default:
+		return datalog.ElementID{}
+	}
+
+	// Reverse bitwise NOT to get original ElementID
+	return DecodeElementID(txBytes)
 }
 
 // BadgerTx implements Tx for BadgerDB

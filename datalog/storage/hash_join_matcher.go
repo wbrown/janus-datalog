@@ -292,7 +292,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 				if a != nil {
 					if kw, ok := a.(datalog.Keyword); ok {
-						attr := NewAttribute(kw.String())
+						var attr Attribute
+						copy(attr[:], kw.String())
 						startParts = append(startParts, attr[:])
 						endParts = append(endParts, attr[:])
 					}
@@ -303,7 +304,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 	case AEVT: // 1
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
-				attr := NewAttribute(kw.String())
+				var attr Attribute
+				copy(attr[:], kw.String())
 				startParts = append(startParts, attr[:])
 				endParts = append(endParts, attr[:])
 
@@ -320,7 +322,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 	case AVET: // 2
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
-				attr := NewAttribute(kw.String())
+				var attr Attribute
+				copy(attr[:], kw.String())
 				startParts = append(startParts, attr[:])
 				endParts = append(endParts, attr[:])
 
@@ -353,7 +356,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 				if a != nil {
 					if kw, ok := a.(datalog.Keyword); ok {
-						attr := NewAttribute(kw.String())
+						var attr Attribute
+						copy(attr[:], kw.String())
 						startParts = append(startParts, attr[:])
 						endParts = append(endParts, attr[:])
 					}
@@ -693,7 +697,7 @@ func (it *hashJoinIterator) Next() bool {
 		it.datomsScanned++
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx > it.matcher.txID {
+		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
 			continue
 		}
 
@@ -778,7 +782,7 @@ func (it *mergeJoinIterator) Next() bool {
 		}
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx > it.matcher.txID {
+		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
 			continue
 		}
 

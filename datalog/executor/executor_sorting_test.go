@@ -27,25 +27,25 @@ func TestQueryWithOrderBy(t *testing.T) {
 	date4 := time.Date(2023, 9, 5, 0, 0, 0, 0, time.UTC)
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
-		{E: alice, A: scoreAttr, V: 85.5, Tx: 1},
-		{E: alice, A: joinedAttr, V: date2, Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: scoreAttr, V: 85.5, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: joinedAttr, V: date2, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: bob, A: ageAttr, V: int64(25), Tx: 1},
-		{E: bob, A: scoreAttr, V: 92.0, Tx: 1},
-		{E: bob, A: joinedAttr, V: date1, Tx: 1},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: scoreAttr, V: 92.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: joinedAttr, V: date1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: charlie, A: ageAttr, V: int64(35), Tx: 1},
-		{E: charlie, A: scoreAttr, V: 78.5, Tx: 1},
-		{E: charlie, A: joinedAttr, V: date3, Tx: 1},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: ageAttr, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: scoreAttr, V: 78.5, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: joinedAttr, V: date3, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: dave, A: nameAttr, V: "Dave", Tx: 1},
-		{E: dave, A: ageAttr, V: int64(28), Tx: 1},
-		{E: dave, A: scoreAttr, V: 88.0, Tx: 1},
-		{E: dave, A: joinedAttr, V: date4, Tx: 1},
+		{E: dave, A: nameAttr, V: "Dave", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: dave, A: ageAttr, V: int64(28), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: dave, A: scoreAttr, V: 88.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: dave, A: joinedAttr, V: date4, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -152,8 +152,8 @@ func TestSortingEdgeCases(t *testing.T) {
 			                [(> ?age 100)]
 			         :order-by [[?name :asc]]]`,
 			datoms: []datalog.Datom{
-				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/name"), V: "Alice", Tx: 1},
-				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/age"), V: int64(30), Tx: 1},
+				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/age"), V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 		},
 		{
@@ -162,7 +162,7 @@ func TestSortingEdgeCases(t *testing.T) {
 			         :where [?e :user/name ?name]
 			         :order-by [[?age :asc]]]`, // ?age not in find
 			datoms: []datalog.Datom{
-				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/name"), V: "Alice", Tx: 1},
+				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 		},
 		{
@@ -172,8 +172,8 @@ func TestSortingEdgeCases(t *testing.T) {
 			                [?e :user/age ?age]
 			         :order-by [[?name :asc]]]`,
 			datoms: []datalog.Datom{
-				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/name"), V: "Alice", Tx: 1},
-				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/age"), V: int64(30), Tx: 1},
+				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/age"), V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 		},
 	}
@@ -214,14 +214,14 @@ func TestSortingWithNulls(t *testing.T) {
 	ageAttr := datalog.NewKeyword(":user/age")
 
 	datoms := []datalog.Datom{
-		{E: user1, A: nameAttr, V: "Alice", Tx: 1},
-		{E: user1, A: ageAttr, V: int64(30), Tx: 1},
+		{E: user1, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: user1, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: user2, A: nameAttr, V: "Bob", Tx: 1},
+		{E: user2, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Bob has no age
 
-		{E: user3, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: user3, A: ageAttr, V: int64(25), Tx: 1},
+		{E: user3, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: user3, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)

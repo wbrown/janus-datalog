@@ -17,21 +17,21 @@ func TestRelationInputIteration(t *testing.T) {
 
 	datoms := []datalog.Datom{
 		// Ages in different years
-		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: 1},
+		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a2"), A: nameAttr, V: "Alice", Tx: 2},
-		{E: datalog.NewIdentity("a2"), A: yearAttr, V: int64(2021), Tx: 2},
-		{E: datalog.NewIdentity("a2"), A: ageAttr, V: int64(26), Tx: 2},
+		{E: datalog.NewIdentity("a2"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a2"), A: yearAttr, V: int64(2021), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a2"), A: ageAttr, V: int64(26), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a3"), A: nameAttr, V: "Bob", Tx: 3},
-		{E: datalog.NewIdentity("a3"), A: yearAttr, V: int64(2020), Tx: 3},
-		{E: datalog.NewIdentity("a3"), A: ageAttr, V: int64(30), Tx: 3},
+		{E: datalog.NewIdentity("a3"), A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a3"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a3"), A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a4"), A: nameAttr, V: "Bob", Tx: 4},
-		{E: datalog.NewIdentity("a4"), A: yearAttr, V: int64(2021), Tx: 4},
-		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: 4},
+		{E: datalog.NewIdentity("a4"), A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a4"), A: yearAttr, V: int64(2021), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -140,21 +140,21 @@ func TestRelationInputIterationParallel(t *testing.T) {
 
 	datoms := []datalog.Datom{
 		// Ages in different years
-		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: 1},
+		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a2"), A: nameAttr, V: "Alice", Tx: 2},
-		{E: datalog.NewIdentity("a2"), A: yearAttr, V: int64(2021), Tx: 2},
-		{E: datalog.NewIdentity("a2"), A: ageAttr, V: int64(26), Tx: 2},
+		{E: datalog.NewIdentity("a2"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a2"), A: yearAttr, V: int64(2021), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a2"), A: ageAttr, V: int64(26), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a3"), A: nameAttr, V: "Bob", Tx: 3},
-		{E: datalog.NewIdentity("a3"), A: yearAttr, V: int64(2020), Tx: 3},
-		{E: datalog.NewIdentity("a3"), A: ageAttr, V: int64(30), Tx: 3},
+		{E: datalog.NewIdentity("a3"), A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a3"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a3"), A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a4"), A: nameAttr, V: "Bob", Tx: 4},
-		{E: datalog.NewIdentity("a4"), A: yearAttr, V: int64(2021), Tx: 4},
-		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: 4},
+		{E: datalog.NewIdentity("a4"), A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a4"), A: yearAttr, V: int64(2021), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -328,9 +328,9 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	yearAttr := datalog.NewKeyword(":year")
 
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: 1},
+		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -516,10 +516,10 @@ func TestRelationInputParallelStress(t *testing.T) {
 			for month := 1; month <= 6; month++ {
 				id := fmt.Sprintf("p%d", idCounter)
 				datoms = append(datoms,
-					datalog.Datom{E: datalog.NewIdentity(id), A: nameAttr, V: name, Tx: uint64(idCounter*4 + 1)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: yearAttr, V: int64(year), Tx: uint64(idCounter*4 + 2)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: monthAttr, V: int64(month), Tx: uint64(idCounter*4 + 3)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: ageAttr, V: int64(25 + idCounter%15), Tx: uint64(idCounter*4 + 4)},
+					datalog.Datom{E: datalog.NewIdentity(id), A: nameAttr, V: name, Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 1)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: yearAttr, V: int64(year), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 2)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: monthAttr, V: int64(month), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 3)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: ageAttr, V: int64(25 + idCounter%15), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 4)}},
 				)
 				idCounter++
 			}

@@ -141,8 +141,8 @@ func TestMultiMatchOptimization(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		e := datalog.NewIdentity(fmt.Sprintf("entity:%d", i))
 		datoms = append(datoms,
-			datalog.Datom{E: e, A: nameAttr, V: fmt.Sprintf("Entity%d", i), Tx: 1},
-			datalog.Datom{E: e, A: valueAttr, V: int64(i * 10), Tx: 1},
+			datalog.Datom{E: e, A: nameAttr, V: fmt.Sprintf("Entity%d", i), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: e, A: valueAttr, V: int64(i * 10), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		)
 	}
 

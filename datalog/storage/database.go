@@ -48,17 +48,7 @@ type Database struct {
 
 // NewDatabase creates a new database with BadgerDB storage
 func NewDatabase(path string) (*Database, error) {
-	// Use Binary encoding explicitly (matches BadgerStore default)
-	store, err := NewBadgerStore(path, NewKeyEncoder(BinaryStrategy))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create store: %w", err)
-	}
-
-	return &Database{
-		store:     store,
-		activeTx:  make(map[*Transaction]bool),
-		planCache: planner.NewPlanCache(1000, 0), // 1000 plans, default TTL
-	}, nil
+	return NewDatabaseWithOptions(DatabaseOptions{Path: path})
 }
 
 // NewDatabaseWithTimeTx creates a database that uses time-based transaction IDs
@@ -146,13 +136,16 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	// Create Lamport clock for CRDT ordering
 	clock := NewLamportClock(replicaID)
 
-	// TODO(Phase 2): Restore clock from max ElementID in TAEV index
-	// This requires the new index encoding with ElementID as Tx.
-	// For now, clock starts at 0. After Phase 2, add:
-	//   maxElementID, err := store.MaxElementID()
-	//   if err == nil && !maxElementID.IsZero() {
-	//       clock.Restore(maxElementID)
-	//   }
+	// Restore clock from max ElementID in TAEV index
+	// This ensures new writes have higher Lamport values than existing data
+	maxElementID, err := store.MaxElementID()
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to get max ElementID: %w", err)
+	}
+	if !maxElementID.IsZero() {
+		clock.Restore(maxElementID)
+	}
 
 	return &Database{
 		store:             store,
@@ -1246,7 +1239,7 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		E:  e,
 		A:  a,
 		V:  v,
-		Tx: 0, // Will be set on commit
+		Tx: datalog.ElementID{}, // Will be set on commit
 	})
 
 	return nil
@@ -1270,7 +1263,7 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 		E:  e,
 		A:  a,
 		V:  v,
-		Tx: 0, // Will be set on commit
+		Tx: datalog.ElementID{}, // Will be set on commit
 	})
 
 	return nil
@@ -1342,31 +1335,23 @@ func (t *Transaction) Commit() (uint64, error) {
 		return 0, err
 	}
 
-	// Get transaction ID (time-based or sequential)
-	var txID uint64
-	var txTime time.Time
+	// Get transaction ID from Lamport clock
+	elemID := t.db.clock.Next()
 
-	// Use custom time if provided, otherwise use current time
+	// Record transaction time for metadata
+	var txTime time.Time
 	if t.txTime != nil {
 		txTime = *t.txTime
 	} else {
 		txTime = time.Now()
 	}
 
-	if t.db.useTimeTx {
-		// Use nanosecond timestamp as transaction ID
-		txID = uint64(txTime.UnixNano())
-	} else {
-		// Use sequential counter
-		txID = t.db.txCounter.Add(1)
-	}
-
 	// Set transaction ID on all datoms
 	for i := range t.datoms {
-		t.datoms[i].Tx = txID
+		t.datoms[i].Tx = elemID
 	}
 	for i := range t.retracts {
-		t.retracts[i].Tx = txID
+		t.retracts[i].Tx = elemID
 	}
 
 	// Apply retractions first
@@ -1384,13 +1369,13 @@ func (t *Transaction) Commit() (uint64, error) {
 	}
 
 	// Add transaction metadata
-	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", txID))
+	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", elemID.Lamport))
 	txMetadata := []datalog.Datom{
 		{
 			E:  txEntity,
 			A:  datalog.NewKeyword(":db/txInstant"),
 			V:  txTime,
-			Tx: txID,
+			Tx: elemID,
 		},
 	}
 	if err := t.db.store.Assert(txMetadata); err != nil {
@@ -1404,7 +1389,7 @@ func (t *Transaction) Commit() (uint64, error) {
 	delete(t.db.activeTx, t)
 	t.db.mu.Unlock()
 
-	return txID, nil
+	return elemID.Lamport, nil
 }
 
 // validateUniqueness checks uniqueness constraints for all datoms in the transaction

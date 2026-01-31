@@ -12,7 +12,8 @@ type KeyEncoder interface {
 	// DecodeKey extracts components from an index key (for current-state indices)
 	// Returns fixed-size arrays for e, a, tx to avoid heap allocations from slice escape.
 	// Only v (value) is variable-length.
-	DecodeKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [20]byte, err error)
+	// tx is 16 bytes: Lamport (8) + ReplicaID (8) = ElementID
+	DecodeKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [16]byte, err error)
 
 	// EncodePrefix creates a prefix key for range scans
 	EncodePrefix(index IndexType, parts ...[]byte) []byte
@@ -20,12 +21,18 @@ type KeyEncoder interface {
 	// EncodePrefixRange creates start and end keys for a prefix scan
 	EncodePrefixRange(index IndexType, parts ...[]byte) (start, end []byte)
 
+	// EncodeTxForPrefix encodes a Tx with bitwise NOT for use in prefix keys.
+	// Use this when constructing scan ranges involving Tx (e.g., TAEV time-range queries).
+	// Note: With bitwise NOT, higher Tx values encode to lower byte values.
+	EncodeTxForPrefix(tx Tx) []byte
+
 	// EncodeHistoryKey creates an index key with Op for history indices
 	EncodeHistoryKey(index IndexType, d *datalog.Datom, op Op) []byte
 
 	// DecodeHistoryKey extracts components including Op from a history index key
 	// Returns fixed-size arrays for e, a, tx to avoid heap allocations from slice escape.
-	DecodeHistoryKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [20]byte, op Op, err error)
+	// tx is 16 bytes: Lamport (8) + ReplicaID (8) = ElementID
+	DecodeHistoryKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [16]byte, op Op, err error)
 }
 
 // KeyEncodingStrategy represents different encoding strategies

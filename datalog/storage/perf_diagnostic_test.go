@@ -42,7 +42,7 @@ func BenchmarkDatomDecoding(b *testing.B) {
 		E:  entity,
 		A:  attr,
 		V:  val,
-		Tx: 12345,
+		Tx: datalog.ElementID{Lamport: 12345, ReplicaID: 1},
 	}
 	key := encoder.EncodeKey(AVET, datom)
 

@@ -88,7 +88,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			Data: map[string]interface{}{
 				"pattern":       pattern.String(),
 				"strategy_type": strategy.Type.String(),
-				"index":         indexName(IndexType(strategy.Index)),
+				"index":         indexName(strategy.Index),
 				"position":      strategy.Position,
 			},
 		})
@@ -109,7 +109,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 					"pattern":       pattern.String(),
 					"join_strategy": joinStrategy.String(),
 					"position":      strategy.Position,
-					"index":         indexName(IndexType(strategy.Index)),
+					"index":         indexName(strategy.Index),
 				},
 			})
 		}
@@ -117,11 +117,11 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		switch joinStrategy {
 		case HashJoinScan:
 			// Use hash join for medium selectivity (1-50%)
-			return m.matchWithHashJoin(pattern, bindingRel, columns, strategy.Position, IndexType(strategy.Index), constraints)
+			return m.matchWithHashJoin(pattern, bindingRel, columns, strategy.Position, strategy.Index, constraints)
 
 		case MergeJoin:
 			// Use merge join for high selectivity (>50%) with large binding sets
-			return m.matchWithMergeJoin(pattern, bindingRel, columns, strategy.Position, IndexType(strategy.Index), constraints)
+			return m.matchWithMergeJoin(pattern, bindingRel, columns, strategy.Position, strategy.Index, constraints)
 
 		case IndexNestedLoop:
 			// Use iterator reuse for small sets or high selectivity
@@ -314,7 +314,7 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 		bindingRel:       bindingRel,
 		tuples:           sortedTuples,
 		position:         strategy.Position,
-		index:            IndexType(strategy.Index),
+		index:            strategy.Index,
 		columns:          columns,
 		constraints:      constraints,
 		currentIdx:       -1,
@@ -373,7 +373,7 @@ func (m *BadgerMatcher) matchWithBatchScanning(
 		pattern,
 		bindingRel,
 		strategy.Position,
-		IndexType(strategy.Index),
+		strategy.Index,
 		columns,
 		constraints,
 	)

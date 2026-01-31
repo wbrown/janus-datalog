@@ -2,11 +2,13 @@ package storage
 
 import (
 	"bytes"
+	"fmt"
 	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 func TestElementIDOrdering(t *testing.T) {
@@ -128,7 +130,7 @@ func TestElementIDSortOrderPreservation(t *testing.T) {
 		{Lamport: 50, ReplicaID: 1},  // Should be second
 		{Lamport: 50, ReplicaID: 0},  // Should be third (same Lamport, lower ReplicaID)
 		{Lamport: 1, ReplicaID: 100}, // Should be fourth
-		HEAD, // Should be last (lowest)
+		HEAD,                         // Should be last (lowest)
 	}
 
 	// Encode all
@@ -159,7 +161,7 @@ func TestElementIDSortOrderPreservation(t *testing.T) {
 		{Lamport: 50, ReplicaID: 1},  // same Lamport group, higher ReplicaID → smaller encoded → first
 		{Lamport: 50, ReplicaID: 0},  // same Lamport group, lower ReplicaID → larger encoded → second
 		{Lamport: 1, ReplicaID: 100}, // lower Lamport
-		HEAD, // zero = lowest, encodes to all 0xFF → largest → last
+		HEAD,                         // zero = lowest, encodes to all 0xFF → largest → last
 	}
 
 	for i, enc := range encoded {
@@ -278,4 +280,203 @@ func TestElementIDEncodeSizeConsistency(t *testing.T) {
 		encoded := EncodeElementIDForKey(id)
 		assert.Len(t, encoded, ElementIDSize, "ElementID %v should encode to %d bytes", id, ElementIDSize)
 	}
+}
+
+func TestElementIDOrderingTransitivity(t *testing.T) {
+	// Total order requires transitivity: if a < b and b < c, then a < c
+	// Test with various combinations
+
+	testCases := []struct {
+		a, b, c ElementID
+	}{
+		// Strictly increasing Lamport
+		{
+			ElementID{Lamport: 1, ReplicaID: 0},
+			ElementID{Lamport: 2, ReplicaID: 0},
+			ElementID{Lamport: 3, ReplicaID: 0},
+		},
+		// Same Lamport, increasing ReplicaID
+		{
+			ElementID{Lamport: 100, ReplicaID: 1},
+			ElementID{Lamport: 100, ReplicaID: 2},
+			ElementID{Lamport: 100, ReplicaID: 3},
+		},
+		// Mixed: Lamport takes precedence
+		{
+			ElementID{Lamport: 1, ReplicaID: 100},
+			ElementID{Lamport: 2, ReplicaID: 1},
+			ElementID{Lamport: 3, ReplicaID: 50},
+		},
+		// Including HEAD (zero)
+		{
+			HEAD,
+			ElementID{Lamport: 1, ReplicaID: 0},
+			ElementID{Lamport: 1, ReplicaID: 1},
+		},
+		// Near max values
+		{
+			ElementID{Lamport: ^uint64(0) - 2, ReplicaID: 0},
+			ElementID{Lamport: ^uint64(0) - 1, ReplicaID: 0},
+			ElementID{Lamport: ^uint64(0), ReplicaID: 0},
+		},
+	}
+
+	for i, tc := range testCases {
+		// Verify a < b
+		assert.True(t, tc.a.Less(tc.b), "case %d: a should be less than b", i)
+		// Verify b < c
+		assert.True(t, tc.b.Less(tc.c), "case %d: b should be less than c", i)
+		// Transitivity: a < c
+		assert.True(t, tc.a.Less(tc.c), "case %d: transitivity violated - a should be less than c", i)
+
+		// Also verify via Compare
+		assert.Equal(t, -1, tc.a.Compare(tc.b), "case %d: Compare(a,b) should be -1", i)
+		assert.Equal(t, -1, tc.b.Compare(tc.c), "case %d: Compare(b,c) should be -1", i)
+		assert.Equal(t, -1, tc.a.Compare(tc.c), "case %d: Compare(a,c) should be -1", i)
+	}
+}
+
+func TestMaxElementID(t *testing.T) {
+	// Test that MaxElementID returns the highest ElementID from the database
+	tempDir := t.TempDir()
+	db, err := NewDatabase(tempDir)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Initially should be zero (empty database)
+	maxID, err := db.store.MaxElementID()
+	require.NoError(t, err)
+	t.Logf("Initial MaxElementID: %v", maxID)
+	assert.True(t, maxID.IsZero(), "Empty database should have zero MaxElementID")
+
+	// Add some datoms
+	tx := db.NewTransaction()
+	entity1 := datalog.NewIdentity("test:entity1")
+	attr := datalog.NewKeyword(":test/name")
+	tx.Add(entity1, attr, "value1")
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// MaxElementID should now be greater
+	maxID1, err := db.store.MaxElementID()
+	require.NoError(t, err)
+	t.Logf("After first tx MaxElementID: %v", maxID1)
+	assert.Greater(t, maxID1.Lamport, uint64(0), "MaxElementID should be non-zero after write")
+
+	// Add more datoms
+	tx2 := db.NewTransaction()
+	entity2 := datalog.NewIdentity("test:entity2")
+	tx2.Add(entity2, attr, "value2")
+	tx2.Add(entity2, attr, "value3")
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// MaxElementID should be higher
+	maxID2, err := db.store.MaxElementID()
+	require.NoError(t, err)
+	t.Logf("After second tx MaxElementID: %v", maxID2)
+	assert.True(t, maxID1.Less(maxID2), "MaxElementID should increase after more writes")
+}
+
+func TestDatabaseClockRestoration(t *testing.T) {
+	// Test that clock is correctly restored when reopening database
+	tempDir := t.TempDir()
+
+	var maxAfterFirstClose ElementID
+
+	// Phase 1: Create database and write some data
+	{
+		db, err := NewDatabase(tempDir)
+		require.NoError(t, err)
+
+		// Write multiple transactions to advance the clock
+		for i := 0; i < 10; i++ {
+			tx := db.NewTransaction()
+			entity := datalog.NewIdentity(fmt.Sprintf("test:entity%d", i))
+			attr := datalog.NewKeyword(":test/value")
+			tx.Add(entity, attr, fmt.Sprintf("value%d", i))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+		}
+
+		// Record max ElementID
+		maxAfterFirstClose, err = db.store.MaxElementID()
+		require.NoError(t, err)
+		t.Logf("Max ElementID after first session: %v", maxAfterFirstClose)
+
+		db.Close()
+	}
+
+	// Phase 2: Reopen database and verify clock restoration
+	{
+		db, err := NewDatabase(tempDir)
+		require.NoError(t, err)
+		defer db.Close()
+
+		// The clock should be restored to at least maxAfterFirstClose
+		currentClock := db.clock.Current()
+		t.Logf("Clock after reopen: %d", currentClock)
+		assert.GreaterOrEqual(t, currentClock, maxAfterFirstClose.Lamport,
+			"Clock should be restored to at least the max from previous session")
+
+		// New writes should have higher ElementIDs
+		tx := db.NewTransaction()
+		entity := datalog.NewIdentity("test:new-entity")
+		attr := datalog.NewKeyword(":test/value")
+		tx.Add(entity, attr, "new-value")
+		_, err = tx.Commit()
+		require.NoError(t, err)
+
+		newMax, err := db.store.MaxElementID()
+		require.NoError(t, err)
+		t.Logf("Max ElementID after new write: %v", newMax)
+
+		assert.True(t, maxAfterFirstClose.Less(newMax),
+			"New writes after reopen should have higher ElementIDs than previous session")
+	}
+}
+
+func TestElementIDKeyEncodingWithBadgerDB(t *testing.T) {
+	// Integration test: verify that encoded keys sort correctly in actual BadgerDB
+	tempDir := t.TempDir()
+	db, err := NewDatabase(tempDir)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Write datoms with specific known Lamport values
+	// We'll use different transactions to get different ElementIDs
+	attr := datalog.NewKeyword(":test/attr")
+	var entities []datalog.Identity
+
+	for i := 0; i < 5; i++ {
+		tx := db.NewTransaction()
+		entity := datalog.NewIdentity(fmt.Sprintf("test:e%d", i))
+		entities = append(entities, entity)
+		tx.Add(entity, attr, fmt.Sprintf("value%d", i))
+		_, err = tx.Commit()
+		require.NoError(t, err)
+	}
+
+	// Scan TAEV index (Tx first) - should return entries in descending Tx order
+	// because of bitwise NOT encoding
+	start := []byte{byte(TAEV)}
+	end := []byte{byte(TAEV) + 1}
+	iter, err := db.store.Scan(TAEV, start, end)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	var foundTx []datalog.ElementID
+	for iter.Next() {
+		datom, err := iter.Datom()
+		require.NoError(t, err)
+		foundTx = append(foundTx, datom.Tx)
+	}
+
+	// Verify descending order (highest Tx first)
+	for i := 0; i < len(foundTx)-1; i++ {
+		assert.GreaterOrEqual(t, foundTx[i].Lamport, foundTx[i+1].Lamport,
+			"TAEV scan should return entries in descending Tx order (highest first)")
+	}
+
+	t.Logf("Found Tx values in scan order: %v", foundTx)
 }
