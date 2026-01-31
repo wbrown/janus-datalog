@@ -714,9 +714,161 @@ func (m *BadgerMatcher) matchCardinalityManyScanAllEntities(
 	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
 }
 
+// cardinalityManyAVETValueIterator streams results for [?e :attr "value"] patterns
+// using the AVET index for O(k) lookup. It scans entries with [A][V] prefix and applies
+// add-wins resolution per entity to determine if the value is currently in each entity's set.
+//
+// AVET key order: [A][V][E][Op][Tx↓]
+// - Same A and V (from prefix)
+// - Entities grouped together
+// - Within entity: Op=0 (Add) before Op=1 (Remove), then by Tx descending
+type cardinalityManyAVETValueIterator struct {
+	matcher     *BadgerMatcher
+	pattern     *query.DataPattern
+	columns     []query.Symbol
+	a, v        interface{}
+	aBytes      [32]byte
+	storageIter Iterator
+
+	// Current entity being processed
+	currentEntity     datalog.Identity
+	currentEntityHash [20]byte
+	hasCurrentEntity  bool
+
+	// Add-wins state for current entity
+	highestAddLamport    uint64
+	highestRemoveLamport uint64
+	hasAdd               bool
+	hasRemove            bool
+
+	// Result
+	currentTuple executor.Tuple
+	done         bool
+}
+
+func (it *cardinalityManyAVETValueIterator) Next() bool {
+	if it.done {
+		return false
+	}
+
+	for {
+		if !it.storageIter.Next() {
+			// End of scan - emit final entity if it's a member
+			if it.hasCurrentEntity && it.isCurrentEntityMember() {
+				it.buildTuple()
+				it.done = true
+				return true
+			}
+			return false
+		}
+
+		datom, err := it.storageIter.Datom()
+		if err != nil {
+			continue
+		}
+
+		eBytes := datom.E.Hash()
+
+		// Check if this is a new entity
+		if !it.hasCurrentEntity {
+			// First entity
+			it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+			continue
+		}
+
+		if eBytes != it.currentEntityHash {
+			// Moving to new entity - check if previous entity is a member
+			if it.isCurrentEntityMember() {
+				it.buildTuple()
+				// Start tracking new entity for next iteration
+				it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+				return true
+			}
+			// Previous entity not a member, start tracking new entity
+			it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+			continue
+		}
+
+		// Same entity - update add-wins state
+		it.updateAddWinsState(datom.Op, datom.Tx.Lamport)
+	}
+}
+
+func (it *cardinalityManyAVETValueIterator) startNewEntity(e datalog.Identity, eHash [20]byte, op datalog.CRDTOp, lamport uint64) {
+	it.currentEntity = e
+	it.currentEntityHash = eHash
+	it.hasCurrentEntity = true
+	it.highestAddLamport = 0
+	it.highestRemoveLamport = 0
+	it.hasAdd = false
+	it.hasRemove = false
+	it.updateAddWinsState(op, lamport)
+}
+
+func (it *cardinalityManyAVETValueIterator) updateAddWinsState(op datalog.CRDTOp, lamport uint64) {
+	if op == datalog.OpCRDTAdd {
+		if !it.hasAdd || lamport > it.highestAddLamport {
+			it.highestAddLamport = lamport
+			it.hasAdd = true
+		}
+	} else if op == datalog.OpCRDTRemove {
+		if !it.hasRemove || lamport > it.highestRemoveLamport {
+			it.highestRemoveLamport = lamport
+			it.hasRemove = true
+		}
+	}
+}
+
+func (it *cardinalityManyAVETValueIterator) isCurrentEntityMember() bool {
+	if !it.hasAdd {
+		return false // No adds means not in set
+	}
+	if !it.hasRemove {
+		return true // Only adds, no removes
+	}
+	// Both add and remove exist - compare Lamport timestamps
+	// Add wins at same Lamport (add-wins semantics)
+	return it.highestAddLamport >= it.highestRemoveLamport
+}
+
+func (it *cardinalityManyAVETValueIterator) buildTuple() {
+	tuple := make(executor.Tuple, len(it.columns))
+	for i, col := range it.columns {
+		switch {
+		case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
+			it.pattern.GetE().(query.Variable).Name == col:
+			tuple[i] = it.currentEntity
+		case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
+			it.pattern.GetA().(query.Variable).Name == col:
+			tuple[i] = it.a
+		case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
+			it.pattern.GetV().(query.Variable).Name == col:
+			tuple[i] = it.v
+		case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+			it.pattern.GetT().(query.Variable).Name == col:
+			tuple[i] = datalog.ElementID{}
+		}
+	}
+	it.currentTuple = tuple
+}
+
+func (it *cardinalityManyAVETValueIterator) Tuple() executor.Tuple {
+	return it.currentTuple
+}
+
+func (it *cardinalityManyAVETValueIterator) Close() error {
+	if it.storageIter != nil {
+		return it.storageIter.Close()
+	}
+	return nil
+}
+
 // cardinalityManyFindEntitiesWithValueIterator streams results for [?e :attr "value"] patterns
 // where E is unbound and cardinality is many. It iterates through entities and checks
 // membership for each, yielding one tuple per entity where the value is in the set.
+//
+// DEPRECATED: Use cardinalityManyAVETValueIterator instead for O(k) performance.
+// This iterator uses AEVT which is O(n) where n = all entities with attribute.
 type cardinalityManyFindEntitiesWithValueIterator struct {
 	matcher      *BadgerMatcher
 	pattern      *query.DataPattern
@@ -790,7 +942,10 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Close() error {
 }
 
 // matchCardinalityManyFindEntitiesWithValue handles [?e :attr "value"] where E is unbound
-// Finds all entities where the specific value is in the set
+// Finds all entities where the specific value is in the set.
+//
+// Uses AVET index with [A][V] prefix for O(k) lookup where k = datoms with this value,
+// instead of O(n) where n = all entities with the attribute.
 func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
 	pattern *query.DataPattern,
 	columns []query.Symbol,
@@ -802,26 +957,32 @@ func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
 		copy(aBytes[:], kw.String())
 	}
 
-	// Scan AEVT to find all entities with this attribute
-	prefix := make([]byte, 1+32)
-	prefix[0] = byte(AEVT)
-	copy(prefix[1:33], aBytes[:])
+	// Encode value with type prefix (same as key encoding)
+	vType := byte(datalog.Type(v))
+	vData := datalog.ValueBytes(v)
+	vBytes := append([]byte{vType}, vData...)
 
-	storageIter, err := m.store.Scan(AEVT, prefix, prefixEnd(prefix))
+	// Build AVET prefix: [index][A][type+value]
+	// This directly seeks to entries with this specific value - O(k) not O(n)
+	prefix := make([]byte, 1+32+len(vBytes))
+	prefix[0] = byte(AVET)
+	copy(prefix[1:33], aBytes[:])
+	copy(prefix[33:], vBytes)
+
+	storageIter, err := m.store.Scan(AVET, prefix, prefixEnd(prefix))
 	if err != nil {
-		return nil, fmt.Errorf("AEVT scan failed: %w", err)
+		return nil, fmt.Errorf("AVET scan failed: %w", err)
 	}
 
-	// Create streaming iterator
-	iter := &cardinalityManyFindEntitiesWithValueIterator{
-		matcher:      m,
-		pattern:      pattern,
-		columns:      columns,
-		a:            a,
-		v:            v,
-		aBytes:       aBytes,
-		storageIter:  storageIter,
-		seenEntities: make(map[[20]byte]bool),
+	// Create streaming iterator that applies add-wins resolution per entity
+	iter := &cardinalityManyAVETValueIterator{
+		matcher:     m,
+		pattern:     pattern,
+		columns:     columns,
+		a:           a,
+		v:           v,
+		aBytes:      aBytes,
+		storageIter: storageIter,
 	}
 
 	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil

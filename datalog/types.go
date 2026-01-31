@@ -5,6 +5,19 @@ import (
 	"strings"
 )
 
+// CRDTOp represents the operation type for CRDT semantics.
+// Used for cardinality-many (add-wins sets) and cardinality-vector (RGA).
+type CRDTOp uint8
+
+const (
+	// OpNone indicates no CRDT operation (used for cardinality-one)
+	OpNone CRDTOp = 0
+	// OpAdd indicates a set/vector add operation
+	OpCRDTAdd CRDTOp = 1
+	// OpRemove indicates a set remove operation (tombstone)
+	OpCRDTRemove CRDTOp = 2
+)
+
 // Datom is the fundamental unit of data in a Datalog system
 // It represents a single fact: Entity-Attribute-Value-Transaction
 type Datom struct {
@@ -12,6 +25,7 @@ type Datom struct {
 	A  Keyword   // Attribute keyword (interned pointer)
 	V  Value     // Any value (see value.go for valid types)
 	Tx ElementID // Transaction/CRDT version (Lamport + ReplicaID)
+	Op CRDTOp    // CRDT operation type (0 = none, 1 = add, 2 = remove)
 }
 
 // keyword is the unexported base type for attribute keywords.

@@ -749,7 +749,8 @@ func indexName(idx IndexType) string {
 // like get-else, missing?, and get-some.
 //
 // Returns (value, true) if the attribute exists, (nil, false) otherwise.
-// For multi-valued attributes, returns the first value found.
+// For cardinality-one, returns the current value (highest Tx via LWW).
+// For cardinality-many, returns one of the current set members.
 func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
 	// Convert to storage format
 	eBytes := entity.Bytes()
@@ -757,8 +758,44 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 
 	encoder := m.store.encoder
 
-	// Use AEVT index which orders by A, then E
-	// This gives us efficient lookup for (A, E) pairs
+	// Determine cardinality for correct resolution
+	card := schema.CardinalityOne // default
+	if m.schema != nil {
+		if def := m.schema.GetAttribute(attr); def != nil {
+			card = def.Cardinality
+		}
+	}
+
+	if card == schema.CardinalityOne {
+		// For cardinality-one, use EATV index where Tx comes before V
+		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
+		start, end := encoder.EncodePrefixRange(EATV, eBytes[:], aStorage[:])
+
+		iter, err := m.store.ScanKeysOnly(EATV, start, end)
+		if err != nil {
+			return nil, false
+		}
+		defer iter.Close()
+
+		for iter.Next() {
+			datom, err := iter.Datom()
+			if err != nil {
+				return nil, false
+			}
+
+			// Check transaction filter for as-of queries
+			if m.txID > 0 && datom.Tx.Lamport > m.txID {
+				continue
+			}
+
+			// First entry with valid Tx is the current value (LWW)
+			return datom.V, true
+		}
+		return nil, false
+	}
+
+	// For cardinality-many, use AEVT and apply add-wins resolution
+	// This is a simplified path - for full resolution, use the set resolution code
 	start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
 
 	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
@@ -767,7 +804,12 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	}
 	defer iter.Close()
 
-	// Look for first matching datom
+	// For cardinality-many, we need add-wins resolution
+	// Track the value with highest add that isn't removed
+	var bestValue interface{}
+	var bestAddLamport uint64
+	valueRemoveLamport := make(map[interface{}]uint64)
+
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
@@ -779,11 +821,27 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 			continue
 		}
 
-		// Found a match - return the value
-		return datom.V, true
+		if datom.Op == datalog.OpCRDTRemove {
+			if datom.Tx.Lamport > valueRemoveLamport[datom.V] {
+				valueRemoveLamport[datom.V] = datom.Tx.Lamport
+			}
+		} else {
+			// OpCRDTAdd or no op (legacy)
+			if datom.Tx.Lamport > bestAddLamport {
+				bestAddLamport = datom.Tx.Lamport
+				bestValue = datom.V
+			}
+		}
 	}
 
-	// No datom found
+	// Check if best value is not removed (or add-wins if same lamport)
+	if bestValue != nil {
+		removeLamport := valueRemoveLamport[bestValue]
+		if bestAddLamport >= removeLamport { // add-wins on tie
+			return bestValue, true
+		}
+	}
+
 	return nil, false
 }
 

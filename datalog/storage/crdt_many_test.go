@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -189,14 +190,11 @@ func TestResolveAddWinsSetDirect(t *testing.T) {
 	entityID := datalog.NewIdentity("test-entity")
 	attr := datalog.NewKeyword(":person/tags")
 
-	// Store two SetEntry values: one add, one remove for same value
-	addEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpAdd})
-	removeEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpRemove})
-
+	// Store two datoms with Op field: one add, one remove for same value
 	// Add at Lamport 1000, Remove at Lamport 900 (Add is newer, should be in set)
 	datoms := []datalog.Datom{
-		{E: entityID, A: attr, V: addEntry, Tx: datalog.ElementID{Lamport: 1000, ReplicaID: 100}},
-		{E: entityID, A: attr, V: removeEntry, Tx: datalog.ElementID{Lamport: 900, ReplicaID: 100}},
+		{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: 1000, ReplicaID: 100}, Op: datalog.OpCRDTAdd},
+		{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: 900, ReplicaID: 100}, Op: datalog.OpCRDTRemove},
 	}
 	err = db.Store().Assert(datoms)
 	if err != nil {
@@ -251,14 +249,11 @@ func TestResolveAddWinsSameLamport(t *testing.T) {
 	entityID := datalog.NewIdentity("test-entity")
 	attr := datalog.NewKeyword(":person/tags")
 
-	// Store two SetEntry values: add and remove with SAME Lamport
-	addEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpAdd})
-	removeEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpRemove})
-
+	// Store two datoms with Op field: add and remove with SAME Lamport
 	sameLamport := uint64(1000)
 	datoms := []datalog.Datom{
-		{E: entityID, A: attr, V: addEntry, Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: 100}},
-		{E: entityID, A: attr, V: removeEntry, Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: 200}},
+		{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: 100}, Op: datalog.OpCRDTAdd},
+		{E: entityID, A: attr, V: "warrior", Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: 200}, Op: datalog.OpCRDTRemove},
 	}
 	err = db.Store().Assert(datoms)
 	if err != nil {
@@ -503,22 +498,21 @@ func TestCardinalityManyAddWins(t *testing.T) {
 	replicaA := uint64(100)
 	replicaB := uint64(200)
 
-	// Encode the value as SetEntry
-	addEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpAdd})
-	removeEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpRemove})
-
 	// Create datoms - Add from replica A, Remove from replica B, same Lamport
+	// NEW FORMAT: Op is a field on Datom, V is the raw value
 	datomAdd := datalog.Datom{
 		E:  entityID,
 		A:  attr,
-		V:  addEntry,
+		V:  "warrior",
 		Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaA},
+		Op: datalog.OpCRDTAdd,
 	}
 	datomRemove := datalog.Datom{
 		E:  entityID,
 		A:  attr,
-		V:  removeEntry,
+		V:  "warrior",
 		Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaB},
+		Op: datalog.OpCRDTRemove,
 	}
 
 	// Assert both directly
@@ -597,20 +591,20 @@ func TestCardinalityManyReplicaIDTiebreaker(t *testing.T) {
 	replicaA := uint64(100)
 	replicaB := uint64(200)
 
-	addEntryA := EncodeSetEntry(SetEntry{Value: "tagA", Op: OpAdd})
-	addEntryB := EncodeSetEntry(SetEntry{Value: "tagB", Op: OpAdd})
-
+	// NEW FORMAT: Op is a field on Datom, V is the raw value
 	datomA := datalog.Datom{
 		E:  entityID,
 		A:  attr,
-		V:  addEntryA,
+		V:  "tagA",
 		Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaA},
+		Op: datalog.OpCRDTAdd,
 	}
 	datomB := datalog.Datom{
 		E:  entityID,
 		A:  attr,
-		V:  addEntryB,
+		V:  "tagB",
 		Tx: datalog.ElementID{Lamport: sameLamport, ReplicaID: replicaB},
+		Op: datalog.OpCRDTAdd,
 	}
 
 	err = db.Store().Assert([]datalog.Datom{datomA, datomB})
@@ -752,20 +746,20 @@ func TestCardinalityManyRemoveThenAdd(t *testing.T) {
 	attr := datalog.NewKeyword(":person/tags")
 
 	// Remove first, then add later (re-add)
-	removeEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpRemove})
-	addEntry := EncodeSetEntry(SetEntry{Value: "warrior", Op: OpAdd})
-
+	// NEW FORMAT: Op is a field on Datom, V is the raw value
 	datomRemove := datalog.Datom{
 		E:  entityID,
 		A:  attr,
-		V:  removeEntry,
+		V:  "warrior",
 		Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}, // Earlier
+		Op: datalog.OpCRDTRemove,
 	}
 	datomAdd := datalog.Datom{
 		E:  entityID,
 		A:  attr,
-		V:  addEntry,
+		V:  "warrior",
 		Tx: datalog.ElementID{Lamport: 200, ReplicaID: 1}, // Later
+		Op: datalog.OpCRDTAdd,
 	}
 
 	err = db.Store().Assert([]datalog.Datom{datomRemove, datomAdd})
@@ -1210,9 +1204,10 @@ func TestCardinalityManyReplaceSet(t *testing.T) {
 	}
 }
 
-// TestAddCardinalityValidation verifies Add() rejects cardinality-one attributes
-func TestAddCardinalityValidation(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crdt-add-validation-*")
+// TestAddSchemaAware verifies Add() is schema-aware and works for all cardinalities
+// Add() uses LWW semantics for cardinality-one, add-wins for cardinality-many
+func TestAddSchemaAware(t *testing.T) {
+	dir, err := os.MkdirTemp("", "crdt-add-schema-aware-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1230,16 +1225,57 @@ func TestAddCardinalityValidation(t *testing.T) {
 		ValueType:   schema.TypeString,
 		Cardinality: schema.CardinalityOne,
 	})
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/tags"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityMany,
+	})
 	db.SetSchema(s)
 
 	entityID := datalog.NewIdentity("test-entity")
 
+	// Add() should work for cardinality-one (uses LWW internally)
 	tx := db.NewTransaction()
 	err = tx.Add(entityID, datalog.NewKeyword(":person/name"), "Alice")
-	if err == nil {
-		t.Error("Expected Add() to fail for cardinality-one attribute")
-	} else {
-		t.Logf("Add correctly rejected for cardinality-one: %v", err)
+	if err != nil {
+		t.Errorf("Add() should work for cardinality-one: %v", err)
+	}
+	_, err = tx.Commit()
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Add() should work for cardinality-many (uses add-wins internally)
+	tx2 := db.NewTransaction()
+	err = tx2.Add(entityID, datalog.NewKeyword(":person/tags"), "developer")
+	if err != nil {
+		t.Errorf("Add() should work for cardinality-many: %v", err)
+	}
+	_, err = tx2.Commit()
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Verify LWW behavior: second Add() to cardinality-one updates value
+	tx3 := db.NewTransaction()
+	err = tx3.Add(entityID, datalog.NewKeyword(":person/name"), "Bob")
+	if err != nil {
+		t.Errorf("Second Add() should work for cardinality-one: %v", err)
+	}
+	_, err = tx3.Commit()
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Query should return the latest value (LWW)
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(entityID, datalog.NewKeyword(":person/name"))
+	if !found {
+		t.Fatal("LookupAttribute returned not found")
+	}
+	if result != "Bob" {
+		t.Errorf("Expected 'Bob' (LWW), got %v", result)
 	}
 }
 
@@ -1802,5 +1838,195 @@ func TestCardinalityManyUnboundEWithRemovedValue(t *testing.T) {
 	}
 	if entities[entity2.String()] {
 		t.Error("entity2 should NOT have 'warrior' tag (it was removed)")
+	}
+}
+
+// TestAVETOptimizationForCardinalityMany tests that [?e :attr "value"] queries
+// use the AVET index for O(k) performance where k = datoms with value,
+// instead of O(n) where n = all entities with attribute.
+func TestAVETOptimizationForCardinalityMany(t *testing.T) {
+	dir, err := os.MkdirTemp("", "avet-optimization-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/tags"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityMany,
+	})
+	db.SetSchema(s)
+
+	attr := datalog.NewKeyword(":person/tags")
+
+	// Create many entities with various tags
+	// 10 entities with "warrior", 90 entities with other tags
+	for i := 0; i < 100; i++ {
+		entity := datalog.NewIdentity(fmt.Sprintf("person-%d", i))
+		tx := db.NewTransaction()
+		if i < 10 {
+			tx.Add(entity, attr, "warrior")
+		}
+		tx.Add(entity, attr, "citizen")           // All have this
+		tx.Add(entity, attr, fmt.Sprintf("id-%d", i)) // Unique tag
+		_, err = tx.Commit()
+		if err != nil {
+			t.Fatalf("Commit failed: %v", err)
+		}
+	}
+
+	// Query: [?e :person/tags "warrior"] - should find exactly 10 entities
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: attr},
+			query.Constant{Value: "warrior"},
+		},
+	}
+
+	results, err := matcher.Match(pattern, nil)
+	if err != nil {
+		t.Fatalf("Match failed: %v", err)
+	}
+
+	var count int
+	iter := results.Iterator()
+	for iter.Next() {
+		count++
+	}
+	iter.Close()
+
+	if count != 10 {
+		t.Errorf("Expected 10 entities with 'warrior' tag, got %d", count)
+	}
+
+	// Query for "citizen" - should find all 100 entities
+	pattern2 := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: attr},
+			query.Constant{Value: "citizen"},
+		},
+	}
+
+	results2, err := matcher.Match(pattern2, nil)
+	if err != nil {
+		t.Fatalf("Match failed: %v", err)
+	}
+
+	count = 0
+	iter2 := results2.Iterator()
+	for iter2.Next() {
+		count++
+	}
+	iter2.Close()
+
+	if count != 100 {
+		t.Errorf("Expected 100 entities with 'citizen' tag, got %d", count)
+	}
+}
+
+// TestAVETAddWinsResolution tests that the AVET-based iterator correctly
+// applies add-wins resolution per entity.
+func TestAVETAddWinsResolution(t *testing.T) {
+	dir, err := os.MkdirTemp("", "avet-addwins-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/tags"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityMany,
+	})
+	db.SetSchema(s)
+
+	attr := datalog.NewKeyword(":person/tags")
+
+	entity1 := datalog.NewIdentity("person-1")
+	entity2 := datalog.NewIdentity("person-2")
+	entity3 := datalog.NewIdentity("person-3")
+
+	// entity1: Add only
+	tx1 := db.NewTransaction()
+	tx1.Add(entity1, attr, "warrior")
+	_, _ = tx1.Commit()
+
+	// entity2: Add then Remove (should NOT be in set)
+	tx2 := db.NewTransaction()
+	tx2.Add(entity2, attr, "warrior")
+	_, _ = tx2.Commit()
+
+	tx3 := db.NewTransaction()
+	tx3.Remove(entity2, attr, "warrior")
+	_, _ = tx3.Commit()
+
+	// entity3: Remove then Add (should be in set)
+	tx4 := db.NewTransaction()
+	tx4.Remove(entity3, attr, "warrior") // Tombstone before any add - unusual but valid
+	_, _ = tx4.Commit()
+
+	tx5 := db.NewTransaction()
+	tx5.Add(entity3, attr, "warrior")
+	_, _ = tx5.Commit()
+
+	// Query: [?e :person/tags "warrior"]
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: attr},
+			query.Constant{Value: "warrior"},
+		},
+	}
+
+	results, err := matcher.Match(pattern, nil)
+	if err != nil {
+		t.Fatalf("Match failed: %v", err)
+	}
+
+	entities := make(map[string]bool)
+	iter := results.Iterator()
+	for iter.Next() {
+		tuple := iter.Tuple()
+		if len(tuple) > 0 {
+			if ident, ok := tuple[0].(datalog.Identity); ok {
+				entities[ident.String()] = true
+			}
+		}
+	}
+	iter.Close()
+
+	// Should find entity1 and entity3, not entity2
+	if len(entities) != 2 {
+		t.Errorf("Expected 2 entities, got %d: %v", len(entities), entities)
+	}
+	if !entities[entity1.String()] {
+		t.Error("entity1 should have 'warrior' tag (add only)")
+	}
+	if entities[entity2.String()] {
+		t.Error("entity2 should NOT have 'warrior' tag (add then remove)")
+	}
+	if !entities[entity3.String()] {
+		t.Error("entity3 should have 'warrior' tag (remove then add)")
 	}
 }

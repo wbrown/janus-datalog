@@ -207,11 +207,12 @@ func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error)
 	it := txn.NewIterator(opts)
 
 	return &BadgerIterator{
-		txn:   txn,
-		it:    it,
-		start: start,
-		end:   end,
-		index: index,
+		txn:     txn,
+		it:      it,
+		start:   start,
+		end:     end,
+		index:   index,
+		encoder: s.encoder, // For decoding Op from key
 	}, nil
 }
 
@@ -269,9 +270,9 @@ func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
 			key := it.Item().Key()
 			if len(key) > 0 && key[0] == byte(TAEV) {
 				// Found a TAEV key - decode ElementID from Tx position
-				// TAEV layout: [prefix:1][Tx:16][A:32][E:20][V:var]
+				// TAEV layout: [prefix:1][Tx:16][A:32][E:20][V:var][Op:1]
 				// DecodeKey handles the bitwise NOT reversal
-				_, _, _, tx, err := s.encoder.DecodeKey(TAEV, key)
+				_, _, _, tx, _, err := s.encoder.DecodeKey(TAEV, key)
 				if err != nil {
 					return fmt.Errorf("failed to decode TAEV key: %w", err)
 				}
@@ -382,12 +383,13 @@ func (s *BadgerStore) CountKeys(index IndexType, start, end []byte) (int64, erro
 
 // BadgerIterator implements Iterator for BadgerDB
 type BadgerIterator struct {
-	txn   *badger.Txn
-	it    *badger.Iterator
-	start []byte
-	end   []byte
-	index IndexType
-	valid bool
+	txn     *badger.Txn
+	it      *badger.Iterator
+	start   []byte
+	end     []byte
+	index   IndexType
+	valid   bool
+	encoder KeyEncoder // For decoding Op from key
 }
 
 // Next advances the iterator
@@ -420,6 +422,13 @@ func (i *BadgerIterator) Next() bool {
 func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 	item := i.it.Item()
 
+	// Get key to decode Op (Op is stored in the key, not the value)
+	key := item.Key()
+	var op byte
+	if i.encoder != nil {
+		_, _, _, _, op, _ = i.encoder.DecodeKey(i.index, key)
+	}
+
 	var result *datalog.Datom
 	err := item.Value(func(val []byte) error {
 		sd, err := StorageDatomFromBytes(val)
@@ -429,11 +438,13 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 		// Convert to user-facing datom
 		// Note: StorageDatomFromBytes already decodes the value properly,
 		// so sd.V is already the decoded value
+		// Op is decoded from the key, not the value
 		result = &datalog.Datom{
 			E:  datalog.InternIdentityFromHash(sd.E),
 			A:  datalog.InternKeywordFromBytes(sd.A),
 			V:  sd.V,
 			Tx: sd.Tx.ToElementID(),
+			Op: datalog.CRDTOp(op),
 		}
 		return nil
 	})

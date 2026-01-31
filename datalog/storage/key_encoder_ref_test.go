@@ -37,9 +37,10 @@ func TestL85RefValueEncoding(t *testing.T) {
 	// - 1 byte prefix
 	// - 40 chars for attribute (L85 for 32 bytes)
 	// - 26 chars for ref value (1 type byte + 25 L85 chars)
+	// - 1 byte for Op (CRDT operation)
 	// - 25 chars for entity (L85 for 20 bytes)
 	// - 20 chars for tx (L85 for 16 bytes = ElementID)
-	expectedLen := 1 + 40 + 26 + 25 + 20
+	expectedLen := 1 + 40 + 26 + 1 + 25 + 20
 	if len(avetKey) != expectedLen {
 		t.Errorf("AVET key length = %d, want %d", len(avetKey), expectedLen)
 	}
@@ -61,7 +62,7 @@ func TestL85RefValueEncoding(t *testing.T) {
 	}
 
 	// Test decoding
-	_, _, v, _, err := encoder.DecodeKey(AVET, avetKey)
+	_, _, v, _, _, err := encoder.DecodeKey(AVET, avetKey)
 	if err != nil {
 		t.Fatalf("Decode error: %v", err)
 	}

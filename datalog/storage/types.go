@@ -27,7 +27,8 @@ type StorageDatom struct {
 	E  Entity        // Entity identifier (20 bytes)
 	A  Attribute     // Attribute identifier (32 bytes)
 	V  datalog.Value // The actual value (unbounded, stored last)
-	Tx Tx            // Transaction/time identifier (20 bytes)
+	Tx Tx            // Transaction/time identifier (16 bytes = ElementID)
+	Op datalog.CRDTOp // CRDT operation (0=none, 1=add, 2=remove)
 }
 
 // NewEntity creates an entity ID from a string identifier
@@ -150,6 +151,7 @@ func ToStorageDatom(d datalog.Datom) StorageDatom {
 		A:  a,
 		V:  d.V,
 		Tx: NewTxFromElementID(d.Tx),
+		Op: d.Op,
 	}
 }
 
@@ -161,6 +163,7 @@ func (d StorageDatom) ToDatom(resolver Resolver) datalog.Datom {
 		A:  resolver.ResolveAttribute(d.A),
 		V:  d.V, // Values are already user-facing
 		Tx: d.Tx.ToElementID(),
+		Op: d.Op,
 	}
 }
 

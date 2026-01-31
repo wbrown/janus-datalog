@@ -345,7 +345,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 	case VAET: // 3
 		// VAET: Value-Attribute-Entity-Transaction
-		// Values in VAET are also encoded with type prefix
+		// Key format: [index][V][A][E][Op][Tx] (Op before Tx, not between V and A)
+		// Values in VAET are encoded with type prefix
 		if v != nil {
 			// For Identity/Reference values
 			if entity, ok := v.(datalog.Identity); ok && entity != nil {

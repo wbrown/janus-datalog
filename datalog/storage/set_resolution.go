@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"bytes"
-
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
@@ -20,14 +18,14 @@ type SetResolutionResult struct {
 // resolveAddWinsSet scans entries for (E,A) and resolves current set membership
 // using add-wins CRDT semantics.
 //
-// Key order is [E][A][type][encoded_value][Op][Tx↓], so for each value we see:
+// Key order is [E][A][type][value][Op][Tx↓], so for each value we see:
 //  1. All entries for that value, ordered by Op then Tx (descending)
-//  2. Within same value: OpAdd (0) sorts before OpRemove (1)
+//  2. Within same value: OpCRDTAdd (1) sorts before OpCRDTRemove (2)
 //  3. Within same Op: higher Tx sorts first
 //
 // Resolution for each value:
-//   - Find highest Lamport with OpAdd (if any)
-//   - Find highest Lamport with OpRemove (if any)
+//   - Find highest Lamport with OpCRDTAdd (if any)
+//   - Find highest Lamport with OpCRDTRemove (if any)
 //   - Compare LAMPORT VALUES ONLY (not full ElementID):
 //     - Higher Lamport wins
 //     - Same Lamport (concurrent operations): Add wins
@@ -53,34 +51,67 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 		Members: make(map[interface{}]bool),
 	}
 
-	// Track state for current value being processed
-	var currentValueBytes []byte
-	var currentValue interface{}
-	var highestAddTx datalog.ElementID
-	var highestRemoveTx datalog.ElementID
-	var hasAdd, hasRemove bool
+	// Track state per value: map[valueKey] -> {highestAddTx, highestRemoveTx, hasAdd, hasRemove, value}
+	type valueState struct {
+		highestAddTx    datalog.ElementID
+		highestRemoveTx datalog.ElementID
+		hasAdd          bool
+		hasRemove       bool
+		value           interface{}
+	}
+	valueStates := make(map[string]*valueState)
 
-	// Emit the current value if it's in the set
-	emitValue := func() {
-		if currentValue == nil {
-			return
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			continue
 		}
 
-		// Determine if value is in set using add-wins semantics
-		// CRITICAL: Compare only Lamport values for add-wins.
-		// At the same Lamport (concurrent operations), add wins regardless of ReplicaID.
-		// ReplicaID is only used for LWW (last-writer-wins) on cardinality-one,
-		// not for add-wins on cardinality-many.
+		elemID := datom.Tx
+
+		// Track global max ElementID
+		if elemID.Compare(result.MaxElementID) > 0 {
+			result.MaxElementID = elemID
+		}
+
+		// Build a key for this value (type + bytes)
+		vType := byte(datalog.Type(datom.V))
+		vBytes := datalog.ValueBytes(datom.V)
+		valueKey := string(append([]byte{vType}, vBytes...))
+
+		state, exists := valueStates[valueKey]
+		if !exists {
+			state = &valueState{value: datom.V}
+			valueStates[valueKey] = state
+		}
+
+		// Track highest Tx for each operation type
+		// Op is now directly on the datom (not decoded from value)
+		if datom.Op == datalog.OpCRDTAdd {
+			if !state.hasAdd || elemID.Compare(state.highestAddTx) > 0 {
+				state.highestAddTx = elemID
+				state.hasAdd = true
+			}
+		} else if datom.Op == datalog.OpCRDTRemove {
+			if !state.hasRemove || elemID.Compare(state.highestRemoveTx) > 0 {
+				state.highestRemoveTx = elemID
+				state.hasRemove = true
+			}
+		}
+	}
+
+	// Resolve each value's membership using add-wins semantics
+	for _, state := range valueStates {
 		inSet := false
-		if hasAdd && !hasRemove {
+		if state.hasAdd && !state.hasRemove {
 			// Only adds, no removes - definitely in set
 			inSet = true
-		} else if hasAdd && hasRemove {
+		} else if state.hasAdd && state.hasRemove {
 			// Both add and remove exist - compare Lamport timestamps only
-			if highestAddTx.Lamport > highestRemoveTx.Lamport {
+			if state.highestAddTx.Lamport > state.highestRemoveTx.Lamport {
 				// Add is more recent - in set
 				inSet = true
-			} else if highestAddTx.Lamport == highestRemoveTx.Lamport {
+			} else if state.highestAddTx.Lamport == state.highestRemoveTx.Lamport {
 				// Same Lamport (concurrent operations) - add-wins
 				inSet = true
 			}
@@ -89,70 +120,9 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 		// If only removes (no adds), not in set
 
 		if inSet {
-			result.Members[currentValue] = true
+			result.Members[state.value] = true
 		}
 	}
-
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			continue
-		}
-
-		// Get ElementID from datom
-		elemID := datom.Tx
-
-		// Track global max ElementID
-		if elemID.Compare(result.MaxElementID) > 0 {
-			result.MaxElementID = elemID
-		}
-
-		// Decode the set entry from value bytes
-		// Value is stored as []byte containing encoded SetEntry
-		valueBytes, ok := datom.V.([]byte)
-		if !ok {
-			// Not a set entry - skip (shouldn't happen for cardinality-many)
-			continue
-		}
-
-		entry, err := DecodeSetEntry(valueBytes)
-		if err != nil {
-			// Invalid set entry - skip
-			continue
-		}
-
-		// Re-encode just the value part (without Op) for comparison
-		// SetEntry format: [type:1][value:var][op:1]
-		// We want [type:1][value:var] for grouping
-		entryValueBytes := valueBytes[:len(valueBytes)-1]
-
-		// Check if we've moved to a new value
-		if !bytes.Equal(entryValueBytes, currentValueBytes) {
-			// Emit previous value (if any)
-			emitValue()
-
-			// Reset tracking for new value
-			currentValueBytes = entryValueBytes
-			currentValue = entry.Value
-			hasAdd = false
-			hasRemove = false
-			highestAddTx = datalog.ElementID{}
-			highestRemoveTx = datalog.ElementID{}
-		}
-
-		// Track highest Tx for each operation type
-		// Since we scan in descending Tx order, first occurrence is highest
-		if entry.Op == OpAdd && !hasAdd {
-			highestAddTx = elemID
-			hasAdd = true
-		} else if entry.Op == OpRemove && !hasRemove {
-			highestRemoveTx = elemID
-			hasRemove = true
-		}
-	}
-
-	// Emit final value
-	emitValue()
 
 	return result, nil
 }
@@ -178,27 +148,25 @@ func prefixEnd(prefix []byte) []byte {
 
 // checkSetMembership checks if a specific value is currently in the set
 // This is an optimized version that only scans entries for the specific value
+//
+// With Op in the key, the key format is:
+// [prefix:1][E:20][A:32][type:1][value:var][Op:1][Tx:16]
+//
+// To find all entries for a specific value, we build prefix:
+// [EAVT][E][A][type][value]
+// This matches all ops (Add/Remove) for that value.
 func (m *BadgerMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{}) (bool, error) {
-	// The stored value is a SetEntry encoded as []byte: [type:1][value:var][op:1]
-	// The key format in EAVT is: [prefix:1][E:20][A:32][TypeBytes:1][SetEntry:var][Tx:16]
-	//
-	// To find all entries for a specific value (both Add and Remove ops),
-	// we need to scan for prefix [E][A][TypeBytes][type:1][value:var]
-	// This matches entries regardless of Op byte.
-
 	// Encode the user value to get its type and bytes
 	vType := byte(datalog.Type(v))
 	vData := datalog.ValueBytes(v)
 
-	// Build prefix: [EAVT prefix][E][A][TypeBytes][user value type][user value bytes]
-	// TypeBytes = 0x07 (the type tag for []byte)
-	prefix := make([]byte, 1+20+32+1+1+len(vData))
+	// Build prefix: [EAVT][E][A][type][value]
+	prefix := make([]byte, 1+20+32+1+len(vData))
 	prefix[0] = byte(EAVT)
 	copy(prefix[1:21], eBytes)
 	copy(prefix[21:53], aBytes)
-	prefix[53] = byte(datalog.TypeBytes) // The SetEntry is stored as []byte
-	prefix[54] = vType                   // First byte of SetEntry is the value's type
-	copy(prefix[55:], vData)             // Then the value bytes
+	prefix[53] = vType
+	copy(prefix[54:], vData)
 
 	// Scan for entries with this specific value (both Add and Remove ops)
 	iter, err := m.store.Scan(EAVT, prefix, prefixEnd(prefix))
@@ -217,26 +185,16 @@ func (m *BadgerMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{})
 			continue
 		}
 
-		// Decode the set entry
-		valueBytes, ok := datom.V.([]byte)
-		if !ok {
-			continue
-		}
-
-		entry, err := DecodeSetEntry(valueBytes)
-		if err != nil {
-			continue
-		}
-
 		elemID := datom.Tx
 
 		// Track highest Tx for each operation type
-		if entry.Op == OpAdd {
+		// Op is now directly on the datom
+		if datom.Op == datalog.OpCRDTAdd {
 			if !hasAdd || elemID.Compare(highestAddTx) > 0 {
 				highestAddTx = elemID
 				hasAdd = true
 			}
-		} else if entry.Op == OpRemove {
+		} else if datom.Op == datalog.OpCRDTRemove {
 			if !hasRemove || elemID.Compare(highestRemoveTx) > 0 {
 				highestRemoveTx = elemID
 				hasRemove = true

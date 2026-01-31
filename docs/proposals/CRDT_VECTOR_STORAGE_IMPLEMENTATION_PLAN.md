@@ -1,9 +1,184 @@
 # CRDT Vector Storage - Implementation Plan
 
-**Status:** In Progress (Phases 0-4 Complete - All Phase 4 Bugs Fixed)
+**Status:** In Progress (Phases 0-4 Complete, Phase 5 NOT STARTED, API Design Fixed)
 **Based On:** CRDT_VECTOR_STORAGE.md Proposal
 **Created:** 2026-01-30
-**Updated:** 2026-01-30 (All 3 Phase 4 bugs fixed with streaming iterators)
+**Updated:** 2026-01-31 (Add() is now schema-aware - all tests pass)
+
+---
+
+## Critical Implementation Gaps (2026-01-31)
+
+This section documents significant gaps between the plan and actual implementation discovered during audit.
+
+### Gap Summary
+
+| Gap | Severity | Status | Impact |
+|-----|----------|--------|--------|
+| 1. Phase 5 (Vector/RGA) unimplemented | **CRITICAL** | ❌ NOT STARTED | No ordered collections |
+| 2. AVET index unused for cardinality-many | **HIGH** | ✅ FIXED | Now O(k) lookups |
+| 3. Vector tests missing | **CRITICAL** | ❌ NONE EXIST | No test coverage |
+| 4. Set/Add API forces cardinality knowledge | **HIGH** | ✅ FIXED | Add() is now schema-aware |
+
+---
+
+### Gap #1: Phase 5 (Cardinality-Vector/RGA) NOT IMPLEMENTED
+
+**Severity:** CRITICAL
+
+**What Exists:**
+- `schema.CardinalityVector` constant defined in `schema/types.go`
+- `.Vector()` builder method in `schema/builder.go`
+- Placeholder references in `matcher.go` and `database.go` switch statements
+
+**What Does NOT Exist:**
+- `rga_element.go` - RGAElement type and encoding
+- `rga_reconstruct.go` - RGA reconstruction algorithm
+- `matcher_vector.go` - Vector pattern matching
+- Any Append() operation in Transaction
+- Any vector resolution logic
+- **ANY TESTS**
+
+**Impact:**
+- Users cannot use `CardinalityVector` attributes
+- Code paths that hit `CardinalityVector` cases will fail or produce undefined behavior
+- The entire Phase 5 section of the plan is unimplemented
+
+**Required Work:**
+- Implement RGAElement type with AfterRef, Tombstone fields
+- Implement RGA reconstruction algorithm
+- Implement Transaction.Append() operation
+- Implement vector matcher with streaming reconstruction
+- Implement vector cache with position index
+- Write comprehensive tests
+
+---
+
+### Gap #2: AVET Index Not Used for Cardinality-Many Value Lookups
+
+**Severity:** HIGH (Performance)
+**Status:** ✅ FIXED (2026-01-31)
+
+**The Problem:**
+
+We fixed the AVET key format (`[A][V][E][Op][Tx]`) so that prefix scans work correctly. However, `matchCardinalityManyFindEntitiesWithValue` in `matcher_relations.go` used **AEVT**, not AVET:
+
+```go
+// Old implementation (O(n) where n = entities with attribute)
+prefix[0] = byte(AEVT)  // <-- Used AEVT, not AVET!
+```
+
+This scanned ALL entities with the attribute and checked membership per-entity.
+
+**Why This Happened - A Pattern of Incomplete Work:**
+
+1. **Bug #2 (unbound E queries)** was fixed by adding AEVT-based streaming iterator as a "works correctly but slowly" workaround
+2. **Bug #4 (AVET key format)** was fixed to enable [A][V] prefix scans
+3. **Nobody connected the dots** - after fixing AVET format, the matcher wasn't updated to use it
+4. **No performance tests** existed to catch the O(n) vs O(k) difference
+
+This is the same pattern as Phase 5 (Vector): infrastructure exists but isn't actually used.
+
+**The Fix:**
+
+Updated `matchCardinalityManyFindEntitiesWithValue` to use AVET with [A][V] prefix:
+
+```go
+// New implementation (O(k) where k = datoms with specific value)
+vType := byte(datalog.Type(v))
+vData := datalog.ValueBytes(v)
+vBytes := append([]byte{vType}, vData...)
+
+prefix := make([]byte, 1+32+len(vBytes))
+prefix[0] = byte(AVET)
+copy(prefix[1:33], aBytes[:])
+copy(prefix[33:], vBytes)
+```
+
+Added new `cardinalityManyAVETValueIterator` that:
+- Scans AVET with [A][V] prefix directly
+- Groups results by entity
+- Applies add-wins resolution per entity
+- Yields only entities where value is currently in set
+
+**Tests Added:**
+- `TestAVETOptimizationForCardinalityMany` - 100 entities, verifies correct filtering
+- `TestAVETAddWinsResolution` - verifies add-wins logic (add-only, add-then-remove, remove-then-add)
+
+**Lesson Learned:**
+
+When fixing infrastructure (key formats, index layouts), must also update the code that USES that infrastructure. A working index format is useless if no queries use it. Tests should verify the intended code path is taken, not just that results are correct.
+
+---
+
+### Gap #3: No Tests for Cardinality-Vector
+
+**Severity:** CRITICAL
+
+The plan specifies tests in `datalog/storage/crdt_vector_test.go`:
+- `TestVectorAppend`
+- `TestVectorReconstruction`
+- `TestVectorConcurrentAppends`
+- `TestVectorTombstone`
+- `TestVectorNoReadAppend`
+- `TestVectorDeterministicOrder`
+- `TestVectorCrossTransactionOrder`
+
+**None of these tests exist** because Phase 5 is unimplemented.
+
+---
+
+---
+
+### Gap #4: Set/Add API Separation Forces Callers to Know Cardinality
+
+**Severity:** HIGH
+**Status:** ✅ FIXED (2026-01-31)
+
+**The Problem:**
+
+The original plan specified separate methods based on cardinality:
+- `Set()` for cardinality-one
+- `Add()` for cardinality-many
+
+The implementation added validation that rejected `Add()` for cardinality-one, causing 15+ test failures in the reflect layer and Pull tests.
+
+**Why This Was Wrong:**
+
+The schema already declares cardinality. Forcing callers to redundantly specify it through method choice violated DRY and broke existing code.
+
+**The Fix:**
+
+Made `Add()` schema-aware - it now internally dispatches based on cardinality:
+- **CardinalityOne:** Uses LWW semantics (same as Set())
+- **CardinalityMany:** Uses add-wins semantics with OpCRDTAdd
+- **CardinalityVector:** Falls back to cardinality-one until Phase 5 is implemented
+- **Schemaless:** Defaults to cardinality-one behavior
+
+**Additional Fixes Required:**
+
+1. **LookupAttribute** was also not cardinality-aware - updated to use EATV index for cardinality-one (LWW resolution) and add-wins for cardinality-many
+2. **Pull tests** were missing `matcher.SetSchema(s)` calls - added to all tests that expect cardinality-aware behavior
+
+**Lesson Learned:**
+
+API design should minimize what callers need to know. If the system has the information (schema cardinality), don't force callers to provide it again. "Helpful" validation that rejects valid usage patterns is a design flaw, not a safety feature.
+
+See Deviation #6 for full analysis.
+
+---
+
+### Testing Gaps Summary (Updated)
+
+| Test Case | Status | Notes |
+|-----------|--------|-------|
+| `[?e :attr "value"]` with cardinality-many | ✅ EXISTS | Now uses AVET (fixed) |
+| `[?e :attr ?v]` with cardinality-many | ✅ EXISTS | Works correctly |
+| Vector append | ❌ MISSING | Phase 5 not implemented |
+| Vector reconstruction | ❌ MISSING | Phase 5 not implemented |
+| Vector concurrent appends | ❌ MISSING | Phase 5 not implemented |
+| AVET direct value lookup | ✅ EXISTS | Fixed 2026-01-31 |
+| AVET vs AEVT performance | ❌ MISSING | No benchmarks |
 
 ---
 
@@ -19,6 +194,115 @@ This section documents differences between the plan and the actual implementatio
 | 2. Raw vs Encoded value param | Design mismatch | Yes | Maybe - depends on encoding strategy |
 | 3. Per-tx vs Per-op Lamport | **Semantic difference** | Different behavior | ✅ FIXED - per-operation |
 | 4. Datom type | Architectural constraint | Yes | No - would require major refactor |
+| 5. Infrastructure built but unused | **Recurring pattern** | Broken | ✅ AVET fixed, ❌ Vector still missing |
+| 6. Separate Set/Add methods by cardinality | **API design flaw** | Fixed | ✅ Add() is now schema-aware |
+
+### Deviation #6: Separate Set/Add Methods Force Callers to Know Cardinality - API DESIGN FLAW
+
+**Severity:** HIGH (API usability, code correctness)
+**Status:** ✅ FIXED (2026-01-31)
+
+#### The Original Plan
+
+The plan specified separate methods based on cardinality:
+
+| Method | Cardinality | Behavior |
+|--------|-------------|----------|
+| `Set(e, a, v)` | One | LWW replace |
+| `Add(e, a, v)` | Many | Add to set |
+| `Remove(e, a, v)` | Many | Remove from set |
+
+The implementation added validation that rejects wrong method/cardinality combinations:
+```go
+func (tx *Transaction) Add(...) error {
+    if card != schema.CardinalityMany {
+        return fmt.Errorf("Add not valid for cardinality-one attribute %s: use Set() instead", a)
+    }
+    // ...
+}
+```
+
+#### The Problem
+
+**Callers should not need to know the cardinality to write a value.**
+
+The schema already declares cardinality. Forcing callers to redundantly declare it through method choice:
+1. **Violates DRY** - cardinality is specified twice (schema + API call)
+2. **Creates coupling** - caller must know schema details to write correctly
+3. **Causes errors** - all the test failures are from code using `Add()` for cardinality-one
+4. **Breaks abstraction** - reflect layer, tests, and user code all need schema knowledge
+
+The reflect layer (`datalog/reflect/writer.go`) uses `tx.Add()` everywhere because it was written before CRDT semantics. Now it fails for cardinality-one attributes:
+```
+Add not valid for cardinality-one attribute :person/name: use Set() instead
+```
+
+This isn't a bug in the reflect layer - it's a bug in the API design.
+
+#### The Correct Design
+
+**Single write method. Schema determines behavior.**
+
+```go
+// Universal write - schema determines semantics
+tx.Add(e, a, v)  // Works for any cardinality
+
+// Internally:
+// - CardinalityOne: LWW (replace current value)
+// - CardinalityMany: Add-wins (add to set)
+// - CardinalityVector: RGA (append to vector)
+
+// For removal (only valid for cardinality-many):
+tx.Retract(e, a, v)
+```
+
+This matches Datomic's model where `:db/add` is universal and the schema controls behavior.
+
+#### Why This Happened
+
+1. **Over-engineering from the plan** - the plan specified separate methods without considering the user experience
+2. **Validation as feature** - adding "helpful" error messages that reject valid usage patterns
+3. **Not questioning the plan** - implementing what was specified without evaluating if it was right
+
+#### Action Required
+
+1. Remove cardinality validation from `Add()` - make it work for all cardinalities
+2. Deprecate or remove `Set()` for cardinality-one - `Add()` handles it
+3. Keep `Set(e, a, slice)` for cardinality-many/vector bulk replacement
+4. Update tests to use `Add()` universally for single values
+5. Reflect layer continues to work unchanged
+
+#### Resolution (2026-01-31)
+
+**Changes Made:**
+
+1. **`database.go` - `Add()` is now schema-aware:**
+   - Removed cardinality validation that rejected cardinality-one
+   - For CardinalityOne: uses LWW semantics (same as Set())
+   - For CardinalityMany: uses add-wins with OpCRDTAdd
+   - For CardinalityVector: defaults to cardinality-one (until Phase 5)
+   - Schemaless: defaults to cardinality-one
+
+2. **`matcher.go` - `LookupAttribute()` is now cardinality-aware:**
+   - For CardinalityOne: uses EATV index (Tx before V) for LWW resolution
+   - For CardinalityMany: uses AEVT with add-wins resolution
+   - Previously always used AEVT, breaking LWW for cardinality-one
+
+3. **`tests/pull_schema_test.go` - Added missing `SetSchema()` calls:**
+   - Tests were creating matchers without setting schema
+   - Added `matcher.SetSchema(s)` to all tests expecting cardinality-aware behavior
+
+4. **`crdt_many_test.go` - Updated test:**
+   - Renamed `TestAddCardinalityValidation` to `TestAddSchemaAware`
+   - Now tests that Add() works for all cardinalities
+
+**All 80+ tests now pass.**
+
+#### Lesson Learned
+
+API design should minimize what callers need to know. If the system has the information (schema cardinality), don't force callers to provide it again. "Helpful" validation that rejects valid usage is not helpful - it's a design flaw masquerading as safety.
+
+---
 
 ### Phase 4 Deviations
 
@@ -127,6 +411,47 @@ These are **causally ordered**, not concurrent. The user did Add, *then* Remove.
 
 **Action:** None required.
 
+#### 5. Infrastructure Built But Not Used - RECURRING PATTERN
+
+| Aspect | Plan | Implementation |
+|--------|------|----------------|
+| AVET index for value lookups | Use AVET with [A][V] prefix for O(k) | Used AEVT with [A] prefix for O(n) |
+| Vector/RGA implementation | Full Phase 5 implementation | Schema type exists, no runtime code |
+
+**What happened:**
+
+1. **AVET for cardinality-many:**
+   - Bug #2 fix added AEVT-based workaround (correct but slow)
+   - Bug #4 fix corrected AVET key format
+   - Nobody updated the matcher to actually USE the fixed AVET index
+   - Tests passed (correctness) but performance was O(n) not O(k)
+
+2. **Vector/RGA:**
+   - `schema.CardinalityVector` constant added
+   - `.Vector()` builder method added
+   - Placeholder switch cases added in matcher and database
+   - Actual RGA implementation never written
+   - Zero tests exist
+
+**Why this keeps happening:**
+
+1. **Fix-and-move-on mentality** - Bug is "fixed" when tests pass, without checking if the fix enables the intended optimization
+2. **No performance tests** - Only correctness tests; O(n) vs O(k) difference not detected
+3. **Disconnected work** - Key format fixed in one session, matcher not updated until audit days later
+4. **Placeholder code accepted as done** - Schema types and switch cases look like progress but do nothing
+
+**Lesson Learned:**
+
+Infrastructure changes (key formats, types, indices) must be accompanied by:
+1. Code that USES the infrastructure
+2. Tests that verify the INTENDED code path, not just correctness
+3. Performance tests for optimizations
+4. Audit that traces from user-facing API to storage layer
+
+**Status:**
+- AVET optimization: ✅ Fixed (2026-01-31)
+- Vector/RGA: ❌ Still unimplemented
+
 ### Confirmed Correct (Not Deviations)
 
 #### Lamport-Only Comparison for Add-Wins
@@ -146,6 +471,7 @@ This section documents bugs discovered during semantic correctness audit of Phas
 | 1. Duplicate writes in Set() | Minor | ✅ Fixed | Wasteful but correct result |
 | 2. Unbound E queries broken | **Critical** | ✅ Fixed | Silent wrong answers |
 | 3. Set() ignores pending ops | Medium | ✅ Fixed | Surprising behavior |
+| 4. SetEntry wrapper breaks AVET | **CRITICAL** | ✅ Fixed | AVET lookups now work |
 
 ### Bug #1: Duplicate Values in Set() Slice Cause Duplicate Writes
 
@@ -269,16 +595,156 @@ tx.Commit()
 
 ---
 
-### Testing Gaps Identified
+### Bug #4: SetEntry Wrapper Breaks AVET Index Lookups (CRITICAL ARCHITECTURAL FLAW)
 
-These bugs reveal missing test coverage:
+**Location:** `database.go` Add()/Remove(), `set_entry.go`, `key_encoder_binary.go`
 
-| Test Case | Status |
-|-----------|--------|
-| `[?e :attr "value"]` with cardinality-many | **Missing** |
-| `[?e :attr ?v]` with cardinality-many, E unbound | **Missing** |
-| `Set()` with duplicate values in slice | **Missing** |
-| `Add()` then `Set()` in same transaction | **Missing** |
+**Problem:** The original implementation stored cardinality-many values as `SetEntry` encoded bytes:
+
+```go
+// WRONG: Add() stored V as SetEntry bytes
+entry := SetEntry{Value: v, Op: OpAdd}
+encodedEntry := EncodeSetEntry(entry)  // Returns []byte
+t.datoms = append(t.datoms, datalog.Datom{
+    V: encodedEntry,  // V is now []byte, gets TypeBytes in key
+})
+```
+
+This causes the AVET index key to be:
+```
+[AVET][:tags][TypeBytes][SetEntry bytes...][E][Tx]
+```
+
+But queries like `[?e :tags "warrior"]` look for:
+```
+[AVET][:tags][TypeString]["warrior"][E][Tx]
+```
+
+**TypeBytes ≠ TypeString → No matches → Silent wrong answers.**
+
+**Impact:**
+- AVET lookups for cardinality-many are **completely broken**
+- Queries like `[?e :attr "value"]` return empty results
+- The streaming iterator workarounds (Bug #2 fix) are O(n) scans, not O(k) index lookups
+- Same problem will affect cardinality-vector (RGA) if we use similar wrapper approach
+
+**Root Cause:** The plan said Op should be in the key (between V and Tx), not wrapped inside V. From section 4.1:
+
+```
+Key order is [E][A][type][encoded_value][Op][Tx↓]
+```
+
+But implementation wrapped Op inside V as SetEntry bytes, polluting the value's type.
+
+**The Fix (In Progress):**
+
+1. **Add `Op` field to `datalog.Datom`:**
+```go
+type CRDTOp uint8
+const (
+    OpNone       CRDTOp = 0  // cardinality-one
+    OpCRDTAdd    CRDTOp = 1  // set add
+    OpCRDTRemove CRDTOp = 2  // set remove (tombstone)
+)
+
+type Datom struct {
+    E  Identity
+    A  Keyword
+    V  Value     // RAW value, not wrapped
+    Tx ElementID
+    Op CRDTOp    // NEW: CRDT operation
+}
+```
+
+2. **Add `Op` to `StorageDatom`:**
+```go
+type StorageDatom struct {
+    E  Entity
+    A  Attribute
+    V  datalog.Value  // RAW value
+    Tx Tx
+    Op datalog.CRDTOp // NEW
+}
+```
+
+3. **Update key encoder - Op positioning varies by index purpose:**
+
+**Initial Implementation (WRONG):**
+Put Op immediately after V in all indices:
+```
+VAET: [prefix][V][Op][A][E][Tx]  ← Op between V and A breaks prefix scanning!
+```
+This breaks VAET prefix scanning: a prefix of `[V][A]` won't match keys with `[V][Op][A]`.
+
+**Correct Approach - Op position depends on index purpose:**
+
+| Index | Purpose | Op Position | Key Format |
+|-------|---------|-------------|------------|
+| EAVT | Add-wins grouping | Before Tx | `[E][A][V][Op][Tx↓]` |
+| AEVT | Add-wins grouping | Before Tx | `[A][E][V][Op][Tx↓]` |
+| AVET | Value lookup | Before Tx | `[A][V][E][Op][Tx↓]` |
+| VAET | Reverse refs | Before Tx | `[V][A][E][Op][Tx↓]` |
+| EATV | Cardinality-one (Tx = currency) | At end | `[E][A][Tx↓][V][Op]` |
+| TAEV | Transaction log (Tx = primary) | At end | `[Tx↓][A][E][V][Op]` |
+
+**Reasoning:**
+
+For **EAVT, AEVT, AVET, VAET** (add-wins indices):
+- Op before Tx means entries with same value group together
+- OpAdd (0) sorts before OpRemove (1)
+- Within a value: all Adds first (highest Tx first), then all Removes (highest Tx first)
+- Resolution can grab first Add and first Remove for each value
+
+For **EATV** (cardinality-one):
+- Tx determines currency (first entry = current value)
+- Op is informational, not for ordering
+- Op at end doesn't interfere with `[E][A]` or `[E][A][Tx]` prefix scans
+
+For **TAEV** (transaction log):
+- Tx is PRIMARY sort component (for clock recovery, audit trail)
+- Op at end doesn't interfere with Tx-based scanning
+- `[Tx]` prefix scans work correctly
+
+4. **Update Add()/Remove() to use Op field:**
+```go
+// CORRECT: Store raw value with Op field
+t.datoms = append(t.datoms, datalog.Datom{
+    E:  e,
+    A:  a,
+    V:  v,  // Raw value - enables AVET lookups
+    Tx: elemID,
+    Op: datalog.OpCRDTAdd,
+})
+```
+
+5. **Update set resolution to read Op from datom, not decode SetEntry**
+
+**Files Modified:**
+- `datalog/types.go` - Added CRDTOp type and Op field to Datom
+- `datalog/storage/types.go` - Added Op field to StorageDatom
+- `datalog/storage/key_encoder_binary.go` - Op between V and Tx in all indices
+- `datalog/storage/key_encoder_l85.go` - Same for L85 encoder
+- `datalog/storage/key_encoder_interface.go` - DecodeKey returns op
+- `datalog/storage/database.go` - Add()/Remove() use Op field
+- `datalog/storage/set_resolution.go` - Read Op from datom.Op
+- `datalog/storage/datom_decoder.go` - Set Op on decoded datom
+
+**Status:** ✅ Fixed - Op field replaces SetEntry, Op positioning corrected in all indices
+
+---
+
+### Testing Gaps Identified (Updated 2026-01-31)
+
+These bugs revealed missing test coverage. Status after Bug #4 fix:
+
+| Test Case | Status | Notes |
+|-----------|--------|-------|
+| `[?e :attr "value"]` with cardinality-many | ✅ Added | `TestCardinalityManyUnboundEWithValue` |
+| `[?e :attr ?v]` with cardinality-many, E unbound | ✅ Added | `TestCardinalityManyUnboundEUnboundV` |
+| `Set()` with duplicate values in slice | ✅ Fixed | Bug #1 fixed |
+| `Add()` then `Set()` in same transaction | ✅ Added | `TestCardinalityManySetSeesPendingOps` |
+| AVET direct value lookup for cardinality-many | ❌ Missing | See Gap #2 - index unused |
+| Any cardinality-vector tests | ❌ Missing | See Gap #1 - Phase 5 unimplemented |
 
 ---
 
@@ -3635,7 +4101,7 @@ for attr, count := range stats.PerAttribute {
 
 ---
 
-## CRDT Test Coverage Analysis
+## CRDT Test Coverage Analysis (Updated 2026-01-31)
 
 ### What IS Currently Tested
 
@@ -3643,43 +4109,68 @@ The following **primitive CRDT components** have unit tests:
 
 | Component | Test File | Coverage |
 |-----------|-----------|----------|
-| ElementID ordering | `storage/element_id_test.go` | Less(), Compare(), ReplicaID tiebreaking |
-| ElementID encoding | `storage/element_id_test.go` | Key encoding with bitwise NOT, decode round-trip |
-| ElementID sort order | `storage/element_id_test.go` | Encoded bytes sort correctly (highest first) |
-| LamportClock Next() | `storage/lamport_clock_test.go` | Monotonically increasing |
-| LamportClock Receive() | `storage/lamport_clock_test.go` | L = max(L, L_remote) + 1 |
-| LamportClock concurrency | `storage/lamport_clock_test.go` | Safe under concurrent access |
+| ElementID ordering | `storage/element_id_test.go` | ✅ Less(), Compare(), ReplicaID tiebreaking |
+| ElementID encoding | `storage/element_id_test.go` | ✅ Key encoding with bitwise NOT, decode round-trip |
+| ElementID sort order | `storage/element_id_test.go` | ✅ Encoded bytes sort correctly (highest first) |
+| LamportClock Next() | `storage/lamport_clock_test.go` | ✅ Monotonically increasing |
+| LamportClock Receive() | `storage/lamport_clock_test.go` | ✅ L = max(L, L_remote) + 1 |
+| LamportClock concurrency | `storage/lamport_clock_test.go` | ✅ Safe under concurrent access |
+| Cardinality-One LWW | `storage/crdt_one_test.go` | ✅ Highest ElementID wins |
+| Cardinality-Many add-wins | `storage/crdt_many_test.go` | ✅ Add-wins resolution |
+| Cardinality-Many [?e :a v] | `storage/crdt_many_test.go` | ✅ Unbound E with bound V |
+| Cardinality-Many [?e :a ?v] | `storage/crdt_many_test.go` | ✅ Unbound E with unbound V |
+| Op field in keys | `storage/op_field_test.go` | ✅ Op encoded/decoded correctly |
+| AVET key format | `storage/key_encoder_*_test.go` | ✅ Op before Tx, prefix scans work |
 
 ### What is NOT Yet Tested (CRDT Semantic Gaps)
 
-The following **true CRDT behaviors** are NOT tested yet:
+| Semantic | Status | Required Test |
+|----------|--------|---------------|
+| **Multi-replica merge** | ❌ Missing | `TestMultiReplicaMerge` |
+| **ReplicaID tiebreaker at query level** | ❌ Missing | `TestReplicaIDTiebreaker` |
+| **Cross-replica query correctness** | ❌ Missing | `TestCrossReplicaQueryConvergence` |
+| **Clock restoration after restart** | ❌ Missing | `TestClockRestorationAfterRestart` |
+| **RGA for cardinality-vector** | ❌ **BLOCKED** | Phase 5 not implemented |
+| **AVET direct value lookup** | ❌ Missing | AVET index unused, needs benchmark |
 
-| Semantic | Description | Required Test |
-|----------|-------------|---------------|
-| **Multi-replica merge** | Two databases with different ReplicaIDs write concurrently, then merge | `TestMultiReplicaMerge` |
-| **LWW resolution at storage level** | Queries return highest (Lamport, ReplicaID) value | `TestLWWQueryResolution` |
-| **ReplicaID tiebreaker at query level** | When Lamports are equal, higher ReplicaID wins | `TestReplicaIDTiebreaker` |
-| **Add-wins for cardinality-many** | Concurrent Add + Remove with same Lamport → Add wins | `TestAddWinsSemantics` |
-| **RGA for cardinality-vector** | Concurrent appends produce deterministic order | `TestRGADeterministicOrder` |
-| **Cross-replica query correctness** | After merge, both replicas return identical results | `TestCrossReplicaQueryConvergence` |
-| **Clock restoration after restart** | Lamport clock ≥ max existing after DB reopen | `TestClockRestorationAfterRestart` |
+### Critical Test Gap: Cardinality-Vector
+
+**NO VECTOR TESTS EXIST** because Phase 5 (RGA) is not implemented.
+
+The plan specifies these tests in `datalog/storage/crdt_vector_test.go`:
+- `TestVectorAppend`
+- `TestVectorReconstruction`
+- `TestVectorConcurrentAppends`
+- `TestVectorTombstone`
+- `TestVectorNoReadAppend`
+- `TestVectorDeterministicOrder`
+- `TestVectorCrossTransactionOrder`
+
+**Status:** File does not exist. Tests cannot be written until Phase 5 is implemented.
+
+### Critical Test Gap: AVET Performance
+
+The AVET index has the correct key format (`[A][V][E][Op][Tx]`) but `matchCardinalityManyFindEntitiesWithValue` uses AEVT instead. Need:
+
+1. `TestAVETDirectValueLookup` - verify AVET can be used for value lookups
+2. `BenchmarkAVETvsAEVT` - measure O(k) vs O(n) performance difference
 
 ### Why This Matters
 
 The primitive tests verify that the building blocks work correctly in isolation. However, CRDT correctness depends on how these primitives **compose** in real storage and query scenarios:
 
-1. **ElementID ordering is tested** → but LWW resolution using that ordering in queries is not
-2. **LamportClock.Receive() is tested** → but actual merge workflows using Receive() are not
-3. **Bitwise NOT encoding is tested** → but O(1) "highest first" scans for current value are not
+1. ✅ **ElementID ordering is tested** → LWW resolution tested in `crdt_one_test.go`
+2. ❌ **LamportClock.Receive() is tested** → but actual merge workflows using Receive() are not
+3. ✅ **Bitwise NOT encoding is tested** → first-in-scan = current tested
+4. ❌ **Vector semantics** → blocked on Phase 5 implementation
 
 ### Recommended Test Files to Add
 
 ```
 datalog/storage/crdt_merge_test.go        # Multi-replica merge scenarios
-datalog/storage/crdt_lww_test.go          # LWW resolution at storage/query level
-datalog/storage/crdt_addwins_test.go      # Add-wins for cardinality-many
-datalog/storage/crdt_rga_test.go          # RGA for cardinality-vector
+datalog/storage/crdt_vector_test.go       # Vector/RGA tests (BLOCKED on Phase 5)
 datalog/storage/crdt_convergence_test.go  # Cross-replica query convergence
+datalog/storage/avet_benchmark_test.go    # AVET vs AEVT performance
 ```
 
 ---
@@ -3781,43 +4272,67 @@ func BenchmarkCRDTvsLegacy(b *testing.B) {
 
 ## Implementation Order
 
-### Critical Path: Clock Restoration
+### Current Status (2026-01-31)
 
-**⚠️ Clock restoration is broken until Phase 2 is complete.**
+| Phase | Status | Notes |
+|-------|--------|-------|
+| **Phase 0: Foundation** | ✅ Complete | Schema infrastructure, ReplicaID |
+| **Phase 1: ElementID/Clocks** | ✅ Complete | ElementID type, LamportClock, clock restoration |
+| **Phase 2: Key Encoding** | ✅ Complete | 16-byte Tx, all 6 indices, Op positioning |
+| **Phase 3: Cardinality-One** | ✅ Complete | LWW semantics, Transaction.Set() |
+| **Phase 4: Cardinality-Many** | ✅ Complete | Add-wins, Add()/Remove(), set resolution |
+| **Phase 5: Cardinality-Vector** | ❌ **NOT STARTED** | No RGA implementation exists |
+| **Phase 6: Cache** | ❌ Not started | Depends on Phase 5 for vector cache |
+| **Phase 7: Transaction API** | Partial | Set/Add/Remove work, no Append |
+| **Phase 8: Query Integration** | Partial | Many works (slow), Vector missing |
+| **Phase 9: Cleanup** | ❌ Not started | - |
 
-The Lamport clock currently restarts at 0 on every database open because:
-- Clock restoration requires scanning TAEV to find max ElementID
-- TAEV must encode ElementID (16 bytes) with descending sort order
-- Current storage uses 20-byte Tx hashes, not ElementID
+### Critical Gaps
 
-**Priority sequence to fix clock restoration:**
-1. ✅ Phase 0.3: ReplicaID persistence (DONE)
-2. ✅ Phase 1.1: ElementID type and encoding (DONE)
-3. ✅ Phase 1.2: LamportClock implementation (DONE)
-4. **→ Phase 2: Key encoding with 16-byte ElementID** (NEXT - enables clock restoration)
-5. Phase 1.3: Clock restoration on database open (blocked on Phase 2)
+1. **Phase 5 (Vector/RGA) is completely unimplemented**
+   - Schema type exists but no runtime code
+   - No tests exist
+   - Blocks Phase 6 (cache) and Phase 8 (query integration for vectors)
 
-### Recommended Sequence
+2. **AVET index unused for cardinality-many**
+   - Key format is correct but `matchCardinalityManyFindEntitiesWithValue` uses AEVT
+   - O(n) entity scan instead of O(k) value lookup
+   - Performance optimization required
 
-**Phase Group 1: Core Primitives (Phases 0-2)**
+### Recommended Next Steps
+
+**Immediate (fix existing gaps):**
+1. Implement AVET optimization for cardinality-many value lookups
+2. Add benchmark tests for AVET vs AEVT
+
+**Phase 5 (when ready for vectors):**
+1. Implement RGAElement type (`rga_element.go`)
+2. Implement RGA reconstruction (`rga_reconstruct.go`)
+3. Implement Transaction.Append()
+4. Implement vector matcher (`matcher_vector.go`)
+5. Write comprehensive vector tests
+
+### Historical Priority Sequence (for reference)
+
+**Phase Group 1: Core Primitives (Phases 0-2)** ✅ DONE
 - ElementID, LamportClock types
-- **Key encoder with 16-byte ElementID (PRIORITY - unblocks clock restoration)**
+- Key encoder with 16-byte ElementID
 - Extensive sort-order testing
 
 **Phase Group 2: Cardinality Semantics (Phases 3-5)**
-- Cardinality-One (simplest)
-- Cardinality-Many with add-wins
-- Cardinality-Vector with RGA
+- ✅ Cardinality-One (simplest)
+- ✅ Cardinality-Many with add-wins
+- ❌ Cardinality-Vector with RGA - **NOT IMPLEMENTED**
 
 **Phase Group 3: Integration (Phases 6-8)**
-- Cache implementation
-- Transaction API
-- Query integration and vector functions
+- ❌ Cache implementation - blocked on Phase 5
+- Partial Transaction API
+- Partial Query integration
 
 **Phase Group 4: Finalization (Phase 9)**
-- Remove legacy code
-- Clean up removed code
-- Full test suite validation
+- ❌ Remove legacy code
+- ❌ Clean up removed code
+- ❌ Full test suite validation
 
 ---
 
@@ -3825,16 +4340,16 @@ The Lamport clock currently restarts at 0 on every database open because:
 
 ### New Files
 
-| File | Phase | Purpose |
-|------|-------|---------|
-| `storage/element_id.go` | 1 | ElementID type and encoding |
-| `storage/lamport_clock.go` | 1 | Lamport clock for CRDT ordering |
-| `storage/set_entry.go` | 4 | Set entry type for cardinality-many |
-| `storage/set_resolution.go` | 4 | Add-wins conflict resolution |
-| `storage/rga_element.go` | 5 | RGA element type for vectors |
-| `storage/rga_reconstruct.go` | 5 | RGA reconstruction algorithm (includes `reconstructRGAWithIDs` for position index) |
-| `storage/matcher_vector.go` | 5 | Vector pattern matching |
-| `storage/matcher_history.go` | 3, 8.4 | History query support |
+| File | Phase | Purpose | Status |
+|------|-------|---------|--------|
+| `storage/element_id.go` | 1 | ElementID type and encoding | ✅ Exists |
+| `storage/lamport_clock.go` | 1 | Lamport clock for CRDT ordering | ✅ Exists |
+| `storage/set_entry.go` | 4 | Set entry type for cardinality-many | ✅ Exists |
+| `storage/set_resolution.go` | 4 | Add-wins conflict resolution | ✅ Exists |
+| `storage/rga_element.go` | 5 | RGA element type for vectors | ❌ **MISSING** |
+| `storage/rga_reconstruct.go` | 5 | RGA reconstruction algorithm | ❌ **MISSING** |
+| `storage/matcher_vector.go` | 5 | Vector pattern matching | ❌ **MISSING** |
+| `storage/matcher_history.go` | 3, 8.4 | History query support | ❌ **MISSING** |
 | `storage/cache.go` | 6 | Unified CRDT resolution cache with attribute-level freshness and vector position index |
 | `storage/index_selection.go` | 2.6 | Cardinality-aware index selection logic |
 | `storage/export.go` | EDN | Export/Import using Merge() for cross-replica sync |
@@ -3876,36 +4391,36 @@ The Lamport clock currently restarts at 0 on every database open because:
 
 ## Success Criteria
 
-Before declaring complete:
+Before declaring complete (current status as of 2026-01-31):
 
 ### Core CRDT Semantics
-1. **Lamport clock correct** - `Receive()` implements `L = max(L, L_remote) + 1`
-2. **ElementID ordering correct** - `Less()` comparison is total order
-3. **Tx encoding correct** - `^(Lamport, ReplicaID)` so first-in-scan = current
-4. **Index selection correct** - EAVT for Many (group by V), EATV for One/Vector
+1. ✅ **Lamport clock correct** - `Receive()` implements `L = max(L, L_remote) + 1`
+2. ✅ **ElementID ordering correct** - `Less()` comparison is total order
+3. ✅ **Tx encoding correct** - `^(Lamport, ReplicaID)` so first-in-scan = current
+4. ✅ **Index selection correct** - EAVT for Many (group by V), EATV for One/Vector
 
 ### Cardinality-Specific
-5. **Cardinality-One** - Highest ElementID wins, no read before write
-6. **Cardinality-Many** - Add-wins at same Lamport, tombstones work
-7. **Cardinality-Vector** - RGA reconstruction deterministic, concurrent appends merge
+5. ✅ **Cardinality-One** - Highest ElementID wins, no read before write
+6. ✅ **Cardinality-Many** - Add-wins at same Lamport, tombstones work
+7. ❌ **Cardinality-Vector** - **NOT IMPLEMENTED** - No RGA code exists
 
 ### Query Integration
-8. **All 8 vector functions work** - enumerate, nth, contains?, length, first, last, index-of, subvec
-9. **History predicates work** - `[(history)]` returns all versions, `[(as-of ?tx N)]` filters correctly
-10. **Cache works** - Freshness check, invalidation, attribute-level freshness
+8. ❌ **All 8 vector functions work** - **NOT IMPLEMENTED** - Phase 5 missing
+9. ❌ **History predicates work** - Not implemented
+10. ❌ **Cache works** - Not implemented (Phase 6)
 
 ### Performance
-11. **Cache provides O(1) vector access** - Cache hit is O(1), miss triggers O(n) reconstruct
-12. **Writes are O(1)** - No read-before-write for any operation
-13. **Reads have no side effects** - No database writes from read operations
-14. **Benchmarks acceptable** - No regression vs legacy for common operations
+11. ❌ **Cache provides O(1) vector access** - Cache not implemented
+12. ✅ **Writes are O(1)** - No read-before-write for any operation
+13. ✅ **Reads have no side effects** - No database writes from read operations
+14. ⚠️ **Benchmarks acceptable** - AVET unused for cardinality-many (O(n) instead of O(k))
 
 ### Documentation
-14. **API limitations documented** - Vector remove requires full replacement
-15. **Append semantics documented** - HEAD + local tracking, not append-to-end
-16. **Storage size documented** - Keys shrink by ~5% (Tx: 20→16 bytes)
+15. ❌ **API limitations documented** - Vector not implemented
+16. ❌ **Append semantics documented** - Vector not implemented
+17. ✅ **Storage size documented** - Keys shrink by ~5% (Tx: 20→16 bytes)
 
 ### Testing
-17. **All new tests pass** - Full coverage for CRDT semantics
-18. **Concurrent write tests pass** - Multi-goroutine, multi-node simulation
-19. **Sort order tests pass** - Key encoding preserves correct order (CRITICAL)
+18. ⚠️ **All new tests pass** - Cardinality-one/many pass, vector tests don't exist
+19. ❌ **Concurrent write tests pass** - Limited coverage
+20. ✅ **Sort order tests pass** - Key encoding preserves correct order

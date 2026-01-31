@@ -35,7 +35,7 @@ func TestPullResolvedCardinalityMany(t *testing.T) {
 
 	// Add person with multiple tags
 	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, name, "Alice"))
+	require.NoError(t, tx.Set(alice, name, "Alice")) // cardinality-one uses Set()
 	require.NoError(t, tx.Add(alice, tags, "developer"))
 	require.NoError(t, tx.Add(alice, tags, "team-lead"))
 	require.NoError(t, tx.Add(alice, tags, "mentor"))
@@ -55,6 +55,7 @@ func TestPullResolvedCardinalityMany(t *testing.T) {
 
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s) // Required for cardinality-aware resolution
 	puller := executor.NewPullExecutor(matcher)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)
@@ -102,9 +103,9 @@ func TestPullResolvedCardinalityManyRefs(t *testing.T) {
 
 	// Add people and friendships
 	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, name, "Alice"))
-	require.NoError(t, tx.Add(bob, name, "Bob"))
-	require.NoError(t, tx.Add(carol, name, "Carol"))
+	require.NoError(t, tx.Set(alice, name, "Alice")) // cardinality-one uses Set()
+	require.NoError(t, tx.Set(bob, name, "Bob"))
+	require.NoError(t, tx.Set(carol, name, "Carol"))
 	require.NoError(t, tx.Add(alice, friends, bob))
 	require.NoError(t, tx.Add(alice, friends, carol))
 	_, err = tx.Commit()
@@ -130,6 +131,7 @@ func TestPullResolvedCardinalityManyRefs(t *testing.T) {
 
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s) // Required for cardinality-aware resolution
 	puller := executor.NewPullExecutor(matcher)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)
@@ -195,6 +197,7 @@ func TestPullResolvedLimit(t *testing.T) {
 
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s) // Required for cardinality-aware resolution
 	puller := executor.NewPullExecutor(matcher)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)
@@ -228,7 +231,7 @@ func TestPullResolvedDefault(t *testing.T) {
 
 	// Add person without status
 	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, name, "Alice"))
+	require.NoError(t, tx.Set(alice, name, "Alice")) // cardinality-one uses Set()
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
@@ -245,6 +248,7 @@ func TestPullResolvedDefault(t *testing.T) {
 
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s) // Required for cardinality-aware resolution
 	puller := executor.NewPullExecutor(matcher)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)

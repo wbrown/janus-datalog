@@ -1265,33 +1265,52 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		}
 	}
 
+	// Schema-aware behavior: Add() works for all cardinalities
+	// The schema determines the semantics, not the method call
+	elemID := t.db.clock.Next()
+
 	if hasSchema {
 		switch card {
 		case schema.CardinalityMany:
-			// CRDT add-wins semantics: encode value as SetEntry with OpAdd
-			// We encode to bytes here so the storage layer sees []byte
-			// Per-operation Lamport: each Add() gets its own ElementID for causal ordering
-			elemID := t.db.clock.Next()
-			entry := SetEntry{Value: v, Op: OpAdd}
-			encodedEntry := EncodeSetEntry(entry)
+			// CRDT add-wins semantics: store raw value with Op=Add
+			// Op is stored in the key (between V and Tx) for proper AVET lookups
 			t.datoms = append(t.datoms, datalog.Datom{
 				E:  e,
 				A:  a,
-				V:  encodedEntry, // Store as []byte
+				V:  v, // Raw value - enables AVET lookups
 				Tx: elemID,
+				Op: datalog.OpCRDTAdd,
 			})
 		case schema.CardinalityOne:
-			return fmt.Errorf("Add not valid for cardinality-one attribute %s: use Set() instead", a.String())
+			// CRDT LWW semantics: just append, no retraction needed
+			// The storage layer will return only the highest ElementID on read
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:  e,
+				A:  a,
+				V:  v,
+				Tx: elemID,
+			})
 		case schema.CardinalityVector:
-			return fmt.Errorf("Add not valid for cardinality-vector attribute %s: use Append() instead", a.String())
+			// Phase 5 not implemented - for now, treat as cardinality-one
+			// TODO: Implement Append() semantics when Phase 5 is done
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:  e,
+				A:  a,
+				V:  v,
+				Tx: elemID,
+			})
 		default:
-			return fmt.Errorf("Add not valid for cardinality %v", card)
+			// Unknown cardinality - treat as cardinality-one
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:  e,
+				A:  a,
+				V:  v,
+				Tx: elemID,
+			})
 		}
 	} else {
 		// Schemaless mode: store raw value for backward compatibility
 		// Queries will treat this as cardinality-one by default
-		// Per-operation Lamport: each Add() gets its own ElementID
-		elemID := t.db.clock.Next()
 		t.datoms = append(t.datoms, datalog.Datom{
 			E:  e,
 			A:  a,
@@ -1336,17 +1355,16 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 
 	switch def.Cardinality {
 	case schema.CardinalityMany:
-		// CRDT add-wins semantics: encode value as SetEntry with OpRemove (tombstone)
-		// We encode to bytes here so the storage layer sees []byte
+		// CRDT add-wins semantics: store raw value with Op=Remove (tombstone)
+		// Op is stored in the key (between V and Tx) for proper AVET lookups
 		// Per-operation Lamport: each Remove() gets its own ElementID for causal ordering
 		elemID := t.db.clock.Next()
-		entry := SetEntry{Value: v, Op: OpRemove}
-		encodedEntry := EncodeSetEntry(entry)
 		t.datoms = append(t.datoms, datalog.Datom{
 			E:  e,
 			A:  a,
-			V:  encodedEntry, // Store as []byte
+			V:  v, // Raw value - enables AVET lookups
 			Tx: elemID,
+			Op: datalog.OpCRDTRemove,
 		})
 	case schema.CardinalityOne:
 		return fmt.Errorf("Remove not valid for cardinality-one attribute %s: cardinality-one values are replaced via Set()", a.String())
@@ -1455,17 +1473,11 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			if datom.E.Hash() != eBytes || datom.A.String() != a.String() {
 				continue
 			}
-			// Decode the SetEntry to see if it's an Add or Remove
-			if encoded, ok := datom.V.([]byte); ok {
-				entry, err := DecodeSetEntry(encoded)
-				if err != nil {
-					continue
-				}
-				if entry.Op == OpAdd {
-					pendingAdds[entry.Value] = datom.Tx
-				} else if entry.Op == OpRemove {
-					pendingRemoves[entry.Value] = datom.Tx
-				}
+			// NEW FORMAT: Op is a field on Datom, V is the raw value
+			if datom.Op == datalog.OpCRDTAdd {
+				pendingAdds[datom.V] = datom.Tx
+			} else if datom.Op == datalog.OpCRDTRemove {
+				pendingRemoves[datom.V] = datom.Tx
 			}
 		}
 
@@ -1503,13 +1515,13 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		for member := range effectiveSet {
 			if !newSet[member] {
 				elemID := t.db.clock.Next()
-				entry := SetEntry{Value: member, Op: OpRemove}
-				encodedEntry := EncodeSetEntry(entry)
+				// NEW FORMAT: Op is a field on Datom, V is the raw value
 				t.datoms = append(t.datoms, datalog.Datom{
 					E:  e,
 					A:  a,
-					V:  encodedEntry,
+					V:  member, // Raw value
 					Tx: elemID,
+					Op: datalog.OpCRDTRemove,
 				})
 			}
 		}
@@ -1519,13 +1531,13 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		for val := range newSet {
 			if !effectiveSet[val] {
 				elemID := t.db.clock.Next()
-				entry := SetEntry{Value: val, Op: OpAdd}
-				encodedEntry := EncodeSetEntry(entry)
+				// NEW FORMAT: Op is a field on Datom, V is the raw value
 				t.datoms = append(t.datoms, datalog.Datom{
 					E:  e,
 					A:  a,
-					V:  encodedEntry,
+					V:  val, // Raw value
 					Tx: elemID,
+					Op: datalog.OpCRDTAdd,
 				})
 			}
 		}

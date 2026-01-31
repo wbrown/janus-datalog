@@ -13,7 +13,8 @@ type KeyEncoder interface {
 	// Returns fixed-size arrays for e, a, tx to avoid heap allocations from slice escape.
 	// Only v (value) is variable-length.
 	// tx is 16 bytes: Lamport (8) + ReplicaID (8) = ElementID
-	DecodeKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [16]byte, err error)
+	// op is 1 byte: 0=none, 1=add, 2=remove (for CRDT semantics)
+	DecodeKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [16]byte, op byte, err error)
 
 	// EncodePrefix creates a prefix key for range scans
 	EncodePrefix(index IndexType, parts ...[]byte) []byte
