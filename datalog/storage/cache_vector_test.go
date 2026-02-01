@@ -353,3 +353,147 @@ func TestVectorLengthNotVectorAttribute(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not a vector")
 }
+
+// TestVectorIndexContainsRealElementIDs verifies that the cache's vectorIndex
+// contains actual ElementIDs (not zeros) that can be used for operations.
+//
+// This test exists because a previous implementation allocated the slice but
+// filled it with zero values, which passed other tests but made the cache
+// useless for its intended purpose.
+func TestVectorIndexContainsRealElementIDs(t *testing.T) {
+	db, cleanup := createVectorCacheTestDatabase(t)
+	defer cleanup()
+
+	// Create schema
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").
+		Type(schema.TypeString).
+		Vector().
+		Add().
+		Build()
+	require.NoError(t, err)
+	db.SetSchema(s)
+
+	// Add vector data
+	e := datalog.NewIdentity("character1")
+	a := datalog.NewKeyword(":character/skills")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, a, "stealth"))
+	require.NoError(t, tx.Add(e, a, "archery"))
+	require.NoError(t, tx.Add(e, a, "lockpicking"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Get the cache entry directly via the resolver interface
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+
+	var eBytes Entity
+	eBytes = e.Hash()
+	var aBytes Attribute
+	copy(aBytes[:], a.String())
+
+	values, positions, maxID, err := matcher.ResolveRGA(eBytes, aBytes)
+	require.NoError(t, err)
+
+	// Verify we got 3 elements
+	require.Len(t, values, 3, "should have 3 values")
+	require.Len(t, positions, 3, "should have 3 positions")
+
+	// Verify values are correct
+	assert.Equal(t, "stealth", values[0])
+	assert.Equal(t, "archery", values[1])
+	assert.Equal(t, "lockpicking", values[2])
+
+	// CRITICAL: Verify positions contain REAL ElementIDs, not zeros
+	for i, pos := range positions {
+		assert.False(t, pos.IsZero(), "position %d should have non-zero ElementID, got %v", i, pos)
+		assert.NotEqual(t, uint64(0), pos.Lamport, "position %d Lamport should be non-zero", i)
+	}
+
+	// Verify ElementIDs are in increasing order (added sequentially in same tx)
+	assert.True(t, positions[0].Less(positions[1]),
+		"position 0 (%v) should be less than position 1 (%v)", positions[0], positions[1])
+	assert.True(t, positions[1].Less(positions[2]),
+		"position 1 (%v) should be less than position 2 (%v)", positions[1], positions[2])
+
+	// Verify maxID is at least as high as the last position
+	assert.False(t, maxID.Less(positions[2]),
+		"maxID (%v) should be >= last position (%v)", maxID, positions[2])
+
+	t.Logf("ElementIDs: [%v, %v, %v], maxID: %v", positions[0], positions[1], positions[2], maxID)
+}
+
+// TestVectorIndexUsableForTombstone verifies that ElementIDs from vectorIndex
+// can actually be used to tombstone specific elements.
+func TestVectorIndexUsableForTombstone(t *testing.T) {
+	db, cleanup := createVectorCacheTestDatabase(t)
+	defer cleanup()
+
+	// Create schema
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").
+		Type(schema.TypeString).
+		Vector().
+		Add().
+		Build()
+	require.NoError(t, err)
+	db.SetSchema(s)
+
+	// Add vector data
+	e := datalog.NewIdentity("character1")
+	a := datalog.NewKeyword(":character/skills")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, a, "stealth"))
+	require.NoError(t, tx.Add(e, a, "archery"))
+	require.NoError(t, tx.Add(e, a, "lockpicking"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Get the ElementID for "archery" (position 1) via cache
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+
+	var eBytes Entity
+	eBytes = e.Hash()
+	var aBytes Attribute
+	copy(aBytes[:], a.String())
+
+	_, positions, _, err := matcher.ResolveRGA(eBytes, aBytes)
+	require.NoError(t, err)
+	require.Len(t, positions, 3)
+
+	archeryElementID := positions[1]
+	require.False(t, archeryElementID.IsZero(), "archery ElementID should not be zero")
+
+	// Now write a tombstone for that specific ElementID
+	tx2 := db.NewTransaction()
+	tombstoneID := db.clock.Next()
+	tx2.datoms = append(tx2.datoms, datalog.Datom{
+		E:        e,
+		A:        a,
+		V:        "archery", // Value for verification
+		Tx:       tombstoneID,
+		Op:       datalog.OpRGATombstone,
+		AfterRef: archeryElementID, // The ElementID we got from cache
+	})
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify "archery" is now gone
+	matcher2 := NewBadgerMatcher(db.store)
+	matcher2.SetSchema(s)
+	result, found := matcher2.LookupAttribute(e, a)
+	require.True(t, found)
+
+	vec := result.([]any)
+	require.Len(t, vec, 2, "should have 2 elements after tombstone")
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "lockpicking", vec[1])
+	// "archery" should NOT be present
+	for _, v := range vec {
+		assert.NotEqual(t, "archery", v, "archery should have been tombstoned")
+	}
+}

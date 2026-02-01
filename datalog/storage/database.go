@@ -1426,7 +1426,88 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 	case schema.CardinalityOne:
 		return fmt.Errorf("Remove not valid for cardinality-one attribute %s: cardinality-one values are replaced via Set()", a.String())
 	case schema.CardinalityVector:
-		return fmt.Errorf("Remove not valid for cardinality-vector attribute %s: use Set() to replace entire vector", a.String())
+		// RGA LIFO Remove: tombstone the most recently added element matching value
+		// O(k) via EAVT scan where k = entries for this (E, A, V) combination
+		//
+		// Design decision: Remove() uses LIFO (most recent) semantics because:
+		// 1. O(k) performance - direct index lookup, no RGA reconstruction
+		// 2. CRDT-friendly - "most recent" = "the one I most recently added"
+		// 3. LIFO/Stack pattern - useful for undo operations
+		// Users wanting to remove the FIRST occurrence must use read-modify-write via Set()
+
+		// Build set of element IDs that have pending tombstones in this transaction
+		// This allows multiple Remove() calls in the same transaction to work correctly
+		pendingTombstones := make(map[datalog.ElementID]bool)
+		for _, d := range t.datoms {
+			if d.A.Matches(a) && e.Equal(d.E) && d.Op == datalog.OpRGATombstone {
+				pendingTombstones[d.AfterRef] = true
+			}
+		}
+
+		// Build EAVT prefix: [prefix][E][A][V] for O(k) scan
+		// EAVT key order: [E][A][V][Tx↓][Op][AfterRef?]
+		// Tx descending means highest Tx (most recent) comes first
+		eBytes := e.Hash()
+		var aBytes [32]byte
+		copy(aBytes[:], a.String())
+		vType := byte(datalog.Type(v))
+		vData := datalog.ValueBytes(v)
+		vBytes := append([]byte{vType}, vData...)
+
+		prefix := make([]byte, 1+20+32+len(vBytes))
+		prefix[0] = byte(EAVT)
+		copy(prefix[1:21], eBytes[:])
+		copy(prefix[21:53], aBytes[:])
+		copy(prefix[53:], vBytes)
+
+		iter, err := t.db.store.Scan(EAVT, prefix, prefixEnd(prefix))
+		if err != nil {
+			return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
+		}
+		defer iter.Close()
+
+		// Scan in Tx descending order:
+		// - Tombstones (higher Tx) come before the inserts they delete
+		// - Collect tombstone AfterRefs, stop at first non-tombstoned insert
+		tombstonedIDs := make(map[datalog.ElementID]bool)
+		var targetID datalog.ElementID
+		var targetValue interface{}
+
+		for iter.Next() {
+			datom, err := iter.Datom()
+			if err != nil {
+				continue
+			}
+
+			if datom.Op == datalog.OpRGATombstone {
+				// Record this tombstone's target
+				tombstonedIDs[datom.AfterRef] = true
+			} else if datom.Op == datalog.OpRGAInsert {
+				// Check if this insert is tombstoned (committed or pending)
+				if !tombstonedIDs[datom.Tx] && !pendingTombstones[datom.Tx] {
+					// Found the most recent non-tombstoned insert
+					targetID = datom.Tx
+					targetValue = datom.V
+					break // Early termination - no need to scan further
+				}
+			}
+		}
+
+		// If no matching element found, Remove is a no-op (not an error)
+		if targetID.IsZero() {
+			return nil
+		}
+
+		// Write tombstone for the target element
+		tombstoneID := t.db.clock.Next()
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:        e,
+			A:        a,
+			V:        targetValue,    // Raw value (for verification/debugging)
+			Tx:       tombstoneID,    // New tombstone ID
+			Op:       datalog.OpRGATombstone,
+			AfterRef: targetID,       // ID of element being tombstoned
+		})
 	default:
 		return fmt.Errorf("Remove not valid for cardinality %v", def.Cardinality)
 	}
@@ -1600,8 +1681,11 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		}
 
 	case schema.CardinalityVector:
-		// Set() for cardinality-vector replaces the entire vector
-		// This requires reading current elements, tombstoning them, and writing new ones
+		// Set() for cardinality-vector uses prefix-diff optimization:
+		// - Find common prefix between old and new vectors
+		// - Only tombstone elements after the common prefix
+		// - Only insert elements after the common prefix
+		// This makes appends O(k) instead of O(n+m) for the common case.
 		newSlice, ok := v.([]interface{})
 		if !ok {
 			// Try []any (same thing, different spelling)
@@ -1619,52 +1703,75 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Load current RGA elements to tombstone them
-		matcher := NewBadgerMatcher(t.db.store)
+		// Get current vector from cache - O(1) if fresh
 		eBytes := e.Hash()
-		var aBytes [32]byte
+		var aBytes Attribute
 		copy(aBytes[:], a.String())
-		currentElements, err := matcher.loadRGAElements(eBytes[:], aBytes[:])
-		if err != nil {
-			return fmt.Errorf("failed to read current vector elements: %w", err)
+		key := CacheKey{E: Entity(eBytes), A: aBytes}
+
+		matcher := NewBadgerMatcher(t.db.store)
+		matcher.SetSchema(t.db.schema)
+		entry := t.db.cache.GetOrResolve(key, matcher)
+
+		var oldList []any
+		var oldIndex []datalog.ElementID
+		if entry != nil && entry.Cardinality() == schema.CardinalityVector {
+			oldList = entry.VectorList()
+			oldIndex = entry.VectorIndex()
 		}
 
-		// Tombstone all existing non-tombstoned elements
-		// Bug #5 fix: Store raw value in V, AfterRef = ID of element being tombstoned
-		for _, elem := range currentElements {
-			if elem.Tombstone == nil {
-				tombstoneID := t.db.clock.Next()
-				t.datoms = append(t.datoms, datalog.Datom{
-					E:        e,
-					A:        a,
-					V:        elem.Value,    // Raw value (for verification/debugging)
-					Tx:       tombstoneID,   // New tombstone ID
-					Op:       datalog.OpRGATombstone, // New Op type indicates tombstone with AfterRef
-					AfterRef: elem.ID,       // ID of element being tombstoned
-				})
+		// Find common prefix - elements that don't need to change
+		// RGA constraint: we can only keep a PREFIX because descendants of
+		// tombstoned elements become unreachable in the DFS traversal.
+		commonPrefix := 0
+		maxPrefix := len(oldList)
+		if len(newSlice) < maxPrefix {
+			maxPrefix = len(newSlice)
+		}
+		for i := 0; i < maxPrefix; i++ {
+			if !datalog.ValuesEqual(oldList[i], newSlice[i]) {
+				break
 			}
+			commonPrefix++
 		}
 
-		// Write new elements with proper RGA chaining
-		// Bug #5 fix: Store raw value in V, AfterRef in datom.AfterRef field
-		key := entityAttrKey{E: e.Hash(), A: a.String()}
-		t.lastVectorElement[key] = datalog.ElementID{} // Reset to HEAD for new vector
+		// Tombstone old[commonPrefix:] - elements after common prefix
+		for i := commonPrefix; i < len(oldList); i++ {
+			tombstoneID := t.db.clock.Next()
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:        e,
+				A:        a,
+				V:        oldList[i],   // Raw value (for verification/debugging)
+				Tx:       tombstoneID,  // New tombstone ID
+				Op:       datalog.OpRGATombstone,
+				AfterRef: oldIndex[i],  // ID of element being tombstoned
+			})
+		}
 
-		for _, val := range newSlice {
+		// Insert new[commonPrefix:] - elements after common prefix
+		// Chain from last kept element (or HEAD if prefix is 0)
+		afterRef := datalog.ElementID{} // HEAD
+		if commonPrefix > 0 {
+			afterRef = oldIndex[commonPrefix-1]
+		}
+
+		eaKey := entityAttrKey{E: e.Hash(), A: a.String()}
+		for _, val := range newSlice[commonPrefix:] {
 			elemID := t.db.clock.Next()
-			afterRef := t.lastVectorElement[key] // Zero value = HEAD
 
 			t.datoms = append(t.datoms, datalog.Datom{
 				E:        e,
 				A:        a,
-				V:        val, // Raw value, not RGAElement wrapper
+				V:        val,
 				Tx:       elemID,
-				Op:       datalog.OpRGAInsert, // New Op type indicates AfterRef present
+				Op:       datalog.OpRGAInsert,
 				AfterRef: afterRef,
 			})
 
-			t.lastVectorElement[key] = elemID
+			afterRef = elemID
 		}
+		// Update lastVectorElement for subsequent Add() calls in same transaction
+		t.lastVectorElement[eaKey] = afterRef
 
 	default:
 		return fmt.Errorf("Set not valid for unknown cardinality %v", card)

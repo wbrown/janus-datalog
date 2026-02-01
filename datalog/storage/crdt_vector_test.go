@@ -721,6 +721,158 @@ func TestVectorPullIntegration(t *testing.T) {
 	assert.Equal(t, "lockpicking", skillsResult[2])
 }
 
+// TestVectorRemoveMostRecent verifies Remove() tombstones the most recently added
+// element matching the value (LIFO semantics).
+//
+// Design decision: Remove(e, a, v) for cardinality-vector removes the element
+// with highest ElementID matching value v. This provides:
+// - O(k) performance where k = elements with matching value (no RGA reconstruction)
+// - LIFO/stack semantics useful for undo operations
+// - CRDT-friendly: "most recent" = "the one I most recently added"
+//
+// Users wanting to remove the FIRST occurrence (in order) must use
+// read-modify-write via Set().
+func TestVectorRemoveMostRecent(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-remove-lifo-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Add skills with duplicates - "stealth" appears twice
+	// Order: stealth(0), archery(1), stealth(2)
+	// Position 0 and 2 both have value "stealth"
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))   // First "stealth" - lower ElementID
+	require.NoError(t, tx1.Add(alice, skills, "archery"))
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))   // Second "stealth" - higher ElementID
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Verify initial state: ["stealth", "archery", "stealth"]
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 3)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
+	assert.Equal(t, "stealth", vec[2])
+
+	// Remove "stealth" - should remove the MOST RECENT one (position 2)
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(alice, skills, "stealth"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result: ["stealth", "archery"]
+	// The first "stealth" remains, the second (most recent) is removed
+	matcher2 := NewBadgerMatcher(db.store)
+	matcher2.SetSchema(s)
+	result2, found2 := matcher2.LookupAttribute(alice, skills)
+	require.True(t, found2)
+	vec2 := result2.([]any)
+	require.Len(t, vec2, 2, "should have 2 elements after Remove()")
+	assert.Equal(t, "stealth", vec2[0], "first stealth should remain")
+	assert.Equal(t, "archery", vec2[1], "archery should remain")
+}
+
+// TestVectorRemoveNonExistent verifies Remove() is a no-op for values not in vector
+func TestVectorRemoveNonExistent(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-remove-nonexistent-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Add some skills
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))
+	require.NoError(t, tx1.Add(alice, skills, "archery"))
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Remove a value that doesn't exist - should be a no-op
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(alice, skills, "magic")) // "magic" not in vector
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify vector unchanged: ["stealth", "archery"]
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 2, "vector should be unchanged")
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
+}
+
+// TestVectorRemoveAllOccurrences verifies multiple Remove() calls remove all occurrences
+func TestVectorRemoveAllOccurrences(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-remove-all-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Add skills with duplicates
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))   // Position 0
+	require.NoError(t, tx1.Add(alice, skills, "archery"))   // Position 1
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))   // Position 2
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Remove "stealth" twice - should remove both occurrences
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(alice, skills, "stealth")) // Removes position 2 (most recent)
+	require.NoError(t, tx2.Remove(alice, skills, "stealth")) // Removes position 0 (now most recent)
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result: ["archery"]
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 1, "should have 1 element after removing both stealths")
+	assert.Equal(t, "archery", vec[0])
+}
+
 // TestAddSchemaAwareVector verifies Add() properly handles vector cardinality
 func TestAddSchemaAwareVector(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "add-schema-vector-test")
@@ -783,4 +935,366 @@ func TestAddSchemaAwareVector(t *testing.T) {
 	require.Len(t, vec, 2)
 	assert.Equal(t, "go", vec[0])
 	assert.Equal(t, "python", vec[1])
+}
+
+// ============================================================================
+// Set() Backwards Diff Optimization Tests
+// ============================================================================
+//
+// These tests verify Set() correctly handles partial updates via backwards diff.
+// The optimization compares from the END first because appends are the dominant
+// operation:
+//
+//   Old: ["a", "b", "c"]
+//   New: ["a", "b", "c", "d"]  // Append
+//
+// Backwards diff finds common prefix = 3, common suffix = 0, so only inserts "d".
+// The full-replace algorithm would do 3 tombstones + 4 inserts = 7 writes.
+// The optimized algorithm does 1 insert.
+//
+// These tests verify CORRECTNESS. Performance is validated via benchmarks.
+
+// TestVectorSetAppend verifies Set() efficiently handles appending elements.
+// This is the most common operation and should only insert new elements.
+func TestVectorSetAppend(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-set-append-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Initial state: ["stealth", "archery", "lockpicking"]
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))
+	require.NoError(t, tx1.Add(alice, skills, "archery"))
+	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Append one element: ["stealth", "archery", "lockpicking", "magic"]
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking", "magic"}))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 4)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
+	assert.Equal(t, "lockpicking", vec[2])
+	assert.Equal(t, "magic", vec[3])
+}
+
+// TestVectorSetAppendMultiple verifies Set() handles appending multiple elements.
+func TestVectorSetAppendMultiple(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-set-append-multi-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Initial state: ["stealth"]
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Append multiple: ["stealth", "archery", "lockpicking"]
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 3)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
+	assert.Equal(t, "lockpicking", vec[2])
+}
+
+// TestVectorSetChangeEnd verifies Set() handles changing the last element.
+func TestVectorSetChangeEnd(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-set-change-end-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Initial state: ["stealth", "archery", "lockpicking"]
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))
+	require.NoError(t, tx1.Add(alice, skills, "archery"))
+	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Change last element: ["stealth", "archery", "magic"]
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "magic"}))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 3)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
+	assert.Equal(t, "magic", vec[2])
+}
+
+// TestVectorSetChangeMiddle verifies Set() handles changing a middle element.
+func TestVectorSetChangeMiddle(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-set-change-middle-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Initial state: ["stealth", "archery", "lockpicking"]
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))
+	require.NoError(t, tx1.Add(alice, skills, "archery"))
+	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Change middle element: ["stealth", "MAGIC", "lockpicking"]
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "MAGIC", "lockpicking"}))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 3)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "MAGIC", vec[1])
+	assert.Equal(t, "lockpicking", vec[2])
+}
+
+// TestVectorSetPrepend verifies Set() handles prepending (worst case for optimization).
+func TestVectorSetPrepend(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-set-prepend-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Initial state: ["archery", "lockpicking"]
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "archery"))
+	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Prepend element: ["stealth", "archery", "lockpicking"]
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 3)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
+	assert.Equal(t, "lockpicking", vec[2])
+}
+
+// TestVectorSetNoChange verifies Set() does nothing when vectors are identical.
+func TestVectorSetNoChange(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-set-nochange-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Initial state: ["stealth", "archery", "lockpicking"]
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))
+	require.NoError(t, tx1.Add(alice, skills, "archery"))
+	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Set to same values: ["stealth", "archery", "lockpicking"]
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result unchanged
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 3)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
+	assert.Equal(t, "lockpicking", vec[2])
+}
+
+// TestVectorSetFromEmpty verifies Set() works when starting with empty vector.
+func TestVectorSetFromEmpty(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-set-from-empty-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// No initial state - vector doesn't exist
+
+	// Set from empty: ["stealth", "archery", "lockpicking"]
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(alice, skills, []interface{}{"stealth", "archery", "lockpicking"}))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Verify result
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 3)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
+	assert.Equal(t, "lockpicking", vec[2])
+}
+
+// TestVectorSetTruncate verifies Set() handles removing elements from the end.
+func TestVectorSetTruncate(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-set-truncate-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Initial state: ["stealth", "archery", "lockpicking", "magic"]
+	tx1 := db.NewTransaction()
+	require.NoError(t, tx1.Add(alice, skills, "stealth"))
+	require.NoError(t, tx1.Add(alice, skills, "archery"))
+	require.NoError(t, tx1.Add(alice, skills, "lockpicking"))
+	require.NoError(t, tx1.Add(alice, skills, "magic"))
+	_, err = tx1.Commit()
+	require.NoError(t, err)
+
+	// Truncate to first two: ["stealth", "archery"]
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Set(alice, skills, []interface{}{"stealth", "archery"}))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Verify result
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+	result, found := matcher.LookupAttribute(alice, skills)
+	require.True(t, found)
+	vec := result.([]any)
+	require.Len(t, vec, 2)
+	assert.Equal(t, "stealth", vec[0])
+	assert.Equal(t, "archery", vec[1])
 }

@@ -543,6 +543,7 @@ Note: While our planner is explicit and feature-complete, the **information flow
 
 ### Implementation Guides
 - **[docs/reference/SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
+- **[docs/reference/CRDT.md](docs/reference/CRDT.md)** - CRDT storage semantics: LWW, add-wins sets, RGA vectors, EA cache
 - **[docs/reference/REFLECT.md](docs/reference/REFLECT.md)** - Struct reflection API: Go structs ↔ datoms
 - **[docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md)** - QueryInto API: typed query results into Go structs
 - **[docs/INPUT_PARAMETER_SEMANTICS.md](docs/INPUT_PARAMETER_SEMANTICS.md)** - Comprehensive guide to input parameter handling

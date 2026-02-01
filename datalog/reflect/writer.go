@@ -33,6 +33,11 @@ type TransactionUpdater interface {
 	TransactionAdder
 	// Remove adds a tombstone for cardinality-many attributes (CRDT add-wins semantics)
 	Remove(e datalog.Identity, a datalog.Keyword, v interface{}) error
+	// Set replaces the value for an attribute (handles all cardinalities correctly)
+	// - Cardinality-One: LWW semantics
+	// - Cardinality-Many: Replaces entire set via diff
+	// - Cardinality-Vector: Replaces entire vector via prefix-diff algorithm
+	Set(e datalog.Identity, a datalog.Keyword, v interface{}) error
 }
 
 // EntityLookup provides lookup of existing entity attributes
@@ -265,10 +270,13 @@ func containsValue(vals []interface{}, target interface{}) bool {
 	return false
 }
 
-// updateSliceField handles cardinality-many field updates
+// updateSliceField handles cardinality-many and cardinality-vector field updates
 // Nil slice means "don't touch existing values" - skip entirely.
 // Empty slice (not nil) means "clear all values".
-// Non-empty slice means "set to exactly these values" (diff-based).
+// Non-empty slice means "set to exactly these values".
+//
+// For cardinality-vector: uses tx.Set() which applies prefix-diff algorithm
+// For cardinality-many: uses element-by-element Add/Remove diff
 func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value, mode UpdateMode) error {
 	if val.Kind() != reflect.Slice {
 		return fmt.Errorf("expected slice, got %s", val.Kind())
@@ -295,6 +303,21 @@ func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLoo
 		}
 	}
 
+	// Check cardinality to determine update strategy
+	card := schema.CardinalityMany // Default for slices
+	if sw.schema != nil {
+		if def := sw.schema.GetAttribute(kw); def != nil {
+			card = def.Cardinality
+		}
+	}
+
+	// For cardinality-vector: use tx.Set() which applies prefix-diff algorithm
+	// This correctly handles RGA semantics (order matters, no orphaning)
+	if card == schema.CardinalityVector {
+		return tx.Set(entity, kw, newVals)
+	}
+
+	// For cardinality-many: use element-by-element diff
 	if mode == UpdateModeReplace {
 		// Diff-based set assignment: slice IS the new complete state
 		existingVals := lookup.LookupAllAttributes(entity, kw)

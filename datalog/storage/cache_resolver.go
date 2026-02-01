@@ -68,22 +68,33 @@ func (m *BadgerMatcher) ResolveAddWins(e Entity, a Attribute) (map[any]bool, dat
 }
 
 // ResolveRGA returns the ordered vector for cardinality-vector
-// Uses the existing resolveVector method and extracts position index
+// Returns (values, positionToElementID, maxElementID, error)
 func (m *BadgerMatcher) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, error) {
-	result, err := m.resolveVector(e[:], a[:])
+	// Load raw RGA elements
+	elements, err := m.loadRGAElements(e[:], a[:])
 	if err != nil {
 		return nil, nil, datalog.ElementID{}, err
 	}
 
-	// Build position index from the elements
-	// For now, we don't have direct access to element IDs in order
-	// We need to load elements again or modify resolveVector to return them
-	// For simplicity, we'll return nil positions for now (can be optimized later)
-	positions := make([]datalog.ElementID, len(result.Elements))
-	// Note: The actual ElementIDs would require modifying RGA reconstruction
-	// to track the mapping from position to ElementID. For now, leave as zero.
+	if len(elements) == 0 {
+		return nil, nil, datalog.ElementID{}, nil
+	}
 
-	return result.Elements, positions, result.MaxElementID, nil
+	// Reconstruct with IDs preserved
+	withIDs := ReconstructRGAWithIDs(elements)
+
+	// Extract values and positions
+	values := make([]any, len(withIDs))
+	positions := make([]datalog.ElementID, len(withIDs))
+	for i, ewp := range withIDs {
+		values[i] = ewp.Element.Value
+		positions[i] = ewp.Element.ID
+	}
+
+	// Get max ElementID for cache versioning
+	maxID := FindMaxElementID(elements)
+
+	return values, positions, maxID, nil
 }
 
 // decodeAttribute converts Attribute bytes to a string (keyword representation)

@@ -19,6 +19,7 @@
 
 Configuration and optimization guides in `docs/reference/`:
 - **[SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
+- **[CRDT.md](docs/reference/CRDT.md)** - CRDT storage semantics: LWW, add-wins sets, RGA vectors, EA cache
 - **[PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
 - **[EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md)** - Database export/import to EDN format for backup and migration
 
