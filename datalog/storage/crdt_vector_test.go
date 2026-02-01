@@ -753,9 +753,9 @@ func TestVectorRemoveMostRecent(t *testing.T) {
 	// Order: stealth(0), archery(1), stealth(2)
 	// Position 0 and 2 both have value "stealth"
 	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))   // First "stealth" - lower ElementID
+	require.NoError(t, tx1.Add(alice, skills, "stealth")) // First "stealth" - lower ElementID
 	require.NoError(t, tx1.Add(alice, skills, "archery"))
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))   // Second "stealth" - higher ElementID
+	require.NoError(t, tx1.Add(alice, skills, "stealth")) // Second "stealth" - higher ElementID
 	_, err = tx1.Commit()
 	require.NoError(t, err)
 
@@ -850,9 +850,9 @@ func TestVectorRemoveAllOccurrences(t *testing.T) {
 
 	// Add skills with duplicates
 	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))   // Position 0
-	require.NoError(t, tx1.Add(alice, skills, "archery"))   // Position 1
-	require.NoError(t, tx1.Add(alice, skills, "stealth"))   // Position 2
+	require.NoError(t, tx1.Add(alice, skills, "stealth")) // Position 0
+	require.NoError(t, tx1.Add(alice, skills, "archery")) // Position 1
+	require.NoError(t, tx1.Add(alice, skills, "stealth")) // Position 2
 	_, err = tx1.Commit()
 	require.NoError(t, err)
 
@@ -881,8 +881,8 @@ func TestAddSchemaAwareVector(t *testing.T) {
 
 	// Create schema with all three cardinalities
 	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).Add().           // One
-		Attribute(":person/tags").Type(schema.TypeString).Many().Add().    // Many
+		Attribute(":person/name").Type(schema.TypeString).Add().            // One
+		Attribute(":person/tags").Type(schema.TypeString).Many().Add().     // Many
 		Attribute(":person/skills").Type(schema.TypeString).Vector().Add(). // Vector
 		Build()
 	require.NoError(t, err)
@@ -898,11 +898,11 @@ func TestAddSchemaAwareVector(t *testing.T) {
 
 	// Add values to all three types using same Add() method
 	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, name, "Alice"))      // One
-	require.NoError(t, tx.Add(alice, tags, "developer"))  // Many
-	require.NoError(t, tx.Add(alice, tags, "lead"))       // Many
-	require.NoError(t, tx.Add(alice, skills, "go"))       // Vector
-	require.NoError(t, tx.Add(alice, skills, "python"))   // Vector
+	require.NoError(t, tx.Add(alice, name, "Alice"))     // One
+	require.NoError(t, tx.Add(alice, tags, "developer")) // Many
+	require.NoError(t, tx.Add(alice, tags, "lead"))      // Many
+	require.NoError(t, tx.Add(alice, skills, "go"))      // Vector
+	require.NoError(t, tx.Add(alice, skills, "python"))  // Vector
 	_, err = tx.Commit()
 	require.NoError(t, err)
 

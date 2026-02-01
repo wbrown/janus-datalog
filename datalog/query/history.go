@@ -16,8 +16,9 @@ const (
 // to return historical values instead of just current values.
 //
 // Usage:
-//   [(history)]        - Return all versions of matched values
-//   [(as-of ?tx 5000)] - Return value as of Lamport time 5000
+//
+//	[(history)]        - Return all versions of matched values
+//	[(as-of ?tx 5000)] - Return value as of Lamport time 5000
 //
 // This predicate doesn't filter results - it changes how the matcher
 // retrieves data. Eval() always returns true.

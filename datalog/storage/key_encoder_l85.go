@@ -66,12 +66,13 @@ func (e *L85KeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 // AfterRef is 16 bytes: present only when Op.HasAfterRef() is true, otherwise zero.
 //
 // Key formats (V before Tx, Op after Tx, AfterRef at end when present):
-//   EAVT: [prefix][E][A][V][Tx][Op][AfterRef?]
-//   EATV: [prefix][E][A][Tx][V][Op][AfterRef?]
-//   AEVT: [prefix][A][E][V][Tx][Op][AfterRef?]
-//   AVET: [prefix][A][V][E][Tx][Op][AfterRef?]
-//   VAET: [prefix][V][A][E][Tx][Op][AfterRef?]
-//   TAEV: [prefix][Tx][A][E][V][Op][AfterRef?]
+//
+//	EAVT: [prefix][E][A][V][Tx][Op][AfterRef?]
+//	EATV: [prefix][E][A][Tx][V][Op][AfterRef?]
+//	AEVT: [prefix][A][E][V][Tx][Op][AfterRef?]
+//	AVET: [prefix][A][V][E][Tx][Op][AfterRef?]
+//	VAET: [prefix][V][A][E][Tx][Op][AfterRef?]
+//	TAEV: [prefix][Tx][A][E][V][Op][AfterRef?]
 //
 // NOTE: L85 encoder does NOT yet support AfterRef - returns zero. Update pending.
 func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]byte, attr [32]byte, value []byte, tx [16]byte, op byte, afterRef [16]byte, err error) {

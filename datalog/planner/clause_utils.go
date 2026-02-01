@@ -437,9 +437,9 @@ func canExecuteClauseWithContext(clause query.Clause, available map[query.Symbol
 //
 // Key insight: Selectivity is VISIBLE in pattern syntax, no statistics needed.
 // Priority ordering:
-//   1. Patterns with concrete values (constants) - visible selectivity, run first
-//   2. Patterns with available variable bindings - join hints, run next
-//   3. Unbound patterns - run last
+//  1. Patterns with concrete values (constants) - visible selectivity, run first
+//  2. Patterns with available variable bindings - join hints, run next
+//  3. Unbound patterns - run last
 //
 // Constants are weighted 10× more than available variables because:
 // - Constants FILTER data (selectivity is visible in the pattern)
@@ -512,7 +512,7 @@ func countSelectivityFactors(p *query.DataPattern, available map[query.Symbol]bo
 			if available[e.Name] {
 				availableVars++ // Available vars are join hints, not selectivity
 			}
-		// Blanks are unbound (match anything) - neither constants nor join hints
+			// Blanks are unbound (match anything) - neither constants nor join hints
 		}
 	}
 	return constants, availableVars

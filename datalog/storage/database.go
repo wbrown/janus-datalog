@@ -1265,7 +1265,7 @@ type Transaction struct {
 	retracts          []datalog.Datom
 	mu                sync.Mutex
 	closed            bool
-	txTime            *time.Time                      // Optional custom transaction time
+	txTime            *time.Time                          // Optional custom transaction time
 	lastVectorElement map[entityAttrKey]datalog.ElementID // Track last appended element per (E,A) for RGA chaining
 }
 
@@ -1503,10 +1503,10 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 		t.datoms = append(t.datoms, datalog.Datom{
 			E:        e,
 			A:        a,
-			V:        targetValue,    // Raw value (for verification/debugging)
-			Tx:       tombstoneID,    // New tombstone ID
+			V:        targetValue, // Raw value (for verification/debugging)
+			Tx:       tombstoneID, // New tombstone ID
 			Op:       datalog.OpRGATombstone,
-			AfterRef: targetID,       // ID of element being tombstoned
+			AfterRef: targetID, // ID of element being tombstoned
 		})
 	default:
 		return fmt.Errorf("Remove not valid for cardinality %v", def.Cardinality)
@@ -1741,10 +1741,10 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			t.datoms = append(t.datoms, datalog.Datom{
 				E:        e,
 				A:        a,
-				V:        oldList[i],   // Raw value (for verification/debugging)
-				Tx:       tombstoneID,  // New tombstone ID
+				V:        oldList[i],  // Raw value (for verification/debugging)
+				Tx:       tombstoneID, // New tombstone ID
 				Op:       datalog.OpRGATombstone,
-				AfterRef: oldIndex[i],  // ID of element being tombstoned
+				AfterRef: oldIndex[i], // ID of element being tombstoned
 			})
 		}
 

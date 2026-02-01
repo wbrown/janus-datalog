@@ -1039,11 +1039,11 @@ type cardinalityManyScanAllEntitiesIterator struct {
 	seenEntities map[[20]byte]bool
 
 	// Current entity state
-	currentEntity         datalog.Identity
-	currentSetMembers     []interface{} // Resolved set members for current entity
-	currentMaxElementID   datalog.ElementID
-	currentMemberIdx      int
-	currentTuple          executor.Tuple
+	currentEntity       datalog.Identity
+	currentSetMembers   []interface{} // Resolved set members for current entity
+	currentMaxElementID datalog.ElementID
+	currentMemberIdx    int
+	currentTuple        executor.Tuple
 }
 
 func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {

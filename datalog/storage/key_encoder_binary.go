@@ -34,12 +34,13 @@ func txFromDescending(encoded []byte) [16]byte {
 // Op is included between V and Tx to support CRDT semantics (add-wins for cardinality-many).
 //
 // Key formats (Bug #5 fix: Tx before Op, AfterRef at end for RGA ops):
-//   EAVT: [prefix][E][A][type][value][Tx↓][Op][AfterRef?]  - groups by value for add-wins
-//   EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]  - first entry is current
-//   AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]  - by attribute
-//   AVET: [prefix][A][type][value][E][Tx↓][Op][AfterRef?]  - value lookup
-//   VAET: [prefix][type][value][A][E][Tx↓][Op][AfterRef?]  - reverse refs
-//   TAEV: [prefix][Tx↓][A][E][type][value][Op][AfterRef?]  - transaction log
+//
+//	EAVT: [prefix][E][A][type][value][Tx↓][Op][AfterRef?]  - groups by value for add-wins
+//	EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]  - first entry is current
+//	AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]  - by attribute
+//	AVET: [prefix][A][type][value][E][Tx↓][Op][AfterRef?]  - value lookup
+//	VAET: [prefix][type][value][A][E][Tx↓][Op][AfterRef?]  - reverse refs
+//	TAEV: [prefix][Tx↓][A][E][type][value][Op][AfterRef?]  - transaction log
 //
 // AfterRef? = 16 bytes present only if Op ∈ {OpRGAInsert(3), OpRGATombstone(4)}
 func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
@@ -124,12 +125,13 @@ func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 // AfterRef is optionally present for Op ∈ {OpRGAInsert(3), OpRGATombstone(4)}.
 //
 // Key formats (Bug #5 fix: Tx before Op, AfterRef at end for RGA ops):
-//   EAVT: [prefix][E][A][type][value][Tx↓][Op][AfterRef?]
-//   EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]
-//   AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]
-//   AVET: [prefix][A][type][value][E][Tx↓][Op][AfterRef?]
-//   VAET: [prefix][type][value][A][E][Tx↓][Op][AfterRef?]
-//   TAEV: [prefix][Tx↓][A][E][type][value][Op][AfterRef?]
+//
+//	EAVT: [prefix][E][A][type][value][Tx↓][Op][AfterRef?]
+//	EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]
+//	AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]
+//	AVET: [prefix][A][type][value][E][Tx↓][Op][AfterRef?]
+//	VAET: [prefix][type][value][A][E][Tx↓][Op][AfterRef?]
+//	TAEV: [prefix][Tx↓][A][E][type][value][Op][AfterRef?]
 func (e *BinaryKeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]byte, attr [32]byte, value []byte, tx [16]byte, op byte, afterRef [16]byte, err error) {
 	if len(key) < 1 {
 		return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("key too short")

@@ -24,12 +24,12 @@ type Tx [16]byte
 // StorageDatom is the internal storage representation
 // It uses fixed-size byte arrays for efficient storage and indexing
 type StorageDatom struct {
-	E        Entity        // Entity identifier (20 bytes)
-	A        Attribute     // Attribute identifier (32 bytes)
-	V        datalog.Value // The actual value (unbounded, stored last)
-	Tx       Tx            // Transaction/time identifier (16 bytes = ElementID)
+	E        Entity         // Entity identifier (20 bytes)
+	A        Attribute      // Attribute identifier (32 bytes)
+	V        datalog.Value  // The actual value (unbounded, stored last)
+	Tx       Tx             // Transaction/time identifier (16 bytes = ElementID)
 	Op       datalog.CRDTOp // CRDT operation (0=none, 1=add, 2=remove, 3=rga-insert, 4=rga-tombstone)
-	AfterRef Tx            // RGA position reference (16 bytes, only used when Op.HasAfterRef() is true)
+	AfterRef Tx             // RGA position reference (16 bytes, only used when Op.HasAfterRef() is true)
 }
 
 // NewEntity creates an entity ID from a string identifier

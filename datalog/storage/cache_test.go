@@ -467,13 +467,13 @@ func (m *mockStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error
 }
 
 // Stub implementations for Store interface
-func (m *mockStore) Assert(datoms []datalog.Datom) error                             { return nil }
-func (m *mockStore) Retract(datoms []datalog.Datom) error                            { return nil }
-func (m *mockStore) Scan(index IndexType, start, end []byte) (Iterator, error)       { return nil, nil }
-func (m *mockStore) Get(index IndexType, key []byte) (*datalog.Datom, error)         { return nil, nil }
-func (m *mockStore) MaxElementID() (datalog.ElementID, error)                        { return datalog.ElementID{}, nil }
-func (m *mockStore) BeginTx() (StoreTx, error)                                       { return nil, nil }
-func (m *mockStore) Close() error                                                    { return nil }
+func (m *mockStore) Assert(datoms []datalog.Datom) error                       { return nil }
+func (m *mockStore) Retract(datoms []datalog.Datom) error                      { return nil }
+func (m *mockStore) Scan(index IndexType, start, end []byte) (Iterator, error) { return nil, nil }
+func (m *mockStore) Get(index IndexType, key []byte) (*datalog.Datom, error)   { return nil, nil }
+func (m *mockStore) MaxElementID() (datalog.ElementID, error)                  { return datalog.ElementID{}, nil }
+func (m *mockStore) BeginTx() (StoreTx, error)                                 { return nil, nil }
+func (m *mockStore) Close() error                                              { return nil }
 
 func TestCacheAttributeFreshness(t *testing.T) {
 	cache := NewCache()

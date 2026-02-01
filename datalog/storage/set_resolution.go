@@ -27,8 +27,8 @@ type SetResolutionResult struct {
 //   - Find highest Lamport with OpCRDTAdd (if any)
 //   - Find highest Lamport with OpCRDTRemove (if any)
 //   - Compare LAMPORT VALUES ONLY (not full ElementID):
-//     - Higher Lamport wins
-//     - Same Lamport (concurrent operations): Add wins
+//   - Higher Lamport wins
+//   - Same Lamport (concurrent operations): Add wins
 //
 // NOTE: ReplicaID is NOT used for add-wins comparison. It's only used for
 // LWW (cardinality-one). For add-wins, "concurrent" means same Lamport,

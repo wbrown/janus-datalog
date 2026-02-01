@@ -19,9 +19,9 @@ type CacheEntry struct {
 	cardinality schema.Cardinality
 
 	// Resolved views (one populated based on cardinality)
-	oneValue    any              // Cardinality-One: single current value
-	manySet     map[any]bool     // Cardinality-Many: current set members
-	vectorList  []any            // Cardinality-Vector: ordered elements
+	oneValue    any                 // Cardinality-One: single current value
+	manySet     map[any]bool        // Cardinality-Many: current set members
+	vectorList  []any               // Cardinality-Vector: ordered elements
 	vectorIndex []datalog.ElementID // Cardinality-Vector: position → ElementID for O(1) access
 }
 

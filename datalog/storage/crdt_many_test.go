@@ -1875,7 +1875,7 @@ func TestAVETOptimizationForCardinalityMany(t *testing.T) {
 		if i < 10 {
 			tx.Add(entity, attr, "warrior")
 		}
-		tx.Add(entity, attr, "citizen")           // All have this
+		tx.Add(entity, attr, "citizen")               // All have this
 		tx.Add(entity, attr, fmt.Sprintf("id-%d", i)) // Unique tag
 		_, err = tx.Commit()
 		if err != nil {

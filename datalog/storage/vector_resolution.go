@@ -113,7 +113,7 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 				// No insert record yet - create tombstoned placeholder
 				elemByID[targetID] = RGAElement{
 					ID:        targetID,
-					Value:     datom.V, // Value from tombstone record
+					Value:     datom.V,             // Value from tombstone record
 					AfterRef:  datalog.ElementID{}, // Unknown until we see insert
 					Tombstone: &tombstoneID,
 				}
