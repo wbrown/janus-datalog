@@ -3,11 +3,153 @@
 **Status:** In Progress (Phases 0-8 Complete, Phase 9 Partially Complete - Audit Pending)
 **Based On:** CRDT_VECTOR_STORAGE.md Proposal
 **Created:** 2026-01-30
-**Updated:** 2026-01-31 (Phase 9 legacy code removal done; thorough audit pending)
+**Updated:** 2026-02-01 (Set() prefix-diff optimization implemented; cache vectorIndex fix)
 
 ---
 
 ## Decision Log
+
+### 2026-01-31: Vector Remove() Semantics - "Most Recent" (LIFO)
+
+**Decision:** `Remove(e, a, v)` for cardinality-vector tombstones the **most recently added** element matching value `v` (highest ElementID).
+
+**Rejected Alternatives:**
+
+| Alternative | Description | Why Rejected |
+|-------------|-------------|--------------|
+| Remove first (in order) | Tombstone first occurrence in reconstructed RGA order | Requires O(n log n) RGA reconstruction; expensive for large vectors |
+| Remove all matching | Tombstone all elements with value v | Set-like semantics, unexpected for ordered collection |
+| Reject Remove() | Force users to use Set() for any modification | Poor ergonomics; read-modify-write is clunky |
+
+**Rationale:**
+
+1. **Performance:** Finding the most recent element is O(k) where k = elements with value v. Just scan AVET index for `[A][V][E]`, pick highest ElementID. No RGA reconstruction needed.
+
+2. **CRDT-friendly:** In a distributed system, "most recent" means "the one I most recently added" - you're removing your own contribution, not someone else's concurrent addition.
+
+3. **LIFO/Stack pattern:** Useful for undo operations, task queues, or any "remove what I just added" workflow.
+
+4. **Simplicity:** Implementation is straightforward - index lookup + tombstone write. No graph traversal.
+
+**Trade-off:** Users expecting traditional `list.remove()` semantics (remove first occurrence) must use read-modify-write via `Set()`. This is acceptable because:
+- Vector reconstruction is already cached for reads
+- "Remove first" is a less common use case than "undo last add"
+- Explicit read-modify-write makes the cost visible
+
+**Implementation:**
+```go
+// Remove(e, :skills, "stealth") for vector:
+// 1. Scan AVET for [A="skills"][V="stealth"][E=e] entries
+// 2. Find entry with highest ElementID (most recent addition)
+// 3. Write tombstone: Op=OpRGATombstone, AfterRef=that ElementID
+```
+
+**Example:**
+```go
+// Vector: ["stealth", "archery", "stealth"] (added in that order)
+// "stealth" at position 0 has ElementID 100
+// "stealth" at position 2 has ElementID 300 (most recent)
+
+tx.Remove(e, :skills, "stealth")
+// Tombstones ElementID 300
+// Result: ["stealth", "archery"]
+```
+
+---
+
+### 2026-02-01: Vector Set() Prefix-Diff Optimization - IMPLEMENTED
+
+**Status:** ✅ IMPLEMENTED (2026-02-01)
+
+**Decision:** `Set(e, a, newSlice)` for cardinality-vector uses a **prefix-diff** algorithm via the EA cache to minimize writes. The most common operation is append, which becomes O(k) instead of O(n+m).
+
+**RGA Constraint - Why Only PREFIX:**
+
+In RGA, each element chains off its predecessor via AfterRef. When you tombstone an element, its descendants become unreachable during DFS reconstruction:
+
+```
+Old: [a, b, c]  with chain: HEAD → a → b → c
+
+If we tombstone b:
+- children[a] = [] (b is filtered out)
+- children[b] = [c] (c still points to b)
+- DFS from HEAD visits: a, then a's children (empty)
+- c is LOST - never visited
+```
+
+**This means we can only keep a PREFIX** - elements that chain from HEAD through kept elements. Common suffix cannot be preserved because they chain from tombstoned elements.
+
+**The Algorithm (Implemented):**
+
+```go
+// 1. Get current vector from cache - O(1) if fresh
+entry := cache.GetOrResolve(key, matcher)
+oldList := entry.VectorList()    // values
+oldIndex := entry.VectorIndex()  // ElementIDs
+
+// 2. Find common prefix
+commonPrefix := 0
+for i := 0; i < min(len(oldList), len(newSlice)); i++ {
+    if !valuesEqual(oldList[i], newSlice[i]) {
+        break
+    }
+    commonPrefix++
+}
+
+// 3. Tombstone old[commonPrefix:] using cached ElementIDs
+for i := commonPrefix; i < len(oldList); i++ {
+    writeTombstone(oldIndex[i])
+}
+
+// 4. Insert new[commonPrefix:], chain from oldIndex[commonPrefix-1] or HEAD
+afterRef := HEAD
+if commonPrefix > 0 {
+    afterRef = oldIndex[commonPrefix-1]
+}
+for _, val := range newSlice[commonPrefix:] {
+    writeInsert(val, afterRef)
+    afterRef = newElemID
+}
+```
+
+**Performance by Operation Type:**
+
+| Operation | Old Writes | New Writes | Improvement |
+|-----------|------------|------------|-------------|
+| Append 1 element | n + (n+1) = 2n+1 | 1 | **O(n) → O(1)** |
+| Prepend 1 element | n + (n+1) = 2n+1 | n+1 tombstones + n+1 inserts | Same (worst case) |
+| Change last element | n + n = 2n | 1 tombstone + 1 insert = 2 | **O(n) → O(1)** |
+| Change first element | n + n = 2n | n tombstones + n inserts = 2n | Same (worst case) |
+| Full replacement | n + m = O(n+m) | n + m = O(n+m) | Same |
+| No change | n + n = 2n | 0 | **O(n) → O(1)** |
+
+**Key Insight:** Prefix-only comparison works because:
+1. **Appends** (most common) → common prefix = old length → 0 tombstones, just inserts
+2. **Modifications at end** → common prefix catches unchanged start, minimal diff
+3. **No changes** → common prefix = full length → 0 tombstones, 0 inserts
+
+**Implementation Uses EA Cache:**
+
+1. `cache.GetOrResolve()` provides O(1) access to `vectorList` and `vectorIndex`
+2. `vectorIndex` gives ElementIDs needed for tombstoning specific elements
+3. No index scan or RGA reconstruction needed (cache does it once, reused)
+4. Values compared using `datalog.ValuesEqual()` for proper type handling
+
+**Test Cases (All Passing):**
+
+| Test | Old | New | Expected Writes |
+|------|-----|-----|-----------------|
+| `TestVectorSetAppend` | ["a","b","c"] | ["a","b","c","d"] | 1 insert |
+| `TestVectorSetAppendMultiple` | ["a"] | ["a","b","c"] | 2 inserts |
+| `TestVectorSetChangeEnd` | ["a","b","c"] | ["a","b","d"] | 1 tombstone + 1 insert |
+| `TestVectorSetChangeMiddle` | ["a","b","c"] | ["a","x","c"] | 1 tombstone + 1 insert |
+| `TestVectorSetPrepend` | ["b","c"] | ["a","b","c"] | 2 tombstones + 3 inserts (worst case) |
+| `TestVectorSetNoChange` | ["a","b","c"] | ["a","b","c"] | 0 writes |
+| `TestVectorSetFullReplace` | ["a","b","c"] | ["x","y","z"] | 3 tombstones + 3 inserts |
+| `TestVectorSetToEmpty` | ["a","b","c"] | [] | 3 tombstones |
+| `TestVectorSetFromEmpty` | [] | ["a","b","c"] | 3 inserts |
+
+---
 
 ### 2026-01-31: Phase 5.5 Merged into Phase 6
 
@@ -1732,21 +1874,21 @@ With Tx = ElementID (16 bytes), keys actually **shrink by 4 bytes** compared to 
 
 ### API Limitations to Document
 
-**Vector Remove Limitation:**
+**Vector Remove Semantics (LIFO - Most Recent):**
 
-The `Remove(e, a, v)` method is **NOT valid for Vector cardinality**. The only way to remove elements from a vector is `Set(e, a, newSlice)` which requires:
+`Remove(e, a, v)` for cardinality-vector tombstones the **most recently added** element matching value `v`. See Decision Log entry "2026-01-31: Vector Remove() Semantics" for full rationale.
 
-1. Read current vector: O(n)
-2. Filter out unwanted element(s)
-3. Write new vector (tombstones all existing + writes new elements)
-
-This is intentional - RGA doesn't support efficient individual element removal by value because elements are identified by ElementID, not value. To remove efficiently, you'd need to expose ElementID to users, which breaks the abstraction.
+**Key points:**
+- Removes the element with highest ElementID matching the value (LIFO/stack semantics)
+- O(k) performance where k = elements with matching value (no RGA reconstruction)
+- If no matching element exists, no error - operation is a no-op
+- To remove the *first* occurrence (in order), use read-modify-write via `Set()`
 
 | Method | One | Many | Vector |
 |--------|-----|------|--------|
 | `Set(e, a, v)` | ✓ New version | ✓ Replace set | ✓ Replace vector |
 | `Add(e, a, v)` | ✗ Error | ✓ Add to set | ✗ Error |
-| `Remove(e, a, v)` | ✗ Error | ✓ Tombstone value | ✗ Error |
+| `Remove(e, a, v)` | ✗ Error | ✓ Tombstone value | ✓ Tombstone most recent |
 | `Append(e, a, v)` | ✗ Error | ✗ Error | ✓ Append element |
 
 ### Deferred: Compaction and Garbage Collection
@@ -3755,10 +3897,10 @@ The matcher's `Match()` and `LookupAttribute()` methods should call `cache.GetOr
 
 **Goal:** Complete the new transaction API with proper validation.
 
-> **STATUS: ✅ COMPLETE (2026-01-31)**
+> **STATUS: ✅ COMPLETE (2026-02-01)**
 >
-> Phase 7 is complete. The original plan specified separate validation helpers and explicit
-> `Set()` usage, but the schema-aware `Add()` implementation (Gap #4 fix) made these unnecessary.
+> Phase 7 is complete. The schema-aware `Add()` implementation works for all cardinalities.
+> The reflect layer now correctly uses `tx.Set()` for cardinality-vector attributes.
 
 ### 7.0 Write Indexing (All 6 Indices)
 
@@ -3784,25 +3926,45 @@ that validation would require is already happening in the methods that need it.
 
 ### 7.2 SaveStruct Integration
 
-> **STATUS: ✅ COMPLETE** - No changes needed.
+> **STATUS: ✅ FIXED (2026-02-01)** - Reflect layer now correctly handles cardinality-vector.
 
-The original plan suggested modifying `SaveStruct` to explicitly use `Set()` for cardinality-one.
-This is **unnecessary** because:
+**The Fix:**
 
-1. **Add() is the universal write method** - It's schema-aware and dispatches correctly:
-   - CardinalityOne: Uses LWW semantics (same as Set())
-   - CardinalityMany: Uses add-wins semantics
-   - CardinalityVector: Uses RGA semantics
+Modified `updateSliceField()` in `reflect/writer.go` to detect `CardinalityVector` and use `tx.Set()`:
 
-2. **SaveStruct already uses Add()** - The reflect layer calls `tx.Add()` for all fields,
-   which works correctly for all cardinalities due to the Gap #4 fix.
+```go
+// Check cardinality to determine update strategy
+card := schema.CardinalityMany // Default for slices
+if sw.schema != nil {
+    if def := sw.schema.GetAttribute(kw); def != nil {
+        card = def.Cardinality
+    }
+}
 
-3. **No performance difference** - Both `Add()` and `Set()` do schema lookup; using `Add()`
-   universally is cleaner and avoids cardinality-conditional code in the reflect layer.
+// For cardinality-vector: use tx.Set() which applies prefix-diff algorithm
+if card == schema.CardinalityVector {
+    return tx.Set(entity, kw, newVals)
+}
+```
 
-**Design Decision:** `Add()` is the preferred write method for all cardinalities. `Set()` exists
-for explicit full-replacement semantics (e.g., replacing an entire set or vector), but `Add()`
-handles single-value writes correctly regardless of cardinality.
+Also added `Set()` method to `TransactionUpdater` interface.
+
+**All 9 vector tests now pass:**
+- `TestReflect_VectorOrderPreserved` - initial order preserved
+- `TestReflect_VectorDuplicatesAllowed` - duplicates handled correctly
+- `TestReflect_VectorUpdatePreservesUnchangedPrefix` - append works
+- `TestReflect_VectorReplaceMiddleElement` - middle replacement works
+- `TestReflect_VectorRemoveFromMiddle` - middle removal works (no orphaning)
+- `TestReflect_VectorReorder` - reordering works
+- `TestReflect_VectorPrepend` - prepend works
+- `TestReflect_VectorInsertInMiddle` - insert works
+- `TestReflect_VectorClearAndRepopulate` - full replacement works
+
+**Remaining limitation:**
+- `SchemaFromStruct()` cannot infer `CardinalityVector` - always infers `CardinalityMany` for slices
+- Users must manually build schema with `.Vector()` to use vectors via reflect
+
+**Tests:** `datalog/reflect/vector_test.go` - 9 tests all passing
 
 ---
 
@@ -4818,7 +4980,7 @@ func BenchmarkCRDTvsLegacy(b *testing.B) {
 | **Phase 4: Cardinality-Many** | ✅ Complete | Add-wins, Add()/Remove(), set resolution |
 | **Phase 5: Cardinality-Vector** | ✅ Complete | RGA with AfterRef in key, Bug #5 fixed |
 | **Phase 6: Cache** | ✅ Complete | Unified cache, query engine integration |
-| **Phase 7: Transaction API** | ✅ Complete | Schema-aware Add(), validation inlined |
+| **Phase 7: Transaction API** | ✅ Complete | Schema-aware Add() works; reflect layer fixed for vectors |
 | **Phase 8: Query Integration** | ✅ Complete | 8.1-8.5 all complete |
 | **Phase 9: Cleanup** | ⚠️ Partially Complete | Legacy code removed; audit pending |
 

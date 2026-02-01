@@ -114,17 +114,70 @@ Op values:
 When two replicas append concurrently (before sync):
 
 ```
-Replica A:                      Replica B:
-tx.Add(e, :skills, "stealth")   tx.Add(e, :skills, "magic")
-  AfterRef = HEAD                 AfterRef = HEAD
-  ID = (L5, A)                    ID = (L5, B)
+Replica A (ReplicaID=100):          Replica B (ReplicaID=200):
+tx.Add(e, :skills, "stealth")       tx.Add(e, :skills, "magic")
+  AfterRef = HEAD                     AfterRef = HEAD
+  ID = (Lamport=5, Replica=100)       ID = (Lamport=5, Replica=200)
+tx.Commit()                         tx.Commit()
 ```
 
-After merge, both elements exist. Order determined by ElementID:
-- If ReplicaID(A) < ReplicaID(B): `["stealth", "magic"]`
-- If ReplicaID(B) < ReplicaID(A): `["magic", "stealth"]`
+Both replicas independently append to an empty vector. Both elements have `AfterRef = HEAD` because neither replica saw the other's write.
 
-**This is deterministic** - same result on all replicas.
+**After merge (bidirectional sync)**, both replicas have both elements. RGA reconstruction:
+
+1. Build adjacency map: `HEAD → [element_A, element_B]`
+2. **Sort children by ElementID** for determinism
+3. DFS from HEAD, visiting children in ElementID order
+
+Since `(5, 100) < (5, 200)` (same Lamport, lower ReplicaID wins):
+
+**Result on ALL replicas**: `["stealth", "magic"]`
+
+### Concurrent Update to Same Position
+
+When two replicas modify the same position concurrently:
+
+```
+Initial: ["a", "b", "c"] (on both replicas)
+
+Replica A:                              Replica B:
+tx.Set(e, :skills, ["a", "X", "c"])     tx.Set(e, :skills, ["a", "Y", "c"])
+  // Change middle to "X"                 // Change middle to "Y"
+tx.Commit()                             tx.Commit()
+```
+
+Each replica:
+1. Tombstones original "b" (and "c" due to RGA prefix constraint)
+2. Inserts new elements after "a"
+
+**After merge**:
+- Both "X" and "Y" are inserted after "a" (both have AfterRef = E1)
+- "X" and "Y" are sorted by ElementID
+- Result: `["a", "X", "Y", "c"]` or `["a", "Y", "X", "c"]` depending on ReplicaID ordering
+
+**Both values are preserved** - RGA does not silently discard concurrent writes.
+
+### Key Properties of Concurrent Vector Writes
+
+| Property | Behavior |
+|----------|----------|
+| **Deterministic** | Same result on all replicas after merge |
+| **No data loss** | All concurrent writes are preserved |
+| **Order by ElementID** | Lower `(Lamport, ReplicaID)` comes first |
+| **Not temporal** | Order is NOT "who wrote first in wall-clock time" |
+| **Convergent** | All replicas converge to identical state after sync |
+
+### Important: This is NOT Last-Writer-Wins
+
+Unlike cardinality-one (LWW), vectors preserve ALL concurrent writes. The semantics are:
+
+- **Cardinality-One**: Concurrent writes → highest ElementID wins, others discarded
+- **Cardinality-Vector**: Concurrent writes → ALL preserved, ordered by ElementID
+
+If you need strict temporal ordering or "only one writer wins" semantics for ordered collections, you would need:
+- External coordination (distributed lock)
+- Explicit position/sequence attributes with LWW semantics
+- Application-level conflict resolution after merge
 
 ---
 

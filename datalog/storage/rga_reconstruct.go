@@ -20,9 +20,26 @@ import (
 // Time complexity: O(n log n) where n = number of elements
 // Space complexity: O(n) for the children map and result slice
 //
-// The deterministic ordering ensures that all replicas produce
-// the same result after merging, regardless of the order in which
-// elements were received.
+// CONCURRENT WRITE BEHAVIOR:
+//
+// When two replicas concurrently insert elements at the same position (same AfterRef),
+// BOTH elements are preserved. The order is determined by ElementID comparison:
+// lower (Lamport, ReplicaID) comes first.
+//
+// Example: Two replicas append to an empty vector concurrently:
+//
+//	Replica A: Add("stealth") → AfterRef=HEAD, ID=(L=5, R=100)
+//	Replica B: Add("magic")   → AfterRef=HEAD, ID=(L=5, R=200)
+//
+// After merge, children[HEAD] = [{stealth, (5,100)}, {magic, (5,200)}]
+// Sorted by ElementID: stealth first (100 < 200)
+// Result: ["stealth", "magic"]
+//
+// This is NOT last-writer-wins. All concurrent writes are preserved and
+// deterministically ordered. The order is based on ElementID, not wall-clock time.
+//
+// For same-position updates via Set(), both new values appear adjacent in the
+// result because both have the same AfterRef (the element before the changed position).
 func ReconstructRGA(elements []RGAElement) []any {
 	// Build children map: afterRef -> []elements
 	// Include ALL elements (even tombstoned) to maintain tree structure

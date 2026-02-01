@@ -1341,8 +1341,24 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 				Tx: elemID,
 			})
 		case schema.CardinalityVector:
-			// RGA append semantics - chain elements within transaction
-			// Bug #5 fix: Store raw value in V, AfterRef in datom.AfterRef field
+			// RGA append semantics - chain elements within transaction.
+			// Bug #5 fix: Store raw value in V, AfterRef in datom.AfterRef field.
+			//
+			// IMPORTANT: Add() does NOT read from storage. AfterRef is set to the last
+			// element added in THIS transaction, or HEAD (zero) if this is the first.
+			//
+			// CONCURRENT WRITE BEHAVIOR:
+			// When two replicas Add() concurrently to the same vector (before sync),
+			// both elements will have AfterRef=HEAD (or the same predecessor).
+			// After merge, BOTH elements are preserved. Order is determined by
+			// ElementID comparison during RGA reconstruction, NOT by wall-clock time.
+			//
+			// Example: Replica A adds "stealth", Replica B adds "magic" concurrently.
+			// Both have AfterRef=HEAD. After merge, result is ["stealth", "magic"]
+			// or ["magic", "stealth"] depending on which replica has lower ReplicaID.
+			//
+			// This is NOT last-writer-wins - all concurrent writes are preserved.
+			// See docs/reference/CRDT.md for detailed semantics.
 			key := entityAttrKey{E: e.Hash(), A: a.String()}
 			afterRef := t.lastVectorElement[key] // Zero value = HEAD
 
