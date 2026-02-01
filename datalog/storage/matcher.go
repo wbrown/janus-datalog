@@ -793,10 +793,12 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 			case schema.CardinalityMany:
 				set := entry.ManySet()
 				if len(set) > 0 {
-					// Return first value from set
+					// Return all values as slice for consistency with cardinality-vector
+					result := make([]interface{}, 0, len(set))
 					for v := range set {
-						return v, true
+						result = append(result, v)
 					}
+					return result, true
 				}
 				return nil, false
 			case schema.CardinalityVector:
@@ -851,7 +853,7 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	}
 
 	// For cardinality-many, use AEVT and apply add-wins resolution
-	// This is a simplified path - for full resolution, use the set resolution code
+	// Must return ALL values that are currently in the set
 	start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
 
 	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
@@ -861,9 +863,8 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	defer iter.Close()
 
 	// For cardinality-many, we need add-wins resolution
-	// Track the value with highest add that isn't removed
-	var bestValue interface{}
-	var bestAddLamport uint64
+	// Track the highest add and remove lamport for each value
+	valueAddLamport := make(map[interface{}]uint64)
 	valueRemoveLamport := make(map[interface{}]uint64)
 
 	for iter.Next() {
@@ -883,21 +884,24 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 			}
 		} else {
 			// OpCRDTAdd or no op (legacy)
-			if datom.Tx.Lamport > bestAddLamport {
-				bestAddLamport = datom.Tx.Lamport
-				bestValue = datom.V
+			if datom.Tx.Lamport > valueAddLamport[datom.V] {
+				valueAddLamport[datom.V] = datom.Tx.Lamport
 			}
 		}
 	}
 
-	// Check if best value is not removed (or add-wins if same lamport)
-	if bestValue != nil {
-		removeLamport := valueRemoveLamport[bestValue]
-		if bestAddLamport >= removeLamport { // add-wins on tie
-			return bestValue, true
+	// Build result: include values where add >= remove (add-wins on tie)
+	var result []interface{}
+	for v, addLamport := range valueAddLamport {
+		removeLamport := valueRemoveLamport[v]
+		if addLamport >= removeLamport { // add-wins on tie
+			result = append(result, v)
 		}
 	}
 
+	if len(result) > 0 {
+		return result, true
+	}
 	return nil, false
 }
 

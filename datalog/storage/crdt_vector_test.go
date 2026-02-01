@@ -763,10 +763,18 @@ func TestAddSchemaAwareVector(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, "Alice", nameVal)
 
-	// Cardinality-many: returns one value (for LookupAttribute)
+	// Cardinality-many: returns slice of all set members
 	tagVal, found := matcher.LookupAttribute(alice, tags)
 	require.True(t, found)
-	assert.NotNil(t, tagVal) // Returns one of the values
+	tagSlice := tagVal.([]interface{})
+	require.Len(t, tagSlice, 2)
+	// Set members may be in any order
+	tagSet := make(map[string]bool)
+	for _, t := range tagSlice {
+		tagSet[t.(string)] = true
+	}
+	assert.True(t, tagSet["developer"])
+	assert.True(t, tagSet["lead"])
 
 	// Cardinality-vector: returns ordered slice
 	skillsVal, found := matcher.LookupAttribute(alice, skills)
