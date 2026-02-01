@@ -1,23 +1,5 @@
 package storage
 
-// historyIndexToBase maps history index types to their base current-state equivalents
-func historyIndexToBase(index IndexType) IndexType {
-	switch index {
-	case EAVT_HISTORY:
-		return EAVT
-	case AEVT_HISTORY:
-		return AEVT
-	case AVET_HISTORY:
-		return AVET
-	case VAET_HISTORY:
-		return VAET
-	case TAEV_HISTORY:
-		return TAEV
-	default:
-		return index
-	}
-}
-
 // incrementLastByte creates an end key by incrementing the last byte of start.
 // Used for prefix range scans.
 func incrementLastByte(start []byte) []byte {

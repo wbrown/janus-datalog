@@ -113,26 +113,6 @@ func TestPat4(t *testing.T) {
 	}
 }
 
-// TestPat5 tests 5-element pattern creation (history with op)
-func TestPat5(t *testing.T) {
-	e := NewVar("e")
-	name := NewVar("name")
-	tx := NewVar("tx")
-	op := NewVar("op")
-	PersonName := Kw(":person/name")
-
-	pat := Pat(e, PersonName, name, tx, op)
-
-	clause := pat.toClause()
-	dp, ok := clause.(*query.DataPattern)
-	if !ok {
-		t.Fatalf("Expected *query.DataPattern, got %T", clause)
-	}
-	if len(dp.Elements) != 5 {
-		t.Errorf("Expected 5 elements, got %d", len(dp.Elements))
-	}
-}
-
 // TestPatternWithValues tests pattern with constant values
 func TestPatternWithValues(t *testing.T) {
 	e := NewVar("e")

@@ -1,9 +1,9 @@
 # CRDT Vector Storage - Implementation Plan
 
-**Status:** In Progress (Phases 0-8 Complete)
+**Status:** In Progress (Phases 0-8 Complete, Phase 9 Partially Complete - Audit Pending)
 **Based On:** CRDT_VECTOR_STORAGE.md Proposal
 **Created:** 2026-01-30
-**Updated:** 2026-01-31 (Phase 8 complete; only Phase 9 cleanup remaining)
+**Updated:** 2026-01-31 (Phase 9 legacy code removal done; thorough audit pending)
 
 ---
 
@@ -4449,17 +4449,54 @@ func RewriteTxPredicate(pred *query.Predicate) (*StorageRange, error) {
 
 **Goal:** Remove legacy code and finalize the new storage model.
 
+> **STATUS: ⚠️ PARTIALLY COMPLETE (2026-01-31)**
+> - ✅ 9.1 Legacy storage code removed
+> - ✅ 9.2 Index migration verified (only 6 CRDT indices remain)
+> - ⚠️ 9.3 Full audit pending
+> - ❌ 9.4 Storage diagnostics API (deferred)
+
 ### 9.1 Remove Legacy Storage Code
 
+**Status:** ✅ COMPLETE (2026-01-31)
+
+**What was removed:**
+
+| File | Removed |
+|------|---------|
+| `store.go` | `_HISTORY` index constants, `HistoryIndices`, `Op` type (bool), `RetractMode` type, renamed `CurrentStateIndices` → `Indices` |
+| `badger_store.go` | `retractMode` field, `writeToHistoryIndices()`, history mode checks in `assertDatom`/`retractDatom` |
+| `database.go` | `RetractMode` from options, `History()`, `RetractMode()`, `ExecuteHistoryQuery()`, `ExecuteHistoryQueryWithInputs()` |
+| `key_encoder_interface.go` | `EncodeHistoryKey`, `DecodeHistoryKey` from interface |
+| `key_encoder_base.go` | `historyIndexToBase()` function |
+| `key_encoder_l85.go` | `EncodeHistoryKey`, `DecodeHistoryKey` implementations |
+| `key_encoder_binary.go` | `EncodeHistoryKey`, `DecodeHistoryKey` implementations |
+| `datom_decoder.go` | `DatomFromHistoryKey`, `HistoryKeyOnlyIterator` |
+| `history_matcher.go` | **Deleted entirely** |
+| `history_test.go` | **Deleted entirely** |
+
+**What was updated:**
+
+| File | Change |
+|------|--------|
+| `reflect/writer.go` | Uses `Add()` for all writes (schema-aware LWW), `Remove()` for cardinality-many tombstones |
+
+**Design decisions preserved:**
+- `Retract()` kept for hard deletion (GDPR, explicit cleanup)
+- `Add()` is the universal write method (schema-aware CRDT semantics)
+- `Remove()` for cardinality-many tombstones
+- History is now inherent in CRDT semantics (all writes preserved with ElementIDs)
+
 **Tasks:**
-- [ ] Remove `Retract` method from Transaction (replaced by tombstones for Many)
-- [ ] Remove `RetractHistory` mode (history is now built-in)
-- [ ] Remove `_HISTORY` index handling
-- [ ] Remove old test fixtures that reference legacy indices
+- [x] Remove `RetractHistory` mode (history is now built-in via CRDT semantics)
+- [x] Remove `_HISTORY` index handling (5 legacy indices removed)
+- [x] Remove old test fixtures that reference legacy indices
+- [x] Keep `Retract()` for explicit hard deletion use cases
 
 ### 9.2 Verify Index Migration
 
-All code should now use the 6 new indices (Tx = ElementID, 16 bytes):
+**Status:** ✅ COMPLETE (2026-01-31)
+
+All code now uses only the 6 CRDT indices (Tx = ElementID, 16 bytes):
 
 ```go
 const (
@@ -4470,16 +4507,32 @@ const (
     VAET                   // V → A → E → Tx: Reverse reference lookup
     TAEV                   // Tx → A → E → V: Transaction log, startup recovery
 )
+
+var Indices = []IndexType{EAVT, EATV, AEVT, AVET, VAET, TAEV}
 ```
 
-Note: This matches Phase 2.3. "Tx" in all names means the 16-byte ElementID (Lamport + ReplicaID).
+Note: "Tx" in all names means the 16-byte ElementID (Lamport + ReplicaID).
 
 ### 9.3 Update All Tests
 
-- [ ] Update test helpers to include ElementID in Datom construction
-- [ ] Remove tests for legacy storage paths
-- [ ] Ensure all 6 indices covered in encoder tests
-- [ ] Verify all cardinality-specific tests pass
+**Status:** ✅ COMPLETE (2026-01-31)
+
+- [x] Remove tests for legacy storage paths (`history_test.go` deleted)
+- [x] All 6 indices covered in encoder tests
+- [x] All cardinality-specific tests pass
+- [x] Full test suite passes (storage: 52.9s, all packages: OK)
+
+### 9.4 Thorough Audit (Pending)
+
+**Status:** ⚠️ PENDING
+
+Before marking Phase 9 complete, need to audit:
+
+- [ ] Search for any remaining references to legacy types/functions
+- [ ] Verify no dead code paths remain
+- [ ] Check for any TODO/FIXME comments related to legacy code
+- [ ] Review all files touched to ensure consistency
+- [ ] Verify documentation is updated (CLAUDE.md mentions RetractHistory)
 
 ### 9.4 Storage Diagnostics API
 
@@ -4767,22 +4820,16 @@ func BenchmarkCRDTvsLegacy(b *testing.B) {
 | **Phase 6: Cache** | ✅ Complete | Unified cache, query engine integration |
 | **Phase 7: Transaction API** | ✅ Complete | Schema-aware Add(), validation inlined |
 | **Phase 8: Query Integration** | ✅ Complete | 8.1-8.5 all complete |
-| **Phase 9: Cleanup** | ❌ Not started | - |
+| **Phase 9: Cleanup** | ⚠️ Partially Complete | Legacy code removed; audit pending |
 
 ### Remaining Work
 
-1. **Phase 8: Query Integration** - ✅ COMPLETE
-   - ✅ 8.1 PatternMatcher Cardinality Dispatch - DONE
-   - ✅ 8.2 Pull API Integration - DONE
-   - ✅ 8.3 Vector Functions - DONE (8 functions, 21 tests)
-   - ✅ 8.4 History query predicates - DONE (history.go, parsing, 35 tests)
-   - ✅ 8.5 Tx range query rewriting - DONE (tx_range_rewriter.go, 15 tests)
-
-2. **Phase 9: Cleanup**
-   - Remove legacy storage code
-   - Verify index migration
-   - Update all tests
-   - Storage diagnostics API
+1. **Phase 9: Cleanup** - ⚠️ PARTIALLY COMPLETE
+   - ✅ 9.1 Remove legacy storage code - DONE
+   - ✅ 9.2 Verify index migration - DONE
+   - ✅ 9.3 Update all tests - DONE (all pass)
+   - ⚠️ 9.4 Thorough audit - PENDING
+   - ❌ 9.5 Storage diagnostics API - DEFERRED
 
 ### What's Working
 
@@ -4792,7 +4839,10 @@ All core CRDT functionality is operational:
 - Cardinality-vector with RGA semantics
 - Unified cache with query engine integration
 - Schema-aware Add() as universal write method
-- All 6 indices (EAVT, EATV, AEVT, AVET, VAET, TAEV)
+- All 6 CRDT indices (EAVT, EATV, AEVT, AVET, VAET, TAEV)
+- Legacy RetractHistory mode and _HISTORY indices removed
+- Reflect layer uses CRDT methods (Add for LWW, Remove for tombstones)
+- Retract() preserved for explicit hard deletion (GDPR, cleanup)
 
 ### Historical Priority Sequence (for reference)
 
@@ -4806,15 +4856,16 @@ All core CRDT functionality is operational:
 - ✅ Cardinality-Many with add-wins
 - ✅ Cardinality-Vector with RGA
 
-**Phase Group 3: Integration (Phases 6-8)** In Progress
+**Phase Group 3: Integration (Phases 6-8)** ✅ DONE
 - ✅ Cache implementation
 - ✅ Transaction API
-- ⚠️ Query integration (8.1, 8.2 done; 8.3, 8.4, 8.5 pending)
+- ✅ Query integration (8.1-8.5 all complete)
 
-**Phase Group 4: Finalization (Phase 9)**
-- ❌ Remove legacy code
-- ❌ Clean up removed code
-- ❌ Full test suite validation
+**Phase Group 4: Finalization (Phase 9)** ⚠️ IN PROGRESS
+- ✅ Remove legacy code (RetractHistory, _HISTORY indices, history_matcher.go)
+- ✅ Update reflect/writer.go for CRDT methods
+- ✅ Full test suite validation (all tests pass)
+- ⚠️ Thorough audit pending
 
 ---
 
@@ -4862,13 +4913,28 @@ All core CRDT functionality is operational:
 | `edn/writer.go` | 1 | Emit #eid for ElementID values |
 | `executor/compare.go` | 1 | Add ElementID to compareValues |
 
-### Deleted Code (Phase 9)
+### Deleted Code (Phase 9) - UPDATED 2026-01-31
 
 | What | Reason |
 |------|--------|
-| `Transaction.Retract()` | Replaced by tombstones |
-| `RetractHistory` mode | History now built-in |
-| `_HISTORY` index handling | No longer needed |
+| `history_matcher.go` | Legacy history queries (replaced by CRDT-inherent history) |
+| `history_test.go` | Tests for removed functionality |
+| `RetractMode` type | No longer needed (history is inherent) |
+| `RetractHistory`/`RetractDelete` constants | No longer needed |
+| `_HISTORY` indices (5) | Replaced by CRDT semantics |
+| `HistoryIndices` variable | No longer needed |
+| `Op` type (bool) | Legacy assertion/retraction flag |
+| `EncodeHistoryKey`/`DecodeHistoryKey` | History key encoding removed |
+| `historyIndexToBase()` | Helper for history indices |
+| `writeToHistoryIndices()` | History index writing |
+| `DatomFromHistoryKey` | History key decoding |
+| `HistoryKeyOnlyIterator` | History-specific iterator |
+| `Database.History()` | Legacy history matcher access |
+| `Database.RetractMode()` | Retract mode accessor |
+| `Database.ExecuteHistoryQuery()` | History query execution |
+| `Database.ExecuteHistoryQueryWithInputs()` | Parameterized history queries |
+
+**Note:** `Transaction.Retract()` (and `Store.Retract()`) are PRESERVED for explicit hard deletion use cases (GDPR, cleanup).
 
 ---
 
@@ -4885,25 +4951,30 @@ Before declaring complete (current status as of 2026-01-31):
 ### Cardinality-Specific
 5. ✅ **Cardinality-One** - Highest ElementID wins, no read before write
 6. ✅ **Cardinality-Many** - Add-wins at same Lamport, tombstones work
-7. ❌ **Cardinality-Vector** - **NOT IMPLEMENTED** - No RGA code exists
+7. ✅ **Cardinality-Vector** - RGA with AfterRef in key, V stores raw values
 
 ### Query Integration
 8. ✅ **All 8 vector functions work** - 21 tests passing (nth, first, last, length, contains?, index-of, subvec, enumerate)
-9. ❌ **History predicates work** - Not implemented
+9. ✅ **History predicates work** - history.go, parsing, 35 tests passing
 10. ✅ **Cache works** - Phase 6 complete
 
 ### Performance
-11. ❌ **Cache provides O(1) vector access** - Cache not implemented
+11. ✅ **Cache provides O(1) vector access** - Cache implemented
 12. ✅ **Writes are O(1)** - No read-before-write for any operation
 13. ✅ **Reads have no side effects** - No database writes from read operations
-14. ⚠️ **Benchmarks acceptable** - AVET unused for cardinality-many (O(n) instead of O(k))
+14. ✅ **AVET optimization** - Now uses O(k) lookup for cardinality-many
 
 ### Documentation
-15. ❌ **API limitations documented** - Vector not implemented
-16. ❌ **Append semantics documented** - Vector not implemented
+15. ⚠️ **API limitations documented** - Needs review after Phase 9 cleanup
+16. ✅ **Append semantics documented** - In plan, vector implemented
 17. ✅ **Storage size documented** - Keys shrink by ~5% (Tx: 20→16 bytes)
 
 ### Testing
-18. ⚠️ **All new tests pass** - Cardinality-one/many pass, vector tests don't exist
-19. ❌ **Concurrent write tests pass** - Limited coverage
+18. ✅ **All new tests pass** - All cardinalities tested, 21 vector tests, full suite passes
+19. ⚠️ **Concurrent write tests pass** - Limited coverage (single-replica only)
 20. ✅ **Sort order tests pass** - Key encoding preserves correct order
+
+### Phase 9 Cleanup
+21. ✅ **Legacy code removed** - RetractHistory, _HISTORY indices, history_matcher.go
+22. ✅ **Reflect layer updated** - Uses Add() for LWW, Remove() for tombstones
+23. ⚠️ **Thorough audit pending** - Need to verify no dead code remains

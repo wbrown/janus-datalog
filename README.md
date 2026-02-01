@@ -21,12 +21,14 @@ Most databases make you choose:
 - **Powerful queries** (Datomic, Datalog) → Complex deployment, expensive, JVM required
 - **Simple deployment** (SQLite, embedded DBs) → Limited query expressiveness
 - **Predictable performance** (Modern optimizers) → Statistics collection, stale plans, "it depends"
+- **Multi-writer support** (CRDTs, distributed DBs) → Complex conflict resolution, eventual consistency headaches
 
-**Janus gives you all three:**
+**Janus gives you all four:**
 
 - **Datomic-style queries**: Joins, aggregations, subqueries, time-travel, history
 - **Single Go binary**: No JVM, no external dependencies, just `go get`
 - **No surprises**: Greedy planning without statistics, explicit error handling, predictable performance
+- **CRDT storage**: Automatic conflict resolution, multi-replica ready, history is inherent
 
 Built for real-world financial analysis with sentiment, options, and OHLC data where query failures mean bad decisions.
 
@@ -291,40 +293,39 @@ Or extract time components:
 
 Time functions: `year`, `month`, `day`, `hour`, `minute`, `second`
 
-### History Queries (Audit Trail)
+### History Queries (Time-Travel)
 
-Track every change with full history mode:
+All writes are preserved with CRDT semantics - history is inherent:
 
 ```go
-// Create database with history mode enabled
-db, _ := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-    Path:        "my.db",
-    RetractMode: storage.RetractHistory,
-})
-
-// Make changes
+// Make changes over time
 tx := db.NewTransaction()
 tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
-tx.Commit()  // tx 1: assert "Alice"
+tx.Commit()  // Lamport 1
 
 tx2 := db.NewTransaction()
-tx2.Retract(alice, datalog.NewKeyword(":user/name"), "Alice")
-tx2.Commit()  // tx 2: retract "Alice"
+tx2.Add(alice, datalog.NewKeyword(":user/name"), "Alicia")  // LWW: replaces "Alice"
+tx2.Commit()  // Lamport 2
 
-// Query current state - returns nothing (value was retracted)
+// Query current state - returns latest value (LWW semantics)
 db.ExecuteQuery(`[:find ?name :where [_ :user/name ?name]]`)
+// Returns: [["Alicia"]]
 
-// Query history - see ALL changes with 5-element pattern [?e ?a ?v ?tx ?op]
-db.ExecuteHistoryQuery(`[:find ?name ?tx ?op :where [_ :user/name ?name ?tx ?op]]`)
-// Returns: [["Alice" 1 true] ["Alice" 2 false]]
-// op=true means assertion, op=false means retraction
+// Query ALL historical values using [(history)] predicate
+db.ExecuteQuery(`[:find ?name ?tx :where [_ :user/name ?name ?tx] [(history)]]`)
+// Returns: [["Alice" <ElementID@1>] ["Alicia" <ElementID@2>]]
+
+// Query value as of a specific Lamport time
+db.ExecuteQuery(`[:find ?name :where [_ :user/name ?name ?tx] [(as-of ?tx 1)]]`)
+// Returns: [["Alice"]]
 ```
 
 **Key concepts:**
-- `RetractHistory` mode preserves full audit trail (default `RetractDelete` just deletes)
-- Current-state queries (`ExecuteQuery`) see only current truth
-- History queries (`ExecuteHistoryQuery`) see all assertions AND retractions
-- 5-element patterns: `[?e ?a ?v ?tx ?op]` where `?op` is true=assert, false=retract
+- CRDT storage preserves all writes with ElementIDs (Lamport + ReplicaID)
+- Current-state queries return resolved values (LWW for cardinality-one)
+- `[(history)]` predicate returns all historical versions
+- `[(as-of ?tx N)]` returns value as of Lamport time N
+- `[(tx-between ?tx low high)]` filters to a Lamport range
 
 ### Subqueries
 
@@ -649,6 +650,54 @@ Query resulted in 3 disjoint relation groups - Cartesian products not supported
 This happens when you write a query with no join paths between patterns. Instead of silently creating billions of tuples, Janus fails fast with a clear error.
 
 **Design philosophy:** Better to error explicitly than succeed unexpectedly.
+
+### CRDT-Backed Storage
+
+Traditional databases assume a single writer. When multiple writers exist (replicas, concurrent processes), you get conflicts that require manual resolution or complex distributed protocols.
+
+**Janus uses CRDT semantics** (Conflict-free Replicated Data Types) at the storage layer:
+
+| Cardinality | Strategy | Behavior |
+|-------------|----------|----------|
+| **One** | LWW (Last-Writer-Wins) | Higher Lamport timestamp wins automatically |
+| **Many** | Add-Wins Set | Concurrent add + remove → add wins (no lost data) |
+| **Vector** | RGA (Replicated Growable Array) | Ordered sequences with deterministic merge |
+
+**What this enables:**
+
+```go
+// Each write gets a unique ElementID (Lamport clock + ReplicaID)
+tx := db.NewTransaction()
+tx.Add(alice, UserName.Keyword(), "Alice")   // ElementID: (Lamport=1, Replica=42)
+tx.Commit()
+
+tx2 := db.NewTransaction()
+tx2.Add(alice, UserName.Keyword(), "Alicia") // ElementID: (Lamport=2, Replica=42)
+tx2.Commit()
+
+// Current value: "Alicia" (higher Lamport wins)
+// But "Alice" is preserved - query it with [(history)]
+```
+
+**Multi-replica scenarios:**
+- Two replicas can accept writes independently (offline-first)
+- Merge via `db.Merge(datomsFromOtherReplica)`
+- Conflicts resolve deterministically - same result on all nodes
+- No coordination required, no conflict resolution callbacks
+
+**History is inherent:**
+- Every write is preserved with its ElementID
+- `[(history)]` predicate returns all versions
+- `[(as-of ?tx N)]` returns state at Lamport time N
+- No separate "history mode" to enable - it's always there
+
+**Why this matters:**
+- **Edge computing**: Devices work offline, sync when connected
+- **Multi-process**: Multiple writers to same database, no locks needed
+- **Audit trails**: Complete history without explicit versioning
+- **Time-travel**: Query any point in time, debug what changed
+
+This is the same class of algorithms used by Automerge, Riak, and CockroachDB - but integrated into a Datalog query engine.
 
 ## Performance
 

@@ -125,15 +125,15 @@ This is **standard database query optimization** (similar to Selinger's algorith
 - Predicates are applied as soon as their required symbols are available
 
 ### Storage Design
-- **Fixed 72-byte keys**: E(20) + A(32) + Tx(20) for efficient indexing
+- **Fixed 69-byte keys**: E(20) + A(32) + Tx(16) + Op(1) for efficient indexing
 - **Unbounded values**: Stored last with 2-byte size prefix and 1-byte type
 - **L85 encoding**: Custom Base85 variant preserving sort order (see below)
-- **Multiple indices**: EAVT, AEVT, AVET, VAET, TAEV for different access patterns
-- **History indices**: EAVT_HISTORY, AEVT_HISTORY, AVET_HISTORY, VAET_HISTORY, TAEV_HISTORY (opt-in with `RetractHistory` mode)
+- **Six indices**: EAVT, EATV, AEVT, AVET, VAET, TAEV for different access patterns and cardinalities
+- **CRDT semantics**: LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector
 - **Keyword interning**: Keywords hashed once and reused
 - **RefValues**: 20-byte entity references are L85-encoded like E/Tx components
 - **Attribute size**: Increased from 20 to 32 bytes to support longer attribute names (e.g., `:option/open-interest`)
-- **Retract modes**: `RetractDelete` (default, hard delete) vs `RetractHistory` (preserves audit trail)
+- **Tx as ElementID**: 16-byte transaction ID with Lamport clock (8 bytes) + ReplicaID (8 bytes) for CRDT ordering
 
 ### L85 Encoding Details
 
@@ -295,7 +295,7 @@ The storage layer connects the query engine to BadgerDB:
 21. **Relations migration** - Multi-value variable support throughout codebase
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
 23. **Schema support** - Type validation, cardinality (one/many), uniqueness constraints; optional and additive
-24. **History mode** - Datomic-style retractions with `RetractHistory` mode; full audit trail via `ExecuteHistoryQuery`; 5-element patterns `[?e ?a ?v ?tx ?op]`
+24. **CRDT storage** - LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector; all writes preserved with ElementIDs; `[(history)]` and `[(as-of ?tx N)]` predicates for time-travel queries
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics; OR supports fallback expressions for default values
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates
 27. **Multi-source queries** - Named sources (`$name`), `SourceRouter`, cross-source joins, `MemoryPatternMatcher`, `SliceSource[T]`, query builder `Source()`/`PatFrom()`

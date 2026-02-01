@@ -14,39 +14,10 @@ const (
 	AVET                  // Attribute-Value-Entity-Tx
 	VAET                  // Value-Attribute-Entity-Tx
 	TAEV                  // Tx-Attribute-Entity-Value (for clock recovery, audit log)
-	// Legacy history indices - DEPRECATED, to be removed
-	// History is now built-in via CRDT semantics (all versions stored in main indices)
-	EAVT_HISTORY // DEPRECATED
-	AEVT_HISTORY // DEPRECATED
-	AVET_HISTORY // DEPRECATED
-	VAET_HISTORY // DEPRECATED
-	TAEV_HISTORY // DEPRECATED
 )
 
-// CurrentStateIndices are the indices used for queries (6 indices for CRDT support)
-var CurrentStateIndices = []IndexType{EAVT, EATV, AEVT, AVET, VAET, TAEV}
-
-// HistoryIndices - DEPRECATED, kept for backward compatibility during migration
-// History is now built-in via CRDT semantics
-var HistoryIndices = []IndexType{EAVT_HISTORY, AEVT_HISTORY, AVET_HISTORY, VAET_HISTORY, TAEV_HISTORY}
-
-// Op represents the operation type for a datom (assert or retract)
-type Op bool
-
-const (
-	OpAssert  Op = true  // Datom was asserted
-	OpRetract Op = false // Datom was retracted
-)
-
-// RetractMode controls how retractions are handled
-type RetractMode int
-
-const (
-	// RetractDelete removes datoms from the store (default, current behavior)
-	RetractDelete RetractMode = iota
-	// RetractHistory keeps full history - retractions append Op=false to history indices
-	RetractHistory
-)
+// Indices lists all indices used for queries (6 indices for CRDT support)
+var Indices = []IndexType{EAVT, EATV, AEVT, AVET, VAET, TAEV}
 
 // Store is the interface for datom storage
 type Store interface {

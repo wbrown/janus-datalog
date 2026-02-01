@@ -27,11 +27,12 @@ type TransactionAdder interface {
 	Add(e datalog.Identity, a datalog.Keyword, v interface{}) error
 }
 
-// TransactionUpdater extends TransactionAdder with retract capability
+// TransactionUpdater extends TransactionAdder with CRDT update capability
 // This is implemented by storage.Transaction
 type TransactionUpdater interface {
 	TransactionAdder
-	Retract(e datalog.Identity, a datalog.Keyword, v interface{}) error
+	// Remove adds a tombstone for cardinality-many attributes (CRDT add-wins semantics)
+	Remove(e datalog.Identity, a datalog.Keyword, v interface{}) error
 }
 
 // EntityLookup provides lookup of existing entity attributes
@@ -226,6 +227,7 @@ func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entit
 }
 
 // updateField updates a single field with upsert semantics
+// For cardinality-one fields, uses LWW (Last-Writer-Wins) - just Add() the new value
 func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value, mode UpdateMode) error {
 	// Handle slice fields (cardinality-many)
 	if IsSliceType(field.GoType) {
@@ -243,20 +245,13 @@ func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, 
 		return nil
 	}
 
-	// Look up existing value
+	// Optimization: skip write if value hasn't changed
 	existingVal, found := lookup.LookupAttribute(entity, kw)
-
-	if found {
-		// Compare values - if same, no action needed
-		if datalog.ValuesEqual(existingVal, newVal) {
-			return nil
-		}
-		// Different value - retract old, add new
-		if err := tx.Retract(entity, kw, existingVal); err != nil {
-			return fmt.Errorf("retract failed: %w", err)
-		}
+	if found && datalog.ValuesEqual(existingVal, newVal) {
+		return nil
 	}
 
+	// For cardinality-one, just Add() - LWW semantics handle replacing old value
 	return tx.Add(entity, kw, newVal)
 }
 
@@ -304,11 +299,11 @@ func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLoo
 		// Diff-based set assignment: slice IS the new complete state
 		existingVals := lookup.LookupAllAttributes(entity, kw)
 
-		// Retract values in existing but not in new
+		// Remove values in existing but not in new (CRDT tombstone)
 		for _, existing := range existingVals {
 			if !containsValue(newVals, existing) {
-				if err := tx.Retract(entity, kw, existing); err != nil {
-					return fmt.Errorf("retract failed: %w", err)
+				if err := tx.Remove(entity, kw, existing); err != nil {
+					return fmt.Errorf("remove failed: %w", err)
 				}
 			}
 		}

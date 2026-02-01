@@ -13,9 +13,9 @@ Janus-datalog implements a substantial subset of Datomic's Datalog query languag
 - ✅ Pull API with nested references, wildcards, defaults, cycle detection
 - ✅ NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)`
 - ✅ Database functions: `get-else`, `missing?`, `get-some`
-- ✅ Schema: type validation, cardinality (one/many), uniqueness
-- ✅ History mode: full audit trail with assertions and retractions
-- ✅ Time queries: as-of, time extraction functions, 5-element history patterns
+- ✅ Schema: type validation, cardinality (one/many/vector), uniqueness
+- ✅ CRDT storage: LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector
+- ✅ Time queries: `[(history)]`, `[(as-of ?tx N)]`, `[(tx-between ?tx low high)]`
 
 **Go-Specific Ergonomics:**
 - ✅ Struct Reflection API: Go structs ↔ datoms with automatic schema generation
@@ -23,7 +23,7 @@ Janus-datalog implements a substantial subset of Datomic's Datalog query languag
 - ✅ Query Builder (qb): compile-time safe query construction with IDE support
 
 **Storage:**
-- ✅ BadgerDB persistent storage with EAVT model and 5 indices
+- ✅ BadgerDB persistent storage with CRDT model and 6 indices (EAVT, EATV, AEVT, AVET, VAET, TAEV)
 - ✅ Export/Import to EDN format for backup and migration
 
 **Not Implemented:**
@@ -571,12 +571,12 @@ db, _ := storage.NewDatabaseWithSchema(path, schema)
 ### 3. Transaction Features ⚠️
 
 Partial transaction support:
-- ✅ **Retractions supported** - Two modes available:
-  - `RetractDelete` (default): Hard delete from current-state indices
-  - `RetractHistory`: Preserves full audit trail in history indices
+- ✅ **CRDT semantics** - LWW, add-wins, and RGA based on attribute cardinality
+- ✅ **Soft removal** - `Remove(e, a, v)` tombstones for cardinality-many
+- ✅ **Hard deletion** - `Retract(e, a, v)` for explicit removal (GDPR, cleanup)
 - ❌ **No transaction functions**
 - ❌ **No tempids** for new entities
-- ❌ **No transaction metadata** beyond timestamp
+- ❌ **No transaction metadata** beyond ElementID (Lamport + ReplicaID)
 - ❌ **No transaction entities**
 
 ### 4. Entity API ❌
@@ -602,34 +602,39 @@ No entity navigation:
 - `keys` - no map results
 - `with` - no duplicate control
 
-### 6. Time and History Features ⚠️
+### 6. Time and History Features ✅
 
 **Supported:**
-- As-of queries via `db.AsOf(txID)`
-- **History database** via `db.History()` (opt-in with `RetractHistory` mode)
-- 5-element patterns `[?e ?a ?v ?tx ?op]` for history queries
-- Full audit trail: see all assertions and retractions
+- CRDT storage inherently preserves all writes with ElementIDs (Lamport + ReplicaID)
+- `[(history)]` predicate returns all historical versions
+- `[(as-of ?tx N)]` returns value as of Lamport time N
+- `[(tx-between ?tx low high)]` filters results to a Lamport range
 
 **History Query API:**
 ```go
-// Create database with history mode enabled
-db, _ := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-    Path:        "/path/to/db",
-    RetractMode: storage.RetractHistory,
-})
+// All writes are preserved with CRDT semantics - no special mode needed
+db, _ := storage.NewDatabase("/path/to/db")
 
-// Query current state (uses current-state indices, value was retracted)
+// Make changes over time
+tx := db.NewTransaction()
+tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice")
+tx.Commit()  // Lamport 1
+
+tx2 := db.NewTransaction()
+tx2.Add(alice, datalog.NewKeyword(":person/name"), "Alicia")  // LWW: replaces "Alice"
+tx2.Commit()  // Lamport 2
+
+// Query current state - returns latest value
 results, _ := db.ExecuteQuery(`[:find ?name :where [?e :person/name ?name]]`)
+// Returns: [["Alicia"]]
 
-// Query history (uses history indices, sees all assertions AND retractions)
-// 5-element pattern: [?e ?a ?v ?tx ?op] where ?op is true=assert, false=retract
-history, _ := db.ExecuteHistoryQuery(`[:find ?name ?tx ?op :where [?e :person/name ?name ?tx ?op]]`)
-// Returns: [["Alice" 1 true] ["Alice" 2 false]]  -- assertion then retraction
+// Query ALL historical values using [(history)] predicate
+history, _ := db.ExecuteQuery(`[:find ?name ?tx :where [?e :person/name ?name ?tx] [(history)]]`)
+// Returns: [["Alice" <ElementID@1>] ["Alicia" <ElementID@2>]]
 ```
 
 **Not supported:**
-- No `since` queries
-- No tx-range queries
+- No `since` queries (use `[(tx-between ?tx start ∞)]` instead)
 
 ### 7. Database Features ❌
 
@@ -652,12 +657,14 @@ No advanced database operations:
 ### 1. Storage Design
 - Uses BadgerDB instead of Datomic's segmented storage
 - L85 encoding (custom Base85) for sortable keys
-- Fixed 72-byte keys: E(20) + A(32) + Tx(20)
+- Fixed 69-byte keys: E(20) + A(32) + Tx(16) + Op(1)
+- Six indices: EAVT, EATV, AEVT, AVET, VAET, TAEV
 
 ### 2. Transaction Model
-- Time-based uint64 transaction IDs
+- ElementID-based transactions (Lamport clock + ReplicaID)
+- CRDT semantics: LWW (one), add-wins (many), RGA (vector)
 - No entity-based transactions
-- Simpler transaction model overall
+- Designed for multi-replica support
 
 ### 3. Type System
 - Direct Go types instead of tagged literals
@@ -685,8 +692,7 @@ No advanced database operations:
 - NOT/OR clauses
 - Subqueries with tuple/relation bindings
 - Order-by clauses
-- Time-based queries (AsOf)
-- History queries (with RetractHistory mode)
+- Time-travel queries via `[(history)]` and `[(as-of ?tx N)]`
 - Database functions (get-else, missing?, get-some)
 
 **Require refactoring:**
@@ -770,9 +776,9 @@ For Datomic users, the transition is straightforward:
 
 1. Most queries port directly, including Pull expressions and NOT/OR clauses
 2. Use subqueries for complex aggregations with proper scoping
-3. Define schema for type validation and cardinality-many support
+3. Define schema for type validation and cardinality support (one/many/vector)
 4. Use Pull API for efficient entity navigation (replaces Entity API)
-5. Enable `RetractHistory` mode for full audit trails
+5. CRDT storage preserves full history automatically - use `[(history)]` for time-travel queries
 
 **For Go developers**, additional ergonomic APIs are available:
 - **Struct Reflection API** (`datalog/reflect`): Go structs ↔ datoms with automatic schema generation

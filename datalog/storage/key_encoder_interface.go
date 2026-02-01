@@ -27,14 +27,6 @@ type KeyEncoder interface {
 	// Use this when constructing scan ranges involving Tx (e.g., TAEV time-range queries).
 	// Note: With bitwise NOT, higher Tx values encode to lower byte values.
 	EncodeTxForPrefix(tx Tx) []byte
-
-	// EncodeHistoryKey creates an index key with Op for history indices
-	EncodeHistoryKey(index IndexType, d *datalog.Datom, op Op) []byte
-
-	// DecodeHistoryKey extracts components including Op from a history index key
-	// Returns fixed-size arrays for e, a, tx to avoid heap allocations from slice escape.
-	// tx is 16 bytes: Lamport (8) + ReplicaID (8) = ElementID
-	DecodeHistoryKey(index IndexType, key []byte) (e [20]byte, a [32]byte, v []byte, tx [16]byte, op Op, err error)
 }
 
 // KeyEncodingStrategy represents different encoding strategies
