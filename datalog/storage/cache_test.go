@@ -453,3 +453,146 @@ func TestCacheConcurrentReadWrite(t *testing.T) {
 	wg.Wait()
 	// Should complete without panic or data race
 }
+
+// mockStore implements Store interface for testing IsAttributeFresh
+type mockStore struct {
+	maxAttrID    datalog.ElementID
+	maxAttrErr   error
+	maxAttrCalls int
+}
+
+func (m *mockStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
+	m.maxAttrCalls++
+	return m.maxAttrID, m.maxAttrErr
+}
+
+// Stub implementations for Store interface
+func (m *mockStore) Assert(datoms []datalog.Datom) error                             { return nil }
+func (m *mockStore) Retract(datoms []datalog.Datom) error                            { return nil }
+func (m *mockStore) Scan(index IndexType, start, end []byte) (Iterator, error)       { return nil, nil }
+func (m *mockStore) Get(index IndexType, key []byte) (*datalog.Datom, error)         { return nil, nil }
+func (m *mockStore) MaxElementID() (datalog.ElementID, error)                        { return datalog.ElementID{}, nil }
+func (m *mockStore) BeginTx() (StoreTx, error)                                       { return nil, nil }
+func (m *mockStore) Close() error                                                    { return nil }
+
+func TestCacheAttributeFreshness(t *testing.T) {
+	cache := NewCache()
+	store := &mockStore{
+		maxAttrID: datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	}
+
+	var a Attribute
+	copy(a[:], ":person/name")
+
+	// Initially, attrVersions is empty - should return false WITHOUT calling store
+	// (short-circuit when no cached version exists)
+	assert.False(t, cache.IsAttributeFresh(a, store))
+	assert.Equal(t, 0, store.maxAttrCalls, "should not call store when no cached version")
+
+	// After updating attribute version to match store
+	cache.UpdateAttributeVersion(a, datalog.ElementID{Lamport: 100, ReplicaID: 1})
+	assert.True(t, cache.IsAttributeFresh(a, store))
+	assert.Equal(t, 1, store.maxAttrCalls, "should call store to compare versions")
+
+	// If store version increases, should return false
+	store.maxAttrID = datalog.ElementID{Lamport: 200, ReplicaID: 1}
+	assert.False(t, cache.IsAttributeFresh(a, store))
+	assert.Equal(t, 2, store.maxAttrCalls)
+}
+
+func TestCacheAttributeInvalidation(t *testing.T) {
+	cache := NewCache()
+	store := &mockStore{
+		maxAttrID: datalog.ElementID{Lamport: 100, ReplicaID: 1},
+	}
+
+	var a Attribute
+	copy(a[:], ":person/name")
+
+	// Set attribute version
+	cache.UpdateAttributeVersion(a, datalog.ElementID{Lamport: 100, ReplicaID: 1})
+	assert.True(t, cache.IsAttributeFresh(a, store))
+
+	// Update to new version
+	cache.UpdateAttributeVersion(a, datalog.ElementID{Lamport: 200, ReplicaID: 1})
+
+	// Now store needs to match new version
+	assert.False(t, cache.IsAttributeFresh(a, store))
+	store.maxAttrID = datalog.ElementID{Lamport: 200, ReplicaID: 1}
+	assert.True(t, cache.IsAttributeFresh(a, store))
+}
+
+func TestCacheAttributeFreshnessStoreError(t *testing.T) {
+	cache := NewCache()
+	store := &mockStore{
+		maxAttrErr: assert.AnError,
+	}
+
+	var a Attribute
+	copy(a[:], ":person/name")
+
+	// Set attribute version
+	cache.UpdateAttributeVersion(a, datalog.ElementID{Lamport: 100, ReplicaID: 1})
+
+	// Should return false when store returns error
+	assert.False(t, cache.IsAttributeFresh(a, store))
+}
+
+func TestCacheRebuildStoreError(t *testing.T) {
+	cache := NewCache()
+
+	// Resolver that returns errors
+	resolver := &mockCacheResolver{
+		cardinality: schema.CardinalityOne,
+		lwwErr:      assert.AnError,
+	}
+
+	var e Entity
+	copy(e[:], "entity1")
+	var a Attribute
+	copy(a[:], ":person/name")
+	key := CacheKey{E: e, A: a}
+
+	// GetOrResolve should return nil when resolver errors
+	entry := cache.GetOrResolve(key, resolver)
+	assert.Nil(t, entry)
+	assert.Equal(t, 1, resolver.resolveLWWCalls)
+}
+
+func TestCacheRebuildAddWinsError(t *testing.T) {
+	cache := NewCache()
+
+	resolver := &mockCacheResolver{
+		cardinality: schema.CardinalityMany,
+		addWinsErr:  assert.AnError,
+	}
+
+	var e Entity
+	copy(e[:], "entity1")
+	var a Attribute
+	copy(a[:], ":tags")
+	key := CacheKey{E: e, A: a}
+
+	entry := cache.GetOrResolve(key, resolver)
+	assert.Nil(t, entry)
+	assert.Equal(t, 1, resolver.resolveAddCalls)
+}
+
+func TestCacheRebuildRGAError(t *testing.T) {
+	cache := NewCache()
+
+	resolver := &mockCacheResolver{
+		cardinality: schema.CardinalityVector,
+		rgaErr:      assert.AnError,
+	}
+
+	var e Entity
+	copy(e[:], "entity1")
+	var a Attribute
+	copy(a[:], ":skills")
+	key := CacheKey{E: e, A: a}
+
+	entry := cache.GetOrResolve(key, resolver)
+	assert.Nil(t, entry)
+	assert.Equal(t, 1, resolver.resolveRGACalls)
+}

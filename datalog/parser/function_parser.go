@@ -31,6 +31,23 @@ func parseFunction(fn string, args []query.PatternElement) (query.Function, erro
 		return parseMissingAttr(args)
 	case "get-some":
 		return parseGetSome(args)
+	// Vector functions for CRDT cardinality-vector attributes
+	case "nth":
+		return parseNth(args)
+	case "first":
+		return parseFirst(args)
+	case "last":
+		return parseLast(args)
+	case "length":
+		return parseLength(args)
+	case "contains?":
+		return parseContains(args)
+	case "index-of":
+		return parseIndexOf(args)
+	case "subvec":
+		return parseSubvec(args)
+	case "enumerate":
+		return parseEnumerate(args)
 	default:
 		return nil, fmt.Errorf("unsupported function: %s", fn)
 	}
@@ -340,4 +357,93 @@ func extractConstantValue(arg query.PatternElement) (interface{}, error) {
 	default:
 		return nil, fmt.Errorf("expected constant, got %T", arg)
 	}
+}
+
+// =============================================================================
+// Vector Function Parsers
+// =============================================================================
+
+// parseNth parses (nth ?vec ?idx) - get element at index
+func parseNth(args []query.PatternElement) (query.Function, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("nth requires exactly 2 arguments (vector, index), got %d", len(args))
+	}
+	return &query.NthFunction{
+		VecTerm:   elementToTerm(args[0]),
+		IndexTerm: elementToTerm(args[1]),
+	}, nil
+}
+
+// parseFirst parses (first ?vec) - get first element
+func parseFirst(args []query.PatternElement) (query.Function, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("first requires exactly 1 argument (vector), got %d", len(args))
+	}
+	return &query.FirstFunction{
+		VecTerm: elementToTerm(args[0]),
+	}, nil
+}
+
+// parseLast parses (last ?vec) - get last element
+func parseLast(args []query.PatternElement) (query.Function, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("last requires exactly 1 argument (vector), got %d", len(args))
+	}
+	return &query.LastFunction{
+		VecTerm: elementToTerm(args[0]),
+	}, nil
+}
+
+// parseLength parses (length ?vec) - get vector length
+func parseLength(args []query.PatternElement) (query.Function, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("length requires exactly 1 argument (vector), got %d", len(args))
+	}
+	return &query.LengthFunction{
+		VecTerm: elementToTerm(args[0]),
+	}, nil
+}
+
+// parseContains parses (contains? ?vec ?val) - check membership
+func parseContains(args []query.PatternElement) (query.Function, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("contains? requires exactly 2 arguments (vector, value), got %d", len(args))
+	}
+	return &query.ContainsFunction{
+		VecTerm:   elementToTerm(args[0]),
+		ValueTerm: elementToTerm(args[1]),
+	}, nil
+}
+
+// parseIndexOf parses (index-of ?vec ?val) - find index of value
+func parseIndexOf(args []query.PatternElement) (query.Function, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("index-of requires exactly 2 arguments (vector, value), got %d", len(args))
+	}
+	return &query.IndexOfFunction{
+		VecTerm:   elementToTerm(args[0]),
+		ValueTerm: elementToTerm(args[1]),
+	}, nil
+}
+
+// parseSubvec parses (subvec ?vec ?start ?end) - get slice of vector
+func parseSubvec(args []query.PatternElement) (query.Function, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("subvec requires exactly 3 arguments (vector, start, end), got %d", len(args))
+	}
+	return &query.SubvecFunction{
+		VecTerm:   elementToTerm(args[0]),
+		StartTerm: elementToTerm(args[1]),
+		EndTerm:   elementToTerm(args[2]),
+	}, nil
+}
+
+// parseEnumerate parses (enumerate ?vec) - decompose into (index, value) pairs
+func parseEnumerate(args []query.PatternElement) (query.Function, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("enumerate requires exactly 1 argument (vector), got %d", len(args))
+	}
+	return &query.EnumerateFunction{
+		VecTerm: elementToTerm(args[0]),
+	}, nil
 }
