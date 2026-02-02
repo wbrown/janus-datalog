@@ -66,11 +66,18 @@ func addStructToBuilder(builder *schema.Builder, v interface{}) error {
 		}
 
 		cardinality := InferCardinality(field.GoType)
+		uniqueElements := InferUniqueElements(field.GoType)
 
 		ab := builder.Attribute(field.FullAttr).Type(valueType)
 
-		if cardinality == schema.CardinalityMany {
+		switch cardinality {
+		case schema.CardinalityMany:
 			ab.Many()
+		case schema.CardinalityVector:
+			ab.Vector()
+			if uniqueElements {
+				ab.UniqueElements(true)
+			}
 		}
 
 		ab.Add()

@@ -1307,9 +1307,10 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	// Check cardinality for CRDT semantics
 	var card schema.Cardinality
+	var def *schema.AttributeDefinition
 	hasSchema := false
 	if s := t.db.Schema(); s != nil {
-		if def := s.GetAttribute(a); def != nil {
+		if def = s.GetAttribute(a); def != nil {
 			card = def.Cardinality
 			hasSchema = true
 		}
@@ -1360,6 +1361,15 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			// This is NOT last-writer-wins - all concurrent writes are preserved.
 			// See docs/reference/CRDT.md for detailed semantics.
 			key := entityAttrKey{E: e.Hash(), A: a.String()}
+
+			// OrderedSet uniqueness check: if UniqueElements is true, check if value already exists
+			if def.UniqueElements {
+				if t.vectorContainsValue(e, a, v) {
+					// Value already exists in ordered set - no-op
+					return nil
+				}
+			}
+
 			afterRef := t.lastVectorElement[key] // Zero value = HEAD
 
 			t.datoms = append(t.datoms, datalog.Datom{
@@ -1794,6 +1804,40 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 	}
 
 	return nil
+}
+
+// vectorContainsValue checks if a value already exists in an ordered set (vector with unique elements).
+// It checks both committed data (via cache) and pending datoms in this transaction.
+func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword, v interface{}) bool {
+	// Check pending datoms in this transaction first
+	eHash := e.Hash()
+	for _, d := range t.datoms {
+		if d.A == a && d.E.Hash() == eHash && d.Op == datalog.OpRGAInsert {
+			if datalog.ValuesEqual(d.V, v) {
+				return true
+			}
+		}
+	}
+
+	// Check committed data via cache
+	eBytes := e.Hash()
+	var aBytes Attribute
+	copy(aBytes[:], a.String())
+	cacheKey := CacheKey{E: Entity(eBytes), A: aBytes}
+
+	matcher := NewBadgerMatcher(t.db.store)
+	matcher.SetSchema(t.db.schema)
+	entry := t.db.cache.GetOrResolve(cacheKey, matcher)
+
+	if entry != nil && entry.Cardinality() == schema.CardinalityVector {
+		for _, existing := range entry.VectorList() {
+			if datalog.ValuesEqual(existing, v) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // Retract removes a datom

@@ -239,6 +239,11 @@ func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, 
 		return sw.updateSliceField(tx, lookup, entity, kw, field, val, mode)
 	}
 
+	// Handle OrderedSet fields (cardinality-vector with unique elements)
+	if isOrderedSetType(field.GoType) {
+		return sw.updateOrderedSetField(tx, entity, kw, field, val)
+	}
+
 	// Get the new value to write
 	newVal, err := sw.extractValue(field, val)
 	if err != nil {
@@ -258,6 +263,37 @@ func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, 
 
 	// For cardinality-one, just Add() - LWW semantics handle replacing old value
 	return tx.Add(entity, kw, newVal)
+}
+
+// updateOrderedSetField handles OrderedSet[T] field updates.
+// Uses tx.Set() which applies prefix-diff algorithm for vectors.
+func (sw *StructWriter) updateOrderedSetField(tx TransactionUpdater, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value) error {
+	// Get the items slice from OrderedSet
+	itemsField := val.FieldByName("Items")
+	if !itemsField.IsValid() {
+		return fmt.Errorf("OrderedSet missing items field")
+	}
+
+	// If items is nil, skip (don't modify existing values)
+	if itemsField.IsNil() {
+		return nil
+	}
+
+	// Extract values from items slice
+	var newVals []interface{}
+	for i := 0; i < itemsField.Len(); i++ {
+		elem := itemsField.Index(i)
+		writeVal, err := sw.extractSingleValue(elem)
+		if err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
+		}
+		if writeVal != nil {
+			newVals = append(newVals, writeVal)
+		}
+	}
+
+	// Use tx.Set() for vector semantics with prefix-diff
+	return tx.Set(entity, kw, newVals)
 }
 
 // containsValue checks if a value exists in a slice using ValuesEqual
@@ -362,6 +398,11 @@ func (sw *StructWriter) writeField(tx TransactionAdder, entity datalog.Identity,
 		return sw.writeSliceField(tx, entity, kw, field, val)
 	}
 
+	// Handle OrderedSet fields (cardinality-vector with unique elements)
+	if isOrderedSetType(field.GoType) {
+		return sw.writeOrderedSetField(tx, entity, kw, field, val)
+	}
+
 	// Get the value to write
 	writeVal, err := sw.extractValue(field, val)
 	if err != nil {
@@ -374,6 +415,40 @@ func (sw *StructWriter) writeField(tx TransactionAdder, entity datalog.Identity,
 	}
 
 	return tx.Add(entity, kw, writeVal)
+}
+
+// writeOrderedSetField handles OrderedSet[T] fields (cardinality-vector with unique elements)
+func (sw *StructWriter) writeOrderedSetField(tx TransactionAdder, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value) error {
+	// Get the items slice from OrderedSet
+	itemsField := val.FieldByName("Items")
+	if !itemsField.IsValid() {
+		return fmt.Errorf("OrderedSet missing items field")
+	}
+
+	// If items is nil, nothing to write
+	if itemsField.IsNil() {
+		return nil
+	}
+
+	// Write each item - storage layer enforces uniqueness
+	for i := 0; i < itemsField.Len(); i++ {
+		elem := itemsField.Index(i)
+
+		writeVal, err := sw.extractSingleValue(elem)
+		if err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
+		}
+
+		if writeVal == nil {
+			continue
+		}
+
+		if err := tx.Add(entity, kw, writeVal); err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
+		}
+	}
+
+	return nil
 }
 
 // writeSliceField handles cardinality-many fields

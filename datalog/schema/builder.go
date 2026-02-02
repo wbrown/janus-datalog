@@ -87,7 +87,23 @@ func (ab *AttributeBuilder) Vector() *AttributeBuilder {
 	return ab
 }
 
-// Unique sets the uniqueness constraint
+// OrderedSet sets cardinality to vector with unique elements (ordered set using RGA CRDT).
+// This is a convenience method equivalent to Vector().UniqueElements(true).
+func (ab *AttributeBuilder) OrderedSet() *AttributeBuilder {
+	ab.def.Cardinality = CardinalityVector
+	ab.def.UniqueElements = true
+	return ab
+}
+
+// UniqueElements sets whether the collection enforces element uniqueness.
+// When true, duplicate values are rejected (set semantics).
+// Only meaningful for Vector cardinality; Many is inherently unique.
+func (ab *AttributeBuilder) UniqueElements(unique bool) *AttributeBuilder {
+	ab.def.UniqueElements = unique
+	return ab
+}
+
+// Unique sets the uniqueness constraint (db.unique/identity or db.unique/value)
 func (ab *AttributeBuilder) Unique(u Unique) *AttributeBuilder {
 	ab.def.Unique = u
 	return ab

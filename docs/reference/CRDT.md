@@ -9,6 +9,7 @@ This document describes the CRDT (Conflict-free Replicated Data Type) storage se
 | One | LWW Register | Highest ElementID wins | Single values (name, age) |
 | Many | Add-Wins Set | Add beats concurrent remove | Tags, roles, categories |
 | Vector | RGA | Deterministic ordering | Ordered lists, sequences |
+| Vector + UniqueElements | RGA-OrderedSet | RGA + duplicate rejection | Ordered unique collections |
 
 All writes are preserved with unique ElementIDs. The "current value" is computed by applying CRDT resolution rules to the full history.
 
@@ -178,6 +179,81 @@ If you need strict temporal ordering or "only one writer wins" semantics for ord
 - External coordination (distributed lock)
 - Explicit position/sequence attributes with LWW semantics
 - Application-level conflict resolution after merge
+
+---
+
+## Vector with UniqueElements (OrderedSet)
+
+**Semantics**: RGA vector with duplicate rejection. Combines ordered semantics with set-like uniqueness.
+
+### Schema Definition
+
+```go
+// Schema builder
+builder.Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add()
+
+// Or explicitly
+builder.Attribute(":character/prefs").Type(schema.TypeString).Vector().UniqueElements(true).Add()
+```
+
+### Duplicate Rejection
+
+When `UniqueElements` is true, `Add()` operations check for existing values:
+
+```go
+tx.Add(entity, ":prefs", "dark-mode")   // Added
+tx.Add(entity, ":prefs", "compact")     // Added
+tx.Add(entity, ":prefs", "dark-mode")   // No-op: already exists
+```
+
+The uniqueness check examines:
+1. Pending datoms in the current transaction
+2. Committed data via cache
+
+### Using with Reflect Package
+
+The `datalog.OrderedSet[T]` type maps to `Vector().UniqueElements(true)`:
+
+```go
+type Character struct {
+    ID    datalog.Identity           `datalog:"-,id"`
+    Name  string                     `datalog:"name"`
+    Prefs datalog.OrderedSet[string] `datalog:"prefs"`
+}
+
+// Create and populate
+prefs := datalog.NewOrderedSet[string]()
+prefs.Append("dark-mode")
+prefs.Append("compact")
+prefs.Append("dark-mode")  // No-op: duplicate
+
+char := Character{Name: "Alice", Prefs: *prefs}
+tx.SaveStruct(&char)
+// Stores: ["dark-mode", "compact"]
+```
+
+### Query Behavior
+
+Vectors (including OrderedSet) return as array values in queries:
+
+```clojure
+[:find ?prefs :where [?e :character/name "Alice"] [?e :character/prefs ?prefs]]
+;; Returns: [[["dark-mode" "compact"]]]
+;; Note: Single tuple with array value, not multiple tuples
+```
+
+### Concurrent Write Behavior
+
+Duplicate rejection is **not distributed-safe**. If two replicas add the same value concurrently (before sync), both will succeed locally and both inserts will appear after merge:
+
+```
+Replica A: tx.Add(e, :prefs, "X")  // Succeeds (no local "X")
+Replica B: tx.Add(e, :prefs, "X")  // Succeeds (no local "X")
+
+After sync: ["X", "X"]  // Both inserts preserved by RGA
+```
+
+For strict uniqueness across replicas, application-level conflict resolution is required after merge.
 
 ---
 

@@ -3,6 +3,7 @@ package reflect
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -15,6 +16,31 @@ var (
 	identityType = reflect.TypeOf((datalog.Identity)(nil))
 	keywordType  = reflect.TypeOf((datalog.Keyword)(nil)) // Keyword is *keyword, no .Elem()
 )
+
+// isOrderedSetType checks if the type is datalog.OrderedSet[T]
+func isOrderedSetType(t reflect.Type) bool {
+	// OrderedSet is a struct type with a name starting with "OrderedSet["
+	// Full type string is "datalog.OrderedSet[T]" where T is the element type
+	typeName := t.String()
+	return strings.HasPrefix(typeName, "datalog.OrderedSet[")
+}
+
+// getOrderedSetElementType returns the element type of an OrderedSet[T].
+// Returns nil if not an OrderedSet type.
+func getOrderedSetElementType(t reflect.Type) reflect.Type {
+	if !isOrderedSetType(t) {
+		return nil
+	}
+	// OrderedSet has an 'items' field which is []T
+	itemsField, ok := t.FieldByName("Items")
+	if !ok {
+		return nil
+	}
+	if itemsField.Type.Kind() != reflect.Slice {
+		return nil
+	}
+	return itemsField.Type.Elem()
+}
 
 // GoTypeToSchemaType maps a Go reflect.Type to a schema.ValueType
 func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
@@ -64,6 +90,13 @@ func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
 		if t == keywordType {
 			return schema.TypeKeyword, nil
 		}
+		// Check for OrderedSet[T] - get element type
+		if isOrderedSetType(t) {
+			elemType := getOrderedSetElementType(t)
+			if elemType != nil {
+				return GoTypeToSchemaType(elemType)
+			}
+		}
 		// Other struct = nested reference
 		return schema.TypeRef, nil
 	}
@@ -73,6 +106,7 @@ func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
 
 // InferCardinality determines cardinality from a Go type
 // Slices (except []byte) are cardinality-many, everything else is one
+// OrderedSet[T] is cardinality-vector (ordered with unique elements)
 func InferCardinality(t reflect.Type) schema.Cardinality {
 	// Check pointer type aliases BEFORE dereferencing
 	// Identity and Keyword are pointer type aliases (*identity, *keyword)
@@ -85,10 +119,31 @@ func InferCardinality(t reflect.Type) schema.Cardinality {
 		return InferCardinality(t.Elem())
 	}
 
+	// Check for OrderedSet[T] - this is vector cardinality
+	if t.Kind() == reflect.Struct && isOrderedSetType(t) {
+		return schema.CardinalityVector
+	}
+
 	if t.Kind() == reflect.Slice && t.Elem().Kind() != reflect.Uint8 {
 		return schema.CardinalityMany
 	}
 	return schema.CardinalityOne
+}
+
+// InferUniqueElements determines if the type should have unique element enforcement.
+// OrderedSet[T] returns true; slices and other types return false.
+func InferUniqueElements(t reflect.Type) bool {
+	// Handle pointers
+	if t.Kind() == reflect.Ptr {
+		return InferUniqueElements(t.Elem())
+	}
+
+	// OrderedSet[T] has unique elements
+	if t.Kind() == reflect.Struct && isOrderedSetType(t) {
+		return true
+	}
+
+	return false
 }
 
 // IsRefType checks if a Go type represents a reference to another entity

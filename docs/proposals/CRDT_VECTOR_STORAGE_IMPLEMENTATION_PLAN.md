@@ -1,9 +1,9 @@
 # CRDT Vector Storage - Implementation Plan
 
-**Status:** In Progress (Phases 0-8 Complete, Phase 9 Partially Complete - Audit Pending)
+**Status:** In Progress (Phases 0-8 Complete, Phase 9 Partially Complete)
 **Based On:** CRDT_VECTOR_STORAGE.md Proposal
 **Created:** 2026-01-30
-**Updated:** 2026-02-01 (Set() prefix-diff optimization implemented; cache vectorIndex fix)
+**Updated:** 2026-02-01 (Added 9.5 Composition Primitives and RGA-OrderedSet)
 
 ---
 
@@ -4609,13 +4609,15 @@ func RewriteTxPredicate(pred *query.Predicate) (*StorageRange, error) {
 
 ## Phase 9: Cleanup and Finalization
 
-**Goal:** Remove legacy code and finalize the new storage model.
+**Goal:** Remove legacy code, add composition primitives, and finalize the new storage model.
 
-> **STATUS: ⚠️ PARTIALLY COMPLETE (2026-01-31)**
+> **STATUS: ⚠️ PARTIALLY COMPLETE (2026-02-01)**
 > - ✅ 9.1 Legacy storage code removed
 > - ✅ 9.2 Index migration verified (only 6 CRDT indices remain)
-> - ⚠️ 9.3 Full audit pending
-> - ❌ 9.4 Storage diagnostics API (deferred)
+> - ✅ 9.3 All tests passing
+> - ⚠️ 9.4 Full audit pending
+> - ❌ 9.5 Composition primitives and RGA-OrderedSet (not started)
+> - ❌ 9.6 Storage diagnostics API (deferred)
 
 ### 9.1 Remove Legacy Storage Code
 
@@ -4696,7 +4698,7 @@ Before marking Phase 9 complete, need to audit:
 - [ ] Review all files touched to ensure consistency
 - [ ] Verify documentation is updated (CLAUDE.md mentions RetractHistory)
 
-### 9.4 Storage Diagnostics API
+### 9.6 Storage Diagnostics API (Deferred)
 
 **Goal:** Provide on-demand storage statistics for monitoring and capacity planning.
 
@@ -4795,6 +4797,462 @@ for attr, count := range stats.PerAttribute {
 - [ ] `TestStorageStatsPerAttribute` - breaks down by attribute
 - [ ] `TestStorageStatsPerCardinality` - breaks down by cardinality
 - [ ] `TestStorageStatsMaxLamport` - tracks highest Lamport
+
+### 9.5 Composition Primitives and RGA-OrderedSet
+
+**Goal:** Add composable CRDT primitives to schema and implement RGA-OrderedSet (Vector + Unique).
+
+> **STATUS: ❌ NOT STARTED**
+
+This phase prepares the foundation for the full CRDT Composable Toolkit (see `docs/proposals/CRDT_COMPOSABLE_TOOLKIT.md`) by:
+1. Adding `Ordering` and `Conflict` types (derived from Cardinality for now)
+2. Adding `Unique` flag to schema with enforcement
+3. Enabling `Vector().Unique(true)` for RGA-OrderedSet semantics
+4. Adding `datalog.OrderedSet[T]` reflect type
+
+**Why now:** This is a small, non-breaking addition (~100-150 lines) that:
+- Proves the composition model works
+- Delivers OrderedSet functionality immediately (using existing RGA)
+- Sets up clean migration path to LSeq later
+
+#### 9.5.1 Add Composition Types to Schema
+
+**File:** `schema/types.go`
+
+```go
+// Ordering determines how elements are arranged in a collection.
+// Currently derived from Cardinality; will become primary in future.
+type Ordering int
+
+const (
+    OrderingNone Ordering = iota // Unordered (registers, sets)
+    OrderingRGA                  // Chained positions (Vector)
+    // Future: OrderingLSeq, OrderingTimestamped
+)
+
+// Conflict determines how concurrent writes are resolved.
+// Currently derived from Cardinality; will become primary in future.
+type Conflict int
+
+const (
+    ConflictLWW     Conflict = iota // Last Writer Wins (highest ElementID)
+    ConflictAddWins                 // Add beats concurrent remove
+    // Future: ConflictRemoveWins, ConflictMV
+)
+```
+
+**Tasks:**
+- [ ] Add `Ordering` type and constants
+- [ ] Add `Conflict` type and constants
+- [ ] Add `Unique bool` field to `AttributeDefinition`
+
+#### 9.5.2 Add Derived Getters to AttributeDefinition
+
+**File:** `schema/types.go`
+
+```go
+// GetOrdering returns the ordering strategy for this attribute.
+// Currently derived from Cardinality.
+func (a *AttributeDefinition) GetOrdering() Ordering {
+    switch a.Cardinality {
+    case CardinalityVector:
+        return OrderingRGA
+    default:
+        return OrderingNone
+    }
+}
+
+// GetConflict returns the conflict resolution strategy for this attribute.
+// Currently derived from Cardinality.
+func (a *AttributeDefinition) GetConflict() Conflict {
+    switch a.Cardinality {
+    case CardinalityOne:
+        return ConflictLWW
+    default:
+        return ConflictAddWins
+    }
+}
+
+// IsUnique returns true if this attribute enforces uniqueness (set semantics).
+// True for CardinalityMany, and for Vector with Unique flag set.
+func (a *AttributeDefinition) IsUnique() bool {
+    return a.Cardinality == CardinalityMany || a.Unique
+}
+
+// IsOrdered returns true if this attribute maintains element ordering.
+func (a *AttributeDefinition) IsOrdered() bool {
+    return a.Cardinality == CardinalityVector
+}
+
+// IsSet returns true if this attribute has set semantics (unordered, unique).
+func (a *AttributeDefinition) IsSet() bool {
+    return a.Cardinality == CardinalityMany
+}
+
+// IsRegister returns true if this attribute has register semantics (single value).
+func (a *AttributeDefinition) IsRegister() bool {
+    return a.Cardinality == CardinalityOne
+}
+
+// IsOrderedSet returns true if this attribute has ordered set semantics.
+func (a *AttributeDefinition) IsOrderedSet() bool {
+    return a.Cardinality == CardinalityVector && a.Unique
+}
+```
+
+**Tasks:**
+- [ ] Add `GetOrdering()` method
+- [ ] Add `GetConflict()` method
+- [ ] Add `IsUnique()` method
+- [ ] Add `IsOrdered()` method
+- [ ] Add `IsSet()` method
+- [ ] Add `IsRegister()` method
+- [ ] Add `IsOrderedSet()` method
+
+#### 9.5.3 Add Unique() to Schema Builder
+
+**File:** `schema/builder.go`
+
+```go
+// Unique sets uniqueness constraint for the attribute.
+// When combined with Vector(), creates an ordered set (no duplicates).
+func (b *AttrBuilder) Unique(u bool) *AttrBuilder {
+    b.unique = u
+    return b
+}
+```
+
+**Usage:**
+```go
+// Ordered set: ordered + unique (RGA-based, LSeq in future)
+schema.Attribute(":person/preferences").Type(TypeString).Vector().Unique(true).Add()
+
+// Existing patterns unchanged
+schema.Attribute(":person/name").Type(TypeString).One().Add()      // Register
+schema.Attribute(":person/tags").Type(TypeString).Many().Add()     // Set
+schema.Attribute(":person/skills").Type(TypeString).Vector().Add() // Vector (duplicates OK)
+```
+
+**Tasks:**
+- [ ] Add `unique bool` field to `AttrBuilder`
+- [ ] Add `Unique(bool)` method to `AttrBuilder`
+- [ ] Pass `unique` through to `AttributeDefinition` in `Add()`
+
+#### 9.5.4 Enforce Uniqueness in Vector Writes
+
+**File:** `storage/transaction.go`
+
+For Vector attributes with `Unique: true`, check AVET before insert:
+
+```go
+func (tx *Transaction) vectorAppend(e Entity, a Keyword, v any) error {
+    schema := tx.db.schema.GetAttribute(a)
+
+    // Uniqueness check for ordered sets
+    if schema != nil && schema.Unique {
+        exists, err := tx.valueExistsInVector(e, a, v)
+        if err != nil {
+            return err
+        }
+        if exists {
+            return nil // No-op: value already in ordered set
+        }
+    }
+
+    // Normal RGA append
+    return tx.rgaAppend(e, a, v)
+}
+
+func (tx *Transaction) valueExistsInVector(e Entity, a Keyword, v any) (bool, error) {
+    // Use AVET index: [A][V][E][Tx] to find if value exists for this entity
+    prefix := tx.db.encoder.EncodePartialKey(AVET, a, v, e)
+    iter, err := tx.db.store.Scan(AVET, prefix, nil)
+    if err != nil {
+        return false, err
+    }
+    defer iter.Close()
+
+    // Check if any non-tombstoned entry exists
+    for iter.Next() {
+        datom, err := tx.db.encoder.DecodeKey(AVET, iter.Key())
+        if err != nil {
+            return false, err
+        }
+        if datom.Op == OpRGAInsert {
+            // Found active entry - check if tombstoned
+            if !tx.isElementTombstoned(datom.ElementID) {
+                return true, nil
+            }
+        }
+    }
+    return false, nil
+}
+```
+
+**Tasks:**
+- [ ] Add uniqueness check to `vectorAppend()`
+- [ ] Add uniqueness check to `vectorInsertAfter()` (if exists)
+- [ ] Add `valueExistsInVector()` helper
+- [ ] Ensure Set() handles uniqueness (new values only)
+
+#### 9.5.5 Add OrderedSet Reflect Type
+
+**File:** `datalog/ordered_set.go` (NEW)
+
+```go
+package datalog
+
+// OrderedSet represents an ordered collection with unique elements.
+// Maps to Vector().Unique(true) in schema (RGA-based ordered set).
+//
+// Unlike Vector (which allows duplicates), OrderedSet ensures each
+// value appears at most once. Order is preserved from insertion.
+type OrderedSet[T comparable] struct {
+    items []T
+    seen  map[T]struct{}
+}
+
+func NewOrderedSet[T comparable]() *OrderedSet[T] {
+    return &OrderedSet[T]{
+        items: make([]T, 0),
+        seen:  make(map[T]struct{}),
+    }
+}
+
+func (s *OrderedSet[T]) Append(v T) {
+    if _, exists := s.seen[v]; exists {
+        return // Already present
+    }
+    s.items = append(s.items, v)
+    s.seen[v] = struct{}{}
+}
+
+func (s *OrderedSet[T]) Contains(v T) bool {
+    _, exists := s.seen[v]
+    return exists
+}
+
+func (s *OrderedSet[T]) Remove(v T) {
+    if _, exists := s.seen[v]; !exists {
+        return
+    }
+    delete(s.seen, v)
+    // Remove from items slice
+    for i, item := range s.items {
+        if item == v {
+            s.items = append(s.items[:i], s.items[i+1:]...)
+            break
+        }
+    }
+}
+
+func (s *OrderedSet[T]) Slice() []T {
+    result := make([]T, len(s.items))
+    copy(result, s.items)
+    return result
+}
+
+func (s *OrderedSet[T]) Len() int {
+    return len(s.items)
+}
+```
+
+**Tasks:**
+- [ ] Create `datalog/ordered_set.go`
+- [ ] Implement `OrderedSet[T]` type
+- [ ] Add methods: `Append`, `Contains`, `Remove`, `Slice`, `Len`
+
+#### 9.5.6 Update Reflect Schema Inference
+
+**File:** `reflect/schema.go`
+
+```go
+// In type inference logic
+switch {
+case isOrderedSetType(fieldType):
+    // datalog.OrderedSet[T] -> Vector().Unique(true)
+    builder.Vector().Unique(true)
+case isVectorType(fieldType):
+    // datalog.Vector[T] -> Vector()
+    builder.Vector()
+case isSetType(fieldType):
+    // datalog.Set[T] -> Many()
+    builder.Many()
+case isSlice(fieldType):
+    // []T -> Many() (backward compatible)
+    builder.Many()
+}
+
+func isOrderedSetType(t reflect.Type) bool {
+    return strings.HasPrefix(t.String(), "datalog.OrderedSet[")
+}
+```
+
+**Tasks:**
+- [ ] Add `isOrderedSetType()` helper
+- [ ] Update schema inference to handle `OrderedSet[T]`
+- [ ] Update `SaveStruct` to handle `OrderedSet[T]` field type
+- [ ] Update `PullInto` to populate `OrderedSet[T]` fields
+
+#### 9.5.7 Tests
+
+**File:** `schema/types_test.go`
+
+```go
+func TestAttributeDefinitionHelpers(t *testing.T) {
+    // Test derived getters
+    one := &AttributeDefinition{Cardinality: CardinalityOne}
+    assert.Equal(t, OrderingNone, one.GetOrdering())
+    assert.Equal(t, ConflictLWW, one.GetConflict())
+    assert.True(t, one.IsRegister())
+
+    many := &AttributeDefinition{Cardinality: CardinalityMany}
+    assert.Equal(t, OrderingNone, many.GetOrdering())
+    assert.Equal(t, ConflictAddWins, many.GetConflict())
+    assert.True(t, many.IsSet())
+    assert.True(t, many.IsUnique())
+
+    vector := &AttributeDefinition{Cardinality: CardinalityVector}
+    assert.Equal(t, OrderingRGA, vector.GetOrdering())
+    assert.Equal(t, ConflictAddWins, vector.GetConflict())
+    assert.True(t, vector.IsOrdered())
+    assert.False(t, vector.IsUnique())
+
+    orderedSet := &AttributeDefinition{Cardinality: CardinalityVector, Unique: true}
+    assert.True(t, orderedSet.IsOrdered())
+    assert.True(t, orderedSet.IsUnique())
+    assert.True(t, orderedSet.IsOrderedSet())
+}
+```
+
+**File:** `storage/ordered_set_test.go` (NEW)
+
+```go
+func TestOrderedSetUniqueness(t *testing.T) {
+    // Setup schema with Vector().Unique(true)
+    s, _ := schema.NewBuilder().
+        Attribute(":test/prefs").Type(schema.TypeString).Vector().Unique(true).Add().
+        Build()
+
+    db := setupTestDB(t, s)
+    e := db.TempID()
+
+    tx := db.NewTransaction()
+    tx.Append(e, ":test/prefs", "first")
+    tx.Append(e, ":test/prefs", "second")
+    tx.Append(e, ":test/prefs", "first")  // Duplicate - should be no-op
+    tx.Commit()
+
+    // Query should return only 2 elements
+    result := db.Pull(e, "[:test/prefs]")
+    prefs := result[":test/prefs"].([]any)
+    assert.Equal(t, 2, len(prefs))
+    assert.Equal(t, "first", prefs[0])
+    assert.Equal(t, "second", prefs[1])
+}
+
+func TestOrderedSetPreservesOrder(t *testing.T) {
+    // ... test that order is maintained
+}
+
+func TestOrderedSetRemove(t *testing.T) {
+    // ... test that Remove works correctly
+}
+
+func TestOrderedSetViaReflect(t *testing.T) {
+    type Pref struct {
+        ID    datalog.Identity                `datalog:"-,id"`
+        Items datalog.OrderedSet[string]      `datalog:"items"`
+    }
+    // ... test SaveStruct/PullInto with OrderedSet field
+}
+```
+
+**Test Summary by Category:**
+
+**Schema Tests** (`schema/types_test.go`, `schema/builder_test.go`):
+- [ ] `TestOrderingType` - Ordering constants defined correctly
+- [ ] `TestConflictType` - Conflict constants defined correctly
+- [ ] `TestAttributeDefinitionGetOrdering` - derived from Cardinality
+- [ ] `TestAttributeDefinitionGetConflict` - derived from Cardinality
+- [ ] `TestAttributeDefinitionIsUnique` - true for Many, true for Vector+Unique
+- [ ] `TestAttributeDefinitionIsOrdered` - true for Vector
+- [ ] `TestAttributeDefinitionIsOrderedSet` - true for Vector+Unique only
+- [ ] `TestBuilderUnique` - `.Unique(true)` sets flag
+- [ ] `TestBuilderVectorUnique` - `.Vector().Unique(true)` chain works
+- [ ] `TestSchemaRoundTrip` - Unique flag persists through save/load
+
+**Storage/Transaction Tests** (`storage/ordered_set_test.go`):
+- [ ] `TestOrderedSetAppendUnique` - duplicate append is no-op
+- [ ] `TestOrderedSetAppendDifferent` - different values append normally
+- [ ] `TestOrderedSetPreservesOrder` - first occurrence position preserved
+- [ ] `TestOrderedSetRemove` - Remove() tombstones correctly
+- [ ] `TestOrderedSetSetReplace` - Set() with prefix-diff respects uniqueness
+- [ ] `TestOrderedSetSetWithDuplicates` - Set(["a","b","a"]) deduplicates
+- [ ] `TestOrderedSetEmpty` - empty ordered set works
+- [ ] `TestOrderedSetSingleElement` - single element works
+- [ ] `TestOrderedSetValueTypes` - works with refs, keywords, not just strings
+- [ ] `TestOrderedSetAVETLookup` - uniqueness check uses AVET correctly
+
+**Cache Tests** (`storage/cache_test.go`):
+- [ ] `TestOrderedSetCacheResolution` - cache returns ordered, unique values
+- [ ] `TestOrderedSetCacheInvalidation` - write invalidates cache
+- [ ] `TestOrderedSetCacheVectorIndex` - position index correct for unique values
+
+**Query Tests** (`executor/ordered_set_query_test.go`):
+- [ ] `TestOrderedSetPatternMatch` - `[?e :prefs ?p]` returns ordered unique
+- [ ] `TestOrderedSetNth` - `(nth ?prefs 0)` works
+- [ ] `TestOrderedSetFirst` - `(first ?prefs)` works
+- [ ] `TestOrderedSetLast` - `(last ?prefs)` works
+- [ ] `TestOrderedSetLength` - `(length ?prefs)` returns correct count
+- [ ] `TestOrderedSetContains` - `(contains? ?prefs "x")` works
+- [ ] `TestOrderedSetIndexOf` - `(index-of ?prefs "x")` works
+- [ ] `TestOrderedSetEnumerate` - `(enumerate ?prefs)` works
+
+**Reflect Tests** (`reflect/ordered_set_test.go`):
+- [ ] `TestOrderedSetSchemaInference` - `datalog.OrderedSet[T]` → Vector+Unique
+- [ ] `TestOrderedSetSaveStruct` - SaveStruct with OrderedSet field
+- [ ] `TestOrderedSetPullInto` - PullInto populates OrderedSet field
+- [ ] `TestOrderedSetNilVsEmpty` - nil = skip, empty = clear
+- [ ] `TestOrderedSetUpdate` - update preserves order, enforces unique
+- [ ] `TestOrderedSetWithRefs` - OrderedSet of entity references
+
+**CRDT/Concurrent Tests** (`storage/ordered_set_crdt_test.go`):
+- [ ] `TestOrderedSetConcurrentSameValue` - two goroutines add same value
+- [ ] `TestOrderedSetConcurrentDifferent` - two goroutines add different values
+- [ ] `TestOrderedSetAddRemoveConcurrent` - add + remove same Lamport
+- [ ] `TestOrderedSetMerge` - multi-replica merge converges (when Merge() exists)
+
+**datalog.OrderedSet Type Tests** (`datalog/ordered_set_test.go`):
+- [ ] `TestOrderedSetTypeAppend` - Append adds if not present
+- [ ] `TestOrderedSetTypeAppendDuplicate` - Append no-op if present
+- [ ] `TestOrderedSetTypeContains` - Contains works
+- [ ] `TestOrderedSetTypeRemove` - Remove works
+- [ ] `TestOrderedSetTypeSlice` - Slice returns copy in order
+- [ ] `TestOrderedSetTypeLen` - Len correct
+
+**Total: 46 tests** covering schema, storage, cache, query, reflect, CRDT, and type layers.
+
+#### 9.5.8 Documentation
+
+**Updates needed:**
+
+1. **CRDT.md** - Add OrderedSet to cardinality table:
+   ```markdown
+   | Vector + Unique | RGA-OrderedSet | Ordered, unique, add-wins | Preference lists |
+   ```
+
+2. **SCHEMA.md** - Document `.Unique(true)` modifier
+
+3. **REFLECT.md** - Document `datalog.OrderedSet[T]` type
+
+4. **CLAUDE.md** - Update cardinality section
+
+**Tasks:**
+- [ ] Update `docs/reference/CRDT.md`
+- [ ] Update `docs/reference/SCHEMA.md`
+- [ ] Update `docs/reference/REFLECT.md`
+- [ ] Update `CLAUDE.md`
 
 ---
 
@@ -4982,7 +5440,7 @@ func BenchmarkCRDTvsLegacy(b *testing.B) {
 | **Phase 6: Cache** | ✅ Complete | Unified cache, query engine integration |
 | **Phase 7: Transaction API** | ✅ Complete | Schema-aware Add() works; reflect layer fixed for vectors |
 | **Phase 8: Query Integration** | ✅ Complete | 8.1-8.5 all complete |
-| **Phase 9: Cleanup** | ⚠️ Partially Complete | Legacy code removed; audit pending |
+| **Phase 9: Cleanup** | ⚠️ Partially Complete | Legacy code removed; composition primitives pending |
 
 ### Remaining Work
 
@@ -4991,7 +5449,8 @@ func BenchmarkCRDTvsLegacy(b *testing.B) {
    - ✅ 9.2 Verify index migration - DONE
    - ✅ 9.3 Update all tests - DONE (all pass)
    - ⚠️ 9.4 Thorough audit - PENDING
-   - ❌ 9.5 Storage diagnostics API - DEFERRED
+   - ❌ 9.5 Composition primitives and RGA-OrderedSet - NOT STARTED
+   - ❌ 9.6 Storage diagnostics API - DEFERRED
 
 ### What's Working
 
@@ -5003,6 +5462,14 @@ All core CRDT functionality is operational:
 - Schema-aware Add() as universal write method
 - All 6 CRDT indices (EAVT, EATV, AEVT, AVET, VAET, TAEV)
 - Legacy RetractHistory mode and _HISTORY indices removed
+
+### Coming in 9.5
+
+Composition primitives prepare for full CRDT toolkit (see `CRDT_COMPOSABLE_TOOLKIT.md`):
+- `Ordering`, `Conflict` types (derived from Cardinality for now)
+- `Unique` flag for Vector attributes
+- `Vector().Unique(true)` = RGA-OrderedSet
+- `datalog.OrderedSet[T]` reflect type
 - Reflect layer uses CRDT methods (Add for LWW, Remove for tombstones)
 - Retract() preserved for explicit hard deletion (GDPR, cleanup)
 

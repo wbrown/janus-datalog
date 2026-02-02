@@ -51,14 +51,44 @@ The namespace is derived from the struct name using kebab-case:
 
 Cardinality is determined by schema (authoritative) or Go type (fallback):
 
-| Go Type | Inferred Cardinality |
-|---------|---------------------|
-| `string`, `int64`, etc. | one |
-| `*T` (pointer) | one (optional) |
-| `[]T` (slice) | many |
-| `[]*T` (slice of pointers) | many |
+| Go Type | Inferred Cardinality | UniqueElements |
+|---------|---------------------|----------------|
+| `string`, `int64`, etc. | one | - |
+| `*T` (pointer) | one (optional) | - |
+| `[]T` (slice) | many | false |
+| `[]*T` (slice of pointers) | many | false |
+| `datalog.OrderedSet[T]` | vector | true |
 
-**Note**: `SchemaFromStruct()` cannot infer `CardinalityVector` - slices always infer as `CardinalityMany`. To use vectors, build the schema manually with `.Vector()` (see [Using Cardinality-Vector](#using-cardinality-vector) below).
+**Note**: Regular slices infer as `CardinalityMany`. To use vectors without unique elements, build the schema manually with `.Vector()` (see [Using Cardinality-Vector](#using-cardinality-vector) below).
+
+### OrderedSet Type
+
+Use `datalog.OrderedSet[T]` for ordered collections with unique elements:
+
+```go
+type Character struct {
+    ID    datalog.Identity           `datalog:"-,id"`
+    Name  string                     `datalog:"name"`
+    Prefs datalog.OrderedSet[string] `datalog:"prefs"`  // Ordered, unique
+}
+
+// Creating an OrderedSet
+prefs := datalog.NewOrderedSet[string]()
+prefs.Append("dark-mode")
+prefs.Append("compact")
+prefs.Append("dark-mode")  // No-op: duplicate
+
+char := Character{Name: "Alice", Prefs: *prefs}
+// Prefs contains: ["dark-mode", "compact"]
+
+// Working with OrderedSet
+prefs.Contains("dark-mode")  // true
+prefs.Len()                  // 2
+prefs.Slice()                // []string{"dark-mode", "compact"}
+prefs.Remove("compact")      // Removes element
+```
+
+Schema inference automatically creates `Vector().UniqueElements(true)` for OrderedSet fields.
 
 ## Generating Schema
 
