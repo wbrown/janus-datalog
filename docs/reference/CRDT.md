@@ -538,28 +538,139 @@ type CacheResolver interface {
 
 ---
 
+## Asymptotic Complexity Analysis
+
+This section provides formal complexity analysis for all CRDT operations.
+
+### Definitions
+
+| Symbol | Meaning |
+|--------|---------|
+| **n** | Total operations (writes + tombstones) for an (E, A) pair |
+| **k** | Live elements in collection (after CRDT resolution) |
+| **d** | Pending datoms in current transaction |
+| **N** | Total datoms in database |
+| **p** | Common prefix length (for Set() diff algorithm) |
+
+### Cardinality-One (LWW Register)
+
+| Operation | Time | Space | Notes |
+|-----------|------|-------|-------|
+| **Write** `Set(e, a, v)` | O(1) | O(1) | Append-only, no read required |
+| **Read** (cache hit) | O(1) | O(1) | Return cached value |
+| **Read** (cache miss) | O(1) | O(1) | EATV index: first entry = max ElementID |
+| **Cache rebuild** | O(1) | O(1) | Single index seek |
+| **History query** | O(n) | O(n) | Scan all writes for (E, A) |
+
+**Why O(1) cache miss?** EATV index orders by Tx descending (bitwise NOT encoding). First entry is always the highest ElementID, which is the current value. No scan needed.
+
+### Cardinality-Many (Add-Wins Set)
+
+| Operation | Time | Space | Notes |
+|-----------|------|-------|-------|
+| **Write** `Add(e, a, v)` | O(1) | O(1) | Append OpAdd datom |
+| **Write** `Remove(e, a, v)` | O(1) | O(1) | Append OpRemove datom |
+| **Read** (cache hit) | O(1) | O(1) | Return cached set |
+| **Read** (cache miss) | O(n) | O(k) | Add-wins resolution |
+| **Cache rebuild** | O(n) | O(k) | Group by V, compare Lamport per value |
+| **Membership test** | O(1) | O(1) | Hash lookup in cached set |
+| **History query** | O(n) | O(n) | Scan all operations |
+
+**Resolution algorithm**: For each unique value V, find max add Lamport and max remove Lamport. Value is in set if `maxAdd >= maxRemove` (add-wins at equal Lamport).
+
+### Cardinality-Vector (RGA)
+
+| Operation | Time | Space | Notes |
+|-----------|------|-------|-------|
+| **Write** `Add(e, a, v)` (append) | O(1) | O(1) | Single RGAInsert datom |
+| **Write** `Set(e, a, vals)` (replace) | O(k + k') | O(k') | See diff algorithm below |
+| **Read** (cache hit) | O(1) | O(1) | Return cached vectorList |
+| **Read** (cache miss) | O(n log n) | O(n) | RGA reconstruction |
+| **Cache rebuild** | O(n log n) | O(k) | Sort + DFS traversal |
+| **Index access** `vec[i]` | O(1) | O(1) | Cached vectorList[i] |
+| **Length** | O(1) | O(1) | len(vectorList) |
+| **History query** | O(n) | O(n) | Scan all operations |
+
+**RGA reconstruction**: O(n) to load all elements, O(n log n) to sort children by ElementID at each node, O(k) DFS to produce ordered output.
+
+**Set() diff complexity**:
+
+| Scenario | Tombstones | Inserts | Total |
+|----------|------------|---------|-------|
+| Append k' elements | 0 | k' | O(k') |
+| Change last element | 1 | 1 | O(1) |
+| Change at position p | k - p | k' - p | O(k + k' - 2p) |
+| Full replace (p=0) | k | k' | O(k + k') |
+| No change | 0 | 0 | O(1) |
+
+### Vector + UniqueElements (OrderedSet)
+
+| Operation | Time | Space | Notes |
+|-----------|------|-------|-------|
+| **Write** `Add(e, a, v)` | O(d + k) | O(1) | Uniqueness check + insert |
+| **Write** `Set(e, a, vals)` | O(k + k') | O(k') | Same as Vector |
+| **Read** (cache hit) | O(1) | O(1) | Same as Vector |
+| **Read** (cache miss) | O(n log n) | O(n) | Same as Vector |
+| **Uniqueness check** | O(d + k) | O(1) | Scan pending + cached |
+
+**Uniqueness check breakdown**:
+- Scan pending transaction datoms: O(d)
+- Cache lookup: O(1) hit, O(n log n) miss
+- Scan cached vectorList: O(k)
+- Total: O(d + k) assuming cache hit
+
+**Trade-off**: Regular Vector Add is O(1). OrderedSet Add is O(d + k) due to uniqueness enforcement. For small vectors (k < 100), overhead is negligible.
+
+### Index Operations
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| Point lookup (any index) | O(log N) | BadgerDB LSM-tree seek |
+| Range scan | O(log N + r) | r = results in range |
+| EAVT scan for (E, A) | O(log N + n) | n = operations for that (E, A) |
+| AVET value lookup | O(log N + m) | m = entities with that value |
+| VAET reverse ref | O(log N + m) | m = references to entity |
+
+### Cache Operations
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| Cache lookup | O(1) | Hash map by (E, A) |
+| Freshness check | O(1) | Compare version to maxVersions |
+| Invalidation | O(1) | Delete entry, update maxVersions |
+| Full rebuild (One) | O(1) | Single index seek |
+| Full rebuild (Many) | O(n) | Add-wins resolution |
+| Full rebuild (Vector) | O(n log n) | RGA reconstruction |
+
+### Space Complexity
+
+**Per (E, A) pair**:
+
+| Cardinality | Storage | Cache |
+|-------------|---------|-------|
+| One | O(n) all writes | O(1) single value |
+| Many | O(n) all writes | O(k) set members |
+| Vector | O(n) all writes | O(k) values + O(k) position index |
+| Vector + UniqueElements | O(n) all writes | O(k) values + O(k) position index |
+
+**Storage note**: All historical writes are preserved (append-only). Storage grows with n (total operations), not k (current size). Compaction/GC is not currently implemented.
+
+**Cache note**: Cache stores only resolved current state, not history. Memory usage is O(k) per cached (E, A) pair.
+
+### Summary: Write vs Read Trade-offs
+
+| Cardinality | Write | Read (miss) | Read (hit) | Trade-off |
+|-------------|-------|-------------|------------|-----------|
+| One | O(1) | O(1) | O(1) | Optimal for single values |
+| Many | O(1) | O(n) | O(1) | Write-optimized, read rebuilds |
+| Vector | O(1) | O(n log n) | O(1) | Write-optimized, expensive rebuild |
+| OrderedSet | O(d+k) | O(n log n) | O(1) | Uniqueness costs at write time |
+
+**Key insight**: The system is write-optimized. Writes are always O(1) or O(d+k) for OrderedSet. Read performance depends on cache hit rate. For read-heavy workloads, use `db.WarmCache()` at startup.
+
+---
+
 ## Performance Characteristics
-
-### Read Performance
-
-| Operation | Cache Hit | Cache Miss |
-|-----------|-----------|------------|
-| Get cardinality-one value | O(1) | O(1) scan first entry |
-| Get cardinality-many set | O(1) | O(n) add-wins resolution |
-| Get vector | O(1) | O(n log n) RGA reconstruction |
-| Get vector[i] | O(1) | O(n log n) then O(1) |
-| Get vector length | O(1) | O(n log n) then O(1) |
-
-### Write Performance
-
-| Operation | Complexity |
-|-----------|------------|
-| Set cardinality-one | O(1) - append only |
-| Add to set | O(1) - append only |
-| Remove from set | O(1) - append tombstone |
-| Append to vector | O(1) - append only |
-| Set vector (diff) | O(k) where k = changed elements |
-| Set vector (full replace) | O(n + m) tombstones + inserts |
 
 ### Memory
 
