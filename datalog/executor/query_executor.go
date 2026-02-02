@@ -784,11 +784,7 @@ func combineSubqueryResultsSimple(results []Relation) Relation {
 	var allTuples []Tuple
 
 	for _, result := range results {
-		it := result.Iterator()
-		defer it.Close()
-		for it.Next() {
-			allTuples = append(allTuples, copyTuple(it.Tuple()))
-		}
+		collectTuplesInto(&allTuples, result)
 	}
 
 	return NewMaterializedRelation(columns, allTuples)
@@ -1333,11 +1329,7 @@ func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
 
 	// Materialize branch result (usually small, like a single ground value)
 	var branchTuples []Tuple
-	branchIter := branch.Iterator()
-	for branchIter.Next() {
-		branchTuples = append(branchTuples, copyTuple(branchIter.Tuple()))
-	}
-	branchIter.Close()
+	collectTuplesInto(&branchTuples, branch)
 
 	// Cross join: for each outer tuple, combine with each branch tuple
 	var resultTuples []Tuple

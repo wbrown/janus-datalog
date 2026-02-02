@@ -37,12 +37,7 @@ func (tf *TableFormatter) FormatRelation(rel Relation) string {
 
 	// Collect all tuples
 	var tuples []Tuple
-	it := rel.Iterator()
-	defer it.Close()
-
-	for it.Next() {
-		tuples = append(tuples, copyTuple(it.Tuple()))
-	}
+	collectTuplesInto(&tuples, rel)
 
 	columns := rel.Columns()
 	return tf.formatTable(columns, tuples)

@@ -1044,11 +1044,7 @@ func (r *StreamingRelation) Sorted() []Tuple {
 
 	// Now consume iterator to build cache
 	var tuples []Tuple
-	it := r.Iterator()
-	defer it.Close()
-	for it.Next() {
-		tuples = append(tuples, copyTuple(it.Tuple()))
-	}
+	collectTuplesInto(&tuples, r)
 
 	// Sort tuples lexicographically by columns
 	sort.Slice(tuples, func(i, j int) bool {
@@ -1132,11 +1128,7 @@ func (r *StreamingRelation) Materialize() Relation {
 func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	// Collect all tuples (can't sort without materializing)
 	var tuples []Tuple
-	it := r.Iterator()
-	for it.Next() {
-		tuples = append(tuples, copyTuple(it.Tuple()))
-	}
-	it.Close()
+	collectTuplesInto(&tuples, r)
 
 	// Create MaterializedRelation and delegate to its Sort
 	mat := NewMaterializedRelationWithOptions(r.columns, tuples, r.options)
@@ -1257,13 +1249,17 @@ func CommonColumns(r1, r2 Relation) []query.Symbol {
 // Select filters a relation based on a predicate
 func Select(rel Relation, pred func(Tuple) bool) Relation {
 	var selected []Tuple
+	needsCopy := rel.RequiresCopy()
 	it := rel.Iterator()
 	defer it.Close()
 
 	for it.Next() {
 		tuple := it.Tuple()
 		if pred(tuple) {
-			selected = append(selected, copyTuple(tuple))
+			if needsCopy {
+				tuple = copyTuple(tuple)
+			}
+			selected = append(selected, tuple)
 		}
 	}
 
@@ -1399,13 +1395,7 @@ func (p *ProductRelation) Project(columns []query.Symbol) (Relation, error) {
 
 func (p *ProductRelation) Materialize() Relation {
 	var tuples []Tuple
-	it := p.Iterator()
-	defer it.Close()
-
-	for it.Next() {
-		tuples = append(tuples, copyTuple(it.Tuple()))
-	}
-
+	collectTuplesInto(&tuples, p)
 	return NewMaterializedRelationWithOptions(p.columns, tuples, p.options)
 }
 

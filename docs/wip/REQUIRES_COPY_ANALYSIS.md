@@ -228,13 +228,161 @@ joined := HashJoinWithOptions(left, right, joinCols, opts)
 - ✅ ExecuteRealized() copies collector from context to options
 - ✅ Full E2E test verifies annotation flows through queries
 
-## Future Work (Lower Priority)
+## Baseline Captured (2026-02-02)
 
-1. Implement delegation pattern for wrapper relations (UnionRelation, OrFallbackRelation, PrependedRelation)
-   - Copy at boundary when source.RequiresCopy()
-   - Return false since output is then guaranteed safe
-2. Add requiresCopy parameter to StreamingRelation constructor for non-storage sources
-3. Update remaining copyTuple sites in query_executor.go, executor_utils.go
+Post-Phase 5 baseline with count=100: `benchmarks/final_baseline_20260202.txt`
+
+---
+
+## Phase 6: Wrapper Relation Delegation (Next)
+
+### Goal
+Wrapper relations (UnionRelation, OrFallbackRelation, PrependedRelation) currently return `RequiresCopy() = true` conservatively. They should instead:
+1. Copy at the boundary when `source.RequiresCopy()` is true
+2. Return `RequiresCopy() = false` since they then guarantee safe output
+
+This pushes the copy decision to the **earliest point** where we know whether it's needed.
+
+### UnionRelation
+
+**File**: `executor/union_relation.go`
+
+Current `UnionIterator.Next()` stores tuple directly:
+```go
+it.currentTuple = it.currentIter.Tuple()
+```
+
+Change to:
+```go
+tuple := it.currentIter.Tuple()
+if it.currentRelation.RequiresCopy() {
+    tuple = copyTuple(tuple)
+}
+it.currentTuple = tuple
+```
+
+Then change `RequiresCopy()` from `true` to `false`.
+
+**Requires**: UnionIterator needs access to the current relation's RequiresCopy status.
+
+### OrFallbackRelation
+
+**File**: `executor/or_fallback_relation.go`
+
+Similar pattern - copy at boundary in iterator, return false from relation.
+
+### PrependedRelation
+
+**File**: `executor/prepended_relation.go`
+
+- `firstTuple` is already safe (copied at construction)
+- `restIter.Tuple()` needs boundary copy if rest relation requires it
+
+### Phase 6.0: Tests Required (Before Implementation)
+
+Current test coverage is insufficient for these changes. We have correctness tests (right answers) but not tuple stability tests for wrapper relations.
+
+**Test file**: `executor/wrapper_relation_copy_test.go`
+
+#### Test 1: UnionIterator with RequiresCopy source
+```go
+// TestUnionIteratorCopiesFromUnsafeSource
+// - Create a MockRelation with RequiresCopy() = true that reuses workspace
+// - Wrap in UnionRelation (single source for simplicity)
+// - Iterate and store tuple references
+// - Verify stored tuples are NOT corrupted after continued iteration
+```
+
+#### Test 2: UnionIterator with safe source (no unnecessary copies)
+```go
+// TestUnionIteratorPassthroughFromSafeSource
+// - Create MaterializedRelation (RequiresCopy() = false)
+// - Wrap in UnionRelation
+// - Verify tuples pass through without copying (same pointer)
+// - This ensures we don't regress performance for safe sources
+```
+
+#### Test 3: UnionIterator with mixed sources
+```go
+// TestUnionIteratorMixedSources
+// - Create one MaterializedRelation (safe) and one mock unsafe relation
+// - UnionRelation over both
+// - Verify: safe source tuples pass through, unsafe source tuples copied
+```
+
+#### Test 4: OrFallbackIterator with RequiresCopy source
+```go
+// TestOrFallbackIteratorCopiesFromUnsafeSource
+// - Create mock unsafe relation as a branch
+// - OrFallbackRelation with that branch
+// - Verify tuples are copied when branch.RequiresCopy() = true
+```
+
+#### Test 5: OrFallbackIterator projection path
+```go
+// TestOrFallbackIteratorProjectionCreatesFreshTuple
+// - When OrFallback projects (creates new tuple), no copy needed
+// - Verify projection path doesn't double-copy
+```
+
+#### Test 6: PrependedIterator rest iteration
+```go
+// TestPrependedIteratorCopiesFromUnsafeRest
+// - Create PrependedRelation with unsafe rest relation
+// - First tuple (prepended) is always safe
+// - Rest tuples should be copied if rest.RequiresCopy() = true
+```
+
+#### Test 7: PrependedIterator with safe rest
+```go
+// TestPrependedIteratorPassthroughFromSafeRest
+// - PrependedRelation with MaterializedRelation as rest
+// - Verify rest tuples pass through without copying
+```
+
+#### MockUnsafeRelation helper
+```go
+// mockUnsafeRelation implements Relation with:
+// - RequiresCopy() = true
+// - Iterator that reuses a workspace slice (simulates storage iterators)
+// - Each Next() overwrites the workspace
+// This lets us verify that wrapper relations copy when needed
+```
+
+### Phase 6 Checklist
+- [ ] Write tests (Phase 6.0)
+- [ ] Verify tests fail with current code (unsafe sources should corrupt)
+- [ ] UnionIterator: copy at boundary, track current relation's RequiresCopy
+- [ ] UnionRelation: return false
+- [ ] OrFallbackIterator: copy at boundary
+- [ ] OrFallbackRelation: return false
+- [ ] PrependedIterator: copy from rest if needed
+- [ ] PrependedRelation: return false
+- [ ] Verify tests pass
+- [ ] Run full test suite with -race
+- [ ] Benchmark and compare to final_baseline_20260202.txt
+
+---
+
+## Phase 7: StreamingRelation Constructor Parameter (Future)
+
+Add `requiresCopy bool` parameter to StreamingRelation:
+- Storage layer creates with `requiresCopy: true`
+- Executor joins create with `requiresCopy: false` (they already copy internally)
+
+---
+
+## Phase 8: Remaining copyTuple Sites (Future)
+
+Still using unconditional copyTuple:
+- query_executor.go:790, 1338
+- executor_utils.go:79, 116, 320
+- relation.go Materialize methods
+- helpers.go, subquery.go, streaming_union.go, etc.
+
+Lower priority - main hot path (joins) is already optimized.
+
+---
 
 ## VectorQuery Path Analysis
 

@@ -7,24 +7,36 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// PrependedRelation wraps an iterator with a pre-peeked first tuple.
-// This allows checking if an iterator has results without losing the first tuple.
+// PrependedRelation wraps a relation with a pre-peeked first tuple.
+// This allows checking if a relation has results without losing the first tuple.
 type PrependedRelation struct {
-	columns     []query.Symbol
-	firstTuple  Tuple
-	restIter    Iterator
-	options     ExecutorOptions
-	iterStarted bool
+	columns      []query.Symbol
+	firstTuple   Tuple
+	restRelation Relation // Use Relation instead of Iterator for RequiresCopy check
+	restIter     Iterator // Cached iterator (created on first Iterator() call)
+	options      ExecutorOptions
+	iterStarted  bool
 }
 
 // NewPrependedRelation creates a streaming relation that yields firstTuple first,
-// then continues with the rest of the iterator.
+// then continues with the rest of the relation.
 func NewPrependedRelation(columns []query.Symbol, firstTuple Tuple, restIter Iterator, options ExecutorOptions) *PrependedRelation {
+	// Legacy API: wrap Iterator without Relation (always copies from rest)
 	return &PrependedRelation{
 		columns:    columns,
 		firstTuple: firstTuple,
 		restIter:   restIter,
 		options:    options,
+	}
+}
+
+// NewPrependedRelationFromRelation creates a streaming relation with proper RequiresCopy handling.
+func NewPrependedRelationFromRelation(columns []query.Symbol, firstTuple Tuple, restRelation Relation, options ExecutorOptions) *PrependedRelation {
+	return &PrependedRelation{
+		columns:      columns,
+		firstTuple:   firstTuple,
+		restRelation: restRelation,
+		options:      options,
 	}
 }
 
@@ -34,10 +46,23 @@ func (r *PrependedRelation) Iterator() Iterator {
 		return r.Materialize().Iterator()
 	}
 	r.iterStarted = true
+
+	// Get iterator from relation if we have one
+	var restIter Iterator
+	var restRelation Relation
+	if r.restRelation != nil {
+		restIter = r.restRelation.Iterator()
+		restRelation = r.restRelation
+	} else {
+		restIter = r.restIter
+		// No relation - must always copy (legacy API)
+		restRelation = nil
+	}
+
 	return &PrependedIterator{
-		firstTuple:    r.firstTuple,
-		restIter:      r.restIter,
-		returnedFirst: false,
+		firstTuple:   r.firstTuple,
+		restIter:     restIter,
+		restRelation: restRelation,
 	}
 }
 
@@ -87,11 +112,27 @@ func (r *PrependedRelation) Project(columns []query.Symbol) (Relation, error) {
 
 func (r *PrependedRelation) Materialize() Relation {
 	tuples := []Tuple{r.firstTuple}
-	if r.restIter != nil {
-		for r.restIter.Next() {
-			tuples = append(tuples, copyTuple(r.restIter.Tuple()))
+
+	// Determine if we need to copy and get the iterator
+	var it Iterator
+	var needsCopy bool
+	if r.restRelation != nil {
+		it = r.restRelation.Iterator()
+		needsCopy = r.restRelation.RequiresCopy()
+	} else if r.restIter != nil {
+		it = r.restIter
+		needsCopy = true // Legacy API - always copy
+	}
+
+	if it != nil {
+		for it.Next() {
+			tuple := it.Tuple()
+			if needsCopy {
+				tuple = copyTuple(tuple)
+			}
+			tuples = append(tuples, tuple)
 		}
-		r.restIter.Close()
+		it.Close()
 		r.restIter = nil
 	}
 	return NewMaterializedRelationWithOptions(r.columns, tuples, r.options)
@@ -145,18 +186,17 @@ func (r *PrependedRelation) Options() ExecutorOptions {
 	return r.options
 }
 
-// RequiresCopy returns true because PrependedRelation wraps a raw Iterator
-// (not a Relation), so it cannot check if the underlying source requires copying.
-// The restIter.Tuple() result is passed through directly without copying.
-// TODO: Change API to accept Relation instead of Iterator for proper delegation.
+// RequiresCopy returns false because PrependedIterator copies tuples from
+// sources that have RequiresCopy() = true at the boundary.
 func (r *PrependedRelation) RequiresCopy() bool {
-	return true
+	return false
 }
 
 // PrependedIterator yields a pre-peeked tuple first, then continues with the rest.
 type PrependedIterator struct {
 	firstTuple    Tuple
 	restIter      Iterator
+	restRelation  Relation // For RequiresCopy check (nil = always copy)
 	returnedFirst bool
 	currentTuple  Tuple
 	done          bool
@@ -174,7 +214,14 @@ func (it *PrependedIterator) Next() bool {
 	}
 
 	if it.restIter != nil && it.restIter.Next() {
-		it.currentTuple = it.restIter.Tuple()
+		tuple := it.restIter.Tuple()
+
+		// Copy if rest relation requires it, or if we don't have a relation (legacy API)
+		if it.restRelation == nil || it.restRelation.RequiresCopy() {
+			tuple = copyTuple(tuple)
+		}
+
+		it.currentTuple = tuple
 		return true
 	}
 

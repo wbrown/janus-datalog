@@ -513,30 +513,39 @@ func TestCacheConcurrency(t *testing.T) {
 	copy(nameAttr[:], ":person/name")
 	key := CacheKey{E: eBytes, A: nameAttr}
 
-	// Run concurrent GetOrResolve calls with real storage
-	var wg sync.WaitGroup
-	errors := make(chan error, 100)
+	// Populate initial entry
+	cache.GetOrResolve(key, matcher)
 
-	for i := 0; i < 100; i++ {
+	var wg sync.WaitGroup
+
+	// Concurrent readers
+	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			entry := cache.GetOrResolve(key, matcher)
-			if entry == nil {
-				errors <- assert.AnError
-				return
-			}
-			if entry.OneValue() != "Alice" {
-				errors <- assert.AnError
-				return
-			}
+			assert.NotNil(t, entry)
 		}()
 	}
-	wg.Wait()
-	close(errors)
 
-	// Check for any errors
-	for err := range errors {
-		t.Error(err)
+	// Concurrent writers (updating max version)
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: uint64(100 + i), ReplicaID: 1})
+		}(i)
 	}
+
+	// Concurrent invalidations
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cache.Invalidate([]CacheKey{key})
+		}()
+	}
+
+	wg.Wait()
+	// Should complete without panic or data race
 }

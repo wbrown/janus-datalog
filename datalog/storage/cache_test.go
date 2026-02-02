@@ -408,57 +408,6 @@ func TestCacheAfterRestart(t *testing.T) {
 	assert.Equal(t, 1, resolver.resolveLWWCalls)
 }
 
-func TestCacheConcurrentReadWrite(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
-	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// Populate initial entry
-	cache.GetOrResolve(key, resolver)
-
-	var wg sync.WaitGroup
-
-	// Concurrent readers
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			entry := cache.GetOrResolve(key, resolver)
-			assert.NotNil(t, entry)
-		}()
-	}
-
-	// Concurrent writers (updating max version)
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: uint64(100 + i), ReplicaID: 1})
-		}(i)
-	}
-
-	// Concurrent invalidations
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cache.Invalidate([]CacheKey{key})
-		}()
-	}
-
-	wg.Wait()
-	// Should complete without panic or data race
-}
-
 // mockStore implements Store interface for testing IsAttributeFresh
 type mockStore struct {
 	maxAttrID    datalog.ElementID

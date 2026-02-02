@@ -396,11 +396,7 @@ func combineSubqueryResults(allResults []Relation, subqPlan planner.SubqueryPlan
 	columns := validResults[0].Columns()
 
 	for _, rel := range validResults {
-		it := rel.Iterator()
-		for it.Next() {
-			allTuples = append(allTuples, copyTuple(it.Tuple()))
-		}
-		it.Close()
+		collectTuplesInto(&allTuples, rel)
 	}
 
 	result := NewMaterializedRelation(columns, allTuples)

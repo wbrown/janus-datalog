@@ -70,14 +70,8 @@ func extractFindColumns(findElements []query.FindElement) []query.Symbol {
 // MaterializeResult converts a streaming relation to a materialized result with the specified columns.
 // This is a pure function that collects all tuples from the iterator into memory.
 func MaterializeResult(rel Relation, columns []query.Symbol) Relation {
-	tuples := []Tuple{}
-
-	it := rel.Iterator()
-	defer it.Close()
-
-	for it.Next() {
-		tuples = append(tuples, copyTuple(it.Tuple()))
-	}
+	var tuples []Tuple
+	collectTuplesInto(&tuples, rel)
 
 	// DEBUG: Check for tuple copying bug
 	if len(tuples) > 1 {
@@ -109,12 +103,8 @@ type Result = MaterializedRelation
 // It materializes the relation if not already materialized.
 func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	// Materialize if not already materialized
-	tuples := []Tuple{}
-	it := rel.Iterator()
-	defer it.Close()
-	for it.Next() {
-		tuples = append(tuples, copyTuple(it.Tuple()))
-	}
+	var tuples []Tuple
+	collectTuplesInto(&tuples, rel)
 
 	// Get column indices for sort variables
 	columns := rel.Columns()
@@ -314,12 +304,7 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 				if rel.Size() > 0 && len(inp.Symbols) == len(rel.Columns()) {
 					// Create a new relation with the input variables as column names
 					tuples := make([]Tuple, 0, rel.Size())
-
-					it := rel.Iterator()
-					for it.Next() {
-						tuples = append(tuples, copyTuple(it.Tuple()))
-					}
-					it.Close()
+					collectTuplesInto(&tuples, rel)
 
 					opts := rel.Options()
 					boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(inp.Symbols, tuples, opts))

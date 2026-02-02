@@ -60,11 +60,7 @@ func (s *StreamingUnionBuilder) unionMaterialized(relations []Relation) Relation
 	var allTuples []Tuple
 
 	for _, rel := range relations {
-		it := rel.Iterator()
-		defer it.Close()
-		for it.Next() {
-			allTuples = append(allTuples, copyTuple(it.Tuple()))
-		}
+		collectTuplesInto(&allTuples, rel)
 	}
 
 	return NewMaterializedRelation(columns, allTuples)
