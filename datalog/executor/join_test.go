@@ -4,9 +4,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wbrown/janus-datalog/datalog/query"
-
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 func TestHashJoin(t *testing.T) {
@@ -238,4 +238,79 @@ func tuplesEqual(a, b []Tuple) bool {
 		}
 	}
 	return true
+}
+
+func TestJoinBuildCopyAnnotation(t *testing.T) {
+	// Test that the copy tracking annotation is emitted when a collector is provided
+
+	// Create a collector to capture events
+	var events []annotations.Event
+	handler := func(e annotations.Event) {
+		events = append(events, e)
+	}
+	collector := annotations.NewCollector(handler)
+
+	// Create relations with options that include the collector
+	opts := ExecutorOptions{
+		Collector: collector,
+	}
+
+	// MaterializedRelation doesn't require copying (RequiresCopy() = false)
+	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	leftTuples := []Tuple{
+		{1, "a"},
+		{2, "b"},
+		{3, "c"},
+	}
+	left := NewMaterializedRelationWithOptions(leftCols, leftTuples, opts)
+
+	rightCols := []query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	rightTuples := []Tuple{
+		{"a", 100},
+		{"b", 200},
+		{"d", 400},
+	}
+	right := NewMaterializedRelationWithOptions(rightCols, rightTuples, opts)
+
+	// Perform the join
+	joined := HashJoinWithOptions(left, right, []query.Symbol{datalog.NewSymbol("?y")}, opts)
+
+	// Materialize to ensure build phase runs
+	_ = collectTuples(joined)
+
+	// Check that we got the copy tracking annotation
+	var foundCopyAnnotation bool
+	var copyCount, skipCount int
+	var requiresCopy bool
+	for _, e := range events {
+		if e.Name == annotations.JoinBuildCopy {
+			foundCopyAnnotation = true
+			if c, ok := e.Data["copied"].(int); ok {
+				copyCount = c
+			}
+			if s, ok := e.Data["passthru"].(int); ok {
+				skipCount = s
+			}
+			if rc, ok := e.Data["requires_copy"].(bool); ok {
+				requiresCopy = rc
+			}
+		}
+	}
+
+	if !foundCopyAnnotation {
+		t.Error("expected JoinBuildCopy annotation to be emitted")
+	}
+
+	// MaterializedRelation doesn't require copying, so we should see passthru > 0, copied = 0
+	if requiresCopy {
+		t.Error("expected requires_copy=false for MaterializedRelation")
+	}
+	if copyCount != 0 {
+		t.Errorf("expected 0 copies for MaterializedRelation, got %d", copyCount)
+	}
+	if skipCount == 0 {
+		t.Errorf("expected some passthru copies for MaterializedRelation, got %d", skipCount)
+	}
+
+	t.Logf("Copy stats: copied=%d, passthru=%d, requires_copy=%v", copyCount, skipCount, requiresCopy)
 }

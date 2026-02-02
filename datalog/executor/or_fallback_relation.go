@@ -309,6 +309,12 @@ func (r *OrFallbackRelation) Options() ExecutorOptions {
 	return r.options
 }
 
+// RequiresCopy returns true because OrFallbackRelation wraps streaming sources
+// that may reuse workspace memory for tuples.
+func (r *OrFallbackRelation) RequiresCopy() bool {
+	return true
+}
+
 // OrFallbackIterator lazily evaluates OR branches per outer tuple.
 type OrFallbackIterator struct {
 	executor  *DefaultQueryExecutor

@@ -2,8 +2,10 @@ package executor
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -309,6 +311,19 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 	buildIt := buildRel.Iterator()
 	defer buildIt.Close()
 
+	// Check if we need to copy tuples from the build relation
+	// This avoids unnecessary copies when the source guarantees stable tuples
+	needsCopy := buildRel.RequiresCopy()
+	var copyCount, passthruCount int
+	maybeCopy := func(t Tuple) Tuple {
+		if needsCopy {
+			copyCount++
+			return copyTuple(t)
+		}
+		passthruCount++
+		return t
+	}
+
 	// Check first tuple to determine if we have a valid tx column
 	if txIndex >= 0 {
 		// Potential tx column found - check first tuple's type
@@ -361,7 +376,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 
 				// Keep only if this is newer than what we have
 				if existingTxVal, exists := latestTx.Get(key); !exists || txID > existingTxVal.(uint64) {
-					latestTuples.Put(key, copyTuple(tuple))
+					latestTuples.Put(key, maybeCopy(tuple))
 					latestTx.Put(key, txID)
 				}
 
@@ -384,7 +399,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 
 					// Keep only if this is newer than what we have
 					if existingTxVal, exists := latestTx.Get(key); !exists || txID > existingTxVal.(uint64) {
-						latestTuples.Put(key, copyTuple(tuple))
+						latestTuples.Put(key, maybeCopy(tuple))
 						latestTx.Put(key, txID)
 					}
 				}
@@ -414,9 +429,9 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				tuple := firstTuple
 				key := NewTupleKey(tuple, buildIndices)
 				if existing, ok := hashTable.Get(key); ok {
-					hashTable.Put(key, append(existing.([]Tuple), copyTuple(tuple)))
+					hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
 				} else {
-					hashTable.Put(key, []Tuple{copyTuple(tuple)})
+					hashTable.Put(key, []Tuple{maybeCopy(tuple)})
 				}
 
 				buildCount := 1
@@ -432,9 +447,9 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 					tuple := buildIt.Tuple()
 					key := NewTupleKey(tuple, buildIndices)
 					if existing, ok := hashTable.Get(key); ok {
-						hashTable.Put(key, append(existing.([]Tuple), copyTuple(tuple)))
+						hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
 					} else {
-						hashTable.Put(key, []Tuple{copyTuple(tuple)})
+						hashTable.Put(key, []Tuple{maybeCopy(tuple)})
 					}
 					buildCount++
 				}
@@ -461,9 +476,9 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				firstBuildTuple = tuple
 			}
 			if existing, ok := hashTable.Get(key); ok {
-				hashTable.Put(key, append(existing.([]Tuple), copyTuple(tuple)))
+				hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
 			} else {
-				hashTable.Put(key, []Tuple{copyTuple(tuple)})
+				hashTable.Put(key, []Tuple{maybeCopy(tuple)})
 			}
 			buildCount++
 		}
@@ -475,6 +490,20 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				fmt.Printf("[HashJoin] Built hash table with %d tuples from iterator\n", buildCount)
 			}
 		}
+	}
+
+	// Emit annotation for copy statistics if collector is available
+	if opts.Collector != nil && (copyCount > 0 || passthruCount > 0) {
+		opts.Collector.Add(annotations.Event{
+			Name:  annotations.JoinBuildCopy,
+			Start: time.Now(),
+			End:   time.Now(),
+			Data: map[string]interface{}{
+				"copied":        copyCount,
+				"passthru":      passthruCount,
+				"requires_copy": needsCopy,
+			},
+		})
 	}
 
 	// Probe phase - find matches

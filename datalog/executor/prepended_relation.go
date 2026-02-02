@@ -145,6 +145,14 @@ func (r *PrependedRelation) Options() ExecutorOptions {
 	return r.options
 }
 
+// RequiresCopy returns true because PrependedRelation wraps a raw Iterator
+// (not a Relation), so it cannot check if the underlying source requires copying.
+// The restIter.Tuple() result is passed through directly without copying.
+// TODO: Change API to accept Relation instead of Iterator for proper delegation.
+func (r *PrependedRelation) RequiresCopy() bool {
+	return true
+}
+
 // PrependedIterator yields a pre-peeked tuple first, then continues with the rest.
 type PrependedIterator struct {
 	firstTuple    Tuple

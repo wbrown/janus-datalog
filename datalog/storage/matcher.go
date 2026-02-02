@@ -69,8 +69,12 @@ func (m *BadgerMatcher) AsOf(txID uint64) *BadgerMatcher {
 
 // SetHandler configures the handler for detailed storage events.
 // This is called by WrapMatcher during construction.
+// Also updates options.Collector so relations inherit the collector for join annotations.
 func (m *BadgerMatcher) SetHandler(handler annotations.Handler) {
 	m.handler = handler
+	if handler != nil {
+		m.options.Collector = annotations.NewCollector(handler)
+	}
 }
 
 // SetSchema sets the schema for cardinality-aware index selection.

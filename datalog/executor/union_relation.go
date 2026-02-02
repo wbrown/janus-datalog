@@ -181,6 +181,12 @@ func (ur *UnionRelation) Options() ExecutorOptions {
 	return ur.opts
 }
 
+// RequiresCopy returns true because UnionRelation wraps streaming sources
+// that may reuse workspace memory for tuples.
+func (ur *UnionRelation) RequiresCopy() bool {
+	return true
+}
+
 // UnionIterator consumes relations from a channel and iterates with deduplication
 // KEY: Only ONE relation held in memory at a time (plus dedup map)
 // ALSO: Builds cache as a side effect for subsequent Iterator() calls

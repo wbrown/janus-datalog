@@ -22,6 +22,22 @@ func copyTuple(t Tuple) Tuple {
 	return c
 }
 
+// collectTuplesInto appends all tuples from a relation into the destination slice.
+// It checks RequiresCopy() to avoid unnecessary copying when the relation
+// guarantees stable tuple references (e.g., MaterializedRelation).
+func collectTuplesInto(dest *[]Tuple, rel Relation) {
+	needsCopy := rel.RequiresCopy()
+	it := rel.Iterator()
+	for it.Next() {
+		tuple := it.Tuple()
+		if needsCopy {
+			tuple = copyTuple(tuple)
+		}
+		*dest = append(*dest, tuple)
+	}
+	it.Close()
+}
+
 // Relation represents a set of tuples with named columns
 type Relation interface {
 	// Columns returns the column names (symbols) in order
@@ -99,6 +115,12 @@ type Relation interface {
 	// Options returns the executor options for this relation
 	// Used by join operations to extract configuration
 	Options() ExecutorOptions
+
+	// RequiresCopy returns true if tuples from Iterator() must be copied
+	// before storing, because the iterator reuses internal workspace memory.
+	// MaterializedRelation returns false (tuples are independent).
+	// StreamingRelation returns true (iterator may reuse workspace).
+	RequiresCopy() bool
 
 	// Note: Relations are IMMUTABLE and DEDUPLICATED at creation
 	// All operations return NEW Relations
@@ -361,6 +383,12 @@ func (r *MaterializedRelation) IsEmpty() bool {
 // Options returns the executor options for this materialized relation
 func (r *MaterializedRelation) Options() ExecutorOptions {
 	return r.options
+}
+
+// RequiresCopy returns false because MaterializedRelation stores tuples
+// in a slice - each tuple is independent and not reused across iterations.
+func (r *MaterializedRelation) RequiresCopy() bool {
+	return false
 }
 
 // Get returns a specific tuple by index
@@ -866,6 +894,12 @@ func (r *StreamingRelation) Size() int {
 // Options returns the executor options for this streaming relation
 func (r *StreamingRelation) Options() ExecutorOptions {
 	return r.options
+}
+
+// RequiresCopy returns true because StreamingRelation wraps iterators
+// that may reuse workspace memory for tuples across Next() calls.
+func (r *StreamingRelation) RequiresCopy() bool {
+	return true
 }
 
 func (r *StreamingRelation) IsEmpty() bool {
@@ -1424,6 +1458,13 @@ func (p *ProductRelation) Aggregate(findElements []query.FindElement) Relation {
 
 func (p *ProductRelation) Options() ExecutorOptions {
 	return p.options
+}
+
+// RequiresCopy returns false because ProductIterator.Tuple() creates a fresh
+// tuple on each call using append (var result Tuple; result = append(result, ...)).
+// The tuple is not reused across Next() calls.
+func (p *ProductRelation) RequiresCopy() bool {
+	return false
 }
 
 // ProductIterator implements streaming nested-loop iteration over multiple relations
