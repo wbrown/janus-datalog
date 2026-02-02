@@ -398,7 +398,7 @@ func combineSubqueryResults(allResults []Relation, subqPlan planner.SubqueryPlan
 	for _, rel := range validResults {
 		it := rel.Iterator()
 		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
+			allTuples = append(allTuples, copyTuple(it.Tuple()))
 		}
 		it.Close()
 	}

@@ -284,5 +284,6 @@ func (e *L85KeyEncoder) EncodePrefixRange(index IndexType, parts ...[]byte) (sta
 // EncodeTxForPrefix encodes a Tx with bitwise NOT for use in prefix keys.
 // L85 encoder uses the same bitwise NOT logic as binary encoder for consistency.
 func (e *L85KeyEncoder) EncodeTxForPrefix(tx Tx) []byte {
-	return txToDescending(tx)
+	result := txToDescending(tx)
+	return result[:]
 }

@@ -76,7 +76,7 @@ func MaterializeResult(rel Relation, columns []query.Symbol) Relation {
 	defer it.Close()
 
 	for it.Next() {
-		tuples = append(tuples, it.Tuple())
+		tuples = append(tuples, copyTuple(it.Tuple()))
 	}
 
 	// DEBUG: Check for tuple copying bug
@@ -113,7 +113,7 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	it := rel.Iterator()
 	defer it.Close()
 	for it.Next() {
-		tuples = append(tuples, it.Tuple())
+		tuples = append(tuples, copyTuple(it.Tuple()))
 	}
 
 	// Get column indices for sort variables
@@ -317,7 +317,7 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 
 					it := rel.Iterator()
 					for it.Next() {
-						tuples = append(tuples, it.Tuple())
+						tuples = append(tuples, copyTuple(it.Tuple()))
 					}
 					it.Close()
 

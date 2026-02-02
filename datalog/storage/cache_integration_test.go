@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -480,4 +481,62 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 	require.NotNil(t, entry, "cache should be populated after cardinality-many query")
 	assert.True(t, entry.ManySet()["developer"])
 	assert.True(t, entry.ManySet()["golang"])
+}
+
+// TestCacheConcurrency verifies that concurrent cache access with real storage
+// is thread-safe and returns correct values.
+func TestCacheConcurrency(t *testing.T) {
+	db, cleanup := createCacheIntegrationTestDatabase(t)
+	defer cleanup()
+
+	// Create schema
+	s, err := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Build()
+	require.NoError(t, err)
+	db.SetSchema(s)
+
+	// Add data
+	tx := db.NewTransaction()
+	e := datalog.NewIdentity("person1")
+	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+	require.NoError(t, err)
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Get matcher (implements CacheResolver)
+	matcher := db.Matcher().(*BadgerMatcher)
+	cache := db.Cache()
+
+	eBytes := Entity(e.Hash())
+	var nameAttr Attribute
+	copy(nameAttr[:], ":person/name")
+	key := CacheKey{E: eBytes, A: nameAttr}
+
+	// Run concurrent GetOrResolve calls with real storage
+	var wg sync.WaitGroup
+	errors := make(chan error, 100)
+
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			entry := cache.GetOrResolve(key, matcher)
+			if entry == nil {
+				errors <- assert.AnError
+				return
+			}
+			if entry.OneValue() != "Alice" {
+				errors <- assert.AnError
+				return
+			}
+		}()
+	}
+	wg.Wait()
+	close(errors)
+
+	// Check for any errors
+	for err := range errors {
+		t.Error(err)
+	}
 }

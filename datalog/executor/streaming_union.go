@@ -63,7 +63,7 @@ func (s *StreamingUnionBuilder) unionMaterialized(relations []Relation) Relation
 		it := rel.Iterator()
 		defer it.Close()
 		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
+			allTuples = append(allTuples, copyTuple(it.Tuple()))
 		}
 	}
 

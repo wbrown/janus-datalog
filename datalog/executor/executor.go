@@ -345,7 +345,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 				var tuples []Tuple
 				it := group.Iterator()
 				for it.Next() {
-					tuples = append(tuples, it.Tuple())
+					tuples = append(tuples, copyTuple(it.Tuple()))
 				}
 				it.Close()
 
@@ -489,7 +489,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	for _, rel := range allResults {
 		it := rel.Iterator()
 		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
+			allTuples = append(allTuples, copyTuple(it.Tuple()))
 		}
 		it.Close()
 	}
@@ -515,7 +515,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	var tuples []Tuple
 	it := iterationRelation.Iterator()
 	for it.Next() {
-		tuples = append(tuples, it.Tuple())
+		tuples = append(tuples, copyTuple(it.Tuple()))
 	}
 	it.Close()
 
@@ -590,7 +590,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	for _, rel := range allResults {
 		it := rel.Iterator()
 		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
+			allTuples = append(allTuples, copyTuple(it.Tuple()))
 		}
 		it.Close()
 	}
@@ -653,7 +653,7 @@ func (e *Executor) executeRealizedNonIterating(
 				var tuples []Tuple
 				it := group.Iterator()
 				for it.Next() {
-					tuples = append(tuples, it.Tuple())
+					tuples = append(tuples, copyTuple(it.Tuple()))
 				}
 				it.Close()
 

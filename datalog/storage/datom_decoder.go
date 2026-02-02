@@ -10,16 +10,17 @@ import (
 
 // DatomFromKey reconstructs a datom from an index key
 // This allows us to avoid fetching values since the key contains all information
-func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Datom, error) {
+// Returns by value to allow callers to reuse storage (no heap allocation per call)
+func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (datalog.Datom, error) {
 	// DecodeKey returns fixed-size arrays directly (no heap escape)
 	entity, attr, vBytes, tx, op, afterRef, err := encoder.DecodeKey(index, key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode key: %w", err)
+		return datalog.Datom{}, fmt.Errorf("failed to decode key: %w", err)
 	}
 
 	// Value (variable length) - first byte is type, rest is data
 	if len(vBytes) < 1 {
-		return nil, fmt.Errorf("value bytes too short: %d", len(vBytes))
+		return datalog.Datom{}, fmt.Errorf("value bytes too short: %d", len(vBytes))
 	}
 	vType := datalog.ValueType(vBytes[0])
 	vData := vBytes[1:]
@@ -34,13 +35,13 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Dat
 
 	v, err := datalog.ValueFromBytes(vType, vData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode value: %w", err)
+		return datalog.Datom{}, fmt.Errorf("failed to decode value: %w", err)
 	}
 
 	// Convert to user datom using direct array-based interning
 	// No intermediate copies needed - arrays go straight to intern cache lookup
 	// tx is [16]byte, convert to Tx type then to uint64
-	return &datalog.Datom{
+	return datalog.Datom{
 		E:        datalog.InternIdentityFromHash(entity),
 		A:        datalog.InternKeywordFromBytes(attr),
 		V:        v,
@@ -55,7 +56,8 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (*datalog.Dat
 type KeyOnlyIterator struct {
 	*BadgerIterator
 	encoder      KeyEncoder
-	currentDatom *datalog.Datom
+	currentDatom datalog.Datom
+	hasDatom     bool
 	currentError error
 }
 
@@ -84,7 +86,7 @@ func NewKeyOnlyIterator(store *BadgerStore, index IndexType, start, end []byte) 
 // Next advances the iterator
 func (i *KeyOnlyIterator) Next() bool {
 	// Clear previous state
-	i.currentDatom = nil
+	i.hasDatom = false
 	i.currentError = nil
 
 	// Use parent's Next
@@ -102,6 +104,7 @@ func (i *KeyOnlyIterator) Next() bool {
 		return false
 	}
 
+	i.hasDatom = true
 	return true
 }
 
@@ -110,8 +113,8 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 	if i.currentError != nil {
 		return nil, i.currentError
 	}
-	if i.currentDatom == nil {
+	if !i.hasDatom {
 		return nil, fmt.Errorf("no current datom")
 	}
-	return i.currentDatom, nil
+	return &i.currentDatom, nil
 }

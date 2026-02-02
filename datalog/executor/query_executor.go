@@ -787,7 +787,7 @@ func combineSubqueryResultsSimple(results []Relation) Relation {
 		it := result.Iterator()
 		defer it.Close()
 		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
+			allTuples = append(allTuples, copyTuple(it.Tuple()))
 		}
 	}
 
@@ -1335,7 +1335,7 @@ func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
 	var branchTuples []Tuple
 	branchIter := branch.Iterator()
 	for branchIter.Next() {
-		branchTuples = append(branchTuples, branchIter.Tuple())
+		branchTuples = append(branchTuples, copyTuple(branchIter.Tuple()))
 	}
 	branchIter.Close()
 

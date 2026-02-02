@@ -361,7 +361,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 
 				// Keep only if this is newer than what we have
 				if existingTxVal, exists := latestTx.Get(key); !exists || txID > existingTxVal.(uint64) {
-					latestTuples.Put(key, tuple)
+					latestTuples.Put(key, copyTuple(tuple))
 					latestTx.Put(key, txID)
 				}
 
@@ -384,7 +384,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 
 					// Keep only if this is newer than what we have
 					if existingTxVal, exists := latestTx.Get(key); !exists || txID > existingTxVal.(uint64) {
-						latestTuples.Put(key, tuple)
+						latestTuples.Put(key, copyTuple(tuple))
 						latestTx.Put(key, txID)
 					}
 				}
@@ -414,9 +414,9 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				tuple := firstTuple
 				key := NewTupleKey(tuple, buildIndices)
 				if existing, ok := hashTable.Get(key); ok {
-					hashTable.Put(key, append(existing.([]Tuple), tuple))
+					hashTable.Put(key, append(existing.([]Tuple), copyTuple(tuple)))
 				} else {
-					hashTable.Put(key, []Tuple{tuple})
+					hashTable.Put(key, []Tuple{copyTuple(tuple)})
 				}
 
 				buildCount := 1
@@ -432,9 +432,9 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 					tuple := buildIt.Tuple()
 					key := NewTupleKey(tuple, buildIndices)
 					if existing, ok := hashTable.Get(key); ok {
-						hashTable.Put(key, append(existing.([]Tuple), tuple))
+						hashTable.Put(key, append(existing.([]Tuple), copyTuple(tuple)))
 					} else {
-						hashTable.Put(key, []Tuple{tuple})
+						hashTable.Put(key, []Tuple{copyTuple(tuple)})
 					}
 					buildCount++
 				}
@@ -461,9 +461,9 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				firstBuildTuple = tuple
 			}
 			if existing, ok := hashTable.Get(key); ok {
-				hashTable.Put(key, append(existing.([]Tuple), tuple))
+				hashTable.Put(key, append(existing.([]Tuple), copyTuple(tuple)))
 			} else {
-				hashTable.Put(key, []Tuple{tuple})
+				hashTable.Put(key, []Tuple{copyTuple(tuple)})
 			}
 			buildCount++
 		}

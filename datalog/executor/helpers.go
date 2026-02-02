@@ -106,7 +106,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		}
 
 		if passes {
-			filtered = append(filtered, tuple)
+			filtered = append(filtered, copyTuple(tuple))
 		}
 	}
 

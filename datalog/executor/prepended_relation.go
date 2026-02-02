@@ -89,7 +89,7 @@ func (r *PrependedRelation) Materialize() Relation {
 	tuples := []Tuple{r.firstTuple}
 	if r.restIter != nil {
 		for r.restIter.Next() {
-			tuples = append(tuples, r.restIter.Tuple())
+			tuples = append(tuples, copyTuple(r.restIter.Tuple()))
 		}
 		r.restIter.Close()
 		r.restIter = nil

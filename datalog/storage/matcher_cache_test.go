@@ -1,13 +1,18 @@
 package storage
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
+
+// Note: fmt, executor, query imports used by benchmarks at end of file
 
 // Helper to create a temp database for matcher-cache tests
 func createMatcherCacheTestDatabase(t *testing.T) (*Database, func()) {
@@ -335,4 +340,200 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 	entry := db.Cache().GetOrResolve(key, matcher)
 	require.NotNil(t, entry)
 	assert.True(t, entry.ManySet()["warrior"], "warrior should be in set after add-remove-add")
+}
+
+// =============================================================================
+// BENCHMARKS - Cache Path Tuple Building
+// =============================================================================
+
+// BenchmarkCachePathTupleBuilding measures the allocation overhead of the cache
+// path tuple building, which currently creates an intermediate Datom struct
+// just to extract fields into a tuple.
+func BenchmarkCachePathTupleBuilding(b *testing.B) {
+	// Setup
+	dir := b.TempDir()
+	db, err := NewDatabase(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+
+	s, _ := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Build()
+	db.SetSchema(s)
+
+	// Create 100 entities with names
+	for i := 0; i < 100; i++ {
+		tx := db.NewTransaction()
+		e := datalog.NewIdentity("person" + string(rune('0'+i/10)) + string(rune('0'+i%10)))
+		tx.Set(e, datalog.NewKeyword(":person/name"), "Name"+string(rune('0'+i/10))+string(rune('0'+i%10)))
+		tx.Commit()
+	}
+
+	// Warm cache
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+	matcher.SetCache(db.Cache())
+
+	b.Run("Query_CacheHit", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			result, _ := db.ExecuteQuery(`[:find ?e ?name :where [?e :person/name ?name]]`)
+			if len(result) != 100 {
+				b.Fatalf("expected 100 results, got %d", len(result))
+			}
+		}
+	})
+}
+
+// BenchmarkCacheResolutionOverhead measures the overhead of cache resolution
+// vs direct storage access.
+func BenchmarkCacheResolutionOverhead(b *testing.B) {
+	dir := b.TempDir()
+	db, err := NewDatabase(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+
+	s, _ := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Build()
+	db.SetSchema(s)
+
+	// Create entity
+	tx := db.NewTransaction()
+	e := datalog.NewIdentity("person1")
+	tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+	tx.Commit()
+
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+
+	eBytes := Entity(e.Hash())
+	var aBytes Attribute
+	copy(aBytes[:], ":person/name")
+	key := CacheKey{E: eBytes, A: aBytes}
+
+	b.Run("CacheGetOrResolve", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			entry := db.Cache().GetOrResolve(key, matcher)
+			if entry == nil {
+				b.Fatal("cache miss")
+			}
+			_ = entry.OneValue()
+		}
+	})
+
+	b.Run("DirectLookupAttribute", func(b *testing.B) {
+		b.ReportAllocs()
+		attr := datalog.NewKeyword(":person/name")
+		for i := 0; i < b.N; i++ {
+			val, found := matcher.LookupAttribute(e, attr)
+			if !found {
+				b.Fatal("not found")
+			}
+			_ = val
+		}
+	})
+}
+
+// BenchmarkCachePathWithBindings exercises the matchWithBindingsFromCache code path
+// in matcher_relations.go:612-739. This path is triggered when:
+// 1. A pattern has E bound from a previous join (bindings exist)
+// 2. A is a constant attribute
+// 3. Cache is enabled
+//
+// The buildTuple closure at line 657-660 creates a *Datom just to pass to
+// BuildTupleInterned - this benchmark measures that allocation overhead.
+func BenchmarkCachePathWithBindings(b *testing.B) {
+	dir := b.TempDir()
+	db, err := NewDatabase(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+
+	s, _ := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Attribute(":person/age").Type(schema.TypeLong).One().Add().
+		Build()
+	db.SetSchema(s)
+
+	// Create 100 entities with name and age
+	for i := 0; i < 100; i++ {
+		tx := db.NewTransaction()
+		e := datalog.NewIdentity(fmt.Sprintf("person%d", i))
+		tx.Set(e, datalog.NewKeyword(":person/name"), fmt.Sprintf("Name%d", i))
+		tx.Set(e, datalog.NewKeyword(":person/age"), int64(20+i))
+		tx.Commit()
+	}
+
+	// This query triggers matchWithBindingsFromCache:
+	// - First pattern [?e :person/name ?name] binds ?e
+	// - Second pattern [?e :person/age ?age] has ?e from bindings, :person/age constant
+	// The second pattern goes through the cache path with bindings
+	b.Run("JoinQuery_CachePath", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			result, err := db.ExecuteQuery(`[:find ?e ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if len(result) != 100 {
+				b.Fatalf("expected 100 results, got %d", len(result))
+			}
+		}
+	})
+
+	// Direct matcher.Match call to isolate the cache path more precisely
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+	matcher.SetCache(db.Cache())
+
+	// Create binding relation simulating output from first pattern
+	var bindingTuples []executor.Tuple
+	for i := 0; i < 100; i++ {
+		e := datalog.NewIdentity(fmt.Sprintf("person%d", i))
+		bindingTuples = append(bindingTuples, executor.Tuple{e})
+	}
+	bindingRel := executor.NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?e")},
+		bindingTuples,
+	)
+
+	// Pattern for second clause: [?e :person/age ?age]
+	agePattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: datalog.NewKeyword(":person/age")},
+			query.Variable{Name: datalog.NewSymbol("?age")},
+		},
+	}
+	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?age")}
+
+	b.Run("MatcherMatch_WithBindings", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			result, err := matcher.Match(agePattern, executor.Relations{bindingRel})
+			if err != nil {
+				b.Fatal(err)
+			}
+			// Consume iterator to trigger all tuple building
+			count := 0
+			it := result.Iterator()
+			for it.Next() {
+				_ = it.Tuple()
+				count++
+			}
+			it.Close()
+			if count != 100 {
+				b.Fatalf("expected 100 results, got %d", count)
+			}
+		}
+	})
+
+	_ = columns // Used in pattern setup
 }

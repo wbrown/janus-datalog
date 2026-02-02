@@ -120,7 +120,7 @@ func (ur *UnionRelation) Materialize() Relation {
 	defer it.Close() // Errors silently dropped
 
 	for it.Next() {
-		allTuples = append(allTuples, it.Tuple())
+		allTuples = append(allTuples, copyTuple(it.Tuple()))
 	}
 
 	return NewMaterializedRelation(ur.columns, allTuples)

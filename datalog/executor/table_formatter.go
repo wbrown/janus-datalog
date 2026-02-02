@@ -41,10 +41,7 @@ func (tf *TableFormatter) FormatRelation(rel Relation) string {
 	defer it.Close()
 
 	for it.Next() {
-		tuple := it.Tuple()
-		tupleCopy := make(Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		tuples = append(tuples, tupleCopy)
+		tuples = append(tuples, copyTuple(it.Tuple()))
 	}
 
 	columns := rel.Columns()

@@ -178,7 +178,8 @@ type KeyMaskIterator struct {
 	*BadgerIterator
 	mask         *KeyMaskConstraint
 	encoder      KeyEncoder
-	currentDatom *datalog.Datom
+	currentDatom datalog.Datom
+	hasDatom     bool
 	currentError error
 
 	// Stats for annotations
@@ -234,7 +235,8 @@ type KeyMaskFilterWrapper struct {
 	mask         *KeyMaskConstraint
 	encoder      KeyEncoder
 	index        IndexType
-	currentDatom *datalog.Datom
+	currentDatom datalog.Datom
+	hasDatom     bool
 	currentError error
 
 	// Stats
@@ -244,6 +246,8 @@ type KeyMaskFilterWrapper struct {
 }
 
 func (w *KeyMaskFilterWrapper) Next() bool {
+	w.hasDatom = false
+
 	for w.baseIter.Next() {
 		w.keysScanned++
 
@@ -277,6 +281,7 @@ func (w *KeyMaskFilterWrapper) Next() bool {
 				continue
 			}
 
+			w.hasDatom = true
 			return true
 		}
 
@@ -293,7 +298,8 @@ func (w *KeyMaskFilterWrapper) Next() bool {
 			// Extract the int64 value from the target bytes
 			targetValue := int64(binary.BigEndian.Uint64(w.mask.TargetBytes[1:9]))
 			if v == targetValue {
-				w.currentDatom = datom
+				w.currentDatom = *datom
+				w.hasDatom = true
 				w.keysMatched++
 				return true
 			}
@@ -307,10 +313,10 @@ func (w *KeyMaskFilterWrapper) Datom() (*datalog.Datom, error) {
 	if w.currentError != nil {
 		return nil, w.currentError
 	}
-	if w.currentDatom == nil {
+	if !w.hasDatom {
 		return nil, fmt.Errorf("no current datom")
 	}
-	return w.currentDatom, nil
+	return &w.currentDatom, nil
 }
 
 func (w *KeyMaskFilterWrapper) Close() error {
@@ -332,6 +338,8 @@ func (w *KeyMaskFilterWrapper) ElementID() datalog.ElementID {
 
 // Next advances to the next matching key
 func (i *KeyMaskIterator) Next() bool {
+	i.hasDatom = false
+
 	for i.BadgerIterator.Next() {
 		i.keysScanned++
 
@@ -352,6 +360,7 @@ func (i *KeyMaskIterator) Next() bool {
 			continue
 		}
 
+		i.hasDatom = true
 		return true
 	}
 
@@ -363,10 +372,10 @@ func (i *KeyMaskIterator) Datom() (*datalog.Datom, error) {
 	if i.currentError != nil {
 		return nil, i.currentError
 	}
-	if i.currentDatom == nil {
+	if !i.hasDatom {
 		return nil, fmt.Errorf("no current datom")
 	}
-	return i.currentDatom, nil
+	return &i.currentDatom, nil
 }
 
 // Stats returns scanning statistics

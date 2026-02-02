@@ -250,7 +250,7 @@ func (r *OrFallbackRelation) Materialize() Relation {
 	var tuples []Tuple
 	it := r.Iterator()
 	for it.Next() {
-		tuples = append(tuples, it.Tuple())
+		tuples = append(tuples, copyTuple(it.Tuple()))
 	}
 	it.Close()
 

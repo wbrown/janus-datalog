@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -12,11 +13,12 @@ type BinaryKeyEncoder struct{}
 // txToDescending applies bitwise NOT to Tx bytes for descending sort order.
 // This ensures highest ElementID sorts first in forward scans, enabling O(1)
 // current value lookup (first entry = highest Tx = current value).
-func txToDescending(tx [16]byte) []byte {
-	result := make([]byte, 16)
-	for i := 0; i < 16; i++ {
-		result[i] = ^tx[i]
-	}
+// Returns [16]byte to avoid heap allocation - use result[:] when slice needed.
+func txToDescending(tx [16]byte) [16]byte {
+	var result [16]byte
+	// Use uint64 NOT operations (2 ops instead of 16 byte ops)
+	binary.BigEndian.PutUint64(result[0:8], ^binary.BigEndian.Uint64(tx[0:8]))
+	binary.BigEndian.PutUint64(result[8:16], ^binary.BigEndian.Uint64(tx[8:16]))
 	return result
 }
 
@@ -66,50 +68,50 @@ func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 	switch index {
 	case EAVT:
 		// [E][A][V][Tx][Op][AfterRef?] - groups by value, Tx before Op for Bug #5 fix
-		key := concatBytes(prefix, sd.E[:], sd.A[:], vBytes, txDesc, opByte)
+		key := concatBytes(prefix, sd.E[:], sd.A[:], vBytes, txDesc[:], opByte)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc...)
+			key = append(key, afterRefDesc[:]...)
 		}
 		return key
 	case EATV:
 		// [E][A][Tx][V][Op][AfterRef?] - for cardinality-one: first entry is current
-		key := concatBytes(prefix, sd.E[:], sd.A[:], txDesc, vBytes, opByte)
+		key := concatBytes(prefix, sd.E[:], sd.A[:], txDesc[:], vBytes, opByte)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc...)
+			key = append(key, afterRefDesc[:]...)
 		}
 		return key
 	case AEVT:
 		// [A][E][V][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op
-		key := concatBytes(prefix, sd.A[:], sd.E[:], vBytes, txDesc, opByte)
+		key := concatBytes(prefix, sd.A[:], sd.E[:], vBytes, txDesc[:], opByte)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc...)
+			key = append(key, afterRefDesc[:]...)
 		}
 		return key
 	case AVET:
 		// [A][V][E][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op, enables [A][V] prefix scans
-		key := concatBytes(prefix, sd.A[:], vBytes, sd.E[:], txDesc, opByte)
+		key := concatBytes(prefix, sd.A[:], vBytes, sd.E[:], txDesc[:], opByte)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc...)
+			key = append(key, afterRefDesc[:]...)
 		}
 		return key
 	case VAET:
 		// [V][A][E][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op, enables [V][A] prefix scans
-		key := concatBytes(prefix, vBytes, sd.A[:], sd.E[:], txDesc, opByte)
+		key := concatBytes(prefix, vBytes, sd.A[:], sd.E[:], txDesc[:], opByte)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc...)
+			key = append(key, afterRefDesc[:]...)
 		}
 		return key
 	case TAEV:
 		// [Tx][A][E][V][Op][AfterRef?]
-		key := concatBytes(prefix, txDesc, sd.A[:], sd.E[:], vBytes, opByte)
+		key := concatBytes(prefix, txDesc[:], sd.A[:], sd.E[:], vBytes, opByte)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc...)
+			key = append(key, afterRefDesc[:]...)
 		}
 		return key
 	default:
@@ -337,7 +339,8 @@ func (e *BinaryKeyEncoder) EncodePrefix(index IndexType, parts ...[]byte) []byte
 // Note: With bitwise NOT, higher Tx values encode to lower byte values,
 // so for a time range [low, high], the scan should be from encoded(high) to encoded(low).
 func (e *BinaryKeyEncoder) EncodeTxForPrefix(tx Tx) []byte {
-	return txToDescending(tx)
+	result := txToDescending(tx)
+	return result[:]
 }
 
 // EncodePrefixRange creates start and end keys for a prefix scan

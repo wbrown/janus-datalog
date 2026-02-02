@@ -14,6 +14,14 @@ import (
 // Tuple is an alias for query.Tuple to maintain backward compatibility
 type Tuple = query.Tuple
 
+// copyTuple returns a copy of the tuple. Required because iterator
+// Tuple() returns a workspace that gets reused on each Next() call.
+func copyTuple(t Tuple) Tuple {
+	c := make(Tuple, len(t))
+	copy(c, t)
+	return c
+}
+
 // Relation represents a set of tuples with named columns
 type Relation interface {
 	// Columns returns the column names (symbols) in order
@@ -1005,8 +1013,7 @@ func (r *StreamingRelation) Sorted() []Tuple {
 	it := r.Iterator()
 	defer it.Close()
 	for it.Next() {
-		// Tuples are already copied by CachingIterator if shouldCache=true
-		tuples = append(tuples, it.Tuple())
+		tuples = append(tuples, copyTuple(it.Tuple()))
 	}
 
 	// Sort tuples lexicographically by columns
@@ -1093,7 +1100,7 @@ func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	var tuples []Tuple
 	it := r.Iterator()
 	for it.Next() {
-		tuples = append(tuples, it.Tuple())
+		tuples = append(tuples, copyTuple(it.Tuple()))
 	}
 	it.Close()
 
@@ -1222,7 +1229,7 @@ func Select(rel Relation, pred func(Tuple) bool) Relation {
 	for it.Next() {
 		tuple := it.Tuple()
 		if pred(tuple) {
-			selected = append(selected, tuple)
+			selected = append(selected, copyTuple(tuple))
 		}
 	}
 
@@ -1362,7 +1369,7 @@ func (p *ProductRelation) Materialize() Relation {
 	defer it.Close()
 
 	for it.Next() {
-		tuples = append(tuples, it.Tuple())
+		tuples = append(tuples, copyTuple(it.Tuple()))
 	}
 
 	return NewMaterializedRelationWithOptions(p.columns, tuples, p.options)

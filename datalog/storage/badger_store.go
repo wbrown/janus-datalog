@@ -135,7 +135,7 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 
 		// Delete from all CRDT indices using the actual stored Tx
 		for _, idx := range Indices {
-			key := s.encoder.EncodeKey(idx, storedDatom)
+			key := s.encoder.EncodeKey(idx, &storedDatom)
 			if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
 				return fmt.Errorf("failed to delete from %v index: %w", idx, err)
 			}

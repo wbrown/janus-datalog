@@ -21,6 +21,7 @@ type reusingIterator struct {
 	storageIter  Iterator       // The BadgerDB iterator we're reusing
 	currentIdx   int            // Current tuple index
 	currentTuple executor.Tuple // Current result tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
 
 	// Cached bound values for current tuple to avoid recreating pattern
 	currentE, currentA, currentV, currentTx interface{}
@@ -95,8 +96,8 @@ func (it *reusingIterator) Next() bool {
 					// Apply transaction and constraint validation
 					if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
 						it.datomsMatched++
-						it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
-						// BuildTuple always returns a tuple if columns > 0
+						it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+						it.currentTuple = it.workspace
 						// Found a match!
 						return true
 					}
