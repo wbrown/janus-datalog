@@ -22,7 +22,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Identity/Keyword interning**: **10-20% faster** on joins and subqueries, **25-44% memory reduction**, pointer equality for all comparisons (verified 2025-12-24)
 - ✅ **Conditional aggregate rewriting**: **7.7× faster**, **5.2× less memory**, **8.1× fewer allocations** for correlated aggregate subqueries (verified 2026-01-16)
 - ✅ **CRDT storage**: **~25-35µs writes** across all cardinalities, **O(1) LWW resolution** (965ns for 1000 versions), linear vector scaling (verified 2026-01-31)
-- ✅ **CRDT allocation optimization**: **47% faster**, **55% less memory** than pre-CRDT main branch while adding full CRDT semantics (verified 2026-02-02)
+- ✅ **CRDT allocation optimization**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch while adding full CRDT semantics (verified 2026-02-02)
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -417,7 +417,7 @@ CRDT semantics add negligible overhead to writes while providing:
 
 ### 11. CRDT Allocation Optimization (COMPLETE - February 2026)
 **Status**: ✅ Production-ready with comprehensive benchmarks
-**Performance**: **47% faster**, **55% less memory** than pre-CRDT main branch (verified 2026-02-02)
+**Performance**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch (verified 2026-02-02)
 **Location**: `datalog/storage/`, `datalog/executor/`
 
 **The Story**: CRDT storage added powerful new capabilities (LWW, add-wins sets, RGA vectors, time-travel queries). The initial implementation had allocation overhead. Rather than accept a performance regression, we optimized the entire storage and executor pipeline. The result: **CRDT storage that's faster than the original non-CRDT implementation**.
@@ -458,9 +458,9 @@ CRDT semantics add negligible overhead to writes while providing:
 
 | Metric | Main (pre-CRDT) | With CRDT + Optimizations | Improvement |
 |--------|-----------------|---------------------------|-------------|
-| Time | 57ms | 30ms | **47% faster** |
-| Memory | 66MB | 30MB | **55% less** |
-| Allocations | 897K | 405K | **55% fewer** |
+| Time | 57ms | 30ms | **1.9× faster** |
+| Memory | 66MB | 30MB | **2.2× less** |
+| Allocations | 897K | 405K | **2.2× fewer** |
 
 This means we added full CRDT semantics (LWW, add-wins sets, RGA vectors, time-travel queries) **and** made the engine nearly 2× faster than before.
 
@@ -728,7 +728,7 @@ All items below are **measured** and **active** in production code:
 14. ✅ **Relation collapsing algorithm** - **Prevents catastrophic Cartesian products**
 15. ✅ **Conditional aggregate rewriting** - **7.7× faster, 5.2× less memory** for correlated aggregate subqueries (verified 2026-01-16)
 16. ✅ **CRDT storage** - **~25-35µs writes**, **O(1) LWW resolution**, conflict-free replication (verified 2026-01-31)
-17. ✅ **CRDT allocation optimization** - **47% faster**, **55% less memory** than pre-CRDT main while adding full CRDT semantics (verified 2026-02-02)
+17. ✅ **CRDT allocation optimization** - **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main while adding full CRDT semantics (verified 2026-02-02)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:
@@ -901,7 +901,7 @@ The engine is **production-ready for datasets up to 10M+ datoms**. All major opt
 **Status**: ✅ Complete - CRDT storage now faster than original non-CRDT implementation
 
 **The Story**:
-CRDT storage added powerful capabilities (LWW, add-wins sets, RGA vectors, time-travel). Rather than accept performance overhead, we optimized the entire pipeline. Result: **CRDT + 47% faster than pre-CRDT main**.
+CRDT storage added powerful capabilities (LWW, add-wins sets, RGA vectors, time-travel). Rather than accept performance overhead, we optimized the entire pipeline. Result: **CRDT + 90% faster (1.9×) than pre-CRDT main**.
 
 **What Was Done**:
 
@@ -920,9 +920,9 @@ CRDT storage added powerful capabilities (LWW, add-wins sets, RGA vectors, time-
 
 | Metric | Main (pre-CRDT) | CRDT + Optimized | Improvement |
 |--------|-----------------|------------------|-------------|
-| Time | 57ms | 30ms | **47% faster** |
-| Memory | 66MB | 30MB | **55% less** |
-| Allocations | 897K | 405K | **55% fewer** |
+| Time | 57ms | 30ms | **1.9× faster** |
+| Memory | 66MB | 30MB | **2.2× less** |
+| Allocations | 897K | 405K | **2.2× fewer** |
 
 **Key Insight**: Hot path allocations dominated. Eliminating heap escapes in `DatomFromKey()` (called millions of times) and `txToDescending()` (every key encode) yielded massive gains.
 
