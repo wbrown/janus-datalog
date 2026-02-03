@@ -258,8 +258,8 @@ func TestResolveRGAFromDatoms_IgnoresNonRGAOps(t *testing.T) {
 	id1 := elemID(100, 1)
 	datoms := []datalog.Datom{
 		rgaDatom(id1, "first", datalog.OpRGAInsert, datalog.ElementID{}),
-		testDatom(elemID(200, 1), "ignored", datalog.OpNone),     // Not RGA op
-		testDatom(elemID(300, 1), "ignored", datalog.OpCRDTAdd),    // Not RGA op
+		testDatom(elemID(200, 1), "ignored", datalog.OpNone),    // Not RGA op
+		testDatom(elemID(300, 1), "ignored", datalog.OpCRDTAdd), // Not RGA op
 	}
 
 	values, _, _ := ResolveRGAFromDatoms(datoms)

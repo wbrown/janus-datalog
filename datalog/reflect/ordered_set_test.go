@@ -173,9 +173,9 @@ type CharacterWithPreferences struct {
 
 // EntityWithOrderedRefs tests OrderedSet[datalog.Identity] fields
 type EntityWithOrderedRefs struct {
-	ID       datalog.Identity                 `datalog:"-,id"`
-	Name     string                           `datalog:"name"`
-	Follows  datalog.OrderedSet[datalog.Identity] `datalog:"follows"`
+	ID      datalog.Identity                     `datalog:"-,id"`
+	Name    string                               `datalog:"name"`
+	Follows datalog.OrderedSet[datalog.Identity] `datalog:"follows"`
 }
 
 // TestSchemaFromStruct_OrderedSet verifies that SchemaFromStruct correctly infers

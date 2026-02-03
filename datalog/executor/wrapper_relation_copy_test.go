@@ -28,28 +28,28 @@ func newMockUnsafeRelation(columns []query.Symbol, data [][]interface{}) *mockUn
 	}
 }
 
-func (r *mockUnsafeRelation) Columns() []query.Symbol            { return r.columns }
-func (r *mockUnsafeRelation) Symbols() []query.Symbol            { return r.columns }
-func (r *mockUnsafeRelation) Size() int                          { return len(r.data) }
-func (r *mockUnsafeRelation) IsEmpty() bool                      { return len(r.data) == 0 }
-func (r *mockUnsafeRelation) Get(i int) Tuple                    { return nil }
-func (r *mockUnsafeRelation) String() string                     { return "mockUnsafeRelation" }
-func (r *mockUnsafeRelation) Table() string                      { return "" }
-func (r *mockUnsafeRelation) ProjectFromPattern(*query.DataPattern) Relation { return nil }
-func (r *mockUnsafeRelation) Sorted() []Tuple                    { return nil }
-func (r *mockUnsafeRelation) Project([]query.Symbol) (Relation, error) { return nil, nil }
-func (r *mockUnsafeRelation) Materialize() Relation              { return r }
-func (r *mockUnsafeRelation) Sort([]query.OrderByClause) Relation { return nil }
-func (r *mockUnsafeRelation) Filter(Filter) Relation             { return nil }
-func (r *mockUnsafeRelation) FilterWithPredicate(query.Predicate) Relation { return nil }
+func (r *mockUnsafeRelation) Columns() []query.Symbol                                { return r.columns }
+func (r *mockUnsafeRelation) Symbols() []query.Symbol                                { return r.columns }
+func (r *mockUnsafeRelation) Size() int                                              { return len(r.data) }
+func (r *mockUnsafeRelation) IsEmpty() bool                                          { return len(r.data) == 0 }
+func (r *mockUnsafeRelation) Get(i int) Tuple                                        { return nil }
+func (r *mockUnsafeRelation) String() string                                         { return "mockUnsafeRelation" }
+func (r *mockUnsafeRelation) Table() string                                          { return "" }
+func (r *mockUnsafeRelation) ProjectFromPattern(*query.DataPattern) Relation         { return nil }
+func (r *mockUnsafeRelation) Sorted() []Tuple                                        { return nil }
+func (r *mockUnsafeRelation) Project([]query.Symbol) (Relation, error)               { return nil, nil }
+func (r *mockUnsafeRelation) Materialize() Relation                                  { return r }
+func (r *mockUnsafeRelation) Sort([]query.OrderByClause) Relation                    { return nil }
+func (r *mockUnsafeRelation) Filter(Filter) Relation                                 { return nil }
+func (r *mockUnsafeRelation) FilterWithPredicate(query.Predicate) Relation           { return nil }
 func (r *mockUnsafeRelation) EvaluateFunction(query.Function, query.Symbol) Relation { return nil }
-func (r *mockUnsafeRelation) Select(func(Tuple) bool) Relation   { return nil }
-func (r *mockUnsafeRelation) Join(Relation) Relation             { return nil }
-func (r *mockUnsafeRelation) HashJoin(Relation, []query.Symbol) Relation { return nil }
-func (r *mockUnsafeRelation) SemiJoin(Relation, []query.Symbol) Relation { return nil }
-func (r *mockUnsafeRelation) AntiJoin(Relation, []query.Symbol) Relation { return nil }
-func (r *mockUnsafeRelation) Aggregate([]query.FindElement) Relation { return nil }
-func (r *mockUnsafeRelation) Options() ExecutorOptions           { return r.options }
+func (r *mockUnsafeRelation) Select(func(Tuple) bool) Relation                       { return nil }
+func (r *mockUnsafeRelation) Join(Relation) Relation                                 { return nil }
+func (r *mockUnsafeRelation) HashJoin(Relation, []query.Symbol) Relation             { return nil }
+func (r *mockUnsafeRelation) SemiJoin(Relation, []query.Symbol) Relation             { return nil }
+func (r *mockUnsafeRelation) AntiJoin(Relation, []query.Symbol) Relation             { return nil }
+func (r *mockUnsafeRelation) Aggregate([]query.FindElement) Relation                 { return nil }
+func (r *mockUnsafeRelation) Options() ExecutorOptions                               { return r.options }
 
 // RequiresCopy returns true - this relation reuses workspace memory
 func (r *mockUnsafeRelation) RequiresCopy() bool { return true }

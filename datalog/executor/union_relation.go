@@ -187,8 +187,8 @@ func (ur *UnionRelation) RequiresCopy() bool {
 type UnionIterator struct {
 	source          <-chan relationItem
 	currentIter     Iterator
-	currentRelation Relation         // Track current relation for RequiresCopy check
-	seen            *TupleKeyMap     // Deduplication without materialization
+	currentRelation Relation     // Track current relation for RequiresCopy check
+	seen            *TupleKeyMap // Deduplication without materialization
 	currentTuple    Tuple
 	exhausted       bool
 	firstError      error    // Track first error encountered
