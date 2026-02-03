@@ -347,7 +347,18 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	// Special case: if groups is empty and expression has no required symbols
 	// (e.g., ground expression), evaluate once and create a single-tuple result
 	if len(groups) == 0 && len(requiredSyms) == 0 {
-		result, err := expr.Function.Eval(make(map[query.Symbol]interface{}))
+		var result interface{}
+		var err error
+		if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
+			if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
+				lookup := entityLookupAdapter{lookupMatcher}
+				result, err = dbFunc.EvalWithLookup(make(map[query.Symbol]interface{}), lookup)
+			} else {
+				return nil, fmt.Errorf("expression requires database lookup but matcher doesn't support it")
+			}
+		} else {
+			result, err = expr.Function.Eval(make(map[query.Symbol]interface{}))
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -420,7 +431,18 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			for sym, val := range e.constantBindings {
 				evalBindings[sym] = val
 			}
-			result, err := expr.Function.Eval(evalBindings)
+			var result interface{}
+			var err error
+			if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok {
+				if lookupMatcher, ok := e.matcher.(EntityLookupMatcher); ok {
+					lookup := entityLookupAdapter{lookupMatcher}
+					result, err = dbFunc.EvalWithLookup(evalBindings, lookup)
+				} else {
+					return nil, fmt.Errorf("expression requires database lookup but matcher doesn't support it")
+				}
+			} else {
+				result, err = expr.Function.Eval(evalBindings)
+			}
 			if err != nil {
 				return nil, err
 			}
