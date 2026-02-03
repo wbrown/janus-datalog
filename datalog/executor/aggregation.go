@@ -576,6 +576,11 @@ func (r *StreamingAggregateRelation) Options() ExecutorOptions {
 	return r.options
 }
 
+// RequiresCopy returns false because StreamingAggregateRelation materializes
+// all results internally before returning them via Iterator(). The tuples
+// are stored in a slice and not reused across iterations.
+func (r *StreamingAggregateRelation) RequiresCopy() bool { return false }
+
 // Iterator returns an iterator over the aggregated results
 // Uses lazy materialization: aggregates are computed on first call, cached for subsequent calls
 func (r *StreamingAggregateRelation) Iterator() Iterator {

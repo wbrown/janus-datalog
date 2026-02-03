@@ -19,6 +19,7 @@ type nonReusingIterator struct {
 	currentIdx   int
 	currentScan  Iterator
 	currentTuple executor.Tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
 	totalScanned int
 	totalMatched int
 
@@ -44,7 +45,8 @@ func (it *nonReusingIterator) Next() bool {
 			if it.matchesWithBinding(datom, it.bindingTuples[it.currentIdx]) {
 				// Apply transaction and constraint validation
 				if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
-					it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
+					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+					it.currentTuple = it.workspace
 					it.totalMatched++
 					return true
 				}

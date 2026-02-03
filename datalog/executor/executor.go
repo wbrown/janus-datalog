@@ -196,8 +196,12 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		return e.executeRealizedWithRelationInputIteration(ctx, plan, inputRelations)
 	}
 
-	// Create QueryExecutor
-	queryExecutor := newQueryExecutor(e.matcher, e.options)
+	// Create QueryExecutor with collector from context for annotations
+	opts := e.options
+	if collector := ctx.Collector(); collector != nil {
+		opts.Collector = collector
+	}
+	queryExecutor := newQueryExecutor(e.matcher, opts)
 
 	var currentGroups []Relation
 
@@ -343,11 +347,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 				// Materialize first to avoid iterator consumption issues
 				// Collect all tuples to create a reusable relation
 				var tuples []Tuple
-				it := group.Iterator()
-				for it.Next() {
-					tuples = append(tuples, it.Tuple())
-				}
-				it.Close()
+				collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
 				materialized := NewMaterializedRelationWithOptions(group.Columns(), tuples, opts)
@@ -487,11 +487,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	columns := allResults[0].Columns()
 
 	for _, rel := range allResults {
-		it := rel.Iterator()
-		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
-		}
-		it.Close()
+		collectTuplesInto(&allTuples, rel)
 	}
 
 	return NewMaterializedRelation(columns, allTuples), nil
@@ -513,11 +509,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 
 	// Collect all tuples first (needed for worker pool)
 	var tuples []Tuple
-	it := iterationRelation.Iterator()
-	for it.Next() {
-		tuples = append(tuples, it.Tuple())
-	}
-	it.Close()
+	collectTuplesInto(&tuples, iterationRelation)
 
 	if len(tuples) == 0 {
 		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
@@ -588,11 +580,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	columns := allResults[0].Columns()
 
 	for _, rel := range allResults {
-		it := rel.Iterator()
-		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
-		}
-		it.Close()
+		collectTuplesInto(&allTuples, rel)
 	}
 
 	return NewMaterializedRelation(columns, allTuples), nil
@@ -651,11 +639,7 @@ func (e *Executor) executeRealizedNonIterating(
 			for i, group := range groups {
 				// Materialize first to avoid iterator consumption issues
 				var tuples []Tuple
-				it := group.Iterator()
-				for it.Next() {
-					tuples = append(tuples, it.Tuple())
-				}
-				it.Close()
+				collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
 				materialized := NewMaterializedRelationWithOptions(group.Columns(), tuples, opts)

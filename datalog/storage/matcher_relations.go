@@ -335,6 +335,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			tx:              tx,
 			keyMask:         keyMask,
 			constraints:     constraints, // Still need for non-mask constraints
+			workspace:       make(executor.Tuple, len(columns)),
 			tupleBuilder:    m.getTupleBuilder(pattern, columns),
 			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 		}
@@ -360,6 +361,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			v:               v,
 			tx:              tx,
 			constraints:     constraints,
+			workspace:       make(executor.Tuple, len(columns)),
 			tupleBuilder:    m.getTupleBuilder(pattern, columns),
 			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 		}
@@ -415,6 +417,7 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 		columns:          columns,
 		constraints:      constraints,
 		currentIdx:       -1,
+		workspace:        make(executor.Tuple, len(columns)),
 		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Columns()),
 		tupleBuilder:     m.getTupleBuilder(pattern, columns),
 	}
@@ -447,6 +450,7 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 		columns:          columns,
 		constraints:      constraints,
 		currentIdx:       -1,
+		workspace:        make(executor.Tuple, len(columns)),
 		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Columns()),
 		tupleBuilder:     m.getTupleBuilder(pattern, columns),
 	}
@@ -544,10 +548,16 @@ func (m *BadgerMatcher) matchFromCache(
 	// Get tuple builder for building tuples
 	tupleBuilder := m.getTupleBuilder(pattern, columns)
 
-	// Helper to build tuple from datom
+	// Pre-allocate datom buffer with constant E and A
+	var datomBuf datalog.Datom
+	datomBuf.E = e
+	datomBuf.A = a
+
+	// Helper to build tuple from datom (reuses buffer)
 	buildTuple := func(val interface{}, tx datalog.ElementID) executor.Tuple {
-		datom := &datalog.Datom{E: e, A: a, V: val, Tx: tx}
-		return tupleBuilder.BuildTupleInterned(datom)
+		datomBuf.V = val
+		datomBuf.Tx = tx
+		return tupleBuilder.BuildTupleInterned(&datomBuf)
 	}
 
 	switch card {
@@ -654,9 +664,16 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 
 	// Get tuple builder
 	tupleBuilder := m.getTupleBuilder(pattern, columns)
+
+	// Pre-allocate datom buffer with constant A
+	var datomBuf datalog.Datom
+	datomBuf.A = a
+
 	buildTuple := func(e datalog.Identity, val interface{}, tx datalog.ElementID) executor.Tuple {
-		datom := &datalog.Datom{E: e, A: a, V: val, Tx: tx}
-		return tupleBuilder.BuildTupleInterned(datom)
+		datomBuf.E = e
+		datomBuf.V = val
+		datomBuf.Tx = tx
+		return tupleBuilder.BuildTupleInterned(&datomBuf)
 	}
 
 	// Iterate bindings and collect results from cache

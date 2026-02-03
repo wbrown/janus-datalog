@@ -204,6 +204,7 @@ func (m *BadgerMatcher) matchWithHashJoin(
 		constraints:  constraints,
 		hashSet:      hashSet,
 		iter:         storageIter,
+		workspace:    make(executor.Tuple, len(columns)),
 		tupleBuilder: m.getTupleBuilder(pattern, columns),
 	}
 
@@ -550,6 +551,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 		sortedTuples: sortedTuples,
 		bindingIdx:   0,
 		iter:         storageIter,
+		workspace:    make(executor.Tuple, len(columns)),
 		tupleBuilder: m.getTupleBuilder(pattern, columns),
 	}
 
@@ -683,8 +685,9 @@ type hashJoinIterator struct {
 	iter          Iterator                  // Storage iterator
 	tupleBuilder  *query.InternedTupleBuilder
 	current       executor.Tuple
-	datomsScanned int // Track number of datoms scanned for event reporting
-	matchesFound  int // Track number of matches for event reporting
+	workspace     executor.Tuple // Reusable workspace for tuple building
+	datomsScanned int            // Track number of datoms scanned for event reporting
+	matchesFound  int            // Track number of matches for event reporting
 }
 
 func (it *hashJoinIterator) Next() bool {
@@ -720,12 +723,10 @@ func (it *hashJoinIterator) Next() bool {
 				}
 
 				if satisfiesAll {
-					tuple := it.tupleBuilder.BuildTupleInterned(datom)
-					if tuple != nil {
-						it.current = tuple
-						it.matchesFound++
-						return true
-					}
+					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+					it.current = it.workspace
+					it.matchesFound++
+					return true
 				}
 			}
 		}
@@ -773,6 +774,7 @@ type mergeJoinIterator struct {
 	iter         Iterator         // Storage iterator
 	tupleBuilder *query.InternedTupleBuilder
 	current      executor.Tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
 }
 
 func (it *mergeJoinIterator) Next() bool {
@@ -826,11 +828,9 @@ func (it *mergeJoinIterator) Next() bool {
 				}
 
 				if satisfiesAll {
-					tuple := it.tupleBuilder.BuildTupleInterned(datom)
-					if tuple != nil {
-						it.current = tuple
-						return true
-					}
+					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+					it.current = it.workspace
+					return true
 				}
 			}
 		}

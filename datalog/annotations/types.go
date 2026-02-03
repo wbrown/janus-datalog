@@ -38,9 +38,10 @@ const (
 	PatternToRelation     = "pattern/to-relation"
 
 	// Join operations
-	JoinHash   = "join/hash"
-	JoinNested = "join/nested"
-	JoinMerge  = "join/merge"
+	JoinHash      = "join/hash"
+	JoinNested    = "join/nested"
+	JoinMerge     = "join/merge"
+	JoinBuildCopy = "join/build.copy" // Tuple copy statistics during hash join build phase
 
 	// OR clause operations
 	OrClauseBegin          = "or/begin"

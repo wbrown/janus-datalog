@@ -1,8 +1,14 @@
 package executor
 
+import "github.com/wbrown/janus-datalog/datalog/annotations"
+
 // ExecutorOptions is a lightweight struct for internal use within executor
 // The main configuration comes from PlannerOptions which includes both planner and executor settings
 type ExecutorOptions struct {
+	// Annotation collector for tracking execution metrics
+	// If nil, no annotations are emitted (zero overhead)
+	Collector *annotations.Collector
+
 	// Streaming options - control memory vs performance tradeoffs
 	EnableIteratorComposition bool
 	EnableTrueStreaming       bool

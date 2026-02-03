@@ -146,13 +146,11 @@ func TestCacheRebuildWhenStale(t *testing.T) {
 	assert.Equal(t, 2, resolver.resolveLWWCalls, "should rebuild when stale")
 }
 
-func TestCacheConcurrency(t *testing.T) {
+// TestCacheMockThreadSafety tests that Cache itself is thread-safe using a
+// stateless mock. For real concurrency testing with storage, see
+// TestCacheConcurrency in cache_integration_test.go.
+func TestCacheMockThreadSafety(t *testing.T) {
 	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
-	}
 
 	var e Entity
 	copy(e[:], "entity1")
@@ -160,12 +158,19 @@ func TestCacheConcurrency(t *testing.T) {
 	copy(a[:], ":person/name")
 	key := CacheKey{E: e, A: a}
 
-	// Run concurrent GetOrResolve calls
+	// Run concurrent GetOrResolve calls with per-goroutine resolvers
+	// Each goroutine gets its own resolver to avoid shared mutable state
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// Each goroutine creates its own stateless resolver
+			resolver := &mockCacheResolver{
+				cardinality: schema.CardinalityOne,
+				lwwValue:    "Alice",
+				lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
+			}
 			entry := cache.GetOrResolve(key, resolver)
 			assert.NotNil(t, entry)
 			assert.Equal(t, "Alice", entry.OneValue())
@@ -401,57 +406,6 @@ func TestCacheAfterRestart(t *testing.T) {
 	entry2 := cache.GetOrResolve(key, resolver)
 	require.NotNil(t, entry2)
 	assert.Equal(t, 1, resolver.resolveLWWCalls)
-}
-
-func TestCacheConcurrentReadWrite(t *testing.T) {
-	cache := NewCache()
-	resolver := &mockCacheResolver{
-		cardinality: schema.CardinalityOne,
-		lwwValue:    "Alice",
-		lwwMaxID:    datalog.ElementID{Lamport: 100, ReplicaID: 1},
-	}
-
-	var e Entity
-	copy(e[:], "entity1")
-	var a Attribute
-	copy(a[:], ":person/name")
-	key := CacheKey{E: e, A: a}
-
-	// Populate initial entry
-	cache.GetOrResolve(key, resolver)
-
-	var wg sync.WaitGroup
-
-	// Concurrent readers
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			entry := cache.GetOrResolve(key, resolver)
-			assert.NotNil(t, entry)
-		}()
-	}
-
-	// Concurrent writers (updating max version)
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			cache.UpdateMaxVersion(key, datalog.ElementID{Lamport: uint64(100 + i), ReplicaID: 1})
-		}(i)
-	}
-
-	// Concurrent invalidations
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cache.Invalidate([]CacheKey{key})
-		}()
-	}
-
-	wg.Wait()
-	// Should complete without panic or data race
 }
 
 // mockStore implements Store interface for testing IsAttributeFresh

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -76,6 +77,16 @@ func (sr *SourceRouter) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		return elm.LookupAttribute(entity, attr)
 	}
 	return nil, false
+}
+
+// SetHandler propagates the annotation handler to all underlying matchers that support it.
+// This is called by WrapMatcher when annotations are enabled.
+func (sr *SourceRouter) SetHandler(handler annotations.Handler) {
+	for _, source := range sr.sources {
+		if sh, ok := source.(interface{ SetHandler(annotations.Handler) }); ok {
+			sh.SetHandler(handler)
+		}
+	}
 }
 
 // Compile-time verification that SourceRouter implements all matcher interfaces
