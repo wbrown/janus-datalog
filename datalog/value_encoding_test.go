@@ -66,3 +66,80 @@ func TestSymbolValueType_Distinct(t *testing.T) {
 		t.Errorf("Symbol type = %d, want %d (TypeSymbol)", symType, TypeSymbol)
 	}
 }
+
+func TestElementIDValueEncoding_RoundTrip(t *testing.T) {
+	tests := []ElementID{
+		{Lamport: 0, ReplicaID: 0}, // HEAD/zero
+		{Lamport: 1, ReplicaID: 1}, // small values
+		{Lamport: 1234, ReplicaID: 5678},
+		{Lamport: 1706745600000000000, ReplicaID: 12345678901234567}, // realistic values
+		{Lamport: ^uint64(0), ReplicaID: ^uint64(0)},                 // max values
+	}
+
+	for _, id := range tests {
+		// Check type
+		vt := Type(id)
+		if vt != TypeElementID {
+			t.Errorf("Type(ElementID{%d, %d}) = %d, want TypeElementID (%d)", id.Lamport, id.ReplicaID, vt, TypeElementID)
+		}
+
+		// Encode
+		data := ValueBytes(id)
+		if len(data) != ElementIDSize {
+			t.Errorf("ValueBytes(ElementID{%d, %d}) = %d bytes, want %d", id.Lamport, id.ReplicaID, len(data), ElementIDSize)
+		}
+
+		// Decode
+		val, err := ValueFromBytes(TypeElementID, data)
+		if err != nil {
+			t.Fatalf("ValueFromBytes(TypeElementID, ...): %v", err)
+		}
+
+		got, ok := val.(ElementID)
+		if !ok {
+			t.Fatalf("ValueFromBytes(TypeElementID, ...) returned %T, want ElementID", val)
+		}
+
+		// Check equality
+		if got.Lamport != id.Lamport || got.ReplicaID != id.ReplicaID {
+			t.Errorf("round-trip failed: got {%d, %d}, want {%d, %d}",
+				got.Lamport, got.ReplicaID, id.Lamport, id.ReplicaID)
+		}
+	}
+}
+
+func TestElementIDValueType_Distinct(t *testing.T) {
+	// ElementID should have a distinct type tag from other types
+	eid := ElementID{Lamport: 100, ReplicaID: 5}
+	intVal := int64(100)
+	sym := NewSymbol("foo")
+
+	eidType := Type(eid)
+	intType := Type(intVal)
+	symType := Type(sym)
+
+	if eidType == intType {
+		t.Errorf("ElementID and int64 have same type tag: %d", eidType)
+	}
+	if eidType == symType {
+		t.Errorf("ElementID and Symbol have same type tag: %d", eidType)
+	}
+	if eidType != TypeElementID {
+		t.Errorf("ElementID type = %d, want %d (TypeElementID)", eidType, TypeElementID)
+	}
+}
+
+func TestElementIDValueBytes_NaturalOrder(t *testing.T) {
+	// Value encoding should use natural order (not bitwise NOT like key encoding)
+	// This means lower Lamport values should encode to smaller bytes
+	low := ElementID{Lamport: 100, ReplicaID: 0}
+	high := ElementID{Lamport: 200, ReplicaID: 0}
+
+	lowBytes := ValueBytes(low)
+	highBytes := ValueBytes(high)
+
+	// Compare bytes - lower Lamport should produce smaller bytes (natural order)
+	if lowBytes[0] > highBytes[0] || (lowBytes[0] == highBytes[0] && lowBytes[7] > highBytes[7]) {
+		t.Errorf("Value encoding should use natural order: low(%v) should encode to smaller bytes than high(%v)", low, high)
+	}
+}

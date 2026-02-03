@@ -1,7 +1,7 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2026-01-16
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, and conditional aggregate rewriting
+**Last Updated**: 2026-02-02
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting, CRDT storage, and allocation regression fixes
 
 ## Executive Summary
 
@@ -21,6 +21,8 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Hash join pre-sizing**: 24-32% faster with 24-30% less memory (verified)
 - ✅ **Identity/Keyword interning**: **10-20% faster** on joins and subqueries, **25-44% memory reduction**, pointer equality for all comparisons (verified 2025-12-24)
 - ✅ **Conditional aggregate rewriting**: **7.7× faster**, **5.2× less memory**, **8.1× fewer allocations** for correlated aggregate subqueries (verified 2026-01-16)
+- ✅ **CRDT storage**: **~25-35µs writes** across all cardinalities, **O(1) LWW resolution** (965ns for 1000 versions), linear vector scaling (verified 2026-01-31)
+- ✅ **CRDT allocation optimization**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch while adding full CRDT semantics (verified 2026-02-02)
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -350,7 +352,140 @@ for _, entity := range entities {
 
 **Recommendation**: Enable schema validation freely for type safety. Uniqueness constraints are worth the 6% write overhead for data integrity.
 
-### 10. OHLC Query Performance (MEASURED 2025-10-25)
+### 10. CRDT Storage Performance (MEASURED 2026-01-31)
+**Status**: ✅ Production-ready with comprehensive benchmarks
+**Performance**: Write operations ~25-35µs, reads scale linearly with cardinality
+**Location**: `datalog/storage/database.go`, `datalog/storage/matcher.go`
+
+**Why CRDT Storage**:
+- **LWW (Last-Writer-Wins)** for cardinality-one: Highest ElementID wins
+- **Add-wins** for cardinality-many: Concurrent add + remove at same Lamport → add wins
+- **RGA** for cardinality-vector: Replicated Growable Array for ordered collections
+- All writes preserved with ElementIDs for time-travel queries
+
+**Write Operation Benchmarks** (Apple M4 Max):
+| Operation | Time | Allocs | Notes |
+|-----------|------|--------|-------|
+| CardinalityOne (LWW) | 24,906 ns | 266 | Single value write |
+| CardinalityMany/Add | 26,132 ns | 263 | Add to set |
+| CardinalityMany/AddRemove | 33,725 ns | 373 | Add + Remove pair |
+| CardinalityVector/Append | 27,126 ns | 270 | RGA append |
+
+**Read Operation Benchmarks**:
+| Operation | Time | Allocs | Notes |
+|-----------|------|--------|-------|
+| CardinalityOne | ~1.1µs | 29 | Direct index lookup |
+| CardinalityMany/10 members | 3,259 ns | 74 | Set resolution |
+| CardinalityMany/100 members | 26,522 ns | 443 | Full set resolution |
+| CardinalityVector/10 elements | 21,239 ns | 420 | RGA reconstruction |
+| CardinalityVector/100 elements | 204,660 ns | 3,687 | RGA reconstruction |
+
+**Comparison with Documented Pull API Performance**:
+| Operation | Documented (Pull) | CRDT Benchmark | Status |
+|-----------|-------------------|----------------|--------|
+| Cardinality-One | 1,117 ns, 31 allocs | 1,100 ns, 29 allocs | ✅ Match |
+| Cardinality-Many (10 values) | 3,679 ns, 96 allocs | 3,259 ns, 74 allocs | ✅ Faster |
+
+**CRDT Resolution Benchmarks**:
+| Operation | Time | Allocs | Notes |
+|-----------|------|--------|-------|
+| AddWins/NoConflict (50 members) | 13,809 ns | 240 | No tombstones |
+| AddWins/WithTombstones (100 adds, 50 removes) | 37,911 ns | 649 | With tombstone filtering |
+| LWW/ManyVersions (1000 versions) | 965 ns | 31 | First entry = current |
+
+**Scaling Characteristics**:
+- **Per-element cost (vectors)**: ~2µs per element for reconstruction
+- **Set resolution**: O(n) where n = total operations (adds + removes)
+- **LWW resolution**: O(1) - first entry in descending Tx scan is current
+
+**Key Findings**:
+- **Write performance is consistent** across cardinalities (~25-35µs, storage I/O dominates)
+- **LWW is extremely fast** - 965ns to resolve current value from 1000 versions (EATV: first entry = current)
+- **Vector reconstruction is expensive** - RGA reconstruction (21µs for 10 elements) is **~6× slower** than set resolution (3.3µs for 10 members) due to graph traversal
+- **Add-wins resolution** scales with complexity - 50 clean members: 14µs; with 50 tombstones: 38µs (~2.7× more work)
+
+**Comparison with Non-CRDT Writes**:
+| Benchmark | CRDT (ns/op) | Schema Validation (ns/op) | Notes |
+|-----------|--------------|---------------------------|-------|
+| Single Add | 24,906 | 25,768 | CRDT ~3% faster |
+| With Uniqueness | 27,236 | 27,236 | Same (uniqueness dominates) |
+
+CRDT semantics add negligible overhead to writes while providing:
+- Conflict-free replication capability
+- Time-travel queries via `[(history)]` and `[(as-of ?tx N)]`
+- Multi-replica merge support
+
+### 11. CRDT Allocation Optimization (COMPLETE - February 2026)
+**Status**: ✅ Production-ready with comprehensive benchmarks
+**Performance**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch (verified 2026-02-02)
+**Location**: `datalog/storage/`, `datalog/executor/`
+
+**The Story**: CRDT storage added powerful new capabilities (LWW, add-wins sets, RGA vectors, time-travel queries). The initial implementation had allocation overhead. Rather than accept a performance regression, we optimized the entire storage and executor pipeline. The result: **CRDT storage that's faster than the original non-CRDT implementation**.
+
+**What We Optimized** (6 phases targeting hot paths):
+
+**Phase 1: txToDescending optimization**
+- Changed return type from `[]byte` to `[16]byte` (stack allocation)
+- Result: 16 B/op → 0 B/op, ~29% faster encoding
+
+**Phase 2: Iterator workspace reuse**
+- Added `workspace` field to all matcher iterators
+- Use `BuildTupleInternedInto()` instead of `BuildTupleInterned()`
+- Result: 7-15% memory reduction, 13-29% fewer allocations
+
+**Phase 3: Cache path Datom reuse**
+- Pre-allocate `datomBuf` in cache path closures
+- Reuse across iterations instead of allocating per tuple
+- Result: 5% time improvement, 9% fewer allocations
+
+**Phase 4: DatomFromKey by value**
+- Changed return type from `*datalog.Datom` to `datalog.Datom`
+- Added `currentDatom` field to iterator structs
+- Result: 80 B/op → 0 B/op per datom decode, 25% faster
+
+**Phase 5: RequiresCopy() method**
+- Added `RequiresCopy()` to Relation interface
+- MaterializedRelation: false (stable slice)
+- StreamingRelation: true (iterator reuses workspace)
+- Hash join build phase copies only when RequiresCopy()=true
+
+**Phase 6: Conditional copyTuple()**
+- Wrapper relations (Union, OrFallback, Prepended) copy once at boundary
+- All other copyTuple() calls conditional on RequiresCopy()
+- `collectTuplesInto()` helper for consistent conditional copying
+
+**Benchmark Results** (Apple M4 Max, BenchmarkOHLCQuery):
+
+| Metric | Main (pre-CRDT) | With CRDT + Optimizations | Improvement |
+|--------|-----------------|---------------------------|-------------|
+| Time | 57ms | 30ms | **1.9× faster** |
+| Memory | 66MB | 30MB | **2.2× less** |
+| Allocations | 897K | 405K | **2.2× fewer** |
+
+This means we added full CRDT semantics (LWW, add-wins sets, RGA vectors, time-travel queries) **and** made the engine nearly 2× faster than before.
+
+**Additional Benchmarks**:
+
+| Benchmark | Improvement | Notes |
+|-----------|-------------|-------|
+| VectorQuery | 11% faster | Exercises wrapper relation paths |
+| CRDT resolution | O(1) LWW | First entry in descending scan |
+
+**Key Insight**: The biggest wins came from eliminating heap allocations in hot paths:
+- `DatomFromKey()` called millions of times during scans
+- `txToDescending()` called for every key encoding
+- Iterator workspace reuse amortizes allocation across all tuples
+
+**Files Changed**:
+- `datalog/storage/key_encoder_binary.go` - txToDescending return type
+- `datalog/storage/datom_decoder.go` - DatomFromKey by value
+- `datalog/storage/matcher_iterator_*.go` - Workspace reuse
+- `datalog/storage/matcher_relations.go` - Cache path optimization
+- `datalog/executor/relation.go` - RequiresCopy() interface
+- `datalog/executor/join.go` - Conditional copy in build phase
+- `datalog/executor/*.go` - Conditional copyTuple() throughout
+
+### 12. OHLC Query Performance (MEASURED 2025-10-25)
 **Benchmark**: OHLC queries with subqueries and predicate pushdown
 
 **Subquery Performance** (BenchmarkOHLCSubqueries):
@@ -376,7 +511,7 @@ for _, entity := range entities {
 - Predicate pushdown benefits increase with dataset size
 - Large dataset queries complete in <400ms even with 90 days of data
 
-### 11. Identity & Keyword Interning (COMPLETE - December 2025)
+### 13. Identity & Keyword Interning (COMPLETE - December 2025)
 **Status**: ✅ Full pointer interning for Identity and Keyword types
 **Performance**: **10-20% faster** on join-heavy workloads, **25% memory reduction** (verified 2025-12-24)
 **Commits**: a504729
@@ -418,7 +553,7 @@ for _, entity := range entities {
 
 **Key Insight**: The existing `datom_decoder.go` already had `[20]byte` → Identity caching and `[32]byte` → string caching. This optimization completed the picture by making all downstream comparisons pointer-based.
 
-### 12. Conditional Aggregate Rewriting (COMPLETE - January 2026)
+### 14. Conditional Aggregate Rewriting (COMPLETE - January 2026)
 **Status**: ✅ Both legacy executor and QueryExecutor now support conditional aggregate rewriting
 **Performance**: **7.7× faster**, **5.2× less memory**, **8.1× fewer allocations** (verified 2026-01-16)
 **Commits**: Latest
@@ -592,6 +727,8 @@ All items below are **measured** and **active** in production code:
 13. ✅ **In-memory indexing** - Hash indices now default path throughout codebase
 14. ✅ **Relation collapsing algorithm** - **Prevents catastrophic Cartesian products**
 15. ✅ **Conditional aggregate rewriting** - **7.7× faster, 5.2× less memory** for correlated aggregate subqueries (verified 2026-01-16)
+16. ✅ **CRDT storage** - **~25-35µs writes**, **O(1) LWW resolution**, conflict-free replication (verified 2026-01-31)
+17. ✅ **CRDT allocation optimization** - **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main while adding full CRDT semantics (verified 2026-02-02)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:
@@ -757,6 +894,85 @@ The engine is **production-ready for datasets up to 10M+ datoms**. All major opt
 ---
 
 ## Session History
+
+### 2026-02-02: CRDT Allocation Optimization - Faster Than Pre-CRDT
+
+**Branch**: `feature/allocation-regression-fixes`
+**Status**: ✅ Complete - CRDT storage now faster than original non-CRDT implementation
+
+**The Story**:
+CRDT storage added powerful capabilities (LWW, add-wins sets, RGA vectors, time-travel). Rather than accept performance overhead, we optimized the entire pipeline. Result: **CRDT + 90% faster (1.9×) than pre-CRDT main**.
+
+**What Was Done**:
+
+1. **Storage Layer** (Phases 1-4):
+   - `txToDescending()`: `[16]byte` return eliminates heap escape (16 B/op → 0)
+   - `DatomFromKey()`: Return by value eliminates pointer allocation (80 B/op → 0)
+   - Iterator workspace reuse via `BuildTupleInternedInto()`
+   - Cache path `datomBuf` reuse across iterations
+
+2. **Executor Layer** (Phases 5-6):
+   - `RequiresCopy()` method on Relation interface
+   - Wrapper relations copy once at boundary, return `RequiresCopy()=false`
+   - All `copyTuple()` calls conditional on source's `RequiresCopy()`
+
+**Benchmark Results** (Apple M4 Max, BenchmarkOHLCQuery):
+
+| Metric | Main (pre-CRDT) | CRDT + Optimized | Improvement |
+|--------|-----------------|------------------|-------------|
+| Time | 57ms | 30ms | **1.9× faster** |
+| Memory | 66MB | 30MB | **2.2× less** |
+| Allocations | 897K | 405K | **2.2× fewer** |
+
+**Key Insight**: Hot path allocations dominated. Eliminating heap escapes in `DatomFromKey()` (called millions of times) and `txToDescending()` (every key encode) yielded massive gains.
+
+**Files Changed**: 40 files, +3293/-284 lines across storage and executor layers
+
+---
+
+### 2026-01-31: CRDT Storage Benchmarks & LookupAttribute Fix
+
+**Branch**: `main`
+**Status**: ✅ Complete with comprehensive CRDT benchmarks
+
+**What Was Done**:
+
+1. **Created CRDT benchmark suite** (`datalog/storage/crdt_benchmark_test.go`):
+   - Write benchmarks for all three cardinalities (One, Many, Vector)
+   - Read benchmarks for set resolution and vector reconstruction
+   - CRDT resolution benchmarks (LWW, add-wins with/without tombstones)
+
+2. **Fixed LookupAttribute semantic issue** (`datalog/storage/matcher.go`):
+   - **Problem**: `LookupAttribute` for cardinality-many returned single value instead of `[]interface{}`
+   - **Impact**: Pull API without schema (unresolved patterns) only got first set member
+   - **Fix**: Updated cache path and storage fallback path to return all set members with add-wins resolution
+
+**Benchmark Results** (Apple M4 Max):
+
+| Category | Operation | Time | Notes |
+|----------|-----------|------|-------|
+| **Writes** | CardinalityOne | 24.9µs | LWW semantics |
+| | CardinalityMany/Add | 26.1µs | Add to set |
+| | CardinalityVector/Append | 27.1µs | RGA append |
+| **Reads** | CardinalityMany/100 members | 26.5µs | Full resolution |
+| | CardinalityVector/10 elements | 21.2µs | RGA reconstruction |
+| | CardinalityVector/100 elements | 204.7µs | Linear scaling |
+| **Resolution** | LWW/1000 versions | 0.97µs | O(1) lookup |
+| | AddWins/50 members | 13.8µs | No tombstones |
+| | AddWins/150 ops (100 add, 50 remove) | 37.9µs | With tombstones |
+
+**Key Findings**:
+- CRDT writes have consistent ~25-35µs performance across cardinalities
+- LWW resolution is O(1) - first entry in descending Tx scan is current value
+- Vector reconstruction scales linearly at ~2µs per element
+- Add-wins tombstone handling adds ~2.7× overhead vs clean sets
+
+**Files Changed**:
+- `datalog/storage/crdt_benchmark_test.go` - New comprehensive benchmark suite
+- `datalog/storage/matcher.go` - Fixed LookupAttribute to return `[]interface{}` for cardinality-many
+- `datalog/storage/crdt_vector_test.go` - Updated test assertions for new semantics
+
+---
 
 ### 2026-01-16: Conditional Aggregate Rewriting - QueryExecutor Parity Fix
 

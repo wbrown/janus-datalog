@@ -16,15 +16,15 @@ func BenchmarkParallelDecorrelation(b *testing.B) {
 	for cat := 0; cat < 100; cat++ {
 		catID := datalog.NewIdentity("cat-" + string(rune('A'+cat)))
 		datoms = append(datoms, datalog.Datom{
-			E: catID, A: datalog.NewKeyword(":category/name"), V: string(rune('A' + cat)), Tx: 1,
+			E: catID, A: datalog.NewKeyword(":category/name"), V: string(rune('A' + cat)), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		})
 
 		for prod := 0; prod < 10; prod++ {
 			prodID := datalog.NewIdentity("prod-" + string(rune('A'+cat)) + string(rune('0'+prod)))
 			price := float64(100 + cat + prod)
 			datoms = append(datoms,
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/category"), V: catID, Tx: 1},
-				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/price"), V: price, Tx: 1},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/category"), V: catID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: prodID, A: datalog.NewKeyword(":product/price"), V: price, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}
@@ -49,7 +49,7 @@ func BenchmarkParallelDecorrelation(b *testing.B) {
 	}
 
 	// Run benchmark - current implementation uses parallel execution
-	exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableFineGrainedPhases:     true,
 		MaxPhases:                   10,
@@ -96,20 +96,20 @@ func BenchmarkParallelOHLCDecorrelation(b *testing.B) {
 			volume := int64(1000 + hour*100 + minute)
 
 			datoms = append(datoms,
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symbol, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: high, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: low, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/close"), V: close, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(mod), Tx: 1},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symbol, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: high, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: low, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/close"), V: close, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(mod), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}
 
 	datoms = append(datoms,
-		datalog.Datom{E: symbol, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: 1},
+		datalog.Datom{E: symbol, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	)
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -210,7 +210,7 @@ func BenchmarkParallelOHLCDecorrelation(b *testing.B) {
 		b.Fatalf("Failed to parse query: %v", err)
 	}
 
-	exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableFineGrainedPhases:     true,
 		MaxPhases:                   10,

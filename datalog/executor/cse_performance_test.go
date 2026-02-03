@@ -31,7 +31,7 @@ func TestCSEPerformanceImpact(t *testing.T) {
 	// Symbol entity
 	symbolID := datalog.NewIdentity("symbol-CRWV")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -83,14 +83,14 @@ func TestCSEPerformanceImpact(t *testing.T) {
 				volume := float64(10000 + minute*100)
 
 				datoms = append(datoms,
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/minute-of-day"), V: minuteOfDay, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/high"), V: high, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/low"), V: low, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/close"), V: close, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: 1},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/minute-of-day"), V: minuteOfDay, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/high"), V: high, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/low"), V: low, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/close"), V: close, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 				)
 			}
 		}
@@ -197,7 +197,7 @@ func TestCSEPerformanceImpact(t *testing.T) {
 	}
 
 	// Test 1: Decorrelation WITHOUT CSE (2 filter groups)
-	execWithoutCSE := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithoutCSE := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableCSE:                   false, // CSE disabled
@@ -230,7 +230,7 @@ func TestCSEPerformanceImpact(t *testing.T) {
 	}
 
 	// Test 2: Decorrelation WITH CSE (1 filter group)
-	execWithCSE := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithCSE := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableCSE:                   true, // CSE enabled

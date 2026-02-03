@@ -23,7 +23,8 @@ func TestIteratorReusePerformance(t *testing.T) {
 	// Get the store from the database for the matcher
 	store := db.store
 
-	// Create test data: 10 symbols with 1000 bars each
+	// Create test data: 10 symbols with 500 bars each
+	// (reduced from 1000 to stay within BadgerDB transaction limits with 6 indices)
 	symbols := []string{"AAPL", "GOOG", "MSFT", "AMZN", "FB", "TSLA", "NVDA", "JPM", "V", "JNJ"}
 
 	tx := db.NewTransaction()
@@ -31,8 +32,8 @@ func TestIteratorReusePerformance(t *testing.T) {
 		symbolEntity := datalog.NewIdentity(fmt.Sprintf("symbol:%s", ticker))
 		tx.Add(symbolEntity, datalog.NewKeyword(":symbol/ticker"), ticker)
 
-		// Create 1000 bars per symbol
-		for i := 0; i < 1000; i++ {
+		// Create 500 bars per symbol
+		for i := 0; i < 500; i++ {
 			barEntity := datalog.NewIdentity(fmt.Sprintf("bar:%s:%d", ticker, i))
 			tx.Add(barEntity, datalog.NewKeyword(":price/symbol"), symbolEntity)
 			tx.Add(barEntity, datalog.NewKeyword(":price/value"), float64(100.0+float64(i)))
@@ -92,7 +93,7 @@ func TestIteratorReusePerformance(t *testing.T) {
 				it.Close()
 				duration := time.Since(start)
 
-				expectedBars := numSymbols * 1000
+				expectedBars := numSymbols * 500
 				if barCount != expectedBars {
 					t.Errorf("Expected %d bars, got %d", expectedBars, barCount)
 				}
@@ -124,7 +125,7 @@ func TestIteratorReusePerformance(t *testing.T) {
 				it.Close()
 				duration := time.Since(start)
 
-				expectedBars := numSymbols * 1000
+				expectedBars := numSymbols * 500
 				if barCount != expectedBars {
 					t.Errorf("Expected %d bars, got %d", expectedBars, barCount)
 				}

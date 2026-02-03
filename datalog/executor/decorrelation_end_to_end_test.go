@@ -16,29 +16,29 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 
 	datoms := []datalog.Datom{
 		// Symbol
-		{E: prod1, A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1},
+		{E: prod1, A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
 		// Prices for hour 9
-		{E: datalog.NewIdentity("bar1"), A: datalog.NewKeyword(":price/symbol"), V: prod1, Tx: 1},
-		{E: datalog.NewIdentity("bar1"), A: datalog.NewKeyword(":price/hour"), V: int64(9), Tx: 1},
-		{E: datalog.NewIdentity("bar1"), A: datalog.NewKeyword(":price/high"), V: 150.0, Tx: 1},
-		{E: datalog.NewIdentity("bar1"), A: datalog.NewKeyword(":price/low"), V: 145.0, Tx: 1},
+		{E: datalog.NewIdentity("bar1"), A: datalog.NewKeyword(":price/symbol"), V: prod1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar1"), A: datalog.NewKeyword(":price/hour"), V: int64(9), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar1"), A: datalog.NewKeyword(":price/high"), V: 150.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar1"), A: datalog.NewKeyword(":price/low"), V: 145.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("bar2"), A: datalog.NewKeyword(":price/symbol"), V: prod1, Tx: 1},
-		{E: datalog.NewIdentity("bar2"), A: datalog.NewKeyword(":price/hour"), V: int64(9), Tx: 1},
-		{E: datalog.NewIdentity("bar2"), A: datalog.NewKeyword(":price/high"), V: 155.0, Tx: 1},
-		{E: datalog.NewIdentity("bar2"), A: datalog.NewKeyword(":price/low"), V: 148.0, Tx: 1},
+		{E: datalog.NewIdentity("bar2"), A: datalog.NewKeyword(":price/symbol"), V: prod1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar2"), A: datalog.NewKeyword(":price/hour"), V: int64(9), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar2"), A: datalog.NewKeyword(":price/high"), V: 155.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar2"), A: datalog.NewKeyword(":price/low"), V: 148.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
 		// Prices for hour 10
-		{E: datalog.NewIdentity("bar3"), A: datalog.NewKeyword(":price/symbol"), V: prod1, Tx: 1},
-		{E: datalog.NewIdentity("bar3"), A: datalog.NewKeyword(":price/hour"), V: int64(10), Tx: 1},
-		{E: datalog.NewIdentity("bar3"), A: datalog.NewKeyword(":price/high"), V: 160.0, Tx: 1},
-		{E: datalog.NewIdentity("bar3"), A: datalog.NewKeyword(":price/low"), V: 152.0, Tx: 1},
+		{E: datalog.NewIdentity("bar3"), A: datalog.NewKeyword(":price/symbol"), V: prod1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar3"), A: datalog.NewKeyword(":price/hour"), V: int64(10), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar3"), A: datalog.NewKeyword(":price/high"), V: 160.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar3"), A: datalog.NewKeyword(":price/low"), V: 152.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("bar4"), A: datalog.NewKeyword(":price/symbol"), V: prod1, Tx: 1},
-		{E: datalog.NewIdentity("bar4"), A: datalog.NewKeyword(":price/hour"), V: int64(10), Tx: 1},
-		{E: datalog.NewIdentity("bar4"), A: datalog.NewKeyword(":price/high"), V: 165.0, Tx: 1},
-		{E: datalog.NewIdentity("bar4"), A: datalog.NewKeyword(":price/low"), V: 158.0, Tx: 1},
+		{E: datalog.NewIdentity("bar4"), A: datalog.NewKeyword(":price/symbol"), V: prod1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar4"), A: datalog.NewKeyword(":price/hour"), V: int64(10), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar4"), A: datalog.NewKeyword(":price/high"), V: 165.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar4"), A: datalog.NewKeyword(":price/low"), V: 158.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	// Create matcher
@@ -75,7 +75,7 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 	}
 
 	// Create executor with decorrelation enabled
-	executor := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	executor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableDynamicReordering:     true,
 		EnablePredicatePushdown:     true,

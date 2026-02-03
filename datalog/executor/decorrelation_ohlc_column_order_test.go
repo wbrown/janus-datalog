@@ -20,37 +20,37 @@ func TestOHLCColumnOrderBug(t *testing.T) {
 
 	datoms := []datalog.Datom{
 		// Symbol
-		{E: sym1, A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: 1},
+		{E: sym1, A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
 		// Bar 1: 09:30 (open of day)
-		{E: bar1, A: datalog.NewKeyword(":price/symbol"), V: sym1, Tx: 1},
-		{E: bar1, A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 10, 9, 30, 0, 0, time.UTC), Tx: 1},
-		{E: bar1, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(570), Tx: 1},
-		{E: bar1, A: datalog.NewKeyword(":price/open"), V: 100.00, Tx: 1},
-		{E: bar1, A: datalog.NewKeyword(":price/high"), V: 101.50, Tx: 1},
-		{E: bar1, A: datalog.NewKeyword(":price/low"), V: 99.50, Tx: 1},
-		{E: bar1, A: datalog.NewKeyword(":price/close"), V: 101.00, Tx: 1},
-		{E: bar1, A: datalog.NewKeyword(":price/volume"), V: int64(1000000), Tx: 1},
+		{E: bar1, A: datalog.NewKeyword(":price/symbol"), V: sym1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 10, 9, 30, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(570), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: datalog.NewKeyword(":price/open"), V: 100.00, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: datalog.NewKeyword(":price/high"), V: 101.50, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: datalog.NewKeyword(":price/low"), V: 99.50, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: datalog.NewKeyword(":price/close"), V: 101.00, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar1, A: datalog.NewKeyword(":price/volume"), V: int64(1000000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
 		// Bar 2: 12:00 (midday)
-		{E: bar2, A: datalog.NewKeyword(":price/symbol"), V: sym1, Tx: 1},
-		{E: bar2, A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC), Tx: 1},
-		{E: bar2, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(720), Tx: 1},
-		{E: bar2, A: datalog.NewKeyword(":price/open"), V: 101.00, Tx: 1},
-		{E: bar2, A: datalog.NewKeyword(":price/high"), V: 103.00, Tx: 1},
-		{E: bar2, A: datalog.NewKeyword(":price/low"), V: 100.50, Tx: 1},
-		{E: bar2, A: datalog.NewKeyword(":price/close"), V: 102.00, Tx: 1},
-		{E: bar2, A: datalog.NewKeyword(":price/volume"), V: int64(950000), Tx: 1},
+		{E: bar2, A: datalog.NewKeyword(":price/symbol"), V: sym1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(720), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: datalog.NewKeyword(":price/open"), V: 101.00, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: datalog.NewKeyword(":price/high"), V: 103.00, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: datalog.NewKeyword(":price/low"), V: 100.50, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: datalog.NewKeyword(":price/close"), V: 102.00, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar2, A: datalog.NewKeyword(":price/volume"), V: int64(950000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
 		// Bar 3: 16:00 (close of day)
-		{E: bar3, A: datalog.NewKeyword(":price/symbol"), V: sym1, Tx: 1},
-		{E: bar3, A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 10, 16, 0, 0, 0, time.UTC), Tx: 1},
-		{E: bar3, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(960), Tx: 1},
-		{E: bar3, A: datalog.NewKeyword(":price/open"), V: 102.00, Tx: 1},
-		{E: bar3, A: datalog.NewKeyword(":price/high"), V: 103.00, Tx: 1},
-		{E: bar3, A: datalog.NewKeyword(":price/low"), V: 101.50, Tx: 1},
-		{E: bar3, A: datalog.NewKeyword(":price/close"), V: 102.50, Tx: 1},
-		{E: bar3, A: datalog.NewKeyword(":price/volume"), V: int64(1100000), Tx: 1},
+		{E: bar3, A: datalog.NewKeyword(":price/symbol"), V: sym1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 1, 10, 16, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(960), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: datalog.NewKeyword(":price/open"), V: 102.00, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: datalog.NewKeyword(":price/high"), V: 103.00, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: datalog.NewKeyword(":price/low"), V: 101.50, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: datalog.NewKeyword(":price/close"), V: 102.50, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bar3, A: datalog.NewKeyword(":price/volume"), V: int64(1100000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	// OHLC query: date, open, high, low, close, volume
@@ -154,7 +154,7 @@ func TestOHLCColumnOrderBug(t *testing.T) {
 
 	t.Run("ParallelDecorrelation", func(t *testing.T) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: true,
 		})
@@ -238,7 +238,7 @@ func TestOHLCColumnOrderBug(t *testing.T) {
 
 	t.Run("SequentialDecorrelation", func(t *testing.T) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: false,
 		})

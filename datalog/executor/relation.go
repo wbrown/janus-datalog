@@ -14,6 +14,30 @@ import (
 // Tuple is an alias for query.Tuple to maintain backward compatibility
 type Tuple = query.Tuple
 
+// copyTuple returns a copy of the tuple. Required because iterator
+// Tuple() returns a workspace that gets reused on each Next() call.
+func copyTuple(t Tuple) Tuple {
+	c := make(Tuple, len(t))
+	copy(c, t)
+	return c
+}
+
+// collectTuplesInto appends all tuples from a relation into the destination slice.
+// It checks RequiresCopy() to avoid unnecessary copying when the relation
+// guarantees stable tuple references (e.g., MaterializedRelation).
+func collectTuplesInto(dest *[]Tuple, rel Relation) {
+	needsCopy := rel.RequiresCopy()
+	it := rel.Iterator()
+	for it.Next() {
+		tuple := it.Tuple()
+		if needsCopy {
+			tuple = copyTuple(tuple)
+		}
+		*dest = append(*dest, tuple)
+	}
+	it.Close()
+}
+
 // Relation represents a set of tuples with named columns
 type Relation interface {
 	// Columns returns the column names (symbols) in order
@@ -91,6 +115,12 @@ type Relation interface {
 	// Options returns the executor options for this relation
 	// Used by join operations to extract configuration
 	Options() ExecutorOptions
+
+	// RequiresCopy returns true if tuples from Iterator() must be copied
+	// before storing, because the iterator reuses internal workspace memory.
+	// MaterializedRelation returns false (tuples are independent).
+	// StreamingRelation returns true (iterator may reuse workspace).
+	RequiresCopy() bool
 
 	// Note: Relations are IMMUTABLE and DEDUPLICATED at creation
 	// All operations return NEW Relations
@@ -353,6 +383,12 @@ func (r *MaterializedRelation) IsEmpty() bool {
 // Options returns the executor options for this materialized relation
 func (r *MaterializedRelation) Options() ExecutorOptions {
 	return r.options
+}
+
+// RequiresCopy returns false because MaterializedRelation stores tuples
+// in a slice - each tuple is independent and not reused across iterations.
+func (r *MaterializedRelation) RequiresCopy() bool {
+	return false
 }
 
 // Get returns a specific tuple by index
@@ -860,6 +896,12 @@ func (r *StreamingRelation) Options() ExecutorOptions {
 	return r.options
 }
 
+// RequiresCopy returns true because StreamingRelation wraps iterators
+// that may reuse workspace memory for tuples across Next() calls.
+func (r *StreamingRelation) RequiresCopy() bool {
+	return true
+}
+
 func (r *StreamingRelation) IsEmpty() bool {
 	// If materialized, check materialized relation
 	if r.materialized != nil {
@@ -1002,12 +1044,7 @@ func (r *StreamingRelation) Sorted() []Tuple {
 
 	// Now consume iterator to build cache
 	var tuples []Tuple
-	it := r.Iterator()
-	defer it.Close()
-	for it.Next() {
-		// Tuples are already copied by CachingIterator if shouldCache=true
-		tuples = append(tuples, it.Tuple())
-	}
+	collectTuplesInto(&tuples, r)
 
 	// Sort tuples lexicographically by columns
 	sort.Slice(tuples, func(i, j int) bool {
@@ -1091,11 +1128,7 @@ func (r *StreamingRelation) Materialize() Relation {
 func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	// Collect all tuples (can't sort without materializing)
 	var tuples []Tuple
-	it := r.Iterator()
-	for it.Next() {
-		tuples = append(tuples, it.Tuple())
-	}
-	it.Close()
+	collectTuplesInto(&tuples, r)
 
 	// Create MaterializedRelation and delegate to its Sort
 	mat := NewMaterializedRelationWithOptions(r.columns, tuples, r.options)
@@ -1216,12 +1249,16 @@ func CommonColumns(r1, r2 Relation) []query.Symbol {
 // Select filters a relation based on a predicate
 func Select(rel Relation, pred func(Tuple) bool) Relation {
 	var selected []Tuple
+	needsCopy := rel.RequiresCopy()
 	it := rel.Iterator()
 	defer it.Close()
 
 	for it.Next() {
 		tuple := it.Tuple()
 		if pred(tuple) {
+			if needsCopy {
+				tuple = copyTuple(tuple)
+			}
 			selected = append(selected, tuple)
 		}
 	}
@@ -1358,13 +1395,7 @@ func (p *ProductRelation) Project(columns []query.Symbol) (Relation, error) {
 
 func (p *ProductRelation) Materialize() Relation {
 	var tuples []Tuple
-	it := p.Iterator()
-	defer it.Close()
-
-	for it.Next() {
-		tuples = append(tuples, it.Tuple())
-	}
-
+	collectTuplesInto(&tuples, p)
 	return NewMaterializedRelationWithOptions(p.columns, tuples, p.options)
 }
 
@@ -1417,6 +1448,13 @@ func (p *ProductRelation) Aggregate(findElements []query.FindElement) Relation {
 
 func (p *ProductRelation) Options() ExecutorOptions {
 	return p.options
+}
+
+// RequiresCopy returns false because ProductIterator.Tuple() creates a fresh
+// tuple on each call using append (var result Tuple; result = append(result, ...)).
+// The tuple is not reused across Next() calls.
+func (p *ProductRelation) RequiresCopy() bool {
+	return false
 }
 
 // ProductIterator implements streaming nested-loop iteration over multiple relations

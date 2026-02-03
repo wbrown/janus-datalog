@@ -19,14 +19,14 @@ func TestPerformanceRegression(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		person := datalog.NewIdentity("person:" + string(rune('a'+i%26)) + string(rune('0'+i/26)))
 		datoms = append(datoms,
-			datalog.Datom{E: person, A: nameAttr, V: "Person" + string(rune(i)), Tx: 1},
-			datalog.Datom{E: person, A: ageAttr, V: int64(20 + i%40), Tx: 1},
-			datalog.Datom{E: person, A: scoreAttr, V: float64(50 + i%50), Tx: 1},
+			datalog.Datom{E: person, A: nameAttr, V: "Person" + string(rune(i)), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: person, A: ageAttr, V: int64(20 + i%40), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: person, A: scoreAttr, V: float64(50 + i%50), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		)
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Test queries
 	queries := []string{

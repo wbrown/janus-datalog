@@ -36,20 +36,20 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 			volume := int64(1000 + hour*100 + minute)
 
 			datoms = append(datoms,
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symbol, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: high, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: low, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/close"), V: close, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: 1},
-				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(mod), Tx: 1},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/symbol"), V: symbol, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/high"), V: high, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/low"), V: low, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/close"), V: close, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barID, A: datalog.NewKeyword(":price/minute-of-day"), V: int64(mod), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}
 
 	datoms = append(datoms,
-		datalog.Datom{E: symbol, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: 1},
+		datalog.Datom{E: symbol, A: datalog.NewKeyword(":symbol/ticker"), V: "CRWV", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	)
 
 	matcher := NewMemoryPatternMatcher(datoms)
@@ -152,7 +152,7 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 	// Test 1: Sequential decorrelation
 	t.Run("Sequential", func(t *testing.T) {
-		execSeq := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		execSeq := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: false, // Sequential
 			EnableFineGrainedPhases:     true,
@@ -177,7 +177,7 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 	// Test 2: Parallel decorrelation
 	t.Run("Parallel", func(t *testing.T) {
-		execPar := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		execPar := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: true, // Parallel
 			EnableFineGrainedPhases:     true,
@@ -201,14 +201,14 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 	// Test 3: Verify results are identical
 	t.Run("ResultsMatch", func(t *testing.T) {
-		execSeq := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		execSeq := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: false,
 			EnableFineGrainedPhases:     true,
 			MaxPhases:                   10,
 		})
 
-		execPar := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		execPar := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: true,
 			EnableFineGrainedPhases:     true,

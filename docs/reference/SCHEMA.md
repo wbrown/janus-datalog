@@ -73,7 +73,25 @@ db.SetSchema(s)
 | Cardinality | Description | Constant |
 |-------------|-------------|----------|
 | `:db.cardinality/one` | Single value (default) | `schema.CardinalityOne` |
-| `:db.cardinality/many` | Multiple values | `schema.CardinalityMany` |
+| `:db.cardinality/many` | Multiple values (set) | `schema.CardinalityMany` |
+| `:db.cardinality/vector` | Ordered list (RGA) | `schema.CardinalityVector` |
+
+### `:db/uniqueElements`
+
+For vector attributes, enforce unique elements (no duplicates):
+
+| Value | Description |
+|-------|-------------|
+| `false` | Duplicates allowed (default) |
+| `true` | Duplicates rejected at write time |
+
+```go
+// Vector with unique elements (OrderedSet)
+builder.Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add()
+
+// Equivalent to:
+builder.Attribute(":character/prefs").Type(schema.TypeString).Vector().UniqueElements(true).Add()
+```
 
 ### `:db/unique`
 
@@ -202,10 +220,10 @@ pattern := &query.PullPattern{
     },
 }
 
-// Resolve and execute
+// Resolve and execute (recommended: use db.Pull() instead)
 resolved := schema.ResolvePullPattern(pattern, s)
 matcher := storage.NewBadgerMatcher(db.Store())
-puller := executor.NewPullExecutor(matcher)
+puller := executor.NewPullExecutor(matcher, db) // db implements EntityResolver for CRDT resolution
 result, _ := puller.PullResolved(alice, resolved)
 
 // Result:

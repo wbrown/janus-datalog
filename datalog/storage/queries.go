@@ -74,10 +74,10 @@ func (q *QueryBuilder) GetEntityTimeRange(entity datalog.Identity, startTx, endT
 		return nil, err
 	}
 
-	// Filter by time range
+	// Filter by time range (compare Lamport component)
 	var result []*datalog.Datom
 	for _, d := range allDatoms {
-		if d.Tx >= startTx && d.Tx < endTx {
+		if d.Tx.Lamport >= startTx && d.Tx.Lamport < endTx {
 			result = append(result, d)
 		}
 	}

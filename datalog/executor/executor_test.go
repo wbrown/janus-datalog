@@ -16,15 +16,15 @@ func TestExecutorBasicQuery(t *testing.T) {
 	friendAttr := datalog.NewKeyword(":user/friend")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
-		{E: alice, A: friendAttr, V: bob, Tx: 2},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: bob, A: ageAttr, V: int64(25), Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: friendAttr, V: bob, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find all names
 	q := &query.Query{
@@ -78,17 +78,17 @@ func TestExecutorJoinQuery(t *testing.T) {
 	friendAttr := datalog.NewKeyword(":user/friend")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
-		{E: alice, A: friendAttr, V: bob, Tx: 2},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: bob, A: ageAttr, V: int64(25), Tx: 1},
-		{E: bob, A: friendAttr, V: charlie, Tx: 2},
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: friendAttr, V: bob, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: friendAttr, V: charlie, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find friends of friends
 	// [?p1 :user/friend ?p2]
@@ -159,16 +159,16 @@ func TestExecutorWithFilter(t *testing.T) {
 	ageAttr := datalog.NewKeyword(":user/age")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: bob, A: ageAttr, V: int64(25), Tx: 1},
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: charlie, A: ageAttr, V: int64(35), Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: ageAttr, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find people younger than 30
 	q := &query.Query{
@@ -227,22 +227,22 @@ func TestExecutorMultipleFilters(t *testing.T) {
 	salaryAttr := datalog.NewKeyword(":user/salary")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
-		{E: alice, A: salaryAttr, V: int64(50000), Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: bob, A: ageAttr, V: int64(25), Tx: 1},
-		{E: bob, A: salaryAttr, V: int64(45000), Tx: 1},
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: charlie, A: ageAttr, V: int64(35), Tx: 1},
-		{E: charlie, A: salaryAttr, V: int64(60000), Tx: 1},
-		{E: david, A: nameAttr, V: "David", Tx: 1},
-		{E: david, A: ageAttr, V: int64(28), Tx: 1},
-		{E: david, A: salaryAttr, V: int64(55000), Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: salaryAttr, V: int64(50000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: salaryAttr, V: int64(45000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: ageAttr, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: salaryAttr, V: int64(60000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: david, A: nameAttr, V: "David", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: david, A: ageAttr, V: int64(28), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: david, A: salaryAttr, V: int64(55000), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find people aged 25-30 with salary > 50000
 	q := &query.Query{
@@ -322,11 +322,11 @@ func TestExecutorEmptyResult(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query for non-existent attribute
 	q := &query.Query{

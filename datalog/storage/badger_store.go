@@ -2,27 +2,25 @@ package storage
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
+// metadataPrefix is used to store database metadata (e.g., ReplicaID)
+// separate from datom indices
+const metadataPrefix = "_meta:"
+
 // BadgerStore implements Store using BadgerDB
 type BadgerStore struct {
-	db          *badger.DB
-	encoder     KeyEncoder
-	retractMode RetractMode // Controls how retractions are handled
+	db      *badger.DB
+	encoder KeyEncoder
 }
 
 // NewBadgerStore creates a new BadgerDB-backed store with the specified encoder
-// Uses RetractDelete mode (current behavior) by default
 func NewBadgerStore(path string, encoder KeyEncoder) (*BadgerStore, error) {
-	return NewBadgerStoreWithRetractMode(path, encoder, RetractDelete)
-}
-
-// NewBadgerStoreWithRetractMode creates a new BadgerDB-backed store with specified retract mode
-func NewBadgerStoreWithRetractMode(path string, encoder KeyEncoder, retractMode RetractMode) (*BadgerStore, error) {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil // Disable BadgerDB logs for now
 
@@ -45,15 +43,9 @@ func NewBadgerStoreWithRetractMode(path string, encoder KeyEncoder, retractMode 
 	}
 
 	return &BadgerStore{
-		db:          db,
-		encoder:     encoder,
-		retractMode: retractMode,
+		db:      db,
+		encoder: encoder,
 	}, nil
-}
-
-// RetractMode returns the store's retract mode
-func (s *BadgerStore) RetractMode() RetractMode {
-	return s.retractMode
 }
 
 // Assert adds datoms to the store
@@ -74,38 +66,14 @@ func (s *BadgerStore) assertDatom(txn *badger.Txn, d *datalog.Datom) error {
 	sd := ToStorageDatom(*d)
 	value := sd.Bytes()
 
-	// Write to all current-state indices
-	for _, idx := range CurrentStateIndices {
+	// Write to all CRDT indices
+	for _, idx := range Indices {
 		key := s.encoder.EncodeKey(idx, d)
 		if err := txn.Set(key, value); err != nil {
 			return fmt.Errorf("failed to write to %v index: %w", idx, err)
 		}
 	}
 
-	// If history mode, also write to history indices with Op=true
-	if s.retractMode == RetractHistory {
-		if err := s.writeToHistoryIndices(txn, d, OpAssert); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// writeToHistoryIndices writes a datom to all history indices with the given Op
-func (s *BadgerStore) writeToHistoryIndices(txn *badger.Txn, d *datalog.Datom, op Op) error {
-	// Value is just the Op byte - all other data is in the key
-	value := []byte{0x00}
-	if op {
-		value[0] = 0x01
-	}
-
-	for _, idx := range HistoryIndices {
-		key := s.encoder.EncodeHistoryKey(idx, d, op)
-		if err := txn.Set(key, value); err != nil {
-			return fmt.Errorf("failed to write to %v history index: %w", idx, err)
-		}
-	}
 	return nil
 }
 
@@ -156,7 +124,7 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 		return nil
 	}
 
-	// For each matching EAVT key, decode it and delete from current-state indices
+	// For each matching EAVT key, decode it and delete from all indices
 	for _, eavtKey := range keysToDelete {
 		// Decode the EAVT key to get the full datom including Tx
 		// DatomFromKey handles all the complexity of decoding components
@@ -165,25 +133,11 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 			return fmt.Errorf("failed to decode key for retraction: %w", err)
 		}
 
-		// Delete from all current-state indices using the actual stored Tx
-		for _, idx := range CurrentStateIndices {
-			key := s.encoder.EncodeKey(idx, storedDatom)
+		// Delete from all CRDT indices using the actual stored Tx
+		for _, idx := range Indices {
+			key := s.encoder.EncodeKey(idx, &storedDatom)
 			if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
 				return fmt.Errorf("failed to delete from %v index: %w", idx, err)
-			}
-		}
-
-		// If history mode, write retraction to history indices
-		// Use the Tx from the passed datom (the retraction transaction)
-		if s.retractMode == RetractHistory {
-			retractDatom := &datalog.Datom{
-				E:  storedDatom.E,
-				A:  storedDatom.A,
-				V:  storedDatom.V,
-				Tx: d.Tx, // Use the retraction Tx, not the original assertion Tx
-			}
-			if err := s.writeToHistoryIndices(txn, retractDatom, OpRetract); err != nil {
-				return err
 			}
 		}
 	}
@@ -202,11 +156,12 @@ func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error)
 	it := txn.NewIterator(opts)
 
 	return &BadgerIterator{
-		txn:   txn,
-		it:    it,
-		start: start,
-		end:   end,
-		index: index,
+		txn:     txn,
+		it:      it,
+		start:   start,
+		end:     end,
+		index:   index,
+		encoder: s.encoder, // For decoding Op from key
 	}, nil
 }
 
@@ -230,7 +185,7 @@ func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
 				E:  datalog.InternIdentityFromHash(sd.E),
 				A:  datalog.InternKeywordFromBytes(sd.A),
 				V:  sd.V,
-				Tx: sd.Tx.Uint64(),
+				Tx: sd.Tx.ToElementID(),
 			}
 			return nil
 		})
@@ -241,6 +196,134 @@ func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
 	}
 
 	return result, err
+}
+
+// MaxElementID returns the highest ElementID in the store by scanning TAEV index.
+// With bitwise NOT encoding for Tx, forward scan gives highest Tx first (O(1)).
+// Returns zero ElementID if store is empty.
+func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
+	var maxID datalog.ElementID
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false // Keys only
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		// TAEV prefix - forward scan, first entry has highest Tx due to bitwise NOT encoding
+		taevPrefix := []byte{byte(TAEV)}
+		it.Seek(taevPrefix)
+
+		if it.Valid() {
+			key := it.Item().Key()
+			if len(key) > 0 && key[0] == byte(TAEV) {
+				// Found a TAEV key - decode ElementID from Tx position
+				// TAEV layout: [prefix:1][Tx:16][A:32][E:20][V:var][Op:1][AfterRef?:16]
+				// DecodeKey handles the bitwise NOT reversal
+				_, _, _, tx, _, _, err := s.encoder.DecodeKey(TAEV, key)
+				if err != nil {
+					return fmt.Errorf("failed to decode TAEV key: %w", err)
+				}
+				maxID = Tx(tx).ToElementID()
+				return nil
+			}
+		}
+
+		// No TAEV entries found - store is empty
+		return nil
+	})
+
+	return maxID, err
+}
+
+// MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
+// Used for fast cache freshness checks on A-bound queries.
+// Uses AEVT index with forward scan - first entry has highest Tx due to bitwise NOT encoding.
+// Returns zero ElementID if no data exists for this attribute.
+func (s *BadgerStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
+	var maxID datalog.ElementID
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false // Keys only
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		// Build AEVT prefix for this attribute: [prefix:1][A:32]
+		aevtPrefix := make([]byte, 1+32)
+		aevtPrefix[0] = byte(AEVT)
+		copy(aevtPrefix[1:33], a)
+
+		it.Seek(aevtPrefix)
+
+		if it.Valid() {
+			key := it.Item().Key()
+			// Verify this key is for our attribute (prefix match)
+			if len(key) >= 33 && key[0] == byte(AEVT) {
+				if !bytesEqual(key[1:33], aevtPrefix[1:33]) {
+					// Different attribute - no data for this attribute
+					return nil
+				}
+				// Found an AEVT key for this attribute
+				// AEVT layout: [prefix:1][A:32][E:20][V:var][Tx:16][Op:1][AfterRef?:16]
+				// However, Tx is NOT the first component after A, so we can't rely on first entry
+				// having highest Tx. We need to scan through entries for this attribute.
+				//
+				// Actually, for AEVT, the key order is: A → E → V → Tx (descending)
+				// So within the same (A, E, V), first entry has highest Tx.
+				// But we want highest across ALL (E, V) for this A.
+				//
+				// For a true O(1) solution, we'd need an index like EATV where Tx comes earlier.
+				// For now, we scan entries until we find a different attribute.
+				// In practice, we only need to find ONE entry to know the attribute has data,
+				// and track the max as we go.
+				for it.Valid() {
+					key := it.Item().Key()
+					// Check if still in our attribute's prefix
+					if len(key) < 33 || key[0] != byte(AEVT) {
+						break
+					}
+					if !bytesEqual(key[1:33], aevtPrefix[1:33]) {
+						break // Different attribute
+					}
+
+					// Decode the Tx from this key
+					_, _, _, tx, _, _, err := s.encoder.DecodeKey(AEVT, key)
+					if err != nil {
+						it.Next()
+						continue
+					}
+					elemID := Tx(tx).ToElementID()
+					if elemID.Compare(maxID) > 0 {
+						maxID = elemID
+					}
+
+					it.Next()
+				}
+				return nil
+			}
+		}
+
+		// No AEVT entries found for this attribute
+		return nil
+	})
+
+	return maxID, err
+}
+
+// bytesEqual compares two byte slices for equality
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // BeginTx starts a new transaction
@@ -255,6 +338,46 @@ func (s *BadgerStore) BeginTx() (StoreTx, error) {
 // Close closes the store
 func (s *BadgerStore) Close() error {
 	return s.db.Close()
+}
+
+// GetMetadataUint64 retrieves a uint64 metadata value by key.
+// Returns (value, true) if found, (0, false) if not found.
+func (s *BadgerStore) GetMetadataUint64(key string) (uint64, bool, error) {
+	metaKey := []byte(metadataPrefix + key)
+	var result uint64
+	var found bool
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(metaKey)
+		if err == badger.ErrKeyNotFound {
+			return nil // Not found is not an error
+		}
+		if err != nil {
+			return err
+		}
+
+		return item.Value(func(val []byte) error {
+			if len(val) != 8 {
+				return fmt.Errorf("metadata %s has invalid length %d, expected 8", key, len(val))
+			}
+			result = binary.BigEndian.Uint64(val)
+			found = true
+			return nil
+		})
+	})
+
+	return result, found, err
+}
+
+// SetMetadataUint64 stores a uint64 metadata value by key.
+func (s *BadgerStore) SetMetadataUint64(key string, value uint64) error {
+	metaKey := []byte(metadataPrefix + key)
+	val := make([]byte, 8)
+	binary.BigEndian.PutUint64(val, value)
+
+	return s.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(metaKey, val)
+	})
 }
 
 // ScanKeysOnly returns an iterator that decodes datoms from keys without fetching values
@@ -298,12 +421,13 @@ func (s *BadgerStore) CountKeys(index IndexType, start, end []byte) (int64, erro
 
 // BadgerIterator implements Iterator for BadgerDB
 type BadgerIterator struct {
-	txn   *badger.Txn
-	it    *badger.Iterator
-	start []byte
-	end   []byte
-	index IndexType
-	valid bool
+	txn     *badger.Txn
+	it      *badger.Iterator
+	start   []byte
+	end     []byte
+	index   IndexType
+	valid   bool
+	encoder KeyEncoder // For decoding Op from key
 }
 
 // Next advances the iterator
@@ -336,6 +460,14 @@ func (i *BadgerIterator) Next() bool {
 func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 	item := i.it.Item()
 
+	// Get key to decode Op and AfterRef (Op and AfterRef are stored in the key, not the value)
+	key := item.Key()
+	var op byte
+	var afterRef [16]byte
+	if i.encoder != nil {
+		_, _, _, _, op, afterRef, _ = i.encoder.DecodeKey(i.index, key)
+	}
+
 	var result *datalog.Datom
 	err := item.Value(func(val []byte) error {
 		sd, err := StorageDatomFromBytes(val)
@@ -345,11 +477,14 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 		// Convert to user-facing datom
 		// Note: StorageDatomFromBytes already decodes the value properly,
 		// so sd.V is already the decoded value
+		// Op and AfterRef are decoded from the key, not the value
 		result = &datalog.Datom{
-			E:  datalog.InternIdentityFromHash(sd.E),
-			A:  datalog.InternKeywordFromBytes(sd.A),
-			V:  sd.V,
-			Tx: sd.Tx.Uint64(),
+			E:        datalog.InternIdentityFromHash(sd.E),
+			A:        datalog.InternKeywordFromBytes(sd.A),
+			V:        sd.V,
+			Tx:       sd.Tx.ToElementID(),
+			Op:       datalog.CRDTOp(op),
+			AfterRef: Tx(afterRef).ToElementID(),
 		}
 		return nil
 	})
@@ -371,6 +506,62 @@ func (i *BadgerIterator) Seek(key []byte) {
 	i.start = key
 	// Leave valid=false so Next() positions us correctly
 	i.valid = false
+}
+
+// ElementID extracts the transaction ElementID from the current key.
+// This is more efficient than Datom() when only the ElementID is needed.
+func (i *BadgerIterator) ElementID() datalog.ElementID {
+	if !i.it.Valid() {
+		return datalog.ElementID{}
+	}
+	key := i.it.Item().Key()
+	return extractElementIDFromKey(i.index, key)
+}
+
+// extractElementIDFromKey extracts the ElementID from a key based on index type.
+// The Tx is encoded with bitwise NOT, so we reverse it here.
+func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {
+	const (
+		prefixSize = 1
+		entitySize = 20
+		attrSize   = 32
+		txSize     = 16
+	)
+
+	if len(key) < prefixSize+txSize {
+		return datalog.ElementID{}
+	}
+
+	var txBytes []byte
+
+	switch index {
+	case TAEV:
+		// TAEV: [prefix:1][Tx:16][A:32][E:20][V:var]
+		// Tx is right after prefix
+		txBytes = key[prefixSize : prefixSize+txSize]
+
+	case EATV:
+		// EATV: [prefix:1][E:20][A:32][Tx:16][V:var]
+		// Tx is after E+A
+		offset := prefixSize + entitySize + attrSize
+		if len(key) < offset+txSize {
+			return datalog.ElementID{}
+		}
+		txBytes = key[offset : offset+txSize]
+
+	case EAVT, AEVT, AVET, VAET:
+		// These have Tx at the end: [...][Tx:16]
+		if len(key) < txSize {
+			return datalog.ElementID{}
+		}
+		txBytes = key[len(key)-txSize:]
+
+	default:
+		return datalog.ElementID{}
+	}
+
+	// Reverse bitwise NOT to get original ElementID
+	return DecodeElementID(txBytes)
 }
 
 // BadgerTx implements Tx for BadgerDB

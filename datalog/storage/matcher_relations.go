@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // Pattern matching implementation is split across multiple files:
@@ -76,6 +78,34 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	// Project the binding relation to only include columns used in the pattern
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 
+	// Check for vector cardinality - requires special handling with bound E from bindings
+	// This intercepts BEFORE normal join paths since vectors need RGA resolution
+	if a := m.extractValue(pattern.GetA()); a != nil {
+		if m.schema != nil {
+			if kw, ok := a.(datalog.Keyword); ok {
+				if attr := m.schema.GetAttribute(kw); attr != nil {
+					if attr.Cardinality == schema.CardinalityVector {
+						// E is bound from bindings, A is a constant - use vector resolution
+						return m.matchVectorWithBindings(pattern, bindingRel, columns, kw)
+					}
+				}
+			}
+		}
+	}
+
+	// CACHE OPTIMIZATION: When A is a constant and E comes from bindings,
+	// use the cache for each E value instead of storage scans.
+	if m.cache != nil && m.txID == 0 {
+		if a := m.extractValue(pattern.GetA()); a != nil {
+			if aKw, ok := a.(datalog.Keyword); ok {
+				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw)
+				if handled {
+					return cacheResult, nil
+				}
+			}
+		}
+	}
+
 	// Analyze if we can use iterator reuse
 	// For multi-position cases, the relation may be materialized to allow cardinality counting
 	strategy, bindingRel := analyzeReuseStrategy(pattern, bindingRel)
@@ -88,7 +118,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			Data: map[string]interface{}{
 				"pattern":       pattern.String(),
 				"strategy_type": strategy.Type.String(),
-				"index":         indexName(IndexType(strategy.Index)),
+				"index":         indexName(strategy.Index),
 				"position":      strategy.Position,
 			},
 		})
@@ -109,7 +139,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 					"pattern":       pattern.String(),
 					"join_strategy": joinStrategy.String(),
 					"position":      strategy.Position,
-					"index":         indexName(IndexType(strategy.Index)),
+					"index":         indexName(strategy.Index),
 				},
 			})
 		}
@@ -117,11 +147,11 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		switch joinStrategy {
 		case HashJoinScan:
 			// Use hash join for medium selectivity (1-50%)
-			return m.matchWithHashJoin(pattern, bindingRel, columns, strategy.Position, IndexType(strategy.Index), constraints)
+			return m.matchWithHashJoin(pattern, bindingRel, columns, strategy.Position, strategy.Index, constraints)
 
 		case MergeJoin:
 			// Use merge join for high selectivity (>50%) with large binding sets
-			return m.matchWithMergeJoin(pattern, bindingRel, columns, strategy.Position, IndexType(strategy.Index), constraints)
+			return m.matchWithMergeJoin(pattern, bindingRel, columns, strategy.Position, strategy.Index, constraints)
 
 		case IndexNestedLoop:
 			// Use iterator reuse for small sets or high selectivity
@@ -156,6 +186,103 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 	}
 	if elem := pattern.GetT(); elem != nil {
 		tx = m.extractValue(elem)
+	}
+
+	// Determine cardinality for CRDT resolution
+	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
+	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
+	// For cardinality-many with E+A+V all bound: membership check
+	// For cardinality-many with A bound, E unbound: scan all entities with add-wins
+	// For cardinality-vector with E+A bound: use vector resolution
+	returnOnlyFirst := false
+	useAddWinsResolution := false
+	useMembershipCheck := false
+	useAddWinsScanAllEntities := false
+	useAddWinsScanAllEntitiesWithValue := false
+	useVectorResolution := false
+	var card schema.Cardinality = schema.CardinalityOne // Default for schemaless
+
+	// Determine cardinality when A is bound (regardless of E)
+	if a != nil {
+		if m.schema != nil {
+			if aKw, ok := a.(datalog.Keyword); ok {
+				if def := m.schema.GetAttribute(aKw); def != nil {
+					card = def.Cardinality
+				}
+			}
+		}
+	}
+
+	// CACHE OPTIMIZATION: When E and A are bound and we're querying latest state,
+	// use the cache for O(1) access instead of storage scans.
+	if m.cache != nil && m.txID == 0 && e != nil && a != nil {
+		if eIdent, ok := e.(datalog.Identity); ok {
+			if aKw, ok := a.(datalog.Keyword); ok {
+				cacheResult, handled := m.matchFromCache(pattern, columns, eIdent, aKw, v, card)
+				if handled {
+					return cacheResult, nil
+				}
+			}
+		}
+	}
+
+	// Check resolution strategy based on bound components and cardinality
+	if e != nil && a != nil {
+		// E and A both bound
+		if v == nil {
+			// V is unbound
+			switch card {
+			case schema.CardinalityOne:
+				// Return only the first (= current) value
+				returnOnlyFirst = true
+			case schema.CardinalityVector:
+				// Use vector resolution (RGA reconstruction)
+				useVectorResolution = true
+			case schema.CardinalityMany:
+				// Use add-wins resolution for set semantics
+				useAddWinsResolution = true
+			}
+		} else {
+			// V is bound - for cardinality-many, this is a membership check
+			if card == schema.CardinalityMany {
+				useMembershipCheck = true
+			}
+		}
+	} else if e == nil && a != nil && card == schema.CardinalityMany {
+		// E is unbound, A is bound, cardinality-many
+		// Need to scan all entities with this attribute and apply add-wins resolution
+		if v == nil {
+			// V unbound: return all (entity, value) pairs
+			useAddWinsScanAllEntities = true
+		} else {
+			// V bound: find all entities where this value is in the set
+			useAddWinsScanAllEntitiesWithValue = true
+		}
+	}
+
+	// For cardinality-vector with E+A bound: use vector resolution
+	if useVectorResolution {
+		return m.matchCardinalityVectorAsRelation(pattern, columns, e, a)
+	}
+
+	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
+	if useAddWinsResolution {
+		return m.matchCardinalityManyAsRelation(pattern, columns, e, a)
+	}
+
+	// For cardinality-many with E+A+V bound: use membership check
+	if useMembershipCheck {
+		return m.matchCardinalityManyMembership(pattern, columns, e, a, v)
+	}
+
+	// For cardinality-many with A bound, E unbound, V unbound: scan all entities
+	if useAddWinsScanAllEntities {
+		return m.matchCardinalityManyScanAllEntities(pattern, columns, a)
+	}
+
+	// For cardinality-many with A bound, E unbound, V bound: find entities with value
+	if useAddWinsScanAllEntitiesWithValue {
+		return m.matchCardinalityManyFindEntitiesWithValue(pattern, columns, a, v)
 	}
 
 	// Choose index and create scan range
@@ -196,19 +323,21 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 	if keyMask != nil {
 		// Use key mask iterator for efficient filtering
 		maskIter := &unboundMaskIterator{
-			matcher:      m,
-			index:        index,
-			start:        start,
-			end:          end,
-			pattern:      pattern,
-			columns:      columns,
-			e:            e,
-			a:            a,
-			v:            v,
-			tx:           tx,
-			keyMask:      keyMask,
-			constraints:  constraints, // Still need for non-mask constraints
-			tupleBuilder: m.getTupleBuilder(pattern, columns),
+			matcher:         m,
+			index:           index,
+			start:           start,
+			end:             end,
+			pattern:         pattern,
+			columns:         columns,
+			e:               e,
+			a:               a,
+			v:               v,
+			tx:              tx,
+			keyMask:         keyMask,
+			constraints:     constraints, // Still need for non-mask constraints
+			workspace:       make(executor.Tuple, len(columns)),
+			tupleBuilder:    m.getTupleBuilder(pattern, columns),
+			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 		}
 
 		// Initialize the key mask iterator using the optimized method
@@ -221,18 +350,20 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 	} else {
 		// Use regular iterator
 		regularIter := &unboundIterator{
-			matcher:      m,
-			index:        index,
-			start:        start,
-			end:          end,
-			pattern:      pattern,
-			columns:      columns,
-			e:            e,
-			a:            a,
-			v:            v,
-			tx:           tx,
-			constraints:  constraints,
-			tupleBuilder: m.getTupleBuilder(pattern, columns),
+			matcher:         m,
+			index:           index,
+			start:           start,
+			end:             end,
+			pattern:         pattern,
+			columns:         columns,
+			e:               e,
+			a:               a,
+			v:               v,
+			tx:              tx,
+			constraints:     constraints,
+			workspace:       make(executor.Tuple, len(columns)),
+			tupleBuilder:    m.getTupleBuilder(pattern, columns),
+			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 		}
 
 		// Initialize the storage iterator using key-only scanning
@@ -286,6 +417,7 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 		columns:          columns,
 		constraints:      constraints,
 		currentIdx:       -1,
+		workspace:        make(executor.Tuple, len(columns)),
 		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Columns()),
 		tupleBuilder:     m.getTupleBuilder(pattern, columns),
 	}
@@ -314,10 +446,11 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 		bindingRel:       bindingRel,
 		tuples:           sortedTuples,
 		position:         strategy.Position,
-		index:            IndexType(strategy.Index),
+		index:            strategy.Index,
 		columns:          columns,
 		constraints:      constraints,
 		currentIdx:       -1,
+		workspace:        make(executor.Tuple, len(columns)),
 		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Columns()),
 		tupleBuilder:     m.getTupleBuilder(pattern, columns),
 	}
@@ -373,7 +506,7 @@ func (m *BadgerMatcher) matchWithBatchScanning(
 		pattern,
 		bindingRel,
 		strategy.Position,
-		IndexType(strategy.Index),
+		strategy.Index,
 		columns,
 		constraints,
 	)
@@ -386,4 +519,943 @@ func (m *BadgerMatcher) matchWithBatchScanning(
 	// Return streaming relation wrapping the scanner
 	// Note: scanner materializes internally but we avoid secondary materialization
 	return executor.NewStreamingRelationWithOptions(columns, scanner, m.options), nil
+}
+
+// matchFromCache attempts to resolve a pattern using the cache.
+// Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
+// This provides O(1) access for patterns with E and A bound when querying latest state.
+func (m *BadgerMatcher) matchFromCache(
+	pattern *query.DataPattern,
+	columns []query.Symbol,
+	e datalog.Identity,
+	a datalog.Keyword,
+	v interface{}, // nil if V is unbound
+	card schema.Cardinality,
+) (executor.Relation, bool) {
+	// Build cache key
+	eBytes := Entity(e.Hash())
+	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
+	var aAttr Attribute
+	copy(aAttr[:], aStorage[:])
+	key := CacheKey{E: eBytes, A: aAttr}
+
+	// Get or resolve from cache
+	entry := m.cache.GetOrResolve(key, m)
+	if entry == nil {
+		return nil, false // Fallback to storage
+	}
+
+	// Get tuple builder for building tuples
+	tupleBuilder := m.getTupleBuilder(pattern, columns)
+
+	// Pre-allocate datom buffer with constant E and A
+	var datomBuf datalog.Datom
+	datomBuf.E = e
+	datomBuf.A = a
+
+	// Helper to build tuple from datom (reuses buffer)
+	buildTuple := func(val interface{}, tx datalog.ElementID) executor.Tuple {
+		datomBuf.V = val
+		datomBuf.Tx = tx
+		return tupleBuilder.BuildTupleInterned(&datomBuf)
+	}
+
+	switch card {
+	case schema.CardinalityOne:
+		val := entry.OneValue()
+		if val == nil {
+			// No value - return empty relation
+			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+		}
+		if v != nil {
+			// V is bound - check if it matches
+			if !valuesEqual(val, v) {
+				return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+			}
+		}
+		// Build tuple with the cached value
+		tuple := buildTuple(val, entry.Version())
+		return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+
+	case schema.CardinalityMany:
+		set := entry.ManySet()
+		if len(set) == 0 {
+			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+		}
+		if v != nil {
+			// V is bound - membership check
+			if set[v] {
+				tuple := buildTuple(v, entry.Version())
+				return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+			}
+			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+		}
+		// V is unbound - return all set members
+		tuples := make([]executor.Tuple, 0, len(set))
+		for val := range set {
+			tuple := buildTuple(val, entry.Version())
+			tuples = append(tuples, tuple)
+		}
+		return executor.NewMaterializedRelationWithOptions(columns, tuples, m.options), true
+
+	case schema.CardinalityVector:
+		list := entry.VectorList()
+		if len(list) == 0 {
+			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+		}
+		if v != nil {
+			// V is bound - check if vector equals (for vector, V is the whole list)
+			// This is an edge case - usually V is unbound for vectors
+			return nil, false // Fallback to storage for this case
+		}
+		// V is unbound - return the vector as a single value
+		tuple := buildTuple(list, entry.Version())
+		return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+	}
+
+	return nil, false // Unknown cardinality, fallback to storage
+}
+
+// matchWithBindingsFromCache handles patterns where E comes from bindings and A is constant.
+// Uses cache for O(1) lookup per bound E value instead of storage scans.
+// Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
+func (m *BadgerMatcher) matchWithBindingsFromCache(
+	pattern *query.DataPattern,
+	bindingRel executor.Relation,
+	columns []query.Symbol,
+	a datalog.Keyword,
+) (executor.Relation, bool) {
+	// Find which column in the binding relation has E
+	eVar, isVar := pattern.GetE().(query.Variable)
+	if !isVar {
+		return nil, false // E is not a variable, can't get it from bindings
+	}
+
+	bindingColumns := bindingRel.Columns()
+	eColIdx := -1
+	for i, col := range bindingColumns {
+		if col == eVar.Name {
+			eColIdx = i
+			break
+		}
+	}
+	if eColIdx < 0 {
+		return nil, false // E variable not in bindings
+	}
+
+	// Determine cardinality
+	card := schema.CardinalityOne
+	if m.schema != nil {
+		if def := m.schema.GetAttribute(a); def != nil {
+			card = def.Cardinality
+		}
+	}
+
+	// Extract V if bound
+	var v interface{}
+	if elem := pattern.GetV(); elem != nil {
+		v = m.extractValue(elem)
+	}
+
+	// Get storage format for attribute
+	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
+	var aAttr Attribute
+	copy(aAttr[:], aStorage[:])
+
+	// Get tuple builder
+	tupleBuilder := m.getTupleBuilder(pattern, columns)
+
+	// Pre-allocate datom buffer with constant A
+	var datomBuf datalog.Datom
+	datomBuf.A = a
+
+	buildTuple := func(e datalog.Identity, val interface{}, tx datalog.ElementID) executor.Tuple {
+		datomBuf.E = e
+		datomBuf.V = val
+		datomBuf.Tx = tx
+		return tupleBuilder.BuildTupleInterned(&datomBuf)
+	}
+
+	// Iterate bindings and collect results from cache
+	var resultTuples []executor.Tuple
+	iter := bindingRel.Iterator()
+	defer iter.Close()
+
+	for iter.Next() {
+		tuple := iter.Tuple()
+		if eColIdx >= len(tuple) {
+			continue
+		}
+
+		// Get E value from binding
+		eVal := tuple[eColIdx]
+		eIdent, ok := eVal.(datalog.Identity)
+		if !ok {
+			// Try to convert if it's a different type
+			if id, ok := eVal.(*datalog.Identity); ok {
+				eIdent = *id
+			} else {
+				continue // Can't use cache for non-Identity E
+			}
+		}
+
+		// Build cache key
+		eBytes := Entity(eIdent.Hash())
+		key := CacheKey{E: eBytes, A: aAttr}
+
+		// Get from cache
+		entry := m.cache.GetOrResolve(key, m)
+		if entry == nil {
+			// Cache miss - fallback to storage for entire query
+			return nil, false
+		}
+
+		// Process based on cardinality
+		switch card {
+		case schema.CardinalityOne:
+			val := entry.OneValue()
+			if val == nil {
+				continue // No value for this E
+			}
+			if v != nil && !valuesEqual(val, v) {
+				continue // Value doesn't match bound V
+			}
+			resultTuples = append(resultTuples, buildTuple(eIdent, val, entry.Version()))
+
+		case schema.CardinalityMany:
+			set := entry.ManySet()
+			if len(set) == 0 {
+				continue
+			}
+			if v != nil {
+				// Membership check
+				if set[v] {
+					resultTuples = append(resultTuples, buildTuple(eIdent, v, entry.Version()))
+				}
+			} else {
+				// Return all set members
+				for val := range set {
+					resultTuples = append(resultTuples, buildTuple(eIdent, val, entry.Version()))
+				}
+			}
+
+		case schema.CardinalityVector:
+			list := entry.VectorList()
+			if len(list) == 0 {
+				continue
+			}
+			if v != nil {
+				// Can't efficiently check vector membership
+				return nil, false
+			}
+			resultTuples = append(resultTuples, buildTuple(eIdent, list, entry.Version()))
+		}
+	}
+
+	return executor.NewMaterializedRelationWithOptions(columns, resultTuples, m.options), true
+}
+
+// valuesEqual compares two values for equality
+func valuesEqual(a, b interface{}) bool {
+	// Handle common types directly for performance
+	switch av := a.(type) {
+	case string:
+		if bv, ok := b.(string); ok {
+			return av == bv
+		}
+	case int64:
+		if bv, ok := b.(int64); ok {
+			return av == bv
+		}
+	case float64:
+		if bv, ok := b.(float64); ok {
+			return av == bv
+		}
+	case bool:
+		if bv, ok := b.(bool); ok {
+			return av == bv
+		}
+	case datalog.Identity:
+		if bv, ok := b.(datalog.Identity); ok {
+			return av.Hash() == bv.Hash()
+		}
+	case datalog.Keyword:
+		if bv, ok := b.(datalog.Keyword); ok {
+			return av == bv
+		}
+	}
+	// Fallback to reflect-based comparison
+	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+}
+
+// matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution
+func (m *BadgerMatcher) matchCardinalityManyAsRelation(
+	pattern *query.DataPattern,
+	columns []query.Symbol,
+	e, a interface{},
+) (executor.Relation, error) {
+	// Get entity and attribute bytes
+	var eBytes [20]byte
+	var aBytes [32]byte
+
+	if ident, ok := e.(datalog.Identity); ok {
+		copy(eBytes[:], ident.Bytes())
+	}
+	if kw, ok := a.(datalog.Keyword); ok {
+		copy(aBytes[:], kw.String())
+	}
+
+	// Resolve the set using add-wins semantics
+	result, err := m.resolveAddWinsSet(eBytes[:], aBytes[:])
+	if err != nil {
+		return nil, fmt.Errorf("add-wins resolution failed: %w", err)
+	}
+
+	// Build tuples from resolved members
+	// We need to map the values to the correct column positions
+	tuples := make([]executor.Tuple, 0, len(result.Members))
+
+	for member := range result.Members {
+		tuple := make(executor.Tuple, len(columns))
+		for i, col := range columns {
+			switch {
+			case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
+				pattern.GetE().(query.Variable).Name == col:
+				tuple[i] = e
+			case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
+				pattern.GetA().(query.Variable).Name == col:
+				tuple[i] = a
+			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
+				pattern.GetV().(query.Variable).Name == col:
+				tuple[i] = member
+			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+				pattern.GetT().(query.Variable).Name == col:
+				// For cardinality-many, we don't have a single Tx
+				// Use the max ElementID as the "current" transaction
+				tuple[i] = result.MaxElementID
+			}
+		}
+		tuples = append(tuples, tuple)
+	}
+
+	// Return materialized relation with the resolved set members
+	return executor.NewMaterializedRelation(columns, tuples), nil
+}
+
+// matchCardinalityVectorAsRelation handles cardinality-vector patterns using RGA resolution.
+// Returns the entire reconstructed vector as a single value bound to the V variable.
+func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
+	pattern *query.DataPattern,
+	columns []query.Symbol,
+	e, a interface{},
+) (executor.Relation, error) {
+	// Get entity and attribute bytes
+	var eBytes [20]byte
+	var aBytes [32]byte
+
+	if ident, ok := e.(datalog.Identity); ok {
+		copy(eBytes[:], ident.Bytes())
+	}
+	if kw, ok := a.(datalog.Keyword); ok {
+		copy(aBytes[:], kw.String())
+	}
+
+	// Resolve the vector using RGA reconstruction
+	result, err := m.resolveVector(eBytes[:], aBytes[:])
+	if err != nil {
+		return nil, fmt.Errorf("vector resolution failed: %w", err)
+	}
+
+	// If empty vector, return empty relation
+	if len(result.Elements) == 0 {
+		return executor.NewMaterializedRelation(columns, nil), nil
+	}
+
+	// Build a single tuple with the entire vector as the V value
+	tuple := make(executor.Tuple, len(columns))
+	for i, col := range columns {
+		switch {
+		case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
+			pattern.GetE().(query.Variable).Name == col:
+			tuple[i] = e
+		case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
+			pattern.GetA().(query.Variable).Name == col:
+			tuple[i] = a
+		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
+			pattern.GetV().(query.Variable).Name == col:
+			// Return the entire vector as a []any
+			tuple[i] = result.Elements
+		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+			pattern.GetT().(query.Variable).Name == col:
+			// Use the max ElementID as the "current" transaction
+			tuple[i] = result.MaxElementID
+		}
+	}
+
+	// Return single-row relation with the vector
+	return executor.NewMaterializedRelation(columns, []executor.Tuple{tuple}), nil
+}
+
+// matchVectorWithBindings handles vector patterns when E is bound via join bindings.
+// For each entity in the bindings, it resolves the vector using RGA reconstruction
+// and returns tuples with the reconstructed vector as the V value.
+func (m *BadgerMatcher) matchVectorWithBindings(
+	pattern *query.DataPattern,
+	bindingRel executor.Relation,
+	columns []query.Symbol,
+	attr datalog.Keyword,
+) (executor.Relation, error) {
+	// Find which column in bindings provides the entity
+	var eColIdx int = -1
+	bindingCols := bindingRel.Columns()
+
+	// Find the entity variable in the pattern and match it to binding columns
+	if pattern.GetE() != nil && pattern.GetE().IsVariable() {
+		eVar := pattern.GetE().(query.Variable).Name
+		for i, col := range bindingCols {
+			if col == eVar {
+				eColIdx = i
+				break
+			}
+		}
+	}
+
+	if eColIdx == -1 {
+		// E is not bound from bindings - fall back to normal path
+		// This shouldn't happen if we got here, but be safe
+		return executor.NewMaterializedRelation(columns, nil), nil
+	}
+
+	// Get attribute bytes once
+	var aBytes [32]byte
+	copy(aBytes[:], attr.String())
+
+	// Iterate through bindings and resolve vector for each entity
+	var tuples []executor.Tuple
+	it := bindingRel.Iterator()
+	defer it.Close()
+
+	for it.Next() {
+		bindingTuple := it.Tuple()
+		eVal := bindingTuple[eColIdx]
+
+		// Get entity bytes
+		var eBytes [20]byte
+		if ident, ok := eVal.(datalog.Identity); ok {
+			copy(eBytes[:], ident.Bytes())
+		} else {
+			continue // Skip non-identity values
+		}
+
+		// Resolve the vector using RGA reconstruction
+		result, err := m.resolveVector(eBytes[:], aBytes[:])
+		if err != nil {
+			return nil, fmt.Errorf("vector resolution failed for entity: %w", err)
+		}
+
+		// Skip entities with empty vectors
+		if len(result.Elements) == 0 {
+			continue
+		}
+
+		// Build output tuple
+		tuple := make(executor.Tuple, len(columns))
+		for i, col := range columns {
+			switch {
+			case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
+				pattern.GetE().(query.Variable).Name == col:
+				tuple[i] = eVal
+			case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
+				pattern.GetA().(query.Variable).Name == col:
+				tuple[i] = attr
+			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
+				pattern.GetV().(query.Variable).Name == col:
+				// Return the entire vector as []any
+				tuple[i] = result.Elements
+			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+				pattern.GetT().(query.Variable).Name == col:
+				tuple[i] = result.MaxElementID
+			default:
+				// Check if this column comes from bindings (pass through)
+				for j, bindCol := range bindingCols {
+					if bindCol == col && j < len(bindingTuple) {
+						tuple[i] = bindingTuple[j]
+						break
+					}
+				}
+			}
+		}
+
+		tuples = append(tuples, tuple)
+	}
+
+	return executor.NewMaterializedRelation(columns, tuples), nil
+}
+
+// matchCardinalityManyMembership checks if a specific value is in a cardinality-many set
+func (m *BadgerMatcher) matchCardinalityManyMembership(
+	pattern *query.DataPattern,
+	columns []query.Symbol,
+	e, a, v interface{},
+) (executor.Relation, error) {
+	// Get entity and attribute bytes
+	var eBytes [20]byte
+	var aBytes [32]byte
+
+	if ident, ok := e.(datalog.Identity); ok {
+		copy(eBytes[:], ident.Bytes())
+	}
+	if kw, ok := a.(datalog.Keyword); ok {
+		copy(aBytes[:], kw.String())
+	}
+
+	// Check if the value is in the set using add-wins semantics
+	isMember, err := m.checkSetMembership(eBytes[:], aBytes[:], v)
+	if err != nil {
+		return nil, fmt.Errorf("membership check failed: %w", err)
+	}
+
+	// If not a member, return empty relation
+	if !isMember {
+		return executor.NewMaterializedRelation(columns, nil), nil
+	}
+
+	// Value is in set - build result tuple
+	tuple := make(executor.Tuple, len(columns))
+	for i, col := range columns {
+		switch {
+		case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
+			pattern.GetE().(query.Variable).Name == col:
+			tuple[i] = e
+		case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
+			pattern.GetA().(query.Variable).Name == col:
+			tuple[i] = a
+		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
+			pattern.GetV().(query.Variable).Name == col:
+			tuple[i] = v
+		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
+			pattern.GetT().(query.Variable).Name == col:
+			// For membership queries, we don't have a specific Tx
+			tuple[i] = datalog.ElementID{}
+		}
+	}
+
+	return executor.NewMaterializedRelation(columns, []executor.Tuple{tuple}), nil
+}
+
+// cardinalityManyScanAllEntitiesIterator streams results for [?e :attr ?v] patterns
+// where E is unbound and cardinality is many. It iterates through entities at the
+// entity level - for each entity, it resolves the add-wins set and yields members one by one.
+type cardinalityManyScanAllEntitiesIterator struct {
+	matcher      *BadgerMatcher
+	pattern      *query.DataPattern
+	columns      []query.Symbol
+	a            interface{}
+	aBytes       [32]byte
+	storageIter  Iterator
+	seenEntities map[[20]byte]bool
+
+	// Current entity state
+	currentEntity       datalog.Identity
+	currentSetMembers   []interface{} // Resolved set members for current entity
+	currentMaxElementID datalog.ElementID
+	currentMemberIdx    int
+	currentTuple        executor.Tuple
+}
+
+func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
+	for {
+		// If we have members remaining for current entity, yield next
+		if it.currentMemberIdx < len(it.currentSetMembers) {
+			member := it.currentSetMembers[it.currentMemberIdx]
+			it.currentMemberIdx++
+
+			// Build tuple
+			tuple := make(executor.Tuple, len(it.columns))
+			for i, col := range it.columns {
+				switch {
+				case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
+					it.pattern.GetE().(query.Variable).Name == col:
+					tuple[i] = it.currentEntity
+				case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
+					it.pattern.GetA().(query.Variable).Name == col:
+					tuple[i] = it.a
+				case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
+					it.pattern.GetV().(query.Variable).Name == col:
+					tuple[i] = member
+				case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+					it.pattern.GetT().(query.Variable).Name == col:
+					tuple[i] = it.currentMaxElementID
+				}
+			}
+			it.currentTuple = tuple
+			return true
+		}
+
+		// Need to find next entity with non-empty set
+		for it.storageIter.Next() {
+			datom, err := it.storageIter.Datom()
+			if err != nil {
+				continue
+			}
+
+			// Get entity bytes
+			eBytes := datom.E.Hash()
+
+			// Skip if we've already processed this entity
+			if it.seenEntities[eBytes] {
+				continue
+			}
+			it.seenEntities[eBytes] = true
+
+			// Resolve the set for this entity using add-wins semantics
+			result, err := it.matcher.resolveAddWinsSet(eBytes[:], it.aBytes[:])
+			if err != nil {
+				continue
+			}
+
+			// If set has members, set up iteration
+			if len(result.Members) > 0 {
+				it.currentEntity = datom.E
+				it.currentSetMembers = make([]interface{}, 0, len(result.Members))
+				for member := range result.Members {
+					it.currentSetMembers = append(it.currentSetMembers, member)
+				}
+				it.currentMaxElementID = result.MaxElementID
+				it.currentMemberIdx = 0
+				break // Go back to top of outer loop to yield first member
+			}
+		}
+
+		// If no more entities or we just found one with members
+		if it.currentMemberIdx < len(it.currentSetMembers) {
+			continue // Yield first member
+		}
+
+		// No more entities
+		return false
+	}
+}
+
+func (it *cardinalityManyScanAllEntitiesIterator) Tuple() executor.Tuple {
+	return it.currentTuple
+}
+
+func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
+	if it.storageIter != nil {
+		return it.storageIter.Close()
+	}
+	return nil
+}
+
+// matchCardinalityManyScanAllEntities handles [?e :attr ?v] where E is unbound
+// Scans all entities with the attribute and resolves each set using add-wins
+func (m *BadgerMatcher) matchCardinalityManyScanAllEntities(
+	pattern *query.DataPattern,
+	columns []query.Symbol,
+	a interface{},
+) (executor.Relation, error) {
+	// Get attribute bytes
+	var aBytes [32]byte
+	if kw, ok := a.(datalog.Keyword); ok {
+		copy(aBytes[:], kw.String())
+	}
+
+	// Scan AEVT to find all entities with this attribute
+	// AEVT key format: [prefix:1][A:32][E:20][V:var][Tx:16]
+	prefix := make([]byte, 1+32)
+	prefix[0] = byte(AEVT)
+	copy(prefix[1:33], aBytes[:])
+
+	storageIter, err := m.store.Scan(AEVT, prefix, prefixEnd(prefix))
+	if err != nil {
+		return nil, fmt.Errorf("AEVT scan failed: %w", err)
+	}
+
+	// Create streaming iterator
+	iter := &cardinalityManyScanAllEntitiesIterator{
+		matcher:      m,
+		pattern:      pattern,
+		columns:      columns,
+		a:            a,
+		aBytes:       aBytes,
+		storageIter:  storageIter,
+		seenEntities: make(map[[20]byte]bool),
+	}
+
+	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+}
+
+// cardinalityManyAVETValueIterator streams results for [?e :attr "value"] patterns
+// using the AVET index for O(k) lookup. It scans entries with [A][V] prefix and applies
+// add-wins resolution per entity to determine if the value is currently in each entity's set.
+//
+// AVET key order: [A][V][E][Op][Tx↓]
+// - Same A and V (from prefix)
+// - Entities grouped together
+// - Within entity: Op=0 (Add) before Op=1 (Remove), then by Tx descending
+type cardinalityManyAVETValueIterator struct {
+	matcher     *BadgerMatcher
+	pattern     *query.DataPattern
+	columns     []query.Symbol
+	a, v        interface{}
+	aBytes      [32]byte
+	storageIter Iterator
+
+	// Current entity being processed
+	currentEntity     datalog.Identity
+	currentEntityHash [20]byte
+	hasCurrentEntity  bool
+
+	// Add-wins state for current entity
+	highestAddLamport    uint64
+	highestRemoveLamport uint64
+	hasAdd               bool
+	hasRemove            bool
+
+	// Result
+	currentTuple executor.Tuple
+	done         bool
+}
+
+func (it *cardinalityManyAVETValueIterator) Next() bool {
+	if it.done {
+		return false
+	}
+
+	for {
+		if !it.storageIter.Next() {
+			// End of scan - emit final entity if it's a member
+			if it.hasCurrentEntity && it.isCurrentEntityMember() {
+				it.buildTuple()
+				it.done = true
+				return true
+			}
+			return false
+		}
+
+		datom, err := it.storageIter.Datom()
+		if err != nil {
+			continue
+		}
+
+		eBytes := datom.E.Hash()
+
+		// Check if this is a new entity
+		if !it.hasCurrentEntity {
+			// First entity
+			it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+			continue
+		}
+
+		if eBytes != it.currentEntityHash {
+			// Moving to new entity - check if previous entity is a member
+			if it.isCurrentEntityMember() {
+				it.buildTuple()
+				// Start tracking new entity for next iteration
+				it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+				return true
+			}
+			// Previous entity not a member, start tracking new entity
+			it.startNewEntity(datom.E, eBytes, datom.Op, datom.Tx.Lamport)
+			continue
+		}
+
+		// Same entity - update add-wins state
+		it.updateAddWinsState(datom.Op, datom.Tx.Lamport)
+	}
+}
+
+func (it *cardinalityManyAVETValueIterator) startNewEntity(e datalog.Identity, eHash [20]byte, op datalog.CRDTOp, lamport uint64) {
+	it.currentEntity = e
+	it.currentEntityHash = eHash
+	it.hasCurrentEntity = true
+	it.highestAddLamport = 0
+	it.highestRemoveLamport = 0
+	it.hasAdd = false
+	it.hasRemove = false
+	it.updateAddWinsState(op, lamport)
+}
+
+func (it *cardinalityManyAVETValueIterator) updateAddWinsState(op datalog.CRDTOp, lamport uint64) {
+	if op == datalog.OpCRDTAdd {
+		if !it.hasAdd || lamport > it.highestAddLamport {
+			it.highestAddLamport = lamport
+			it.hasAdd = true
+		}
+	} else if op == datalog.OpCRDTRemove {
+		if !it.hasRemove || lamport > it.highestRemoveLamport {
+			it.highestRemoveLamport = lamport
+			it.hasRemove = true
+		}
+	}
+}
+
+func (it *cardinalityManyAVETValueIterator) isCurrentEntityMember() bool {
+	if !it.hasAdd {
+		return false // No adds means not in set
+	}
+	if !it.hasRemove {
+		return true // Only adds, no removes
+	}
+	// Both add and remove exist - compare Lamport timestamps
+	// Add wins at same Lamport (add-wins semantics)
+	return it.highestAddLamport >= it.highestRemoveLamport
+}
+
+func (it *cardinalityManyAVETValueIterator) buildTuple() {
+	tuple := make(executor.Tuple, len(it.columns))
+	for i, col := range it.columns {
+		switch {
+		case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
+			it.pattern.GetE().(query.Variable).Name == col:
+			tuple[i] = it.currentEntity
+		case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
+			it.pattern.GetA().(query.Variable).Name == col:
+			tuple[i] = it.a
+		case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
+			it.pattern.GetV().(query.Variable).Name == col:
+			tuple[i] = it.v
+		case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+			it.pattern.GetT().(query.Variable).Name == col:
+			tuple[i] = datalog.ElementID{}
+		}
+	}
+	it.currentTuple = tuple
+}
+
+func (it *cardinalityManyAVETValueIterator) Tuple() executor.Tuple {
+	return it.currentTuple
+}
+
+func (it *cardinalityManyAVETValueIterator) Close() error {
+	if it.storageIter != nil {
+		return it.storageIter.Close()
+	}
+	return nil
+}
+
+// cardinalityManyFindEntitiesWithValueIterator streams results for [?e :attr "value"] patterns
+// where E is unbound and cardinality is many. It iterates through entities and checks
+// membership for each, yielding one tuple per entity where the value is in the set.
+//
+// DEPRECATED: Use cardinalityManyAVETValueIterator instead for O(k) performance.
+// This iterator uses AEVT which is O(n) where n = all entities with attribute.
+type cardinalityManyFindEntitiesWithValueIterator struct {
+	matcher      *BadgerMatcher
+	pattern      *query.DataPattern
+	columns      []query.Symbol
+	a, v         interface{}
+	aBytes       [32]byte
+	storageIter  Iterator
+	seenEntities map[[20]byte]bool
+	currentTuple executor.Tuple
+}
+
+func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
+	for it.storageIter.Next() {
+		datom, err := it.storageIter.Datom()
+		if err != nil {
+			continue
+		}
+
+		// Get entity bytes
+		eBytes := datom.E.Hash()
+
+		// Skip if we've already processed this entity
+		if it.seenEntities[eBytes] {
+			continue
+		}
+		it.seenEntities[eBytes] = true
+
+		// Check if the specific value is in this entity's set
+		isMember, err := it.matcher.checkSetMembership(eBytes[:], it.aBytes[:], it.v)
+		if err != nil {
+			continue
+		}
+
+		if !isMember {
+			continue
+		}
+
+		// Value is in the set - build tuple
+		tuple := make(executor.Tuple, len(it.columns))
+		for i, col := range it.columns {
+			switch {
+			case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
+				it.pattern.GetE().(query.Variable).Name == col:
+				tuple[i] = datom.E
+			case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
+				it.pattern.GetA().(query.Variable).Name == col:
+				tuple[i] = it.a
+			case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
+				it.pattern.GetV().(query.Variable).Name == col:
+				tuple[i] = it.v
+			case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+				it.pattern.GetT().(query.Variable).Name == col:
+				tuple[i] = datalog.ElementID{}
+			}
+		}
+		it.currentTuple = tuple
+		return true
+	}
+	return false
+}
+
+func (it *cardinalityManyFindEntitiesWithValueIterator) Tuple() executor.Tuple {
+	return it.currentTuple
+}
+
+func (it *cardinalityManyFindEntitiesWithValueIterator) Close() error {
+	if it.storageIter != nil {
+		return it.storageIter.Close()
+	}
+	return nil
+}
+
+// matchCardinalityManyFindEntitiesWithValue handles [?e :attr "value"] where E is unbound
+// Finds all entities where the specific value is in the set.
+//
+// Uses AVET index with [A][V] prefix for O(k) lookup where k = datoms with this value,
+// instead of O(n) where n = all entities with the attribute.
+func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
+	pattern *query.DataPattern,
+	columns []query.Symbol,
+	a, v interface{},
+) (executor.Relation, error) {
+	// Get attribute bytes
+	var aBytes [32]byte
+	if kw, ok := a.(datalog.Keyword); ok {
+		copy(aBytes[:], kw.String())
+	}
+
+	// Encode value with type prefix (same as key encoding)
+	vType := byte(datalog.Type(v))
+	vData := datalog.ValueBytes(v)
+	vBytes := append([]byte{vType}, vData...)
+
+	// Build AVET prefix: [index][A][type+value]
+	// This directly seeks to entries with this specific value - O(k) not O(n)
+	prefix := make([]byte, 1+32+len(vBytes))
+	prefix[0] = byte(AVET)
+	copy(prefix[1:33], aBytes[:])
+	copy(prefix[33:], vBytes)
+
+	storageIter, err := m.store.Scan(AVET, prefix, prefixEnd(prefix))
+	if err != nil {
+		return nil, fmt.Errorf("AVET scan failed: %w", err)
+	}
+
+	// Create streaming iterator that applies add-wins resolution per entity
+	iter := &cardinalityManyAVETValueIterator{
+		matcher:     m,
+		pattern:     pattern,
+		columns:     columns,
+		a:           a,
+		v:           v,
+		aBytes:      aBytes,
+		storageIter: storageIter,
+	}
+
+	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
 }

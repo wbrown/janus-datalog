@@ -198,7 +198,7 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 			}
 
 			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-			exec := executor.NewExecutor(matcher)
+			exec := executor.NewExecutor(matcher, db)
 
 			// Execute through full pipeline
 			result, err := exec.Execute(q)
@@ -310,7 +310,7 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 			}
 
 			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-			exec := executor.NewExecutor(matcher)
+			exec := executor.NewExecutor(matcher, db)
 
 			result, err := exec.Execute(q)
 			if err != nil {

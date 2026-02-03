@@ -2,7 +2,8 @@ package reflect
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"reflect"
 	"time"
@@ -12,13 +13,19 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// generateUniqueID creates a unique entity ID using timestamp + random bytes
+// generateUniqueID creates a unique entity ID using timestamp + random bytes.
+// Returns an Identity that displays as L85 hash (not the raw timestamp string).
 func generateUniqueID() datalog.Identity {
-	// 8 random bytes gives us 64 bits of entropy
-	var randomBytes [8]byte
-	rand.Read(randomBytes[:])
-	randomHex := hex.EncodeToString(randomBytes[:])
-	return datalog.NewIdentity(fmt.Sprintf("e%d-%s", time.Now().UnixNano(), randomHex))
+	// Build unique bytes: 8 bytes timestamp + 8 bytes random
+	var buf [16]byte
+	binary.BigEndian.PutUint64(buf[:8], uint64(time.Now().UnixNano()))
+	rand.Read(buf[8:])
+
+	// Hash to get a proper 20-byte identity
+	hash := sha1.Sum(buf[:])
+
+	// Use NewIdentityFromHash so String() returns L85 (not the raw input)
+	return datalog.NewIdentityFromHash(hash)
 }
 
 // TransactionAdder is the interface required for adding datoms
@@ -27,11 +34,17 @@ type TransactionAdder interface {
 	Add(e datalog.Identity, a datalog.Keyword, v interface{}) error
 }
 
-// TransactionUpdater extends TransactionAdder with retract capability
+// TransactionUpdater extends TransactionAdder with CRDT update capability
 // This is implemented by storage.Transaction
 type TransactionUpdater interface {
 	TransactionAdder
-	Retract(e datalog.Identity, a datalog.Keyword, v interface{}) error
+	// Remove adds a tombstone for cardinality-many attributes (CRDT add-wins semantics)
+	Remove(e datalog.Identity, a datalog.Keyword, v interface{}) error
+	// Set replaces the value for an attribute (handles all cardinalities correctly)
+	// - Cardinality-One: LWW semantics
+	// - Cardinality-Many: Replaces entire set via diff
+	// - Cardinality-Vector: Replaces entire vector via prefix-diff algorithm
+	Set(e datalog.Identity, a datalog.Keyword, v interface{}) error
 }
 
 // EntityLookup provides lookup of existing entity attributes
@@ -226,10 +239,16 @@ func (sw *StructWriter) Update(tx TransactionUpdater, lookup EntityLookup, entit
 }
 
 // updateField updates a single field with upsert semantics
+// For cardinality-one fields, uses LWW (Last-Writer-Wins) - just Add() the new value
 func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value, mode UpdateMode) error {
 	// Handle slice fields (cardinality-many)
 	if IsSliceType(field.GoType) {
 		return sw.updateSliceField(tx, lookup, entity, kw, field, val, mode)
+	}
+
+	// Handle OrderedSet fields (cardinality-vector with unique elements)
+	if isOrderedSetType(field.GoType) {
+		return sw.updateOrderedSetField(tx, entity, kw, field, val)
 	}
 
 	// Get the new value to write
@@ -243,21 +262,45 @@ func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, 
 		return nil
 	}
 
-	// Look up existing value
+	// Optimization: skip write if value hasn't changed
 	existingVal, found := lookup.LookupAttribute(entity, kw)
+	if found && datalog.ValuesEqual(existingVal, newVal) {
+		return nil
+	}
 
-	if found {
-		// Compare values - if same, no action needed
-		if datalog.ValuesEqual(existingVal, newVal) {
-			return nil
+	// For cardinality-one, just Add() - LWW semantics handle replacing old value
+	return tx.Add(entity, kw, newVal)
+}
+
+// updateOrderedSetField handles OrderedSet[T] field updates.
+// Uses tx.Set() which applies prefix-diff algorithm for vectors.
+func (sw *StructWriter) updateOrderedSetField(tx TransactionUpdater, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value) error {
+	// Get the items slice from OrderedSet
+	itemsField := val.FieldByName("Items")
+	if !itemsField.IsValid() {
+		return fmt.Errorf("OrderedSet missing items field")
+	}
+
+	// If items is nil, skip (don't modify existing values)
+	if itemsField.IsNil() {
+		return nil
+	}
+
+	// Extract values from items slice
+	var newVals []interface{}
+	for i := 0; i < itemsField.Len(); i++ {
+		elem := itemsField.Index(i)
+		writeVal, err := sw.extractSingleValue(elem)
+		if err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
 		}
-		// Different value - retract old, add new
-		if err := tx.Retract(entity, kw, existingVal); err != nil {
-			return fmt.Errorf("retract failed: %w", err)
+		if writeVal != nil {
+			newVals = append(newVals, writeVal)
 		}
 	}
 
-	return tx.Add(entity, kw, newVal)
+	// Use tx.Set() for vector semantics with prefix-diff
+	return tx.Set(entity, kw, newVals)
 }
 
 // containsValue checks if a value exists in a slice using ValuesEqual
@@ -270,10 +313,13 @@ func containsValue(vals []interface{}, target interface{}) bool {
 	return false
 }
 
-// updateSliceField handles cardinality-many field updates
+// updateSliceField handles cardinality-many and cardinality-vector field updates
 // Nil slice means "don't touch existing values" - skip entirely.
 // Empty slice (not nil) means "clear all values".
-// Non-empty slice means "set to exactly these values" (diff-based).
+// Non-empty slice means "set to exactly these values".
+//
+// For cardinality-vector: uses tx.Set() which applies prefix-diff algorithm
+// For cardinality-many: uses element-by-element Add/Remove diff
 func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLookup, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value, mode UpdateMode) error {
 	if val.Kind() != reflect.Slice {
 		return fmt.Errorf("expected slice, got %s", val.Kind())
@@ -300,15 +346,30 @@ func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLoo
 		}
 	}
 
+	// Check cardinality to determine update strategy
+	card := schema.CardinalityMany // Default for slices
+	if sw.schema != nil {
+		if def := sw.schema.GetAttribute(kw); def != nil {
+			card = def.Cardinality
+		}
+	}
+
+	// For cardinality-vector: use tx.Set() which applies prefix-diff algorithm
+	// This correctly handles RGA semantics (order matters, no orphaning)
+	if card == schema.CardinalityVector {
+		return tx.Set(entity, kw, newVals)
+	}
+
+	// For cardinality-many: use element-by-element diff
 	if mode == UpdateModeReplace {
 		// Diff-based set assignment: slice IS the new complete state
 		existingVals := lookup.LookupAllAttributes(entity, kw)
 
-		// Retract values in existing but not in new
+		// Remove values in existing but not in new (CRDT tombstone)
 		for _, existing := range existingVals {
 			if !containsValue(newVals, existing) {
-				if err := tx.Retract(entity, kw, existing); err != nil {
-					return fmt.Errorf("retract failed: %w", err)
+				if err := tx.Remove(entity, kw, existing); err != nil {
+					return fmt.Errorf("remove failed: %w", err)
 				}
 			}
 		}
@@ -344,6 +405,11 @@ func (sw *StructWriter) writeField(tx TransactionAdder, entity datalog.Identity,
 		return sw.writeSliceField(tx, entity, kw, field, val)
 	}
 
+	// Handle OrderedSet fields (cardinality-vector with unique elements)
+	if isOrderedSetType(field.GoType) {
+		return sw.writeOrderedSetField(tx, entity, kw, field, val)
+	}
+
 	// Get the value to write
 	writeVal, err := sw.extractValue(field, val)
 	if err != nil {
@@ -356,6 +422,40 @@ func (sw *StructWriter) writeField(tx TransactionAdder, entity datalog.Identity,
 	}
 
 	return tx.Add(entity, kw, writeVal)
+}
+
+// writeOrderedSetField handles OrderedSet[T] fields (cardinality-vector with unique elements)
+func (sw *StructWriter) writeOrderedSetField(tx TransactionAdder, entity datalog.Identity, kw datalog.Keyword, field *FieldInfo, val reflect.Value) error {
+	// Get the items slice from OrderedSet
+	itemsField := val.FieldByName("Items")
+	if !itemsField.IsValid() {
+		return fmt.Errorf("OrderedSet missing items field")
+	}
+
+	// If items is nil, nothing to write
+	if itemsField.IsNil() {
+		return nil
+	}
+
+	// Write each item - storage layer enforces uniqueness
+	for i := 0; i < itemsField.Len(); i++ {
+		elem := itemsField.Index(i)
+
+		writeVal, err := sw.extractSingleValue(elem)
+		if err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
+		}
+
+		if writeVal == nil {
+			continue
+		}
+
+		if err := tx.Add(entity, kw, writeVal); err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
+		}
+	}
+
+	return nil
 }
 
 // writeSliceField handles cardinality-many fields

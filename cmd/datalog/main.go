@@ -376,7 +376,7 @@ func isDatabaseEmpty(db *storage.Database) bool {
 	// Try a simple query to see if there's any data
 	query := `[:find ?e :where [?e _ _]]`
 
-	exec := executor.NewExecutor(db.Matcher())
+	exec := db.NewExecutor()
 	q, err := parser.ParseQuery(query)
 	if err != nil {
 		return true // Assume empty on error

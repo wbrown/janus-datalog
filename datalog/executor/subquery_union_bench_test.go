@@ -52,7 +52,7 @@ func BenchmarkSubqueryUnionComparison(b *testing.B) {
 			EnableStreamingJoins:      true,
 			EnableParallelSubqueries:  false, // Sequential for cleaner comparison
 		}
-		exec := NewExecutorWithOptions(matcher, opts)
+		exec := NewExecutorWithOptions(matcher, nil, opts)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -76,7 +76,7 @@ func BenchmarkSubqueryUnionComparison(b *testing.B) {
 			EnableStreamingJoins:      true,
 			EnableParallelSubqueries:  false, // Sequential for cleaner comparison
 		}
-		exec := NewExecutorWithOptions(matcher, opts)
+		exec := NewExecutorWithOptions(matcher, nil, opts)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

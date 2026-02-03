@@ -14,26 +14,26 @@ func TestSimpleSubquery(t *testing.T) {
 		data: map[string][]datalog.Datom{
 			// Symbols
 			"[:symbol/ticker \"AAPL\"]": {
-				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1},
+				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			"[:symbol/ticker \"GOOG\"]": {
-				{E: datalog.NewIdentity("symbol:goog"), A: datalog.NewKeyword(":symbol/ticker"), V: "GOOG", Tx: 1},
+				{E: datalog.NewIdentity("symbol:goog"), A: datalog.NewKeyword(":symbol/ticker"), V: "GOOG", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			// Prices - note: these need to match on entity references
 			"[:price/symbol _]": {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:goog"), Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:goog"), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 			"[:price/value _]": {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/value"), V: 2800.0, Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/value"), V: 2800.0, Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with subquery to find max price for each symbol
 	queryStr := `[:find ?symbol ?max-price
@@ -104,23 +104,23 @@ func TestSubqueryWithMultipleInputs(t *testing.T) {
 		data: map[string][]datalog.Datom{
 			// Symbols
 			"[:symbol/ticker _]": {
-				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1},
+				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			},
 			// Prices with dates
 			"[:price/symbol _]": {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 			"[:price/time _]": {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 6, 2, 0, 0, 0, 0, time.UTC), Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 6, 2, 0, 0, 0, 0, time.UTC), Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 6, 2, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/time"), V: time.Date(2025, 6, 2, 0, 0, 0, 0, time.UTC), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 			"[:price/high _]": {
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/high"), V: 150.0, Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/high"), V: 155.0, Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/high"), V: 160.0, Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/high"), V: 150.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/high"), V: 155.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/high"), V: 160.0, Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 		},
 	}
@@ -169,7 +169,7 @@ func TestSubqueryWithMultipleInputs(t *testing.T) {
 		return result, nil
 	})
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with subquery that takes multiple inputs
 	// Note: Simplified to test basic functionality first

@@ -32,7 +32,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	symbolID := datalog.NewIdentity("symbol-TEST")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "TEST", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -75,14 +75,14 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 				volume := float64(10000 + minute*100)
 
 				datoms = append(datoms,
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/minute-of-day"), V: minuteOfDay, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/high"), V: high, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/low"), V: low, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/close"), V: close, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: 1},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/minute-of-day"), V: minuteOfDay, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/high"), V: high, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/low"), V: low, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/close"), V: close, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/volume"), V: volume, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 				)
 			}
 		}
@@ -200,7 +200,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	// Test 1: Sequential execution WITHOUT CSE
 	t.Log("\n=== Test 1: Sequential, No CSE ===")
-	exec1 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec1 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: false, // Sequential
 		EnableCSE:                   false,
@@ -226,7 +226,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	// Test 2: Sequential execution WITH CSE
 	t.Log("\n=== Test 2: Sequential, With CSE ===")
-	exec2 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec2 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: false, // Sequential
 		EnableCSE:                   true,
@@ -252,7 +252,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	// Test 3: Parallel execution WITHOUT CSE
 	t.Log("\n=== Test 3: Parallel, No CSE ===")
-	exec3 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec3 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true, // Parallel
 		EnableCSE:                   false,
@@ -278,7 +278,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	// Test 4: Parallel execution WITH CSE
 	t.Log("\n=== Test 4: Parallel, With CSE ===")
-	exec4 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec4 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true, // Parallel
 		EnableCSE:                   true,

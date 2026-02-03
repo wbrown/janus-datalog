@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"reflect"
 	"strings"
 	"sync"
@@ -41,21 +42,14 @@ type Database struct {
 	planCache         *planner.PlanCache    // Shared query plan cache
 	schema            schema.SchemaProvider // Optional schema for validation
 	annotationHandler annotations.Handler   // Optional handler for query tracing
+	clock             *LamportClock         // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
+	replicaID         uint64                // CRDT: This database's replica identifier
+	cache             *Cache                // CRDT: Unified cache for resolved CRDT views
 }
 
 // NewDatabase creates a new database with BadgerDB storage
 func NewDatabase(path string) (*Database, error) {
-	// Use Binary encoding explicitly (matches BadgerStore default)
-	store, err := NewBadgerStore(path, NewKeyEncoder(BinaryStrategy))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create store: %w", err)
-	}
-
-	return &Database{
-		store:     store,
-		activeTx:  make(map[*Transaction]bool),
-		planCache: planner.NewPlanCache(1000, 0), // 1000 plans, default TTL
-	}, nil
+	return NewDatabaseWithOptions(DatabaseOptions{Path: path})
 }
 
 // NewDatabaseWithTimeTx creates a database that uses time-based transaction IDs
@@ -81,10 +75,10 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
 	Path              string                // Path to the database directory
-	UseTimeTx         bool                  // Use time-based transaction IDs
-	RetractMode       RetractMode           // How retractions are handled
+	UseTimeTx         bool                  // Use time-based transaction IDs (legacy, kept for compatibility)
 	Schema            schema.SchemaProvider // Optional schema for validation
 	AnnotationHandler annotations.Handler   // Optional handler for query tracing
+	ReplicaID         uint64                // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -92,25 +86,62 @@ type DatabaseOptions struct {
 //
 // Options:
 //   - Path: Required. Directory for BadgerDB storage.
-//   - UseTimeTx: If true, use nanosecond timestamps as transaction IDs.
-//   - RetractMode: RetractDelete (default) deletes data; RetractHistory preserves full audit trail.
+//   - UseTimeTx: Legacy option, kept for compatibility.
 //   - Schema: Optional schema for validation.
+//   - ReplicaID: For CRDT mode. 0 = auto-generate random; non-zero = use specified.
 //
 // Example:
 //
 //	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-//	    Path:        "/path/to/db",
-//	    RetractMode: storage.RetractHistory,
+//	    Path: "/path/to/db",
 //	})
-//	// Now db.History() returns a PatternMatcher for querying all changes
 func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	if opts.Path == "" {
 		return nil, fmt.Errorf("database path is required")
 	}
 
-	store, err := NewBadgerStoreWithRetractMode(opts.Path, NewKeyEncoder(BinaryStrategy), opts.RetractMode)
+	store, err := NewBadgerStore(opts.Path, NewKeyEncoder(BinaryStrategy))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create store: %w", err)
+	}
+
+	// Determine ReplicaID: check metadata first (existing DB), then opts, then generate
+	var replicaID uint64
+	storedReplicaID, found, err := store.GetMetadataUint64("replica_id")
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to read replica_id metadata: %w", err)
+	}
+
+	if found {
+		// Existing database: use stored ReplicaID (opts.ReplicaID ignored)
+		replicaID = storedReplicaID
+	} else {
+		// New database: use specified or generate random
+		if opts.ReplicaID != 0 {
+			replicaID = opts.ReplicaID
+		} else {
+			replicaID = rand.Uint64()
+		}
+		// Persist the ReplicaID for future opens
+		if err := store.SetMetadataUint64("replica_id", replicaID); err != nil {
+			store.Close()
+			return nil, fmt.Errorf("failed to persist replica_id metadata: %w", err)
+		}
+	}
+
+	// Create Lamport clock for CRDT ordering
+	clock := NewLamportClock(replicaID)
+
+	// Restore clock from max ElementID in TAEV index
+	// This ensures new writes have higher Lamport values than existing data
+	maxElementID, err := store.MaxElementID()
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to get max ElementID: %w", err)
+	}
+	if !maxElementID.IsZero() {
+		clock.Restore(maxElementID)
 	}
 
 	return &Database{
@@ -120,6 +151,9 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		useTimeTx:         opts.UseTimeTx,
 		schema:            opts.Schema,
 		annotationHandler: opts.AnnotationHandler,
+		clock:             clock,
+		replicaID:         replicaID,
+		cache:             NewCache(),
 	}, nil
 }
 
@@ -136,6 +170,145 @@ func (d *Database) SetSchema(s schema.SchemaProvider) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.schema = s
+}
+
+// ReplicaID returns this database's replica identifier for CRDT operations.
+// Each database instance should have a unique ReplicaID for proper multi-replica
+// merge semantics. The ID is auto-generated if not specified in DatabaseOptions.
+func (d *Database) ReplicaID() uint64 {
+	return d.replicaID
+}
+
+// Clock returns the Lamport clock for CRDT operations.
+// Returns nil if the database was created without CRDT support.
+func (d *Database) Clock() *LamportClock {
+	return d.clock
+}
+
+// Cache returns the CRDT resolution cache.
+// Used by the matcher for O(1) access to resolved CRDT views.
+func (d *Database) Cache() *Cache {
+	return d.cache
+}
+
+// WarmCache pre-populates cache entries for the specified attributes.
+// Use this after process restart for attributes with high query frequency
+// to avoid cold-start latency on first access.
+//
+// For each attribute, this scans all entities and populates:
+// - Per-(E,A) cache entries with resolved CRDT values
+// - Attribute-level version tracking for freshness checks
+//
+// This is O(n) where n = total datoms for the specified attributes.
+// Call during application startup, not on the hot path.
+func (d *Database) WarmCache(attributes []datalog.Keyword) error {
+	matcher := NewBadgerMatcher(d.store)
+	matcher.SetSchema(d.schema)
+
+	for _, attr := range attributes {
+		var aBytes Attribute
+		copy(aBytes[:], attr.String())
+
+		// Build prefix for this attribute on AEVT index
+		prefix := make([]byte, 1+32) // prefix byte + A
+		prefix[0] = byte(AEVT)
+		copy(prefix[1:33], aBytes[:])
+
+		// Scan AEVT for all entities with this attribute
+		iter, err := d.store.Scan(AEVT, prefix, prefixEnd(prefix))
+		if err != nil {
+			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
+		}
+
+		var maxAttrVersion datalog.ElementID
+		seenEntities := make(map[Entity]bool)
+
+		for iter.Next() {
+			datom, err := iter.Datom()
+			if err != nil {
+				iter.Close()
+				return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
+			}
+
+			// Track max version for attribute-level freshness
+			if datom.Tx.Compare(maxAttrVersion) > 0 {
+				maxAttrVersion = datom.Tx
+			}
+
+			// Get entity bytes
+			eBytes := Entity(datom.E.Hash())
+
+			// Resolve each (E, A) once
+			if !seenEntities[eBytes] {
+				seenEntities[eBytes] = true
+				key := CacheKey{E: eBytes, A: aBytes}
+				d.cache.GetOrResolve(key, matcher)
+			}
+		}
+		iter.Close()
+
+		// Update attribute-level version
+		d.cache.UpdateAttributeVersion(aBytes, maxAttrVersion)
+	}
+
+	return nil
+}
+
+// GetVectorNth returns the nth element of a vector attribute.
+// Uses the cache for O(1) access when the cache is fresh.
+// Returns nil if index is out of bounds or attribute is not a vector.
+func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) (any, error) {
+	eBytes := Entity(e.Hash())
+
+	var aBytes Attribute
+	copy(aBytes[:], a.String())
+
+	key := CacheKey{E: eBytes, A: aBytes}
+
+	matcher := NewBadgerMatcher(d.store)
+	matcher.SetSchema(d.schema)
+
+	entry := d.cache.GetOrResolve(key, matcher)
+	if entry == nil {
+		return nil, nil
+	}
+
+	if entry.Cardinality() != schema.CardinalityVector {
+		return nil, fmt.Errorf("attribute %s is not a vector", a.String())
+	}
+
+	vec := entry.VectorList()
+	if n < 0 || n >= int64(len(vec)) {
+		return nil, nil // Out of bounds
+	}
+
+	return vec[n], nil
+}
+
+// GetVectorLength returns the length of a vector attribute.
+// Uses the cache for O(1) access when the cache is fresh.
+// Returns 0 if the attribute is not a vector or doesn't exist.
+func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64, error) {
+	eBytes := Entity(e.Hash())
+
+	var aBytes Attribute
+	copy(aBytes[:], a.String())
+
+	key := CacheKey{E: eBytes, A: aBytes}
+
+	matcher := NewBadgerMatcher(d.store)
+	matcher.SetSchema(d.schema)
+
+	entry := d.cache.GetOrResolve(key, matcher)
+	if entry == nil {
+		return 0, nil
+	}
+
+	if entry.Cardinality() != schema.CardinalityVector {
+		return 0, fmt.Errorf("attribute %s is not a vector", a.String())
+	}
+
+	return int64(len(entry.VectorList())), nil
 }
 
 // AnnotationHandler returns the current annotation handler (may be nil)
@@ -166,9 +339,10 @@ func (d *Database) NewTransaction() *Transaction {
 	defer d.mu.Unlock()
 
 	tx := &Transaction{
-		db:       d,
-		datoms:   make([]datalog.Datom, 0),
-		retracts: make([]datalog.Datom, 0),
+		db:                d,
+		datoms:            make([]datalog.Datom, 0),
+		retracts:          make([]datalog.Datom, 0),
+		lastVectorElement: make(map[entityAttrKey]datalog.ElementID),
 	}
 
 	d.activeTx[tx] = true
@@ -199,7 +373,16 @@ func (d *Database) Matcher() executor.PatternMatcher {
 		EnableDebugLogging:              opts.EnableDebugLogging,
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
-	return NewBadgerMatcherWithOptions(d.store, execOpts)
+	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
+	// Set schema for CRDT cardinality-aware resolution
+	if d.schema != nil {
+		matcher.SetSchema(d.schema)
+	}
+	// Set cache for CRDT resolution O(1) access
+	if d.cache != nil {
+		matcher.SetCache(d.cache)
+	}
+	return matcher
 }
 
 // Match implements executor.PatternMatcher — the Database itself can answer pattern queries.
@@ -227,49 +410,16 @@ func (d *Database) AsOf(txID uint64) executor.PatternMatcher {
 		EnableDebugLogging:              opts.EnableDebugLogging,
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
-	return NewBadgerMatcherWithOptions(d.store, execOpts).AsOf(txID)
-}
-
-// History returns a PatternMatcher for querying the full history of the database.
-// This includes all assertions and retractions with the Op (operation) field.
-// History queries can use 5-element patterns: [?e ?a ?v ?tx ?op]
-//
-// Returns nil if the database was not created with RetractHistory mode.
-// In RetractHistory mode, all assertions and retractions are preserved in history indices.
-//
-// Example:
-//
-//	historyMatcher := db.History()
-//	if historyMatcher == nil {
-//	    // Database doesn't support history queries
-//	}
-//	// Query all changes to an entity
-//	// Pattern: [entity-id ?a ?v ?tx ?op]
-func (d *Database) History() executor.PatternMatcher {
-	if d.store.RetractMode() != RetractHistory {
-		return nil
+	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
+	// Set schema for CRDT cardinality-aware resolution
+	if d.schema != nil {
+		matcher.SetSchema(d.schema)
 	}
-	opts := DefaultPlannerOptions()
-	execOpts := executor.ExecutorOptions{
-		EnableIteratorComposition:       opts.EnableIteratorComposition,
-		EnableTrueStreaming:             opts.EnableTrueStreaming,
-		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
-		EnableStreamingJoins:            opts.EnableStreamingJoins,
-		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
-		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
-		EnableDebugLogging:              opts.EnableDebugLogging,
-		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
+	// Set cache for CRDT resolution O(1) access
+	if d.cache != nil {
+		matcher.SetCache(d.cache)
 	}
-	return NewHistoryMatcherWithOptions(d.store, execOpts)
-}
-
-// RetractMode returns the retraction mode of the database.
-// RetractDelete means retractions delete data from current-state indices.
-// RetractHistory means retractions are preserved in history indices for audit trails.
-func (d *Database) RetractMode() RetractMode {
-	return d.store.RetractMode()
+	return matcher.AsOf(txID)
 }
 
 // DefaultPlannerOptions returns the default planner and executor options for the database
@@ -310,7 +460,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 func (d *Database) NewExecutor() *executor.Executor {
 	opts := DefaultPlannerOptions()
 	opts.Cache = d.planCache // Use database's cache
-	return executor.NewExecutorWithOptions(d.Matcher(), opts)
+	return executor.NewExecutorWithOptions(d.Matcher(), d, opts)
 }
 
 // NewExecutorWithOptions creates a new query executor with custom options and the database's plan cache
@@ -331,7 +481,7 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
-	return executor.NewExecutorWithOptions(matcher, opts)
+	return executor.NewExecutorWithOptions(matcher, d, opts)
 }
 
 // Store returns the underlying store for direct access (debugging/testing)
@@ -513,7 +663,7 @@ func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...inte
 	// Execute with the SourceRouter as the PatternMatcher
 	planOpts := DefaultPlannerOptions()
 	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, planOpts)
+	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
@@ -553,7 +703,7 @@ func (d *Database) ExecuteQueryRelation(queryInput interface{}, inputs ...interf
 	// Execute with the SourceRouter as the PatternMatcher
 	planOpts := DefaultPlannerOptions()
 	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, planOpts)
+	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
@@ -1095,68 +1245,28 @@ func setScalarValue(dest reflect.Value, val interface{}) error {
 	return fmt.Errorf("cannot convert %T to %s", val, destType)
 }
 
-// ExecuteHistoryQuery executes a Datalog query against the history database.
-// The query can be either an EDN string or a *query.Query from the query builder.
-// This requires the database to be created with RetractHistory mode.
-//
-// History queries support 5-element patterns: [?e ?a ?v ?tx ?op]
-// where ?op is true for assertions and false for retractions
-//
-// Example:
-//
-//	results, err := db.ExecuteHistoryQuery(`[:find ?v ?tx ?op :where [?e :person/name ?v ?tx ?op]]`)
-func (d *Database) ExecuteHistoryQuery(q interface{}) ([][]interface{}, error) {
-	return d.ExecuteHistoryQueryWithInputs(q)
-}
-
-// ExecuteHistoryQueryWithInputs executes a parameterized query against the history database.
-// The query can be either an EDN string or a *query.Query from the query builder.
-// This is the history equivalent of ExecuteQueryWithInputs.
-func (d *Database) ExecuteHistoryQueryWithInputs(queryInput interface{}, inputs ...interface{}) ([][]interface{}, error) {
-	historyMatcher := d.History()
-	if historyMatcher == nil {
-		return nil, fmt.Errorf("history queries require RetractHistory mode (database was created with RetractDelete mode)")
-	}
-
-	// Resolve the query (string or *query.Query)
-	q, err := resolveQuery(queryInput)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Convert inputs to Relations based on :in clause
-	inputRelations, err := d.convertInputsToRelations(q, inputs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Execute the query using the history matcher with annotation handler if set
-	opts := DefaultPlannerOptions()
-	opts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(historyMatcher, opts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
-	if err != nil {
-		return nil, fmt.Errorf("history query execution failed: %w", err)
-	}
-
-	// Convert result to [][]interface{}
-	return relationToSlice(result), nil
-}
-
 // GetExecutor returns a new query executor
 // This provides direct access to the executor for advanced use cases
 func (d *Database) GetExecutor() *executor.Executor {
 	return d.NewExecutor()
 }
 
+// entityAttrKey is used to track per-(E, A) state within a transaction.
+// Used for vector appends to chain elements correctly.
+type entityAttrKey struct {
+	E [20]byte // Entity hash
+	A string   // Attribute string
+}
+
 // Transaction represents a write transaction
 type Transaction struct {
-	db       *Database
-	datoms   []datalog.Datom
-	retracts []datalog.Datom
-	mu       sync.Mutex
-	closed   bool
-	txTime   *time.Time // Optional custom transaction time
+	db                *Database
+	datoms            []datalog.Datom
+	retracts          []datalog.Datom
+	mu                sync.Mutex
+	closed            bool
+	txTime            *time.Time                          // Optional custom transaction time
+	lastVectorElement map[entityAttrKey]datalog.ElementID // Track last appended element per (E,A) for RGA chaining
 }
 
 // SetTime sets a custom transaction time for this transaction
@@ -1167,7 +1277,16 @@ func (t *Transaction) SetTime(txTime time.Time) {
 	t.txTime = &txTime
 }
 
-// Add asserts a new datom
+// Add adds a value using schema-aware CRDT semantics.
+// The schema determines the semantics - callers don't need to know the cardinality.
+//
+// Behavior by cardinality:
+// - Cardinality-One: LWW semantics (highest ElementID wins)
+// - Cardinality-Many: Add-wins set semantics (value added with OpCRDTAdd)
+// - Cardinality-Vector: RGA append semantics (element chained after previous in tx)
+//
+// For schemaless attributes (no schema or attribute not defined in schema),
+// Add() stores the raw value with LWW semantics (cardinality-one behavior).
 func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1176,19 +1295,549 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("transaction is closed")
 	}
 
+	// Nil values are not allowed in relational algebra - absence of fact represents "no value"
+	if v == nil {
+		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
+	}
+
 	// Schema validation (if schema present)
 	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
 		return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
 	}
 
-	t.datoms = append(t.datoms, datalog.Datom{
-		E:  e,
-		A:  a,
-		V:  v,
-		Tx: 0, // Will be set on commit
-	})
+	// Check cardinality for CRDT semantics
+	var card schema.Cardinality
+	var def *schema.AttributeDefinition
+	hasSchema := false
+	if s := t.db.Schema(); s != nil {
+		if def = s.GetAttribute(a); def != nil {
+			card = def.Cardinality
+			hasSchema = true
+		}
+	}
+
+	// Schema-aware behavior: Add() works for all cardinalities
+	// The schema determines the semantics, not the method call
+	elemID := t.db.clock.Next()
+
+	if hasSchema {
+		switch card {
+		case schema.CardinalityMany:
+			// CRDT add-wins semantics: store raw value with Op=Add
+			// Op is stored in the key (between V and Tx) for proper AVET lookups
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:  e,
+				A:  a,
+				V:  v, // Raw value - enables AVET lookups
+				Tx: elemID,
+				Op: datalog.OpCRDTAdd,
+			})
+		case schema.CardinalityOne:
+			// CRDT LWW semantics: just append, no retraction needed
+			// The storage layer will return only the highest ElementID on read
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:  e,
+				A:  a,
+				V:  v,
+				Tx: elemID,
+			})
+		case schema.CardinalityVector:
+			// RGA append semantics - chain elements within transaction.
+			// Bug #5 fix: Store raw value in V, AfterRef in datom.AfterRef field.
+			//
+			// IMPORTANT: Add() does NOT read from storage. AfterRef is set to the last
+			// element added in THIS transaction, or HEAD (zero) if this is the first.
+			//
+			// CONCURRENT WRITE BEHAVIOR:
+			// When two replicas Add() concurrently to the same vector (before sync),
+			// both elements will have AfterRef=HEAD (or the same predecessor).
+			// After merge, BOTH elements are preserved. Order is determined by
+			// ElementID comparison during RGA reconstruction, NOT by wall-clock time.
+			//
+			// Example: Replica A adds "stealth", Replica B adds "magic" concurrently.
+			// Both have AfterRef=HEAD. After merge, result is ["stealth", "magic"]
+			// or ["magic", "stealth"] depending on which replica has lower ReplicaID.
+			//
+			// This is NOT last-writer-wins - all concurrent writes are preserved.
+			// See docs/reference/CRDT.md for detailed semantics.
+			key := entityAttrKey{E: e.Hash(), A: a.String()}
+
+			// OrderedSet uniqueness check: if UniqueElements is true, check if value already exists
+			if def.UniqueElements {
+				if t.vectorContainsValue(e, a, v) {
+					// Value already exists in ordered set - no-op
+					return nil
+				}
+			}
+
+			afterRef := t.lastVectorElement[key] // Zero value = HEAD
+
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:        e,
+				A:        a,
+				V:        v, // Raw value, not RGAElement wrapper
+				Tx:       elemID,
+				Op:       datalog.OpRGAInsert, // New Op type indicates AfterRef present
+				AfterRef: afterRef,
+			})
+
+			t.lastVectorElement[key] = elemID
+		default:
+			// Unknown cardinality - treat as cardinality-one
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:  e,
+				A:  a,
+				V:  v,
+				Tx: elemID,
+			})
+		}
+	} else {
+		// Schemaless mode: store raw value for backward compatibility
+		// Queries will treat this as cardinality-one by default
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:  e,
+			A:  a,
+			V:  v,
+			Tx: elemID,
+		})
+	}
 
 	return nil
+}
+
+// Remove removes a value from a cardinality-many set using CRDT add-wins semantics.
+// The value is wrapped in a SetEntry with OpRemove (tombstone) and stored.
+//
+// This method is part of the CRDT implementation:
+// - Cardinality-Many: Value tombstoned; add-wins resolves conflicts
+// - Cardinality-One: Not applicable (use Set() to replace value)
+// - Cardinality-Vector: Not applicable (use Set() to replace entire vector)
+func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{}) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.closed {
+		return fmt.Errorf("transaction is closed")
+	}
+
+	// Nil values are not allowed
+	if v == nil {
+		return fmt.Errorf("nil value not allowed for Remove on attribute %s", a.String())
+	}
+
+	// Remove requires schema with cardinality-many
+	s := t.db.Schema()
+	if s == nil {
+		return fmt.Errorf("Remove requires schema: attribute %s has no schema defined", a.String())
+	}
+
+	def := s.GetAttribute(a)
+	if def == nil {
+		return fmt.Errorf("Remove requires schema: attribute %s not defined in schema", a.String())
+	}
+
+	switch def.Cardinality {
+	case schema.CardinalityMany:
+		// CRDT add-wins semantics: store raw value with Op=Remove (tombstone)
+		// Op is stored in the key (between V and Tx) for proper AVET lookups
+		// Per-operation Lamport: each Remove() gets its own ElementID for causal ordering
+		elemID := t.db.clock.Next()
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:  e,
+			A:  a,
+			V:  v, // Raw value - enables AVET lookups
+			Tx: elemID,
+			Op: datalog.OpCRDTRemove,
+		})
+	case schema.CardinalityOne:
+		return fmt.Errorf("Remove not valid for cardinality-one attribute %s: cardinality-one values are replaced via Set()", a.String())
+	case schema.CardinalityVector:
+		// RGA LIFO Remove: tombstone the most recently added element matching value
+		// O(k) via EAVT scan where k = entries for this (E, A, V) combination
+		//
+		// Design decision: Remove() uses LIFO (most recent) semantics because:
+		// 1. O(k) performance - direct index lookup, no RGA reconstruction
+		// 2. CRDT-friendly - "most recent" = "the one I most recently added"
+		// 3. LIFO/Stack pattern - useful for undo operations
+		// Users wanting to remove the FIRST occurrence must use read-modify-write via Set()
+
+		// Build set of element IDs that have pending tombstones in this transaction
+		// This allows multiple Remove() calls in the same transaction to work correctly
+		pendingTombstones := make(map[datalog.ElementID]bool)
+		for _, d := range t.datoms {
+			if d.A.Matches(a) && e.Equal(d.E) && d.Op == datalog.OpRGATombstone {
+				pendingTombstones[d.AfterRef] = true
+			}
+		}
+
+		// Build EAVT prefix: [prefix][E][A][V] for O(k) scan
+		// EAVT key order: [E][A][V][Tx↓][Op][AfterRef?]
+		// Tx descending means highest Tx (most recent) comes first
+		eBytes := e.Hash()
+		var aBytes [32]byte
+		copy(aBytes[:], a.String())
+		vType := byte(datalog.Type(v))
+		vData := datalog.ValueBytes(v)
+		vBytes := append([]byte{vType}, vData...)
+
+		prefix := make([]byte, 1+20+32+len(vBytes))
+		prefix[0] = byte(EAVT)
+		copy(prefix[1:21], eBytes[:])
+		copy(prefix[21:53], aBytes[:])
+		copy(prefix[53:], vBytes)
+
+		iter, err := t.db.store.Scan(EAVT, prefix, prefixEnd(prefix))
+		if err != nil {
+			return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
+		}
+		defer iter.Close()
+
+		// Scan in Tx descending order:
+		// - Tombstones (higher Tx) come before the inserts they delete
+		// - Collect tombstone AfterRefs, stop at first non-tombstoned insert
+		tombstonedIDs := make(map[datalog.ElementID]bool)
+		var targetID datalog.ElementID
+		var targetValue interface{}
+
+		for iter.Next() {
+			datom, err := iter.Datom()
+			if err != nil {
+				continue
+			}
+
+			if datom.Op == datalog.OpRGATombstone {
+				// Record this tombstone's target
+				tombstonedIDs[datom.AfterRef] = true
+			} else if datom.Op == datalog.OpRGAInsert {
+				// Check if this insert is tombstoned (committed or pending)
+				if !tombstonedIDs[datom.Tx] && !pendingTombstones[datom.Tx] {
+					// Found the most recent non-tombstoned insert
+					targetID = datom.Tx
+					targetValue = datom.V
+					break // Early termination - no need to scan further
+				}
+			}
+		}
+
+		// If no matching element found, Remove is a no-op (not an error)
+		if targetID.IsZero() {
+			return nil
+		}
+
+		// Write tombstone for the target element
+		tombstoneID := t.db.clock.Next()
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:        e,
+			A:        a,
+			V:        targetValue, // Raw value (for verification/debugging)
+			Tx:       tombstoneID, // New tombstone ID
+			Op:       datalog.OpRGATombstone,
+			AfterRef: targetID, // ID of element being tombstoned
+		})
+	default:
+		return fmt.Errorf("Remove not valid for cardinality %v", def.Cardinality)
+	}
+
+	return nil
+}
+
+// Set sets a value for a cardinality-one attribute using CRDT LWW semantics.
+// For cardinality-one: just appends the new value. The storage layer handles
+// Last-Writer-Wins resolution - no read-before-write or retraction needed.
+//
+// This method is part of the CRDT implementation:
+// - Cardinality-One: Highest ElementID wins (LWW semantics)
+// - Cardinality-Many: Replaces entire set (reads current, generates Add/Remove ops)
+// - Cardinality-Vector: Replaces entire vector
+func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.closed {
+		return fmt.Errorf("transaction is closed")
+	}
+
+	// Nil values are not allowed in relational algebra - absence of fact represents "no value"
+	if v == nil {
+		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
+	}
+
+	// Check cardinality first - determines validation strategy
+	card := schema.CardinalityOne
+	if s := t.db.Schema(); s != nil {
+		if def := s.GetAttribute(a); def != nil {
+			card = def.Cardinality
+		}
+	}
+
+	switch card {
+	case schema.CardinalityOne:
+		// Schema validation for single value
+		if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
+			return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
+		}
+		// CRDT LWW semantics: just append, no retraction needed
+		// The storage layer will return only the highest ElementID on read
+		// Per-operation Lamport: each Set() gets its own ElementID for causal ordering
+		elemID := t.db.clock.Next()
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:  e,
+			A:  a,
+			V:  v,
+			Tx: elemID,
+		})
+
+	case schema.CardinalityMany:
+		// Set() for cardinality-many replaces the entire set
+		// This requires reading current membership and diffing
+		newSlice, ok := v.([]interface{})
+		if !ok {
+			// Try []any (same thing, different spelling)
+			if anySlice, ok2 := v.([]any); ok2 {
+				newSlice = anySlice
+			} else {
+				return fmt.Errorf("Set for cardinality-many requires []interface{}, got %T", v)
+			}
+		}
+
+		// Schema validation for each element in the slice
+		for _, val := range newSlice {
+			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
+				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
+			}
+		}
+
+		// Build set of new values for O(1) lookup
+		newSet := make(map[interface{}]bool, len(newSlice))
+		for _, val := range newSlice {
+			newSet[val] = true
+		}
+
+		// Get current set membership from committed state
+		matcher := NewBadgerMatcher(t.db.store)
+		eBytes := e.Hash()
+		var aBytes [32]byte
+		copy(aBytes[:], a.String())
+		currentResult, err := matcher.resolveAddWinsSet(eBytes[:], aBytes[:])
+		if err != nil {
+			return fmt.Errorf("failed to read current set membership: %w", err)
+		}
+
+		// Apply pending transaction operations to get effective current set
+		// This ensures Set() sees Add/Remove ops from earlier in the same transaction
+		effectiveSet := make(map[interface{}]bool)
+		for member := range currentResult.Members {
+			effectiveSet[member] = true
+		}
+
+		// Scan pending datoms for this (E, A) pair
+		pendingAdds := make(map[interface{}]datalog.ElementID)
+		pendingRemoves := make(map[interface{}]datalog.ElementID)
+		for _, datom := range t.datoms {
+			if datom.E.Hash() != eBytes || datom.A.String() != a.String() {
+				continue
+			}
+			// NEW FORMAT: Op is a field on Datom, V is the raw value
+			if datom.Op == datalog.OpCRDTAdd {
+				pendingAdds[datom.V] = datom.Tx
+			} else if datom.Op == datalog.OpCRDTRemove {
+				pendingRemoves[datom.V] = datom.Tx
+			}
+		}
+
+		// Apply pending ops using add-wins semantics
+		// For each value, compare highest pending add Lamport vs highest pending remove Lamport
+		allPendingValues := make(map[interface{}]bool)
+		for v := range pendingAdds {
+			allPendingValues[v] = true
+		}
+		for v := range pendingRemoves {
+			allPendingValues[v] = true
+		}
+
+		for val := range allPendingValues {
+			addTx, hasAdd := pendingAdds[val]
+			removeTx, hasRemove := pendingRemoves[val]
+
+			if hasAdd && !hasRemove {
+				// Only add pending
+				effectiveSet[val] = true
+			} else if !hasAdd && hasRemove {
+				// Only remove pending
+				delete(effectiveSet, val)
+			} else {
+				// Both add and remove pending - compare Lamport (add-wins at same Lamport)
+				if addTx.Lamport >= removeTx.Lamport {
+					effectiveSet[val] = true
+				} else {
+					delete(effectiveSet, val)
+				}
+			}
+		}
+
+		// Remove members that are in effective set but not in new set
+		for member := range effectiveSet {
+			if !newSet[member] {
+				elemID := t.db.clock.Next()
+				// NEW FORMAT: Op is a field on Datom, V is the raw value
+				t.datoms = append(t.datoms, datalog.Datom{
+					E:  e,
+					A:  a,
+					V:  member, // Raw value
+					Tx: elemID,
+					Op: datalog.OpCRDTRemove,
+				})
+			}
+		}
+
+		// Add members that are in new set but not in effective set
+		// Iterate newSet (deduplicated) to avoid duplicate writes for duplicate slice values
+		for val := range newSet {
+			if !effectiveSet[val] {
+				elemID := t.db.clock.Next()
+				// NEW FORMAT: Op is a field on Datom, V is the raw value
+				t.datoms = append(t.datoms, datalog.Datom{
+					E:  e,
+					A:  a,
+					V:  val, // Raw value
+					Tx: elemID,
+					Op: datalog.OpCRDTAdd,
+				})
+			}
+		}
+
+	case schema.CardinalityVector:
+		// Set() for cardinality-vector uses prefix-diff optimization:
+		// - Find common prefix between old and new vectors
+		// - Only tombstone elements after the common prefix
+		// - Only insert elements after the common prefix
+		// This makes appends O(k) instead of O(n+m) for the common case.
+		newSlice, ok := v.([]interface{})
+		if !ok {
+			// Try []any (same thing, different spelling)
+			if anySlice, ok2 := v.([]any); ok2 {
+				newSlice = anySlice
+			} else {
+				return fmt.Errorf("Set for cardinality-vector requires []interface{}, got %T", v)
+			}
+		}
+
+		// Schema validation for each element in the slice
+		for _, val := range newSlice {
+			if err := schema.ValidateDatom(t.db.Schema(), a, val); err != nil {
+				return fmt.Errorf("schema validation failed for %s element: %w", a.String(), err)
+			}
+		}
+
+		// Get current vector from cache - O(1) if fresh
+		eBytes := e.Hash()
+		var aBytes Attribute
+		copy(aBytes[:], a.String())
+		key := CacheKey{E: Entity(eBytes), A: aBytes}
+
+		matcher := NewBadgerMatcher(t.db.store)
+		matcher.SetSchema(t.db.schema)
+		entry := t.db.cache.GetOrResolve(key, matcher)
+
+		var oldList []any
+		var oldIndex []datalog.ElementID
+		if entry != nil && entry.Cardinality() == schema.CardinalityVector {
+			oldList = entry.VectorList()
+			oldIndex = entry.VectorIndex()
+		}
+
+		// Find common prefix - elements that don't need to change
+		// RGA constraint: we can only keep a PREFIX because descendants of
+		// tombstoned elements become unreachable in the DFS traversal.
+		commonPrefix := 0
+		maxPrefix := len(oldList)
+		if len(newSlice) < maxPrefix {
+			maxPrefix = len(newSlice)
+		}
+		for i := 0; i < maxPrefix; i++ {
+			if !datalog.ValuesEqual(oldList[i], newSlice[i]) {
+				break
+			}
+			commonPrefix++
+		}
+
+		// Tombstone old[commonPrefix:] - elements after common prefix
+		for i := commonPrefix; i < len(oldList); i++ {
+			tombstoneID := t.db.clock.Next()
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:        e,
+				A:        a,
+				V:        oldList[i],  // Raw value (for verification/debugging)
+				Tx:       tombstoneID, // New tombstone ID
+				Op:       datalog.OpRGATombstone,
+				AfterRef: oldIndex[i], // ID of element being tombstoned
+			})
+		}
+
+		// Insert new[commonPrefix:] - elements after common prefix
+		// Chain from last kept element (or HEAD if prefix is 0)
+		afterRef := datalog.ElementID{} // HEAD
+		if commonPrefix > 0 {
+			afterRef = oldIndex[commonPrefix-1]
+		}
+
+		eaKey := entityAttrKey{E: e.Hash(), A: a.String()}
+		for _, val := range newSlice[commonPrefix:] {
+			elemID := t.db.clock.Next()
+
+			t.datoms = append(t.datoms, datalog.Datom{
+				E:        e,
+				A:        a,
+				V:        val,
+				Tx:       elemID,
+				Op:       datalog.OpRGAInsert,
+				AfterRef: afterRef,
+			})
+
+			afterRef = elemID
+		}
+		// Update lastVectorElement for subsequent Add() calls in same transaction
+		t.lastVectorElement[eaKey] = afterRef
+
+	default:
+		return fmt.Errorf("Set not valid for unknown cardinality %v", card)
+	}
+
+	return nil
+}
+
+// vectorContainsValue checks if a value already exists in an ordered set (vector with unique elements).
+// It checks both committed data (via cache) and pending datoms in this transaction.
+func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword, v interface{}) bool {
+	// Check pending datoms in this transaction first
+	eHash := e.Hash()
+	for _, d := range t.datoms {
+		if d.A == a && d.E.Hash() == eHash && d.Op == datalog.OpRGAInsert {
+			if datalog.ValuesEqual(d.V, v) {
+				return true
+			}
+		}
+	}
+
+	// Check committed data via cache
+	eBytes := e.Hash()
+	var aBytes Attribute
+	copy(aBytes[:], a.String())
+	cacheKey := CacheKey{E: Entity(eBytes), A: aBytes}
+
+	matcher := NewBadgerMatcher(t.db.store)
+	matcher.SetSchema(t.db.schema)
+	entry := t.db.cache.GetOrResolve(cacheKey, matcher)
+
+	if entry != nil && entry.Cardinality() == schema.CardinalityVector {
+		for _, existing := range entry.VectorList() {
+			if datalog.ValuesEqual(existing, v) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // Retract removes a datom
@@ -1200,11 +1849,16 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 		return fmt.Errorf("transaction is closed")
 	}
 
+	// Nil values are not allowed - must specify exact value to retract
+	if v == nil {
+		return fmt.Errorf("nil value not allowed for retraction of %s: must specify exact value to retract", a.String())
+	}
+
 	t.retracts = append(t.retracts, datalog.Datom{
 		E:  e,
 		A:  a,
 		V:  v,
-		Tx: 0, // Will be set on commit
+		Tx: datalog.ElementID{}, // Will be set on commit
 	})
 
 	return nil
@@ -1276,31 +1930,19 @@ func (t *Transaction) Commit() (uint64, error) {
 		return 0, err
 	}
 
-	// Get transaction ID (time-based or sequential)
-	var txID uint64
+	// Record transaction time for metadata
 	var txTime time.Time
-
-	// Use custom time if provided, otherwise use current time
 	if t.txTime != nil {
 		txTime = *t.txTime
 	} else {
 		txTime = time.Now()
 	}
 
-	if t.db.useTimeTx {
-		// Use nanosecond timestamp as transaction ID
-		txID = uint64(txTime.UnixNano())
-	} else {
-		// Use sequential counter
-		txID = t.db.txCounter.Add(1)
-	}
-
-	// Set transaction ID on all datoms
-	for i := range t.datoms {
-		t.datoms[i].Tx = txID
-	}
+	// Per-operation Lamport: datoms already have their Tx set by Add/Remove/Set.
+	// Only legacy Retract() method needs Tx assignment at commit time.
+	// Each retract gets its own per-operation Lamport for causal ordering.
 	for i := range t.retracts {
-		t.retracts[i].Tx = txID
+		t.retracts[i].Tx = t.db.clock.Next()
 	}
 
 	// Apply retractions first
@@ -1317,14 +1959,16 @@ func (t *Transaction) Commit() (uint64, error) {
 		}
 	}
 
-	// Add transaction metadata
-	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", txID))
+	// Add transaction metadata with its own Lamport timestamp
+	// This is the final operation in the transaction, so its Lamport is the "transaction time"
+	metadataElemID := t.db.clock.Next()
+	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", metadataElemID.Lamport))
 	txMetadata := []datalog.Datom{
 		{
 			E:  txEntity,
 			A:  datalog.NewKeyword(":db/txInstant"),
 			V:  txTime,
-			Tx: txID,
+			Tx: metadataElemID,
 		},
 	}
 	if err := t.db.store.Assert(txMetadata); err != nil {
@@ -1332,13 +1976,51 @@ func (t *Transaction) Commit() (uint64, error) {
 		fmt.Printf("Warning: failed to write transaction metadata: %v\n", err)
 	}
 
+	// Update cache: track max versions and invalidate stale entries
+	touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
+	seenKeys := make(map[CacheKey]bool)
+
+	// Process asserted datoms
+	for _, d := range t.datoms {
+		eBytes := Entity(d.E.Hash())
+
+		var aBytes Attribute
+		copy(aBytes[:], d.A.String())
+
+		key := CacheKey{E: eBytes, A: aBytes}
+		if !seenKeys[key] {
+			seenKeys[key] = true
+			touched = append(touched, key)
+			t.db.cache.UpdateMaxVersion(key, d.Tx)
+		}
+	}
+
+	// Process retracted datoms
+	for _, d := range t.retracts {
+		eBytes := Entity(d.E.Hash())
+
+		var aBytes Attribute
+		copy(aBytes[:], d.A.String())
+
+		key := CacheKey{E: eBytes, A: aBytes}
+		if !seenKeys[key] {
+			seenKeys[key] = true
+			touched = append(touched, key)
+			t.db.cache.UpdateMaxVersion(key, d.Tx)
+		}
+	}
+
+	// Invalidate cache entries for all touched (E, A) pairs
+	t.db.cache.Invalidate(touched)
+
 	// Clean up
 	t.closed = true
 	t.db.mu.Lock()
 	delete(t.db.activeTx, t)
 	t.db.mu.Unlock()
 
-	return txID, nil
+	// Return the metadata's Lamport as the "transaction ID" - it's the highest from this tx
+	return metadataElemID.Lamport, nil
 }
 
 // validateUniqueness checks uniqueness constraints for all datoms in the transaction
@@ -1632,7 +2314,7 @@ func (d *Database) Pull(entityID datalog.Identity, patternStr string) (map[strin
 
 	// Create pull executor with database matcher
 	matcher := d.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, d)
 
 	// Execute pull
 	return puller.Pull(entityID, pattern)
@@ -1658,10 +2340,193 @@ func (d *Database) PullMany(entityIDs []datalog.Identity, patternStr string) ([]
 
 	// Create pull executor with database matcher
 	matcher := d.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, d)
 
 	// Execute pull for all entities
 	return puller.PullMany(entityIDs, pattern)
+}
+
+// ResolveEntityAttributes resolves CRDT values for the requested attributes of an entity.
+// This is the core resolution method that properly applies CRDT semantics:
+// - CardinalityOne: LWW (Last-Writer-Wins)
+// - CardinalityMany: Add-wins set
+// - CardinalityVector: RGA ordered list
+//
+// The method uses difference-based logic:
+// - Checks which attributes are already cached for this entity
+// - If few missing: individual GetOrResolve calls
+// - If many missing: full EAVT scan then resolve
+//
+// Returns a map of keyword -> resolved value. Missing attributes are not included.
+func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []datalog.Keyword) (map[datalog.Keyword]interface{}, error) {
+	if len(attrs) == 0 {
+		return make(map[datalog.Keyword]interface{}), nil
+	}
+
+	eBytes := Entity(entity.Hash())
+	matcher := d.Matcher().(*BadgerMatcher)
+	result := make(map[datalog.Keyword]interface{})
+
+	// Get what's already cached for this entity
+	cachedAttrs := d.cache.GetCachedAttrs(eBytes)
+
+	// Partition needed attrs into cached vs missing
+	var missing []datalog.Keyword
+	for _, kw := range attrs {
+		var aBytes Attribute
+		copy(aBytes[:], kw.String())
+
+		if cachedAttrs != nil && cachedAttrs[aBytes] {
+			// Already cached - GetOrResolve will do freshness check
+			key := CacheKey{E: eBytes, A: aBytes}
+			if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
+				if val := entryToValue(entry); val != nil {
+					result[kw] = val
+				}
+			}
+		} else {
+			missing = append(missing, kw)
+		}
+	}
+
+	if len(missing) == 0 {
+		return result, nil // All from cache
+	}
+
+	// For now, use individual GetOrResolve for missing attrs
+	// TODO: Add threshold-based scan optimization
+	for _, kw := range missing {
+		var aBytes Attribute
+		copy(aBytes[:], kw.String())
+		key := CacheKey{E: eBytes, A: aBytes}
+		if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
+			if val := entryToValue(entry); val != nil {
+				result[kw] = val
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// entryToValue converts a CacheEntry to its appropriate value representation
+func entryToValue(entry *CacheEntry) interface{} {
+	switch entry.Cardinality() {
+	case schema.CardinalityOne:
+		return entry.OneValue()
+	case schema.CardinalityMany:
+		// Convert set to slice for API consistency
+		set := entry.ManySet()
+		if len(set) == 0 {
+			return nil
+		}
+		values := make([]interface{}, 0, len(set))
+		for v := range set {
+			values = append(values, v)
+		}
+		return values
+	case schema.CardinalityVector:
+		return entry.VectorList()
+	default:
+		return entry.OneValue()
+	}
+}
+
+// ResolveAllAttributes retrieves all CRDT-resolved attributes for an entity.
+// This is used by wildcard pulls to get all attributes with proper CRDT resolution.
+//
+// It scans EAVT for all datoms with the given entity, discovers unique attributes,
+// and resolves each using the cache (LWW for one, add-wins for many, RGA for vector).
+//
+// Returns a map of keyword -> resolved value. The value type depends on cardinality:
+// - CardinalityOne: single value (LWW)
+// - CardinalityMany: []interface{} (add-wins set)
+// - CardinalityVector: []interface{} (RGA ordered list)
+func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error) {
+	if d.cache == nil {
+		return nil, fmt.Errorf("ResolveAllAttributes requires cache")
+	}
+
+	// If schema exists, delegate to ResolveEntityAttributes with all schema attrs.
+	// This uses difference-based logic: check cache first, scan only if needed.
+	if d.schema != nil {
+		if s, ok := d.schema.(*schema.Schema); ok && s.HasSchema() {
+			attrs := s.Attributes()
+			keywords := make([]datalog.Keyword, len(attrs))
+			for i, def := range attrs {
+				keywords[i] = def.Ident
+			}
+			return d.ResolveEntityAttributes(entity, keywords)
+		}
+	}
+
+	// No schema: must scan EAVT to discover all attributes for this entity
+	eBytes := entity.Bytes()
+	encoder := d.store.encoder
+	start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
+
+	iter, err := d.store.Scan(EAVT, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("EAVT scan failed: %w", err)
+	}
+	defer iter.Close()
+
+	// Discover unique attributes
+	seenAttrs := make(map[Attribute]datalog.Keyword)
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			continue
+		}
+		sd := ToStorageDatom(*datom)
+		if _, seen := seenAttrs[sd.A]; !seen {
+			seenAttrs[sd.A] = datom.A
+		}
+	}
+
+	// Resolve each attribute using cache
+	matcher := d.Matcher().(*BadgerMatcher)
+	eEntity := Entity(eBytes)
+	result := make(map[datalog.Keyword]interface{})
+
+	for aBytes, kw := range seenAttrs {
+		key := CacheKey{E: eEntity, A: aBytes}
+		entry := d.cache.GetOrResolve(key, matcher)
+		if entry == nil {
+			continue
+		}
+
+		// Determine cardinality for proper value conversion
+		card := schema.CardinalityOne
+		if d.schema != nil {
+			if def := d.schema.GetAttribute(kw); def != nil {
+				card = def.Cardinality
+			}
+		}
+
+		switch card {
+		case schema.CardinalityOne:
+			if v := entry.OneValue(); v != nil {
+				result[kw] = v
+			}
+		case schema.CardinalityMany:
+			set := entry.ManySet()
+			if len(set) > 0 {
+				values := make([]interface{}, 0, len(set))
+				for v := range set {
+					values = append(values, v)
+				}
+				result[kw] = values
+			}
+		case schema.CardinalityVector:
+			list := entry.VectorList()
+			if len(list) > 0 {
+				result[kw] = list
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // PullInto retrieves entity data and populates the provided struct.
@@ -1697,7 +2562,7 @@ func (d *Database) PullInto(entityID datalog.Identity, v interface{}) error {
 
 	// Create pull executor and execute
 	matcher := d.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, d)
 	result, err := puller.PullResolved(entityID, resolved)
 	if err != nil {
 		return err
@@ -1750,7 +2615,7 @@ func (d *Database) PullIntoMany(entityIDs []datalog.Identity, v interface{}) err
 
 	// Create pull executor and execute
 	matcher := d.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, d)
 	results, err := puller.PullResolvedMany(entityIDs, resolved)
 	if err != nil {
 		return err

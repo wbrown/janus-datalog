@@ -149,8 +149,75 @@ func (sr *StructReader) setFieldValue(fieldVal reflect.Value, field *FieldInfo, 
 		return sr.setSliceValue(fieldVal, field, value, depth, maxDepth)
 	}
 
+	// Handle OrderedSet fields (cardinality-vector with unique elements)
+	if isOrderedSetType(fieldType) {
+		return sr.setOrderedSetValue(fieldVal, field, value, depth, maxDepth)
+	}
+
 	// Single value
 	return sr.setSingleValue(fieldVal, fieldType, value, depth, maxDepth)
+}
+
+// setOrderedSetValue handles OrderedSet[T] fields (cardinality-vector with unique elements)
+func (sr *StructReader) setOrderedSetValue(fieldVal reflect.Value, field *FieldInfo, value interface{}, depth, maxDepth int) error {
+	// Value should be a slice from the pull result
+	valueSlice, ok := value.([]interface{})
+	if !ok {
+		// Single value - wrap in slice
+		valueSlice = []interface{}{value}
+	}
+
+	elemType := getOrderedSetElementType(field.GoType)
+	if elemType == nil {
+		return fmt.Errorf("cannot determine OrderedSet element type for %s", field.GoType)
+	}
+
+	// Create new OrderedSet instance
+	// OrderedSet has Items (exported []T) and seen (unexported map[T]struct{}) fields
+	// We only set the exported Items field; the seen map is initialized lazily
+	// by OrderedSet methods when needed (Append, Contains, etc.)
+	newSet := reflect.New(field.GoType).Elem()
+	itemsField := newSet.FieldByName("Items")
+
+	if !itemsField.IsValid() {
+		return fmt.Errorf("OrderedSet missing Items field")
+	}
+
+	// Initialize the slice
+	itemsSlice := reflect.MakeSlice(itemsField.Type(), 0, len(valueSlice))
+
+	for _, elem := range valueSlice {
+		var newElem reflect.Value
+
+		// Handle different element types
+		if elemType == identityType {
+			if id, ok := elem.(datalog.Identity); ok {
+				newElem = reflect.ValueOf(id)
+			} else {
+				return fmt.Errorf("expected Identity, got %T", elem)
+			}
+		} else if elemType == keywordType {
+			if kw, ok := elem.(datalog.Keyword); ok {
+				newElem = reflect.ValueOf(kw)
+			} else {
+				return fmt.Errorf("expected Keyword, got %T", elem)
+			}
+		} else {
+			// Regular value type
+			newElem = reflect.New(elemType).Elem()
+			if err := sr.setSingleValue(newElem, elemType, elem, depth, maxDepth); err != nil {
+				return err
+			}
+		}
+
+		// Add to items slice
+		itemsSlice = reflect.Append(itemsSlice, newElem)
+	}
+
+	itemsField.Set(itemsSlice)
+	fieldVal.Set(newSet)
+
+	return nil
 }
 
 // setSliceValue handles cardinality-many fields

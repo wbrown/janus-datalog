@@ -204,6 +204,7 @@ func (m *BadgerMatcher) matchWithHashJoin(
 		constraints:  constraints,
 		hashSet:      hashSet,
 		iter:         storageIter,
+		workspace:    make(executor.Tuple, len(columns)),
 		tupleBuilder: m.getTupleBuilder(pattern, columns),
 	}
 
@@ -292,7 +293,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 				if a != nil {
 					if kw, ok := a.(datalog.Keyword); ok {
-						attr := NewAttribute(kw.String())
+						var attr Attribute
+						copy(attr[:], kw.String())
 						startParts = append(startParts, attr[:])
 						endParts = append(endParts, attr[:])
 					}
@@ -303,7 +305,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 	case AEVT: // 1
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
-				attr := NewAttribute(kw.String())
+				var attr Attribute
+				copy(attr[:], kw.String())
 				startParts = append(startParts, attr[:])
 				endParts = append(endParts, attr[:])
 
@@ -320,7 +323,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 	case AVET: // 2
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
-				attr := NewAttribute(kw.String())
+				var attr Attribute
+				copy(attr[:], kw.String())
 				startParts = append(startParts, attr[:])
 				endParts = append(endParts, attr[:])
 
@@ -342,7 +346,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 	case VAET: // 3
 		// VAET: Value-Attribute-Entity-Transaction
-		// Values in VAET are also encoded with type prefix
+		// Key format: [index][V][A][E][Op][Tx] (Op before Tx, not between V and A)
+		// Values in VAET are encoded with type prefix
 		if v != nil {
 			// For Identity/Reference values
 			if entity, ok := v.(datalog.Identity); ok && entity != nil {
@@ -353,7 +358,8 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 				if a != nil {
 					if kw, ok := a.(datalog.Keyword); ok {
-						attr := NewAttribute(kw.String())
+						var attr Attribute
+						copy(attr[:], kw.String())
 						startParts = append(startParts, attr[:])
 						endParts = append(endParts, attr[:])
 					}
@@ -545,6 +551,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 		sortedTuples: sortedTuples,
 		bindingIdx:   0,
 		iter:         storageIter,
+		workspace:    make(executor.Tuple, len(columns)),
 		tupleBuilder: m.getTupleBuilder(pattern, columns),
 	}
 
@@ -678,8 +685,9 @@ type hashJoinIterator struct {
 	iter          Iterator                  // Storage iterator
 	tupleBuilder  *query.InternedTupleBuilder
 	current       executor.Tuple
-	datomsScanned int // Track number of datoms scanned for event reporting
-	matchesFound  int // Track number of matches for event reporting
+	workspace     executor.Tuple // Reusable workspace for tuple building
+	datomsScanned int            // Track number of datoms scanned for event reporting
+	matchesFound  int            // Track number of matches for event reporting
 }
 
 func (it *hashJoinIterator) Next() bool {
@@ -693,7 +701,7 @@ func (it *hashJoinIterator) Next() bool {
 		it.datomsScanned++
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx > it.matcher.txID {
+		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
 			continue
 		}
 
@@ -715,12 +723,10 @@ func (it *hashJoinIterator) Next() bool {
 				}
 
 				if satisfiesAll {
-					tuple := it.tupleBuilder.BuildTupleInterned(datom)
-					if tuple != nil {
-						it.current = tuple
-						it.matchesFound++
-						return true
-					}
+					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+					it.current = it.workspace
+					it.matchesFound++
+					return true
 				}
 			}
 		}
@@ -768,6 +774,7 @@ type mergeJoinIterator struct {
 	iter         Iterator         // Storage iterator
 	tupleBuilder *query.InternedTupleBuilder
 	current      executor.Tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
 }
 
 func (it *mergeJoinIterator) Next() bool {
@@ -778,7 +785,7 @@ func (it *mergeJoinIterator) Next() bool {
 		}
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx > it.matcher.txID {
+		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
 			continue
 		}
 
@@ -821,11 +828,9 @@ func (it *mergeJoinIterator) Next() bool {
 				}
 
 				if satisfiesAll {
-					tuple := it.tupleBuilder.BuildTupleInterned(datom)
-					if tuple != nil {
-						it.current = tuple
-						return true
-					}
+					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+					it.current = it.workspace
+					return true
 				}
 			}
 		}

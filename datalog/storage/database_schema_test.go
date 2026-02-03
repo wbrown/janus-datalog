@@ -52,25 +52,25 @@ func TestSchemaTypeValidation(t *testing.T) {
 	name := datalog.NewKeyword(":person/name")
 	age := datalog.NewKeyword(":person/age")
 
-	// Valid data
+	// Valid data - use Set() for cardinality-one attributes
 	tx := db.NewTransaction()
-	err = tx.Add(alice, name, "Alice")
+	err = tx.Set(alice, name, "Alice")
 	assert.NoError(t, err)
-	err = tx.Add(alice, age, int64(30))
+	err = tx.Set(alice, age, int64(30))
 	assert.NoError(t, err)
 	_, err = tx.Commit()
 	assert.NoError(t, err)
 
 	// Invalid type: string instead of long
 	tx2 := db.NewTransaction()
-	err = tx2.Add(alice, age, "thirty") // Should fail - wrong type
+	err = tx2.Set(alice, age, "thirty") // Should fail - wrong type
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "schema validation failed")
 	assert.Contains(t, err.Error(), "db.type/long")
 
 	// Invalid type: int instead of string
 	tx3 := db.NewTransaction()
-	err = tx3.Add(alice, name, 123) // Should fail - wrong type
+	err = tx3.Set(alice, name, 123) // Should fail - wrong type
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "schema validation failed")
 	assert.Contains(t, err.Error(), "db.type/string")
@@ -120,9 +120,9 @@ func TestSchemaUniquenessValue(t *testing.T) {
 	bob := datalog.NewIdentity("bob")
 	email := datalog.NewKeyword(":user/email")
 
-	// First user with email
+	// First user with email - use Set() for cardinality-one
 	tx := db.NewTransaction()
-	err = tx.Add(alice, email, "alice@example.com")
+	err = tx.Set(alice, email, "alice@example.com")
 	require.NoError(t, err)
 	txid, err := tx.Commit()
 	require.NoError(t, err)
@@ -163,8 +163,8 @@ func TestSchemaUniquenessValue(t *testing.T) {
 
 	// Second user with same email should fail
 	tx2 := db.NewTransaction()
-	err = tx2.Add(bob, email, "alice@example.com")
-	require.NoError(t, err) // Add succeeds (type check passes)
+	err = tx2.Set(bob, email, "alice@example.com")
+	require.NoError(t, err) // Set succeeds (type check passes)
 	_, err = tx2.Commit()
 	require.Error(t, err, "should fail uniqueness check")
 	assert.Contains(t, err.Error(), "uniqueness violation")
@@ -191,10 +191,10 @@ func TestSchemaUniquenessWithinTransaction(t *testing.T) {
 
 	// Two different entities with same email in same transaction
 	tx := db.NewTransaction()
-	err = tx.Add(alice, email, "shared@example.com")
+	err = tx.Set(alice, email, "shared@example.com")
 	require.NoError(t, err)
-	err = tx.Add(bob, email, "shared@example.com")
-	require.NoError(t, err) // Add succeeds (checked at commit time for cross-entity)
+	err = tx.Set(bob, email, "shared@example.com")
+	require.NoError(t, err) // Set succeeds (checked at commit time for cross-entity)
 	_, err = tx.Commit()
 	assert.Error(t, err, "should fail uniqueness check within transaction")
 	assert.Contains(t, err.Error(), "uniqueness violation")
@@ -221,14 +221,14 @@ func TestSchemaUniquenessIdempotent(t *testing.T) {
 
 	// First assertion
 	tx := db.NewTransaction()
-	err = tx.Add(alice, email, "alice@example.com")
+	err = tx.Set(alice, email, "alice@example.com")
 	require.NoError(t, err)
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
 	// Same entity, same value should succeed (idempotent)
 	tx2 := db.NewTransaction()
-	err = tx2.Add(alice, email, "alice@example.com")
+	err = tx2.Set(alice, email, "alice@example.com")
 	require.NoError(t, err)
 	_, err = tx2.Commit()
 	assert.NoError(t, err, "idempotent update should succeed")
@@ -281,4 +281,30 @@ func TestSetSchema(t *testing.T) {
 	tx := db.NewTransaction()
 	err = tx.Add(alice, datalog.NewKeyword(":person/age"), "not a number")
 	assert.Error(t, err, "schema should now be enforced")
+}
+
+func TestNilValueRejected(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "db-nil-value-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Create database without schema - nil should still be rejected
+	db, err := NewDatabase(tmpDir)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	nameAttr := datalog.NewKeyword(":person/name")
+
+	// Add with nil value should fail
+	tx := db.NewTransaction()
+	err = tx.Add(alice, nameAttr, nil)
+	assert.Error(t, err, "nil value should be rejected")
+	assert.Contains(t, err.Error(), "nil value not allowed")
+
+	// Retract with nil value should also fail
+	tx2 := db.NewTransaction()
+	err = tx2.Retract(alice, nameAttr, nil)
+	assert.Error(t, err, "nil value should be rejected for retraction")
+	assert.Contains(t, err.Error(), "nil value not allowed")
 }

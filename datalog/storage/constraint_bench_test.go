@@ -17,25 +17,25 @@ func BenchmarkConstraintEvaluation(b *testing.B) {
 			E:  datalog.NewIdentity("entity1"),
 			A:  datalog.NewKeyword(":person/age"),
 			V:  int64(25),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("entity2"),
 			A:  datalog.NewKeyword(":person/name"),
 			V:  "Alice",
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("entity3"),
 			A:  datalog.NewKeyword(":person/active"),
 			V:  true,
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("entity4"),
 			A:  datalog.NewKeyword(":person/created"),
 			V:  time.Now(),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 	}
 
@@ -94,7 +94,7 @@ func BenchmarkConstraintEvaluation(b *testing.B) {
 				E:  datalog.NewIdentity("person" + string(rune(i))),
 				A:  datalog.NewKeyword(":person/age"),
 				V:  int64(i%100 + 1),
-				Tx: uint64(i),
+				Tx: datalog.ElementID{Lamport: uint64(i)},
 			}
 		}
 
@@ -142,7 +142,7 @@ func BenchmarkConstraintEvaluation(b *testing.B) {
 				E:  datalog.NewIdentity("person" + string(rune(i))),
 				A:  datalog.NewKeyword(":person/age"),
 				V:  int64(i%100 + 1),
-				Tx: uint64(i),
+				Tx: datalog.ElementID{Lamport: uint64(i)},
 			}
 		}
 
@@ -201,6 +201,9 @@ func (c *equalityConstraint) Evaluate(datom *datalog.Datom) bool {
 		return datalog.ValuesEqual(datom.V, c.value)
 	case 3: // Transaction
 		if tx, ok := c.value.(uint64); ok {
+			return datom.Tx.Lamport == tx
+		}
+		if tx, ok := c.value.(datalog.ElementID); ok {
 			return datom.Tx == tx
 		}
 	}
@@ -233,6 +236,9 @@ func (c *unoptimizedEqualityConstraint) Evaluate(datom *datalog.Datom) bool {
 		return datalog.ValuesEqual(datom.V, c.value)
 	case 3: // Transaction
 		if tx, ok := c.value.(uint64); ok {
+			return datom.Tx.Lamport == tx
+		}
+		if tx, ok := c.value.(datalog.ElementID); ok {
 			return datom.Tx == tx
 		}
 	}

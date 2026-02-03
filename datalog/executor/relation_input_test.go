@@ -17,25 +17,25 @@ func TestRelationInputIteration(t *testing.T) {
 
 	datoms := []datalog.Datom{
 		// Ages in different years
-		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: 1},
+		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a2"), A: nameAttr, V: "Alice", Tx: 2},
-		{E: datalog.NewIdentity("a2"), A: yearAttr, V: int64(2021), Tx: 2},
-		{E: datalog.NewIdentity("a2"), A: ageAttr, V: int64(26), Tx: 2},
+		{E: datalog.NewIdentity("a2"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a2"), A: yearAttr, V: int64(2021), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a2"), A: ageAttr, V: int64(26), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a3"), A: nameAttr, V: "Bob", Tx: 3},
-		{E: datalog.NewIdentity("a3"), A: yearAttr, V: int64(2020), Tx: 3},
-		{E: datalog.NewIdentity("a3"), A: ageAttr, V: int64(30), Tx: 3},
+		{E: datalog.NewIdentity("a3"), A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a3"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a3"), A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a4"), A: nameAttr, V: "Bob", Tx: 4},
-		{E: datalog.NewIdentity("a4"), A: yearAttr, V: int64(2021), Tx: 4},
-		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: 4},
+		{E: datalog.NewIdentity("a4"), A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a4"), A: yearAttr, V: int64(2021), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 	ctx := NewContext(nil)
 
 	t.Run("direct query with RelationInput", func(t *testing.T) {
@@ -140,25 +140,25 @@ func TestRelationInputIterationParallel(t *testing.T) {
 
 	datoms := []datalog.Datom{
 		// Ages in different years
-		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: 1},
+		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a2"), A: nameAttr, V: "Alice", Tx: 2},
-		{E: datalog.NewIdentity("a2"), A: yearAttr, V: int64(2021), Tx: 2},
-		{E: datalog.NewIdentity("a2"), A: ageAttr, V: int64(26), Tx: 2},
+		{E: datalog.NewIdentity("a2"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a2"), A: yearAttr, V: int64(2021), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a2"), A: ageAttr, V: int64(26), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a3"), A: nameAttr, V: "Bob", Tx: 3},
-		{E: datalog.NewIdentity("a3"), A: yearAttr, V: int64(2020), Tx: 3},
-		{E: datalog.NewIdentity("a3"), A: ageAttr, V: int64(30), Tx: 3},
+		{E: datalog.NewIdentity("a3"), A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a3"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a3"), A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("a4"), A: nameAttr, V: "Bob", Tx: 4},
-		{E: datalog.NewIdentity("a4"), A: yearAttr, V: int64(2021), Tx: 4},
-		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: 4},
+		{E: datalog.NewIdentity("a4"), A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a4"), A: yearAttr, V: int64(2021), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a4"), A: ageAttr, V: int64(31), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 	exec.EnableParallelSubqueries(4) // Use 4 workers for testing
 	ctx := NewContext(nil)
 
@@ -254,7 +254,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 		)
 
 		// Execute sequentially
-		seqExec := NewExecutor(matcher)
+		seqExec := NewExecutor(matcher, nil)
 		seqExec.DisableParallelSubqueries()
 		seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
 		if err != nil {
@@ -262,7 +262,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 		}
 
 		// Execute in parallel
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(4)
 		parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
 		if err != nil {
@@ -328,16 +328,16 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	yearAttr := datalog.NewKeyword(":year")
 
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: 1},
-		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: 1},
+		{E: datalog.NewIdentity("a1"), A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: yearAttr, V: int64(2020), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("a1"), A: ageAttr, V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
 	ctx := NewContext(nil)
 
 	t.Run("empty input relation", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(4)
 
 		q := `[:find ?n ?y (max ?age)
@@ -365,7 +365,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	})
 
 	t.Run("single tuple", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(4)
 
 		q := `[:find ?n ?y (max ?age)
@@ -396,7 +396,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	})
 
 	t.Run("no matching results", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(4)
 
 		q := `[:find ?n ?y (max ?age)
@@ -430,7 +430,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	})
 
 	t.Run("mixed matching and non-matching", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(4)
 
 		q := `[:find ?n ?y (max ?age)
@@ -466,7 +466,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	})
 
 	t.Run("high worker count with small input", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(100) // Way more workers than tuples
 
 		q := `[:find ?n ?y (max ?age)
@@ -516,10 +516,10 @@ func TestRelationInputParallelStress(t *testing.T) {
 			for month := 1; month <= 6; month++ {
 				id := fmt.Sprintf("p%d", idCounter)
 				datoms = append(datoms,
-					datalog.Datom{E: datalog.NewIdentity(id), A: nameAttr, V: name, Tx: uint64(idCounter*4 + 1)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: yearAttr, V: int64(year), Tx: uint64(idCounter*4 + 2)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: monthAttr, V: int64(month), Tx: uint64(idCounter*4 + 3)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: ageAttr, V: int64(25 + idCounter%15), Tx: uint64(idCounter*4 + 4)},
+					datalog.Datom{E: datalog.NewIdentity(id), A: nameAttr, V: name, Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 1)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: yearAttr, V: int64(year), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 2)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: monthAttr, V: int64(month), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 3)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: ageAttr, V: int64(25 + idCounter%15), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 4)}},
 				)
 				idCounter++
 			}
@@ -530,7 +530,7 @@ func TestRelationInputParallelStress(t *testing.T) {
 	ctx := NewContext(nil)
 
 	t.Run("stress test with many iterations", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(16) // High worker count
 
 		q := `[:find ?n ?y ?m (max ?age)
@@ -613,7 +613,7 @@ func TestRelationInputParallelStress(t *testing.T) {
 		errCh := make(chan error, 10)
 		for i := 0; i < 10; i++ {
 			go func() {
-				exec := NewExecutor(matcher)
+				exec := NewExecutor(matcher, nil)
 				exec.EnableParallelSubqueries(8)
 				_, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
 				errCh <- err

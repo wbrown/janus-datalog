@@ -116,13 +116,7 @@ func (ur *UnionRelation) Project(columns []query.Symbol) (Relation, error) {
 // Errors from Close() are silently dropped (limitation of Relation interface)
 func (ur *UnionRelation) Materialize() Relation {
 	var allTuples []Tuple
-	it := ur.Iterator()
-	defer it.Close() // Errors silently dropped
-
-	for it.Next() {
-		allTuples = append(allTuples, it.Tuple())
-	}
-
+	collectTuplesInto(&allTuples, ur)
 	return NewMaterializedRelation(ur.columns, allTuples)
 }
 
@@ -181,18 +175,25 @@ func (ur *UnionRelation) Options() ExecutorOptions {
 	return ur.opts
 }
 
+// RequiresCopy returns false because UnionIterator copies tuples from
+// sources that have RequiresCopy() = true at the boundary.
+func (ur *UnionRelation) RequiresCopy() bool {
+	return false
+}
+
 // UnionIterator consumes relations from a channel and iterates with deduplication
 // KEY: Only ONE relation held in memory at a time (plus dedup map)
 // ALSO: Builds cache as a side effect for subsequent Iterator() calls
 type UnionIterator struct {
-	source       <-chan relationItem
-	currentIter  Iterator
-	seen         *TupleKeyMap // Deduplication without materialization
-	currentTuple Tuple
-	exhausted    bool
-	firstError   error    // Track first error encountered
-	cache        *[]Tuple // Pointer to cache to build
-	cacheBuilt   *bool    // Pointer to flag
+	source          <-chan relationItem
+	currentIter     Iterator
+	currentRelation Relation         // Track current relation for RequiresCopy check
+	seen            *TupleKeyMap     // Deduplication without materialization
+	currentTuple    Tuple
+	exhausted       bool
+	firstError      error    // Track first error encountered
+	cache           *[]Tuple // Pointer to cache to build
+	cacheBuilt      *bool    // Pointer to flag
 }
 
 // NewUnionIteratorWithCache creates a new union iterator that builds cache as it iterates
@@ -217,6 +218,11 @@ func (it *UnionIterator) Next() bool {
 		if it.currentIter != nil && it.currentIter.Next() {
 			tuple := it.currentIter.Tuple()
 
+			// Copy tuple if source relation reuses workspace memory
+			if it.currentRelation != nil && it.currentRelation.RequiresCopy() {
+				tuple = copyTuple(tuple)
+			}
+
 			// Check if we've seen this tuple before (deduplication)
 			key := NewTupleKeyFull(tuple)
 			if !it.seen.Exists(key) {
@@ -239,6 +245,7 @@ func (it *UnionIterator) Next() bool {
 		if it.currentIter != nil {
 			it.currentIter.Close()
 			it.currentIter = nil
+			it.currentRelation = nil
 		}
 
 		// Read next relation from channel
@@ -272,6 +279,7 @@ func (it *UnionIterator) Next() bool {
 		// Set up iterator for this relation
 		// Don't check IsEmpty() - it might consume the iterator!
 		// If the relation is empty, Next() will return false and we'll move to the next one
+		it.currentRelation = item.relation
 		it.currentIter = item.relation.Iterator()
 		// Loop back to get first tuple from this relation
 	}

@@ -18,15 +18,15 @@ func TestNotClause(t *testing.T) {
 	archivedAttr := datalog.NewKeyword(":user/archived")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Alice is archived
-		{E: alice, A: archivedAttr, V: true, Tx: 2},
+		{E: alice, A: archivedAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find non-archived users
 	// [:find ?name :where [?e :user/name ?name] (not [?e :user/archived true])]
@@ -89,13 +89,13 @@ func TestNotClauseNoMatches(t *testing.T) {
 	archivedAttr := datalog.NewKeyword(":user/archived")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// No one is archived
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find non-archived users (no one is archived)
 	q := &query.Query{
@@ -143,15 +143,15 @@ func TestNotClauseAllMatch(t *testing.T) {
 	archivedAttr := datalog.NewKeyword(":user/archived")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Everyone is archived
-		{E: alice, A: archivedAttr, V: true, Tx: 2},
-		{E: bob, A: archivedAttr, V: true, Tx: 2},
+		{E: alice, A: archivedAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: bob, A: archivedAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find non-archived users (everyone is archived)
 	q := &query.Query{
@@ -201,17 +201,17 @@ func TestNotJoinClause(t *testing.T) {
 	deletedAttr := datalog.NewKeyword(":user/deleted")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Alice is archived
-		{E: alice, A: archivedAttr, V: true, Tx: 2},
+		{E: alice, A: archivedAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 		// Bob is deleted
-		{E: bob, A: deletedAttr, V: true, Tx: 2},
+		{E: bob, A: deletedAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find users that are neither archived nor deleted
 	// [:find ?name :where [?e :user/name ?name] (not-join [?e] [?e :user/archived true] [?e :user/deleted true])]
@@ -278,16 +278,16 @@ func TestOrClause(t *testing.T) {
 	statusAttr := datalog.NewKeyword(":user/status")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: alice, A: statusAttr, V: "active", Tx: 1},
-		{E: bob, A: statusAttr, V: "pending", Tx: 1},
-		{E: charlie, A: statusAttr, V: "inactive", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: statusAttr, V: "active", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: statusAttr, V: "pending", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: statusAttr, V: "inactive", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find users with status "active" OR "pending"
 	// [:find ?name :where [?e :user/name ?name] (or [?e :user/status "active"] [?e :user/status "pending"])]
@@ -362,16 +362,16 @@ func TestOrJoinClause(t *testing.T) {
 	adminStatusAttr := datalog.NewKeyword(":admin/status")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: charlie, A: nameAttr, V: "Charlie", Tx: 1},
-		{E: alice, A: userStatusAttr, V: "active", Tx: 1},     // Alice is active user
-		{E: bob, A: adminStatusAttr, V: "enabled", Tx: 1},     // Bob is enabled admin
-		{E: charlie, A: userStatusAttr, V: "inactive", Tx: 1}, // Charlie is inactive
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: charlie, A: nameAttr, V: "Charlie", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: userStatusAttr, V: "active", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},     // Alice is active user
+		{E: bob, A: adminStatusAttr, V: "enabled", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},     // Bob is enabled admin
+		{E: charlie, A: userStatusAttr, V: "inactive", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Charlie is inactive
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find users that are active users OR enabled admins
 	// [:find ?name :where [?e :user/name ?name] (or-join [?e] [?e :user/status "active"] [?e :admin/status "enabled"])]
@@ -444,7 +444,7 @@ func TestOrJoinClause(t *testing.T) {
 func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 	// Directly test the query executor to isolate the issue
 	matcher := NewMemoryPatternMatcher(nil)
-	queryExecutor := NewExecutor(matcher)
+	queryExecutor := NewExecutor(matcher, nil)
 
 	// Build the OR clause query directly
 	orClause := &query.OrClause{
@@ -490,7 +490,7 @@ func TestOrFallbackWithGroundExpression(t *testing.T) {
 	// Test OR with ground expression as fallback
 	// When pattern matches nothing, ground should provide default value
 	matcher := NewMemoryPatternMatcher(nil) // Empty database
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: (or [?e :nonexistent ?x] [(ground 0) ?x])
 	// Since no data exists, should fall back to ground(0)
@@ -545,11 +545,11 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: (or [?e :user/name ?x] [(ground "fallback") ?x])
 	// First branch should match, so we should get "Alice", not "fallback"
@@ -602,7 +602,7 @@ func TestOrFallbackMultipleBranches(t *testing.T) {
 	// Test OR with multiple fallback branches
 	// (or [nonexistent1] [nonexistent2] [(ground "default")])
 	matcher := NewMemoryPatternMatcher(nil) // Empty database
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	nonexistent1 := datalog.NewKeyword(":nonexistent1")
 	nonexistent2 := datalog.NewKeyword(":nonexistent2")
@@ -667,11 +667,11 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 	ageAttr := datalog.NewKeyword(":user/age")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: ageAttr, V: int64(30), Tx: 1},
+		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: (or [?e :nonexistent ?x] [(+ 1 1) ?x])
 	// Pattern won't match, so should get 2 from arithmetic
@@ -734,14 +734,14 @@ func TestOrFallbackPatternOnlyUnionSemantics(t *testing.T) {
 	premiumAttr := datalog.NewKeyword(":user/premium")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
-		{E: bob, A: nameAttr, V: "Bob", Tx: 1},
-		{E: alice, A: activeAttr, V: true, Tx: 1}, // Alice is active
-		{E: bob, A: premiumAttr, V: true, Tx: 1},  // Bob is premium
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: activeAttr, V: true, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Alice is active
+		{E: bob, A: premiumAttr, V: true, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},  // Bob is premium
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Pattern-only OR should return BOTH Alice and Bob (union semantics)
 	q := &query.Query{
@@ -792,11 +792,11 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 	alice := datalog.NewIdentity("user:alice")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Alice", Tx: 1},
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: (or [?e :user/name ?x] [(ground "fallback") ?x])
 	// Pattern should match, returning "Alice"
@@ -850,12 +850,12 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 	completeStatus := datalog.NewKeyword(":status/complete")
 
 	datoms := []datalog.Datom{
-		{E: alice, A: nameAttr, V: "Task Alice", Tx: 1},
-		{E: alice, A: statusAttr, V: completeStatus, Tx: 1},
+		{E: alice, A: nameAttr, V: "Task Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: alice, A: statusAttr, V: completeStatus, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	queryExecutor := NewExecutor(matcher)
+	queryExecutor := NewExecutor(matcher, nil)
 
 	// Build the OR clause with SubqueryPattern and ground fallback
 	// (or [(q [:find (count ?t) :where [?t :task/status :status/complete]] $) [[?count]]]
@@ -935,18 +935,18 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 
 	datoms := []datalog.Datom{
 		// Two scenarios
-		{E: scenario1, A: scenarioAttr, V: "Scenario 1", Tx: 1},
-		{E: scenario2, A: scenarioAttr, V: "Scenario 2", Tx: 1},
+		{E: scenario1, A: scenarioAttr, V: "Scenario 1", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: scenario2, A: scenarioAttr, V: "Scenario 2", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Tasks for scenario1 (has completed tasks)
-		{E: task1, A: taskScenarioAttr, V: scenario1, Tx: 1},
-		{E: task1, A: taskStatusAttr, V: completeStatus, Tx: 1},
-		{E: task2, A: taskScenarioAttr, V: scenario1, Tx: 1},
-		{E: task2, A: taskStatusAttr, V: completeStatus, Tx: 1},
+		{E: task1, A: taskScenarioAttr, V: scenario1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: task1, A: taskStatusAttr, V: completeStatus, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: task2, A: taskScenarioAttr, V: scenario1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: task2, A: taskStatusAttr, V: completeStatus, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// No tasks for scenario2 (should fall back to 0)
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	queryExecutor := NewExecutor(matcher)
+	queryExecutor := NewExecutor(matcher, nil)
 
 	// Create annotation handler to debug OR fallback behavior
 	var events []annotations.Event
@@ -1070,10 +1070,10 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 	countAttr := datalog.NewKeyword(":task/count")
 
 	datoms := []datalog.Datom{
-		{E: scenario1, A: nameAttr, V: "Scenario One", Tx: 1},
-		{E: scenario2, A: nameAttr, V: "Scenario Two", Tx: 1},
-		{E: scenario1, A: taskAttr, V: task1, Tx: 1},
-		{E: task1, A: countAttr, V: int64(5), Tx: 1},
+		{E: scenario1, A: nameAttr, V: "Scenario One", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: scenario2, A: nameAttr, V: "Scenario Two", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: scenario1, A: taskAttr, V: task1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: task1, A: countAttr, V: int64(5), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Note: scenario2 has NO tasks
 	}
 
@@ -1085,7 +1085,7 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 		events = append(events, event)
 	}
 	ctx := NewContext(handler)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query:
 	// [:find ?scenario ?name ?taskCount
@@ -1199,14 +1199,14 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 	countAttr := datalog.NewKeyword(":task/count")
 
 	datoms := []datalog.Datom{
-		{E: scenario1, A: nameAttr, V: "Scenario One", Tx: 1},
-		{E: scenario2, A: nameAttr, V: "Scenario Two", Tx: 1},
-		{E: scenario1, A: taskAttr, V: task1, Tx: 1},
-		{E: task1, A: countAttr, V: int64(5), Tx: 1},
+		{E: scenario1, A: nameAttr, V: "Scenario One", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: scenario2, A: nameAttr, V: "Scenario Two", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: scenario1, A: taskAttr, V: task1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: task1, A: countAttr, V: int64(5), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Same as TestOrFallbackWithPatternAndTupleGround but with SCALAR ground
 	orClause := &query.OrClause{
@@ -1296,7 +1296,7 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 	// Test OR with SubqueryPattern that returns empty, falling back to ground
 	matcher := NewMemoryPatternMatcher(nil) // Empty database
-	queryExecutor := NewExecutor(matcher)
+	queryExecutor := NewExecutor(matcher, nil)
 
 	statusAttr := datalog.NewKeyword(":task/status")
 	completeStatus := datalog.NewKeyword(":status/complete")

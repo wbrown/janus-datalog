@@ -16,7 +16,7 @@ func validateDatomWithConstraintsHelper(
 	constraints []executor.StorageConstraint,
 ) bool {
 	// Check transaction validity
-	if txID > 0 && datom.Tx > txID {
+	if txID > 0 && datom.Tx.Lamport > txID {
 		return false
 	}
 
@@ -36,7 +36,7 @@ func validateDatomInline(
 	constraints []executor.StorageConstraint,
 ) bool {
 	// Check transaction validity
-	if txID > 0 && datom.Tx > txID {
+	if txID > 0 && datom.Tx.Lamport > txID {
 		return false
 	}
 
@@ -70,7 +70,7 @@ func BenchmarkIteratorValidation(b *testing.B) {
 		E:  alice,
 		A:  nameAttr,
 		V:  "Alice",
-		Tx: 100,
+		Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1},
 	}
 
 	scenarios := []struct {
@@ -127,7 +127,7 @@ func BenchmarkIteratorLoop(b *testing.B) {
 			E:  datalog.NewIdentity("user:alice"),
 			A:  datalog.NewKeyword(":user/name"),
 			V:  "Alice",
-			Tx: uint64(i),
+			Tx: datalog.ElementID{Lamport: uint64(i), ReplicaID: 1},
 		}
 	}
 
@@ -143,7 +143,7 @@ func BenchmarkIteratorLoop(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			for _, datom := range datoms {
 				// Inline validation (current approach)
-				if 500 > 0 && datom.Tx > 500 {
+				if 500 > 0 && datom.Tx.Lamport > 500 {
 					continue
 				}
 

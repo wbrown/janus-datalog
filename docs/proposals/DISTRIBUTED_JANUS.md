@@ -1,4 +1,4 @@
-# Distributed Janus Datalog
+laud
 
 **Status:** Proposal
 **Author:** wbrown

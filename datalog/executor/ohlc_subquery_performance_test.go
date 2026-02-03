@@ -22,7 +22,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 		E:  symbolID,
 		A:  datalog.NewKeyword(":symbol/ticker"),
 		V:  "TEST",
-		Tx: 1,
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	// Create price bars for 5 days, 10 bars per day
@@ -41,7 +41,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/symbol"),
 				V:  symbolID,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 
 			// Add time
@@ -49,7 +49,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/time"),
 				V:  barTime,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 
 			// Add minute of day (570 = 9:30 AM)
@@ -57,7 +57,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/minute-of-day"),
 				V:  int64(570 + minute),
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 
 			// Add OHLC data
@@ -65,19 +65,19 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/open"),
 				V:  100.0 + float64(day) + float64(minute)*0.1,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/high"),
 				V:  102.0 + float64(day) + float64(minute)*0.2,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/low"),
 				V:  98.0 + float64(day) - float64(minute)*0.1,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 
 			barID++
@@ -86,7 +86,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 
 	// Create memory matcher with our test data
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Test 1: Single subquery (just get the open price for each day)
 	t.Run("SingleSubquery", func(t *testing.T) {
@@ -193,7 +193,7 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 		E:  symbolID,
 		A:  datalog.NewKeyword(":symbol/ticker"),
 		V:  "BENCH",
-		Tx: 1,
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	// Create 20 days of data, 50 bars per day = 1000 bars
@@ -209,37 +209,37 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/symbol"),
 				V:  symbolID,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/time"),
 				V:  barTime,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/minute-of-day"),
 				V:  int64(570 + minute),
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/open"),
 				V:  100.0 + float64(day) + float64(minute)*0.1,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/high"),
 				V:  102.0 + float64(day) + float64(minute)*0.2,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/low"),
 				V:  98.0 + float64(day) - float64(minute)*0.1,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 
 			barID++
@@ -247,7 +247,7 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Benchmark single subquery
 	b.Run("SingleAggregation", func(b *testing.B) {
@@ -347,10 +347,10 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 			for month := 1; month <= 12; month++ {
 				id := fmt.Sprintf("p%d", idCounter)
 				datoms = append(datoms,
-					datalog.Datom{E: datalog.NewIdentity(id), A: nameAttr, V: name, Tx: uint64(idCounter*4 + 1)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: yearAttr, V: int64(year), Tx: uint64(idCounter*4 + 2)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: monthAttr, V: int64(month), Tx: uint64(idCounter*4 + 3)},
-					datalog.Datom{E: datalog.NewIdentity(id), A: ageAttr, V: int64(25 + idCounter%15), Tx: uint64(idCounter*4 + 4)},
+					datalog.Datom{E: datalog.NewIdentity(id), A: nameAttr, V: name, Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 1)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: yearAttr, V: int64(year), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 2)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: monthAttr, V: int64(month), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 3)}},
+					datalog.Datom{E: datalog.NewIdentity(id), A: ageAttr, V: int64(25 + idCounter%15), Tx: datalog.ElementID{Lamport: uint64(idCounter*4 + 4)}},
 				)
 				idCounter++
 			}
@@ -381,7 +381,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
 	b.Run("Sequential", func(b *testing.B) {
-		seqExec := NewExecutor(matcher)
+		seqExec := NewExecutor(matcher, nil)
 		seqExec.DisableParallelSubqueries()
 
 		b.ResetTimer()
@@ -394,7 +394,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-2Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(2)
 
 		b.ResetTimer()
@@ -407,7 +407,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-4Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(4)
 
 		b.ResetTimer()
@@ -420,7 +420,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-8Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(8)
 
 		b.ResetTimer()
@@ -433,7 +433,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-16Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(16)
 
 		b.ResetTimer()
@@ -446,7 +446,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-32Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(32)
 
 		b.ResetTimer()

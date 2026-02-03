@@ -12,10 +12,10 @@ import (
 func TestIndexedMatcher_IndexBuilding(t *testing.T) {
 	// Create test datoms
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("age"), V: int64(30), Tx: 1},
-		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword("name"), V: "Bob", Tx: 1},
-		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword("age"), V: int64(25), Tx: 1},
+		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("age"), V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword("name"), V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword("age"), V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewIndexedMemoryMatcher(datoms)
@@ -63,7 +63,7 @@ func TestIndexedMatcher_IndexBuilding(t *testing.T) {
 // TestIndexedMatcher_StrategySelection verifies correct index selection
 func TestIndexedMatcher_StrategySelection(t *testing.T) {
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: 1},
+		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewIndexedMemoryMatcher(datoms)
@@ -142,14 +142,14 @@ func TestIndexedMatcher_StrategySelection(t *testing.T) {
 func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 	// Create diverse test datoms
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword("age"), V: int64(30), Tx: 1},
-		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword("active"), V: true, Tx: 1},
-		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword("name"), V: "Bob", Tx: 1},
-		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword("age"), V: int64(25), Tx: 1},
-		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword("active"), V: false, Tx: 1},
-		{E: datalog.NewIdentity("person3"), A: datalog.NewKeyword("name"), V: "Charlie", Tx: 2},
-		{E: datalog.NewIdentity("person3"), A: datalog.NewKeyword("age"), V: int64(35), Tx: 2},
+		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword("age"), V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("person1"), A: datalog.NewKeyword("active"), V: true, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword("name"), V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword("age"), V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("person2"), A: datalog.NewKeyword("active"), V: false, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("person3"), A: datalog.NewKeyword("name"), V: "Charlie", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("person3"), A: datalog.NewKeyword("age"), V: int64(35), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 	}
 
 	linear := NewMemoryPatternMatcher(datoms)
@@ -292,7 +292,7 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 
 	t.Run("Single datom", func(t *testing.T) {
 		datoms := []datalog.Datom{
-			{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: 1},
+			{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		}
 
 		matcher := NewIndexedMemoryMatcher(datoms)
@@ -325,9 +325,9 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 		// We can't control hash function, but we can test that different values
 		// are correctly distinguished even if they hash to the same value
 		datoms := []datalog.Datom{
-			{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("value"), V: "test1", Tx: 1},
-			{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword("value"), V: "test2", Tx: 1},
-			{E: datalog.NewIdentity("e3"), A: datalog.NewKeyword("value"), V: "test3", Tx: 1},
+			{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("value"), V: "test1", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword("value"), V: "test2", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			{E: datalog.NewIdentity("e3"), A: datalog.NewKeyword("value"), V: "test3", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		}
 
 		matcher := NewIndexedMemoryMatcher(datoms)
@@ -376,10 +376,10 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 // TestIndexedMatcher_WithBindings tests pattern matching with binding relations
 func TestIndexedMatcher_WithBindings(t *testing.T) {
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("p1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("p1"), A: datalog.NewKeyword("age"), V: int64(30), Tx: 1},
-		{E: datalog.NewIdentity("p2"), A: datalog.NewKeyword("name"), V: "Bob", Tx: 1},
-		{E: datalog.NewIdentity("p2"), A: datalog.NewKeyword("age"), V: int64(25), Tx: 1},
+		{E: datalog.NewIdentity("p1"), A: datalog.NewKeyword("name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("p1"), A: datalog.NewKeyword("age"), V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("p2"), A: datalog.NewKeyword("name"), V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("p2"), A: datalog.NewKeyword("age"), V: int64(25), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewIndexedMemoryMatcher(datoms)
@@ -434,9 +434,9 @@ func TestIndexedMatcher_WithBindings(t *testing.T) {
 func TestIndexedMatcher_WithConstraints(t *testing.T) {
 	now := time.Now()
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("timestamp"), V: now, Tx: 1},
-		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword("timestamp"), V: now.Add(-time.Hour), Tx: 1},
-		{E: datalog.NewIdentity("e3"), A: datalog.NewKeyword("timestamp"), V: now.Add(-2 * time.Hour), Tx: 1},
+		{E: datalog.NewIdentity("e1"), A: datalog.NewKeyword("timestamp"), V: now, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("e2"), A: datalog.NewKeyword("timestamp"), V: now.Add(-time.Hour), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("e3"), A: datalog.NewKeyword("timestamp"), V: now.Add(-2 * time.Hour), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
 	matcher := NewIndexedMemoryMatcher(datoms)

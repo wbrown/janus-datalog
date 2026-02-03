@@ -13,7 +13,7 @@ func BenchmarkTupleBuilding(b *testing.B) {
 		E:  datalog.NewIdentity("entity1"),
 		A:  datalog.NewKeyword(":test/attr"),
 		V:  "value",
-		Tx: 12345,
+		Tx: datalog.ElementID{Lamport: 12345, ReplicaID: 1},
 	}
 
 	// Create a pattern with all variables
@@ -160,7 +160,7 @@ func BenchmarkTupleBuildingScenarios(b *testing.B) {
 		E:  datalog.NewIdentity("entity1"),
 		A:  datalog.NewKeyword(":test/attr"),
 		V:  "value",
-		Tx: 12345,
+		Tx: datalog.ElementID{Lamport: 12345, ReplicaID: 1},
 	}
 
 	for _, scenario := range scenarios {

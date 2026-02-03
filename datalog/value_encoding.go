@@ -20,6 +20,7 @@ const (
 	TypeReference
 	TypeKeyword
 	TypeSymbol
+	TypeElementID // 0x09 - CRDT ElementID for transaction ordering
 )
 
 // Type returns the type of a value
@@ -52,6 +53,8 @@ func Type(v Value) ValueType {
 		return TypeKeyword
 	case Symbol:
 		return TypeSymbol
+	case ElementID:
+		return TypeElementID
 	default:
 		panic(fmt.Sprintf("unknown value type: %T", val))
 	}
@@ -102,6 +105,9 @@ func ValueBytes(v Value) []byte {
 		return []byte(val.String())
 	case Symbol:
 		return []byte(val.String())
+	case ElementID:
+		// Uses natural order encoding (not bitwise NOT like key encoding)
+		return val.Bytes()
 	default:
 		panic(fmt.Sprintf("cannot encode value type: %T", v))
 	}
@@ -147,6 +153,11 @@ func ValueFromBytes(vType ValueType, data []byte) (Value, error) {
 		return NewKeyword(string(data)), nil
 	case TypeSymbol:
 		return NewSymbol(string(data)), nil
+	case TypeElementID:
+		if len(data) != ElementIDSize {
+			return nil, fmt.Errorf("ElementID value must be %d bytes, got %d", ElementIDSize, len(data))
+		}
+		return ElementIDFromBytes(data), nil
 	default:
 		return nil, fmt.Errorf("unknown value type: %v", vType)
 	}

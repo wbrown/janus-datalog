@@ -18,49 +18,49 @@ func TestParallelDecorrelationColumnOrder(t *testing.T) {
 			E:  datalog.NewIdentity("sym1"),
 			A:  datalog.NewKeyword(":symbol/ticker"),
 			V:  "TEST",
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("bar1"),
 			A:  datalog.NewKeyword(":price/symbol"),
 			V:  datalog.NewIdentity("sym1"),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("bar1"),
 			A:  datalog.NewKeyword(":price/time"),
 			V:  time.Date(2025, 1, 10, 9, 30, 0, 0, time.UTC),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("bar1"),
 			A:  datalog.NewKeyword(":price/open"),
 			V:  float64(100.00),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("bar1"),
 			A:  datalog.NewKeyword(":price/high"),
 			V:  float64(101.50),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("bar1"),
 			A:  datalog.NewKeyword(":price/low"),
 			V:  float64(99.50),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("bar1"),
 			A:  datalog.NewKeyword(":price/close"),
 			V:  float64(101.00),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 		{
 			E:  datalog.NewIdentity("bar1"),
 			A:  datalog.NewKeyword(":price/volume"),
 			V:  int64(1000000),
-			Tx: 1,
+			Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 		},
 	}
 
@@ -103,7 +103,7 @@ func TestParallelDecorrelationColumnOrder(t *testing.T) {
 	// Test with PARALLEL decorrelation
 	t.Run("ParallelDecorrelation", func(t *testing.T) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: true, // PARALLEL
 		})
@@ -178,7 +178,7 @@ func TestParallelDecorrelationColumnOrder(t *testing.T) {
 	// Test with SEQUENTIAL decorrelation (should work)
 	t.Run("SequentialDecorrelation", func(t *testing.T) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: false, // SEQUENTIAL
 		})

@@ -12,7 +12,8 @@ import (
 // pattern) causes a nil pointer panic in relationToSlice.
 //
 // The query:
-//   [:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]
+//
+//	[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]
 //
 // The scalar input ?e only appears in the get-some expression, not in any
 // data pattern. This should work: get-some looks up attributes on the input

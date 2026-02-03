@@ -136,7 +136,8 @@ func (s *simpleBatchScanner) calculateScanRange(bindingSet map[string]executor.T
 	if c, ok := s.pattern.GetA().(query.Constant); ok {
 		if kw, ok := c.Value.(datalog.Keyword); ok {
 			// Convert keyword to 32-byte storage format
-			attr := NewAttribute(kw.String())
+			var attr Attribute
+			copy(attr[:], kw.String())
 			constA = attr[:]
 		}
 	}
@@ -209,8 +210,8 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 		} else if s.position == 1 {
 			// Attribute bound (A varies)
 			if kw, ok := value.(datalog.Keyword); ok {
-				// Convert keyword to 32-byte storage format
-				attr := NewAttribute(kw.String())
+				var attr Attribute
+				copy(attr[:], kw.String())
 				parts := [][]byte{attr[:]}
 				return encoder.EncodePrefix(s.index, parts...)
 			}
@@ -225,8 +226,8 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 			hash := v.Hash()
 			valueBytes = hash[:]
 		case datalog.Keyword:
-			// Keywords in value position
-			attr := NewAttribute(v.String())
+			var attr Attribute
+			copy(attr[:], v.String())
 			valueBytes = attr[:]
 		case string:
 			valueBytes = []byte(v)
@@ -265,7 +266,7 @@ func (s *simpleBatchScanner) scanAndFilter(iter Iterator, bindingSet map[string]
 		datomCount++
 
 		// Check transaction validity
-		if s.matcher.txID > 0 && datom.Tx > s.matcher.txID {
+		if s.matcher.txID > 0 && datom.Tx.Lamport > s.matcher.txID {
 			continue
 		}
 

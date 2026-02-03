@@ -937,9 +937,9 @@ func TestSetSemantics_StoragePattern(t *testing.T) {
 		attr := datalog.NewKeyword(":test/value")
 
 		datoms := []datalog.Datom{
-			{E: e1, A: attr, V: "shared", Tx: 1},
-			{E: e2, A: attr, V: "shared", Tx: 2}, // Same value
-			{E: e3, A: attr, V: "unique", Tx: 3},
+			{E: e1, A: attr, V: "shared", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			{E: e2, A: attr, V: "shared", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}}, // Same value
+			{E: e3, A: attr, V: "unique", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 		}
 
 		// Convert to tuples as pattern matcher would

@@ -23,8 +23,9 @@ const (
 type Cardinality string
 
 const (
-	CardinalityOne  Cardinality = "db.cardinality/one"
-	CardinalityMany Cardinality = "db.cardinality/many"
+	CardinalityOne    Cardinality = "db.cardinality/one"
+	CardinalityMany   Cardinality = "db.cardinality/many"
+	CardinalityVector Cardinality = "db.cardinality/vector" // Ordered collection (RGA)
 )
 
 // Unique represents uniqueness constraints on attribute values
@@ -36,13 +37,104 @@ const (
 	UniqueIdentity Unique = "db.unique/identity" // Upsert behavior on conflict
 )
 
+// Ordering determines how elements are arranged in a collection.
+// Currently derived from Cardinality; will become primary in future toolkit.
+type Ordering int
+
+const (
+	OrderingNone Ordering = iota // Unordered (registers, sets)
+	OrderingRGA                  // Chained positions via AfterRef (Vector)
+	// Future: OrderingLSeq (independent positions), OrderingTimestamped
+)
+
+// Conflict determines how concurrent writes are resolved.
+// Currently derived from Cardinality; will become primary in future toolkit.
+type Conflict int
+
+const (
+	ConflictLWW     Conflict = iota // Last Writer Wins (highest ElementID)
+	ConflictAddWins                 // Add beats concurrent remove at same Lamport
+	// Future: ConflictRemoveWins, ConflictMV
+)
+
 // AttributeDefinition defines schema for a single attribute
 type AttributeDefinition struct {
-	Ident       datalog.Keyword // The attribute keyword (e.g., :person/name), interned
-	ValueType   ValueType       // Required for type validation
-	Cardinality Cardinality     // Required for Pull API (default: one)
-	Unique      Unique          // Optional uniqueness constraint
-	Doc         string          // Optional documentation
+	Ident          datalog.Keyword // The attribute keyword (e.g., :person/name), interned
+	ValueType      ValueType       // Required for type validation
+	Cardinality    Cardinality     // Required for Pull API (default: one)
+	Unique         Unique          // Optional uniqueness constraint (db.unique/identity, db.unique/value)
+	UniqueElements bool            // If true, collection has set semantics (no duplicate values)
+	Doc            string          // Optional documentation
+}
+
+// GetOrdering returns the ordering strategy for this attribute.
+// Currently derived from Cardinality.
+func (a *AttributeDefinition) GetOrdering() Ordering {
+	if a == nil {
+		return OrderingNone
+	}
+	switch a.Cardinality {
+	case CardinalityVector:
+		return OrderingRGA
+	default:
+		return OrderingNone
+	}
+}
+
+// GetConflict returns the conflict resolution strategy for this attribute.
+// Currently derived from Cardinality.
+func (a *AttributeDefinition) GetConflict() Conflict {
+	if a == nil {
+		return ConflictLWW
+	}
+	switch a.Cardinality {
+	case CardinalityOne:
+		return ConflictLWW
+	default:
+		return ConflictAddWins
+	}
+}
+
+// IsUniqueElements returns true if this attribute enforces element uniqueness.
+// True for CardinalityMany (sets are inherently unique), and for Vector with UniqueElements flag.
+func (a *AttributeDefinition) IsUniqueElements() bool {
+	if a == nil {
+		return false
+	}
+	return a.Cardinality == CardinalityMany || a.UniqueElements
+}
+
+// IsOrdered returns true if this attribute maintains element ordering.
+func (a *AttributeDefinition) IsOrdered() bool {
+	if a == nil {
+		return false
+	}
+	return a.Cardinality == CardinalityVector
+}
+
+// IsSet returns true if this attribute has set semantics (unordered, unique).
+func (a *AttributeDefinition) IsSet() bool {
+	if a == nil {
+		return false
+	}
+	return a.Cardinality == CardinalityMany
+}
+
+// IsRegister returns true if this attribute has register semantics (single value, LWW).
+func (a *AttributeDefinition) IsRegister() bool {
+	if a == nil {
+		return false
+	}
+	return a.Cardinality == CardinalityOne
+}
+
+// IsOrderedSet returns true if this attribute has ordered set semantics (ordered + unique).
+// This is Vector with UniqueElements enabled.
+func (a *AttributeDefinition) IsOrderedSet() bool {
+	if a == nil {
+		return false
+	}
+	return a.Cardinality == CardinalityVector && a.UniqueElements
 }
 
 // Schema holds all attribute definitions
@@ -95,6 +187,21 @@ func (s *Schema) IsRef(attr datalog.Keyword) bool {
 func (s *Schema) IsMany(attr datalog.Keyword) bool {
 	def := s.GetAttribute(attr)
 	return def != nil && def.Cardinality == CardinalityMany
+}
+
+// IsVector returns true if the attribute has cardinality vector (ordered collection)
+func (s *Schema) IsVector(attr datalog.Keyword) bool {
+	def := s.GetAttribute(attr)
+	return def != nil && def.Cardinality == CardinalityVector
+}
+
+// Cardinality returns the cardinality of an attribute, defaulting to CardinalityOne
+func (s *Schema) Cardinality(attr datalog.Keyword) Cardinality {
+	def := s.GetAttribute(attr)
+	if def == nil {
+		return CardinalityOne
+	}
+	return def.Cardinality
 }
 
 // Attributes returns all attribute definitions in the schema

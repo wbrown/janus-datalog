@@ -11,6 +11,7 @@ import (
 // Executor is the main query execution engine
 type Executor struct {
 	matcher                  PatternMatcher
+	entityResolver           EntityResolver
 	planner                  planner.QueryPlanner
 	options                  ExecutorOptions
 	enableParallelSubqueries bool
@@ -18,7 +19,7 @@ type Executor struct {
 }
 
 // NewExecutor creates a new query executor with default options
-func NewExecutor(matcher PatternMatcher) *Executor {
+func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 	defaultOpts := planner.PlannerOptions{
 		EnableDynamicReordering:     true,
 		EnablePredicatePushdown:     true,
@@ -37,11 +38,11 @@ func NewExecutor(matcher PatternMatcher) *Executor {
 		EnableStreamingAggregation:  true,
 		EnableDebugLogging:          false,
 	}
-	return NewExecutorWithOptions(matcher, defaultOpts)
+	return NewExecutorWithOptions(matcher, resolver, defaultOpts)
 }
 
 // NewExecutorWithOptions creates a new query executor with custom planner options
-func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions) *Executor {
+func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opts planner.PlannerOptions) *Executor {
 	// Convert to executor options
 	execOpts := convertToExecutorOptions(opts)
 
@@ -55,6 +56,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions)
 
 	return &Executor{
 		matcher:                  matcher,
+		entityResolver:           resolver,
 		planner:                  queryPlanner,
 		options:                  execOpts,
 		enableParallelSubqueries: opts.EnableParallelSubqueries,
@@ -117,6 +119,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	// Create a temporary executor with the wrapped matcher
 	executor := &Executor{
 		matcher:                  matcher,
+		entityResolver:           e.entityResolver,
 		planner:                  e.planner,
 		options:                  e.options,
 		enableParallelSubqueries: e.enableParallelSubqueries,
@@ -196,8 +199,12 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		return e.executeRealizedWithRelationInputIteration(ctx, plan, inputRelations)
 	}
 
-	// Create QueryExecutor
-	queryExecutor := newQueryExecutor(e.matcher, e.options)
+	// Create QueryExecutor with collector from context for annotations
+	opts := e.options
+	if collector := ctx.Collector(); collector != nil {
+		opts.Collector = collector
+	}
+	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, opts)
 
 	var currentGroups []Relation
 
@@ -343,11 +350,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 				// Materialize first to avoid iterator consumption issues
 				// Collect all tuples to create a reusable relation
 				var tuples []Tuple
-				it := group.Iterator()
-				for it.Next() {
-					tuples = append(tuples, it.Tuple())
-				}
-				it.Close()
+				collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
 				materialized := NewMaterializedRelationWithOptions(group.Columns(), tuples, opts)
@@ -487,11 +490,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	columns := allResults[0].Columns()
 
 	for _, rel := range allResults {
-		it := rel.Iterator()
-		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
-		}
-		it.Close()
+		collectTuplesInto(&allTuples, rel)
 	}
 
 	return NewMaterializedRelation(columns, allTuples), nil
@@ -513,11 +512,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 
 	// Collect all tuples first (needed for worker pool)
 	var tuples []Tuple
-	it := iterationRelation.Iterator()
-	for it.Next() {
-		tuples = append(tuples, it.Tuple())
-	}
-	it.Close()
+	collectTuplesInto(&tuples, iterationRelation)
 
 	if len(tuples) == 0 {
 		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
@@ -588,11 +583,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	columns := allResults[0].Columns()
 
 	for _, rel := range allResults {
-		it := rel.Iterator()
-		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
-		}
-		it.Close()
+		collectTuplesInto(&allTuples, rel)
 	}
 
 	return NewMaterializedRelation(columns, allTuples), nil
@@ -607,7 +598,7 @@ func (e *Executor) executeRealizedNonIterating(
 	relationInput query.RelationInput,
 ) (Relation, error) {
 	// Create QueryExecutor
-	queryExecutor := newQueryExecutor(e.matcher, e.options)
+	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, e.options)
 
 	var currentGroups []Relation
 
@@ -651,11 +642,7 @@ func (e *Executor) executeRealizedNonIterating(
 			for i, group := range groups {
 				// Materialize first to avoid iterator consumption issues
 				var tuples []Tuple
-				it := group.Iterator()
-				for it.Next() {
-					tuples = append(tuples, it.Tuple())
-				}
-				it.Close()
+				collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
 				materialized := NewMaterializedRelationWithOptions(group.Columns(), tuples, opts)

@@ -29,6 +29,7 @@ type QueryExecutor interface {
 // DefaultQueryExecutor implements QueryExecutor using the PatternMatcher interface
 type DefaultQueryExecutor struct {
 	matcher          PatternMatcher
+	entityResolver   EntityResolver
 	options          ExecutorOptions
 	constantBindings map[query.Symbol]interface{} // Scalar inputs resolved as constants (not relation columns)
 }
@@ -40,10 +41,11 @@ type DefaultQueryExecutor struct {
 // of this function in tests is for unit testing internal executor methods like
 // executePattern or executeExpression. End-to-end and integration tests must use
 // the public API to ensure the planner is exercised.
-func newQueryExecutor(matcher PatternMatcher, options ExecutorOptions) *DefaultQueryExecutor {
+func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options ExecutorOptions) *DefaultQueryExecutor {
 	return &DefaultQueryExecutor{
-		matcher: matcher,
-		options: options,
+		matcher:        matcher,
+		entityResolver: resolver,
+		options:        options,
 	}
 }
 
@@ -784,11 +786,7 @@ func combineSubqueryResultsSimple(results []Relation) Relation {
 	var allTuples []Tuple
 
 	for _, result := range results {
-		it := result.Iterator()
-		defer it.Close()
-		for it.Next() {
-			allTuples = append(allTuples, it.Tuple())
-		}
+		collectTuplesInto(&allTuples, result)
 	}
 
 	return NewMaterializedRelation(columns, allTuples)
@@ -1059,7 +1057,7 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 	}
 
 	// Create pull executor
-	puller := NewPullExecutor(e.matcher)
+	puller := NewPullExecutor(e.matcher, e.entityResolver)
 
 	// Process tuples and execute pulls
 	var resultTuples []Tuple
@@ -1333,11 +1331,7 @@ func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
 
 	// Materialize branch result (usually small, like a single ground value)
 	var branchTuples []Tuple
-	branchIter := branch.Iterator()
-	for branchIter.Next() {
-		branchTuples = append(branchTuples, branchIter.Tuple())
-	}
-	branchIter.Close()
+	collectTuplesInto(&branchTuples, branch)
 
 	// Cross join: for each outer tuple, combine with each branch tuple
 	var resultTuples []Tuple

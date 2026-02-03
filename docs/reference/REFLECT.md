@@ -51,12 +51,44 @@ The namespace is derived from the struct name using kebab-case:
 
 Cardinality is determined by schema (authoritative) or Go type (fallback):
 
-| Go Type | Inferred Cardinality |
-|---------|---------------------|
-| `string`, `int64`, etc. | one |
-| `*T` (pointer) | one (optional) |
-| `[]T` (slice) | many |
-| `[]*T` (slice of pointers) | many |
+| Go Type | Inferred Cardinality | UniqueElements |
+|---------|---------------------|----------------|
+| `string`, `int64`, etc. | one | - |
+| `*T` (pointer) | one (optional) | - |
+| `[]T` (slice) | many | false |
+| `[]*T` (slice of pointers) | many | false |
+| `datalog.OrderedSet[T]` | vector | true |
+
+**Note**: Regular slices infer as `CardinalityMany`. To use vectors without unique elements, build the schema manually with `.Vector()` (see [Using Cardinality-Vector](#using-cardinality-vector) below).
+
+### OrderedSet Type
+
+Use `datalog.OrderedSet[T]` for ordered collections with unique elements:
+
+```go
+type Character struct {
+    ID    datalog.Identity           `datalog:"-,id"`
+    Name  string                     `datalog:"name"`
+    Prefs datalog.OrderedSet[string] `datalog:"prefs"`  // Ordered, unique
+}
+
+// Creating an OrderedSet
+prefs := datalog.NewOrderedSet[string]()
+prefs.Append("dark-mode")
+prefs.Append("compact")
+prefs.Append("dark-mode")  // No-op: duplicate
+
+char := Character{Name: "Alice", Prefs: *prefs}
+// Prefs contains: ["dark-mode", "compact"]
+
+// Working with OrderedSet
+prefs.Contains("dark-mode")  // true
+prefs.Len()                  // 2
+prefs.Slice()                // []string{"dark-mode", "compact"}
+prefs.Remove("compact")      // Removes element
+```
+
+Schema inference automatically creates `Vector().UniqueElements(true)` for OrderedSet fields.
 
 ## Generating Schema
 
@@ -184,6 +216,64 @@ tx2.SaveStruct(&clear)
 tx2.Commit()
 // tags now empty
 ```
+
+### Using Cardinality-Vector
+
+Cardinality-vector provides **ordered collections** where element position matters. Unlike cardinality-many (unordered sets), vectors preserve insertion order and allow duplicates.
+
+**Important**: `SchemaFromStruct()` cannot infer vector cardinality. You must build the schema manually:
+
+```go
+type Character struct {
+    ID     datalog.Identity `datalog:"-,id"`
+    Name   string           `datalog:"name"`
+    Skills []string         `datalog:"skills"`  // We want this to be a vector
+}
+
+// SchemaFromStruct would infer cardinality-many for Skills
+// Instead, build schema manually:
+s, _ := schema.NewBuilder().
+    Attribute(":character/name").Type(schema.TypeString).Add().
+    Attribute(":character/skills").Type(schema.TypeString).Vector().Add().  // .Vector() !
+    Build()
+
+db, _ := storage.NewDatabaseWithSchema(path, s)
+```
+
+**Vector update semantics differ from sets:**
+
+| Cardinality | Update Algorithm | Order Preserved | Duplicates Allowed |
+|-------------|------------------|-----------------|-------------------|
+| Many (set) | Element-by-element diff | No | No |
+| Vector | Prefix-diff algorithm | **Yes** | **Yes** |
+
+```go
+// Vector: order and duplicates preserved
+char := &Character{
+    Name:   "Alice",
+    Skills: []string{"stealth", "archery", "stealth"},  // duplicate allowed
+}
+tx.SaveStruct(char)
+tx.Commit()
+
+// Update - middle element replaced correctly
+char.Skills = []string{"stealth", "MAGIC", "stealth"}  // changed "archery" to "MAGIC"
+tx2.SaveStruct(char)
+tx2.Commit()
+
+// Result: ["stealth", "MAGIC", "stealth"] - order preserved, middle element replaced
+```
+
+**Prefix-diff optimization**: Updates compute the common prefix and only modify elements after it:
+
+```go
+// Old: ["a", "b", "c", "d", "e"]
+// New: ["a", "b", "c", "d", "f"]
+// Common prefix: 4 elements
+// Result: 1 tombstone + 1 insert (not 5+5)
+```
+
+See [CRDT.md](CRDT.md) for detailed RGA (Replicated Growable Array) semantics.
 
 ### Complete Update Example
 
@@ -386,6 +476,7 @@ func main() {
 2. **Circular references on write**: Caller is responsible for ensuring entities exist before referencing them
 3. **Unexported fields**: Always ignored (Go reflection limitation)
 4. **Interface fields**: Not supported - use concrete types
+5. **Vector cardinality inference**: `SchemaFromStruct()` cannot distinguish between sets and vectors - slices always infer as `CardinalityMany`. Build schema manually with `.Vector()` for ordered collections
 
 ## Package Reference
 

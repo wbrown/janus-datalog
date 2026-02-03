@@ -248,11 +248,7 @@ func (r *OrFallbackRelation) Project(columns []query.Symbol) (Relation, error) {
 
 func (r *OrFallbackRelation) Materialize() Relation {
 	var tuples []Tuple
-	it := r.Iterator()
-	for it.Next() {
-		tuples = append(tuples, it.Tuple())
-	}
-	it.Close()
+	collectTuplesInto(&tuples, r)
 
 	cols := r.columns
 	if cols == nil {
@@ -309,6 +305,12 @@ func (r *OrFallbackRelation) Options() ExecutorOptions {
 	return r.options
 }
 
+// RequiresCopy returns false because OrFallbackIterator copies tuples from
+// sources that have RequiresCopy() = true at the boundary.
+func (r *OrFallbackRelation) RequiresCopy() bool {
+	return false
+}
+
 // OrFallbackIterator lazily evaluates OR branches per outer tuple.
 type OrFallbackIterator struct {
 	executor  *DefaultQueryExecutor
@@ -319,11 +321,12 @@ type OrFallbackIterator struct {
 	options   ExecutorOptions
 
 	// Current state
-	currentBranchIter Iterator
-	currentTuple      Tuple
-	outputCols        []query.Symbol
-	done              bool
-	err               error
+	currentBranchIter     Iterator
+	currentBranchRelation Relation // Track relation for RequiresCopy check
+	currentTuple          Tuple
+	outputCols            []query.Symbol
+	done                  bool
+	err                   error
 }
 
 func (it *OrFallbackIterator) Next() bool {
@@ -335,12 +338,14 @@ func (it *OrFallbackIterator) Next() bool {
 		// If we have a current branch iterator, try to get next tuple from it
 		if it.currentBranchIter != nil {
 			if it.currentBranchIter.Next() {
+				// projectedIterator.Tuple() handles copying when needed
 				it.currentTuple = it.currentBranchIter.Tuple()
 				return true
 			}
 			// Branch exhausted, close it
 			it.currentBranchIter.Close()
 			it.currentBranchIter = nil
+			it.currentBranchRelation = nil
 		}
 
 		// Need to advance to next outer tuple
@@ -414,15 +419,23 @@ func (it *OrFallbackIterator) Next() bool {
 					// Project tuple to match output columns if needed
 					// Different branches may produce different schemas (e.g., subquery vs ground)
 					branchCols := branchResult.Columns()
+					firstTuple := branchIter.Tuple()
+
 					if len(branchCols) != len(it.outputCols) || !columnsMatch(branchCols, it.outputCols) {
-						it.currentTuple = projectTupleToColumns(branchIter.Tuple(), branchCols, it.outputCols)
+						// Projection allocates new slice - no additional copy needed
+						it.currentTuple = projectTupleToColumns(firstTuple, branchCols, it.outputCols)
+					} else if branchResult.RequiresCopy() {
+						// No projection but unsafe source - copy once
+						it.currentTuple = copyTuple(firstTuple)
 					} else {
-						it.currentTuple = branchIter.Tuple()
+						it.currentTuple = firstTuple
 					}
+					it.currentBranchRelation = branchResult
 					it.currentBranchIter = &projectedIterator{
-						inner:      branchIter,
-						branchCols: branchCols,
-						outputCols: it.outputCols,
+						inner:          branchIter,
+						branchRelation: branchResult,
+						branchCols:     branchCols,
+						outputCols:     it.outputCols,
 					}
 					return true
 				}
@@ -488,10 +501,10 @@ func projectTupleToColumns(tuple Tuple, srcCols, dstCols []query.Symbol) Tuple {
 
 // projectedIterator wraps an iterator and projects tuples to a different schema
 type projectedIterator struct {
-	inner      Iterator
-	branchCols []query.Symbol
-	outputCols []query.Symbol
-	needsProj  bool
+	inner          Iterator
+	branchRelation Relation // For RequiresCopy check
+	branchCols     []query.Symbol
+	outputCols     []query.Symbol
 }
 
 func (it *projectedIterator) Next() bool {
@@ -500,8 +513,15 @@ func (it *projectedIterator) Next() bool {
 
 func (it *projectedIterator) Tuple() Tuple {
 	tuple := it.inner.Tuple()
+
 	if len(it.branchCols) != len(it.outputCols) || !columnsMatch(it.branchCols, it.outputCols) {
+		// Projection allocates new slice - no additional copy needed
 		return projectTupleToColumns(tuple, it.branchCols, it.outputCols)
+	}
+
+	// No projection - copy if source is unsafe
+	if it.branchRelation != nil && it.branchRelation.RequiresCopy() {
+		return copyTuple(tuple)
 	}
 	return tuple
 }

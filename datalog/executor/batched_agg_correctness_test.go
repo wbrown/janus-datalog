@@ -16,30 +16,30 @@ func TestBatchedAggregationCorrectness(t *testing.T) {
 
 	datoms := []datalog.Datom{
 		// Symbol A
-		{E: symbolA, A: datalog.NewKeyword(":symbol/ticker"), V: "A", Tx: 1},
+		{E: symbolA, A: datalog.NewKeyword(":symbol/ticker"), V: "A", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		// Symbol B
-		{E: symbolB, A: datalog.NewKeyword(":symbol/ticker"), V: "B", Tx: 2},
+		{E: symbolB, A: datalog.NewKeyword(":symbol/ticker"), V: "B", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 
 		// Prices for A: 10, 20, 30 (max should be 30)
-		{E: datalog.NewIdentity("bar:A:1"), A: datalog.NewKeyword(":price/symbol"), V: symbolA, Tx: 3},
-		{E: datalog.NewIdentity("bar:A:1"), A: datalog.NewKeyword(":price/value"), V: float64(10), Tx: 3},
+		{E: datalog.NewIdentity("bar:A:1"), A: datalog.NewKeyword(":price/symbol"), V: symbolA, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar:A:1"), A: datalog.NewKeyword(":price/value"), V: float64(10), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("bar:A:2"), A: datalog.NewKeyword(":price/symbol"), V: symbolA, Tx: 4},
-		{E: datalog.NewIdentity("bar:A:2"), A: datalog.NewKeyword(":price/value"), V: float64(20), Tx: 4},
+		{E: datalog.NewIdentity("bar:A:2"), A: datalog.NewKeyword(":price/symbol"), V: symbolA, Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar:A:2"), A: datalog.NewKeyword(":price/value"), V: float64(20), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("bar:A:3"), A: datalog.NewKeyword(":price/symbol"), V: symbolA, Tx: 5},
-		{E: datalog.NewIdentity("bar:A:3"), A: datalog.NewKeyword(":price/value"), V: float64(30), Tx: 5},
+		{E: datalog.NewIdentity("bar:A:3"), A: datalog.NewKeyword(":price/symbol"), V: symbolA, Tx: datalog.ElementID{Lamport: 5, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar:A:3"), A: datalog.NewKeyword(":price/value"), V: float64(30), Tx: datalog.ElementID{Lamport: 5, ReplicaID: 1}},
 
 		// Prices for B: 100, 200 (max should be 200)
-		{E: datalog.NewIdentity("bar:B:1"), A: datalog.NewKeyword(":price/symbol"), V: symbolB, Tx: 6},
-		{E: datalog.NewIdentity("bar:B:1"), A: datalog.NewKeyword(":price/value"), V: float64(100), Tx: 6},
+		{E: datalog.NewIdentity("bar:B:1"), A: datalog.NewKeyword(":price/symbol"), V: symbolB, Tx: datalog.ElementID{Lamport: 6, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar:B:1"), A: datalog.NewKeyword(":price/value"), V: float64(100), Tx: datalog.ElementID{Lamport: 6, ReplicaID: 1}},
 
-		{E: datalog.NewIdentity("bar:B:2"), A: datalog.NewKeyword(":price/symbol"), V: symbolB, Tx: 7},
-		{E: datalog.NewIdentity("bar:B:2"), A: datalog.NewKeyword(":price/value"), V: float64(200), Tx: 7},
+		{E: datalog.NewIdentity("bar:B:2"), A: datalog.NewKeyword(":price/symbol"), V: symbolB, Tx: datalog.ElementID{Lamport: 7, ReplicaID: 1}},
+		{E: datalog.NewIdentity("bar:B:2"), A: datalog.NewKeyword(":price/value"), V: float64(200), Tx: datalog.ElementID{Lamport: 7, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with RelationInput (uses batched path)
 	queryStr := `

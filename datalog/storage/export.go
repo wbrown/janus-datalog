@@ -31,9 +31,9 @@ import (
 // The output is suitable for Import() to restore the database.
 func (d *Database) Export(w io.Writer) error {
 	// Scan all datoms from EAVT index only
-	// Keys are prefixed with index type byte, so we scan from EAVT prefix to AEVT prefix
+	// Keys are prefixed with index type byte, so we scan from EAVT prefix to EATV prefix
 	start := []byte{byte(EAVT)}
-	end := []byte{byte(AEVT)} // AEVT is the next index after EAVT
+	end := []byte{byte(EATV)} // EATV is the next index after EAVT
 	iter, err := d.store.Scan(EAVT, start, end)
 	if err != nil {
 		return fmt.Errorf("failed to scan database: %w", err)
@@ -131,7 +131,8 @@ func FormatDatomEDN(d *datalog.Datom) string {
 	sb.WriteString(" ")
 	sb.WriteString(FormatValueEDN(d.V))
 	sb.WriteString(" ")
-	sb.WriteString(strconv.FormatUint(d.Tx, 10))
+	// Format ElementID as [lamport replica] tuple for EDN
+	sb.WriteString(fmt.Sprintf("[%d %d]", d.Tx.Lamport, d.Tx.ReplicaID))
 	sb.WriteString("]")
 	return sb.String()
 }
@@ -195,6 +196,10 @@ func FormatValueEDN(v interface{}) string {
 
 	case datalog.Symbol:
 		return val.String()
+
+	case datalog.ElementID:
+		// ElementID as #eid [lamport replica-id]
+		return fmt.Sprintf("#eid [%d %d]", val.Lamport, val.ReplicaID)
 
 	default:
 		// Fallback to string representation
@@ -261,17 +266,35 @@ func ParseDatomEDN(s string) (*datalog.Datom, error) {
 		return nil, fmt.Errorf("invalid value: %w", err)
 	}
 
-	// Parse transaction ID
-	txID, err := parseIntNode(&node.Nodes[3])
-	if err != nil {
-		return nil, fmt.Errorf("invalid tx: %w", err)
+	// Parse transaction ID (ElementID)
+	// Supports both old format (integer) and new format ([lamport replica] vector)
+	txNode := &node.Nodes[3]
+	var elemID datalog.ElementID
+	if txNode.Type == edn.NodeVector && len(txNode.Nodes) == 2 {
+		// New format: [lamport replica]
+		lamport, err := parseUintNode(&txNode.Nodes[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid tx lamport: %w", err)
+		}
+		replica, err := parseUintNode(&txNode.Nodes[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid tx replica: %w", err)
+		}
+		elemID = datalog.ElementID{Lamport: lamport, ReplicaID: replica}
+	} else {
+		// Old format: integer (backward compatibility)
+		txID, err := parseUintNode(txNode)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tx: %w", err)
+		}
+		elemID = datalog.ElementID{Lamport: txID, ReplicaID: 0}
 	}
 
 	return &datalog.Datom{
 		E:  entity,
 		A:  attr,
 		V:  value,
-		Tx: uint64(txID),
+		Tx: elemID,
 	}, nil
 }
 
@@ -390,6 +413,37 @@ func parseTaggedValue(node *edn.Node) (interface{}, error) {
 		}
 		return datalog.NewIdentityFromHash(hash), nil
 
+	case "eid":
+		// Parse ElementID: #eid [lamport replica-id]
+		if valueNode.Type != edn.NodeVector {
+			return nil, fmt.Errorf("#eid requires [lamport replica-id] vector")
+		}
+		if len(valueNode.Nodes) != 2 {
+			return nil, fmt.Errorf("#eid requires exactly 2 elements [lamport replica-id], got %d", len(valueNode.Nodes))
+		}
+
+		// Parse Lamport
+		lamportNode := valueNode.Nodes[0]
+		if lamportNode.Type != edn.NodeInt {
+			return nil, fmt.Errorf("#eid lamport must be integer, got %s", nodeTypeName(lamportNode.Type))
+		}
+		lamport, err := strconv.ParseUint(lamportNode.Value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("#eid invalid lamport value: %w", err)
+		}
+
+		// Parse ReplicaID
+		replicaNode := valueNode.Nodes[1]
+		if replicaNode.Type != edn.NodeInt {
+			return nil, fmt.Errorf("#eid replica-id must be integer, got %s", nodeTypeName(replicaNode.Type))
+		}
+		replicaID, err := strconv.ParseUint(replicaNode.Value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("#eid invalid replica-id value: %w", err)
+		}
+
+		return datalog.ElementID{Lamport: lamport, ReplicaID: replicaID}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown tag: #%s", tag)
 	}
@@ -409,6 +463,15 @@ func parseIntNode(node *edn.Node) (int64, error) {
 		return 0, fmt.Errorf("expected int, got %s", nodeTypeName(node.Type))
 	}
 	return strconv.ParseInt(node.Value, 10, 64)
+}
+
+// parseUintNode parses an unsigned integer from an EDN node.
+// Used for uint64 values like Lamport clocks and ReplicaIDs.
+func parseUintNode(node *edn.Node) (uint64, error) {
+	if node.Type != edn.NodeInt {
+		return 0, fmt.Errorf("expected int, got %s", nodeTypeName(node.Type))
+	}
+	return strconv.ParseUint(node.Value, 10, 64)
 }
 
 // nodeTypeName returns a human-readable name for an EDN node type.

@@ -34,3 +34,16 @@ type EntityLookupMatcher interface {
 	// Returns (value, true) if the attribute exists, (nil, false) otherwise.
 	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool)
 }
+
+// EntityResolver provides CRDT-aware entity resolution.
+// This is used by wildcard pulls to get all attributes for an entity with
+// proper CRDT resolution (LWW for cardinality-one, add-wins for many, RGA for vector).
+// Implemented by Database, not by matchers.
+type EntityResolver interface {
+	// ResolveAllAttributes returns all CRDT-resolved attributes for an entity.
+	// The returned map uses Keyword keys and properly resolved values:
+	// - CardinalityOne: single value (LWW)
+	// - CardinalityMany: []interface{} (add-wins set, order undefined)
+	// - CardinalityVector: []interface{} (RGA ordered list)
+	ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error)
+}

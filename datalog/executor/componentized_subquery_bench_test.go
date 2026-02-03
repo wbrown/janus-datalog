@@ -22,7 +22,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 		E:  symbolID,
 		A:  datalog.NewKeyword(":symbol/ticker"),
 		V:  "TEST",
-		Tx: 1,
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	// Create price bars: 10 days, 100 bars per day = 1000 bars total
@@ -39,43 +39,43 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/symbol"),
 				V:  symbolID,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/time"),
 				V:  barTime,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/minute-of-day"),
 				V:  int64(570 + minute),
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/open"),
 				V:  100.0 + float64(day) + float64(minute)*0.1,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/high"),
 				V:  102.0 + float64(day) + float64(minute)*0.2,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/low"),
 				V:  98.0 + float64(day) - float64(minute)*0.1,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/close"),
 				V:  101.0 + float64(day) + float64(minute)*0.05,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 
 			barID++
@@ -141,7 +141,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 	// Benchmark Legacy Path (UseComponentizedSubquery: false)
 	b.Run("Legacy", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery: false,
 			EnableParallelSubqueries: false,
 		})
@@ -162,7 +162,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 	// Benchmark Componentized Path - Sequential (UseComponentizedSubquery: true, no parallel)
 	b.Run("Componentized_Sequential", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery: true,
 			EnableParallelSubqueries: false,
 		})
@@ -183,7 +183,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 	// Benchmark Componentized Path - Parallel (UseComponentizedSubquery: true, with parallel)
 	b.Run("Componentized_Parallel", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery:  true,
 			EnableParallelSubqueries:  true,
 			MaxSubqueryWorkers:        4,
@@ -215,7 +215,7 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 		E:  symbolID,
 		A:  datalog.NewKeyword(":symbol/ticker"),
 		V:  "LARGE",
-		Tx: 1,
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	barID := 1000
@@ -230,25 +230,25 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/symbol"),
 				V:  symbolID,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/time"),
 				V:  barTime,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/open"),
 				V:  100.0 + float64(day) + float64(minute)*0.1,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 			datoms = append(datoms, datalog.Datom{
 				E:  currentBarID,
 				A:  datalog.NewKeyword(":price/high"),
 				V:  102.0 + float64(day) + float64(minute)*0.2,
-				Tx: uint64(barID),
+				Tx: datalog.ElementID{Lamport: uint64(barID)},
 			})
 
 			barID++
@@ -292,7 +292,7 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 	// Benchmark Legacy Path
 	b.Run("Legacy_Large", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery: false,
 		})
 
@@ -313,7 +313,7 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 	// Benchmark Componentized Path
 	b.Run("Componentized_Large", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery: true,
 			EnableParallelSubqueries: true,
 			MaxSubqueryWorkers:       4,

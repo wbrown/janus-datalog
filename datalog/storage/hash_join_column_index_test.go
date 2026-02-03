@@ -73,7 +73,7 @@ func TestHashJoinColumnIndexBug(t *testing.T) {
 	matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
 		IndexNestedLoopThreshold: 0, // Always use HashJoinScan
 	})
-	exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{})
+	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 	result, err := exec.Execute(q)
 	assert.NoError(t, err)
@@ -150,7 +150,7 @@ func TestHashJoinColumnIndexMultiColumn(t *testing.T) {
 	matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
 		IndexNestedLoopThreshold: 0,
 	})
-	exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{})
+	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 	result, err := exec.Execute(q)
 	assert.NoError(t, err)

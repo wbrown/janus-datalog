@@ -9,6 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // BadgerMatcher implements the executor.PatternMatcher interface using BadgerStore
@@ -21,6 +22,8 @@ type BadgerMatcher struct {
 	handler           annotations.Handler      // Set from HandlerProvider for detailed storage events
 	options           executor.ExecutorOptions // Options for creating relations
 	forceJoinStrategy *JoinStrategy            // Override join strategy selection for testing
+	schema            schema.SchemaProvider    // Optional schema for cardinality-aware index selection
+	cache             *Cache                   // CRDT resolution cache for O(1) access to resolved views
 }
 
 // NewBadgerMatcher creates a new pattern matcher for the BadgerStore
@@ -59,13 +62,33 @@ func (m *BadgerMatcher) AsOf(txID uint64) *BadgerMatcher {
 		builderCache: m.builderCache,
 		handler:      m.handler,
 		options:      m.options, // Preserve options
+		schema:       m.schema,  // Preserve schema for cardinality-aware index selection
+		cache:        m.cache,   // Preserve cache for CRDT resolution
 	}
 }
 
 // SetHandler configures the handler for detailed storage events.
 // This is called by WrapMatcher during construction.
+// Also updates options.Collector so relations inherit the collector for join annotations.
 func (m *BadgerMatcher) SetHandler(handler annotations.Handler) {
 	m.handler = handler
+	if handler != nil {
+		m.options.Collector = annotations.NewCollector(handler)
+	}
+}
+
+// SetSchema sets the schema for cardinality-aware index selection.
+// When schema is set, the matcher uses EATV for cardinality-one attributes
+// and EAVT for cardinality-many attributes (for add-wins resolution).
+func (m *BadgerMatcher) SetSchema(s schema.SchemaProvider) {
+	m.schema = s
+}
+
+// SetCache sets the CRDT resolution cache for O(1) access to resolved views.
+// When cache is set, LookupAttribute() and related methods check the cache
+// before scanning storage, providing O(1) access for cache hits.
+func (m *BadgerMatcher) SetCache(c *Cache) {
+	m.cache = c
 }
 
 // WithTimeRanges sets the time range constraints and returns self for chaining
@@ -180,6 +203,26 @@ func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog
 		tx = m.extractValue(elem)
 	}
 
+	// Determine cardinality for CRDT resolution
+	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
+	returnOnlyFirst := false
+	if e != nil && a != nil && v == nil {
+		// E and A are bound, V is unbound - check cardinality
+		card := schema.CardinalityOne // Default for schemaless
+		if m.schema != nil {
+			if aKw, ok := a.(datalog.Keyword); ok {
+				if def := m.schema.GetAttribute(aKw); def != nil {
+					card = def.Cardinality
+				}
+			}
+		}
+		// For cardinality-one (and vector), return only the first (= current) value
+		// For cardinality-many, we need all values for add-wins resolution
+		if card == schema.CardinalityOne || card == schema.CardinalityVector {
+			returnOnlyFirst = true
+		}
+	}
+
 	// Choose index and create scan range
 	index, start, end := m.chooseIndex(e, a, v, tx)
 
@@ -201,13 +244,141 @@ func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog
 		}
 
 		// Check if datom is valid for our transaction view
-		if m.txID > 0 && datom.Tx > m.txID {
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
 			continue
 		}
 
 		// Check if datom matches all pattern constraints
 		if m.matchesDatom(datom, e, a, v, tx) {
 			results = append(results, *datom)
+
+			// For cardinality-one/vector: first result is current value
+			// EATV index with descending Tx means first = highest ElementID = current
+			if returnOnlyFirst {
+				break
+			}
+		}
+	}
+
+	return results, nil
+}
+
+// MatchWithHistory matches a pattern and returns ALL historical values, not just current.
+// This is used for history queries where the user wants to see all versions of an attribute.
+// Returns all datoms including their ElementIDs for temporal ordering.
+//
+// For cardinality-one: returns all historical versions ordered by descending Tx
+// For cardinality-many: returns all add/remove operations for add-wins analysis
+// For cardinality-vector: returns all RGA elements for reconstruction
+func (m *BadgerMatcher) MatchWithHistory(pattern *query.DataPattern) ([]datalog.Datom, error) {
+	// Extract values from pattern
+	var e, a, v, tx interface{}
+
+	if elem := pattern.GetE(); elem != nil {
+		e = m.extractValue(elem)
+	}
+	if elem := pattern.GetA(); elem != nil {
+		a = m.extractValue(elem)
+	}
+	if elem := pattern.GetV(); elem != nil {
+		v = m.extractValue(elem)
+	}
+	if elem := pattern.GetT(); elem != nil {
+		tx = m.extractValue(elem)
+	}
+
+	// Choose index and create scan range
+	index, start, end := m.chooseIndex(e, a, v, tx)
+
+	// Use key-only scanning since all datom information is encoded in the key
+	iter, err := m.store.ScanKeysOnly(index, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
+	}
+	defer iter.Close()
+
+	var results []datalog.Datom
+
+	// Scan and collect ALL matching datoms (no early termination for history)
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			return nil, err
+		}
+
+		// Check if datom is valid for our transaction view (as-of still applies)
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+			continue
+		}
+
+		// Check if datom matches all pattern constraints
+		if m.matchesDatom(datom, e, a, v, tx) {
+			results = append(results, *datom)
+		}
+	}
+
+	return results, nil
+}
+
+// MatchAsOf matches a pattern and returns the value as of a specific Lamport time.
+// This finds the first entry with Lamport <= targetLamport (the value that was current then).
+// If no value existed at that time, returns nil.
+func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetLamport uint64) ([]datalog.Datom, error) {
+	// Extract values from pattern
+	var e, a, v, tx interface{}
+
+	if elem := pattern.GetE(); elem != nil {
+		e = m.extractValue(elem)
+	}
+	if elem := pattern.GetA(); elem != nil {
+		a = m.extractValue(elem)
+	}
+	if elem := pattern.GetV(); elem != nil {
+		v = m.extractValue(elem)
+	}
+	if elem := pattern.GetT(); elem != nil {
+		tx = m.extractValue(elem)
+	}
+
+	// Choose index and create scan range
+	index, start, end := m.chooseIndex(e, a, v, tx)
+
+	// Use key-only scanning
+	iter, err := m.store.ScanKeysOnly(index, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
+	}
+	defer iter.Close()
+
+	var results []datalog.Datom
+
+	// Find first entry with Lamport <= target (entries are in descending Tx order)
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			return nil, err
+		}
+
+		// Skip entries newer than target time
+		if datom.Tx.Lamport > targetLamport {
+			continue
+		}
+
+		// Also apply as-of filter if set
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+			continue
+		}
+
+		// Check if datom matches all pattern constraints
+		if m.matchesDatom(datom, e, a, v, tx) {
+			results = append(results, *datom)
+
+			// For as-of queries, return only the first matching entry
+			// (which is the value that was current at that Lamport time)
+			if e != nil && a != nil && v == nil {
+				// E and A bound, V unbound - return current value at that time
+				break
+			}
 		}
 	}
 
@@ -257,7 +428,7 @@ func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]
 			}
 
 			// Check transaction filter
-			if m.txID > 0 && datom.Tx > m.txID {
+			if m.txID > 0 && datom.Tx.Lamport > m.txID {
 				continue
 			}
 
@@ -265,15 +436,19 @@ func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]
 			if tx != nil {
 				switch txv := tx.(type) {
 				case uint64:
-					if datom.Tx != txv {
+					if datom.Tx.Lamport != txv {
 						continue
 					}
 				case int64:
-					if datom.Tx != uint64(txv) {
+					if datom.Tx.Lamport != uint64(txv) {
 						continue
 					}
 				case int:
-					if datom.Tx != uint64(txv) {
+					if datom.Tx.Lamport != uint64(txv) {
+						continue
+					}
+				case datalog.ElementID:
+					if datom.Tx != txv {
 						continue
 					}
 				default:
@@ -346,7 +521,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 						E:  eId,
 						A:  aPtr,
 						V:  nil,
-						Tx: 0,
+						Tx: datalog.ElementID{},
 					}
 
 					if v != nil {
@@ -372,11 +547,24 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 						return AEVT, start, end
 					}
 
-					// E and A bound, V unbound - use AEVT prefix
-					// AEVT index order: A + E + V + Tx
-					// We want all datoms with (A, E) prefix
-					start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
-					return AEVT, start, end
+					// E and A bound, V unbound - use cardinality-aware index selection
+					// For CRDT semantics:
+					// - CardinalityMany: EAVT groups by V first, enabling add-wins resolution
+					// - CardinalityOne/Vector: EATV orders by Tx first, first entry is current
+					card := schema.CardinalityOne
+					if m.schema != nil {
+						if attrDef := m.schema.GetAttribute(aPtr); attrDef != nil {
+							card = attrDef.Cardinality
+						}
+					}
+					if card == schema.CardinalityMany {
+						// EAVT: E → A → V → Tx - values grouped together for add-wins
+						start, end := encoder.EncodePrefixRange(EAVT, eBytes[:], aStorage[:])
+						return EAVT, start, end
+					}
+					// EATV: E → A → Tx → V - first entry is current (highest Tx)
+					start, end := encoder.EncodePrefixRange(EATV, eBytes[:], aStorage[:])
+					return EATV, start, end
 				}
 			}
 
@@ -398,7 +586,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 					E:  datalog.NewIdentity(""),
 					A:  aPtr,
 					V:  v,
-					Tx: 0,
+					Tx: datalog.ElementID{},
 				}
 				// Get value bytes with type prefix
 				// Must match how EncodeKey encodes values!
@@ -433,7 +621,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 			E:  datalog.NewIdentity(""),
 			A:  datalog.NewKeyword(""),
 			V:  v,
-			Tx: 0,
+			Tx: datalog.ElementID{},
 		}
 		sDatom := ToStorageDatom(*dummyDatom)
 		vType := byte(datalog.Type(sDatom.V))
@@ -520,15 +708,19 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 	if tx != nil {
 		switch txv := tx.(type) {
 		case uint64:
-			if datom.Tx != txv {
+			if datom.Tx.Lamport != txv {
 				return false
 			}
 		case int64:
-			if datom.Tx != uint64(txv) {
+			if datom.Tx.Lamport != uint64(txv) {
 				return false
 			}
 		case int:
-			if datom.Tx != uint64(txv) {
+			if datom.Tx.Lamport != uint64(txv) {
+				return false
+			}
+		case datalog.ElementID:
+			if datom.Tx != txv {
 				return false
 			}
 		default:
@@ -550,6 +742,8 @@ func indexName(idx IndexType) string {
 	switch idx {
 	case EAVT:
 		return "EAVT"
+	case EATV:
+		return "EATV"
 	case AEVT:
 		return "AEVT"
 	case AVET:
@@ -568,7 +762,8 @@ func indexName(idx IndexType) string {
 // like get-else, missing?, and get-some.
 //
 // Returns (value, true) if the attribute exists, (nil, false) otherwise.
-// For multi-valued attributes, returns the first value found.
+// For cardinality-one, returns the current value (highest Tx via LWW).
+// For cardinality-many, returns one of the current set members.
 func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
 	// Convert to storage format
 	eBytes := entity.Bytes()
@@ -576,8 +771,93 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 
 	encoder := m.store.encoder
 
-	// Use AEVT index which orders by A, then E
-	// This gives us efficient lookup for (A, E) pairs
+	// Determine cardinality for correct resolution
+	card := schema.CardinalityOne // default
+	if m.schema != nil {
+		if def := m.schema.GetAttribute(attr); def != nil {
+			card = def.Cardinality
+		}
+	}
+
+	// Try cache first for O(1) access (only for latest state, not as-of queries)
+	if m.cache != nil && m.txID == 0 {
+		eEntity := Entity(eBytes)
+		var aAttr Attribute
+		copy(aAttr[:], aStorage[:])
+		key := CacheKey{E: eEntity, A: aAttr}
+
+		entry := m.cache.GetOrResolve(key, m)
+		if entry != nil {
+			switch card {
+			case schema.CardinalityOne:
+				if entry.OneValue() != nil {
+					return entry.OneValue(), true
+				}
+				return nil, false
+			case schema.CardinalityMany:
+				set := entry.ManySet()
+				if len(set) > 0 {
+					// Return all values as slice for consistency with cardinality-vector
+					result := make([]interface{}, 0, len(set))
+					for v := range set {
+						result = append(result, v)
+					}
+					return result, true
+				}
+				return nil, false
+			case schema.CardinalityVector:
+				list := entry.VectorList()
+				if len(list) > 0 {
+					return list, true
+				}
+				return nil, false
+			}
+		}
+	}
+
+	// Fallback to storage scan (for as-of queries or when cache is not set)
+	if card == schema.CardinalityOne {
+		// For cardinality-one, use EATV index where Tx comes before V
+		// Tx is encoded descending, so first entry = highest Tx = current value (LWW)
+		start, end := encoder.EncodePrefixRange(EATV, eBytes[:], aStorage[:])
+
+		iter, err := m.store.ScanKeysOnly(EATV, start, end)
+		if err != nil {
+			return nil, false
+		}
+		defer iter.Close()
+
+		for iter.Next() {
+			datom, err := iter.Datom()
+			if err != nil {
+				return nil, false
+			}
+
+			// Check transaction filter for as-of queries
+			if m.txID > 0 && datom.Tx.Lamport > m.txID {
+				continue
+			}
+
+			// First entry with valid Tx is the current value (LWW)
+			return datom.V, true
+		}
+		return nil, false
+	}
+
+	if card == schema.CardinalityVector {
+		// For cardinality-vector, resolve the entire RGA and return as []any
+		result, err := m.resolveVector(eBytes[:], aStorage[:])
+		if err != nil {
+			return nil, false
+		}
+		if len(result.Elements) == 0 {
+			return nil, false
+		}
+		return result.Elements, true
+	}
+
+	// For cardinality-many, use AEVT and apply add-wins resolution
+	// Must return ALL values that are currently in the set
 	start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
 
 	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
@@ -586,7 +866,11 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	}
 	defer iter.Close()
 
-	// Look for first matching datom
+	// For cardinality-many, we need add-wins resolution
+	// Track the highest add and remove lamport for each value
+	valueAddLamport := make(map[interface{}]uint64)
+	valueRemoveLamport := make(map[interface{}]uint64)
+
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
@@ -594,15 +878,34 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		}
 
 		// Check transaction filter for as-of queries
-		if m.txID > 0 && datom.Tx > m.txID {
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
 			continue
 		}
 
-		// Found a match - return the value
-		return datom.V, true
+		if datom.Op == datalog.OpCRDTRemove {
+			if datom.Tx.Lamport > valueRemoveLamport[datom.V] {
+				valueRemoveLamport[datom.V] = datom.Tx.Lamport
+			}
+		} else {
+			// OpCRDTAdd or no op (legacy)
+			if datom.Tx.Lamport > valueAddLamport[datom.V] {
+				valueAddLamport[datom.V] = datom.Tx.Lamport
+			}
+		}
 	}
 
-	// No datom found
+	// Build result: include values where add >= remove (add-wins on tie)
+	var result []interface{}
+	for v, addLamport := range valueAddLamport {
+		removeLamport := valueRemoveLamport[v]
+		if addLamport >= removeLamport { // add-wins on tie
+			result = append(result, v)
+		}
+	}
+
+	if len(result) > 0 {
+		return result, true
+	}
 	return nil, false
 }
 
@@ -613,6 +916,44 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 	eBytes := entity.Bytes()
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
 
+	// Try cache first for O(1) access (only for latest state, not as-of queries)
+	if m.cache != nil && m.txID == 0 {
+		eEntity := Entity(eBytes)
+		var aAttr Attribute
+		copy(aAttr[:], aStorage[:])
+		key := CacheKey{E: eEntity, A: aAttr}
+
+		entry := m.cache.GetOrResolve(key, m)
+		if entry != nil {
+			// Determine cardinality
+			card := schema.CardinalityOne
+			if m.schema != nil {
+				if def := m.schema.GetAttribute(attr); def != nil {
+					card = def.Cardinality
+				}
+			}
+
+			switch card {
+			case schema.CardinalityMany:
+				set := entry.ManySet()
+				result := make([]interface{}, 0, len(set))
+				for v := range set {
+					result = append(result, v)
+				}
+				return result
+			case schema.CardinalityVector:
+				return entry.VectorList()
+			case schema.CardinalityOne:
+				// For cardinality-one, return single value as slice
+				if entry.OneValue() != nil {
+					return []interface{}{entry.OneValue()}
+				}
+				return nil
+			}
+		}
+	}
+
+	// Fallback to storage scan (for as-of queries or when cache is not set)
 	encoder := m.store.encoder
 
 	// Use AEVT index which orders by A, then E
@@ -632,7 +973,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 		}
 
 		// Check transaction filter for as-of queries
-		if m.txID > 0 && datom.Tx > m.txID {
+		if m.txID > 0 && datom.Tx.Lamport > m.txID {
 			continue
 		}
 

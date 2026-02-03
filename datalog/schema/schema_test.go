@@ -66,6 +66,55 @@ func TestSchemaIsMany(t *testing.T) {
 	assert.False(t, s.IsMany(kw(":unknown/attr")))
 }
 
+func TestSchemaIsVector(t *testing.T) {
+	s := NewSchema()
+	s.Add(&AttributeDefinition{
+		Ident:       kw(":character/skills"),
+		ValueType:   TypeString,
+		Cardinality: CardinalityVector,
+	})
+	s.Add(&AttributeDefinition{
+		Ident:       kw(":person/name"),
+		ValueType:   TypeString,
+		Cardinality: CardinalityOne,
+	})
+	s.Add(&AttributeDefinition{
+		Ident:       kw(":person/tags"),
+		ValueType:   TypeString,
+		Cardinality: CardinalityMany,
+	})
+
+	assert.True(t, s.IsVector(kw(":character/skills")))
+	assert.False(t, s.IsVector(kw(":person/name")))
+	assert.False(t, s.IsVector(kw(":person/tags")))
+	assert.False(t, s.IsVector(kw(":unknown/attr")))
+}
+
+func TestSchemaCardinality(t *testing.T) {
+	s := NewSchema()
+	s.Add(&AttributeDefinition{
+		Ident:       kw(":attr/one"),
+		ValueType:   TypeString,
+		Cardinality: CardinalityOne,
+	})
+	s.Add(&AttributeDefinition{
+		Ident:       kw(":attr/many"),
+		ValueType:   TypeString,
+		Cardinality: CardinalityMany,
+	})
+	s.Add(&AttributeDefinition{
+		Ident:       kw(":attr/vector"),
+		ValueType:   TypeString,
+		Cardinality: CardinalityVector,
+	})
+
+	assert.Equal(t, CardinalityOne, s.Cardinality(kw(":attr/one")))
+	assert.Equal(t, CardinalityMany, s.Cardinality(kw(":attr/many")))
+	assert.Equal(t, CardinalityVector, s.Cardinality(kw(":attr/vector")))
+	// Unknown attributes default to CardinalityOne
+	assert.Equal(t, CardinalityOne, s.Cardinality(kw(":unknown/attr")))
+}
+
 func TestSchemaDefaultCardinality(t *testing.T) {
 	s := NewSchema()
 	// Add without explicit cardinality
@@ -114,12 +163,15 @@ func TestBuilderWithCardinality(t *testing.T) {
 	schema, err := NewBuilder().
 		Attribute(":person/name").Type(TypeString).One().Add().
 		Attribute(":person/friends").Type(TypeRef).Many().Add().
+		Attribute(":character/skills").Type(TypeString).Vector().Add().
 		Build()
 
 	require.NoError(t, err)
 
 	assert.False(t, schema.IsMany(kw(":person/name")))
 	assert.True(t, schema.IsMany(kw(":person/friends")))
+	assert.True(t, schema.IsVector(kw(":character/skills")))
+	assert.Equal(t, CardinalityVector, schema.Cardinality(kw(":character/skills")))
 }
 
 func TestBuilderWithUnique(t *testing.T) {

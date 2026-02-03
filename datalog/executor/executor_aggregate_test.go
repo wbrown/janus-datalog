@@ -12,13 +12,13 @@ import (
 func TestAggregateSum(t *testing.T) {
 	// Create test data
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("order:1"), A: datalog.NewKeyword(":order/total"), V: 100.0, Tx: 1},
-		{E: datalog.NewIdentity("order:2"), A: datalog.NewKeyword(":order/total"), V: 200.0, Tx: 2},
-		{E: datalog.NewIdentity("order:3"), A: datalog.NewKeyword(":order/total"), V: 300.0, Tx: 3},
+		{E: datalog.NewIdentity("order:1"), A: datalog.NewKeyword(":order/total"), V: 100.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("order:2"), A: datalog.NewKeyword(":order/total"), V: 200.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("order:3"), A: datalog.NewKeyword(":order/total"), V: 300.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find (sum ?total)
 	              :where [?o :order/total ?total]]`
@@ -39,13 +39,13 @@ func TestAggregateSum(t *testing.T) {
 func TestAggregateCount(t *testing.T) {
 	// Create test data
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/name"), V: "Alice", Tx: 1},
-		{E: datalog.NewIdentity("user:2"), A: datalog.NewKeyword(":user/name"), V: "Bob", Tx: 2},
-		{E: datalog.NewIdentity("user:3"), A: datalog.NewKeyword(":user/name"), V: "Charlie", Tx: 3},
+		{E: datalog.NewIdentity("user:1"), A: datalog.NewKeyword(":user/name"), V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("user:2"), A: datalog.NewKeyword(":user/name"), V: "Bob", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("user:3"), A: datalog.NewKeyword(":user/name"), V: "Charlie", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find (count ?user)
 	              :where [?user :user/name ?name]]`
@@ -66,13 +66,13 @@ func TestAggregateCount(t *testing.T) {
 func TestAggregateAvg(t *testing.T) {
 	// Create test data
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("score:1"), A: datalog.NewKeyword(":score/value"), V: 80.0, Tx: 1},
-		{E: datalog.NewIdentity("score:2"), A: datalog.NewKeyword(":score/value"), V: 90.0, Tx: 2},
-		{E: datalog.NewIdentity("score:3"), A: datalog.NewKeyword(":score/value"), V: 100.0, Tx: 3},
+		{E: datalog.NewIdentity("score:1"), A: datalog.NewKeyword(":score/value"), V: 80.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("score:2"), A: datalog.NewKeyword(":score/value"), V: 90.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("score:3"), A: datalog.NewKeyword(":score/value"), V: 100.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find (avg ?value)
 	              :where [?s :score/value ?value]]`
@@ -97,13 +97,13 @@ func TestAggregateMinMax(t *testing.T) {
 	t3 := time.Date(2024, 1, 3, 10, 0, 0, 0, time.UTC)
 
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("event:1"), A: datalog.NewKeyword(":event/time"), V: t1, Tx: 1},
-		{E: datalog.NewIdentity("event:2"), A: datalog.NewKeyword(":event/time"), V: t2, Tx: 2},
-		{E: datalog.NewIdentity("event:3"), A: datalog.NewKeyword(":event/time"), V: t3, Tx: 3},
+		{E: datalog.NewIdentity("event:1"), A: datalog.NewKeyword(":event/time"), V: t1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("event:2"), A: datalog.NewKeyword(":event/time"), V: t2, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("event:3"), A: datalog.NewKeyword(":event/time"), V: t3, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find (min ?time) (max ?time)
 	              :where [?e :event/time ?time]]`
@@ -126,19 +126,19 @@ func TestAggregateGroupBy(t *testing.T) {
 	// Create test data - sales by department
 	datoms := []datalog.Datom{
 		// Engineering department
-		{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/dept"), V: "Engineering", Tx: 1},
-		{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/amount"), V: 1000.0, Tx: 1},
-		{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/dept"), V: "Engineering", Tx: 2},
-		{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/amount"), V: 1500.0, Tx: 2},
+		{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/dept"), V: "Engineering", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("sale:1"), A: datalog.NewKeyword(":sale/amount"), V: 1000.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/dept"), V: "Engineering", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("sale:2"), A: datalog.NewKeyword(":sale/amount"), V: 1500.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
 		// Sales department
-		{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/dept"), V: "Sales", Tx: 3},
-		{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/amount"), V: 2000.0, Tx: 3},
-		{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/dept"), V: "Sales", Tx: 4},
-		{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/amount"), V: 2500.0, Tx: 4},
+		{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/dept"), V: "Sales", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("sale:3"), A: datalog.NewKeyword(":sale/amount"), V: 2000.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/dept"), V: "Sales", Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: datalog.NewIdentity("sale:4"), A: datalog.NewKeyword(":sale/amount"), V: 2500.0, Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find ?dept (sum ?amount)
 	              :where [?s :sale/dept ?dept]
@@ -170,16 +170,16 @@ func TestAggregateGroupBy(t *testing.T) {
 func TestAggregateMixedWithNonAggregated(t *testing.T) {
 	// This test ensures we handle the case where we have both aggregated and non-aggregated values
 	datoms := []datalog.Datom{
-		{E: datalog.NewIdentity("product:1"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: 1},
-		{E: datalog.NewIdentity("product:1"), A: datalog.NewKeyword(":product/price"), V: 100.0, Tx: 1},
-		{E: datalog.NewIdentity("product:2"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: 2},
-		{E: datalog.NewIdentity("product:2"), A: datalog.NewKeyword(":product/price"), V: 200.0, Tx: 2},
-		{E: datalog.NewIdentity("product:3"), A: datalog.NewKeyword(":product/category"), V: "Books", Tx: 3},
-		{E: datalog.NewIdentity("product:3"), A: datalog.NewKeyword(":product/price"), V: 30.0, Tx: 3},
+		{E: datalog.NewIdentity("product:1"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("product:1"), A: datalog.NewKeyword(":product/price"), V: 100.0, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: datalog.NewIdentity("product:2"), A: datalog.NewKeyword(":product/category"), V: "Electronics", Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("product:2"), A: datalog.NewKeyword(":product/price"), V: 200.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: datalog.NewIdentity("product:3"), A: datalog.NewKeyword(":product/category"), V: "Books", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: datalog.NewIdentity("product:3"), A: datalog.NewKeyword(":product/price"), V: 30.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Find category and average price
 	queryStr := `[:find ?category (avg ?price) (count ?p)

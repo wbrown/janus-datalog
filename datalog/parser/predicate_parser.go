@@ -29,6 +29,13 @@ func parsePredicate(fn string, args []query.PatternElement) (query.Predicate, er
 			Fn:   fn,
 			Args: args,
 		}, nil
+	// History query predicates - modify how data is retrieved
+	case "history":
+		return parseHistoryPredicate(args)
+	case "as-of":
+		return parseAsOfPredicate(args)
+	case "tx-between":
+		return parseTxBetweenPredicate(args)
 	default:
 		// All other predicates become FunctionPredicates
 		// This handles things like str/starts-with?, custom predicates, etc.
@@ -256,5 +263,119 @@ func extractKeywordPredicate(arg query.PatternElement) (datalog.Keyword, error) 
 		}
 	default:
 		return nil, fmt.Errorf("expected keyword constant, got %T", arg)
+	}
+}
+
+// =============================================================================
+// History Query Predicate Parsers
+// =============================================================================
+
+// parseHistoryPredicate parses [(history)]
+// This predicate takes no arguments and enables history mode for the query.
+func parseHistoryPredicate(args []query.PatternElement) (query.Predicate, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("history predicate takes no arguments, got %d", len(args))
+	}
+	return &query.HistoryPredicate{
+		Type: query.HistoryAll,
+	}, nil
+}
+
+// parseAsOfPredicate parses [(as-of ?tx 5000)]
+// Returns values as of a specific transaction (Lamport time).
+func parseAsOfPredicate(args []query.PatternElement) (query.Predicate, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("as-of requires exactly 2 arguments (variable, lamport), got %d", len(args))
+	}
+
+	// First argument must be a variable
+	txVar, ok := args[0].(query.Variable)
+	if !ok {
+		return nil, fmt.Errorf("as-of first argument must be a variable, got %T", args[0])
+	}
+
+	// Second argument must be an integer
+	var targetLamport uint64
+	switch v := args[1].(type) {
+	case query.Constant:
+		switch n := v.Value.(type) {
+		case int64:
+			targetLamport = uint64(n)
+		case int:
+			targetLamport = uint64(n)
+		case uint64:
+			targetLamport = n
+		default:
+			return nil, fmt.Errorf("as-of second argument must be an integer, got %T", v.Value)
+		}
+	default:
+		return nil, fmt.Errorf("as-of second argument must be a constant integer, got %T", args[1])
+	}
+
+	return &query.HistoryPredicate{
+		Type:          query.HistoryAsOf,
+		TxVar:         txVar.Name,
+		TargetLamport: targetLamport,
+	}, nil
+}
+
+// parseTxBetweenPredicate parses [(tx-between ?tx 1000 2000)]
+// Filters results to transactions within a Lamport range [low, high] inclusive.
+func parseTxBetweenPredicate(args []query.PatternElement) (query.Predicate, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tx-between requires exactly 3 arguments (variable, low, high), got %d", len(args))
+	}
+
+	// First argument must be a variable
+	txVar, ok := args[0].(query.Variable)
+	if !ok {
+		return nil, fmt.Errorf("tx-between first argument must be a variable, got %T", args[0])
+	}
+
+	// Second argument (low) must be an integer
+	low, err := extractUint64(args[1], "tx-between low")
+	if err != nil {
+		return nil, err
+	}
+
+	// Third argument (high) must be an integer
+	high, err := extractUint64(args[2], "tx-between high")
+	if err != nil {
+		return nil, err
+	}
+
+	if low > high {
+		return nil, fmt.Errorf("tx-between: low (%d) must be <= high (%d)", low, high)
+	}
+
+	return &query.TxRangePredicate{
+		TxVar: txVar.Name,
+		Low:   low,
+		High:  high,
+	}, nil
+}
+
+// extractUint64 extracts a uint64 from a pattern element
+func extractUint64(arg query.PatternElement, context string) (uint64, error) {
+	switch v := arg.(type) {
+	case query.Constant:
+		switch n := v.Value.(type) {
+		case int64:
+			if n < 0 {
+				return 0, fmt.Errorf("%s must be non-negative, got %d", context, n)
+			}
+			return uint64(n), nil
+		case int:
+			if n < 0 {
+				return 0, fmt.Errorf("%s must be non-negative, got %d", context, n)
+			}
+			return uint64(n), nil
+		case uint64:
+			return n, nil
+		default:
+			return 0, fmt.Errorf("%s must be an integer, got %T", context, v.Value)
+		}
+	default:
+		return 0, fmt.Errorf("%s must be a constant integer, got %T", context, arg)
 	}
 }

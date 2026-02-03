@@ -77,7 +77,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 		indexNested := IndexNestedLoop
 		matcher.ForceJoinStrategy(&indexNested)
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -114,7 +114,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 		hashJoin := HashJoinScan
 		matcher.ForceJoinStrategy(&hashJoin)
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -151,7 +151,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 		indexNested := IndexNestedLoop
 		matcher.ForceJoinStrategy(&indexNested)
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -183,7 +183,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 		hashJoin := HashJoinScan
 		matcher.ForceJoinStrategy(&hashJoin)
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -226,7 +226,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 		indexNested := IndexNestedLoop
 		matcher.ForceJoinStrategy(&indexNested)
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -257,7 +257,7 @@ func BenchmarkIndexNestedLoopVsHashJoin(b *testing.B) {
 		hashJoin := HashJoinScan
 		matcher.ForceJoinStrategy(&hashJoin)
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -345,7 +345,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 			}
 		})
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		result, err := exec.Execute(q)
 		if err != nil {
@@ -386,7 +386,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 			}
 		})
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		result, err := exec.Execute(q)
 		if err != nil {
@@ -437,7 +437,7 @@ func TestVerifyStrategyUsed(t *testing.T) {
 			}
 		})
 
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		result, err := exec.Execute(q)
 		if err != nil {
@@ -551,7 +551,7 @@ func TestMaterializationDetection(t *testing.T) {
 	}
 	matcher.SetHandler(handler)
 
-	exec := executor.NewExecutor(matcher)
+	exec := executor.NewExecutor(matcher, db)
 
 	t.Log("Executing query...")
 	result, err := exec.Execute(q)

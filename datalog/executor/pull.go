@@ -10,23 +10,26 @@ import (
 
 // PullExecutor executes pull patterns against the database
 type PullExecutor struct {
-	matcher PatternMatcher
-	ctx     PullContext
+	matcher        PatternMatcher
+	ctx            PullContext
+	entityResolver EntityResolver
 }
 
 // NewPullExecutor creates a new pull executor
-func NewPullExecutor(matcher PatternMatcher) *PullExecutor {
+func NewPullExecutor(matcher PatternMatcher, resolver EntityResolver) *PullExecutor {
 	return &PullExecutor{
-		matcher: matcher,
-		ctx:     &BasePullContext{},
+		matcher:        matcher,
+		entityResolver: resolver,
+		ctx:            &BasePullContext{},
 	}
 }
 
 // NewPullExecutorWithHandler creates a new pull executor with annotation support
-func NewPullExecutorWithHandler(matcher PatternMatcher, handler annotations.Handler) *PullExecutor {
+func NewPullExecutorWithHandler(matcher PatternMatcher, resolver EntityResolver, handler annotations.Handler) *PullExecutor {
 	return &PullExecutor{
-		matcher: matcher,
-		ctx:     NewPullContext(handler),
+		matcher:        matcher,
+		entityResolver: resolver,
+		ctx:            NewPullContext(handler),
 	}
 }
 
@@ -96,23 +99,34 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 		// Missing attributes are omitted (not included as nil)
 
 	case *query.PullWildcard:
-		// Get all attributes for entity
-		datoms, err := pe.getAllAttributes(entity)
-		if err != nil {
-			return fmt.Errorf("wildcard pull failed: %w", err)
-		}
-		for _, datom := range datoms {
-			key := query.KeyName(datom.A)
-			if existing, ok := result[key]; ok {
-				// Attribute already seen - accumulate into slice (cardinality-many)
-				switch v := existing.(type) {
-				case []interface{}:
-					result[key] = append(v, datom.V)
-				default:
-					result[key] = []interface{}{v, datom.V}
+		// Use EntityResolver for CRDT-resolved values if available
+		if pe.entityResolver != nil {
+			resolved, err := pe.entityResolver.ResolveAllAttributes(entity)
+			if err != nil {
+				return fmt.Errorf("wildcard pull failed: %w", err)
+			}
+			for kw, val := range resolved {
+				result[query.KeyName(kw)] = val
+			}
+		} else {
+			// Fallback to raw datoms when no EntityResolver
+			datoms, err := pe.getAllAttributes(entity)
+			if err != nil {
+				return fmt.Errorf("wildcard pull failed: %w", err)
+			}
+			for _, datom := range datoms {
+				key := query.KeyName(datom.A)
+				if existing, ok := result[key]; ok {
+					// Attribute already seen - accumulate into slice (cardinality-many)
+					switch v := existing.(type) {
+					case []interface{}:
+						result[key] = append(v, datom.V)
+					default:
+						result[key] = []interface{}{v, datom.V}
+					}
+				} else {
+					result[key] = datom.V
 				}
-			} else {
-				result[key] = datom.V
 			}
 		}
 
@@ -388,24 +402,13 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 		}
 
 	case *query.ResolvedPullWildcard:
-		// Get all attributes for entity (same as unresolved)
-		datoms, err := pe.getAllAttributes(entity)
+		// Use EntityResolver for CRDT-resolved values
+		resolved, err := pe.entityResolver.ResolveAllAttributes(entity)
 		if err != nil {
 			return fmt.Errorf("wildcard pull failed: %w", err)
 		}
-		for _, datom := range datoms {
-			key := query.KeyName(datom.A)
-			if existing, ok := result[key]; ok {
-				// Attribute already seen - accumulate into slice (cardinality-many)
-				switch v := existing.(type) {
-				case []interface{}:
-					result[key] = append(v, datom.V)
-				default:
-					result[key] = []interface{}{v, datom.V}
-				}
-			} else {
-				result[key] = datom.V
-			}
+		for kw, val := range resolved {
+			result[query.KeyName(kw)] = val
 		}
 
 	case *query.ResolvedPullMapSpec:

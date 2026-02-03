@@ -30,10 +30,10 @@ func createBenchmarkDataset(numEntities int) []datalog.Datom {
 
 		// Add 4 attributes per entity (similar to OHLC queries)
 		datoms = append(datoms,
-			datalog.Datom{E: entity, A: datalog.NewKeyword("price/open"), V: int64(100 + i), Tx: 1},
-			datalog.Datom{E: entity, A: datalog.NewKeyword("price/high"), V: int64(110 + i), Tx: 1},
-			datalog.Datom{E: entity, A: datalog.NewKeyword("price/low"), V: int64(90 + i), Tx: 1},
-			datalog.Datom{E: entity, A: datalog.NewKeyword("price/close"), V: int64(105 + i), Tx: 1},
+			datalog.Datom{E: entity, A: datalog.NewKeyword("price/open"), V: int64(100 + i), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: entity, A: datalog.NewKeyword("price/high"), V: int64(110 + i), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: entity, A: datalog.NewKeyword("price/low"), V: int64(90 + i), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: entity, A: datalog.NewKeyword("price/close"), V: int64(105 + i), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		)
 	}
 

@@ -15,20 +15,20 @@ func TestSubqueryDatomicCompatible(t *testing.T) {
 		data: map[string][]datalog.Datom{
 			"all": {
 				// Symbols
-				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1},
-				{E: datalog.NewIdentity("symbol:goog"), A: datalog.NewKeyword(":symbol/ticker"), V: "GOOG", Tx: 1},
+				{E: datalog.NewIdentity("symbol:aapl"), A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				{E: datalog.NewIdentity("symbol:goog"), A: datalog.NewKeyword(":symbol/ticker"), V: "GOOG", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 				// Prices
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:goog"), Tx: 4},
-				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: 2},
-				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: 3},
-				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/value"), V: 2800.0, Tx: 4},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:aapl"), Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/symbol"), V: datalog.NewIdentity("symbol:goog"), Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:1"), A: datalog.NewKeyword(":price/value"), V: 150.0, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:2"), A: datalog.NewKeyword(":price/value"), V: 155.0, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+				{E: datalog.NewIdentity("price:3"), A: datalog.NewKeyword(":price/value"), V: 2800.0, Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
 			},
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	t.Run("ExplicitDatabasePassing", func(t *testing.T) {
 		// Datomic-style query with explicit $ passing

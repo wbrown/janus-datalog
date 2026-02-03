@@ -29,8 +29,8 @@ func TestBadgerStore(t *testing.T) {
 	// Create some test datoms
 	alice := datalog.NewIdentity("user:alice")
 	bob := datalog.NewIdentity("user:bob")
-	tx1 := uint64(1)
-	tx2 := uint64(2)
+	tx1 := datalog.ElementID{Lamport: 1, ReplicaID: 1}
+	tx2 := datalog.ElementID{Lamport: 2, ReplicaID: 1}
 
 	datoms := []datalog.Datom{
 		{
@@ -98,7 +98,8 @@ func TestBadgerStore(t *testing.T) {
 
 	// Test AVET scan (find all users by name attribute)
 	t.Run("AVET Scan", func(t *testing.T) {
-		nameAttr := NewAttribute(":user/name")
+		var nameAttr Attribute
+		copy(nameAttr[:], ":user/name")
 		start, end := encoder.EncodePrefixRange(AVET, nameAttr[:])
 
 		it, err := store.Scan(AVET, start, end)
@@ -151,7 +152,8 @@ func TestBadgerStore(t *testing.T) {
 		}
 
 		// Verify it was added
-		emailAttr := NewAttribute(":user/email")
+		var emailAttr Attribute
+		copy(emailAttr[:], ":user/email")
 		bobHash := bob.Hash()
 		start, end := encoder.EncodePrefixRange(EAVT, bobHash[:], emailAttr[:])
 
@@ -182,7 +184,8 @@ func TestBadgerStore(t *testing.T) {
 		}
 
 		// Verify it's gone
-		nameAttr := NewAttribute(":user/name")
+		var nameAttr Attribute
+		copy(nameAttr[:], ":user/name")
 		bobHash := bob.Hash()
 		start, end := encoder.EncodePrefixRange(EAVT, bobHash[:], nameAttr[:])
 
@@ -219,8 +222,8 @@ func TestRetractWithDifferentTx(t *testing.T) {
 	// Create entity and attribute
 	alice := datalog.NewIdentity("alice-retract-tx")
 	nameAttr := datalog.NewKeyword(":person/name")
-	originalTx := uint64(100)
-	differentTx := uint64(999) // Different from originalTx
+	originalTx := datalog.ElementID{Lamport: 100, ReplicaID: 1}
+	differentTx := datalog.ElementID{Lamport: 999, ReplicaID: 1} // Different from originalTx
 
 	// Assert a datom with originalTx
 	err = store.Assert([]datalog.Datom{
@@ -232,7 +235,8 @@ func TestRetractWithDifferentTx(t *testing.T) {
 
 	// Verify it was stored
 	aliceHash := alice.Hash()
-	attr := NewAttribute(":person/name")
+	var attr Attribute
+	copy(attr[:], ":person/name")
 	start, end := encoder.EncodePrefixRange(EAVT, aliceHash[:], attr[:])
 	it, err := store.Scan(EAVT, start, end)
 	if err != nil {
@@ -293,7 +297,7 @@ func TestKeyOnlyScanning(t *testing.T) {
 				E:  entity,
 				A:  datalog.NewKeyword(fmt.Sprintf(":attr/%d", j)),
 				V:  fmt.Sprintf("value-%d-%d", i, j),
-				Tx: uint64(i),
+				Tx: datalog.ElementID{Lamport: uint64(i)},
 			})
 		}
 	}
@@ -480,15 +484,15 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 	testTime := time.Date(2025, 8, 24, 10, 30, 0, 0, time.UTC)
 
 	datoms := []datalog.Datom{
-		{E: entity, A: datalog.NewKeyword(":test/string"), V: "hello world", Tx: 1},
-		{E: entity, A: datalog.NewKeyword(":test/int"), V: int64(42), Tx: 2},
-		{E: entity, A: datalog.NewKeyword(":test/float"), V: 3.14159, Tx: 3},
-		{E: entity, A: datalog.NewKeyword(":test/bool"), V: true, Tx: 4},
-		{E: entity, A: datalog.NewKeyword(":test/time"), V: testTime, Tx: 5},
-		{E: entity, A: datalog.NewKeyword(":test/bytes"), V: []byte("binary data"), Tx: 6},
-		{E: entity, A: datalog.NewKeyword(":test/ref"), V: refEntity, Tx: 7},
-		{E: entity, A: datalog.NewKeyword(":test/keyword"), V: datalog.NewKeyword(":status/active"), Tx: 8},
-		{E: entity, A: datalog.NewKeyword(":test/symbol"), V: datalog.NewSymbol("my-function"), Tx: 9},
+		{E: entity, A: datalog.NewKeyword(":test/string"), V: "hello world", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: entity, A: datalog.NewKeyword(":test/int"), V: int64(42), Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+		{E: entity, A: datalog.NewKeyword(":test/float"), V: 3.14159, Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
+		{E: entity, A: datalog.NewKeyword(":test/bool"), V: true, Tx: datalog.ElementID{Lamport: 4, ReplicaID: 1}},
+		{E: entity, A: datalog.NewKeyword(":test/time"), V: testTime, Tx: datalog.ElementID{Lamport: 5, ReplicaID: 1}},
+		{E: entity, A: datalog.NewKeyword(":test/bytes"), V: []byte("binary data"), Tx: datalog.ElementID{Lamport: 6, ReplicaID: 1}},
+		{E: entity, A: datalog.NewKeyword(":test/ref"), V: refEntity, Tx: datalog.ElementID{Lamport: 7, ReplicaID: 1}},
+		{E: entity, A: datalog.NewKeyword(":test/keyword"), V: datalog.NewKeyword(":status/active"), Tx: datalog.ElementID{Lamport: 8, ReplicaID: 1}},
+		{E: entity, A: datalog.NewKeyword(":test/symbol"), V: datalog.NewSymbol("my-function"), Tx: datalog.ElementID{Lamport: 9, ReplicaID: 1}},
 	}
 
 	// Assert all datoms
@@ -646,7 +650,7 @@ func TestTimeBasedQueries(t *testing.T) {
 			E:  entity,
 			A:  attr,
 			V:  20.0 + float64(i),
-			Tx: uint64(t.UnixNano()),
+			Tx: datalog.ElementID{Lamport: uint64(t.UnixNano())},
 		}
 	}
 
@@ -664,8 +668,13 @@ func TestTimeBasedQueries(t *testing.T) {
 		startTx := NewTxFromUint(uint64(startTime.UnixNano()))
 		endTx := NewTxFromUint(uint64(endTime.UnixNano()))
 
-		start := encoder.EncodePrefix(TAEV, startTx[:])
-		end := encoder.EncodePrefix(TAEV, endTx[:])
+		// With bitwise NOT encoding, higher Tx encodes to lower bytes
+		// So for range [startTime, endTime], scan from encoded(endTime) to encoded(startTime)
+		encodedStart := encoder.EncodeTxForPrefix(endTx)
+		encodedEnd := encoder.EncodeTxForPrefix(startTx)
+
+		start := encoder.EncodePrefix(TAEV, encodedStart)
+		end := encoder.EncodePrefix(TAEV, encodedEnd)
 
 		it, err := store.Scan(TAEV, start, end)
 		if err != nil {
@@ -692,4 +701,161 @@ func TestTimeBasedQueries(t *testing.T) {
 			t.Errorf("expected 1 reading in time range, got %d", count)
 		}
 	})
+}
+
+func TestMaxElementIDForAttribute(t *testing.T) {
+	// Create temporary directory
+	dir, err := os.MkdirTemp("", "badger-maxattr-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	encoder := NewKeyEncoder(BinaryStrategy)
+	store, err := NewBadgerStore(dir, encoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// Create entities and attribute
+	alice := datalog.NewIdentity("user:alice")
+	bob := datalog.NewIdentity("user:bob")
+	nameAttr := datalog.NewKeyword(":user/name")
+	emailAttr := datalog.NewKeyword(":user/email")
+
+	// Assert datoms with different ElementIDs
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}},
+		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 200, ReplicaID: 1}},
+		{E: alice, A: emailAttr, V: "alice@example.com", Tx: datalog.ElementID{Lamport: 150, ReplicaID: 1}},
+	}
+
+	err = store.Assert(datoms)
+	if err != nil {
+		t.Fatalf("Assert failed: %v", err)
+	}
+
+	// Test MaxElementIDForAttribute for :user/name
+	t.Run("Returns highest ElementID for attribute", func(t *testing.T) {
+		var attr Attribute
+		copy(attr[:], ":user/name")
+
+		maxID, err := store.MaxElementIDForAttribute(attr[:])
+		if err != nil {
+			t.Fatalf("MaxElementIDForAttribute failed: %v", err)
+		}
+
+		// Bob's entry at Lamport 200 should be highest for :user/name
+		expected := datalog.ElementID{Lamport: 200, ReplicaID: 1}
+		if maxID != expected {
+			t.Errorf("expected %v, got %v", expected, maxID)
+		}
+	})
+
+	// Test with different attribute
+	t.Run("Returns correct max for different attribute", func(t *testing.T) {
+		var attr Attribute
+		copy(attr[:], ":user/email")
+
+		maxID, err := store.MaxElementIDForAttribute(attr[:])
+		if err != nil {
+			t.Fatalf("MaxElementIDForAttribute failed: %v", err)
+		}
+
+		// Only one entry at Lamport 150 for :user/email
+		expected := datalog.ElementID{Lamport: 150, ReplicaID: 1}
+		if maxID != expected {
+			t.Errorf("expected %v, got %v", expected, maxID)
+		}
+	})
+}
+
+func TestMaxElementIDForAttributeEmpty(t *testing.T) {
+	// Create temporary directory
+	dir, err := os.MkdirTemp("", "badger-maxattr-empty-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	encoder := NewKeyEncoder(BinaryStrategy)
+	store, err := NewBadgerStore(dir, encoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// Don't add any data - test empty case
+	t.Run("Returns zero ElementID for nonexistent attribute", func(t *testing.T) {
+		var attr Attribute
+		copy(attr[:], ":nonexistent/attr")
+
+		maxID, err := store.MaxElementIDForAttribute(attr[:])
+		if err != nil {
+			t.Fatalf("MaxElementIDForAttribute failed: %v", err)
+		}
+
+		// Should return zero ElementID
+		expected := datalog.ElementID{}
+		if maxID != expected {
+			t.Errorf("expected zero ElementID, got %v", maxID)
+		}
+	})
+}
+
+func TestMaxElementIDForAttributeAfterWrites(t *testing.T) {
+	// Create temporary directory
+	dir, err := os.MkdirTemp("", "badger-maxattr-writes-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	encoder := NewKeyEncoder(BinaryStrategy)
+	store, err := NewBadgerStore(dir, encoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	alice := datalog.NewIdentity("user:alice")
+	nameAttr := datalog.NewKeyword(":user/name")
+
+	// Initial write
+	err = store.Assert([]datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice v1", Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1}},
+	})
+	if err != nil {
+		t.Fatalf("Assert failed: %v", err)
+	}
+
+	// Check initial max
+	var attr Attribute
+	copy(attr[:], ":user/name")
+
+	maxID, err := store.MaxElementIDForAttribute(attr[:])
+	if err != nil {
+		t.Fatalf("MaxElementIDForAttribute failed: %v", err)
+	}
+	if maxID.Lamport != 100 {
+		t.Errorf("expected Lamport 100, got %d", maxID.Lamport)
+	}
+
+	// Write with higher ElementID
+	err = store.Assert([]datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice v2", Tx: datalog.ElementID{Lamport: 300, ReplicaID: 1}},
+	})
+	if err != nil {
+		t.Fatalf("Assert failed: %v", err)
+	}
+
+	// Check updated max
+	maxID, err = store.MaxElementIDForAttribute(attr[:])
+	if err != nil {
+		t.Fatalf("MaxElementIDForAttribute failed: %v", err)
+	}
+	if maxID.Lamport != 300 {
+		t.Errorf("expected Lamport 300 after update, got %d", maxID.Lamport)
+	}
 }

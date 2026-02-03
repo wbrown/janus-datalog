@@ -47,7 +47,7 @@ func TestTupleGroundBasic(t *testing.T) {
 	}
 
 	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), opts)
+	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
 
 	result, err := exec.Execute(q)
 	if err != nil {
@@ -150,7 +150,7 @@ func TestTupleGroundOrFallback(t *testing.T) {
 	t.Logf("Parsed query: %s", q.String())
 
 	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), opts)
+	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
 
 	ctx := executor.NewContext(func(event annotations.Event) {
 		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
@@ -262,7 +262,7 @@ func TestTupleGroundBackwardCompatibility(t *testing.T) {
 	}
 
 	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), opts)
+	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
 
 	result, err := exec.Execute(q)
 	if err != nil {
@@ -327,7 +327,7 @@ func TestTupleGroundQB(t *testing.T) {
 	t.Logf("Query built: %s", q.String())
 
 	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), opts)
+	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
 
 	result, err := exec.Execute(q)
 	if err != nil {
@@ -430,7 +430,7 @@ func TestTupleGroundQBInOr(t *testing.T) {
 	t.Logf("Query built: %s", q.String())
 
 	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), opts)
+	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
 
 	result, err := exec.Execute(q)
 	if err != nil {

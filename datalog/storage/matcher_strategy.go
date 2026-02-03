@@ -30,8 +30,8 @@ func (rt ReuseType) String() string {
 // ReuseStrategy describes how iterator reuse can be applied
 type ReuseStrategy struct {
 	Type     ReuseType
-	Position int // Which position is changing (0=E, 1=A, 2=V, 3=T)
-	Index    int // Which index to use (maps to IndexType)
+	Position int       // Which position is changing (0=E, 1=A, 2=V, 3=T)
+	Index    IndexType // Which index to use
 }
 
 // analyzeReuseStrategy determines if and how iterator reuse can be applied.
@@ -98,7 +98,7 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 		position := boundPositions[0]
 
 		// Determine which index to use and if reuse is beneficial
-		var indexType int
+		var indexType IndexType
 		var canReuse bool
 
 		switch position {
@@ -108,16 +108,16 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 				// E is bound, A is constant → use AEVT for direct lookups
 				// Pattern like [?e :attr/name ?v] where ?e is bound to many values
 				// AEVT allows: seek to (:attr/name, entity1), seek to (:attr/name, entity2), etc.
-				indexType = 1   // AEVT - direct lookup by (A, E) pair
-				canReuse = true // Try iterator reuse with Seek() between entities
+				indexType = AEVT // direct lookup by (A, E) pair
+				canReuse = true  // Try iterator reuse with Seek() between entities
 			} else {
 				// E is bound, A varies → use EAVT
-				indexType = 0 // EAVT - E is primary sort key
+				indexType = EAVT // E is primary sort key
 				canReuse = true
 			}
 
 		case 1: // A is bound
-			indexType = 1 // AEVT - A is primary sort key ✓
+			indexType = AEVT // A is primary sort key ✓
 			canReuse = true
 
 		case 2: // V is bound
@@ -136,17 +136,17 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 				// AVET index: A is primary, V is secondary
 				// When A is fixed, all V values for that A are contiguous
 				// We CAN efficiently seek between V values within that A range
-				indexType = 2   // AVET
-				canReuse = true // Re-enabled with fixed "moved past" logic
+				indexType = AVET // A is primary, V is secondary
+				canReuse = true  // Re-enabled with fixed "moved past" logic
 			} else {
 				// A varies with the binding relation
 				// Use VAET where V is the primary sort key
-				indexType = 3 // VAET
+				indexType = VAET // V is primary sort key
 				canReuse = true
 			}
 
 		case 3: // T is bound
-			indexType = 4 // TAEV - T is primary sort key ✓
+			indexType = TAEV // T is primary sort key ✓
 			canReuse = true
 		}
 
@@ -276,25 +276,25 @@ func chooseBestMultiPositionStrategy(
 	}
 
 	// Determine index based on best position for reuse
-	var indexType int
+	var indexType IndexType
 	switch bestPosition {
 	case 0: // E has most distinct values - use AEVT or EAVT
 		// Check if A is constant
 		if _, isConstant := pattern.GetA().(query.Constant); isConstant {
-			indexType = 1 // AEVT - A is constant, seek by E
+			indexType = AEVT // A is constant, seek by E
 		} else {
-			indexType = 0 // EAVT - seek by E
+			indexType = EAVT // seek by E
 		}
 	case 1: // A has most distinct values - use AEVT
-		indexType = 1 // AEVT
+		indexType = AEVT
 	case 2: // V has most distinct values - use AVET or VAET
 		if _, isConstant := pattern.GetA().(query.Constant); isConstant {
-			indexType = 2 // AVET - A is constant, seek by V
+			indexType = AVET // A is constant, seek by V
 		} else {
-			indexType = 3 // VAET - seek by V
+			indexType = VAET // seek by V
 		}
 	case 3: // T has most distinct values - use TAEV
-		indexType = 4 // TAEV
+		indexType = TAEV
 	default:
 		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}

@@ -28,7 +28,7 @@ func BenchmarkOHLCFullChain(b *testing.B) {
 			// Create test data
 			datoms := createOHLCData(bm.numDays, bm.numHours)
 			matcher := NewMemoryPatternMatcher(datoms)
-			exec := NewExecutor(matcher)
+			exec := NewExecutor(matcher, nil)
 
 			// Build the query
 			var queryStr string
@@ -170,7 +170,7 @@ func createOHLCData(numDays, numHours int) []datalog.Datom {
 		E:  symbolID,
 		A:  datalog.NewKeyword(":symbol/ticker"),
 		V:  "TEST",
-		Tx: 1,
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	barID := 1000
@@ -185,12 +185,12 @@ func createOHLCData(numDays, numHours int) []datalog.Datom {
 				barTime := dayTime.Add(time.Duration(minute) * time.Minute)
 
 				datoms = append(datoms,
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/open"), V: 100.0 + float64(day) + float64(minute)*0.1, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/high"), V: 102.0 + float64(day) + float64(minute)*0.2, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/low"), V: 98.0 + float64(day) - float64(minute)*0.1, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/close"), V: 101.0 + float64(day) + float64(minute)*0.15, Tx: uint64(barID)},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/open"), V: 100.0 + float64(day) + float64(minute)*0.1, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/high"), V: 102.0 + float64(day) + float64(minute)*0.2, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/low"), V: 98.0 + float64(day) - float64(minute)*0.1, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/close"), V: 101.0 + float64(day) + float64(minute)*0.15, Tx: datalog.ElementID{Lamport: uint64(barID)}},
 				)
 				barID++
 			}
@@ -205,12 +205,12 @@ func createOHLCData(numDays, numHours int) []datalog.Datom {
 				barTime := hourTime.Add(time.Duration(minute) * time.Minute)
 
 				datoms = append(datoms,
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/open"), V: 100.0 + float64(hour) + float64(minute)*0.1, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/high"), V: 102.0 + float64(hour) + float64(minute)*0.2, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/low"), V: 98.0 + float64(hour) - float64(minute)*0.1, Tx: uint64(barID)},
-					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/close"), V: 101.0 + float64(hour) + float64(minute)*0.15, Tx: uint64(barID)},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/open"), V: 100.0 + float64(hour) + float64(minute)*0.1, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/high"), V: 102.0 + float64(hour) + float64(minute)*0.2, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/low"), V: 98.0 + float64(hour) - float64(minute)*0.1, Tx: datalog.ElementID{Lamport: uint64(barID)}},
+					datalog.Datom{E: currentBarID, A: datalog.NewKeyword(":price/close"), V: 101.0 + float64(hour) + float64(minute)*0.15, Tx: datalog.ElementID{Lamport: uint64(barID)}},
 				)
 				barID++
 			}
@@ -268,7 +268,7 @@ func BenchmarkTimeExtractionFunctions(b *testing.B) {
 	// Create test data
 	datoms := createOHLCData(0, 260)
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with multiple time extractions
 	queryStr := `

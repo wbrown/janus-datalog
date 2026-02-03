@@ -61,6 +61,7 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 // constantBindings are pre-resolved scalar values that are not present as relation columns.
 func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) Relation {
 	columns := rel.Columns()
+	needsCopy := rel.RequiresCopy()
 
 	// Pre-allocate filtered only for materialized relations to avoid forcing materialization
 	var filtered []Tuple
@@ -106,6 +107,9 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		}
 
 		if passes {
+			if needsCopy {
+				tuple = copyTuple(tuple)
+			}
 			filtered = append(filtered, tuple)
 		}
 	}

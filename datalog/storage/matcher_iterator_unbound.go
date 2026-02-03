@@ -17,6 +17,7 @@ type unboundIterator struct {
 
 	storageIter  Iterator
 	currentTuple executor.Tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
 
 	// Statistics tracking
 	datomsScanned int
@@ -24,9 +25,18 @@ type unboundIterator struct {
 
 	// Optimized tuple builder
 	tupleBuilder *query.InternedTupleBuilder
+
+	// CRDT cardinality-one support: stop after first result
+	returnOnlyFirst bool
+	foundFirst      bool
 }
 
 func (it *unboundIterator) Next() bool {
+	// CRDT cardinality-one: if we already found the first result, stop
+	if it.returnOnlyFirst && it.foundFirst {
+		return false
+	}
+
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
 		if err != nil {
@@ -39,11 +49,11 @@ func (it *unboundIterator) Next() bool {
 		if it.matcher.matchesDatom(datom, it.e, it.a, it.v, it.tx) {
 			// Apply transaction and constraint validation
 			if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
-				it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
-				if it.currentTuple != nil {
-					it.datomsMatched++
-					return true
-				}
+				it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+				it.currentTuple = it.workspace
+				it.datomsMatched++
+				it.foundFirst = true
+				return true
 			}
 		}
 	}
@@ -86,6 +96,7 @@ type unboundMaskIterator struct {
 
 	storageIter  Iterator
 	currentTuple executor.Tuple
+	workspace    executor.Tuple // Reusable workspace for tuple building
 
 	// Statistics tracking
 	datomsScanned int
@@ -94,9 +105,18 @@ type unboundMaskIterator struct {
 
 	// Optimized tuple builder
 	tupleBuilder *query.InternedTupleBuilder
+
+	// CRDT cardinality-one support: stop after first result
+	returnOnlyFirst bool
+	foundFirst      bool
 }
 
 func (it *unboundMaskIterator) Next() bool {
+	// CRDT cardinality-one: if we already found the first result, stop
+	if it.returnOnlyFirst && it.foundFirst {
+		return false
+	}
+
 	// The KeyMaskIterator already handles the filtering
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
@@ -114,11 +134,11 @@ func (it *unboundMaskIterator) Next() bool {
 			// the mask (it was disabled for performance reasons but the code path
 			// remained - see badger_store.go:179)
 			if validateDatomWithConstraints(datom, it.matcher.txID, it.constraints) {
-				it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
-				if it.currentTuple != nil {
-					it.datomsMatched++
-					return true
-				}
+				it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+				it.currentTuple = it.workspace
+				it.datomsMatched++
+				it.foundFirst = true
+				return true
 			}
 		}
 	}

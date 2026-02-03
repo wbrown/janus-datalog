@@ -17,7 +17,7 @@ func TestSemanticRewritingTimePredicates(t *testing.T) {
 
 	symbolID := datalog.NewIdentity("symbol-NVDA")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "NVDA", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "NVDA", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -34,9 +34,9 @@ func TestSemanticRewritingTimePredicates(t *testing.T) {
 			open := float64(100 + year - 2023 + i)
 
 			datoms = append(datoms,
-				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
+				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+				datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 			)
 		}
 	}
@@ -61,7 +61,7 @@ func TestSemanticRewritingTimePredicates(t *testing.T) {
 	}
 
 	// Execute WITH semantic rewriting
-	execWithRewriting := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithRewriting := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSemanticRewriting: true,
 		EnableFineGrainedPhases: true,
 		MaxPhases:               10,
@@ -73,7 +73,7 @@ func TestSemanticRewritingTimePredicates(t *testing.T) {
 	}
 
 	// Execute WITHOUT semantic rewriting for comparison
-	execWithoutRewriting := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithoutRewriting := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSemanticRewriting: false,
 		EnableFineGrainedPhases: true,
 		MaxPhases:               10,
@@ -114,7 +114,7 @@ func TestSemanticRewritingMultipleTimeComponents(t *testing.T) {
 
 	symbolID := datalog.NewIdentity("symbol-AAPL")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "AAPL", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -131,9 +131,9 @@ func TestSemanticRewritingMultipleTimeComponents(t *testing.T) {
 				open := float64(150 + day + hour + minute)
 
 				datoms = append(datoms,
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: 1},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+					datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: open, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 				)
 			}
 		}
@@ -165,7 +165,7 @@ func TestSemanticRewritingMultipleTimeComponents(t *testing.T) {
 	}
 
 	// Execute WITH semantic rewriting
-	execWithRewriting := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithRewriting := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSemanticRewriting: true,
 		EnableFineGrainedPhases: true,
 		MaxPhases:               10,
@@ -211,7 +211,7 @@ func TestSemanticRewritingDisabled(t *testing.T) {
 
 	symbolID := datalog.NewIdentity("symbol-TSLA")
 	datoms = append(datoms, datalog.Datom{
-		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "TSLA", Tx: 1,
+		E: symbolID, A: datalog.NewKeyword(":symbol/ticker"), V: "TSLA", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
 	})
 
 	loc := time.UTC
@@ -222,9 +222,9 @@ func TestSemanticRewritingDisabled(t *testing.T) {
 		barEntity := datalog.NewIdentity("bar-0" + string(rune('0'+i)))
 
 		datoms = append(datoms,
-			datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: 1},
-			datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: 1},
-			datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: float64(200 + i), Tx: 1},
+			datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/symbol"), V: symbolID, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/time"), V: barTime, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+			datalog.Datom{E: barEntity, A: datalog.NewKeyword(":price/open"), V: float64(200 + i), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 		)
 	}
 
@@ -245,7 +245,7 @@ func TestSemanticRewritingDisabled(t *testing.T) {
 	}
 
 	// Execute WITHOUT semantic rewriting - should still work via expressions
-	exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSemanticRewriting: false,
 		EnableFineGrainedPhases: true,
 		MaxPhases:               10,

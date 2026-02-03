@@ -35,7 +35,7 @@ func TestGopherStreetExactBug(t *testing.T) {
 		EnableTrueStreaming: true,
 	}
 	matcher := NewBadgerMatcherWithOptions(db.store, opts)
-	exec := executor.NewExecutor(matcher)
+	exec := executor.NewExecutor(matcher, db)
 
 	result, err := exec.Execute(q)
 	require.NoError(t, err)
