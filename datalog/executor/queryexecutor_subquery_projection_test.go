@@ -49,7 +49,7 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 
 	matcher := NewIndexedMemoryMatcher(datoms)
 	opts := planner.PlannerOptions{}
-	exec := NewExecutorWithOptions(matcher, opts)
+	exec := NewExecutorWithOptions(matcher, nil, opts)
 	result, err := exec.Execute(q)
 	assert.NoError(t, err, "QueryExecutor should preserve subquery result column names")
 
@@ -154,7 +154,7 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 	t.Run("QueryExecutor", func(t *testing.T) {
 		matcher := NewIndexedMemoryMatcher(datoms) // Fresh matcher per subtest
 		opts := planner.PlannerOptions{}
-		exec := NewExecutorWithOptions(matcher, opts)
+		exec := NewExecutorWithOptions(matcher, nil, opts)
 		result, err := exec.Execute(q)
 
 		// BUG: This should succeed but fails with:

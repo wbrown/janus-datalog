@@ -87,7 +87,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 
 	// Create executor
 	matcher := NewBadgerMatcher(db.store)
-	exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 		EnablePredicatePushdown: true,
 		EnableFineGrainedPhases: true,
 	})

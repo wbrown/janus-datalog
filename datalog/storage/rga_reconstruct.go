@@ -86,14 +86,14 @@ type RGAElementWithPosition struct {
 // This is used for building position indexes (position -> ElementID mapping).
 //
 // Returns a slice of (ElementID, Value) pairs in the correct order.
+// Tombstoned elements are excluded from the result but kept in the tree structure
+// so their children remain reachable.
 func ReconstructRGAWithIDs(elements []RGAElement) []RGAElementWithPosition {
 	// Build children map: afterRef -> []elements
-	// Only include non-deleted elements
+	// Include ALL elements (even tombstoned) to maintain tree structure
 	children := make(map[datalog.ElementID][]RGAElement)
 	for _, e := range elements {
-		if e.Tombstone == nil { // Skip deleted elements
-			children[e.AfterRef] = append(children[e.AfterRef], e)
-		}
+		children[e.AfterRef] = append(children[e.AfterRef], e)
 	}
 
 	// Sort each child list by ElementID for deterministic order
@@ -104,14 +104,18 @@ func ReconstructRGAWithIDs(elements []RGAElement) []RGAElementWithPosition {
 	}
 
 	// DFS from HEAD to build ordered result with positions
+	// Only emit non-tombstoned elements
 	var result []RGAElementWithPosition
 	var walk func(id datalog.ElementID)
 	walk = func(id datalog.ElementID) {
 		for _, child := range children[id] {
-			result = append(result, RGAElementWithPosition{
-				Element:  child,
-				Position: len(result),
-			})
+			if child.Tombstone == nil {
+				result = append(result, RGAElementWithPosition{
+					Element:  child,
+					Position: len(result),
+				})
+			}
+			// Always walk children, even if this element is tombstoned
 			walk(child.ID)
 		}
 	}

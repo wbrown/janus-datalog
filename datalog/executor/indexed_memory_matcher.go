@@ -390,3 +390,4 @@ func (m *IndexedMemoryMatcher) getCandidates(strategy matchStrategy) []int {
 		return positions
 	}
 }
+

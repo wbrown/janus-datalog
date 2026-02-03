@@ -61,7 +61,7 @@ func TestSemanticRewritingTimePredicates(t *testing.T) {
 	}
 
 	// Execute WITH semantic rewriting
-	execWithRewriting := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithRewriting := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSemanticRewriting: true,
 		EnableFineGrainedPhases: true,
 		MaxPhases:               10,
@@ -73,7 +73,7 @@ func TestSemanticRewritingTimePredicates(t *testing.T) {
 	}
 
 	// Execute WITHOUT semantic rewriting for comparison
-	execWithoutRewriting := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithoutRewriting := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSemanticRewriting: false,
 		EnableFineGrainedPhases: true,
 		MaxPhases:               10,
@@ -165,7 +165,7 @@ func TestSemanticRewritingMultipleTimeComponents(t *testing.T) {
 	}
 
 	// Execute WITH semantic rewriting
-	execWithRewriting := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithRewriting := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSemanticRewriting: true,
 		EnableFineGrainedPhases: true,
 		MaxPhases:               10,
@@ -245,7 +245,7 @@ func TestSemanticRewritingDisabled(t *testing.T) {
 	}
 
 	// Execute WITHOUT semantic rewriting - should still work via expressions
-	exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSemanticRewriting: false,
 		EnableFineGrainedPhases: true,
 		MaxPhases:               10,

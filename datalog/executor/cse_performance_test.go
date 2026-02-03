@@ -197,7 +197,7 @@ func TestCSEPerformanceImpact(t *testing.T) {
 	}
 
 	// Test 1: Decorrelation WITHOUT CSE (2 filter groups)
-	execWithoutCSE := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithoutCSE := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableCSE:                   false, // CSE disabled
@@ -230,7 +230,7 @@ func TestCSEPerformanceImpact(t *testing.T) {
 	}
 
 	// Test 2: Decorrelation WITH CSE (1 filter group)
-	execWithCSE := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithCSE := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableCSE:                   true, // CSE enabled

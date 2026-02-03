@@ -60,7 +60,7 @@ func TestCSEOpportunity(t *testing.T) {
 	}
 
 	// Execute with CSE enabled
-	exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableCSE:                   true,
@@ -267,7 +267,7 @@ func TestOHLCCSEOpportunity(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableCSE:                   true,

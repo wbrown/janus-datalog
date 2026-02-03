@@ -81,7 +81,7 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 		EnableStreamingAggregation:  execOpts.EnableStreamingAggregation,
 		EnableDebugLogging:          execOpts.EnableDebugLogging,
 	}
-	exec := executor.NewExecutorWithOptions(matcher, opts)
+	exec := executor.NewExecutorWithOptions(matcher, db, opts)
 
 	// Test 1: Non-aggregated query (should work)
 	t.Run("NonAggregated", func(t *testing.T) {

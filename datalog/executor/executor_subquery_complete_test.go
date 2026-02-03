@@ -66,7 +66,7 @@ func TestSubqueryComplete(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	t.Run("SingleInputSubquery", func(t *testing.T) {
 		// Find max high price for each symbol

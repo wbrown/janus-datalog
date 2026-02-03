@@ -705,3 +705,55 @@ All writes are preserved. Use history predicates for time-travel queries:
 ```
 
 The cache stores current value only. History queries bypass the cache and scan storage directly.
+
+---
+
+## Pull API and CRDT Resolution
+
+The Pull API (`db.Pull()`, `db.PullInto()`, and pull expressions in queries) uses CRDT resolution to return current values.
+
+### EntityResolver Interface
+
+Pull operations use the `EntityResolver` interface to resolve attributes with proper CRDT semantics:
+
+```go
+type EntityResolver interface {
+    ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error)
+}
+```
+
+The Database implements this interface, delegating to `ResolveEntityAttributes` which uses the EA cache for efficient resolution.
+
+### Wildcard Pulls
+
+Wildcard pulls (`[*]`) resolve all attributes for an entity:
+
+```go
+result, _ := db.Pull(entity, "[*]")
+// Returns CRDT-resolved values:
+// - CardinalityOne: single value (LWW)
+// - CardinalityMany: []interface{} (add-wins set)
+// - CardinalityVector: []interface{} (RGA ordered list)
+```
+
+**With schema**: Uses schema attributes as the resolution list, leveraging the cache when data is already cached.
+
+**Without schema**: Scans EAVT to discover all attributes for the entity.
+
+### Pull Expressions in Queries
+
+Pull expressions in queries also use CRDT resolution:
+
+```clojure
+[:find (pull ?e [*]) :where [?e :task/name "test"]]
+```
+
+Both standalone `db.PullInto()` and query pull expressions use the same resolution path through `EntityResolver`.
+
+### Return Types by Cardinality
+
+| Cardinality | Pull Return Type | Example |
+|-------------|------------------|---------|
+| One | Single value | `"Alice"` |
+| Many | `[]interface{}` | `["admin", "user"]` |
+| Vector | `[]interface{}` (ordered) | `["Go", "Python", "Rust"]` |

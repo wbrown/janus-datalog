@@ -186,7 +186,7 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 		}
 
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 			EnableFineGrainedPhases: true,
 		})
 
@@ -216,7 +216,7 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 		}
 
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 			EnableFineGrainedPhases: true,
 		})
 
@@ -243,7 +243,7 @@ func BenchmarkHighCardinalityKeywords(b *testing.B) {
 		}
 
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 			EnableFineGrainedPhases: true,
 		})
 

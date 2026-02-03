@@ -28,7 +28,7 @@ func BenchmarkOHLCFullChain(b *testing.B) {
 			// Create test data
 			datoms := createOHLCData(bm.numDays, bm.numHours)
 			matcher := NewMemoryPatternMatcher(datoms)
-			exec := NewExecutor(matcher)
+			exec := NewExecutor(matcher, nil)
 
 			// Build the query
 			var queryStr string
@@ -268,7 +268,7 @@ func BenchmarkTimeExtractionFunctions(b *testing.B) {
 	// Create test data
 	datoms := createOHLCData(0, 260)
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with multiple time extractions
 	queryStr := `

@@ -29,6 +29,7 @@ type QueryExecutor interface {
 // DefaultQueryExecutor implements QueryExecutor using the PatternMatcher interface
 type DefaultQueryExecutor struct {
 	matcher          PatternMatcher
+	entityResolver   EntityResolver
 	options          ExecutorOptions
 	constantBindings map[query.Symbol]interface{} // Scalar inputs resolved as constants (not relation columns)
 }
@@ -40,10 +41,11 @@ type DefaultQueryExecutor struct {
 // of this function in tests is for unit testing internal executor methods like
 // executePattern or executeExpression. End-to-end and integration tests must use
 // the public API to ensure the planner is exercised.
-func newQueryExecutor(matcher PatternMatcher, options ExecutorOptions) *DefaultQueryExecutor {
+func newQueryExecutor(matcher PatternMatcher, resolver EntityResolver, options ExecutorOptions) *DefaultQueryExecutor {
 	return &DefaultQueryExecutor{
-		matcher: matcher,
-		options: options,
+		matcher:        matcher,
+		entityResolver: resolver,
+		options:        options,
 	}
 }
 
@@ -1055,7 +1057,7 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 	}
 
 	// Create pull executor
-	puller := NewPullExecutor(e.matcher)
+	puller := NewPullExecutor(e.matcher, e.entityResolver)
 
 	// Process tuples and execute pulls
 	var resultTuples []Tuple

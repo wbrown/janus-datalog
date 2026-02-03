@@ -22,8 +22,8 @@ func TestPullExecutor_SimpleAttributes(t *testing.T) {
 		{E: alice, A: emailAttr, V: "alice@example.com", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pull pattern
 	pattern, err := parser.ParsePullPattern(`[:user/name :user/age]`)
@@ -68,8 +68,8 @@ func TestPullExecutor_Wildcard(t *testing.T) {
 		{E: alice, A: emailAttr, V: "alice@example.com", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse wildcard pattern
 	pattern, err := parser.ParsePullPattern(`[*]`)
@@ -118,8 +118,8 @@ func TestPullExecutor_Wildcard_CardinalityMany(t *testing.T) {
 		{E: alice, A: tagAttr, V: "reviewer", Tx: datalog.ElementID{Lamport: 3, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse wildcard pattern
 	pattern, err := parser.ParsePullPattern(`[*]`)
@@ -188,8 +188,8 @@ func TestPullExecutor_NestedReference(t *testing.T) {
 		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Reference to region
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse nested pattern
 	pattern, err := parser.ParsePullPattern(`[:entity/code :entity/name {:entity/region [:region/code :region/name]}]`)
@@ -244,8 +244,8 @@ func TestPullExecutor_CycleDetection(t *testing.T) {
 		{E: entity2, A: nextAttr, V: entity1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Circular reference back to entity1
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern that would recurse infinitely without cycle detection
 	pattern, err := parser.ParsePullPattern(`[:entity/name {:entity/next [:entity/name {:entity/next [:entity/name]}]}]`)
@@ -300,8 +300,8 @@ func TestPullExecutor_MissingAttribute(t *testing.T) {
 		// No age attribute
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern requesting missing attribute
 	pattern, err := parser.ParsePullPattern(`[:user/name :user/age]`)
@@ -336,8 +336,8 @@ func TestPullExecutor_DefaultValue(t *testing.T) {
 		// No status attribute
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern with default value
 	pattern, err := parser.ParsePullPattern(`[:user/name (default :user/status "inactive")]`)
@@ -366,8 +366,8 @@ func TestPullExecutor_NonExistentEntity(t *testing.T) {
 	// Create empty datoms
 	datoms := []datalog.Datom{}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern
 	pattern, err := parser.ParsePullPattern(`[:user/name :user/age]`)
@@ -399,8 +399,8 @@ func TestPullExecutor_PullMany(t *testing.T) {
 		{E: bob, A: nameAttr, V: "Bob", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse pattern
 	pattern, err := parser.ParsePullPattern(`[:user/name]`)
@@ -446,8 +446,8 @@ func TestPullExecutor_DeeplyNested(t *testing.T) {
 		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Parse 3-level nested pattern
 	pattern, err := parser.ParsePullPattern(`[:entity/code {:entity/region [:region/code {:region/nation [:nation/name]}]}]`)
@@ -508,8 +508,8 @@ func TestPullExecutor_AnnotationsEmitted(t *testing.T) {
 		{E: alice, A: ageAttr, V: int64(30), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Capture events
 	var events []annotations.Event
@@ -572,8 +572,8 @@ func TestPullExecutor_NoEventsWhenHandlerNil(t *testing.T) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 	// Don't set handler - should use BasePullContext (no-op)
 
 	pattern, err := parser.ParsePullPattern(`[:user/name]`)
@@ -607,8 +607,8 @@ func TestPullExecutor_CycleDetectedEvent(t *testing.T) {
 		{E: entity2, A: nextAttr, V: entity1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}}, // Circular reference
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Capture events
 	var events []annotations.Event
@@ -657,8 +657,8 @@ func TestPullExecutor_NestedRefsEmitDepthEvents(t *testing.T) {
 		{E: entity, A: entityRegionAttr, V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 
 	// Capture events
 	var events []annotations.Event

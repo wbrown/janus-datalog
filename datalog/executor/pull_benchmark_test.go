@@ -19,8 +19,8 @@ func BenchmarkPull_SingleAttribute(b *testing.B) {
 		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 	pattern, _ := parser.ParsePullPattern(`[:user/name]`)
 
 	b.ResetTimer()
@@ -41,8 +41,8 @@ func BenchmarkPull_MultipleAttributes(b *testing.B) {
 		{E: alice, A: datalog.NewKeyword(":user/country"), V: "USA", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 	pattern, _ := parser.ParsePullPattern(`[:user/name :user/age :user/email :user/city :user/country]`)
 
 	b.ResetTimer()
@@ -63,8 +63,8 @@ func BenchmarkPull_Wildcard(b *testing.B) {
 		{E: alice, A: datalog.NewKeyword(":user/country"), V: "USA", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 	pattern, _ := parser.ParsePullPattern(`[*]`)
 
 	b.ResetTimer()
@@ -85,8 +85,8 @@ func BenchmarkPull_NestedReference(b *testing.B) {
 		{E: region, A: datalog.NewKeyword(":region/name"), V: "US West", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 	pattern, _ := parser.ParsePullPattern(`[:user/name {:user/region [:region/code :region/name]}]`)
 
 	b.ResetTimer()
@@ -109,8 +109,8 @@ func BenchmarkPull_DeepNesting(b *testing.B) {
 		{E: entity, A: datalog.NewKeyword(":entity/region"), V: region, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 	pattern, _ := parser.ParsePullPattern(`[:entity/code {:entity/region [:region/code {:region/nation [:nation/name]}]}]`)
 
 	b.ResetTimer()
@@ -134,8 +134,8 @@ func BenchmarkPullMany(b *testing.B) {
 		)
 	}
 
-	matcher := NewMemoryPatternMatcher(datoms)
-	puller := NewPullExecutor(matcher)
+	matcher := NewIndexedMemoryMatcher(datoms)
+	puller := NewPullExecutor(matcher, nil)
 	pattern, _ := parser.ParsePullPattern(`[:user/name :user/age]`)
 
 	b.ResetTimer()
@@ -160,7 +160,7 @@ func BenchmarkPull_VsManualQuery(b *testing.B) {
 	matcher := NewMemoryPatternMatcher(datoms)
 
 	b.Run("Pull", func(b *testing.B) {
-		puller := NewPullExecutor(matcher)
+		puller := NewPullExecutor(matcher, nil)
 		pattern, _ := parser.ParsePullPattern(`[:user/name :user/age :user/email]`)
 
 		b.ResetTimer()
@@ -219,7 +219,7 @@ func BenchmarkPull_ScalingWithAttributes(b *testing.B) {
 		}
 
 		matcher := NewMemoryPatternMatcher(datoms)
-		puller := NewPullExecutor(matcher)
+		puller := NewPullExecutor(matcher, nil)
 		pattern, _ := parser.ParsePullPattern(fmt.Sprintf("[%s]", patternAttrs))
 
 		b.Run(fmt.Sprintf("Attrs_%d", numAttrs), func(b *testing.B) {

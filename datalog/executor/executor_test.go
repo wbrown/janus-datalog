@@ -24,7 +24,7 @@ func TestExecutorBasicQuery(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find all names
 	q := &query.Query{
@@ -88,7 +88,7 @@ func TestExecutorJoinQuery(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find friends of friends
 	// [?p1 :user/friend ?p2]
@@ -168,7 +168,7 @@ func TestExecutorWithFilter(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find people younger than 30
 	q := &query.Query{
@@ -242,7 +242,7 @@ func TestExecutorMultipleFilters(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find people aged 25-30 with salary > 50000
 	q := &query.Query{
@@ -326,7 +326,7 @@ func TestExecutorEmptyResult(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query for non-existent attribute
 	q := &query.Query{

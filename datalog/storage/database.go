@@ -460,7 +460,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 func (d *Database) NewExecutor() *executor.Executor {
 	opts := DefaultPlannerOptions()
 	opts.Cache = d.planCache // Use database's cache
-	return executor.NewExecutorWithOptions(d.Matcher(), opts)
+	return executor.NewExecutorWithOptions(d.Matcher(), d, opts)
 }
 
 // NewExecutorWithOptions creates a new query executor with custom options and the database's plan cache
@@ -481,7 +481,7 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
-	return executor.NewExecutorWithOptions(matcher, opts)
+	return executor.NewExecutorWithOptions(matcher, d, opts)
 }
 
 // Store returns the underlying store for direct access (debugging/testing)
@@ -663,7 +663,7 @@ func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...inte
 	// Execute with the SourceRouter as the PatternMatcher
 	planOpts := DefaultPlannerOptions()
 	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, planOpts)
+	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
@@ -703,7 +703,7 @@ func (d *Database) ExecuteQueryRelation(queryInput interface{}, inputs ...interf
 	// Execute with the SourceRouter as the PatternMatcher
 	planOpts := DefaultPlannerOptions()
 	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, planOpts)
+	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
@@ -2314,7 +2314,7 @@ func (d *Database) Pull(entityID datalog.Identity, patternStr string) (map[strin
 
 	// Create pull executor with database matcher
 	matcher := d.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, d)
 
 	// Execute pull
 	return puller.Pull(entityID, pattern)
@@ -2340,10 +2340,193 @@ func (d *Database) PullMany(entityIDs []datalog.Identity, patternStr string) ([]
 
 	// Create pull executor with database matcher
 	matcher := d.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, d)
 
 	// Execute pull for all entities
 	return puller.PullMany(entityIDs, pattern)
+}
+
+// ResolveEntityAttributes resolves CRDT values for the requested attributes of an entity.
+// This is the core resolution method that properly applies CRDT semantics:
+// - CardinalityOne: LWW (Last-Writer-Wins)
+// - CardinalityMany: Add-wins set
+// - CardinalityVector: RGA ordered list
+//
+// The method uses difference-based logic:
+// - Checks which attributes are already cached for this entity
+// - If few missing: individual GetOrResolve calls
+// - If many missing: full EAVT scan then resolve
+//
+// Returns a map of keyword -> resolved value. Missing attributes are not included.
+func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []datalog.Keyword) (map[datalog.Keyword]interface{}, error) {
+	if len(attrs) == 0 {
+		return make(map[datalog.Keyword]interface{}), nil
+	}
+
+	eBytes := Entity(entity.Hash())
+	matcher := d.Matcher().(*BadgerMatcher)
+	result := make(map[datalog.Keyword]interface{})
+
+	// Get what's already cached for this entity
+	cachedAttrs := d.cache.GetCachedAttrs(eBytes)
+
+	// Partition needed attrs into cached vs missing
+	var missing []datalog.Keyword
+	for _, kw := range attrs {
+		var aBytes Attribute
+		copy(aBytes[:], kw.String())
+
+		if cachedAttrs != nil && cachedAttrs[aBytes] {
+			// Already cached - GetOrResolve will do freshness check
+			key := CacheKey{E: eBytes, A: aBytes}
+			if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
+				if val := entryToValue(entry); val != nil {
+					result[kw] = val
+				}
+			}
+		} else {
+			missing = append(missing, kw)
+		}
+	}
+
+	if len(missing) == 0 {
+		return result, nil // All from cache
+	}
+
+	// For now, use individual GetOrResolve for missing attrs
+	// TODO: Add threshold-based scan optimization
+	for _, kw := range missing {
+		var aBytes Attribute
+		copy(aBytes[:], kw.String())
+		key := CacheKey{E: eBytes, A: aBytes}
+		if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
+			if val := entryToValue(entry); val != nil {
+				result[kw] = val
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// entryToValue converts a CacheEntry to its appropriate value representation
+func entryToValue(entry *CacheEntry) interface{} {
+	switch entry.Cardinality() {
+	case schema.CardinalityOne:
+		return entry.OneValue()
+	case schema.CardinalityMany:
+		// Convert set to slice for API consistency
+		set := entry.ManySet()
+		if len(set) == 0 {
+			return nil
+		}
+		values := make([]interface{}, 0, len(set))
+		for v := range set {
+			values = append(values, v)
+		}
+		return values
+	case schema.CardinalityVector:
+		return entry.VectorList()
+	default:
+		return entry.OneValue()
+	}
+}
+
+// ResolveAllAttributes retrieves all CRDT-resolved attributes for an entity.
+// This is used by wildcard pulls to get all attributes with proper CRDT resolution.
+//
+// It scans EAVT for all datoms with the given entity, discovers unique attributes,
+// and resolves each using the cache (LWW for one, add-wins for many, RGA for vector).
+//
+// Returns a map of keyword -> resolved value. The value type depends on cardinality:
+// - CardinalityOne: single value (LWW)
+// - CardinalityMany: []interface{} (add-wins set)
+// - CardinalityVector: []interface{} (RGA ordered list)
+func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error) {
+	if d.cache == nil {
+		return nil, fmt.Errorf("ResolveAllAttributes requires cache")
+	}
+
+	// If schema exists, delegate to ResolveEntityAttributes with all schema attrs.
+	// This uses difference-based logic: check cache first, scan only if needed.
+	if d.schema != nil {
+		if s, ok := d.schema.(*schema.Schema); ok && s.HasSchema() {
+			attrs := s.Attributes()
+			keywords := make([]datalog.Keyword, len(attrs))
+			for i, def := range attrs {
+				keywords[i] = def.Ident
+			}
+			return d.ResolveEntityAttributes(entity, keywords)
+		}
+	}
+
+	// No schema: must scan EAVT to discover all attributes for this entity
+	eBytes := entity.Bytes()
+	encoder := d.store.encoder
+	start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
+
+	iter, err := d.store.Scan(EAVT, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("EAVT scan failed: %w", err)
+	}
+	defer iter.Close()
+
+	// Discover unique attributes
+	seenAttrs := make(map[Attribute]datalog.Keyword)
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			continue
+		}
+		sd := ToStorageDatom(*datom)
+		if _, seen := seenAttrs[sd.A]; !seen {
+			seenAttrs[sd.A] = datom.A
+		}
+	}
+
+	// Resolve each attribute using cache
+	matcher := d.Matcher().(*BadgerMatcher)
+	eEntity := Entity(eBytes)
+	result := make(map[datalog.Keyword]interface{})
+
+	for aBytes, kw := range seenAttrs {
+		key := CacheKey{E: eEntity, A: aBytes}
+		entry := d.cache.GetOrResolve(key, matcher)
+		if entry == nil {
+			continue
+		}
+
+		// Determine cardinality for proper value conversion
+		card := schema.CardinalityOne
+		if d.schema != nil {
+			if def := d.schema.GetAttribute(kw); def != nil {
+				card = def.Cardinality
+			}
+		}
+
+		switch card {
+		case schema.CardinalityOne:
+			if v := entry.OneValue(); v != nil {
+				result[kw] = v
+			}
+		case schema.CardinalityMany:
+			set := entry.ManySet()
+			if len(set) > 0 {
+				values := make([]interface{}, 0, len(set))
+				for v := range set {
+					values = append(values, v)
+				}
+				result[kw] = values
+			}
+		case schema.CardinalityVector:
+			list := entry.VectorList()
+			if len(list) > 0 {
+				result[kw] = list
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // PullInto retrieves entity data and populates the provided struct.
@@ -2379,7 +2562,7 @@ func (d *Database) PullInto(entityID datalog.Identity, v interface{}) error {
 
 	// Create pull executor and execute
 	matcher := d.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, d)
 	result, err := puller.PullResolved(entityID, resolved)
 	if err != nil {
 		return err
@@ -2432,7 +2615,7 @@ func (d *Database) PullIntoMany(entityIDs []datalog.Identity, v interface{}) err
 
 	// Create pull executor and execute
 	matcher := d.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, d)
 	results, err := puller.PullResolvedMany(entityIDs, resolved)
 	if err != nil {
 		return err

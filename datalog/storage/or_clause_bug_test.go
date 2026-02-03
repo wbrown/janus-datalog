@@ -131,7 +131,7 @@ func TestOrClauseBugTraced(t *testing.T) {
 	wrappedMatcher := executor.WrapMatcher(baseMatcher, handler)
 	opts := DefaultPlannerOptions()
 	opts.EnableDebugLogging = true
-	exec := executor.NewExecutorWithOptions(wrappedMatcher, opts)
+	exec := executor.NewExecutorWithOptions(wrappedMatcher, db, opts)
 
 	// First, test what the OR branches return individually
 	t.Log("\n=== Testing OR branch 1: [?t :task/type :type/a] ===")

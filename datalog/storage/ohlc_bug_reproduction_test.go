@@ -72,7 +72,7 @@ func TestOHLCQueryBug(t *testing.T) {
 	require.NoError(t, err)
 
 	matcher := NewBadgerMatcher(db.store)
-	exec := executor.NewExecutor(matcher)
+	exec := executor.NewExecutor(matcher, db)
 
 	// Set a timeout channel to prevent hanging forever
 	done := make(chan bool)

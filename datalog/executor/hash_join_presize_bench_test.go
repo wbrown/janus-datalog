@@ -112,7 +112,7 @@ func BenchmarkOHLCWithPreSizing(b *testing.B) {
 
 	datoms := createOHLCData(0, 260) // 260 hours
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `
 	[:find ?day ?hour ?open ?high ?low ?close

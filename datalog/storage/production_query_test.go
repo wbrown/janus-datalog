@@ -364,7 +364,7 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 	t.Run("WithoutPredicatePushdown", func(t *testing.T) {
 		// Create executor with predicate pushdown disabled
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 			EnablePredicatePushdown: false,
 			EnableFineGrainedPhases: true,
 		})
@@ -395,7 +395,7 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 	t.Run("WithPredicatePushdown", func(t *testing.T) {
 		// Create executor with predicate pushdown enabled (default)
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutor(matcher) // Has pushdown enabled by default
+		exec := executor.NewExecutor(matcher, db) // Has pushdown enabled by default
 
 		result, err := exec.Execute(q)
 		if err != nil {

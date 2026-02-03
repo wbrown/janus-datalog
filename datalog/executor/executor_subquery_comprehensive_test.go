@@ -22,7 +22,7 @@ func TestSubqueryWithNoResults(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Subquery should return no results for max price
 	queryStr := `[:find ?symbol ?max-price
@@ -76,7 +76,7 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Subquery returns all prices for a symbol (relation binding)
 	queryStr := `[:find ?symbol ?time ?price
@@ -141,7 +141,7 @@ func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Find average salary per department using subquery
 	queryStr := `[:find ?dept-name ?avg-salary
@@ -224,7 +224,7 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Find sales for specific category and date using subquery with two inputs
 	targetDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -292,7 +292,7 @@ func TestSubqueryWithNoInput(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Find products cheaper than max configured price
 	// NOTE: Changed order - subquery must come before its result is used
@@ -355,7 +355,7 @@ func TestSubqueryInFilter(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Find employees earning more than average
 	queryStr := `[:find ?name ?salary
@@ -443,7 +443,7 @@ func TestSubqueryErrorHandling(t *testing.T) {
 				},
 			}
 
-			exec := NewExecutor(matcher)
+			exec := NewExecutor(matcher, nil)
 			q, err := parser.ParseQuery(tt.queryStr)
 			if err != nil {
 				t.Fatalf("Failed to parse query: %v", err)
@@ -472,7 +472,7 @@ func TestSubqueryWithEmptyOuterQuery(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find ?symbol ?max-price
 	             :where 
@@ -530,7 +530,7 @@ func TestSubqueryPerformance(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Count products per category using subquery
 	queryStr := `[:find ?cat-name ?count

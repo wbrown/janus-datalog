@@ -18,7 +18,7 @@ func TestAggregateSum(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find (sum ?total)
 	              :where [?o :order/total ?total]]`
@@ -45,7 +45,7 @@ func TestAggregateCount(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find (count ?user)
 	              :where [?user :user/name ?name]]`
@@ -72,7 +72,7 @@ func TestAggregateAvg(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find (avg ?value)
 	              :where [?s :score/value ?value]]`
@@ -103,7 +103,7 @@ func TestAggregateMinMax(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find (min ?time) (max ?time)
 	              :where [?e :event/time ?time]]`
@@ -138,7 +138,7 @@ func TestAggregateGroupBy(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	queryStr := `[:find ?dept (sum ?amount)
 	              :where [?s :sale/dept ?dept]
@@ -179,7 +179,7 @@ func TestAggregateMixedWithNonAggregated(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Find category and average price
 	queryStr := `[:find ?category (avg ?price) (count ?p)

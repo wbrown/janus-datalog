@@ -104,7 +104,7 @@ func BenchmarkFullQuery(b *testing.B) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query with expression and aggregation
 	queryStr := `[:find ?age (avg ?score)

@@ -59,7 +59,7 @@ func BenchmarkSemanticRewritingYearFilter(b *testing.B) {
 
 	// Benchmark WITHOUT semantic rewriting
 	b.Run("WithoutRewriting", func(b *testing.B) {
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSemanticRewriting: false,
 			EnableFineGrainedPhases: true,
 			MaxPhases:               10,
@@ -79,7 +79,7 @@ func BenchmarkSemanticRewritingYearFilter(b *testing.B) {
 
 	// Benchmark WITH semantic rewriting
 	b.Run("WithRewriting", func(b *testing.B) {
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSemanticRewriting: true,
 			EnableFineGrainedPhases: true,
 			MaxPhases:               10,
@@ -154,7 +154,7 @@ func BenchmarkSemanticRewritingMultiComponent(b *testing.B) {
 
 	// Benchmark WITHOUT semantic rewriting
 	b.Run("WithoutRewriting", func(b *testing.B) {
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSemanticRewriting: false,
 			EnableFineGrainedPhases: true,
 			MaxPhases:               10,
@@ -174,7 +174,7 @@ func BenchmarkSemanticRewritingMultiComponent(b *testing.B) {
 
 	// Benchmark WITH semantic rewriting
 	b.Run("WithRewriting", func(b *testing.B) {
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSemanticRewriting: true,
 			EnableFineGrainedPhases: true,
 			MaxPhases:               10,
@@ -271,7 +271,7 @@ func BenchmarkSemanticRewritingOHLCScale(b *testing.B) {
 
 	// Benchmark WITHOUT semantic rewriting
 	b.Run("WithoutRewriting", func(b *testing.B) {
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSemanticRewriting: false,
 			EnableFineGrainedPhases: true,
 			MaxPhases:               10,
@@ -292,7 +292,7 @@ func BenchmarkSemanticRewritingOHLCScale(b *testing.B) {
 
 	// Benchmark WITH semantic rewriting
 	b.Run("WithRewriting", func(b *testing.B) {
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSemanticRewriting: true,
 			EnableFineGrainedPhases: true,
 			MaxPhases:               10,

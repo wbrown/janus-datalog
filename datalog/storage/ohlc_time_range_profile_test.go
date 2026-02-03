@@ -150,7 +150,7 @@ func BenchmarkOHLCBadgerDBTimeRanges(b *testing.B) {
 
 			// Create executor with BadgerMatcher
 			matcher := NewBadgerMatcher(db.store)
-			exec := executor.NewExecutor(matcher)
+			exec := executor.NewExecutor(matcher, db)
 
 			// Warmup
 			result, err := exec.Execute(q)
@@ -218,7 +218,7 @@ func BenchmarkSimpleTimeQuery(b *testing.B) {
 	}
 
 	matcher := NewBadgerMatcher(db.store)
-	exec := executor.NewExecutor(matcher)
+	exec := executor.NewExecutor(matcher, db)
 
 	b.ResetTimer()
 	b.ReportAllocs()

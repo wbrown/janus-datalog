@@ -102,7 +102,7 @@ func TestAEVTIndexBugDirect(t *testing.T) {
 	)
 
 	// Execute query without parallel execution (to capture all annotations)
-	exec := executor.NewExecutor(matcher)
+	exec := executor.NewExecutor(matcher, db)
 	exec.DisableParallelSubqueries() // Disable parallel to get all events in our handler
 	result, err := exec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
 	if err != nil {

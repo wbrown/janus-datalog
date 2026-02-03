@@ -60,7 +60,7 @@ func BenchmarkPullBadger_SingleAttribute(b *testing.B) {
 
 	pattern, _ := parser.ParsePullPattern(`[:entity/attr0]`)
 	matcher := db.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -75,7 +75,7 @@ func BenchmarkPullBadger_MultipleAttributes(b *testing.B) {
 
 	pattern, _ := parser.ParsePullPattern(`[:entity/attr0 :entity/attr1 :entity/attr2 :entity/attr3 :entity/attr4]`)
 	matcher := db.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -90,7 +90,7 @@ func BenchmarkPullBadger_Wildcard(b *testing.B) {
 
 	pattern, _ := parser.ParsePullPattern(`[*]`)
 	matcher := db.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -121,7 +121,7 @@ func BenchmarkPullBadger_NestedReference(b *testing.B) {
 
 	pattern, _ := parser.ParsePullPattern(`[:entity/name {:entity/child [:entity/name :entity/value]}]`)
 	matcher := db.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -148,7 +148,7 @@ func BenchmarkPullBadger_StandaloneAPICached(b *testing.B) {
 	// Pre-parse to measure just execution
 	pattern, _ := parser.ParsePullPattern(`[:entity/attr0 :entity/attr1 :entity/attr2]`)
 	matcher := db.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -162,7 +162,7 @@ func BenchmarkPullManyBadger(b *testing.B) {
 
 	pattern, _ := parser.ParsePullPattern(`[:entity/attr0 :entity/attr1]`)
 	matcher := db.Matcher()
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -177,7 +177,7 @@ func BenchmarkPullBadger_ScalingWithEntities(b *testing.B) {
 
 		pattern, _ := parser.ParsePullPattern(`[:entity/attr0 :entity/attr1]`)
 		matcher := db.Matcher()
-		puller := executor.NewPullExecutor(matcher)
+		puller := executor.NewPullExecutor(matcher, db)
 
 		b.Run(fmt.Sprintf("Entities_%d", numEntities), func(b *testing.B) {
 			b.ResetTimer()
@@ -205,7 +205,7 @@ func BenchmarkPullBadger_ScalingWithAttributes(b *testing.B) {
 
 		pattern, _ := parser.ParsePullPattern(fmt.Sprintf("[%s]", patternStr))
 		matcher := db.Matcher()
-		puller := executor.NewPullExecutor(matcher)
+		puller := executor.NewPullExecutor(matcher, db)
 
 		b.Run(fmt.Sprintf("Attrs_%d", numAttrs), func(b *testing.B) {
 			b.ResetTimer()
@@ -224,7 +224,7 @@ func BenchmarkPullBadger_VsQuery(b *testing.B) {
 	b.Run("Pull", func(b *testing.B) {
 		pattern, _ := parser.ParsePullPattern(`[:entity/attr0 :entity/attr1 :entity/attr2]`)
 		matcher := db.Matcher()
-		puller := executor.NewPullExecutor(matcher)
+		puller := executor.NewPullExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

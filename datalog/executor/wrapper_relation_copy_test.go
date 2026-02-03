@@ -426,7 +426,7 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 	}
 
 	matcher := NewIndexedMemoryMatcher(datoms)
-	queryExec := newQueryExecutor(matcher, ExecutorOptions{})
+	queryExec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 	ctx := NewContext(nil)
 
 	// Create an unsafe outer relation with [?e, ?name]
@@ -595,7 +595,7 @@ func TestOrFallbackIteratorMultipleBranchResultsIntegration(t *testing.T) {
 	}
 
 	matcher := NewIndexedMemoryMatcher(datoms)
-	queryExec := newQueryExecutor(matcher, ExecutorOptions{})
+	queryExec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 	ctx := NewContext(func(e annotations.Event) {
 		t.Logf("[ANNOTATION] %s: %v", e.Name, e.Data)
 	})
@@ -687,7 +687,7 @@ func TestOrFallbackIteratorWithFallbackBranch(t *testing.T) {
 	}
 
 	matcher := NewIndexedMemoryMatcher(datoms)
-	queryExec := newQueryExecutor(matcher, ExecutorOptions{})
+	queryExec := newQueryExecutor(matcher, nil, ExecutorOptions{})
 	ctx := NewContext(nil)
 
 	// Create an unsafe outer relation with 3 items

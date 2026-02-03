@@ -220,10 +220,10 @@ pattern := &query.PullPattern{
     },
 }
 
-// Resolve and execute
+// Resolve and execute (recommended: use db.Pull() instead)
 resolved := schema.ResolvePullPattern(pattern, s)
 matcher := storage.NewBadgerMatcher(db.Store())
-puller := executor.NewPullExecutor(matcher)
+puller := executor.NewPullExecutor(matcher, db) // db implements EntityResolver for CRDT resolution
 result, _ := puller.PullResolved(alice, resolved)
 
 // Result:

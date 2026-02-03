@@ -59,7 +59,7 @@ func TestMatcherRelationsTupleCopyingBug(t *testing.T) {
 	require.NoError(t, err)
 
 	matcher := NewBadgerMatcher(db.store)
-	exec := executor.NewExecutor(matcher)
+	exec := executor.NewExecutor(matcher, db)
 
 	result, err := exec.Execute(q)
 	require.NoError(t, err)

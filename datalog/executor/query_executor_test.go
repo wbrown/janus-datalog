@@ -139,7 +139,7 @@ func TestExecutePattern(t *testing.T) {
 		},
 	}
 
-	executor := newQueryExecutor(matcher, ExecutorOptions{})
+	executor := newQueryExecutor(matcher, nil, ExecutorOptions{})
 	ctx := NewContext(nil)
 
 	pattern := &query.DataPattern{
@@ -163,7 +163,7 @@ func TestExecutePattern(t *testing.T) {
 // TestExecuteExpression tests expression evaluation
 func TestExecuteExpression(t *testing.T) {
 	t.Run("single relation expression", func(t *testing.T) {
-		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Create a relation with ?x
@@ -204,7 +204,7 @@ func TestExecuteExpression(t *testing.T) {
 	})
 
 	t.Run("multi-relation expression (Cartesian product)", func(t *testing.T) {
-		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Two disjoint relations
@@ -247,7 +247,7 @@ func TestExecuteExpression(t *testing.T) {
 // TestExecutePredicate tests predicate filtering
 func TestExecutePredicate(t *testing.T) {
 	t.Run("single relation predicate", func(t *testing.T) {
-		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Create relation with ?x
@@ -296,7 +296,7 @@ func TestExecuteAggregates(t *testing.T) {
 		},
 	}
 
-	executor := newQueryExecutor(matcher, ExecutorOptions{})
+	executor := newQueryExecutor(matcher, nil, ExecutorOptions{})
 	ctx := NewContext(nil)
 
 	t.Run("grouped aggregation", func(t *testing.T) {
@@ -387,7 +387,7 @@ func TestEndToEndQueries(t *testing.T) {
 		},
 	}
 
-	executor := newQueryExecutor(matcher, ExecutorOptions{})
+	executor := newQueryExecutor(matcher, nil, ExecutorOptions{})
 	ctx := NewContext(nil)
 
 	t.Run("pattern + predicate query", func(t *testing.T) {
@@ -433,7 +433,7 @@ func TestEndToEndQueries(t *testing.T) {
 // TestExecuteTupleGround tests tuple ground expression execution
 func TestExecuteTupleGround(t *testing.T) {
 	t.Run("standalone tuple ground", func(t *testing.T) {
-		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Expression: [(ground [1 2 3]) [?a ?b ?c]]
@@ -486,7 +486,7 @@ func TestExecuteTupleGround(t *testing.T) {
 	})
 
 	t.Run("tuple ground with existing relation", func(t *testing.T) {
-		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Create a relation with ?x
@@ -526,7 +526,7 @@ func TestExecuteTupleGround(t *testing.T) {
 	})
 
 	t.Run("tuple ground mismatch error", func(t *testing.T) {
-		executor := newQueryExecutor(&MockMatcher{}, ExecutorOptions{})
+		executor := newQueryExecutor(&MockMatcher{}, nil, ExecutorOptions{})
 		ctx := NewContext(nil)
 
 		// Expression with mismatched values and bindings

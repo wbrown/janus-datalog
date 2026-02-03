@@ -48,7 +48,7 @@ func TestEntityJoinBug(t *testing.T) {
 	highQuery := `[:find ?bar :where [?bar :price/high ?h]]`
 	hq, _ := parser.ParseQuery(highQuery)
 	matcher := storage.NewBadgerMatcher(db.Store())
-	exec := executor.NewExecutor(matcher)
+	exec := executor.NewExecutor(matcher, nil)
 	hresult, _ := exec.Execute(hq)
 
 	// Collect results by iterating
@@ -132,7 +132,7 @@ func TestEntityJoinBug(t *testing.T) {
 		EnableDebugLogging: true,
 	}
 	annotatedMatcher := storage.NewBadgerMatcherWithOptions(db.Store(), opts)
-	annotatedExec := executor.NewExecutor(annotatedMatcher)
+	annotatedExec := executor.NewExecutor(annotatedMatcher, nil)
 
 	jresult, _ := annotatedExec.Execute(jq)
 
