@@ -2,7 +2,8 @@ package reflect
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"reflect"
 	"time"
@@ -12,13 +13,19 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// generateUniqueID creates a unique entity ID using timestamp + random bytes
+// generateUniqueID creates a unique entity ID using timestamp + random bytes.
+// Returns an Identity that displays as L85 hash (not the raw timestamp string).
 func generateUniqueID() datalog.Identity {
-	// 8 random bytes gives us 64 bits of entropy
-	var randomBytes [8]byte
-	rand.Read(randomBytes[:])
-	randomHex := hex.EncodeToString(randomBytes[:])
-	return datalog.NewIdentity(fmt.Sprintf("e%d-%s", time.Now().UnixNano(), randomHex))
+	// Build unique bytes: 8 bytes timestamp + 8 bytes random
+	var buf [16]byte
+	binary.BigEndian.PutUint64(buf[:8], uint64(time.Now().UnixNano()))
+	rand.Read(buf[8:])
+
+	// Hash to get a proper 20-byte identity
+	hash := sha1.Sum(buf[:])
+
+	// Use NewIdentityFromHash so String() returns L85 (not the raw input)
+	return datalog.NewIdentityFromHash(hash)
 }
 
 // TransactionAdder is the interface required for adding datoms
