@@ -140,7 +140,7 @@ func TestParallelDecorrelationColumnOrderBadger(t *testing.T) {
 
 	t.Run("ParallelDecorrelation", func(t *testing.T) {
 		matcher := db.Matcher()
-		exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: true,
 		})
@@ -199,7 +199,7 @@ func TestParallelDecorrelationColumnOrderBadger(t *testing.T) {
 
 	t.Run("SequentialDecorrelation", func(t *testing.T) {
 		matcher := db.Matcher()
-		exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: false,
 		})

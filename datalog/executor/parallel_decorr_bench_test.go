@@ -49,7 +49,7 @@ func BenchmarkParallelDecorrelation(b *testing.B) {
 	}
 
 	// Run benchmark - current implementation uses parallel execution
-	exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableFineGrainedPhases:     true,
 		MaxPhases:                   10,
@@ -210,7 +210,7 @@ func BenchmarkParallelOHLCDecorrelation(b *testing.B) {
 		b.Fatalf("Failed to parse query: %v", err)
 	}
 
-	exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableFineGrainedPhases:     true,
 		MaxPhases:                   10,

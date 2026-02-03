@@ -179,7 +179,7 @@ func BenchmarkPullCardinalityOne(b *testing.B) {
 	resolved := schema.ResolvePullPattern(pattern, s)
 
 	matcher := NewBadgerMatcher(db.Store())
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -216,7 +216,7 @@ func BenchmarkPullCardinalityMany(b *testing.B) {
 	resolved := schema.ResolvePullPattern(pattern, s)
 
 	matcher := NewBadgerMatcher(db.Store())
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

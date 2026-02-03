@@ -56,7 +56,7 @@ func TestPullResolvedCardinalityMany(t *testing.T) {
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
 	matcher.SetSchema(s) // Required for cardinality-aware resolution
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, nil)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -132,7 +132,7 @@ func TestPullResolvedCardinalityManyRefs(t *testing.T) {
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
 	matcher.SetSchema(s) // Required for cardinality-aware resolution
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, nil)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -198,7 +198,7 @@ func TestPullResolvedLimit(t *testing.T) {
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
 	matcher.SetSchema(s) // Required for cardinality-aware resolution
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, nil)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -249,7 +249,7 @@ func TestPullResolvedDefault(t *testing.T) {
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
 	matcher.SetSchema(s) // Required for cardinality-aware resolution
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, nil)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -296,7 +296,7 @@ func TestPullResolvedWithoutSchema(t *testing.T) {
 
 	// Execute pull with resolved pattern
 	matcher := storage.NewBadgerMatcher(db.Store())
-	puller := executor.NewPullExecutor(matcher)
+	puller := executor.NewPullExecutor(matcher, nil)
 	result, err := puller.PullResolved(alice, resolved)
 	require.NoError(t, err)
 	require.NotNil(t, result)

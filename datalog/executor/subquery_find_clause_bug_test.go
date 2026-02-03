@@ -35,7 +35,7 @@ func TestSubqueryFindClauseBug(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with TWO subqueries that share the same input parameter
 	// This triggers decorrelation optimization which incorrectly modifies the find clause
@@ -144,7 +144,7 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 
 	// Wrap matcher with annotation support
 	annotatedMatcher := WrapMatcher(matcher, handler)
-	exec := NewExecutor(annotatedMatcher)
+	exec := NewExecutor(annotatedMatcher, nil)
 
 	// Query with TWO subqueries that share the same input parameter
 	queryStr := `[:find ?symbol ?max-price ?min-price
@@ -234,7 +234,7 @@ func TestSubqueryMultiValueFindClauseBug(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with TWO multi-value binding subqueries that have intermediate variables
 	// Both subqueries share the same inputs (?sym, ?d) which triggers decorrelation

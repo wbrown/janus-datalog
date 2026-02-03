@@ -86,7 +86,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 
 	// Create memory matcher with our test data
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Test 1: Single subquery (just get the open price for each day)
 	t.Run("SingleSubquery", func(t *testing.T) {
@@ -247,7 +247,7 @@ func BenchmarkOHLCSubqueries(b *testing.B) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Benchmark single subquery
 	b.Run("SingleAggregation", func(b *testing.B) {
@@ -381,7 +381,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
 	b.Run("Sequential", func(b *testing.B) {
-		seqExec := NewExecutor(matcher)
+		seqExec := NewExecutor(matcher, nil)
 		seqExec.DisableParallelSubqueries()
 
 		b.ResetTimer()
@@ -394,7 +394,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-2Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(2)
 
 		b.ResetTimer()
@@ -407,7 +407,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-4Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(4)
 
 		b.ResetTimer()
@@ -420,7 +420,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-8Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(8)
 
 		b.ResetTimer()
@@ -433,7 +433,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-16Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(16)
 
 		b.ResetTimer()
@@ -446,7 +446,7 @@ func BenchmarkRelationInputParallel(b *testing.B) {
 	})
 
 	b.Run("Parallel-32Workers", func(b *testing.B) {
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(32)
 
 		b.ResetTimer()

@@ -74,6 +74,11 @@ type Cache struct {
 	// When querying [?e :name "Bob"], we can check if ANY :name has changed
 	// without checking every individual (E, :name) pair
 	attrVersions sync.Map // map[Attribute]datalog.ElementID
+
+	// Per-entity attribute tracking - tracks which attributes we've cached per entity
+	// This is NOT source of truth - just tracks what's in cache for difference-based
+	// decisions on whether to do individual lookups vs full entity scan
+	entityAttrs sync.Map // map[Entity]*sync.Map (inner: map[Attribute]struct{})
 }
 
 // NewCache creates a new cache instance
@@ -109,6 +114,8 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
 		c.entries.Store(key, entry)
 		// Update maxVersions to reflect what we just resolved
 		c.UpdateMaxVersion(key, entry.version)
+		// Track that we've cached this attribute for this entity
+		c.TrackEntityAttr(key.E, key.A)
 	}
 	return entry
 }
@@ -191,6 +198,33 @@ func (c *Cache) Clear() {
 	c.entries = sync.Map{}
 	c.maxVersions = sync.Map{}
 	c.attrVersions = sync.Map{}
+	c.entityAttrs = sync.Map{}
+}
+
+// TrackEntityAttr records that we have cached an (E, A) entry
+// Called when storing cache entries to track what's cached per entity
+func (c *Cache) TrackEntityAttr(e Entity, a Attribute) {
+	// Get or create the attribute set for this entity
+	val, _ := c.entityAttrs.LoadOrStore(e, &sync.Map{})
+	set := val.(*sync.Map)
+	set.Store(a, struct{}{})
+}
+
+// GetCachedAttrs returns the set of attributes we've cached for an entity
+// Returns nil if no attributes are cached for this entity
+func (c *Cache) GetCachedAttrs(e Entity) map[Attribute]bool {
+	val, ok := c.entityAttrs.Load(e)
+	if !ok {
+		return nil
+	}
+	set := val.(*sync.Map)
+
+	result := make(map[Attribute]bool)
+	set.Range(func(key, _ any) bool {
+		result[key.(Attribute)] = true
+		return true
+	})
+	return result
 }
 
 // rebuild resolves the current value for (E, A) based on cardinality

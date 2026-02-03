@@ -26,7 +26,7 @@ func TestPerformanceRegression(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Test queries
 	queries := []string{

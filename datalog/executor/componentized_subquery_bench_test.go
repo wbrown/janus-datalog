@@ -141,7 +141,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 	// Benchmark Legacy Path (UseComponentizedSubquery: false)
 	b.Run("Legacy", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery: false,
 			EnableParallelSubqueries: false,
 		})
@@ -162,7 +162,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 	// Benchmark Componentized Path - Sequential (UseComponentizedSubquery: true, no parallel)
 	b.Run("Componentized_Sequential", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery: true,
 			EnableParallelSubqueries: false,
 		})
@@ -183,7 +183,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 	// Benchmark Componentized Path - Parallel (UseComponentizedSubquery: true, with parallel)
 	b.Run("Componentized_Parallel", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery:  true,
 			EnableParallelSubqueries:  true,
 			MaxSubqueryWorkers:        4,
@@ -292,7 +292,7 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 	// Benchmark Legacy Path
 	b.Run("Legacy_Large", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery: false,
 		})
 
@@ -313,7 +313,7 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 	// Benchmark Componentized Path
 	b.Run("Componentized_Large", func(b *testing.B) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			UseComponentizedSubquery: true,
 			EnableParallelSubqueries: true,
 			MaxSubqueryWorkers:       4,

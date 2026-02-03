@@ -97,7 +97,7 @@ func TestBadgerParallelProfile(t *testing.T) {
 	defer pprof.StopCPUProfile()
 
 	// Run parallel execution
-	parExec := executor.NewExecutor(matcher)
+	parExec := executor.NewExecutor(matcher, nil)
 	parExec.EnableParallelSubqueries(8)
 
 	start := time.Now()

@@ -82,7 +82,7 @@ func TestParallelSubqueryWithBadgerDB(t *testing.T) {
 	inputRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
 	t.Run("sequential with BadgerDB", func(t *testing.T) {
-		seqExec := executor.NewExecutor(matcher)
+		seqExec := executor.NewExecutor(matcher, nil)
 		seqExec.DisableParallelSubqueries()
 
 		start := time.Now()
@@ -101,7 +101,7 @@ func TestParallelSubqueryWithBadgerDB(t *testing.T) {
 	})
 
 	t.Run("parallel with BadgerDB", func(t *testing.T) {
-		parExec := executor.NewExecutor(matcher)
+		parExec := executor.NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(8)
 
 		start := time.Now()
@@ -121,7 +121,7 @@ func TestParallelSubqueryWithBadgerDB(t *testing.T) {
 
 	t.Run("correctness and performance: sequential vs parallel", func(t *testing.T) {
 		// Sequential execution
-		seqExec := executor.NewExecutor(matcher)
+		seqExec := executor.NewExecutor(matcher, nil)
 		seqExec.DisableParallelSubqueries()
 		seqStart := time.Now()
 		seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
@@ -131,7 +131,7 @@ func TestParallelSubqueryWithBadgerDB(t *testing.T) {
 		}
 
 		// Parallel execution
-		parExec := executor.NewExecutor(matcher)
+		parExec := executor.NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(8)
 		parStart := time.Now()
 		parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})

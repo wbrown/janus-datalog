@@ -51,7 +51,7 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 	}
 
 	// Test WITHOUT decorrelation
-	execNoDecor := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execNoDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: false,
 		EnableFineGrainedPhases:     true,
 		MaxPhases:                   10,
@@ -65,7 +65,7 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 	}
 
 	// Test WITH decorrelation (parallel by default)
-	execWithDecor := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableFineGrainedPhases:     true,
@@ -143,7 +143,7 @@ func TestDecorrelationAnnotations(t *testing.T) {
 	}
 
 	// Execute WITH decorrelation and capture annotations
-	execWithDecor := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableFineGrainedPhases:     true,

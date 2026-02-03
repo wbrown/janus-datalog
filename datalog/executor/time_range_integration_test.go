@@ -60,7 +60,7 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: false, // Disable for deterministic testing
 	}
-	exec := NewExecutorWithOptions(matcher, plannerOpts)
+	exec := NewExecutorWithOptions(matcher, nil, plannerOpts)
 
 	// Query: Hourly OHLC for hours 9 and 10 only (not 11)
 	queryStr := `[:find ?hour (max ?h) (min ?l)
@@ -85,7 +85,7 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 	}
 
 	// Execute without decorrelation (baseline)
-	execNoDecorr := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	execNoDecorr := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: false,
 	})
 
@@ -168,7 +168,7 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: false,
 	}
-	exec := NewExecutorWithOptions(matcher, plannerOpts)
+	exec := NewExecutorWithOptions(matcher, nil, plannerOpts)
 
 	// Query with decorrelated subquery (like OHLC pattern)
 	queryStr := `[:find ?hour ?high ?low

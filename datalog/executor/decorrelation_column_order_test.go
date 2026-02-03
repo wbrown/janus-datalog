@@ -103,7 +103,7 @@ func TestParallelDecorrelationColumnOrder(t *testing.T) {
 	// Test with PARALLEL decorrelation
 	t.Run("ParallelDecorrelation", func(t *testing.T) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: true, // PARALLEL
 		})
@@ -178,7 +178,7 @@ func TestParallelDecorrelationColumnOrder(t *testing.T) {
 	// Test with SEQUENTIAL decorrelation (should work)
 	t.Run("SequentialDecorrelation", func(t *testing.T) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnableSubqueryDecorrelation: true,
 			EnableParallelDecorrelation: false, // SEQUENTIAL
 		})

@@ -33,7 +33,7 @@ func TestSimpleSubquery(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with subquery to find max price for each symbol
 	queryStr := `[:find ?symbol ?max-price
@@ -169,7 +169,7 @@ func TestSubqueryWithMultipleInputs(t *testing.T) {
 		return result, nil
 	})
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with subquery that takes multiple inputs
 	// Note: Simplified to test basic functionality first

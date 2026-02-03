@@ -11,6 +11,7 @@ import (
 // Executor is the main query execution engine
 type Executor struct {
 	matcher                  PatternMatcher
+	entityResolver           EntityResolver
 	planner                  planner.QueryPlanner
 	options                  ExecutorOptions
 	enableParallelSubqueries bool
@@ -18,7 +19,7 @@ type Executor struct {
 }
 
 // NewExecutor creates a new query executor with default options
-func NewExecutor(matcher PatternMatcher) *Executor {
+func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 	defaultOpts := planner.PlannerOptions{
 		EnableDynamicReordering:     true,
 		EnablePredicatePushdown:     true,
@@ -37,11 +38,11 @@ func NewExecutor(matcher PatternMatcher) *Executor {
 		EnableStreamingAggregation:  true,
 		EnableDebugLogging:          false,
 	}
-	return NewExecutorWithOptions(matcher, defaultOpts)
+	return NewExecutorWithOptions(matcher, resolver, defaultOpts)
 }
 
 // NewExecutorWithOptions creates a new query executor with custom planner options
-func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions) *Executor {
+func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opts planner.PlannerOptions) *Executor {
 	// Convert to executor options
 	execOpts := convertToExecutorOptions(opts)
 
@@ -55,6 +56,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions)
 
 	return &Executor{
 		matcher:                  matcher,
+		entityResolver:           resolver,
 		planner:                  queryPlanner,
 		options:                  execOpts,
 		enableParallelSubqueries: opts.EnableParallelSubqueries,
@@ -117,6 +119,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	// Create a temporary executor with the wrapped matcher
 	executor := &Executor{
 		matcher:                  matcher,
+		entityResolver:           e.entityResolver,
 		planner:                  e.planner,
 		options:                  e.options,
 		enableParallelSubqueries: e.enableParallelSubqueries,
@@ -201,7 +204,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 	if collector := ctx.Collector(); collector != nil {
 		opts.Collector = collector
 	}
-	queryExecutor := newQueryExecutor(e.matcher, opts)
+	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, opts)
 
 	var currentGroups []Relation
 
@@ -595,7 +598,7 @@ func (e *Executor) executeRealizedNonIterating(
 	relationInput query.RelationInput,
 ) (Relation, error) {
 	// Create QueryExecutor
-	queryExecutor := newQueryExecutor(e.matcher, e.options)
+	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, e.options)
 
 	var currentGroups []Relation
 

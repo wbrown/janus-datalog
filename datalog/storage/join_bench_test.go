@@ -83,7 +83,7 @@ func BenchmarkStorageBackedJoin(b *testing.B) {
 				DefaultHashTableSize:    256,
 			}
 			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-			exec := executor.NewExecutor(matcher)
+			exec := executor.NewExecutor(matcher, db)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -118,7 +118,7 @@ func BenchmarkStorageBackedJoin(b *testing.B) {
 				DefaultHashTableSize:    256,
 			}
 			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-			exec := executor.NewExecutor(matcher)
+			exec := executor.NewExecutor(matcher, db)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -174,7 +174,7 @@ func BenchmarkStorageBackedJoinLimit(b *testing.B) {
 				DefaultHashTableSize:    256,
 			}
 			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-			exec := executor.NewExecutor(matcher)
+			exec := executor.NewExecutor(matcher, db)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -209,7 +209,7 @@ func BenchmarkStorageBackedJoinLimit(b *testing.B) {
 				DefaultHashTableSize:    256,
 			}
 			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-			exec := executor.NewExecutor(matcher)
+			exec := executor.NewExecutor(matcher, db)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -261,7 +261,7 @@ func BenchmarkStorageBackedJoinWithFilter(b *testing.B) {
 			DefaultHashTableSize:    256,
 		}
 		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -292,7 +292,7 @@ func BenchmarkStorageBackedJoinWithFilter(b *testing.B) {
 			DefaultHashTableSize:    256,
 		}
 		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-		exec := executor.NewExecutor(matcher)
+		exec := executor.NewExecutor(matcher, db)
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

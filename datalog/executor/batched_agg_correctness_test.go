@@ -39,7 +39,7 @@ func TestBatchedAggregationCorrectness(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	// Query with RelationInput (uses batched path)
 	queryStr := `

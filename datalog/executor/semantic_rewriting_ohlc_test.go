@@ -179,7 +179,7 @@ func TestSemanticRewritingOHLCScale(t *testing.T) {
 
 	// Test 1: Decorrelation WITHOUT Semantic Rewriting
 	t.Log("\n=== Config 1: Decorrelation WITHOUT Semantic Rewriting ===")
-	exec1 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec1 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableSemanticRewriting:     false,
@@ -197,7 +197,7 @@ func TestSemanticRewritingOHLCScale(t *testing.T) {
 
 	// Test 2: Decorrelation WITH Semantic Rewriting
 	t.Log("\n=== Config 2: Decorrelation WITH Semantic Rewriting ===")
-	exec2 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec2 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
 		EnableSemanticRewriting:     true,
@@ -215,7 +215,7 @@ func TestSemanticRewritingOHLCScale(t *testing.T) {
 
 	// Test 3: NO Decorrelation, NO Semantic Rewriting (baseline)
 	t.Log("\n=== Config 3: NO Decorrelation, NO Semantic Rewriting (Baseline) ===")
-	exec3 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec3 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: false,
 		EnableParallelDecorrelation: false,
 		EnableSemanticRewriting:     false,
@@ -233,7 +233,7 @@ func TestSemanticRewritingOHLCScale(t *testing.T) {
 
 	// Test 4: NO Decorrelation, WITH Semantic Rewriting
 	t.Log("\n=== Config 4: NO Decorrelation, WITH Semantic Rewriting ===")
-	exec4 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec4 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: false,
 		EnableParallelDecorrelation: false,
 		EnableSemanticRewriting:     true,

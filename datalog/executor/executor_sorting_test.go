@@ -49,7 +49,7 @@ func TestQueryWithOrderBy(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	tests := []struct {
 		name     string
@@ -181,7 +181,7 @@ func TestSortingEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			matcher := NewMemoryPatternMatcher(tt.datoms)
-			executor := NewExecutor(matcher)
+			executor := NewExecutor(matcher, nil)
 
 			// Parse query
 			q, err := parser.ParseQuery(tt.query)
@@ -225,7 +225,7 @@ func TestSortingWithNulls(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Note: get-else is not implemented, so we test with a simpler query
 	// This is more about ensuring no panic than specific null handling

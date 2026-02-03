@@ -47,7 +47,7 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 
 	matcher := NewIndexedMemoryMatcher(datoms)
 	opts := planner.PlannerOptions{}
-	exec := NewExecutorWithOptions(matcher, opts)
+	exec := NewExecutorWithOptions(matcher, nil, opts)
 	result, err := exec.Execute(q)
 
 	if err != nil {

@@ -347,7 +347,7 @@ func TestExecutorWithCustomPlannerOptions(t *testing.T) {
 	matcher := &mockMatcher{}
 
 	t.Run("DefaultExecutor", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		if exec == nil {
 			t.Fatal("Expected executor, got nil")
 		}
@@ -358,7 +358,7 @@ func TestExecutorWithCustomPlannerOptions(t *testing.T) {
 	})
 
 	t.Run("CustomOptions", func(t *testing.T) {
-		exec := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 			EnablePredicatePushdown: false,
 			EnableFineGrainedPhases: true,
 			MaxPhases:               5,

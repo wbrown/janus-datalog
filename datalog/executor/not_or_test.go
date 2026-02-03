@@ -26,7 +26,7 @@ func TestNotClause(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find non-archived users
 	// [:find ?name :where [?e :user/name ?name] (not [?e :user/archived true])]
@@ -95,7 +95,7 @@ func TestNotClauseNoMatches(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find non-archived users (no one is archived)
 	q := &query.Query{
@@ -151,7 +151,7 @@ func TestNotClauseAllMatch(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find non-archived users (everyone is archived)
 	q := &query.Query{
@@ -211,7 +211,7 @@ func TestNotJoinClause(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find users that are neither archived nor deleted
 	// [:find ?name :where [?e :user/name ?name] (not-join [?e] [?e :user/archived true] [?e :user/deleted true])]
@@ -287,7 +287,7 @@ func TestOrClause(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find users with status "active" OR "pending"
 	// [:find ?name :where [?e :user/name ?name] (or [?e :user/status "active"] [?e :user/status "pending"])]
@@ -371,7 +371,7 @@ func TestOrJoinClause(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: Find users that are active users OR enabled admins
 	// [:find ?name :where [?e :user/name ?name] (or-join [?e] [?e :user/status "active"] [?e :admin/status "enabled"])]
@@ -444,7 +444,7 @@ func TestOrJoinClause(t *testing.T) {
 func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 	// Directly test the query executor to isolate the issue
 	matcher := NewMemoryPatternMatcher(nil)
-	queryExecutor := NewExecutor(matcher)
+	queryExecutor := NewExecutor(matcher, nil)
 
 	// Build the OR clause query directly
 	orClause := &query.OrClause{
@@ -490,7 +490,7 @@ func TestOrFallbackWithGroundExpression(t *testing.T) {
 	// Test OR with ground expression as fallback
 	// When pattern matches nothing, ground should provide default value
 	matcher := NewMemoryPatternMatcher(nil) // Empty database
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: (or [?e :nonexistent ?x] [(ground 0) ?x])
 	// Since no data exists, should fall back to ground(0)
@@ -549,7 +549,7 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: (or [?e :user/name ?x] [(ground "fallback") ?x])
 	// First branch should match, so we should get "Alice", not "fallback"
@@ -602,7 +602,7 @@ func TestOrFallbackMultipleBranches(t *testing.T) {
 	// Test OR with multiple fallback branches
 	// (or [nonexistent1] [nonexistent2] [(ground "default")])
 	matcher := NewMemoryPatternMatcher(nil) // Empty database
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	nonexistent1 := datalog.NewKeyword(":nonexistent1")
 	nonexistent2 := datalog.NewKeyword(":nonexistent2")
@@ -671,7 +671,7 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: (or [?e :nonexistent ?x] [(+ 1 1) ?x])
 	// Pattern won't match, so should get 2 from arithmetic
@@ -741,7 +741,7 @@ func TestOrFallbackPatternOnlyUnionSemantics(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Pattern-only OR should return BOTH Alice and Bob (union semantics)
 	q := &query.Query{
@@ -796,7 +796,7 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query: (or [?e :user/name ?x] [(ground "fallback") ?x])
 	// Pattern should match, returning "Alice"
@@ -855,7 +855,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	queryExecutor := NewExecutor(matcher)
+	queryExecutor := NewExecutor(matcher, nil)
 
 	// Build the OR clause with SubqueryPattern and ground fallback
 	// (or [(q [:find (count ?t) :where [?t :task/status :status/complete]] $) [[?count]]]
@@ -946,7 +946,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	queryExecutor := NewExecutor(matcher)
+	queryExecutor := NewExecutor(matcher, nil)
 
 	// Create annotation handler to debug OR fallback behavior
 	var events []annotations.Event
@@ -1085,7 +1085,7 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 		events = append(events, event)
 	}
 	ctx := NewContext(handler)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Query:
 	// [:find ?scenario ?name ?taskCount
@@ -1206,7 +1206,7 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher)
+	executor := NewExecutor(matcher, nil)
 
 	// Same as TestOrFallbackWithPatternAndTupleGround but with SCALAR ground
 	orClause := &query.OrClause{
@@ -1296,7 +1296,7 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 	// Test OR with SubqueryPattern that returns empty, falling back to ground
 	matcher := NewMemoryPatternMatcher(nil) // Empty database
-	queryExecutor := NewExecutor(matcher)
+	queryExecutor := NewExecutor(matcher, nil)
 
 	statusAttr := datalog.NewKeyword(":task/status")
 	completeStatus := datalog.NewKeyword(":status/complete")

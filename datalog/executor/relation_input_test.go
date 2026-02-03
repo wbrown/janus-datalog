@@ -35,7 +35,7 @@ func TestRelationInputIteration(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 	ctx := NewContext(nil)
 
 	t.Run("direct query with RelationInput", func(t *testing.T) {
@@ -158,7 +158,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 	exec.EnableParallelSubqueries(4) // Use 4 workers for testing
 	ctx := NewContext(nil)
 
@@ -254,7 +254,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 		)
 
 		// Execute sequentially
-		seqExec := NewExecutor(matcher)
+		seqExec := NewExecutor(matcher, nil)
 		seqExec.DisableParallelSubqueries()
 		seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
 		if err != nil {
@@ -262,7 +262,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 		}
 
 		// Execute in parallel
-		parExec := NewExecutor(matcher)
+		parExec := NewExecutor(matcher, nil)
 		parExec.EnableParallelSubqueries(4)
 		parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
 		if err != nil {
@@ -337,7 +337,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	ctx := NewContext(nil)
 
 	t.Run("empty input relation", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(4)
 
 		q := `[:find ?n ?y (max ?age)
@@ -365,7 +365,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	})
 
 	t.Run("single tuple", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(4)
 
 		q := `[:find ?n ?y (max ?age)
@@ -396,7 +396,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	})
 
 	t.Run("no matching results", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(4)
 
 		q := `[:find ?n ?y (max ?age)
@@ -430,7 +430,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	})
 
 	t.Run("mixed matching and non-matching", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(4)
 
 		q := `[:find ?n ?y (max ?age)
@@ -466,7 +466,7 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	})
 
 	t.Run("high worker count with small input", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(100) // Way more workers than tuples
 
 		q := `[:find ?n ?y (max ?age)
@@ -530,7 +530,7 @@ func TestRelationInputParallelStress(t *testing.T) {
 	ctx := NewContext(nil)
 
 	t.Run("stress test with many iterations", func(t *testing.T) {
-		exec := NewExecutor(matcher)
+		exec := NewExecutor(matcher, nil)
 		exec.EnableParallelSubqueries(16) // High worker count
 
 		q := `[:find ?n ?y ?m (max ?age)
@@ -613,7 +613,7 @@ func TestRelationInputParallelStress(t *testing.T) {
 		errCh := make(chan error, 10)
 		for i := 0; i < 10; i++ {
 			go func() {
-				exec := NewExecutor(matcher)
+				exec := NewExecutor(matcher, nil)
 				exec.EnableParallelSubqueries(8)
 				_, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
 				errCh <- err

@@ -28,7 +28,7 @@ func TestSubqueryDatomicCompatible(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher)
+	exec := NewExecutor(matcher, nil)
 
 	t.Run("ExplicitDatabasePassing", func(t *testing.T) {
 		// Datomic-style query with explicit $ passing

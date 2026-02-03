@@ -87,7 +87,7 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 
 	// Use executor with annotations to trace execution
 	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), opts)
+	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
 
 	ctx := executor.NewContext(func(event annotations.Event) {
 		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)

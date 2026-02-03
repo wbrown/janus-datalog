@@ -75,7 +75,7 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 	}
 
 	// Create executor with decorrelation enabled
-	executor := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	executor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableDynamicReordering:     true,
 		EnablePredicatePushdown:     true,

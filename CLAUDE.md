@@ -452,7 +452,8 @@ baseMatcher := storage.NewBadgerMatcher(db.Store())
 matcher := executor.WrapMatcher(baseMatcher, handler)
 
 // Use matcher normally - annotations are transparent
-executor := executor.NewExecutor(matcher)
+// Second parameter is EntityResolver (db) for CRDT resolution in Pull operations
+executor := executor.NewExecutor(matcher, db)
 ```
 
 **Key Design Principles**:

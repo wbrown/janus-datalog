@@ -134,7 +134,7 @@ func TestExecuteSubqueryStructure(t *testing.T) {
 
 	// Verify configuration defaults
 	// NOTE: EnableParallelSubqueries is now in ExecutorOptions, test default via executor creation
-	exec := NewExecutor(nil)
+	exec := NewExecutor(nil, nil)
 	if !exec.enableParallelSubqueries {
 		t.Error("enableParallelSubqueries should be true by default")
 	}

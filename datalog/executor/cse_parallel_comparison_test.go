@@ -200,7 +200,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	// Test 1: Sequential execution WITHOUT CSE
 	t.Log("\n=== Test 1: Sequential, No CSE ===")
-	exec1 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec1 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: false, // Sequential
 		EnableCSE:                   false,
@@ -226,7 +226,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	// Test 2: Sequential execution WITH CSE
 	t.Log("\n=== Test 2: Sequential, With CSE ===")
-	exec2 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec2 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: false, // Sequential
 		EnableCSE:                   true,
@@ -252,7 +252,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	// Test 3: Parallel execution WITHOUT CSE
 	t.Log("\n=== Test 3: Parallel, No CSE ===")
-	exec3 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec3 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true, // Parallel
 		EnableCSE:                   false,
@@ -278,7 +278,7 @@ func TestCSEWithAndWithoutParallel(t *testing.T) {
 
 	// Test 4: Parallel execution WITH CSE
 	t.Log("\n=== Test 4: Parallel, With CSE ===")
-	exec4 := NewExecutorWithOptions(matcher, planner.PlannerOptions{
+	exec4 := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true, // Parallel
 		EnableCSE:                   true,
