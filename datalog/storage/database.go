@@ -79,6 +79,7 @@ type DatabaseOptions struct {
 	Schema            schema.SchemaProvider // Optional schema for validation
 	AnnotationHandler annotations.Handler   // Optional handler for query tracing
 	ReplicaID         uint64                // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
+	DisableCache      bool                  // Disable EA cache; queries resolve directly from storage
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -89,6 +90,7 @@ type DatabaseOptions struct {
 //   - UseTimeTx: Legacy option, kept for compatibility.
 //   - Schema: Optional schema for validation.
 //   - ReplicaID: For CRDT mode. 0 = auto-generate random; non-zero = use specified.
+//   - DisableCache: Disable EA cache; queries resolve directly from storage.
 //
 // Example:
 //
@@ -144,6 +146,11 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		clock.Restore(maxElementID)
 	}
 
+	var cache *Cache
+	if !opts.DisableCache {
+		cache = NewCache()
+	}
+
 	return &Database{
 		store:             store,
 		activeTx:          make(map[*Transaction]bool),
@@ -153,7 +160,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		annotationHandler: opts.AnnotationHandler,
 		clock:             clock,
 		replicaID:         replicaID,
-		cache:             NewCache(),
+		cache:             cache,
 	}, nil
 }
 
@@ -1729,7 +1736,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Get current vector from cache - O(1) if fresh
+		// Get current vector from cache (if enabled) or resolve directly
 		eBytes := e.Hash()
 		var aBytes Attribute
 		copy(aBytes[:], a.String())
@@ -1737,7 +1744,14 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 		matcher := NewBadgerMatcher(t.db.store)
 		matcher.SetSchema(t.db.schema)
-		entry := t.db.cache.GetOrResolve(key, matcher)
+
+		var entry *CacheEntry
+		if t.db.cache != nil {
+			entry = t.db.cache.GetOrResolve(key, matcher)
+		} else {
+			// Cache disabled - resolve directly from storage
+			entry = ResolveEntry(key, matcher)
+		}
 
 		var oldList []any
 		var oldIndex []datalog.ElementID
@@ -1819,7 +1833,7 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 		}
 	}
 
-	// Check committed data via cache
+	// Check committed data via cache (if enabled) or direct resolution
 	eBytes := e.Hash()
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
@@ -1827,7 +1841,13 @@ func (t *Transaction) vectorContainsValue(e datalog.Identity, a datalog.Keyword,
 
 	matcher := NewBadgerMatcher(t.db.store)
 	matcher.SetSchema(t.db.schema)
-	entry := t.db.cache.GetOrResolve(cacheKey, matcher)
+
+	var entry *CacheEntry
+	if t.db.cache != nil {
+		entry = t.db.cache.GetOrResolve(cacheKey, matcher)
+	} else {
+		entry = ResolveEntry(cacheKey, matcher)
+	}
 
 	if entry != nil && entry.Cardinality() == schema.CardinalityVector {
 		for _, existing := range entry.VectorList() {
@@ -1977,41 +1997,44 @@ func (t *Transaction) Commit() (uint64, error) {
 	}
 
 	// Update cache: track max versions and invalidate stale entries
-	touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
-	seenKeys := make(map[CacheKey]bool)
+	// Skip if cache is disabled
+	if t.db.cache != nil {
+		touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
+		seenKeys := make(map[CacheKey]bool)
 
-	// Process asserted datoms
-	for _, d := range t.datoms {
-		eBytes := Entity(d.E.Hash())
+		// Process asserted datoms
+		for _, d := range t.datoms {
+			eBytes := Entity(d.E.Hash())
 
-		var aBytes Attribute
-		copy(aBytes[:], d.A.String())
+			var aBytes Attribute
+			copy(aBytes[:], d.A.String())
 
-		key := CacheKey{E: eBytes, A: aBytes}
-		if !seenKeys[key] {
-			seenKeys[key] = true
-			touched = append(touched, key)
-			t.db.cache.UpdateMaxVersion(key, d.Tx)
+			key := CacheKey{E: eBytes, A: aBytes}
+			if !seenKeys[key] {
+				seenKeys[key] = true
+				touched = append(touched, key)
+				t.db.cache.UpdateMaxVersion(key, d.Tx)
+			}
 		}
-	}
 
-	// Process retracted datoms
-	for _, d := range t.retracts {
-		eBytes := Entity(d.E.Hash())
+		// Process retracted datoms
+		for _, d := range t.retracts {
+			eBytes := Entity(d.E.Hash())
 
-		var aBytes Attribute
-		copy(aBytes[:], d.A.String())
+			var aBytes Attribute
+			copy(aBytes[:], d.A.String())
 
-		key := CacheKey{E: eBytes, A: aBytes}
-		if !seenKeys[key] {
-			seenKeys[key] = true
-			touched = append(touched, key)
-			t.db.cache.UpdateMaxVersion(key, d.Tx)
+			key := CacheKey{E: eBytes, A: aBytes}
+			if !seenKeys[key] {
+				seenKeys[key] = true
+				touched = append(touched, key)
+				t.db.cache.UpdateMaxVersion(key, d.Tx)
+			}
 		}
-	}
 
-	// Invalidate cache entries for all touched (E, A) pairs
-	t.db.cache.Invalidate(touched)
+		// Invalidate cache entries for all touched (E, A) pairs
+		t.db.cache.Invalidate(touched)
+	}
 
 	// Clean up
 	t.closed = true
