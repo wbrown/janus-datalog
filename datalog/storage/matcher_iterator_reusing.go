@@ -64,9 +64,16 @@ func (it *reusingIterator) Next() bool {
 		endKey = append(endKey, 0xFF, 0xFF, 0xFF, 0xFF)
 
 		var err error
-		it.storageIter, err = it.matcher.store.ScanKeysOnly(it.index, startKey, endKey)
+		rawIter, err := it.matcher.store.ScanKeysOnly(it.index, startKey, endKey)
 		if err != nil {
 			return false
+		}
+
+		// Wrap with CRDT resolution to ensure we only see resolved values
+		if it.matcher.schema != nil {
+			it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
+		} else {
+			it.storageIter = rawIter
 		}
 
 		// Reset to first tuple for actual processing

@@ -193,6 +193,14 @@ func (m *BadgerMatcher) matchWithHashJoin(
 		return nil, fmt.Errorf("hash join scan failed: %w", err)
 	}
 
+	// PHASE 3.5: Wrap with CRDT resolution
+	// This ensures we only see CRDT-resolved current values, not all historical values.
+	// The resolution is per (E, A) group based on schema cardinality.
+	var resolvedIter Iterator = storageIter
+	if m.schema != nil {
+		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
+	}
+
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
 		matcher:      m,
@@ -203,7 +211,7 @@ func (m *BadgerMatcher) matchWithHashJoin(
 		index:        index,
 		constraints:  constraints,
 		hashSet:      hashSet,
-		iter:         storageIter,
+		iter:         resolvedIter,
 		workspace:    make(executor.Tuple, len(columns)),
 		tupleBuilder: m.getTupleBuilder(pattern, columns),
 	}
@@ -539,6 +547,12 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 		return nil, fmt.Errorf("merge join scan failed: %w", err)
 	}
 
+	// PHASE 3.5: Wrap with CRDT resolution
+	var resolvedIterMerge Iterator = storageIter
+	if m.schema != nil {
+		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
+	}
+
 	// PHASE 4: Create streaming merge join iterator
 	iter := &mergeJoinIterator{
 		matcher:      m,
@@ -550,7 +564,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 		constraints:  constraints,
 		sortedTuples: sortedTuples,
 		bindingIdx:   0,
-		iter:         storageIter,
+		iter:         resolvedIterMerge,
 		workspace:    make(executor.Tuple, len(columns)),
 		tupleBuilder: m.getTupleBuilder(pattern, columns),
 	}

@@ -250,9 +250,16 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 
 	// Open scan for this range using key-only scanning
 	var err error
-	it.storageIter, err = it.matcher.store.ScanKeysOnly(it.index, rg.startKey, rg.endKey)
+	rawIter, err := it.matcher.store.ScanKeysOnly(it.index, rg.startKey, rg.endKey)
 	if err != nil {
 		return
+	}
+
+	// Wrap with CRDT resolution to ensure we only see resolved values
+	if it.matcher.schema != nil {
+		it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
+	} else {
+		it.storageIter = rawIter
 	}
 	it.totalScans++
 
