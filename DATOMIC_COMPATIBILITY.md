@@ -23,7 +23,7 @@ Janus-datalog implements a substantial subset of Datomic's Datalog query languag
 - ✅ Query Builder (qb): compile-time safe query construction with IDE support
 
 **Storage:**
-- ✅ BadgerDB persistent storage with CRDT model and 6 indices (EAVT, EATV, AEVT, AVET, VAET, TAEV)
+- ✅ BadgerDB persistent storage with CRDT model and 7 indices (EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV)
 - ✅ Export/Import to EDN format for backup and migration
 
 **Not Implemented:**
@@ -658,7 +658,7 @@ No advanced database operations:
 - Uses BadgerDB instead of Datomic's segmented storage
 - L85 encoding (custom Base85) for sortable keys
 - Fixed 69-byte keys: E(20) + A(32) + Tx(16) + Op(1)
-- Six indices: EAVT, EATV, AEVT, AVET, VAET, TAEV
+- Seven indices: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV
 
 ### 2. Transaction Model
 - ElementID-based transactions (Lamport clock + ReplicaID)

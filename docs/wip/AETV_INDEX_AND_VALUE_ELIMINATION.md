@@ -1,8 +1,18 @@
 # AETV Index and Value Elimination
 
 **Date**: 2026-02-05
-**Status**: Design
+**Status**: Partially Implemented
 **Author**: Discussion between user and Claude
+
+## Implementation Status
+
+**Implemented (2026-02-05):**
+- AETV index added (now 7 indices total: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV)
+- Index selection updated to use AETV for A-primary CRDT queries
+
+**Not yet implemented:**
+- EAVT removal (keeping for now - no urgency)
+- Value elimination (Part 2 of this proposal)
 
 ## Overview
 

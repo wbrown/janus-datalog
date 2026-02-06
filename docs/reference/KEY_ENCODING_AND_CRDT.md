@@ -9,7 +9,7 @@ This document provides a comprehensive analysis of how Janus Datalog's key encod
 3. [Key Structure](#key-structure)
 4. [The Key IS the Value](#the-key-is-the-value)
 5. [The Bitwise NOT Trick](#the-bitwise-not-trick)
-6. [Six Indices for CRDT Semantics](#six-indices-for-crdt-semantics)
+6. [Seven Indices for CRDT Semantics](#seven-indices-for-crdt-semantics)
 7. [Unified Current and History](#unified-current-and-history)
 8. [L85 Encoding: Representation Only](#l85-encoding-representation-only)
 9. [Comparison with Other CRDT Systems](#comparison-with-other-crdt-systems)
@@ -196,12 +196,12 @@ There's no step 2-3. The key's sort order IS the resolution, and the key contain
 
 ### The "6× Indexing Overhead" Reframe
 
-The six indices aren't "6× overhead pointing to data stored elsewhere."
+The seven indices aren't "7× overhead pointing to data stored elsewhere."
 
 Each index IS a complete copy of the data in a different sort order. There's no separate "row store" being indexed. The storage cost is:
 
 ```
-6 indices × datom size = total storage
+7 indices × datom size = total storage
 ```
 
 Not:
@@ -258,15 +258,16 @@ Forward scan: encounters L200 first (the current value)
 
 ---
 
-## Six Indices for CRDT Semantics
+## Seven Indices for CRDT Semantics
 
-The system maintains six different index orderings, each optimized for specific CRDT operations:
+The system maintains seven different index orderings, each optimized for specific CRDT operations:
 
 | Index | Order | CRDT Use | When Selected |
 |-------|-------|----------|---------------|
-| **EATV** | E→A→Tx↓→V | Cardinality-One (LWW) | E+A bound, cardinality=one |
+| **EATV** | E→A→Tx↓→V | Cardinality-One (LWW), E-primary | E+A bound, cardinality=one |
 | **EAVT** | E→A→V→Tx↓ | Cardinality-Many (add-wins) | E+A bound, cardinality=many |
-| **AEVT** | A→E→V→Tx↓ | Attribute scans | A bound, E unbound |
+| **AETV** | A→E→Tx↓→V | Cardinality-One (LWW), A-primary | A bound, E from input, cardinality=one |
+| **AEVT** | A→E→V→Tx↓ | Attribute scans (no CRDT resolution) | A bound, E unbound, cardinality=many |
 | **AVET** | A→V→E→Tx↓ | Value lookups | A+V bound |
 | **VAET** | V→A→E→Tx↓ | Reverse reference lookup | V bound (for refs) |
 | **TAEV** | Tx↓→A→E→V | Transaction log / time-travel | Time-based queries |
@@ -282,8 +283,9 @@ The position of **V relative to Tx** determines CRDT semantics:
 
 ```
 EAVT: [prefix][E][A][type+value][Tx↓][Op][AfterRef?]  - groups by value for add-wins
-EATV: [prefix][E][A][Tx↓][type+value][Op][AfterRef?]  - first entry is current (LWW)
-AEVT: [prefix][A][E][type+value][Tx↓][Op][AfterRef?]  - by attribute
+EATV: [prefix][E][A][Tx↓][type+value][Op][AfterRef?]  - first entry is current (LWW), E-primary
+AETV: [prefix][A][E][Tx↓][type+value][Op][AfterRef?]  - first entry is current (LWW), A-primary
+AEVT: [prefix][A][E][type+value][Tx↓][Op][AfterRef?]  - by attribute (Tx ascending)
 AVET: [prefix][A][type+value][E][Tx↓][Op][AfterRef?]  - value lookup
 VAET: [prefix][type+value][A][E][Tx↓][Op][AfterRef?]  - reverse refs (V first!)
 TAEV: [prefix][Tx↓][A][E][type+value][Op][AfterRef?]  - transaction log
@@ -325,12 +327,12 @@ This means Datomic effectively maintains **8 index structures** (4 current + 4 h
 Janus stores ALL datoms (current and historical) in the SAME indices:
 
 ```
-Single Index Set: EAVT, EATV, AEVT, AVET, VAET, TAEV (6 indices)
+Single Index Set: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV (7 indices)
     Contains: All datoms, all time, one structure
 ```
 
 **On every write:**
-1. Write new datom with new ElementID (6 index updates)
+1. Write new datom with new ElementID (7 index updates)
 2. That's it. No data movement.
 
 **To query current state:** Seek to (E,A), read first entry (bitwise NOT makes newest sort first)
@@ -890,8 +892,8 @@ There's no incremental update for RGA that's cheaper than rebuild.
 | **The key IS the value** | No pointer chasing, every index is covering, O(1) data access |
 | **Fixed 16-byte ElementID** | O(1) size regardless of replica count |
 | **Bitwise NOT on Tx** | Forward scan = newest first = O(1) current value |
-| **Unified current/history** | 6 indices vs Datomic's 8, no data movement on writes |
-| **Six indices** | Cardinality-aware access patterns |
+| **Unified current/history** | 7 indices vs Datomic's 8, no data movement on writes |
+| **Seven indices** | Cardinality-aware access patterns |
 | **LSM-tree (BadgerDB)** | Natural append-only for CRDT history |
 | **Value types for hot paths** | No heap allocation in decode/encode |
 | **No separate CRDT layer** | Resolution IS the index access |

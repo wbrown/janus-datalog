@@ -128,7 +128,7 @@ This is **standard database query optimization** (similar to Selinger's algorith
 - **Fixed 69-byte keys**: E(20) + A(32) + Tx(16) + Op(1) for efficient indexing
 - **Unbounded values**: Stored last with 2-byte size prefix and 1-byte type
 - **L85 encoding**: Custom Base85 variant preserving sort order (see below)
-- **Six indices**: EAVT, EATV, AEVT, AVET, VAET, TAEV for different access patterns and cardinalities
+- **Seven indices**: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV for different access patterns and cardinalities
 - **CRDT semantics**: LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector
 - **Keyword interning**: Keywords hashed once and reused
 - **RefValues**: 20-byte entity references are L85-encoded like E/Tx components
