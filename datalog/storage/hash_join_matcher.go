@@ -178,9 +178,9 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	var boundValue interface{}
 	if len(hashSet) == 1 {
 		// Extract the single bound value from the hash set
-		for _, tuple := range hashSet {
-			if columnIndex < len(tuple) {
-				boundValue = tuple[columnIndex]
+		for _, tuples := range hashSet {
+			if len(tuples) > 0 && columnIndex < len(tuples[0]) {
+				boundValue = tuples[0][columnIndex]
 			}
 			break
 		}
@@ -310,7 +310,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 			}
 		}
 
-	case AEVT: // 1
+	case AEVT: // 2
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
 				var attr Attribute
@@ -328,7 +328,26 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 			}
 		}
 
-	case AVET: // 2
+	case AETV: // 3 - A-primary CRDT index (A → E → Tx↓ → V)
+		// Same prefix structure as AEVT: A first, then E
+		if a != nil {
+			if kw, ok := a.(datalog.Keyword); ok {
+				var attr Attribute
+				copy(attr[:], kw.String())
+				startParts = append(startParts, attr[:])
+				endParts = append(endParts, attr[:])
+
+				if e != nil {
+					if entity, ok := e.(datalog.Identity); ok {
+						hash := entity.Hash()
+						startParts = append(startParts, hash[:])
+						endParts = append(endParts, hash[:])
+					}
+				}
+			}
+		}
+
+	case AVET: // 4
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
 				var attr Attribute
@@ -382,19 +401,17 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 	}
 
 	start := encoder.EncodePrefix(index, startParts...)
-	end := encoder.EncodePrefix(index, endParts...)
-
-	// Extend end key to include all suffixes
-	if len(end) > 0 {
-		end = append(end, 0xFF, 0xFF, 0xFF, 0xFF)
-	}
+	// Use incrementLastByte for proper prefix range scan
+	// This creates an exclusive upper bound that includes all suffixes
+	end := incrementLastByte(start)
 
 	return index, start, end
 }
 
 // buildHashSet creates a hash set from binding relation for O(1) lookup
-func (m *BadgerMatcher) buildHashSet(bindingRel executor.Relation, position int) map[string]executor.Tuple {
-	hashSet := make(map[string]executor.Tuple)
+// Returns map from key to ALL tuples with that key value (supporting multi-column bindings)
+func (m *BadgerMatcher) buildHashSet(bindingRel executor.Relation, position int) map[string][]executor.Tuple {
+	hashSet := make(map[string][]executor.Tuple)
 
 	iter := bindingRel.Iterator()
 	for iter.Next() {
@@ -408,7 +425,9 @@ func (m *BadgerMatcher) buildHashSet(bindingRel executor.Relation, position int)
 		key := valueToHashKey(value)
 
 		if key != "" {
-			hashSet[key] = tuple
+			// No copy needed: binding relations are materialized (materializeRelationsForPattern)
+			// and sliceIterator returns distinct slice references without reusing storage
+			hashSet[key] = append(hashSet[key], tuple)
 		}
 	}
 	iter.Close()
@@ -695,8 +714,8 @@ type hashJoinIterator struct {
 	position      int
 	index         IndexType
 	constraints   []executor.StorageConstraint
-	hashSet       map[string]executor.Tuple // Built upfront
-	iter          Iterator                  // Storage iterator
+	hashSet       map[string][]executor.Tuple // Built upfront - maps key to ALL matching tuples
+	iter          Iterator                    // Storage iterator
 	tupleBuilder  *query.InternedTupleBuilder
 	current       executor.Tuple
 	workspace     executor.Tuple // Reusable workspace for tuple building
@@ -724,23 +743,27 @@ func (it *hashJoinIterator) Next() bool {
 		probeKeyStr := valueToHashKey(probeKey)
 
 		// Probe hash set (O(1) lookup)
-		if bindingTuple, found := it.hashSet[probeKeyStr]; found {
-			// Verify full pattern match
-			if it.matcher.matchesWithBindingTuple(datom, it.pattern, it.bindingRel, bindingTuple) {
-				// Apply storage constraints
-				satisfiesAll := true
-				for _, constraint := range it.constraints {
-					if !constraint.Evaluate(datom) {
-						satisfiesAll = false
-						break
+		if bindingTuples, found := it.hashSet[probeKeyStr]; found {
+			// Check against ALL binding tuples with this key
+			// (for multi-column bindings, there may be multiple tuples per key)
+			for _, bindingTuple := range bindingTuples {
+				// Verify full pattern match
+				if it.matcher.matchesWithBindingTuple(datom, it.pattern, it.bindingRel, bindingTuple) {
+					// Apply storage constraints
+					satisfiesAll := true
+					for _, constraint := range it.constraints {
+						if !constraint.Evaluate(datom) {
+							satisfiesAll = false
+							break
+						}
 					}
-				}
 
-				if satisfiesAll {
-					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
-					it.current = it.workspace
-					it.matchesFound++
-					return true
+					if satisfiesAll {
+						it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
+						it.current = it.workspace
+						it.matchesFound++
+						return true
+					}
 				}
 			}
 		}

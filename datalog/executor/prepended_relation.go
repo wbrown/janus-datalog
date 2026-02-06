@@ -12,26 +12,14 @@ import (
 type PrependedRelation struct {
 	columns      []query.Symbol
 	firstTuple   Tuple
-	restRelation Relation // Use Relation instead of Iterator for RequiresCopy check
-	restIter     Iterator // Cached iterator (created on first Iterator() call)
+	restRelation Relation
 	options      ExecutorOptions
 	iterStarted  bool
 }
 
 // NewPrependedRelation creates a streaming relation that yields firstTuple first,
 // then continues with the rest of the relation.
-func NewPrependedRelation(columns []query.Symbol, firstTuple Tuple, restIter Iterator, options ExecutorOptions) *PrependedRelation {
-	// Legacy API: wrap Iterator without Relation (always copies from rest)
-	return &PrependedRelation{
-		columns:    columns,
-		firstTuple: firstTuple,
-		restIter:   restIter,
-		options:    options,
-	}
-}
-
-// NewPrependedRelationFromRelation creates a streaming relation with proper RequiresCopy handling.
-func NewPrependedRelationFromRelation(columns []query.Symbol, firstTuple Tuple, restRelation Relation, options ExecutorOptions) *PrependedRelation {
+func NewPrependedRelation(columns []query.Symbol, firstTuple Tuple, restRelation Relation, options ExecutorOptions) *PrependedRelation {
 	return &PrependedRelation{
 		columns:      columns,
 		firstTuple:   firstTuple,
@@ -47,22 +35,10 @@ func (r *PrependedRelation) Iterator() Iterator {
 	}
 	r.iterStarted = true
 
-	// Get iterator from relation if we have one
-	var restIter Iterator
-	var restRelation Relation
-	if r.restRelation != nil {
-		restIter = r.restRelation.Iterator()
-		restRelation = r.restRelation
-	} else {
-		restIter = r.restIter
-		// No relation - must always copy (legacy API)
-		restRelation = nil
-	}
-
 	return &PrependedIterator{
 		firstTuple:   r.firstTuple,
-		restIter:     restIter,
-		restRelation: restRelation,
+		restIter:     r.restRelation.Iterator(),
+		restRelation: r.restRelation,
 	}
 }
 
@@ -113,28 +89,17 @@ func (r *PrependedRelation) Project(columns []query.Symbol) (Relation, error) {
 func (r *PrependedRelation) Materialize() Relation {
 	tuples := []Tuple{r.firstTuple}
 
-	// Determine if we need to copy and get the iterator
-	var it Iterator
-	var needsCopy bool
-	if r.restRelation != nil {
-		it = r.restRelation.Iterator()
-		needsCopy = r.restRelation.RequiresCopy()
-	} else if r.restIter != nil {
-		it = r.restIter
-		needsCopy = true // Legacy API - always copy
-	}
-
-	if it != nil {
-		for it.Next() {
-			tuple := it.Tuple()
-			if needsCopy {
-				tuple = copyTuple(tuple)
-			}
-			tuples = append(tuples, tuple)
+	needsCopy := r.restRelation.RequiresCopy()
+	it := r.restRelation.Iterator()
+	for it.Next() {
+		tuple := it.Tuple()
+		if needsCopy {
+			tuple = copyTuple(tuple)
 		}
-		it.Close()
-		r.restIter = nil
+		tuples = append(tuples, tuple)
 	}
+	it.Close()
+
 	return NewMaterializedRelationWithOptions(r.columns, tuples, r.options)
 }
 
@@ -196,7 +161,7 @@ func (r *PrependedRelation) RequiresCopy() bool {
 type PrependedIterator struct {
 	firstTuple    Tuple
 	restIter      Iterator
-	restRelation  Relation // For RequiresCopy check (nil = always copy)
+	restRelation  Relation // For RequiresCopy check
 	returnedFirst bool
 	currentTuple  Tuple
 	done          bool
@@ -216,8 +181,8 @@ func (it *PrependedIterator) Next() bool {
 	if it.restIter != nil && it.restIter.Next() {
 		tuple := it.restIter.Tuple()
 
-		// Copy if rest relation requires it, or if we don't have a relation (legacy API)
-		if it.restRelation == nil || it.restRelation.RequiresCopy() {
+		// Copy if rest relation requires it
+		if it.restRelation.RequiresCopy() {
 			tuple = copyTuple(tuple)
 		}
 

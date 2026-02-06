@@ -437,3 +437,115 @@ func TestChooseIndexForValuesAEVT(t *testing.T) {
 		}
 	})
 }
+
+// TestChooseIndexForValuesAETV verifies that AETV index scan ranges
+// are correctly narrowed when attribute and/or entity are bound.
+// AETV is the A-primary CRDT-aware index (A → E → Tx↓ → V).
+// This test ensures chooseIndexForValues handles AETV properly.
+func TestChooseIndexForValuesAETV(t *testing.T) {
+	dir, err := os.MkdirTemp("", "choose-index-aetv-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create test data: multiple entities with different attributes
+	entity1 := datalog.NewIdentity("person-1")
+	entity2 := datalog.NewIdentity("person-2")
+	entity3 := datalog.NewIdentity("person-3")
+
+	tx := db.NewTransaction()
+	// Each entity has :person/name and :person/age
+	tx.Add(entity1, datalog.NewKeyword(":person/name"), "Alice")
+	tx.Add(entity1, datalog.NewKeyword(":person/age"), int64(30))
+	tx.Add(entity2, datalog.NewKeyword(":person/name"), "Bob")
+	tx.Add(entity2, datalog.NewKeyword(":person/age"), int64(25))
+	tx.Add(entity3, datalog.NewKeyword(":person/name"), "Charlie")
+	tx.Add(entity3, datalog.NewKeyword(":person/age"), int64(35))
+	// Add some other attributes to increase total datom count
+	tx.Add(entity1, datalog.NewKeyword(":person/city"), "NYC")
+	tx.Add(entity2, datalog.NewKeyword(":person/city"), "LA")
+	_, err = tx.Commit()
+	if err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	matcher := db.Matcher().(*BadgerMatcher)
+
+	t.Run("AETV with attribute bound only", func(t *testing.T) {
+		// Scan AETV for :person/name - should get exactly 3 datoms
+		attr := datalog.NewKeyword(":person/name")
+		_, start, end := matcher.chooseIndexForValues(AETV, nil, attr, nil, 0)
+
+		iter, err := matcher.store.ScanKeysOnly(AETV, start, end)
+		if err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+
+		count := 0
+		for iter.Next() {
+			count++
+		}
+		iter.Close()
+
+		// Should find exactly 3 :person/name datoms
+		if count != 3 {
+			t.Errorf("Expected 3 datoms for :person/name via AETV, got %d", count)
+		}
+	})
+
+	t.Run("AETV with attribute and entity bound", func(t *testing.T) {
+		// Scan AETV for entity1 + :person/name - should get exactly 1 datom
+		attr := datalog.NewKeyword(":person/name")
+		_, start, end := matcher.chooseIndexForValues(AETV, entity1, attr, nil, 0)
+
+		iter, err := matcher.store.ScanKeysOnly(AETV, start, end)
+		if err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+
+		count := 0
+		for iter.Next() {
+			count++
+		}
+		iter.Close()
+
+		// Should find exactly 1 datom for entity1 + :person/name
+		if count != 1 {
+			t.Errorf("Expected 1 datom for entity1+:person/name via AETV, got %d", count)
+		}
+	})
+
+	t.Run("AETV scan should not exceed attribute datom count", func(t *testing.T) {
+		// This test verifies the bug is fixed: without AETV case in chooseIndexForValues,
+		// it would scan ALL datoms in the index instead of just the attribute's datoms
+		attr := datalog.NewKeyword(":person/age")
+		_, start, end := matcher.chooseIndexForValues(AETV, nil, attr, nil, 0)
+
+		iter, err := matcher.store.ScanKeysOnly(AETV, start, end)
+		if err != nil {
+			t.Fatalf("Scan failed: %v", err)
+		}
+
+		count := 0
+		for iter.Next() {
+			count++
+		}
+		iter.Close()
+
+		// Total datoms in DB is 8, :person/age has 3
+		// If AETV case is missing, count would be >= 8 (full scan)
+		if count > 3 {
+			t.Errorf("AETV scan for :person/age scanned %d datoms, expected 3 (possible full index scan)", count)
+		}
+		if count != 3 {
+			t.Errorf("Expected exactly 3 datoms for :person/age, got %d", count)
+		}
+	})
+}

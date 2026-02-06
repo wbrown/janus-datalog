@@ -133,8 +133,10 @@ func TestAEVTMatcherBug(t *testing.T) {
 	t.Logf("Total datoms in DB: 50")
 
 	// Assertions
-	if indexUsed != "AEVT" {
-		t.Errorf("Expected AEVT index, got %s", indexUsed)
+	// AETV is the correct index for "E bound, A constant" pattern with CRDT semantics
+	// AETV has Tx descending, so first entry for each (A, E) is the LWW winner
+	if indexUsed != "AETV" {
+		t.Errorf("Expected AETV index (CRDT-aware A-primary), got %s", indexUsed)
 	}
 
 	// PERFORMANCE TEST: With HashJoinScan strategy, we scan all :person/age datoms (10)

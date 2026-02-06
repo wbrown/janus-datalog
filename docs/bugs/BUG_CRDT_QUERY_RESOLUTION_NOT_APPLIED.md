@@ -2,8 +2,8 @@
 
 **Date**: 2026-02-05
 **Severity**: Critical
-**Status**: ✅ FIXED - Streaming CRDT resolution implemented
-**Affected**: All query methods except Pull API (now fixed)
+**Status**: ⚠️ PARTIALLY FIXED - Works with cache, broken without cache
+**Affected**: All query methods except Pull API
 
 ## Resolution Summary
 
@@ -13,6 +13,8 @@ Implemented `CRDTResolvingIterator` with streaming resolution:
 - **CardinalityVector**: Buffer minimal state (not datoms), reconstruct at boundary
 
 **Key insight**: EATV index stores Tx descending. First entry for each (E, A) IS the LWW winner. Resolution is filtering, not buffering.
+
+**Current issue**: When E is bound via input and cache is disabled, join strategies use AEVT index instead of EATV. CRDTResolvingIterator is applied but wrong index order means "first entry" is NOT the LWW winner. See "Current Investigation" section below.
 
 **Design doc**: `docs/reference/CRDT_STREAMING_RESOLUTION.md`
 
@@ -960,29 +962,65 @@ func TestCRDTResolution_Matrix(t *testing.T) {
 #### Phase 2: Test Coverage ✅ COMPLETE
 Created comprehensive test matrix in `crdt_cache_matrix_test.go` with 17 test patterns covering all binding scenarios and cardinality types.
 
-### Test Results Matrix (After Fix)
+### Test Results Matrix (CURRENT - 2026-02-05)
 
 | Test | cache_enabled | cache_disabled | Status |
 |------|---------------|----------------|--------|
-| AConstant | **PASS** | **PASS** | ✅ Fixed |
-| AFromScalarInput | **PASS** | **PASS** | ✅ Fixed |
-| AUnbound | **PASS** | **PASS** | ✅ Fixed |
-| EFromCollection_AFromScalar | **PASS** | **PASS** | ✅ Fixed |
-| CardinalityMany | **PASS** | **PASS** | ✅ Fixed |
+| AConstant | **PASS** | FAIL | ❌ E bound path broken |
+| AFromScalarInput | **PASS** | FAIL | ❌ E bound path broken |
+| AUnbound | **PASS** | **PASS** | ✅ Works (E unbound) |
+| EFromCollection_AFromScalar | **PASS** | FAIL | ❌ E bound path broken |
+| CardinalityMany | **PASS** | **PASS** | ✅ Works |
 | PullIntoComparison | **PASS** | **PASS** | ✅ Control |
-| AFromCollection | **PASS** | **PASS** | ✅ Fixed |
-| AFromTupleInput | **PASS** | **PASS** | ✅ Fixed |
-| AFromRelationInput | **PASS** | **PASS** | ✅ Fixed |
-| ABoundViaJoin | **PASS** | **PASS** | ✅ Fixed |
-| ABoundViaSubquery | **PASS** | **PASS** | ✅ Fixed |
+| AFromCollection | **PASS** | FAIL | ❌ E bound path broken |
+| AFromTupleInput | **PASS** | FAIL | ❌ E bound path broken |
+| AFromRelationInput | **PASS** | FAIL | ❌ E bound path broken |
+| ABoundViaJoin | **PASS** | FAIL | ❌ E bound path broken |
+| ABoundViaSubquery | **PASS** | FAIL | ❌ E bound path broken |
 | EAndABothFromCollections | FAIL | FAIL | ⚠️ Separate query execution issue |
-| WithNotClause | **PASS** | **PASS** | ✅ Fixed |
-| WithOrClause | **PASS** | **PASS** | ✅ Fixed |
-| WithAggregation | **PASS** | **PASS** | ✅ Fixed |
-| CardinalityVector | **PASS** | **PASS** | ✅ Fixed (copyDatom bug) |
-| AsOfQuery | **SKIP** | **SKIP** | Test data issue |
+| WithNotClause | **PASS** | FAIL | ❌ E bound path broken |
+| WithOrClause | **PASS** | **PASS** | ✅ Works |
+| WithAggregation | **PASS** | FAIL | ❌ E bound path broken |
+| CardinalityVector | **PASS** | **PASS** | ✅ Works |
+| AsOfQuery | **PASS** | FAIL | ❌ E bound path broken |
 
 **Note**: History query (Pattern 14) removed - will use `db.History()` Datomic-style view instead.
+
+### Current Investigation (2026-02-05)
+
+**Problem**: Tests pass with cache_enabled but fail with cache_disabled when E is bound.
+
+**Root cause analysis**:
+
+The `CRDTResolvingIterator` IS being applied (in hash_join_matcher.go, matcher_iterator_*.go), but it's iterating over the **wrong index**.
+
+**The issue**: When E is bound via input and A is a constant pattern:
+```go
+// matcher_strategy.go:107-112
+case 0: // E is bound
+    if _, isConstant := pattern.GetA().(query.Constant); isConstant {
+        // E is bound, A is constant → use AEVT for direct lookups
+        indexType = AEVT // ← WRONG for CRDT resolution!
+    }
+```
+
+**Index ordering problem**:
+- **AEVT** (chosen): A → E → V → Tx. Within each (A, E, V) group, Tx is ascending.
+- **EATV** (needed): E → A → Tx↓ → V. Tx is descending (highest first).
+
+The `CRDTResolvingIterator` assumes EATV ordering (line 11):
+```go
+// Key insight: EATV index stores Tx in descending order (highest Tx first).
+// This means resolution is just filtering - no buffering needed.
+```
+
+But when iterating AEVT, "first entry" is NOT the highest Tx! The iterator emits the wrong value.
+
+When E is bound:
+- **cache_enabled**: Resolution happens through the cache path which uses EATV directly (works)
+- **cache_disabled**: Join strategies use AEVT, CRDTResolvingIterator is applied but wrong index order (BROKEN)
+
+**Fix**: When schema exists and cardinality is CardinalityOne or CardinalityVector, use EATV instead of AEVT for the "E bound, A constant" case. EATV allows prefix scan on (E, A) with Tx descending.
 
 ### Fix Implementation (Phase 3) ✅ COMPLETE
 

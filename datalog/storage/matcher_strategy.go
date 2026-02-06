@@ -105,19 +105,20 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 		case 0: // E is bound
 			// Check if A is also constant (not in binding set)
 			if _, isConstant := pattern.GetA().(query.Constant); isConstant {
-				// E is bound, A is constant → use AEVT for direct lookups
+				// E is bound, A is constant → use AETV for CRDT-aware lookups
 				// Pattern like [?e :attr/name ?v] where ?e is bound to many values
-				// AEVT allows: seek to (:attr/name, entity1), seek to (:attr/name, entity2), etc.
-				indexType = AEVT // direct lookup by (A, E) pair
+				// AETV has Tx descending: first entry for each (A, E) is LWW winner
+				// AETV allows: seek to (:attr/name, entity1), seek to (:attr/name, entity2), etc.
+				indexType = AETV // direct lookup by (A, E) pair with Tx descending
 				canReuse = true  // Try iterator reuse with Seek() between entities
 			} else {
-				// E is bound, A varies → use EAVT
-				indexType = EAVT // E is primary sort key
+				// E is bound, A varies → use EATV (E-primary with Tx descending)
+				indexType = EATV // E is primary sort key, Tx descending for CRDT
 				canReuse = true
 			}
 
 		case 1: // A is bound
-			indexType = AEVT // A is primary sort key ✓
+			indexType = AETV // A is primary sort key, Tx descending for CRDT
 			canReuse = true
 
 		case 2: // V is bound
@@ -278,15 +279,15 @@ func chooseBestMultiPositionStrategy(
 	// Determine index based on best position for reuse
 	var indexType IndexType
 	switch bestPosition {
-	case 0: // E has most distinct values - use AEVT or EAVT
+	case 0: // E has most distinct values - use AETV or EATV
 		// Check if A is constant
 		if _, isConstant := pattern.GetA().(query.Constant); isConstant {
-			indexType = AEVT // A is constant, seek by E
+			indexType = AETV // A is constant, seek by E (Tx descending for CRDT)
 		} else {
-			indexType = EAVT // seek by E
+			indexType = EATV // seek by E (Tx descending for CRDT)
 		}
-	case 1: // A has most distinct values - use AEVT
-		indexType = AEVT
+	case 1: // A has most distinct values - use AETV (Tx descending for CRDT)
+		indexType = AETV
 	case 2: // V has most distinct values - use AVET or VAET
 		if _, isConstant := pattern.GetA().(query.Constant); isConstant {
 			indexType = AVET // A is constant, seek by V

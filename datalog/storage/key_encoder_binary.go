@@ -38,8 +38,9 @@ func txFromDescending(encoded []byte) [16]byte {
 // Key formats (Bug #5 fix: Tx before Op, AfterRef at end for RGA ops):
 //
 //	EAVT: [prefix][E][A][type][value][Tx↓][Op][AfterRef?]  - groups by value for add-wins
-//	EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]  - first entry is current
-//	AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]  - by attribute
+//	EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]  - first entry is current (E-primary CRDT)
+//	AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]  - by attribute (V before Tx)
+//	AETV: [prefix][A][E][Tx↓][type][value][Op][AfterRef?]  - first entry is current (A-primary CRDT)
 //	AVET: [prefix][A][type][value][E][Tx↓][Op][AfterRef?]  - value lookup
 //	VAET: [prefix][type][value][A][E][Tx↓][Op][AfterRef?]  - reverse refs
 //	TAEV: [prefix][Tx↓][A][E][type][value][Op][AfterRef?]  - transaction log
@@ -90,6 +91,14 @@ func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 			key = append(key, afterRefDesc[:]...)
 		}
 		return key
+	case AETV:
+		// [A][E][Tx][V][Op][AfterRef?] - A-primary CRDT: first entry is current (Tx descending)
+		key := concatBytes(prefix, sd.A[:], sd.E[:], txDesc[:], vBytes, opByte)
+		if sd.Op.HasAfterRef() {
+			afterRefDesc := txToDescending(sd.AfterRef)
+			key = append(key, afterRefDesc[:]...)
+		}
+		return key
 	case AVET:
 		// [A][V][E][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op, enables [A][V] prefix scans
 		key := concatBytes(prefix, sd.A[:], vBytes, sd.E[:], txDesc[:], opByte)
@@ -131,6 +140,7 @@ func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 //	EAVT: [prefix][E][A][type][value][Tx↓][Op][AfterRef?]
 //	EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]
 //	AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]
+//	AETV: [prefix][A][E][Tx↓][type][value][Op][AfterRef?]
 //	AVET: [prefix][A][type][value][E][Tx↓][Op][AfterRef?]
 //	VAET: [prefix][type][value][A][E][Tx↓][Op][AfterRef?]
 //	TAEV: [prefix][Tx↓][A][E][type][value][Op][AfterRef?]
@@ -232,6 +242,33 @@ func (e *BinaryKeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]by
 			vEnd := len(key) - opSize - txSize
 			value = key[attrSize+entitySize : vEnd]
 			tx = txFromDescending(key[vEnd : vEnd+txSize])
+		}
+
+	case AETV:
+		// [A][E][Tx][V][Op][AfterRef?] - A-primary CRDT: first entry is current (Tx descending)
+		minSize := attrSize + entitySize + txSize + opSize
+		if len(key) < minSize {
+			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("AETV key too short")
+		}
+		copy(attr[:], key[0:attrSize])
+		copy(entity[:], key[attrSize:attrSize+entitySize])
+		tx = txFromDescending(key[attrSize+entitySize : attrSize+entitySize+txSize])
+		// Check if AfterRef is present
+		hasAfterRef := len(key) >= minSize+afterRefSize
+		if hasAfterRef {
+			op = key[len(key)-afterRefSize-opSize]
+			if datalog.CRDTOp(op).HasAfterRef() {
+				vStart := attrSize + entitySize + txSize
+				value = key[vStart : len(key)-afterRefSize-opSize]
+				afterRef = txFromDescending(key[len(key)-afterRefSize:])
+			} else {
+				hasAfterRef = false
+			}
+		}
+		if !hasAfterRef {
+			vStart := attrSize + entitySize + txSize
+			value = key[vStart : len(key)-opSize]
+			op = key[len(key)-opSize]
 		}
 
 	case AVET:

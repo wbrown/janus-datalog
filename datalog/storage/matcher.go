@@ -610,9 +610,24 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 				return AVET, start, end
 			}
 
-			// Only A bound - use AEVT index
-			start, end := encoder.EncodePrefixRange(AEVT, aStorage[:])
-			return AEVT, start, end
+			// Only A bound - use cardinality-aware index selection
+			// For CRDT semantics:
+			// - CardinalityMany: AEVT groups by V for add-wins resolution
+			// - CardinalityOne/Vector: AETV orders by Tx first, first entry is current
+			card := schema.CardinalityOne
+			if m.schema != nil {
+				if attrDef := m.schema.GetAttribute(aPtr); attrDef != nil {
+					card = attrDef.Cardinality
+				}
+			}
+			if card == schema.CardinalityMany {
+				// AEVT: A → E → V → Tx - values grouped together for add-wins
+				start, end := encoder.EncodePrefixRange(AEVT, aStorage[:])
+				return AEVT, start, end
+			}
+			// AETV: A → E → Tx → V - first entry is current (highest Tx)
+			start, end := encoder.EncodePrefixRange(AETV, aStorage[:])
+			return AETV, start, end
 		}
 	} else if v != nil {
 		// Only V bound - use VAET index
@@ -746,6 +761,8 @@ func indexName(idx IndexType) string {
 		return "EATV"
 	case AEVT:
 		return "AEVT"
+	case AETV:
+		return "AETV"
 	case AVET:
 		return "AVET"
 	case VAET:
