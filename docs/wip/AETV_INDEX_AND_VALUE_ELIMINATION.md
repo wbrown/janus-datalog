@@ -10,9 +10,14 @@
 - AETV index added (now 7 indices total: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV)
 - Index selection updated to use AETV for A-primary CRDT queries
 
+**Implemented (2026-02-06):**
+- Value elimination complete - `assertDatom()` now writes nil values
+- `BadgerIterator.Datom()` decodes from key using `DatomFromKey()`
+- `BadgerStore.Get()` updated to decode from key
+- ~50% storage reduction achieved
+
 **Not yet implemented:**
 - EAVT removal (keeping for now - no urgency)
-- Value elimination (Part 2 of this proposal)
 
 ## Overview
 

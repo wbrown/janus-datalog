@@ -62,14 +62,11 @@ func (s *BadgerStore) Assert(datoms []datalog.Datom) error {
 
 // assertDatom adds a single datom to all indices
 func (s *BadgerStore) assertDatom(txn *badger.Txn, d *datalog.Datom) error {
-	// Serialize the datom
-	sd := ToStorageDatom(*d)
-	value := sd.Bytes()
-
 	// Write to all CRDT indices
+	// Value is nil - all datom information is encoded in the key
 	for _, idx := range Indices {
 		key := s.encoder.EncodeKey(idx, d)
-		if err := txn.Set(key, value); err != nil {
+		if err := txn.Set(key, nil); err != nil {
 			return fmt.Errorf("failed to write to %v index: %w", idx, err)
 		}
 	}
@@ -166,29 +163,23 @@ func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error)
 }
 
 // Get retrieves a single datom by key
+// Values are not stored - all datom information is decoded from the key
 func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
 	var result *datalog.Datom
 
 	err := s.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(key)
+		_, err := txn.Get(key)
 		if err != nil {
 			return err
 		}
 
-		return item.Value(func(val []byte) error {
-			sd, err := StorageDatomFromBytes(val)
-			if err != nil {
-				return err
-			}
-			// Convert to user-facing datom
-			result = &datalog.Datom{
-				E:  datalog.InternIdentityFromHash(sd.E),
-				A:  datalog.InternKeywordFromBytes(sd.A),
-				V:  sd.V,
-				Tx: sd.Tx.ToElementID(),
-			}
-			return nil
-		})
+		// Decode datom from key - values are not stored
+		datom, err := DatomFromKey(index, key, s.encoder)
+		if err != nil {
+			return err
+		}
+		result = &datom
+		return nil
 	})
 
 	if err == badger.ErrKeyNotFound {
@@ -456,40 +447,21 @@ func (i *BadgerIterator) Next() bool {
 	return true
 }
 
-// Datom returns the current datom
+// Datom returns the current datom decoded from the key
+// Values are not stored - all datom information is in the key
 func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 	item := i.it.Item()
 
-	// Get key to decode Op and AfterRef (Op and AfterRef are stored in the key, not the value)
-	key := item.Key()
-	var op byte
-	var afterRef [16]byte
-	if i.encoder != nil {
-		_, _, _, _, op, afterRef, _ = i.encoder.DecodeKey(i.index, key)
+	// Must copy key since BadgerDB reuses the buffer
+	key := item.KeyCopy(nil)
+
+	// Decode datom from key - all information is in the key
+	datom, err := DatomFromKey(i.index, key, i.encoder)
+	if err != nil {
+		return nil, err
 	}
 
-	var result *datalog.Datom
-	err := item.Value(func(val []byte) error {
-		sd, err := StorageDatomFromBytes(val)
-		if err != nil {
-			return err
-		}
-		// Convert to user-facing datom
-		// Note: StorageDatomFromBytes already decodes the value properly,
-		// so sd.V is already the decoded value
-		// Op and AfterRef are decoded from the key, not the value
-		result = &datalog.Datom{
-			E:        datalog.InternIdentityFromHash(sd.E),
-			A:        datalog.InternKeywordFromBytes(sd.A),
-			V:        sd.V,
-			Tx:       sd.Tx.ToElementID(),
-			Op:       datalog.CRDTOp(op),
-			AfterRef: Tx(afterRef).ToElementID(),
-		}
-		return nil
-	})
-
-	return result, err
+	return &datom, nil
 }
 
 // Close closes the iterator
