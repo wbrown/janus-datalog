@@ -269,9 +269,8 @@ func TestPrependedIteratorCopiesFromUnsafeRest(t *testing.T) {
 	})
 
 	// Create PrependedRelation with a safe first tuple and unsafe rest
-	// Use the new API that accepts Relation for proper RequiresCopy handling
 	firstTuple := Tuple{1, "first"}
-	prepended := NewPrependedRelationFromRelation(cols, firstTuple, unsafeRel, ExecutorOptions{})
+	prepended := NewPrependedRelation(cols, firstTuple, unsafeRel, ExecutorOptions{})
 
 	// Iterate and store all tuples
 	var storedTuples []Tuple
@@ -319,9 +318,9 @@ func TestPrependedIteratorPassthroughFromSafeRest(t *testing.T) {
 		{3, "rest2"},
 	})
 
-	// Create PrependedRelation using new API
+	// Create PrependedRelation
 	firstTuple := Tuple{1, "first"}
-	prepended := NewPrependedRelationFromRelation(cols, firstTuple, safeRel, ExecutorOptions{})
+	prepended := NewPrependedRelation(cols, firstTuple, safeRel, ExecutorOptions{})
 
 	// Iterate and store all tuples
 	var storedTuples []Tuple

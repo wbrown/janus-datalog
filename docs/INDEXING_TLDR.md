@@ -18,19 +18,23 @@ You want to query these efficiently:
 
 **Problem**: Different queries need different orderings. There's no single sort that's optimal for everything.
 
-**Solution**: Store the same data sorted 5 different ways. Pick the best one per query.
+**Solution**: Store the same data sorted 7 different ways. Pick the best one per query.
 
 ---
 
-## The 5 Indices (Think: 5 Different Acceleration Structures)
+## The 7 Indices (Think: 7 Different Acceleration Structures)
 
 | Index | Sort Order | Game Engine Analogy |
 |-------|------------|---------------------|
 | **EAVT** | Entity → Attr → Val → Tx | Octree: "Give me everything in this spatial cell" |
+| **EATV** | Entity → Attr → Tx↓ → Val | LWW lookup: "Get current value" (E-primary CRDT) |
 | **AEVT** | Attr → Entity → Val → Tx | Component array: "Give me all Health components" |
+| **AETV** | Attr → Entity → Tx↓ → Val | LWW lookup: "Get current value" (A-primary CRDT) |
 | **AVET** | Attr → Val → Entity → Tx | Inverted index: "Find all entities with Health=100" |
 | **VAET** | Val → Attr → Entity → Tx | Reverse refs: "Who's referencing this entity?" |
 | **TAEV** | Tx → Attr → Entity → Val | Timeline: "What changed this frame/tick?" |
+
+**EATV/AETV note**: These indices store Tx with bitwise NOT for descending order, so the first entry is always the newest (LWW winner). They enable O(1) current-value lookup for CRDT resolution.
 
 **Key insight**: This is like having both an octree AND a BVH AND a grid AND a kd-tree. Each structure is optimal for certain queries. You don't traverse all of them—you pick the right one.
 
@@ -120,7 +124,7 @@ Pattern `[?e :assigned-to weapon_7]`:
 
 | Optimization | Game Equivalent |
 |--------------|-----------------|
-| 5 pre-sorted indices | Multiple acceleration structures |
+| 7 pre-sorted indices | Multiple acceleration structures |
 | Fixed 72-byte keys | Fixed stride vertex buffers |
 | L85 sort-preserving encoding | Normalized coords that compare correctly |
 | Prefix range scans | Frustum culling on sorted data |

@@ -11,13 +11,15 @@ const (
 	EAVT IndexType = iota // Entity-Attribute-Value-Tx (for cardinality-many: group by V)
 	EATV                  // Entity-Attribute-Tx-Value (for cardinality-one: first = current)
 	AEVT                  // Attribute-Entity-Value-Tx
+	AETV                  // Attribute-Entity-Tx-Value (for A-primary CRDT: first = current)
 	AVET                  // Attribute-Value-Entity-Tx
 	VAET                  // Value-Attribute-Entity-Tx
 	TAEV                  // Tx-Attribute-Entity-Value (for clock recovery, audit log)
 )
 
-// Indices lists all indices used for queries (6 indices for CRDT support)
-var Indices = []IndexType{EAVT, EATV, AEVT, AVET, VAET, TAEV}
+// Indices lists all indices used for queries
+// Note: AETV added for A-primary CRDT resolution. EAVT kept temporarily for migration.
+var Indices = []IndexType{EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV}
 
 // Store is the interface for datom storage
 type Store interface {

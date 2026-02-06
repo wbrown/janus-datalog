@@ -332,26 +332,25 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 
 		case query.CollectionInput:
 			// Collection input - all values in one column
+			// IMPORTANT: Always add the collection relation, even if empty.
+			// An empty collection should produce 0 results when joined.
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
-				if rel.Size() > 0 {
-					// Create a relation with the collection variable
-					columns := []query.Symbol{inp.Symbol}
-					tuples := make([]Tuple, 0, rel.Size())
+				columns := []query.Symbol{inp.Symbol}
+				tuples := make([]Tuple, 0, rel.Size())
 
-					it := rel.Iterator()
-					for it.Next() {
-						tuple := it.Tuple()
-						if len(tuple) > 0 {
-							// Take first value from each tuple
-							tuples = append(tuples, Tuple{tuple[0]})
-						}
+				it := rel.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					if len(tuple) > 0 {
+						// Take first value from each tuple
+						tuples = append(tuples, Tuple{tuple[0]})
 					}
-					it.Close()
-
-					opts := rel.Options()
-					boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(columns, tuples, opts))
 				}
+				it.Close()
+
+				opts := rel.Options()
+				boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(columns, tuples, opts))
 				relationIndex++
 			}
 		}

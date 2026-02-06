@@ -309,3 +309,57 @@ type CacheResolver interface {
 	// Returns (elements, positionIndex, maxElementID, error)
 	ResolveRGA(e Entity, a Attribute) ([]any, []datalog.ElementID, datalog.ElementID, error)
 }
+
+// ResolveEntry resolves a CacheEntry directly from storage without caching.
+// This is used when cache is disabled but CRDT resolution is still needed.
+func ResolveEntry(key CacheKey, resolver CacheResolver) *CacheEntry {
+	card := resolver.GetCardinality(key.A)
+
+	switch card {
+	case schema.CardinalityOne:
+		value, maxID, err := resolver.ResolveLWW(key.E, key.A)
+		if err != nil {
+			return nil
+		}
+		return &CacheEntry{
+			version:     maxID,
+			cardinality: schema.CardinalityOne,
+			oneValue:    value,
+		}
+
+	case schema.CardinalityMany:
+		members, maxID, err := resolver.ResolveAddWins(key.E, key.A)
+		if err != nil {
+			return nil
+		}
+		return &CacheEntry{
+			version:     maxID,
+			cardinality: schema.CardinalityMany,
+			manySet:     members,
+		}
+
+	case schema.CardinalityVector:
+		elements, positions, maxID, err := resolver.ResolveRGA(key.E, key.A)
+		if err != nil {
+			return nil
+		}
+		return &CacheEntry{
+			version:     maxID,
+			cardinality: schema.CardinalityVector,
+			vectorList:  elements,
+			vectorIndex: positions,
+		}
+
+	default:
+		// Default to cardinality-one for schemaless
+		value, maxID, err := resolver.ResolveLWW(key.E, key.A)
+		if err != nil {
+			return nil
+		}
+		return &CacheEntry{
+			version:     maxID,
+			cardinality: schema.CardinalityOne,
+			oneValue:    value,
+		}
+	}
+}

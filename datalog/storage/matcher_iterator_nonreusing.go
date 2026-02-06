@@ -71,10 +71,16 @@ func (it *nonReusingIterator) Next() bool {
 	// Choose index and create scan
 	index, start, end := it.matcher.chooseIndex(e, a, v, tx)
 
-	var err error
-	it.currentScan, err = it.matcher.store.ScanKeysOnly(index, start, end)
+	rawIter, err := it.matcher.store.ScanKeysOnly(index, start, end)
 	if err != nil {
 		return false
+	}
+
+	// Wrap with CRDT resolution to ensure we only see resolved values
+	if it.matcher.schema != nil {
+		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
+	} else {
+		it.currentScan = rawIter
 	}
 
 	// Try to find first match

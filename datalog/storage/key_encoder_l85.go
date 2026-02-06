@@ -46,6 +46,9 @@ func (e *L85KeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 	case AEVT:
 		// [A][E][V][Op][Tx]
 		return concatBytes(prefix, []byte(aL85), []byte(eL85), vBytes, opByte, []byte(txL85))
+	case AETV:
+		// [A][E][Tx][V][Op] - A-primary CRDT: first entry is current (Tx descending)
+		return concatBytes(prefix, []byte(aL85), []byte(eL85), []byte(txL85), vBytes, opByte)
 	case AVET:
 		// [A][V][E][Op][Tx] - Op before Tx for add-wins, enables [A][V] prefix scans
 		return concatBytes(prefix, []byte(aL85), vBytes, []byte(eL85), opByte, []byte(txL85))
@@ -70,6 +73,7 @@ func (e *L85KeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 //	EAVT: [prefix][E][A][V][Tx][Op][AfterRef?]
 //	EATV: [prefix][E][A][Tx][V][Op][AfterRef?]
 //	AEVT: [prefix][A][E][V][Tx][Op][AfterRef?]
+//	AETV: [prefix][A][E][Tx][V][Op][AfterRef?]
 //	AVET: [prefix][A][V][E][Tx][Op][AfterRef?]
 //	VAET: [prefix][V][A][E][Tx][Op][AfterRef?]
 //	TAEV: [prefix][Tx][A][E][V][Op][AfterRef?]
@@ -155,6 +159,29 @@ func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]byte,
 		}
 		op = key[vEnd]
 		tx, _ = codec.DecodeFixed16(string(key[len(key)-l85Size16:]))
+
+	case AETV:
+		// [A][E][Tx][V][Op] - A-primary CRDT: first entry is current (Tx descending)
+		minSize := l85SizeAttr + l85Size20 + l85Size16 + opSize
+		if len(key) < minSize {
+			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("AETV key too short")
+		}
+		attr, _ = codec.DecodeFixed32(string(key[0:l85SizeAttr]))
+		entity, _ = codec.DecodeFixed20(string(key[l85SizeAttr : l85SizeAttr+l85Size20]))
+		tx, _ = codec.DecodeFixed16(string(key[l85SizeAttr+l85Size20 : l85SizeAttr+l85Size20+l85Size16]))
+		// V is between Tx and Op
+		vStart := l85SizeAttr + l85Size20 + l85Size16
+		valueBytes := key[vStart : len(key)-opSize]
+		if len(valueBytes) == l85Size20 {
+			if decoded, decErr := codec.DecodeFixed20(string(valueBytes)); decErr == nil {
+				value = decoded[:]
+			} else {
+				value = valueBytes
+			}
+		} else {
+			value = valueBytes
+		}
+		op = key[len(key)-opSize]
 
 	case AVET:
 		// [A][V][E][Op][Tx] - Op before Tx

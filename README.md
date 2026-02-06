@@ -765,7 +765,6 @@ CRDT features don't cost performance. The storage layer is designed for both.
 **We chose correctness over raw speed:**
 
 - Explicit Cartesian product detection (errors instead of OOM)
-- L85 encoding for human-readable keys (20-25% overhead vs binary)
 - Better algorithms over micro-optimizations
 
 **Philosophy:** Make the right thing fast, not the fast thing easy to misuse.
@@ -818,17 +817,19 @@ type Datom struct {
 
 Every fact is a datom. The entire database is just a collection of datoms with multiple indices.
 
-### Five Indices for Fast Queries
+### Seven Indices for Fast Queries
 
 | Index | Primary Use Case |
 |-------|-----------------|
-| **EAVT** | Find all facts about an entity |
+| **EAVT** | Find all facts about an entity (cardinality-many) |
+| **EATV** | Current value for entity+attribute (cardinality-one LWW) |
 | **AEVT** | Find all entities with an attribute |
+| **AETV** | A-primary CRDT queries (cardinality-one LWW) |
 | **AVET** | Find entities by attribute value |
 | **VAET** | Reverse lookup (who references this entity?) |
 | **TAEV** | Time-based queries |
 
-The query planner picks the best index based on which values are bound in your pattern.
+The EATV and AETV indices store Tx with bitwise NOT for descending order, enabling O(1) current-value lookup (first entry = highest Tx = LWW winner). The query planner picks the best index based on which values are bound in your pattern.
 
 ### Type System: Direct Go Types
 
@@ -875,7 +876,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete system architecture.
 
 ### L85 Encoding: Human-Readable Storage Keys
 
-Storage keys use **L85 encoding** – a custom Base85 variant that preserves sort order:
+Janus includes **L85 encoding** – a custom Base85 variant that preserves sort order:
 
 ```
 20 bytes → 25 characters (vs 28 for Base64)
@@ -888,7 +889,7 @@ This enables:
 - Range scans work correctly
 - URL and JSON safe
 
-**Trade-off:** 20-25% overhead vs raw binary. We chose debuggability.
+The default encoder uses binary keys for performance. L85 is available for debugging and interoperability.
 
 See implementation in `datalog/codec/l85.go`.
 
@@ -1020,27 +1021,11 @@ See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for the complete compat
 
 ## Current Status
 
-**Production Ready:**
+**Production ready.** All core Datalog features implemented, tested, and used in performance-critical production for financial analysis.
 
-- Core query engine complete and tested
-- Pull API with nested references and cycle detection
-- Schema support: type validation, cardinality, uniqueness
-- Struct reflection and QueryInto for Go-native ergonomics
-- Persistent storage with BadgerDB
-- Comprehensive test suite (1.28:1 test-to-code ratio)
-- Used in production for financial analysis
+**API stability caveat:** The author actively evolves the API based on production experience. Breaking changes happen between versions. Pin your version and expect to update call sites when upgrading. There are no guaranteed migration paths.
 
-**In Progress:**
-
-- Additional aggregation functions (distinct, median)
-
-**Future Work:**
-
-- WASM build for browser deployment
-- Statistics-based optimization (for SQL-style queries)
-- Distributed query execution
-
-See [TODO.md](TODO.md) for detailed roadmap.
+See [TODO.md](TODO.md) for roadmap and [PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md) for benchmarks.
 
 ## Design Principles
 

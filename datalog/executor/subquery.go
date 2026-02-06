@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -595,11 +596,26 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 			}
 
 		case query.CollectionInput:
-			// Create a single-column relation
+			// Create a single-column relation with one tuple per collection element
 			if valueIndex < len(orderedValues) {
+				var tuples []Tuple
+
+				// Use reflection to detect and unpack slices
+				val := reflect.ValueOf(orderedValues[valueIndex])
+				if val.Kind() == reflect.Slice {
+					// Unpack slice into individual tuples (pre-allocate to avoid reallocation)
+					tuples = make([]Tuple, val.Len())
+					for i := 0; i < val.Len(); i++ {
+						tuples[i] = Tuple{val.Index(i).Interface()}
+					}
+				} else {
+					// Single value - wrap in tuple
+					tuples = []Tuple{{orderedValues[valueIndex]}}
+				}
+
 				rel := NewMaterializedRelationWithOptions(
 					[]query.Symbol{inp.Symbol},
-					[]Tuple{{orderedValues[valueIndex]}},
+					tuples,
 					opts,
 				)
 				relations = append(relations, rel)

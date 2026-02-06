@@ -680,15 +680,46 @@ Cache entries are rebuilt on demand. After process restart, first access to each
 
 ## Index Selection by Cardinality
 
+### E-Primary Indices (EATV)
+
 | Cardinality | Primary Index | Reason |
 |-------------|---------------|--------|
 | One | EATV | Tx before V: first entry = current value |
 | Many | EAVT | Group by V for add-wins resolution |
 | Vector | EATV | Load all elements, reconstruct in memory |
 
+### A-Primary Index (AETV)
+
+When E is bound via input (not constant) and A is constant, the query engine uses AETV instead of AEVT:
+
+| Index | Ordering | Use Case |
+|-------|----------|----------|
+| AEVT | A → E → V → Tx | Value lookups, no CRDT resolution |
+| AETV | A → E → Tx↓ → V | A-primary queries with CRDT resolution |
+
+**Why AETV?** The CRDTResolvingIterator requires Tx-descending order to apply "first entry wins" logic. AEVT has Tx ascending (oldest first), which breaks LWW resolution. AETV stores Tx with bitwise NOT for descending order.
+
+### Value Lookups
+
 For value lookups across entities:
 - AVET: Find entities where attribute has specific value
 - Works for all cardinalities (V is raw value, not wrapped metadata)
+
+---
+
+## Streaming CRDT Resolution
+
+When the cache is bypassed (e.g., unbound E scans, `DisableCache: true`), CRDT resolution is applied at the storage scan level via `CRDTResolvingIterator`.
+
+**Key insight**: The EATV/AETV index ordering IS resolution. Tx is stored with bitwise NOT for descending order, so forward scan returns highest Tx first. For LWW (CardinalityOne), the first entry is the winner.
+
+| Cardinality | Resolution Strategy |
+|-------------|---------------------|
+| One | Emit first datom per (E, A), skip rest |
+| Many | Track emitted values + tombstones, emit immediately |
+| Vector | Accumulate minimal state, reconstruct at (E, A) boundary |
+
+See [CRDT_STREAMING_RESOLUTION.md](CRDT_STREAMING_RESOLUTION.md) for detailed design.
 
 ---
 

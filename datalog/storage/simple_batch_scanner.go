@@ -66,9 +66,15 @@ func (s *simpleBatchScanner) Scan() error {
 	}
 
 	// Step 3: Open a single scan for the entire range using key-only scanning
-	iter, err := s.matcher.store.ScanKeysOnly(s.index, startKey, endKey)
+	rawIter, err := s.matcher.store.ScanKeysOnly(s.index, startKey, endKey)
 	if err != nil {
 		return fmt.Errorf("failed to open scan: %w", err)
+	}
+
+	// Wrap with CRDT resolution to ensure we only see resolved values
+	var iter Iterator = rawIter
+	if s.matcher.schema != nil {
+		iter = NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.txID)
 	}
 	defer iter.Close()
 

@@ -4,7 +4,7 @@
 
 ### What's Working Well ✅
 - Complete Datalog query engine with EAVT storage
-- BadgerDB persistent storage with 5 indices
+- BadgerDB persistent storage with **7 indices** (EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV)
 - Pattern matching, joins, and predicates
 - Expression clauses with arithmetic and string operations
 - Aggregations (sum, count, avg, min, max)
@@ -20,69 +20,67 @@
 - **Lock-free intern caches (6.26× BadgerDB speedup)**
 - Query plan caching (3× speedup, active)
 - Relation collapsing algorithm (prevents memory explosion)
+- **CRDT storage: LWW for cardinality-one, add-wins for cardinality-many, RGA for vectors**
+- **NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics**
+- **History/time-travel queries: `[(history)]` and `[(as-of ?tx N)]` predicates**
+- **Multi-source queries: named sources, SourceRouter, cross-source joins**
+- **QueryInto API: typed query results via struct tag mapping**
+- **Database export/import: EDN format for backup and migration**
+- **Conditional aggregate rewriting (7.7× faster correlated aggregates)**
+- **AETV index for A-primary CRDT resolution**
+- **Value elimination: ~50% storage reduction (keys-only storage)**
 
-### Production Readiness: ~85%
-The engine is **functionally complete, semantically correct, and memory-efficient**. Streaming execution is now enabled by default, providing significant performance and memory improvements (2.22× faster, 52-91.5% memory reduction). See `PERFORMANCE_STATUS.md` for detailed analysis.
+### Production Readiness: ✅ Ready
 
-## Immediate Priorities (Critical)
+The engine is **functionally complete, semantically correct, and blazingly fast**. All core Datalog features are implemented, CRDT storage provides conflict-free replication, and performance exceeds targets by 2-227×.
 
-### 1. ✅ Fix AEVT Index Performance Bug - COMPLETED
+**The only caveat:** This is a research-oriented project where the author makes breaking API changes between versions. If you need API stability, pin your version.
+
+## Completed (Historical Reference)
+
+These items have been completed and are preserved for historical context:
+
+### ✅ Fix AEVT Index Performance Bug
 **Problem**: AEVT scans 12.8M datoms instead of 65 for E+A bound patterns
-**Root Cause**: Lack of visibility into iterator reuse scan counts
-**Fix**: Added datom tracking to reusingIterator; verified Seek() works correctly
 **Status**: ✅ RESOLVED (commit 0565b85)
-**Result**: 5 scans for 3 entities (3 matches + 2 "moved past"), no database-wide scans
 
-### 2. ✅ True Streaming Execution - COMPLETED
+### ✅ True Streaming Execution
 **Problem**: StreamingRelation forced materialization at every operation
-**Solution**: Iterator composition with BufferedIterator for re-iteration
-**Status**: ✅ IMPLEMENTED (October 13, 2025)
-**Result**: 1.5-2.5× speedup, 50-99% memory reduction
-**Docs**: STREAMING_PERFORMANCE_REPORT.md, STREAMING_FINAL_SUMMARY.md
+**Status**: ✅ IMPLEMENTED (October 2025)
+**Result**: 2.22× speedup, 52-91.5% memory reduction
 
-### 3. ✅ Fix Conditional Aggregate Rewriting - PLANNING COMPLETE
+### ✅ Conditional Aggregate Rewriting
 **Problem**: Cross-phase expression dependencies cause projection failures
-**Root Cause**: Rewriter adds expressions to phases without checking if input dependencies are satisfied
-**Status**:
-- ✅ Fixed non-deterministic pattern grouping (sorting by entity symbol)
-- ✅ Fixed missing expression outputs (ExpressionPlan.Output now set)
-- ✅ Wired up rewriteCorrelatedAggregates() call in planner
-- ✅ Fixed expression phase placement (moves expressions to satisfy dependencies)
-- ✅ Fixed aggregate metadata movement (follows expressions to correct phase)
-- ✅ Fixed phase reordering to respect subquery dependencies
-- ✅ Expression outputs now included in Provides field
-**Result**: Query planning is now correct and 100% deterministic (no more projection failures)
-**Remaining**: Execution returns 0 results - need to debug executor conditional aggregate logic
-**See**: commits 51f0842, c0f5bce, ef78db9
+**Status**: ✅ COMPLETE (February 2026)
+**Result**: 7.7× faster correlated aggregates
 
-### 4. Documentation Cleanup
-**Problem**: Old performance docs with outdated/conflicting info
-**Status**: ✅ PERFORMANCE_STATUS.md updated with streaming results
-**Action**: Move old docs to `docs/archive/optimization-attempts/`
+### ✅ NOT/OR Clauses
+**Status**: ✅ COMPLETE with Datomic-compatible semantics
+
+### ✅ CRDT Storage Layer
+**Status**: ✅ COMPLETE - LWW, add-wins sets, RGA vectors with history queries
+
+### ✅ AETV Index and Value Elimination
+**Status**: ✅ COMPLETE (February 2026)
+**Result**: Proper A-primary CRDT resolution, ~50% storage reduction
 
 ## Medium Term (1-2 Months)
 
 ### Query Engine Enhancements
 1. **Collection Binding**: `[?x ...]` for set inputs
-2. **NOT Clauses**: `(not [?e :attr _])` for negation
-3. **OR Clauses**: `(or [...] [...])` for alternatives
-4. **Distinct Aggregation**: `(count-distinct ?x)`
+2. **Distinct Aggregation**: `(count-distinct ?x)`
 
 ### Performance Optimizations
-1. ✅ **Streaming Execution**: COMPLETE - Iterator composition with lazy evaluation
-2. **Parallel Pattern Execution**: For independent patterns (complex dependency analysis)
-3. **Statistics Collection**: For better query planning (requires architecture changes)
-4. **Adaptive Streaming Strategy**: Automatically choose streaming vs materialized based on data
-
-**Note**: See `PERFORMANCE_STATUS.md` for realistic assessment of optimization priorities. Focus on proven bottlenecks (parallel execution) over speculative optimizations.
+1. **Parallel Pattern Execution**: For independent patterns (complex dependency analysis)
+2. **Statistics Collection**: For better query planning (requires architecture changes)
+3. **Adaptive Streaming Strategy**: Automatically choose streaming vs materialized based on data
 
 ## Long Term (3-6 Months)
 
 ### Major Features
 1. **Rules System**: Named, reusable query fragments
-2. ✅ **Pull Syntax**: Entity graph traversal - COMPLETED
-3. **Recursive Queries**: Graph algorithms
-4. **Transaction Functions**: Custom transaction logic
+2. **Recursive Queries**: Graph algorithms
+3. **Transaction Functions**: Custom transaction logic
 
 ### Infrastructure
 1. **WASM Build**: Browser deployment
@@ -90,22 +88,29 @@ The engine is **functionally complete, semantically correct, and memory-efficien
 3. **Incremental View Maintenance**: Real-time aggregations
 4. **Query Timeout/Cancellation**: Resource limits
 
-## Won't Do (Out of Scope)
+## ~~Won't Do~~ (I Lied)
 
-These require fundamental architecture changes:
-- Full Datomic compatibility (different philosophy)
-- Full history/time-travel queries (would need different storage model)
-- Lazy evaluation throughout (Go doesn't support well)
+These were originally listed as "out of scope" but got implemented anyway:
 
-**Note:** Schema support was added in Dec 2025 as an optional, additive feature. See `docs/reference/SCHEMA.md`.
+- ~~Full history/time-travel queries~~ → ✅ **Done** via CRDT storage with `[(history)]` and `[(as-of ?tx N)]`
+- ~~Would need different storage model~~ → The CRDT refactor made it natural
+
+### Actually Won't Do
+- **Full Datomic compatibility** - Different philosophy (simpler, Go-idiomatic)
+- **Lazy evaluation throughout** - Go doesn't support well; we use streaming instead
 
 ## Success Metrics
 
-### Performance Targets
-- Simple queries: <10ms
-- Complex queries (10+ patterns): <100ms  
-- OHLC aggregations: <5s for month of data
-- Memory usage: <100MB for typical queries
+### Performance Targets (Crushed)
+
+| Target | Goal | Achieved | How Much Better |
+|--------|------|----------|-----------------|
+| Simple queries | <10ms | **44µs** | **227× faster** |
+| Complex queries | <100ms | **21ms** | **5× faster** |
+| OHLC aggregations | <5s/month | **2-4s** | **~2× faster** |
+| Memory usage | <100MB | **30MB** | **3× less** |
+
+*Benchmarked on Apple M4 Max. See PERFORMANCE_STATUS.md for methodology.*
 
 ### Code Quality
 - Test coverage: >80%

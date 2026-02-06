@@ -341,11 +341,18 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 		}
 
 		// Initialize the key mask iterator using the optimized method
-		storageIter, err := m.store.ScanKeysOnlyWithMask(index, start, end, keyMask)
+		rawStorageIter, err := m.store.ScanKeysOnlyWithMask(index, start, end, keyMask)
 		if err != nil {
 			return nil, fmt.Errorf("key mask scan failed: %w", err)
 		}
-		maskIter.storageIter = storageIter
+
+		// Wrap with CRDT resolution when schema exists
+		// This ensures per-(E, A) group resolution regardless of bound/unbound status
+		if m.schema != nil {
+			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
+		} else {
+			maskIter.storageIter = rawStorageIter
+		}
 		iter = maskIter
 	} else {
 		// Use regular iterator
@@ -367,11 +374,18 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 		}
 
 		// Initialize the storage iterator using key-only scanning
-		storageIter, err := m.store.ScanKeysOnly(index, start, end)
+		rawStorageIter, err := m.store.ScanKeysOnly(index, start, end)
 		if err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
-		regularIter.storageIter = storageIter
+
+		// Wrap with CRDT resolution when E is unbound but A is bound
+		// This ensures per-(E, A) group resolution even for patterns like [?e :attr ?v]
+		if m.schema != nil && e == nil && a != nil {
+			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
+		} else {
+			regularIter.storageIter = rawStorageIter
+		}
 		iter = regularIter
 	}
 
