@@ -452,7 +452,10 @@ func (i *BadgerIterator) Next() bool {
 func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 	item := i.it.Item()
 
-	// Must copy key since BadgerDB reuses the buffer
+	// Must copy key since BadgerDB reuses the buffer.
+	// Note: We cannot reuse a key buffer here because DecodeKey returns a slice
+	// into the key bytes for the value component. Reusing the buffer would cause
+	// the value slice to be overwritten on subsequent calls.
 	key := item.KeyCopy(nil)
 
 	// Decode datom from key - all information is in the key

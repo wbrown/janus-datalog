@@ -1,7 +1,7 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2026-02-02
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting, CRDT storage, and allocation regression fixes
+**Last Updated**: 2026-02-06
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting, CRDT storage, allocation regression fixes, and value elimination
 
 ## Executive Summary
 
@@ -23,6 +23,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Conditional aggregate rewriting**: **7.7× faster**, **5.2× less memory**, **8.1× fewer allocations** for correlated aggregate subqueries (verified 2026-01-16)
 - ✅ **CRDT storage**: **~25-35µs writes** across all cardinalities, **O(1) LWW resolution** (965ns for 1000 versions), linear vector scaling (verified 2026-01-31)
 - ✅ **CRDT allocation optimization**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch while adding full CRDT semantics (verified 2026-02-02)
+- ✅ **AETV index & value elimination**: **5% faster**, **19% less memory**, **17% fewer allocations** (geomean); complex queries see **35% memory reduction** (verified 2026-02-06)
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -894,6 +895,61 @@ The engine is **production-ready for datasets up to 10M+ datoms**. All major opt
 ---
 
 ## Session History
+
+### 2026-02-06: AETV Index & Value Elimination - Streaming CRDT Fixes
+
+**Branch**: `main`
+**Status**: ✅ Complete - CRDT resolution now correct for all query patterns
+
+**The Story**:
+The `CRDTResolvingIterator` relies on Tx-descending index order (first entry = LWW winner). When E was bound via input with A constant, the matcher selected AEVT (Tx ascending) instead of a CRDT-aware index, returning stale values. We added AETV as a 7th index and eliminated redundant value storage.
+
+**What Was Done**:
+
+1. **AETV Index** (A → E → Tx↓ → V):
+   - New A-primary CRDT index complementing EATV (E-primary CRDT)
+   - Index selection updated: A-constant + E-from-input now uses AETV
+   - Fixes `CRDTResolvingIterator` returning wrong values for batch entity lookups
+
+2. **Value Elimination**:
+   - `assertDatom()` now writes nil values (all datom data is encoded in keys)
+   - `BadgerIterator.Datom()` decodes from key via `DatomFromKey()`
+   - ~50% storage reduction (no redundant value bytes)
+
+**Benchmark Results** (Apple M4 Max, benchstat n=100):
+
+| Benchmark | Time | Memory | Allocations |
+|-----------|------|--------|-------------|
+| SimpleQuery | +2.59% | +0.13% | -0.12% |
+| JoinQuery | +0.94% | -0.85% | -0.84% |
+| CardinalityMany | **-5.16%** | **-32.59%** | **-28.49%** |
+| VectorQuery | **-18.60%** | **-35.11%** | **-32.89%** |
+| **geomean** | **-5.44%** | **-18.82%** | **-16.97%** |
+
+**Key Findings**:
+- Simple queries: minimal change (less datom decoding)
+- Complex queries: significant wins from eliminating value reads
+- Storage reduced by ~50% (values were 100% redundant with keys)
+- All 17 CRDT resolution tests now pass with `DisableCache: true`
+
+**SimpleQuery Regression Explained** (+2.59%):
+The regression comes from `KeyCopy(nil)` in `BadgerIterator.Datom()`. Previously, values were read from BadgerDB's value storage. Now we decode from keys, which requires copying the key bytes because BadgerDB reuses its internal buffer.
+
+We investigated key buffer reuse to eliminate this allocation, but it's not possible: `DecodeKey` returns the value component as a slice *into* the key bytes (e.g., `value = key[entitySize+attrSize:vEnd]`). Reusing the key buffer would cause values to be corrupted on subsequent iterations.
+
+This is an acceptable trade-off:
+- SimpleQuery: +2.59% time (~1µs absolute on a 44µs query)
+- VectorQuery: **-18.60%** time (complex queries dominate real workloads)
+- geomean: **-5.44%** time (net positive across all query types)
+
+**Files Changed**:
+- `datalog/storage/key_encoder_*.go` - AETV encoding/decoding
+- `datalog/storage/matcher_strategy.go` - Index selection for AETV
+- `datalog/storage/badger_store.go` - Value elimination in `assertDatom()`
+- `datalog/storage/badger_iterator.go` - Decode from key in `Datom()`
+- `docs/wip/AETV_INDEX_AND_VALUE_ELIMINATION.md` - Design doc
+
+---
 
 ### 2026-02-02: CRDT Allocation Optimization - Faster Than Pre-CRDT
 

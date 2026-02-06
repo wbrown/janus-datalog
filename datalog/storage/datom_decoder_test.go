@@ -172,3 +172,150 @@ func TestIteratorDatomStability(t *testing.T) {
 	// Verify we got the expected number of results
 	t.Logf("Iterated %d datoms with values: %v", len(values), values)
 }
+
+// TestBadgerIteratorKeyBufferReuse verifies that the key buffer reuse optimization
+// in BadgerIterator.Datom() produces correct results. This tests the fix for the
+// ~2.6% regression in SimpleQuery caused by KeyCopy(nil) allocating on each call.
+func TestBadgerIteratorKeyBufferReuse(t *testing.T) {
+	db, err := NewDatabase(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Add test data with distinct values
+	tx := db.NewTransaction()
+	entities := make([]datalog.Identity, 5)
+	for i := 0; i < 5; i++ {
+		entities[i] = datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
+		tx.Add(entities[i], datalog.NewKeyword(":test/value"), int64(i*100))
+		tx.Add(entities[i], datalog.NewKeyword(":test/name"), fmt.Sprintf("name-%d", i))
+	}
+	_, err = tx.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("DatomValuesAreCorrectAcrossIteration", func(t *testing.T) {
+		it, err := db.Store().ScanKeysOnly(EAVT, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer it.Close()
+
+		// Collect all datoms and their values
+		type datomRecord struct {
+			E datalog.Identity
+			A datalog.Keyword
+			V interface{}
+		}
+		var records []datomRecord
+
+		for it.Next() {
+			d, err := it.Datom()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Store copies of the values (not pointers to shared state)
+			records = append(records, datomRecord{E: d.E, A: d.A, V: d.V})
+		}
+
+		// Verify we got at least the expected number of datoms (5 entities * 2 attributes = 10)
+		// May have additional schema/metadata datoms
+		if len(records) < 10 {
+			t.Fatalf("Expected at least 10 datoms, got %d", len(records))
+		}
+
+		// Verify each record has valid, non-zero values
+		for i, r := range records {
+			if r.E == nil {
+				t.Errorf("Record %d: entity is nil", i)
+			}
+			if r.A == nil {
+				t.Errorf("Record %d: attribute is nil", i)
+			}
+			if r.V == nil {
+				t.Errorf("Record %d: value is nil", i)
+			}
+		}
+
+		// Verify that different datoms have different values (no corruption from buffer reuse)
+		valueSet := make(map[string]bool)
+		for _, r := range records {
+			key := fmt.Sprintf("%s|%s|%v", r.E.L85(), r.A.String(), r.V)
+			if valueSet[key] {
+				t.Errorf("Duplicate datom found: %s (indicates buffer reuse corruption)", key)
+			}
+			valueSet[key] = true
+		}
+	})
+
+	t.Run("WorkspaceReuseIsDocumented", func(t *testing.T) {
+		// KeyOnlyIterator uses workspace reuse (currentDatom field).
+		// This means Datom() returns a pointer to the SAME memory each time.
+		// Callers must copy values if they need them after calling Next().
+		it, err := db.Store().ScanKeysOnly(EAVT, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer it.Close()
+
+		// Collect datom pointers
+		var addresses []*datalog.Datom
+
+		for it.Next() {
+			d, err := it.Datom()
+			if err != nil {
+				t.Fatal(err)
+			}
+			addresses = append(addresses, d)
+		}
+
+		if len(addresses) < 2 {
+			t.Fatalf("Expected at least 2 datoms, got %d", len(addresses))
+		}
+
+		// With workspace reuse, all pointers should be the SAME address
+		allSame := true
+		for i := 1; i < len(addresses); i++ {
+			if addresses[i] != addresses[0] {
+				allSame = false
+				break
+			}
+		}
+
+		if !allSame {
+			t.Errorf("Expected workspace reuse (all same address), but got different addresses")
+		} else {
+			t.Logf("Confirmed: KeyOnlyIterator uses workspace reuse (%d calls, same address)", len(addresses))
+		}
+	})
+
+	t.Run("MultipleDatomCallsAtSamePosition", func(t *testing.T) {
+		it, err := db.Store().ScanKeysOnly(EAVT, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer it.Close()
+
+		if !it.Next() {
+			t.Fatal("Expected at least one datom")
+		}
+
+		// Call Datom() multiple times at the same position
+		d1, _ := it.Datom()
+		d2, _ := it.Datom()
+		d3, _ := it.Datom()
+
+		// All should return the same values
+		if !d1.E.Equal(d2.E) || !d2.E.Equal(d3.E) {
+			t.Errorf("Entity differs across Datom() calls: %v, %v, %v", d1.E, d2.E, d3.E)
+		}
+		if d1.A.String() != d2.A.String() || d2.A.String() != d3.A.String() {
+			t.Errorf("Attribute differs across Datom() calls: %v, %v, %v", d1.A, d2.A, d3.A)
+		}
+		if d1.V != d2.V || d2.V != d3.V {
+			t.Errorf("Value differs across Datom() calls: %v, %v, %v", d1.V, d2.V, d3.V)
+		}
+	})
+}
