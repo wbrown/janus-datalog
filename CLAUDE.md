@@ -221,7 +221,7 @@ This separation ensures the query engine remains simple and focused on logic, wh
 ### Storage Integration
 The storage layer connects the query engine to BadgerDB:
 - **Database API**: High-level interface for creating transactions and querying
-- **Transaction API**: Write datoms with automatic indexing across all 5 indices
+- **Transaction API**: Write datoms with automatic indexing across all 7 indices
 - **BadgerMatcher**: Implements PatternMatcher interface for the executor
   - Chooses optimal index based on bound values in patterns
   - Converts between user types (Identity, Keyword) and storage types ([20]byte for E/Tx, [32]byte for A)

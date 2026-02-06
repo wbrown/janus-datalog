@@ -82,14 +82,16 @@ The codebase already uses `ScanKeysOnly()` for nearly all reads. Values are 100%
 - VAET (V → A → E → Tx)
 - TAEV (T → A → E → V)
 
-**After (6 indices):**
-- ~~EAVT~~ removed
+**After (7 indices) - Actual Implementation:**
+- EAVT (E → A → V → Tx) - kept for cardinality-many
 - EATV (E → A → Tx↓ → V)
 - **AETV (A → E → Tx↓ → V)** - NEW
 - AEVT (A → E → V → Tx)
 - AVET (A → V → E → Tx)
 - VAET (V → A → E → Tx)
 - TAEV (T → A → E → V)
+
+*Note: The original proposal was to remove EAVT, but it was kept for cardinality-many use cases. AETV was added as a 7th index.*
 
 **Symmetry achieved:**
 | E-primary | A-primary |

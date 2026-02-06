@@ -210,7 +210,7 @@ Not:
 1 row store + 6 indices pointing to it = total storage
 ```
 
-This is more like 6 different sort orders of the same data than 6 indices plus a base table. The mental model from relational databases ("indices are overhead on top of tables") doesn't apply.
+This is more like 7 different sort orders of the same data than 7 indices plus a base table. The mental model from relational databases ("indices are overhead on top of tables") doesn't apply.
 
 ### What This Enables
 
@@ -366,7 +366,7 @@ Single Index Set: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV (7 indices)
 | System | What You Get | Actual Index Structures |
 |--------|--------------|------------------------|
 | Datomic | Current + History | 8 (4 per segment) |
-| Janus | Current + History + CRDT Resolution | 6 (unified) |
+| Janus | Current + History + CRDT Resolution | 7 (unified) |
 
 Janus provides MORE functionality (CRDT semantics, time-travel via TAEV) with FEWER index structures because the unified design with bitwise NOT eliminates the need for segmentation.
 
@@ -427,7 +427,7 @@ Not from encoding format.
 
 | System | Primary CRDT Mechanism | Ordering Primitive | Storage Model |
 |--------|----------------------|-------------------|---------------|
-| **Janus** | Key structure + indices | ElementID (Lamport + ReplicaID) | LSM-tree with 6 indices |
+| **Janus** | Key structure + indices | ElementID (Lamport + ReplicaID) | LSM-tree with 7 indices |
 | **Automerge** | Operation log + columnar encoding | OpID (Actor + Counter) | Compressed chunks |
 | **Yjs** | YATA algorithm | Vector clocks per document | Binary deltas |
 | **Riak** | Dotted Version Vectors | DVV (dot + vector clock) | Bitcask/LevelDB per vnode |
@@ -570,7 +570,7 @@ type CacheEntry struct {
 WRITE PATH (Transaction.Commit):
 ┌─────────────────────────────────────────────────────────────┐
 │ for each datom:                                             │
-│   1. Write to BadgerDB (all 6 indices)                      │
+│   1. Write to BadgerDB (all 7 indices)                      │
 │   2. cache.UpdateMaxVersion(key, elemID)  ← Track newest    │
 │                                                             │
 │ After all writes:                                           │
@@ -808,7 +808,7 @@ There's no incremental update for RGA that's cheaper than rebuild.
 | **Automerge** | Mutate field | Memory only | ~1-10µs | Append op to in-memory log |
 | **Yjs** | Insert/delete | Memory only | ~1-5µs | YATA insertion in memory |
 | **Riak** | Write | Durable (replicated) | ~1-10ms | Vnode write, DVV update, replication |
-| **Janus** | Write (any) | Durable (WAL) | **~25-35µs** | WAL append + memtable insert × 6 indices |
+| **Janus** | Write (any) | Durable (WAL) | **~25-35µs** | WAL append + memtable insert × 7 indices |
 
 **Note on Janus write performance:**
 - Writes go to WAL (Write-Ahead Log) first - this is fast sequential I/O
@@ -921,7 +921,7 @@ Most CRDT systems require loading and reconstructing documents to access data. J
 - **LWW**: Seek + read first key = current value is IN the key (O(1) in practice)
 - **Sets**: Scan keys grouped by value + add-wins comparison
 - **Vectors**: Load keys + RGA graph traversal
-- **Unified storage**: Current and historical values in same indices (vs Datomic's 8 index structures, Janus uses 6)
+- **Unified storage**: Current and historical values in same indices (vs Datomic's 8 index structures, Janus uses 7)
 
 The cache is optional for LWW, essential for repeated set/vector access, and uses invalidation (not write-through) because it stores resolved views rather than operations.
 

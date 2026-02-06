@@ -399,7 +399,7 @@ Adding vectors didn't add overhead. The CRDT model **eliminated**:
 | Retraction datoms | None needed | Storage space, write I/O |
 | Separate HISTORY index | Unified indices | Index maintenance |
 | Different history code path | Same code path | Complexity, bugs |
-| 8 index structures (Datomic-style) | 6 unified | 25% fewer indices |
+| 8 index structures (Datomic-style) | 7 unified | 12.5% fewer indices |
 
 **The feature that seemed like it would add complexity actually reduced it** because the new foundation was more coherent than the old one.
 

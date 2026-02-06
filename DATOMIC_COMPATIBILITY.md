@@ -274,7 +274,7 @@ Every datom includes a transaction ID for temporal queries.
 ### 10. Storage Model
 
 - **EAVT model** with Entity-Attribute-Value-Transaction tuples
-- **Multiple indices**: EAVT, AEVT, AVET, VAET, TAEV
+- **Seven indices**: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution)
 - **BadgerDB backend** for persistence
 - **L85 encoding** for sortable, efficient keys
 - **Export/Import** to EDN format for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md))
