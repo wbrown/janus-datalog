@@ -1134,8 +1134,7 @@ This fix is complete when ALL of the following are true:
 | AsOfQuery | FAIL | FAIL | Bug: as-of returns wrong/all values |
 
 **Test results AFTER streaming resolution fix (current):**
-- 16/17 tests PASS in both cache_enabled and cache_disabled modes
-- Only `EAndABothFromCollections` still fails (separate query execution issue, not CRDT)
+- All 17 tests PASS in both cache_enabled and cache_disabled modes
 - CardinalityVector now works correctly with proper RGA reconstruction
 
 - [x] Each pattern tested with CardinalityOne, CardinalityMany, CardinalityVector
@@ -1164,16 +1163,13 @@ This fix is complete when ALL of the following are true:
 - [x] `[(as-of ?tx N)]` queries filter by txID in CRDTResolvingIterator
 - [x] CardinalityVector (RGA) resolution in iterator - fixed `copyDatom()` bug
 
-### Phase 4: Verification ✅ MOSTLY COMPLETE
+### Phase 4: Verification ✅ COMPLETE
 
-- [x] 16/17 tests pass with cache ENABLED
-- [x] 16/17 tests pass with cache DISABLED
-- [x] Cache-enabled and cache-disabled return IDENTICAL results for passing tests
+- [x] All 17 tests pass with cache ENABLED
+- [x] All 17 tests pass with cache DISABLED
+- [x] Cache-enabled and cache-disabled return IDENTICAL results
 - [ ] No performance regression for cache-enabled path (benchmark) - not tested yet
 - [x] Memory usage acceptable (buffers only one (E, A) group)
-
-**Remaining test failure:**
-1. `EAndABothFromCollections` - Query execution issue with multiple collection inputs (not CRDT related)
 
 ### Phase 5: Optimization (Optional)
 
