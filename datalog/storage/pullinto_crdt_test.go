@@ -310,3 +310,50 @@ func TestPullInto_AfterCacheClear(t *testing.T) {
 
 	assert.Equal(t, "Alice Updated", person.Name)
 }
+
+// =============================================================================
+// Any/Interface{} Field Tests
+// =============================================================================
+
+// PersonWithAnyFields uses `any` for heterogeneous attribute inspection
+type PersonWithAnyFields struct {
+	ID   datalog.Identity `datalog:"-,id"`
+	Name any              `datalog:"person/name"`
+	Age  any              `datalog:"person/age"`
+}
+
+// TestPullInto_AnyField verifies that PullInto works with `any` typed fields
+func TestPullInto_AnyField(t *testing.T) {
+	db, cleanup := createPullIntoCRDTTestDB(t)
+	defer cleanup()
+
+	s, err := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Attribute(":person/age").Type(schema.TypeLong).One().Add().
+		Build()
+	require.NoError(t, err)
+	db.SetSchema(s)
+
+	e1 := datalog.NewIdentity("person1")
+
+	tx := db.NewTransaction()
+	err = tx.Set(e1, datalog.NewKeyword(":person/name"), "Alice")
+	require.NoError(t, err)
+	err = tx.Set(e1, datalog.NewKeyword(":person/age"), int64(30))
+	require.NoError(t, err)
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	var person PersonWithAnyFields
+	err = db.PullInto(e1, &person)
+	require.NoError(t, err)
+
+	// Verify the values are correct and have the right underlying types
+	name, ok := person.Name.(string)
+	assert.True(t, ok, "Name should be string, got %T", person.Name)
+	assert.Equal(t, "Alice", name)
+
+	age, ok := person.Age.(int64)
+	assert.True(t, ok, "Age should be int64, got %T", person.Age)
+	assert.Equal(t, int64(30), age)
+}

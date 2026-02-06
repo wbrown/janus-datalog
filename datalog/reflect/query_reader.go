@@ -500,6 +500,11 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 		}
 		fieldVal.Set(newSlice)
 
+	case reflect.Interface:
+		// For interface{}/any fields, assign the value directly.
+		// The caller accepts responsibility for type assertions.
+		fieldVal.Set(reflect.ValueOf(value))
+
 	default:
 		return fmt.Errorf("unsupported type: %s", fieldType)
 	}

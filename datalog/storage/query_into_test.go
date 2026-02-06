@@ -887,3 +887,136 @@ func TestQueryOneInto_MixedMode(t *testing.T) {
 		t.Error("expected ID to be non-nil")
 	}
 }
+
+// =============================================================================
+// Any/Interface{} Field Tests - heterogeneous value support
+// =============================================================================
+
+// EntityAttr is used for entity enumeration queries where ?v can be any type
+type EntityAttr struct {
+	Attr  datalog.Keyword `datalog:"?a"`
+	Value any             `datalog:"?v"`
+}
+
+func TestQueryInto_AnyField(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	// Get Alice's entity ID for the query
+	alice := datalog.NewIdentity("person:alice")
+
+	// Query all attributes of Alice - ?v will contain heterogeneous types
+	var attrs []EntityAttr
+	err := db.QueryInto(&attrs, `
+		[:find ?a ?v
+		 :in $ ?e
+		 :where [?e ?a ?v]]
+	`, alice)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	// Alice has 3 attributes: :person/name (string), :person/age (int64), :person/email (string)
+	if len(attrs) != 3 {
+		t.Fatalf("expected 3 attributes, got %d", len(attrs))
+	}
+
+	// Build a map for easier verification
+	attrMap := make(map[string]any)
+	for _, a := range attrs {
+		attrMap[a.Attr.String()] = a.Value
+	}
+
+	// Check string value
+	if name, ok := attrMap[":person/name"].(string); !ok {
+		t.Errorf("expected :person/name to be string, got %T", attrMap[":person/name"])
+	} else if name != "Alice" {
+		t.Errorf("expected name='Alice', got %q", name)
+	}
+
+	// Check int64 value
+	if age, ok := attrMap[":person/age"].(int64); !ok {
+		t.Errorf("expected :person/age to be int64, got %T", attrMap[":person/age"])
+	} else if age != 30 {
+		t.Errorf("expected age=30, got %d", age)
+	}
+
+	// Check another string value
+	if email, ok := attrMap[":person/email"].(string); !ok {
+		t.Errorf("expected :person/email to be string, got %T", attrMap[":person/email"])
+	} else if email != "alice@example.com" {
+		t.Errorf("expected email='alice@example.com', got %q", email)
+	}
+}
+
+func TestQueryInto_AnyFieldWithKeywordValue(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	// Add a keyword-valued attribute
+	statusKw := datalog.NewKeyword(":person/status")
+	activeKw := datalog.NewKeyword(":status/active")
+
+	tx := db.NewTransaction()
+	alice := datalog.NewIdentity("person:alice")
+	tx.Add(alice, statusKw, activeKw)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Query the status attribute specifically
+	type StatusResult struct {
+		Status any `datalog:"?v"`
+	}
+
+	var results []StatusResult
+	err := db.QueryInto(&results, `
+		[:find ?v
+		 :in $ ?e
+		 :where [?e :person/status ?v]]
+	`, alice)
+	if err != nil {
+		t.Fatalf("QueryInto failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	// The value should be a Keyword
+	if kw, ok := results[0].Status.(datalog.Keyword); !ok {
+		t.Errorf("expected Status to be Keyword, got %T", results[0].Status)
+	} else if kw.String() != ":status/active" {
+		t.Errorf("expected ':status/active', got %q", kw.String())
+	}
+}
+
+func TestQueryOneInto_AnyField(t *testing.T) {
+	db, cleanup := createTestDatabaseWithPeople(t)
+	defer cleanup()
+
+	alice := datalog.NewIdentity("person:alice")
+
+	type SingleAttr struct {
+		Value any `datalog:"?v"`
+	}
+
+	var result SingleAttr
+	found, err := db.QueryOneInto(&result, `
+		[:find ?v
+		 :in $ ?e
+		 :where [?e :person/name ?v]]
+	`, alice)
+	if err != nil {
+		t.Fatalf("QueryOneInto failed: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true")
+	}
+
+	if name, ok := result.Value.(string); !ok {
+		t.Errorf("expected Value to be string, got %T", result.Value)
+	} else if name != "Alice" {
+		t.Errorf("expected 'Alice', got %q", name)
+	}
+}

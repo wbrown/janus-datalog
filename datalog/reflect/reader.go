@@ -392,6 +392,11 @@ func (sr *StructReader) setSingleValue(fieldVal reflect.Value, fieldType reflect
 			return fmt.Errorf("unsupported slice type: %s", fieldType)
 		}
 
+	case reflect.Interface:
+		// For interface{}/any fields, assign the value directly.
+		// The caller accepts responsibility for type assertions.
+		fieldVal.Set(reflect.ValueOf(value))
+
 	default:
 		return fmt.Errorf("unsupported type: %s", fieldType)
 	}
