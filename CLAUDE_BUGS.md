@@ -307,3 +307,60 @@ if len(phase.Patterns) == 0 && len(collapsed) == 0 {
 - Type preservation over clever encoding
 
 **Rule**: Make it right, then make it fast.
+
+---
+
+## Streaming Architecture Violation (2026-02-05)
+
+**Critical Architecture Bug**: Created a buffering "CRDT resolution" layer that defeated the entire streaming architecture.
+
+**What I Did Wrong**:
+1. Created `CRDTResolvingIterator` that buffers ALL datoms for an (E, A) group
+2. Added `copyDatom()` function to copy iterator results into a buffer
+3. Built complex "resolution" logic (resolveLWW, resolveAddWins, resolveRGA)
+4. Completely ignored that the storage layer already solves this problem
+
+**Why It Was Wrong**:
+The EATV index stores Tx with **bitwise NOT for descending order**. This means:
+- First entry for each (E, A) IS the LWW winner
+- No resolution logic needed for CardinalityOne
+- Just skip subsequent entries with same (E, A)
+
+The comments in `key_encoder_binary.go` say it explicitly:
+```go
+// EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?] - first entry is current
+// Tx is encoded with bitwise NOT for descending sort order (highest Tx first)
+```
+
+**Red Flags I Should Have Noticed**:
+1. Creating a `copy*` function for iterator results → buffering smell
+2. Accumulating datoms in a slice → materialization smell
+3. Building "resolution" logic → the index already does this
+4. Adding complexity to "solve" something → should have asked why it's needed
+
+**The Correct Approach for CardinalityOne**:
+```go
+// Track current (E, A), skip duplicates
+// First entry wins because EATV orders Tx descending
+// Pure filtering, zero buffering
+```
+
+**The Correct Approach for CardinalityMany**:
+```go
+// Track state per value: map[valueKey]{highestAdd, highestRemove}
+// When (E, A) changes, emit values where add >= remove
+// Buffer state, not datoms
+```
+
+**Pattern**: The storage layer index ordering IS the CRDT resolution. If you think you need resolution logic, you don't understand the storage layer. READ THE INDEX COMMENTS.
+
+**Meta-Pattern**: If you're buffering iterator results, you're breaking streaming. STOP and ask.
+
+---
+
+### 6. Understand Before Implementing
+- Read code AND understand what it means
+- Index ordering has semantic meaning (descending Tx = first wins)
+- Don't treat features as problems to solve without understanding existing design
+
+**Rule**: If you read comments explaining WHY something works a certain way, actually think about the implications.

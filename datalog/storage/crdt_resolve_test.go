@@ -265,3 +265,4 @@ func TestResolveRGAFromDatoms_IgnoresNonRGAOps(t *testing.T) {
 	values, _, _ := ResolveRGAFromDatoms(datoms)
 	assert.Equal(t, []any{"first"}, values)
 }
+
