@@ -112,13 +112,14 @@ With AVET scan on (A, V):
 - Add-wins is safe: emits if highest-Tx op is assert, skips if retracted
 
 **Cardinality hierarchy**:
-| Condition | Cardinality | V-Bound Behavior |
-|-----------|-------------|------------------|
-| Schema defines CardinalityOne | One | Post-validate with EATV |
-| Schema defines CardinalityMany | Many | Add-wins via CRDT iterator |
-| Schema defines CardinalityVector | Vector | RGA via CRDT iterator |
+
+| Condition                             | Cardinality    | V-Bound Behavior           |
+|---------------------------------------|----------------|----------------------------|
+| Schema defines CardinalityOne         | One            | Post-validate with EATV    |
+| Schema defines CardinalityMany        | Many           | Add-wins via CRDT iterator |
+| Schema defines CardinalityVector      | Vector         | RGA via CRDT iterator      |
 | Schema exists but attribute undefined | Unknown → Many | Add-wins via CRDT iterator |
-| No schema at all | Unknown → Many | Add-wins via CRDT iterator |
+| No schema at all                      | Unknown → Many | Add-wins via CRDT iterator |
 
 **Implementation rule**: Only apply post-validation when cardinality is **explicitly CardinalityOne**. All other cases use CRDTResolvingIterator with add-wins semantics.
 
@@ -139,15 +140,15 @@ Since Tx↓ sorts by the full 16-byte ElementID, ties are impossible. ∎
 
 ## Index CRDT Analysis
 
-| Index | Order             | Card-One CRDT? | Card-Many CRDT? | Notes |
-|-------|-------------------|----------------|-----------------|-------|
-| EAVT  | E → A → V → Tx↓   | ✗ No           | ✓ Yes           | V before Tx breaks card-one |
-| EATV  | E → A → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (E, A) — Thm 1(a) |
-| AEVT  | A → E → V → Tx↓   | ✗ No           | ✓ Yes           | V before Tx breaks card-one |
-| AETV  | A → E → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (A, E) — Thm 1(a) |
+| Index | Order             | Card-One CRDT? | Card-Many CRDT? | Notes                                 |
+|-------|-------------------|----------------|-----------------|---------------------------------------|
+| EAVT  | E → A → V → Tx↓   | ✗ No           | ✓ Yes           | V before Tx breaks card-one           |
+| EATV  | E → A → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (E, A) — Thm 1(a)           |
+| AEVT  | A → E → V → Tx↓   | ✗ No           | ✓ Yes           | V before Tx breaks card-one           |
+| AETV  | A → E → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (A, E) — Thm 1(a)           |
 | AVET  | A → V → E → Tx↓   | ✗ No           | ✓ Yes           | V-bound hides other V (card-one only) |
 | VAET  | V → A → E → Tx↓   | ✗ No           | ✓ Yes           | V-bound hides other V (card-one only) |
-| TAEV  | Tx↓ → A → E → V   | T-bound only   | T-bound only    | Tx↓ primary — Thm 1(b) |
+| TAEV  | Tx↓ → A → E → V   | T-bound only   | T-bound only    | Tx↓ primary — Thm 1(b)                |
 
 **Summary**:
 - Cardinality-one: EATV, AETV always correct; TAEV when T is bound
@@ -177,19 +178,19 @@ Since Tx↓ sorts by the full 16-byte ElementID, ties are impossible. ∎
 
 ## The Selection Matrix
 
-| E | A | V | T | Card | Index | Validation | Justification |
-|---|---|---|---|------|-------|------------|---------------|
-| - | - | - | - | any | EATV | - | Full scan |
-| ✓ | - | - | - | any | EATV | - | E-primary |
-| - | ✓ | - | - | any | AETV | - | A-primary |
-| ✓ | ✓ | - | - | any | EATV | - | E+A bound |
-| - | ✓ | ✓ | - | one | AVET | EATV | Post-validate card-one emissions |
-| - | ✓ | ✓ | - | many | AVET | - | CRDT iterator (add-wins) |
-| - | ✓ | ✓ | - | vector | AVET | - | CRDT iterator (RGA) |
-| - | ✓ | ✓ | - | unknown | AVET | - | CRDT iterator (add-wins default) |
-| ✓ | ✓ | ✓ | - | any | EATV | - | Point lookup, filter by V |
-| - | - | ✓ | - | per-datom | VAET | EATV | Per-datom cardinality resolution |
-| * | * | * | ✓ | any | TAEV | varies | T bound always uses TAEV |
+| E | A | V | T | Card      | Index | Validation | Justification                    |
+|---|---|---|---|-----------|-------|------------|----------------------------------|
+| - | - | - | - | any       | EATV  | -          | Full scan                        |
+| ✓ | - | - | - | any       | EATV  | -          | E-primary                        |
+| - | ✓ | - | - | any       | AETV  | -          | A-primary                        |
+| ✓ | ✓ | - | - | any       | EATV  | -          | E+A bound                        |
+| - | ✓ | ✓ | - | one       | AVET  | EATV       | Post-validate card-one emissions |
+| - | ✓ | ✓ | - | many      | AVET  | -          | CRDT iterator (add-wins)         |
+| - | ✓ | ✓ | - | vector    | AVET  | -          | CRDT iterator (RGA)              |
+| - | ✓ | ✓ | - | unknown   | AVET  | -          | CRDT iterator (add-wins default) |
+| ✓ | ✓ | ✓ | - | any       | EATV  | -          | Point lookup, filter by V        |
+| - | - | ✓ | - | per-datom | VAET  | EATV       | Per-datom cardinality resolution |
+| * | * | * | ✓ | any       | TAEV  | varies     | T bound always uses TAEV         |
 
 **Resolution behavior by cardinality**:
 - **CardinalityOne**: Post-validate with EATV point lookup (LWW winner may have different V)
@@ -314,25 +315,25 @@ func validateVBoundCandidate(store *Store, e, a, boundV interface{}) bool {
 
 All 7 indices serve a purpose:
 
-| Index | Purpose |
-|-------|---------|
-| EATV | E-primary CRDT resolution, validation lookups |
-| AETV | A-primary CRDT resolution |
-| TAEV | T-primary queries (time-travel, single transaction) |
-| AVET | V-bound with A constant: card-many/vector resolution, card-one candidate discovery |
-| VAET | V-bound with A variable: per-datom cardinality resolution |
-| EAVT | Card-many resolution with E+A+V grouping, historical queries |
-| AEVT | Card-many resolution with A+E+V grouping, historical queries |
+| Index  | Purpose                                                                            |
+|--------|------------------------------------------------------------------------------------|
+| EATV   | E-primary CRDT resolution, validation lookups                                      |
+| AETV   | A-primary CRDT resolution                                                          |
+| TAEV   | T-primary queries (time-travel, single transaction)                                |
+| AVET   | V-bound with A constant: card-many/vector resolution, card-one candidate discovery |
+| VAET   | V-bound with A variable: per-datom cardinality resolution                          |
+| EAVT   | Card-many resolution with E+A+V grouping, historical queries                       |
+| AEVT   | Card-many resolution with A+E+V grouping, historical queries                       |
 
 **Note**: For card-many, EAVT and AEVT are useful because they group (E, A, V) together, allowing add-wins resolution. They're "broken" only for card-one LWW queries.
 
 ## Summary
 
-| Property | Cardinality-One | Cardinality-Many/Vector |
-|----------|-----------------|-------------------------|
-| V-bound direct | ✗ Broken (LWW winner may have different V) | ✓ Works with CRDTResolvingIterator |
-| V-bound solution | CRDTResolvingIterator + post-validate | CRDTResolvingIterator directly |
-| CRDT-correct indices | EATV, AETV, TAEV* | All 7 |
+| Property             | Cardinality-One                            | Cardinality-Many/Vector            |
+|----------------------|--------------------------------------------|------------------------------------|
+| V-bound direct       | ✗ Broken (LWW winner may have different V) | ✓ Works with CRDTResolvingIterator |
+| V-bound solution     | CRDTResolvingIterator + post-validate      | CRDTResolvingIterator directly     |
+| CRDT-correct indices | EATV, AETV, TAEV*                          | All 7                              |
 
 *TAEV only when T is bound
 
