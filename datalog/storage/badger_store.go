@@ -516,9 +516,18 @@ func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {
 		txBytes = key[prefixSize : prefixSize+txSize]
 
 	case EATV:
-		// EATV: [prefix:1][E:20][A:32][Tx:16][V:var]
+		// EATV: [prefix:1][E:20][A:32][Tx:16][V:var][Op:1]
 		// Tx is after E+A
 		offset := prefixSize + entitySize + attrSize
+		if len(key) < offset+txSize {
+			return datalog.ElementID{}
+		}
+		txBytes = key[offset : offset+txSize]
+
+	case AETV:
+		// AETV: [prefix:1][A:32][E:20][Tx:16][V:var][Op:1]
+		// Tx is after A+E
+		offset := prefixSize + attrSize + entitySize
 		if len(key) < offset+txSize {
 			return datalog.ElementID{}
 		}

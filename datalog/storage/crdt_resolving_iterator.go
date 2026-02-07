@@ -150,6 +150,16 @@ func (it *CRDTResolvingIterator) Next() bool {
 		case schema.CardinalityVector:
 			it.accumulateRGA(datom)
 			continue
+
+		case schema.CardinalityUnknown:
+			// No schema definition - use add-wins (same as CardinalityMany)
+			// This respects explicit Remove() operations while not requiring schema
+			// See INDEX_SELECTION_PROOF.md Theorem 3b
+			if result := it.processAddWins(datom); result != nil {
+				it.currentDatom = result
+				return true
+			}
+			continue
 		}
 	}
 }
@@ -160,8 +170,10 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	it.currentA = datom.A
 	it.hasGroup = true
 
-	// Determine cardinality
-	it.card = schema.CardinalityOne
+	// Determine cardinality from schema
+	// If no schema definition exists for this attribute, use CardinalityUnknown
+	// which uses add-wins semantics (same as CardinalityMany)
+	it.card = schema.CardinalityUnknown
 	if it.schema != nil {
 		if attr := it.schema.GetAttribute(datom.A); attr != nil {
 			it.card = attr.Cardinality
@@ -177,6 +189,10 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 		it.tombstones = make(map[any]uint64)
 	case schema.CardinalityVector:
 		it.rgaElements = it.rgaElements[:0]
+	case schema.CardinalityUnknown:
+		// Same as CardinalityMany - use add-wins
+		it.emitted = make(map[any]bool)
+		it.tombstones = make(map[any]uint64)
 	}
 }
 
