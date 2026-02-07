@@ -1279,7 +1279,8 @@ func TestAddSchemaAware(t *testing.T) {
 	}
 }
 
-// TestRemoveCardinalityValidation verifies Remove() rejects non-cardinality-many attributes
+// TestRemoveCardinalityValidation verifies Remove() works for all cardinalities.
+// Remove writes OpCRDTRemove regardless of cardinality.
 func TestRemoveCardinalityValidation(t *testing.T) {
 	dir, err := os.MkdirTemp("", "crdt-remove-validation-*")
 	if err != nil {
@@ -1303,21 +1304,22 @@ func TestRemoveCardinalityValidation(t *testing.T) {
 
 	entityID := datalog.NewIdentity("test-entity")
 
+	// Remove() on CardinalityOne should succeed (writes OpCRDTRemove)
 	tx := db.NewTransaction()
 	err = tx.Remove(entityID, datalog.NewKeyword(":person/name"), "Alice")
-	if err == nil {
-		t.Error("Expected Remove() to fail for cardinality-one attribute")
+	if err != nil {
+		t.Errorf("Remove() should succeed for cardinality-one attribute: %v", err)
 	} else {
-		t.Logf("Remove correctly rejected for cardinality-one: %v", err)
+		t.Log("Remove correctly accepted for cardinality-one (writes OpCRDTRemove)")
 	}
 
-	// Also test that Remove() requires schema
+	// Remove() on unknown/schemaless attributes should succeed (CardinalityOne default)
 	tx2 := db.NewTransaction()
 	err = tx2.Remove(entityID, datalog.NewKeyword(":unknown/attr"), "value")
-	if err == nil {
-		t.Error("Expected Remove() to fail for unknown attribute (no schema)")
+	if err != nil {
+		t.Errorf("Remove() should succeed for unknown attribute: %v", err)
 	} else {
-		t.Logf("Remove correctly rejected for unknown attribute: %v", err)
+		t.Log("Remove correctly accepted for unknown attribute (CardinalityOne default)")
 	}
 }
 

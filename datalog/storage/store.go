@@ -18,7 +18,6 @@ const (
 )
 
 // Indices lists all indices used for queries
-// Note: AETV added for A-primary CRDT resolution. EAVT kept temporarily for migration.
 var Indices = []IndexType{EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV}
 
 // Store is the interface for datom storage

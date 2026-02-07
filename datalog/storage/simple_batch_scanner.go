@@ -72,10 +72,8 @@ func (s *simpleBatchScanner) Scan() error {
 	}
 
 	// Wrap with CRDT resolution to ensure we only see resolved values
-	var iter Iterator = rawIter
-	if s.matcher.schema != nil {
-		iter = NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.txID)
-	}
+	// Always applied: CRDTResolvingIterator handles nil schema correctly
+	iter := NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.txID)
 	defer iter.Close()
 
 	// Step 4: Scan and filter

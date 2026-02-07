@@ -568,9 +568,11 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 				}
 			}
 
-			// Only E bound - use prefix range
-			start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
-			return EAVT, start, end
+			// Only E bound - use EATV for CRDT resolution
+			// EATV: E → A → Tx↓ → V - first entry for each (E, A) is LWW winner
+			// This is required for CRDTResolvingIterator's "first entry wins" logic
+			start, end := encoder.EncodePrefixRange(EATV, eBytes[:])
+			return EATV, start, end
 		}
 	} else if a != nil {
 		// A is bound but not E
@@ -630,7 +632,8 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 			return AETV, start, end
 		}
 	} else if v != nil {
-		// Only V bound - use VAET index
+		// Only V bound - use VAET index with per-datom cardinality resolution
+		// VAET: V → A → E → Tx↓ - groups by A, enabling efficient cardinality lookup
 		// Create dummy datom for value encoding
 		dummyDatom := &datalog.Datom{
 			E:  datalog.NewIdentity(""),
@@ -666,9 +669,11 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 		}
 	}
 
-	// Full scan on EAVT - use index prefix to avoid scanning other indices
-	start, end := encoder.EncodePrefixRange(EAVT)
-	return EAVT, start, end
+	// Full scan on EATV for CRDT resolution
+	// EATV: E → A → Tx↓ → V - first entry for each (E, A) is LWW winner
+	// This is required for CRDTResolvingIterator's "first entry wins" logic
+	start, end := encoder.EncodePrefixRange(EATV)
+	return EATV, start, end
 }
 
 // matchesDatom checks if a datom matches the pattern constraints

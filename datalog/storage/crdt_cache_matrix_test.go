@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -167,6 +168,455 @@ func TestCacheMatrix_AUnbound(t *testing.T) {
 			// Should return 2 results: one for name (Charlie), one for age (30)
 			// NOT 6 results (all historical values)
 			assert.Len(t, results, 2, "[%s] Unbound A should return 1 result per attribute (CRDT resolved)", mode.name)
+
+			t.Logf("[%s] Results: %v", mode.name, results)
+		})
+	}
+}
+
+// TestCacheMatrix_EConstantAUnbound tests when E is a constant in the pattern (not via input)
+// This exercises chooseIndex's E-only path, which previously used EAVT (wrong for CRDT)
+func TestCacheMatrix_EConstantAUnbound(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/age"),
+				ValueType:   schema.TypeLong,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
+
+			personID := datalog.NewIdentity("person-1")
+
+			// Write multiple values to name
+			for _, name := range []string{"Alice", "Bob", "Charlie"} {
+				tx := db.NewTransaction()
+				tx.Set(personID, datalog.NewKeyword(":person/name"), name)
+				tx.Commit()
+			}
+
+			// Write multiple values to age
+			for _, age := range []int64{20, 25, 30} {
+				tx := db.NewTransaction()
+				tx.Set(personID, datalog.NewKeyword(":person/age"), age)
+				tx.Commit()
+			}
+
+			// Pattern: E is CONSTANT in pattern (not via :in), A unbound
+			// This goes through matchUnboundAsRelation → chooseIndex with e != nil
+			// The bug was: chooseIndex used EAVT (V-before-Tx) for E-only case
+			// Fixed: now uses EATV (Tx-first) for proper CRDT resolution
+			results, err := db.ExecuteQuery(
+				`[:find ?a ?v :where ["person-1" ?a ?v]]`)
+			require.NoError(t, err)
+
+			// Should return 2 results: one for name (Charlie), one for age (30)
+			// NOT 6 results (all historical values)
+			assert.Len(t, results, 2, "[%s] E constant in pattern should return CRDT-resolved results", mode.name)
+
+			t.Logf("[%s] Results: %v", mode.name, results)
+		})
+	}
+}
+
+// TestCacheMatrix_VOnlyBound tests when ONLY V is bound (E and A both unbound)
+// This exercises chooseIndex's V-only path, which uses VAET index with per-datom
+// cardinality resolution.
+//
+// VAET has order V → A → E → Tx↓. CRDTResolvingIterator wraps the scan and handles
+// many/vector/unknown correctly. Card-one emissions are post-validated with EATV.
+func TestCacheMatrix_VOnlyBound(t *testing.T) {
+
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/manager"),
+				ValueType:   schema.TypeRef,
+				Cardinality: schema.CardinalityOne,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":project/lead"),
+				ValueType:   schema.TypeRef,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
+
+			leader := datalog.NewIdentity("leader-1")
+			emp1 := datalog.NewIdentity("emp-1")
+			proj1 := datalog.NewIdentity("proj-1")
+
+			// emp1 has multiple manager changes, final is leader
+			for _, mgr := range []datalog.Identity{
+				datalog.NewIdentity("old-manager"),
+				leader,
+			} {
+				tx := db.NewTransaction()
+				tx.Set(emp1, datalog.NewKeyword(":person/manager"), mgr)
+				tx.Commit()
+			}
+
+			// proj1 has leader as lead
+			tx := db.NewTransaction()
+			tx.Set(proj1, datalog.NewKeyword(":project/lead"), leader)
+			tx.Commit()
+
+			// Enable annotations to trace query execution
+			db.SetAnnotationHandler(func(e annotations.Event) {
+				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
+			})
+
+			// Pattern: ONLY V bound - "what entities/attributes reference leader?"
+			// This uses VAET index with per-datom cardinality resolution
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
+				leader)
+			require.NoError(t, err)
+
+			// Should return 2 results: emp1/:person/manager and proj1/:project/lead
+			// NOT extra results from historical assignments (old-manager)
+			assert.Len(t, results, 2, "[%s] V-only bound should return CRDT-resolved results", mode.name)
+
+			t.Logf("[%s] Results: %v", mode.name, results)
+		})
+	}
+}
+
+// TestCacheMatrix_VOnlyBound_Supersede tests that V-bound queries correctly
+// handle superseded values. This is the critical test case from the proof review:
+//
+// If emp-1/:person/manager was "leader" but is now "new-leader", a query for
+// V="leader" should NOT return emp-1, because the CRDT-resolved current value
+// is "new-leader", not "leader".
+//
+// With VAET + cardinalityAwareVBoundIterator, card-one emissions are post-validated
+// with EATV point lookup, correctly filtering out stale candidates.
+func TestCacheMatrix_VOnlyBound_Supersede(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/manager"),
+				ValueType:   schema.TypeRef,
+				Cardinality: schema.CardinalityOne,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":project/lead"),
+				ValueType:   schema.TypeRef,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
+
+			leader := datalog.NewIdentity("leader-1")
+			newLeader := datalog.NewIdentity("new-leader-1")
+			emp1 := datalog.NewIdentity("emp-1")
+			proj1 := datalog.NewIdentity("proj-1")
+
+			// emp1 manager: leader → new-leader (SUPERSEDED)
+			tx := db.NewTransaction()
+			tx.Set(emp1, datalog.NewKeyword(":person/manager"), leader)
+			tx.Commit()
+
+			tx = db.NewTransaction()
+			tx.Set(emp1, datalog.NewKeyword(":person/manager"), newLeader) // supersedes leader
+			tx.Commit()
+
+			// proj1 still has leader as lead (NOT superseded)
+			tx = db.NewTransaction()
+			tx.Set(proj1, datalog.NewKeyword(":project/lead"), leader)
+			tx.Commit()
+
+			// Query: find all (E, A) where V = leader
+			// CRDT-resolved, emp-1/:person/manager is now "new-leader", NOT "leader"
+			// So only proj-1/:project/lead should be returned
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
+				leader)
+			require.NoError(t, err)
+
+			// Should return 1 result: ONLY proj1/:project/lead
+			// emp1/:person/manager should NOT be returned because its current value is new-leader
+			assert.Len(t, results, 1, "[%s] V-bound query should only return entities where V is the CURRENT value", mode.name)
+
+			if len(results) == 1 {
+				// Verify it's proj1, not emp1
+				e := results[0][0]
+				assert.Equal(t, proj1, e, "[%s] Should return proj-1, not emp-1", mode.name)
+			}
+
+			t.Logf("[%s] Results: %v", mode.name, results)
+		})
+	}
+}
+
+// TestVOnlyBound_CardinalityMany_Retracted tests that V-bound queries with
+// CardinalityMany attributes correctly handle retracted values using add-wins.
+//
+// Scenario: Add tag "go" then retract it. Query for V="go" should return nothing.
+// This tests per-datom cardinality resolution for V-only bound (A is variable).
+func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
+
+			emp1 := datalog.NewIdentity("emp-1")
+
+			// Debug: check schema
+			if db.schema != nil {
+				attr := db.schema.GetAttribute(datalog.NewKeyword(":person/tags"))
+				if attr != nil {
+					t.Logf("Schema has :person/tags with cardinality=%v", attr.Cardinality)
+				} else {
+					t.Log("Schema does NOT have :person/tags")
+				}
+			} else {
+				t.Log("No schema set")
+			}
+
+			// Add tag "go"
+			tx := db.NewTransaction()
+			t.Logf("Adding tag 'go' to emp1=%s, attr=:person/tags", emp1.String())
+			err := tx.Add(emp1, datalog.NewKeyword(":person/tags"), "go")
+			require.NoError(t, err, "Add tag 'go' should succeed")
+			txID, err := tx.Commit()
+			require.NoError(t, err, "Commit should succeed")
+			t.Logf("Committed transaction: %v", txID)
+
+			// Remove tag "go" using CRDT tombstone (not Retract which deletes)
+			tx = db.NewTransaction()
+			err = tx.Remove(emp1, datalog.NewKeyword(":person/tags"), "go")
+			require.NoError(t, err, "Remove tag 'go' should succeed")
+			_, err = tx.Commit()
+			require.NoError(t, err, "Commit should succeed")
+
+			// Enable annotations to trace query execution
+			db.SetAnnotationHandler(func(e annotations.Event) {
+				t.Logf("[TRACE] %s: %v", e.Name, e.Data)
+			})
+
+			// Debug: scan EATV index directly to see ALL datoms
+			t.Log("=== Scanning EATV index for all datoms ===")
+			store := db.Store()
+			startE := []byte{byte(EATV)}
+			endE := []byte{byte(EATV) + 1}
+			iterE, err := store.ScanKeysOnly(EATV, startE, endE)
+			require.NoError(t, err)
+			countE := 0
+			for iterE.Next() {
+				d, _ := iterE.Datom()
+				if d != nil {
+					t.Logf("  EATV datom: E=%s A=%s V=%v Tx=%s Op=%d",
+						d.E.String(), d.A.String(), d.V, d.Tx.String(), d.Op)
+					countE++
+				}
+			}
+			iterE.Close()
+			t.Logf("=== Found %d datoms in EATV ===", countE)
+
+			// Debug: scan VAET index directly to see what's there
+			t.Log("=== Scanning VAET index ===")
+			start := []byte{byte(VAET)}
+			end := []byte{byte(VAET) + 1}
+			iter, err := store.ScanKeysOnly(VAET, start, end)
+			require.NoError(t, err)
+			count := 0
+			for iter.Next() {
+				d, _ := iter.Datom()
+				if d != nil {
+					t.Logf("  VAET datom: E=%s A=%s V=%v Tx=%s Op=%d",
+						d.E.String(), d.A.String(), d.V, d.Tx.String(), d.Op)
+					count++
+				}
+			}
+			iter.Close()
+			t.Logf("=== Found %d datoms in VAET ===", count)
+
+			// Query: find all (E, A) where V = "go"
+			// Since "go" was retracted, should return nothing
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
+				"go")
+			require.NoError(t, err)
+
+			// Should return 0 results - "go" was retracted
+			assert.Len(t, results, 0, "[%s] V-bound query on retracted card-many value should return nothing", mode.name)
+
+			t.Logf("[%s] Results: %v", mode.name, results)
+		})
+	}
+}
+
+// TestVOnlyBound_MixedCardinality tests V-only bound queries where different
+// attributes have different cardinalities. The per-datom resolution must handle
+// each attribute according to its cardinality.
+//
+// Scenario:
+// - :person/name (CardinalityOne): emp-1 had "Alice" then changed to "Bob"
+// - :person/tags (CardinalityMany): emp-1 has tag "Alice" (not retracted)
+// Query for V="Alice" should return only (:person/tags, emp-1), NOT (:person/name, emp-1)
+func TestVOnlyBound_MixedCardinality(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
+
+			emp1 := datalog.NewIdentity("emp-1")
+
+			// Set name to "Alice"
+			tx := db.NewTransaction()
+			tx.Set(emp1, datalog.NewKeyword(":person/name"), "Alice")
+			tx.Commit()
+
+			// Change name to "Bob" (supersedes "Alice")
+			tx = db.NewTransaction()
+			tx.Set(emp1, datalog.NewKeyword(":person/name"), "Bob")
+			tx.Commit()
+
+			// Add tag "Alice" (separate from name, still current)
+			tx = db.NewTransaction()
+			tx.Add(emp1, datalog.NewKeyword(":person/tags"), "Alice")
+			tx.Commit()
+
+			// Query: find all (E, A) where V = "Alice"
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
+				"Alice")
+			require.NoError(t, err)
+
+			// Should return 1 result: emp-1/:person/tags
+			// NOT emp-1/:person/name (because name is now "Bob")
+			assert.Len(t, results, 1, "[%s] V-bound query with mixed cardinality should apply per-datom resolution", mode.name)
+
+			if len(results) == 1 {
+				a := results[0][1]
+				assert.Equal(t, datalog.NewKeyword(":person/tags"), a,
+					"[%s] Should return :person/tags (card-many), not :person/name (card-one superseded)", mode.name)
+			}
+
+			t.Logf("[%s] Results: %v", mode.name, results)
+		})
+	}
+}
+
+// TestVOnlyBound_Schemaless tests V-only bound queries on schemaless attributes.
+// Schemaless attributes default to CardinalityMany (add-wins) semantics.
+func TestVOnlyBound_Schemaless(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			// NO SCHEMA - all attributes are schemaless
+
+			emp1 := datalog.NewIdentity("emp-1")
+
+			// Add value "test" to schemaless attribute
+			tx := db.NewTransaction()
+			tx.Add(emp1, datalog.NewKeyword(":misc/data"), "test")
+			tx.Commit()
+
+			// Remove it using CRDT tombstone (not Retract which physically deletes)
+			tx = db.NewTransaction()
+			tx.Remove(emp1, datalog.NewKeyword(":misc/data"), "test")
+			tx.Commit()
+
+			// Query: find all (E, A) where V = "test"
+			// Schemaless uses add-wins, so retracted value should not appear
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
+				"test")
+			require.NoError(t, err)
+
+			// Should return 0 results - value was retracted
+			assert.Len(t, results, 0, "[%s] V-bound query on retracted schemaless value should return nothing", mode.name)
+
+			t.Logf("[%s] Results: %v", mode.name, results)
+		})
+	}
+}
+
+// TestCacheMatrix_AVBound tests when A and V are bound (E unbound)
+// This exercises the AVET index path
+func TestCacheMatrix_AVBound(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/manager"),
+				ValueType:   schema.TypeRef,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
+
+			manager := datalog.NewIdentity("manager-1")
+			emp1 := datalog.NewIdentity("emp-1")
+			emp2 := datalog.NewIdentity("emp-2")
+
+			// emp1 has multiple manager changes
+			for _, mgr := range []datalog.Identity{
+				datalog.NewIdentity("old-manager-1"),
+				datalog.NewIdentity("old-manager-2"),
+				manager, // Final manager
+			} {
+				tx := db.NewTransaction()
+				tx.Set(emp1, datalog.NewKeyword(":person/manager"), mgr)
+				tx.Commit()
+			}
+
+			// emp2 also reports to manager
+			tx := db.NewTransaction()
+			tx.Set(emp2, datalog.NewKeyword(":person/manager"), manager)
+			tx.Commit()
+
+			// Pattern: A and V bound - "who has manager-1 as :person/manager?"
+			// This uses AVET index
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?e :in $ ?mgr :where [?e :person/manager ?mgr]]`,
+				manager)
+			require.NoError(t, err)
+
+			// Should return 2 results: emp1 and emp2
+			assert.Len(t, results, 2, "[%s] A+V bound should return CRDT-resolved results", mode.name)
 
 			t.Logf("[%s] Results: %v", mode.name, results)
 		})
@@ -940,6 +1390,146 @@ func TestCacheMatrix_AsOfQuery(t *testing.T) {
 			}
 
 			t.Logf("[%s] as-of %d results: %v", mode.name, aliceLamport, results)
+		})
+	}
+}
+
+// TestCacheMatrix_SchemaAfterWrite tests CRDT resolution when data was written
+// BEFORE schema was set (schemaless mode). This simulates legacy data migrations
+// and the entity browser pattern for older databases.
+func TestCacheMatrix_SchemaAfterWrite(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			personID := datalog.NewIdentity("person-1")
+			nameAttr := datalog.NewKeyword(":person/name")
+			ageAttr := datalog.NewKeyword(":person/age")
+
+			// Write data WITHOUT schema - multiple values to same (E, A)
+			// This simulates legacy data written before schema existed
+			for _, name := range []string{"Alice", "Bob", "Charlie"} {
+				tx := db.NewTransaction()
+				tx.Add(personID, nameAttr, name)
+				tx.Commit()
+			}
+			for _, age := range []int64{20, 25, 30} {
+				tx := db.NewTransaction()
+				tx.Add(personID, ageAttr, age)
+				tx.Commit()
+			}
+
+			// NOW set schema - read path should apply CRDT resolution
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       nameAttr,
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       ageAttr,
+				ValueType:   schema.TypeLong,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
+
+			// Pattern: E bound, A unbound - entity browser pattern
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?a ?v :in $ ?e :where [?e ?a ?v]]`,
+				personID)
+			require.NoError(t, err)
+
+			// Should return 2 results: one for name (Charlie), one for age (30)
+			// NOT 6 results (all historical values)
+			assert.Len(t, results, 2, "[%s] Schema-after-write should still apply CRDT resolution", mode.name)
+
+			t.Logf("[%s] Results: %v", mode.name, results)
+
+			// Also test with wildcard pull - same scenario (only when cache is enabled)
+			// Wildcard pull requires cache to enumerate attributes
+			if !mode.disableCache {
+				pullResult, err := db.Pull(personID, "[*]")
+				require.NoError(t, err)
+
+				// Pull should also return only current values
+				assert.Equal(t, "Charlie", pullResult["person/name"], "[%s] Pull should return LWW name", mode.name)
+				assert.Equal(t, int64(30), pullResult["person/age"], "[%s] Pull should return LWW age", mode.name)
+			}
+		})
+	}
+}
+
+// TestCacheMatrix_AllUnbound tests CRDT resolution when E, A, V are all unbound.
+// This goes through matchUnboundAsRelation - a different code path from join strategies.
+func TestCacheMatrix_AllUnbound(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createCacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/age"),
+				ValueType:   schema.TypeLong,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
+
+			// Create two entities with multiple historical values each
+			person1 := datalog.NewIdentity("person-1")
+			person2 := datalog.NewIdentity("person-2")
+
+			// person1: multiple name and age updates
+			for _, name := range []string{"Alice", "Bob", "Charlie"} {
+				tx := db.NewTransaction()
+				tx.Set(person1, datalog.NewKeyword(":person/name"), name)
+				tx.Commit()
+			}
+			for _, age := range []int64{20, 25, 30} {
+				tx := db.NewTransaction()
+				tx.Set(person1, datalog.NewKeyword(":person/age"), age)
+				tx.Commit()
+			}
+
+			// person2: multiple name and age updates
+			for _, name := range []string{"Dave", "Eve", "Frank"} {
+				tx := db.NewTransaction()
+				tx.Set(person2, datalog.NewKeyword(":person/name"), name)
+				tx.Commit()
+			}
+			for _, age := range []int64{40, 45, 50} {
+				tx := db.NewTransaction()
+				tx.Set(person2, datalog.NewKeyword(":person/age"), age)
+				tx.Commit()
+			}
+
+			// Pattern: All unbound - scans entire database
+			// This goes through matchUnboundAsRelation
+			results, err := db.ExecuteQuery(`[:find ?e ?a ?v :where [?e ?a ?v]]`)
+			require.NoError(t, err)
+
+			// Count only person entities (filter out tx:* system entities)
+			// System entities like tx:* have :db/txInstant without schema, so return all values
+			personResults := 0
+			for _, r := range results {
+				if e, ok := r[0].(datalog.Identity); ok {
+					if len(e.String()) > 0 && e.String()[0] != 't' { // not tx:*
+						personResults++
+					}
+				}
+			}
+
+			// Should return 4 person results: 2 entities × 2 attributes
+			// NOT 12 results (all historical values for persons)
+			assert.Equal(t, 4, personResults, "[%s] Person entities should have CRDT-resolved results", mode.name)
+
+			t.Logf("[%s] Results: %v", mode.name, results)
 		})
 	}
 }

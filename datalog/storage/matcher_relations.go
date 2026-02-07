@@ -6,6 +6,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
@@ -110,16 +111,38 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	// For multi-position cases, the relation may be materialized to allow cardinality counting
 	strategy, bindingRel := analyzeReuseStrategy(pattern, bindingRel)
 
+	// For V-bound queries with NeedsValidation, check cardinality
+	// Only validate when EXPLICITLY CardinalityOne
+	// CardinalityMany uses add-wins, CardinalityUnknown/schemaless emits all
+	// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 3b
+	if strategy.NeedsValidation && strategy.BoundA != nil {
+		// Default: no validation (schemaless = Datascript-style = emit all)
+		strategy.NeedsValidation = false
+
+		if m.schema != nil {
+			if aKw, ok := strategy.BoundA.(datalog.Keyword); ok {
+				if def := m.schema.GetAttribute(aKw); def != nil {
+					if def.Cardinality == schema.CardinalityOne {
+						// Only explicit CardinalityOne needs validation
+						strategy.NeedsValidation = true
+					}
+				}
+			}
+		}
+	}
+
 	// Emit strategy selection event
 	if m.handler != nil {
 		m.handler(annotations.Event{
 			Name:  "storage/reuse-strategy",
 			Start: time.Now(),
 			Data: map[string]interface{}{
-				"pattern":       pattern.String(),
-				"strategy_type": strategy.Type.String(),
-				"index":         indexName(strategy.Index),
-				"position":      strategy.Position,
+				"pattern":          pattern.String(),
+				"strategy_type":    strategy.Type.String(),
+				"index":            indexName(strategy.Index),
+				"position":         strategy.Position,
+				"needs_validation": strategy.NeedsValidation,
+				"bound_a":          fmt.Sprintf("%v", strategy.BoundA),
 			},
 		})
 	}
@@ -127,6 +150,12 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	// Use appropriate matching strategy
 	switch strategy.Type {
 	case SinglePositionReuse:
+		// For V-bound cardinality-one queries, use candidate + validate pattern
+		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4
+		if strategy.NeedsValidation {
+			return m.matchWithVValidation(pattern, bindingRel, columns, strategy, constraints)
+		}
+
 		// Choose join strategy based on selectivity
 		joinStrategy := m.chooseJoinStrategy(pattern, bindingRel, strategy.Position)
 
@@ -294,8 +323,10 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			Name:  "pattern/index-selection",
 			Start: time.Now(),
 			Data: map[string]interface{}{
-				"pattern": pattern.String(),
-				"index":   indexName(index),
+				"pattern":    pattern.String(),
+				"index":      indexName(index),
+				"scan.start": codec.EncodeL85(start),
+				"scan.end":   codec.EncodeL85(end),
 			},
 		})
 	}
@@ -346,13 +377,10 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			return nil, fmt.Errorf("key mask scan failed: %w", err)
 		}
 
-		// Wrap with CRDT resolution when schema exists
-		// This ensures per-(E, A) group resolution regardless of bound/unbound status
-		if m.schema != nil {
-			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
-		} else {
-			maskIter.storageIter = rawStorageIter
-		}
+		// Wrap with CRDT resolution for per-(E, A) group resolution
+		// Always applied: CRDTResolvingIterator handles nil schema correctly
+		// (defaults to CardinalityUnknown → add-wins semantics)
+		maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
 		iter = maskIter
 	} else {
 		// Use regular iterator
@@ -379,13 +407,10 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
-		// Wrap with CRDT resolution when E is unbound but A is bound
-		// This ensures per-(E, A) group resolution even for patterns like [?e :attr ?v]
-		if m.schema != nil && e == nil && a != nil {
-			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
-		} else {
-			regularIter.storageIter = rawStorageIter
-		}
+		// Wrap with CRDT resolution for per-(E, A) group resolution
+		// Always applied: CRDTResolvingIterator handles nil schema correctly
+		// (defaults to CardinalityUnknown → add-wins semantics)
+		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
 		iter = regularIter
 	}
 
@@ -471,6 +496,409 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 
 	// Return streaming relation with the iterator
 	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+}
+
+// matchWithVValidation implements the candidate + validate pattern for V-bound
+// cardinality-one queries. See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4.
+//
+// Algorithm:
+// 1. Scan V-primary index (AVET/VAET) for candidate entities
+// 2. For each candidate E, point-lookup EATV to get CRDT winner
+// 3. If winner.V == boundV, emit; otherwise skip (stale candidate)
+func (m *BadgerMatcher) matchWithVValidation(
+	pattern *query.DataPattern,
+	bindingRel executor.Relation,
+	columns []query.Symbol,
+	strategy ReuseStrategy,
+	constraints []executor.StorageConstraint,
+) (executor.Relation, error) {
+	if m.handler != nil {
+		m.handler(annotations.Event{
+			Name:  "v-validation/entry",
+			Start: time.Now(),
+			Data: map[string]any{
+				"pattern":     pattern.String(),
+				"index":       indexName(strategy.Index),
+				"bound_a":     fmt.Sprintf("%v", strategy.BoundA),
+				"binding_rel": bindingRel.Columns(),
+			},
+		})
+	}
+	// Get sorted tuples for efficient iteration
+	sortedTuples := bindingRel.Sorted()
+
+	// Create validating iterator
+	iter := &validatingVBoundIterator{
+		matcher:          m,
+		pattern:          pattern,
+		bindingRel:       bindingRel,
+		tuples:           sortedTuples,
+		candidateIndex:   strategy.Index,           // AVET or VAET for candidates
+		validationIndex:  strategy.ValidationIndex, // EATV for validation
+		boundA:           strategy.BoundA,          // Constant A value if any
+		columns:          columns,
+		constraints:      constraints,
+		currentTupleIdx:  -1,
+		workspace:        make(executor.Tuple, len(columns)),
+		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Columns()),
+		tupleBuilder:     m.getTupleBuilder(pattern, columns),
+	}
+
+	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+}
+
+// validatingVBoundIterator implements the semi-join pattern for V-bound queries.
+// It wraps a VAET scan with CRDTResolvingIterator for correct CRDT semantics,
+// then post-validates CardinalityOne emissions with EATV point lookup.
+//
+// Architecture (per proof doc):
+//  1. VAET scan wrapped with CRDTResolvingIterator
+//  2. CRDTResolvingIterator handles: group deduplication (O(1) space),
+//     add-wins with same-Tx tiebreaking, RGA for vectors
+//  3. Only CardinalityOne needs post-validation (LWW winner may have different V)
+type validatingVBoundIterator struct {
+	matcher     *BadgerMatcher
+	pattern     *query.DataPattern
+	bindingRel  executor.Relation
+	tuples      []executor.Tuple
+	columns     []query.Symbol
+	constraints []executor.StorageConstraint
+
+	// Index configuration
+	candidateIndex  IndexType // AVET or VAET
+	validationIndex IndexType // EATV
+	boundA          any       // Constant A value (nil if A is variable)
+
+	// Iterator state - CRDTResolvingIterator wraps the raw scan
+	crdtIter        *CRDTResolvingIterator // Wraps VAET/AVET scan
+	rawIter         Iterator               // Underlying raw iterator (for Close)
+	currentTupleIdx int                    // Current binding tuple index
+	currentTuple    executor.Tuple         // Current result tuple
+	workspace       executor.Tuple
+
+	// Pattern extraction
+	patternExtractor *query.PatternExtractor
+	tupleBuilder     *query.InternedTupleBuilder
+
+	// Current V value being searched
+	currentBoundV any
+}
+
+func (it *validatingVBoundIterator) Next() bool {
+	for {
+		// Try to get next CRDT-resolved result from current scan
+		if it.crdtIter != nil {
+			for it.crdtIter.Next() {
+				datom, err := it.crdtIter.Datom()
+				if err != nil {
+					continue
+				}
+
+				// Emit annotation for CRDT-resolved candidate
+				if it.matcher.handler != nil {
+					it.matcher.handler(annotations.Event{
+						Name:  "v-validation/candidate",
+						Start: time.Now(),
+						Data: map[string]any{
+							"e":     datom.E.String(),
+							"a":     datom.A.String(),
+							"v":     fmt.Sprintf("%v", datom.V),
+							"tx":    datom.Tx.String(),
+							"op":    fmt.Sprintf("%d", datom.Op),
+							"bound": fmt.Sprintf("%v", it.currentBoundV),
+						},
+					})
+				}
+
+				// CRDTResolvingIterator already handled:
+				// - CardinalityMany: add-wins with same-Tx tiebreaking
+				// - CardinalityVector: RGA resolution
+				// - CardinalityUnknown: add-wins (same as CardinalityMany)
+				//
+				// Only CardinalityOne needs post-validation because the
+				// LWW winner may have a different V than our bound V.
+				card := it.getCardinalityEnum(datom.A)
+				if card == schema.CardinalityOne {
+					if !it.validateCandidate(datom.E, datom.A) {
+						// Stale candidate - LWW winner has different V
+						continue
+					}
+				}
+
+				// Build result tuple
+				it.currentTuple = it.buildTuple(datom)
+				return true
+			}
+			it.crdtIter.Close()
+			it.crdtIter = nil
+			it.rawIter = nil
+		}
+
+		// Move to next binding tuple
+		it.currentTupleIdx++
+		if it.currentTupleIdx >= len(it.tuples) {
+			return false
+		}
+
+		// Get V value from binding tuple
+		tuple := it.tuples[it.currentTupleIdx]
+		it.currentBoundV = it.patternExtractor.ExtractV(tuple)
+		if it.currentBoundV == nil {
+			continue // V not bound in this tuple
+		}
+
+		// Open CRDT-resolving scan on V-primary index
+		var err error
+		it.crdtIter, it.rawIter, err = it.openCRDTScan()
+		if err != nil {
+			continue
+		}
+	}
+}
+
+// validateCandidate checks if the current value of (E, A) matches boundV
+func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) bool {
+	encoder := it.matcher.store.encoder
+
+	// Convert E to storage bytes
+	eBytes := ToStorageDatom(datalog.Datom{E: e}).E
+
+	// Convert A to storage bytes
+	aPtr := datalog.NewKeyword(a.String())
+	aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
+
+	// Point lookup on EATV: scan (E, A) prefix, first result is CRDT winner
+	start, end := encoder.EncodePrefixRange(it.validationIndex, eBytes[:], aStorage[:])
+	rawIter, err := it.matcher.store.ScanKeysOnly(it.validationIndex, start, end)
+	if err != nil {
+		return false
+	}
+	defer rawIter.Close()
+
+	// First result is the CRDT winner (Tx descending in EATV)
+	if !rawIter.Next() {
+		if it.matcher.handler != nil {
+			it.matcher.handler(annotations.Event{
+				Name:  "v-validation/no-winner",
+				Start: time.Now(),
+				Data: map[string]any{
+					"e":     e.String(),
+					"a":     a.String(),
+					"bound": fmt.Sprintf("%v", it.currentBoundV),
+				},
+			})
+		}
+		return false // No current value
+	}
+
+	winner, err := rawIter.Datom()
+	if err != nil {
+		return false
+	}
+
+	// Check if winner's V matches our bound V
+	matches := winner.V == it.currentBoundV
+
+	if it.matcher.handler != nil {
+		it.matcher.handler(annotations.Event{
+			Name:  "v-validation/result",
+			Start: time.Now(),
+			Data: map[string]any{
+				"e":           e.String(),
+				"a":           a.String(),
+				"bound_v":     fmt.Sprintf("%v", it.currentBoundV),
+				"winner_v":    fmt.Sprintf("%v", winner.V),
+				"winner_tx":   winner.Tx.String(),
+				"winner_op":   fmt.Sprintf("%d", winner.Op),
+				"matches":     matches,
+				"will_emit":   matches,
+				"cardinality": it.getCardinality(a),
+			},
+		})
+	}
+
+	return matches
+}
+
+// getCardinality looks up the cardinality for an attribute (for annotations)
+func (it *validatingVBoundIterator) getCardinality(a datalog.Keyword) string {
+	if it.matcher.schema == nil {
+		return "unknown"
+	}
+	def := it.matcher.schema.GetAttribute(a)
+	if def == nil {
+		return "unknown"
+	}
+	switch def.Cardinality {
+	case schema.CardinalityOne:
+		return "one"
+	case schema.CardinalityMany:
+		return "many"
+	case schema.CardinalityVector:
+		return "vector"
+	default:
+		return "unknown"
+	}
+}
+
+// getCardinalityEnum looks up the cardinality enum for an attribute
+// Returns CardinalityUnknown (0) for schemaless or undefined attributes
+func (it *validatingVBoundIterator) getCardinalityEnum(a datalog.Keyword) schema.Cardinality {
+	if it.matcher.schema == nil {
+		return schema.CardinalityUnknown
+	}
+	def := it.matcher.schema.GetAttribute(a)
+	if def == nil {
+		return schema.CardinalityUnknown
+	}
+	return def.Cardinality
+}
+
+// openCRDTScan opens a CRDT-resolving scan on the V-primary index for current bound V.
+// Returns both the CRDTResolvingIterator wrapper and the raw iterator (for proper Close).
+func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iterator, error) {
+	encoder := it.matcher.store.encoder
+	var start, end []byte
+
+	if it.matcher.handler != nil {
+		it.matcher.handler(annotations.Event{
+			Name:  "v-validation/open-scan",
+			Start: time.Now(),
+			Data: map[string]any{
+				"bound_v": fmt.Sprintf("%v", it.currentBoundV),
+				"bound_a": fmt.Sprintf("%v", it.boundA),
+				"index":   indexName(it.candidateIndex),
+			},
+		})
+	}
+
+	if it.boundA != nil {
+		// A is constant: use AVET with (A, V) prefix
+		aKw, ok := it.boundA.(datalog.Keyword)
+		if !ok {
+			return nil, nil, fmt.Errorf("boundA is not a Keyword")
+		}
+
+		// Convert A to storage bytes
+		aPtr := datalog.NewKeyword(aKw.String())
+		aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
+
+		// Encode V with type prefix
+		valueBytes := it.encodeValue(it.currentBoundV)
+
+		start, end = encoder.EncodePrefixRange(it.candidateIndex, aStorage[:], valueBytes)
+	} else {
+		// A is variable: use VAET with V prefix
+		valueBytes := it.encodeValue(it.currentBoundV)
+		start, end = encoder.EncodePrefixRange(it.candidateIndex, valueBytes)
+
+		if it.matcher.handler != nil {
+			it.matcher.handler(annotations.Event{
+				Name:  "v-validation/scan-range",
+				Start: time.Now(),
+				Data: map[string]any{
+					"value_bytes": fmt.Sprintf("%x", valueBytes),
+					"start":       fmt.Sprintf("%x", start),
+					"end":         fmt.Sprintf("%x", end),
+				},
+			})
+		}
+	}
+
+	// Raw scan on V-primary index
+	rawIter, err := it.matcher.store.ScanKeysOnly(it.candidateIndex, start, end)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Wrap with CRDTResolvingIterator for correct CRDT semantics
+	// CRDTResolvingIterator handles:
+	// - Group deduplication via contiguous comparison (O(1) space)
+	// - Add-wins with same-Tx tiebreaking for CardinalityMany
+	// - RGA for CardinalityVector
+	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
+	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, 0)
+
+	if it.matcher.handler != nil {
+		it.matcher.handler(annotations.Event{
+			Name:  "v-validation/scan-opened",
+			Start: time.Now(),
+			Data: map[string]any{
+				"index":        indexName(it.candidateIndex),
+				"crdt_wrapped": true,
+			},
+		})
+	}
+
+	return crdtIter, rawIter, nil
+}
+
+// encodeValue converts a value to bytes for index prefix
+func (it *validatingVBoundIterator) encodeValue(v any) []byte {
+	encoder := it.matcher.store.encoder
+
+	// Create dummy datom for encoding
+	dummyDatom := &datalog.Datom{
+		E:  datalog.NewIdentity(""),
+		A:  datalog.NewKeyword(":dummy"),
+		V:  v,
+		Tx: datalog.ElementID{},
+	}
+	sDatom := ToStorageDatom(*dummyDatom)
+	vType := byte(datalog.Type(sDatom.V))
+
+	// Check if we're using L85 encoding and have a reference value
+	if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
+		var vArr [20]byte
+		copy(vArr[:], datalog.ValueBytes(sDatom.V))
+		return append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
+	}
+
+	// Binary encoder or non-reference values: type + raw bytes
+	vData := datalog.ValueBytes(sDatom.V)
+	return append([]byte{vType}, vData...)
+}
+
+// buildTuple creates a result tuple from a validated datom
+func (it *validatingVBoundIterator) buildTuple(datom *datalog.Datom) executor.Tuple {
+	tuple := make(executor.Tuple, len(it.columns))
+	for i, col := range it.columns {
+		// Check each pattern element - might be Variable or Constant
+		if v, ok := it.pattern.GetE().(query.Variable); ok && col == v.Name {
+			tuple[i] = datom.E
+			continue
+		}
+		if v, ok := it.pattern.GetA().(query.Variable); ok && col == v.Name {
+			tuple[i] = datom.A
+			continue
+		}
+		if v, ok := it.pattern.GetV().(query.Variable); ok && col == v.Name {
+			tuple[i] = datom.V
+			continue
+		}
+		if len(it.pattern.Elements) > 3 {
+			if v, ok := it.pattern.GetT().(query.Variable); ok && col == v.Name {
+				tuple[i] = datom.Tx
+			}
+		}
+	}
+	return tuple
+}
+
+func (it *validatingVBoundIterator) Tuple() executor.Tuple {
+	return it.currentTuple
+}
+
+func (it *validatingVBoundIterator) Close() error {
+	if it.crdtIter != nil {
+		it.crdtIter.Close()
+		it.crdtIter = nil
+	}
+	if it.rawIter != nil {
+		it.rawIter.Close()
+		it.rawIter = nil
+	}
+	return nil
 }
 
 // matchWithSimpleBatchScanning uses simplified batch scanning to process large binding sets efficiently

@@ -194,12 +194,9 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	}
 
 	// PHASE 3.5: Wrap with CRDT resolution
-	// This ensures we only see CRDT-resolved current values, not all historical values.
-	// The resolution is per (E, A) group based on schema cardinality.
-	var resolvedIter Iterator = storageIter
-	if m.schema != nil {
-		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
-	}
+	// Always applied: CRDTResolvingIterator handles nil schema correctly
+	// (defaults to CardinalityUnknown → add-wins semantics)
+	resolvedIter := NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
 
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
@@ -567,10 +564,8 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 	}
 
 	// PHASE 3.5: Wrap with CRDT resolution
-	var resolvedIterMerge Iterator = storageIter
-	if m.schema != nil {
-		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
-	}
+	// Always applied: CRDTResolvingIterator handles nil schema correctly
+	resolvedIterMerge := NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
 
 	// PHASE 4: Create streaming merge join iterator
 	iter := &mergeJoinIterator{

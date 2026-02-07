@@ -19,7 +19,6 @@ type CharacterWithSkills struct {
 }
 
 // TestReflect_VectorOrderPreserved verifies that vector order is preserved through SaveStruct/PullInto.
-// CURRENT STATUS: EXPECTED TO FAIL - reflect layer treats vectors as sets, losing order.
 func TestReflect_VectorOrderPreserved(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-order-test")
 	if err != nil {
@@ -92,7 +91,6 @@ func TestReflect_VectorOrderPreserved(t *testing.T) {
 }
 
 // TestReflect_VectorDuplicatesAllowed verifies that vectors allow duplicate values.
-// CURRENT STATUS: EXPECTED TO FAIL - reflect layer uses set semantics, deduplicating values.
 func TestReflect_VectorDuplicatesAllowed(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-duplicates-test")
 	if err != nil {
@@ -154,7 +152,6 @@ func TestReflect_VectorDuplicatesAllowed(t *testing.T) {
 
 // TestReflect_VectorUpdatePreservesUnchangedPrefix verifies that updating a vector
 // uses the prefix-diff optimization (only changes what's different).
-// CURRENT STATUS: EXPECTED TO FAIL - reflect layer uses set diff, not prefix diff.
 func TestReflect_VectorUpdatePreservesUnchangedPrefix(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-update-test")
 	if err != nil {
@@ -230,7 +227,6 @@ func TestReflect_VectorUpdatePreservesUnchangedPrefix(t *testing.T) {
 }
 
 // TestReflect_VectorReplaceMiddleElement verifies that replacing an element in the middle works.
-// CURRENT STATUS: EXPECTED TO FAIL - reflect layer uses set diff which doesn't understand position.
 func TestReflect_VectorReplaceMiddleElement(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-replace-test")
 	if err != nil {
@@ -307,7 +303,6 @@ func TestReflect_VectorReplaceMiddleElement(t *testing.T) {
 
 // TestReflect_VectorRemoveFromMiddle verifies that removing an element from the middle
 // doesn't orphan subsequent elements.
-// CURRENT STATUS: EXPECTED TO FAIL - Remove() tombstones element, orphaning RGA descendants.
 func TestReflect_VectorRemoveFromMiddle(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-remove-middle-test")
 	if err != nil {
@@ -380,7 +375,6 @@ func TestReflect_VectorRemoveFromMiddle(t *testing.T) {
 }
 
 // TestReflect_VectorReorder verifies that reordering elements works.
-// CURRENT STATUS: EXPECTED TO FAIL - set diff sees same values, does nothing.
 func TestReflect_VectorReorder(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-reorder-test")
 	if err != nil {
@@ -453,7 +447,6 @@ func TestReflect_VectorReorder(t *testing.T) {
 }
 
 // TestReflect_VectorPrepend verifies that prepending an element works.
-// CURRENT STATUS: EXPECTED TO FAIL - Add() appends to end, doesn't prepend.
 func TestReflect_VectorPrepend(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-prepend-test")
 	if err != nil {
@@ -526,7 +519,6 @@ func TestReflect_VectorPrepend(t *testing.T) {
 }
 
 // TestReflect_VectorInsertInMiddle verifies that inserting an element in the middle works.
-// CURRENT STATUS: EXPECTED TO FAIL - Add() appends to end, doesn't insert at position.
 func TestReflect_VectorInsertInMiddle(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-insert-middle-test")
 	if err != nil {
@@ -599,7 +591,6 @@ func TestReflect_VectorInsertInMiddle(t *testing.T) {
 }
 
 // TestReflect_VectorClearAndRepopulate verifies that clearing and repopulating a vector works.
-// CURRENT STATUS: EXPECTED TO FAIL - tombstoning all elements orphans the chain.
 func TestReflect_VectorClearAndRepopulate(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-vector-clear-test")
 	if err != nil {

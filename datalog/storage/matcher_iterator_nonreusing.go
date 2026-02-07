@@ -77,11 +77,8 @@ func (it *nonReusingIterator) Next() bool {
 	}
 
 	// Wrap with CRDT resolution to ensure we only see resolved values
-	if it.matcher.schema != nil {
-		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
-	} else {
-		it.currentScan = rawIter
-	}
+	// Always applied: CRDTResolvingIterator handles nil schema correctly
+	it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
 
 	// Try to find first match
 	return it.Next()

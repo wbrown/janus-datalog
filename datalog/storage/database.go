@@ -1399,26 +1399,27 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			})
 		}
 	} else {
-		// Schemaless mode: store raw value for backward compatibility
-		// Queries will treat this as cardinality-one by default
+		// Schemaless mode: CardinalityOne (LWW) semantics
+		// OpNone is valid and means "CardinalityOne LWW assertion"
 		t.datoms = append(t.datoms, datalog.Datom{
 			E:  e,
 			A:  a,
 			V:  v,
 			Tx: elemID,
+			Op: datalog.OpNone,
 		})
 	}
 
 	return nil
 }
 
-// Remove removes a value from a cardinality-many set using CRDT add-wins semantics.
-// The value is wrapped in a SetEntry with OpRemove (tombstone) and stored.
+// Remove removes a value using CRDT tombstone semantics.
 //
-// This method is part of the CRDT implementation:
-// - Cardinality-Many: Value tombstoned; add-wins resolves conflicts
-// - Cardinality-One: Not applicable (use Set() to replace value)
-// - Cardinality-Vector: Not applicable (use Set() to replace entire vector)
+// Behavior by cardinality:
+// - Cardinality-One: Writes OpCRDTRemove; attribute doesn't exist if tombstone has highest Tx
+// - Cardinality-Many: Writes OpCRDTRemove; add-wins resolves per-value conflicts
+// - Cardinality-Vector: RGA LIFO tombstone; removes most recently added matching element
+// - Schemaless/undefined: Defaults to CardinalityOne
 func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{}) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1432,18 +1433,23 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 		return fmt.Errorf("nil value not allowed for Remove on attribute %s", a.String())
 	}
 
-	// Remove requires schema with cardinality-many
+	// Determine cardinality for Remove semantics
 	s := t.db.Schema()
-	if s == nil {
-		return fmt.Errorf("Remove requires schema: attribute %s has no schema defined", a.String())
+	var def *schema.AttributeDefinition
+	if s != nil {
+		def = s.GetAttribute(a)
 	}
 
-	def := s.GetAttribute(a)
-	if def == nil {
-		return fmt.Errorf("Remove requires schema: attribute %s not defined in schema", a.String())
+	// Determine cardinality: schemaless/undefined defaults to CardinalityOne
+	var card schema.Cardinality
+	if def != nil {
+		card = def.Cardinality
+	} else {
+		// Schemaless or undefined attribute: CardinalityOne (LWW)
+		card = schema.CardinalityOne
 	}
 
-	switch def.Cardinality {
+	switch card {
 	case schema.CardinalityMany:
 		// CRDT add-wins semantics: store raw value with Op=Remove (tombstone)
 		// Op is stored in the key (between V and Tx) for proper AVET lookups
@@ -1457,7 +1463,15 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 			Op: datalog.OpCRDTRemove,
 		})
 	case schema.CardinalityOne:
-		return fmt.Errorf("Remove not valid for cardinality-one attribute %s: cardinality-one values are replaced via Set()", a.String())
+		// Write tombstone — CRDTResolvingIterator checks Op on first entry
+		elemID := t.db.clock.Next()
+		t.datoms = append(t.datoms, datalog.Datom{
+			E:  e,
+			A:  a,
+			V:  v,
+			Tx: elemID,
+			Op: datalog.OpCRDTRemove,
+		})
 	case schema.CardinalityVector:
 		// RGA LIFO Remove: tombstone the most recently added element matching value
 		// O(k) via EAVT scan where k = entries for this (E, A, V) combination

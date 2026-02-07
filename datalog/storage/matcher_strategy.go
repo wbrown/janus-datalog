@@ -29,9 +29,13 @@ func (rt ReuseType) String() string {
 
 // ReuseStrategy describes how iterator reuse can be applied
 type ReuseStrategy struct {
-	Type     ReuseType
-	Position int       // Which position is changing (0=E, 1=A, 2=V, 3=T)
-	Index    IndexType // Which index to use
+	Type            ReuseType
+	Position        int       // Which position is changing (0=E, 1=A, 2=V, 3=T)
+	Index           IndexType // Which index to use
+	NeedsValidation bool      // If true, V-bound query needs CRDT validation
+	ValidationIndex IndexType // Index to use for validation (EATV for point lookups)
+	BoundA          any       // The bound A value (for validation lookups)
+	BoundV          any       // The bound V value (for validation comparison)
 }
 
 // analyzeReuseStrategy determines if and how iterator reuse can be applied.
@@ -122,28 +126,40 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 			canReuse = true
 
 		case 2: // V is bound
-			// Check if A is constant OR bound to a single value (not in binding relation)
-			aIsFixedValue := false
-			if _, ok := pattern.GetA().(query.Constant); ok {
-				// A is a constant in the pattern (e.g., :price/symbol)
-				aIsFixedValue = true
-			} else if v, ok := pattern.GetA().(query.Variable); ok && !bindingSet[v.Name] {
-				// A is a variable but NOT in the binding relation,
-				// so it must be bound to a scalar/constant elsewhere
-				aIsFixedValue = true
-			}
-
-			if aIsFixedValue {
-				// AVET index: A is primary, V is secondary
-				// When A is fixed, all V values for that A are contiguous
-				// We CAN efficiently seek between V values within that A range
-				indexType = AVET // A is primary, V is secondary
-				canReuse = true  // Re-enabled with fixed "moved past" logic
-			} else {
-				// A varies with the binding relation
-				// Use VAET where V is the primary sort key
-				indexType = VAET // V is primary sort key
+			// V-bound queries use candidate + validate pattern for cardinality-one.
+			// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4.
+			//
+			// Strategy: Use V-primary index for candidate discovery, then validate
+			// each candidate with EATV point lookup.
+			//
+			// For cardinality-many, validation is not needed (add-wins semantics).
+			// Caller must check cardinality and clear NeedsValidation if appropriate.
+			if aConst, ok := pattern.GetA().(query.Constant); ok {
+				// A is constant: use AVET for (A, V) prefix scan
+				indexType = AVET
 				canReuse = true
+				// Return strategy with validation setup
+				// Caller will check cardinality and may clear NeedsValidation
+				return ReuseStrategy{
+					Type:            SinglePositionReuse,
+					Position:        position,
+					Index:           indexType,
+					NeedsValidation: true,         // Assume cardinality-one; caller clears for many
+					ValidationIndex: EATV,         // Point lookup on (E, A)
+					BoundA:          aConst.Value, // For validation lookups
+				}, bindingRel
+			} else {
+				// A is variable: use VAET for V-primary scan
+				// Validation will need to determine A from each candidate
+				indexType = VAET
+				canReuse = true
+				return ReuseStrategy{
+					Type:            SinglePositionReuse,
+					Position:        position,
+					Index:           indexType,
+					NeedsValidation: true, // Must validate since A varies
+					ValidationIndex: EATV,
+				}, bindingRel
 			}
 
 		case 3: // T is bound

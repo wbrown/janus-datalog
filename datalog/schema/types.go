@@ -23,9 +23,10 @@ const (
 type Cardinality string
 
 const (
-	CardinalityOne    Cardinality = "db.cardinality/one"
-	CardinalityMany   Cardinality = "db.cardinality/many"
-	CardinalityVector Cardinality = "db.cardinality/vector" // Ordered collection (RGA)
+	CardinalityOne     Cardinality = "db.cardinality/one"
+	CardinalityMany    Cardinality = "db.cardinality/many"
+	CardinalityVector  Cardinality = "db.cardinality/vector"  // Ordered collection (RGA)
+	CardinalityUnknown Cardinality = "db.cardinality/unknown" // No schema definition - return all values
 )
 
 // Unique represents uniqueness constraints on attribute values

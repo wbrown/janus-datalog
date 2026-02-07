@@ -21,10 +21,10 @@ type CRDTResolvingIterator struct {
 	txID   uint64 // For as-of queries: only consider datoms with Tx.Lamport <= txID
 
 	// Current (E, A) group tracking
-	currentE  datalog.Identity
-	currentA  datalog.Keyword
-	hasGroup  bool
-	card      schema.Cardinality
+	currentE datalog.Identity
+	currentA datalog.Keyword
+	hasGroup bool
+	card     schema.Cardinality
 
 	// CardinalityMany: streaming state (no buffering!)
 	// Because we iterate Tx descending:
@@ -133,11 +133,15 @@ func (it *CRDTResolvingIterator) Next() bool {
 		switch it.card {
 		case schema.CardinalityOne:
 			if isNewGroup {
-				// First entry for this (E, A) - emit immediately
+				if datom.Op == datalog.OpCRDTRemove {
+					// Value was retracted — attribute doesn't exist. Skip group.
+					continue
+				}
+				// First entry for this (E, A) — emit (LWW winner)
 				it.currentDatom = datom
 				return true
 			}
-			// Same (E, A) - skip (we already emitted the winner)
+			// Same (E, A) — skip (already emitted or skipped the winner)
 			continue
 
 		case schema.CardinalityMany:
@@ -150,6 +154,17 @@ func (it *CRDTResolvingIterator) Next() bool {
 		case schema.CardinalityVector:
 			it.accumulateRGA(datom)
 			continue
+
+		case schema.CardinalityUnknown:
+			// Default is CardinalityOne (LWW) — same resolution as CardinalityOne
+			if isNewGroup {
+				if datom.Op == datalog.OpCRDTRemove {
+					continue
+				}
+				it.currentDatom = datom
+				return true
+			}
+			continue
 		}
 	}
 }
@@ -160,8 +175,10 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	it.currentA = datom.A
 	it.hasGroup = true
 
-	// Determine cardinality
-	it.card = schema.CardinalityOne
+	// Determine cardinality from schema
+	// If no schema definition exists for this attribute, use CardinalityUnknown
+	// which defaults to CardinalityOne (LWW) semantics
+	it.card = schema.CardinalityUnknown
 	if it.schema != nil {
 		if attr := it.schema.GetAttribute(datom.A); attr != nil {
 			it.card = attr.Cardinality
@@ -177,6 +194,8 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 		it.tombstones = make(map[any]uint64)
 	case schema.CardinalityVector:
 		it.rgaElements = it.rgaElements[:0]
+	case schema.CardinalityUnknown:
+		// Default is CardinalityOne (LWW) — no state needed
 	}
 }
 
