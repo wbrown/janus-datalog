@@ -12,6 +12,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/edn"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // Helper to create a temp BadgerDB database
@@ -389,7 +390,9 @@ func TestFormatDatomEDN(t *testing.T) {
 	assert.True(t, strings.HasPrefix(result, "[#identity "))
 	assert.Contains(t, result, ":person/name")
 	assert.Contains(t, result, `"Alice"`)
-	assert.Contains(t, result, "[12345 1]]") // ElementID format: [Lamport ReplicaID]
+	assert.Contains(t, result, "[12345 1]")
+	assert.Contains(t, result, ":op/none")
+	assert.True(t, strings.HasSuffix(result, ":op/none]"))
 }
 
 func TestParseDatomEDN(t *testing.T) {
@@ -470,8 +473,8 @@ func TestParseDatomEDN_Errors(t *testing.T) {
 		error string
 	}{
 		{"not vector", `"just a string"`, "expected vector"},
-		{"too few elements", `[#identity "` + validID + `" :attr "val"]`, "expected 4 elements"},
-		{"too many elements", `[#identity "` + validID + `" :attr "val" 1 extra]`, "expected 4 elements"},
+		{"too few elements", `[#identity "` + validID + `" :attr "val"]`, "expected 4-6 elements"},
+		{"too many elements", `[#identity "` + validID + `" :attr "val" 1 :op/none [0 0] extra]`, "expected 4-6 elements"},
 		{"invalid attribute", `[#identity "` + validID + `" "not-keyword" "val" 1]`, "invalid attribute"},
 		{"invalid tx", `[#identity "` + validID + `" :attr "val" "not-int"]`, "invalid tx"},
 		{"invalid identity L85", `[#identity "abc" :attr "val" 1]`, "invalid L85"},
@@ -666,7 +669,7 @@ not valid EDN
 		input := `[#identity "` + validID + `" :test/val]`
 		err := db.Import(strings.NewReader(input))
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "expected 4 elements")
+		assert.Contains(t, err.Error(), "expected 4-6 elements")
 	})
 
 	t.Run("invalid L85 identity", func(t *testing.T) {
@@ -902,8 +905,394 @@ func TestDatomEDN_RoundTrip_ElementID(t *testing.T) {
 }
 
 // =============================================================================
+// Unit Tests: CRDTOp EDN Formatting and Parsing
+// =============================================================================
+
+func TestFormatCRDTOpEDN(t *testing.T) {
+	tests := []struct {
+		op       datalog.CRDTOp
+		expected string
+	}{
+		{datalog.OpNone, ":op/none"},
+		{datalog.OpCRDTAdd, ":op/add"},
+		{datalog.OpCRDTRemove, ":op/remove"},
+		{datalog.OpRGAInsert, ":op/rga-insert"},
+		{datalog.OpRGATombstone, ":op/rga-tombstone"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := FormatCRDTOpEDN(tt.op)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+
+	// Unknown op produces a fallback
+	t.Run("unknown", func(t *testing.T) {
+		result := FormatCRDTOpEDN(datalog.CRDTOp(99))
+		assert.Equal(t, ":op/unknown-99", result)
+	})
+}
+
+func TestParseCRDTOpNode(t *testing.T) {
+	tests := []struct {
+		keyword  string
+		expected datalog.CRDTOp
+	}{
+		{":op/none", datalog.OpNone},
+		{":op/add", datalog.OpCRDTAdd},
+		{":op/remove", datalog.OpCRDTRemove},
+		{":op/rga-insert", datalog.OpRGAInsert},
+		{":op/rga-tombstone", datalog.OpRGATombstone},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.keyword, func(t *testing.T) {
+			node, err := parseEDNValue(tt.keyword)
+			require.NoError(t, err)
+			result, err := ParseCRDTOpNode(node)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+
+	t.Run("unknown keyword", func(t *testing.T) {
+		node, err := parseEDNValue(":op/bogus")
+		require.NoError(t, err)
+		_, err = ParseCRDTOpNode(node)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown op keyword")
+	})
+
+	t.Run("not a keyword", func(t *testing.T) {
+		node, err := parseEDNValue(`"not-a-keyword"`)
+		require.NoError(t, err)
+		_, err = ParseCRDTOpNode(node)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "expected keyword")
+	})
+}
+
+// =============================================================================
+// Unit Tests: Datom EDN Round-Trip with Op and AfterRef
+// =============================================================================
+
+func TestDatomEDN_RoundTrip_WithOp(t *testing.T) {
+	id := datalog.NewIdentity("entity1")
+	tx := datalog.ElementID{Lamport: 100, ReplicaID: 1}
+
+	ops := []struct {
+		name string
+		op   datalog.CRDTOp
+	}{
+		{"OpNone", datalog.OpNone},
+		{"OpCRDTAdd", datalog.OpCRDTAdd},
+		{"OpCRDTRemove", datalog.OpCRDTRemove},
+	}
+
+	for _, tt := range ops {
+		t.Run(tt.name, func(t *testing.T) {
+			datom := &datalog.Datom{
+				E:  id,
+				A:  kw(":test/attr"),
+				V:  "value",
+				Tx: tx,
+				Op: tt.op,
+			}
+
+			formatted := FormatDatomEDN(datom)
+			assert.Contains(t, formatted, FormatCRDTOpEDN(tt.op))
+
+			parsed, err := ParseDatomEDN(formatted)
+			require.NoError(t, err)
+
+			assert.Equal(t, datom.E.Hash(), parsed.E.Hash())
+			assert.Equal(t, datom.A, parsed.A)
+			assert.Equal(t, datom.V, parsed.V)
+			assert.Equal(t, datom.Tx, parsed.Tx)
+			assert.Equal(t, tt.op, parsed.Op)
+			assert.Equal(t, datalog.ElementID{}, parsed.AfterRef)
+		})
+	}
+}
+
+func TestDatomEDN_RoundTrip_WithAfterRef(t *testing.T) {
+	id := datalog.NewIdentity("entity1")
+	tx := datalog.ElementID{Lamport: 100, ReplicaID: 1}
+	afterRef := datalog.ElementID{Lamport: 50, ReplicaID: 1}
+
+	ops := []struct {
+		name string
+		op   datalog.CRDTOp
+	}{
+		{"OpRGAInsert", datalog.OpRGAInsert},
+		{"OpRGATombstone", datalog.OpRGATombstone},
+	}
+
+	for _, tt := range ops {
+		t.Run(tt.name, func(t *testing.T) {
+			datom := &datalog.Datom{
+				E:        id,
+				A:        kw(":test/vec"),
+				V:        "item",
+				Tx:       tx,
+				Op:       tt.op,
+				AfterRef: afterRef,
+			}
+
+			formatted := FormatDatomEDN(datom)
+			assert.Contains(t, formatted, FormatCRDTOpEDN(tt.op))
+			assert.Contains(t, formatted, "[50 1]")
+
+			parsed, err := ParseDatomEDN(formatted)
+			require.NoError(t, err)
+
+			assert.Equal(t, datom.E.Hash(), parsed.E.Hash())
+			assert.Equal(t, datom.A, parsed.A)
+			assert.Equal(t, datom.V, parsed.V)
+			assert.Equal(t, datom.Tx, parsed.Tx)
+			assert.Equal(t, tt.op, parsed.Op)
+			assert.Equal(t, afterRef, parsed.AfterRef)
+		})
+	}
+}
+
+func TestParseDatomEDN_BackwardCompat(t *testing.T) {
+	// Old 4-element format should still parse, with Op=OpNone and zero AfterRef
+	validID := datalog.NewIdentity("test").L85()
+
+	t.Run("4-element with int tx (oldest format)", func(t *testing.T) {
+		input := `[#identity "` + validID + `" :test/attr "hello" 42]`
+		datom, err := ParseDatomEDN(input)
+		require.NoError(t, err)
+		assert.Equal(t, kw(":test/attr"), datom.A)
+		assert.Equal(t, "hello", datom.V)
+		assert.Equal(t, uint64(42), datom.Tx.Lamport)
+		assert.Equal(t, datalog.OpNone, datom.Op)
+		assert.Equal(t, datalog.ElementID{}, datom.AfterRef)
+	})
+
+	t.Run("4-element with vector tx", func(t *testing.T) {
+		input := `[#identity "` + validID + `" :test/attr "hello" [100 1]]`
+		datom, err := ParseDatomEDN(input)
+		require.NoError(t, err)
+		assert.Equal(t, datalog.ElementID{Lamport: 100, ReplicaID: 1}, datom.Tx)
+		assert.Equal(t, datalog.OpNone, datom.Op)
+		assert.Equal(t, datalog.ElementID{}, datom.AfterRef)
+	})
+
+	t.Run("5-element with op", func(t *testing.T) {
+		input := `[#identity "` + validID + `" :test/attr "hello" [100 1] :op/add]`
+		datom, err := ParseDatomEDN(input)
+		require.NoError(t, err)
+		assert.Equal(t, datalog.OpCRDTAdd, datom.Op)
+		assert.Equal(t, datalog.ElementID{}, datom.AfterRef)
+	})
+
+	t.Run("6-element with op and after-ref", func(t *testing.T) {
+		input := `[#identity "` + validID + `" :test/attr "hello" [100 1] :op/rga-insert [50 1]]`
+		datom, err := ParseDatomEDN(input)
+		require.NoError(t, err)
+		assert.Equal(t, datalog.OpRGAInsert, datom.Op)
+		assert.Equal(t, datalog.ElementID{Lamport: 50, ReplicaID: 1}, datom.AfterRef)
+	})
+}
+
+// =============================================================================
+// Integration Tests: Database Round-Trip with CRDT Ops
+// =============================================================================
+
+func TestDatabaseRoundTrip_CRDTOps(t *testing.T) {
+	// Create DB with cardinality-many schema
+	s, err := schema.NewBuilder().
+		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+		Build()
+	require.NoError(t, err)
+
+	db1, err := NewDatabaseWithSchema(t.TempDir(), s)
+	require.NoError(t, err)
+	defer db1.Close()
+
+	id := datalog.NewIdentity("entity1")
+	tags := kw(":person/tags")
+
+	// Add values
+	tx := db1.NewTransaction()
+	require.NoError(t, tx.Add(id, tags, "warrior"))
+	require.NoError(t, tx.Add(id, tags, "veteran"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Remove one
+	tx2 := db1.NewTransaction()
+	require.NoError(t, tx2.Remove(id, tags, "warrior"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Export
+	var buf bytes.Buffer
+	err = db1.Export(&buf)
+	require.NoError(t, err)
+
+	// Verify exported lines contain Op keywords
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	foundAdd := false
+	foundRemove := false
+	for _, line := range lines {
+		if strings.Contains(line, ":op/add") {
+			foundAdd = true
+		}
+		if strings.Contains(line, ":op/remove") {
+			foundRemove = true
+		}
+	}
+	assert.True(t, foundAdd, "expected :op/add in export")
+	assert.True(t, foundRemove, "expected :op/remove in export")
+
+	// Import into fresh DB with same schema
+	db2, err := NewDatabaseWithSchema(t.TempDir(), s)
+	require.NoError(t, err)
+	defer db2.Close()
+
+	err = db2.Import(strings.NewReader(buf.String()))
+	require.NoError(t, err)
+
+	// Export db2 and compare byte-for-byte
+	var buf2 bytes.Buffer
+	err = db2.Export(&buf2)
+	require.NoError(t, err)
+	assert.Equal(t, buf.String(), buf2.String())
+}
+
+func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
+	// Semantic verification: after export/import, CRDT resolution still works correctly.
+	// Tombstoned values must stay dead; live values must remain visible.
+	s, err := schema.NewBuilder().
+		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+		Build()
+	require.NoError(t, err)
+
+	db1, err := NewDatabaseWithSchema(t.TempDir(), s)
+	require.NoError(t, err)
+	defer db1.Close()
+
+	id := datalog.NewIdentity("entity1")
+	tags := kw(":person/tags")
+
+	// Add three tags
+	tx := db1.NewTransaction()
+	require.NoError(t, tx.Add(id, tags, "warrior"))
+	require.NoError(t, tx.Add(id, tags, "veteran"))
+	require.NoError(t, tx.Add(id, tags, "leader"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Remove "warrior"
+	tx2 := db1.NewTransaction()
+	require.NoError(t, tx2.Remove(id, tags, "warrior"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Query original: should see "veteran" and "leader" but not "warrior"
+	results1, err := db1.ExecuteQueryWithInputs(
+		`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id)
+	require.NoError(t, err)
+	tags1 := extractStringValues(results1)
+	assert.Contains(t, tags1, "veteran")
+	assert.Contains(t, tags1, "leader")
+	assert.NotContains(t, tags1, "warrior")
+
+	// Export → Import
+	var buf bytes.Buffer
+	err = db1.Export(&buf)
+	require.NoError(t, err)
+
+	db2, err := NewDatabaseWithSchema(t.TempDir(), s)
+	require.NoError(t, err)
+	defer db2.Close()
+
+	err = db2.Import(strings.NewReader(buf.String()))
+	require.NoError(t, err)
+
+	// Query imported DB: same semantic result — "warrior" must still be dead
+	results2, err := db2.ExecuteQueryWithInputs(
+		`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id)
+	require.NoError(t, err)
+	tags2 := extractStringValues(results2)
+	assert.Contains(t, tags2, "veteran")
+	assert.Contains(t, tags2, "leader")
+	assert.NotContains(t, tags2, "warrior")
+	assert.ElementsMatch(t, tags1, tags2)
+}
+
+func TestDatabaseRoundTrip_RGA(t *testing.T) {
+	// Round-trip RGA (cardinality-vector) with insert and tombstone ops
+	s, err := schema.NewBuilder().
+		Attribute(":doc/items").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db1, err := NewDatabaseWithSchema(t.TempDir(), s)
+	require.NoError(t, err)
+	defer db1.Close()
+
+	id := datalog.NewIdentity("doc1")
+	items := kw(":doc/items")
+
+	// Add items
+	tx := db1.NewTransaction()
+	require.NoError(t, tx.Add(id, items, "first"))
+	require.NoError(t, tx.Add(id, items, "second"))
+	require.NoError(t, tx.Add(id, items, "third"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Export
+	var buf bytes.Buffer
+	err = db1.Export(&buf)
+	require.NoError(t, err)
+
+	// Verify exported lines contain RGA ops and AfterRef
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	foundRGAInsert := false
+	for _, line := range lines {
+		if strings.Contains(line, ":op/rga-insert") {
+			foundRGAInsert = true
+		}
+	}
+	assert.True(t, foundRGAInsert, "expected :op/rga-insert in export")
+
+	// Import into fresh DB with same schema
+	db2, err := NewDatabaseWithSchema(t.TempDir(), s)
+	require.NoError(t, err)
+	defer db2.Close()
+
+	err = db2.Import(strings.NewReader(buf.String()))
+	require.NoError(t, err)
+
+	// Export db2 and compare byte-for-byte
+	var buf2 bytes.Buffer
+	err = db2.Export(&buf2)
+	require.NoError(t, err)
+	assert.Equal(t, buf.String(), buf2.String())
+}
+
+// =============================================================================
 // Helper functions
 // =============================================================================
+
+// extractStringValues extracts string values from query result tuples (first column)
+func extractStringValues(results [][]interface{}) []string {
+	var vals []string
+	for _, row := range results {
+		if len(row) > 0 {
+			if s, ok := row[0].(string); ok {
+				vals = append(vals, s)
+			}
+		}
+	}
+	return vals
+}
 
 // parseEDNValue parses a single EDN value and returns the node
 func parseEDNValue(s string) (*edn.Node, error) {
