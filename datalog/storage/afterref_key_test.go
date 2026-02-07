@@ -5,8 +5,8 @@ package storage
 // These tests verify that AfterRef is correctly encoded/decoded in index keys
 // when Op is OpRGAInsert or OpRGATombstone.
 //
-// Key format: [...][V][Tx↓][Op][AfterRef?]
-// AfterRef? = 16 bytes present only when Op.HasAfterRef() is true
+// Key format: [...][V][Tx↓][AfterRef?][Op]
+// Op is always the last byte. AfterRef? = 16 bytes before Op when Op.HasAfterRef()
 
 import (
 	"bytes"

@@ -7,7 +7,7 @@ package storage
 // SetEntry wrapper approach.
 //
 // Key changes tested:
-// 1. Op field is encoded in keys between V and Tx
+// 1. Op field is always the last byte of every key
 // 2. V stores raw values (not SetEntry bytes) - enables AVET lookups
 // 3. Add-wins resolution reads Op from datom.Op, not from SetEntry
 // 4. AVET index can now match raw value types for cardinality-many

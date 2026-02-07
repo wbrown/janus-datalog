@@ -33,17 +33,18 @@ func txFromDescending(encoded []byte) [16]byte {
 
 // EncodeKey creates a binary index key from a datom
 // Tx is encoded with bitwise NOT for descending sort order (highest Tx first).
-// Op is included between V and Tx to support CRDT semantics (add-wins for cardinality-many).
+// Op is always the LAST byte of every key. This enables deterministic decoding:
+// op = key[len(key)-1]. If Op.HasAfterRef(), AfterRef is the 16 bytes before Op.
 //
-// Key formats (Bug #5 fix: Tx before Op, AfterRef at end for RGA ops):
+// Key formats (Op always last — see docs/reference/OP_POSITION_PROOF.md):
 //
-//	EAVT: [prefix][E][A][type][value][Tx↓][Op][AfterRef?]  - groups by value for add-wins
-//	EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]  - first entry is current (E-primary CRDT)
-//	AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]  - by attribute (V before Tx)
-//	AETV: [prefix][A][E][Tx↓][type][value][Op][AfterRef?]  - first entry is current (A-primary CRDT)
-//	AVET: [prefix][A][type][value][E][Tx↓][Op][AfterRef?]  - value lookup
-//	VAET: [prefix][type][value][A][E][Tx↓][Op][AfterRef?]  - reverse refs
-//	TAEV: [prefix][Tx↓][A][E][type][value][Op][AfterRef?]  - transaction log
+//	EAVT: [prefix][E][A][type][value][Tx↓][AfterRef?][Op]  - groups by value for add-wins
+//	EATV: [prefix][E][A][Tx↓][type][value][AfterRef?][Op]  - first entry is current (E-primary CRDT)
+//	AEVT: [prefix][A][E][type][value][Tx↓][AfterRef?][Op]  - by attribute (V before Tx)
+//	AETV: [prefix][A][E][Tx↓][type][value][AfterRef?][Op]  - first entry is current (A-primary CRDT)
+//	AVET: [prefix][A][type][value][E][Tx↓][AfterRef?][Op]  - value lookup
+//	VAET: [prefix][type][value][A][E][Tx↓][AfterRef?][Op]  - reverse refs
+//	TAEV: [prefix][Tx↓][A][E][type][value][AfterRef?][Op]  - transaction log
 //
 // AfterRef? = 16 bytes present only if Op ∈ {OpRGAInsert(3), OpRGATombstone(4)}
 func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
@@ -58,70 +59,75 @@ func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 	vData := datalog.ValueBytes(sd.V)
 	vBytes := append([]byte{vType}, vData...)
 
-	// Op byte (0=none, 1=add, 2=remove)
-	opByte := []byte{byte(sd.Op)}
-
 	// Encode Tx with bitwise NOT for descending sort order
 	txDesc := txToDescending(sd.Tx)
 
-	// Build key based on index type using raw bytes
-	// Op is placed after V in all indices to preserve value grouping
+	// Build key based on index type using raw bytes.
+	// Op is always appended LAST, after AfterRef (if present).
+	// This eliminates the AfterRef length heuristic in DecodeKey.
 	switch index {
 	case EAVT:
-		// [E][A][V][Tx][Op][AfterRef?] - groups by value, Tx before Op for Bug #5 fix
-		key := concatBytes(prefix, sd.E[:], sd.A[:], vBytes, txDesc[:], opByte)
+		// [E][A][V][Tx↓][AfterRef?][Op]
+		key := concatBytes(prefix, sd.E[:], sd.A[:], vBytes, txDesc[:])
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
 			key = append(key, afterRefDesc[:]...)
 		}
+		key = append(key, byte(sd.Op))
 		return key
 	case EATV:
-		// [E][A][Tx][V][Op][AfterRef?] - for cardinality-one: first entry is current
-		key := concatBytes(prefix, sd.E[:], sd.A[:], txDesc[:], vBytes, opByte)
+		// [E][A][Tx↓][V][AfterRef?][Op]
+		key := concatBytes(prefix, sd.E[:], sd.A[:], txDesc[:], vBytes)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
 			key = append(key, afterRefDesc[:]...)
 		}
+		key = append(key, byte(sd.Op))
 		return key
 	case AEVT:
-		// [A][E][V][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op
-		key := concatBytes(prefix, sd.A[:], sd.E[:], vBytes, txDesc[:], opByte)
+		// [A][E][V][Tx↓][AfterRef?][Op]
+		key := concatBytes(prefix, sd.A[:], sd.E[:], vBytes, txDesc[:])
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
 			key = append(key, afterRefDesc[:]...)
 		}
+		key = append(key, byte(sd.Op))
 		return key
 	case AETV:
-		// [A][E][Tx][V][Op][AfterRef?] - A-primary CRDT: first entry is current (Tx descending)
-		key := concatBytes(prefix, sd.A[:], sd.E[:], txDesc[:], vBytes, opByte)
+		// [A][E][Tx↓][V][AfterRef?][Op]
+		key := concatBytes(prefix, sd.A[:], sd.E[:], txDesc[:], vBytes)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
 			key = append(key, afterRefDesc[:]...)
 		}
+		key = append(key, byte(sd.Op))
 		return key
 	case AVET:
-		// [A][V][E][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op, enables [A][V] prefix scans
-		key := concatBytes(prefix, sd.A[:], vBytes, sd.E[:], txDesc[:], opByte)
+		// [A][V][E][Tx↓][AfterRef?][Op]
+		key := concatBytes(prefix, sd.A[:], vBytes, sd.E[:], txDesc[:])
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
 			key = append(key, afterRefDesc[:]...)
 		}
+		key = append(key, byte(sd.Op))
 		return key
 	case VAET:
-		// [V][A][E][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op, enables [V][A] prefix scans
-		key := concatBytes(prefix, vBytes, sd.A[:], sd.E[:], txDesc[:], opByte)
+		// [V][A][E][Tx↓][AfterRef?][Op]
+		key := concatBytes(prefix, vBytes, sd.A[:], sd.E[:], txDesc[:])
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
 			key = append(key, afterRefDesc[:]...)
 		}
+		key = append(key, byte(sd.Op))
 		return key
 	case TAEV:
-		// [Tx][A][E][V][Op][AfterRef?]
-		key := concatBytes(prefix, txDesc[:], sd.A[:], sd.E[:], vBytes, opByte)
+		// [Tx↓][A][E][V][AfterRef?][Op]
+		key := concatBytes(prefix, txDesc[:], sd.A[:], sd.E[:], vBytes)
 		if sd.Op.HasAfterRef() {
 			afterRefDesc := txToDescending(sd.AfterRef)
 			key = append(key, afterRefDesc[:]...)
 		}
+		key = append(key, byte(sd.Op))
 		return key
 	default:
 		panic(fmt.Sprintf("unknown index type: %v", index))
@@ -132,18 +138,21 @@ func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 // Returns fixed-size arrays for entity, attr, tx, and op to avoid heap escape.
 // tx is 16 bytes: Lamport (8) + ReplicaID (8) = ElementID
 // Tx is stored with bitwise NOT for descending sort, reversed on decode.
-// Op is 1 byte: 0-4 (see CRDTOp constants).
+// Op is 1 byte: 0-4 (see CRDTOp constants). Always the LAST byte of every key.
 // AfterRef is optionally present for Op ∈ {OpRGAInsert(3), OpRGATombstone(4)}.
 //
-// Key formats (Bug #5 fix: Tx before Op, AfterRef at end for RGA ops):
+// Key formats (Op always last — see docs/reference/OP_POSITION_PROOF.md):
 //
-//	EAVT: [prefix][E][A][type][value][Tx↓][Op][AfterRef?]
-//	EATV: [prefix][E][A][Tx↓][type][value][Op][AfterRef?]
-//	AEVT: [prefix][A][E][type][value][Tx↓][Op][AfterRef?]
-//	AETV: [prefix][A][E][Tx↓][type][value][Op][AfterRef?]
-//	AVET: [prefix][A][type][value][E][Tx↓][Op][AfterRef?]
-//	VAET: [prefix][type][value][A][E][Tx↓][Op][AfterRef?]
-//	TAEV: [prefix][Tx↓][A][E][type][value][Op][AfterRef?]
+//	EAVT: [prefix][E][A][type][value][Tx↓][AfterRef?][Op]
+//	EATV: [prefix][E][A][Tx↓][type][value][AfterRef?][Op]
+//	AEVT: [prefix][A][E][type][value][Tx↓][AfterRef?][Op]
+//	AETV: [prefix][A][E][Tx↓][type][value][AfterRef?][Op]
+//	AVET: [prefix][A][type][value][E][Tx↓][AfterRef?][Op]
+//	VAET: [prefix][type][value][A][E][Tx↓][AfterRef?][Op]
+//	TAEV: [prefix][Tx↓][A][E][type][value][AfterRef?][Op]
+//
+// Decoding strategy: Op = key[len-1]. If Op.HasAfterRef(), AfterRef = key[len-17:len-1].
+// No heuristic needed. No ambiguity.
 func (e *BinaryKeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]byte, attr [32]byte, value []byte, tx [16]byte, op byte, afterRef [16]byte, err error) {
 	if len(key) < 1 {
 		return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("key too short")
@@ -157,205 +166,102 @@ func (e *BinaryKeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]by
 	const attrSize = 32
 	const txSize = 16 // ElementID: Lamport (8) + ReplicaID (8)
 	const opSize = 1
-
 	const afterRefSize = 16
+
+	// Op is always the last byte
+	op = key[len(key)-opSize]
+
+	// Determine tail size: AfterRef (16 bytes) + Op (1 byte), or just Op (1 byte)
+	tailSize := opSize
+	if datalog.CRDTOp(op).HasAfterRef() {
+		tailSize = afterRefSize + opSize
+		afterRef = txFromDescending(key[len(key)-opSize-afterRefSize : len(key)-opSize])
+	}
 
 	switch index {
 	case EAVT:
-		// [E][A][V][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op
-		minSize := entitySize + attrSize + txSize + opSize
+		// [E][A][V][Tx↓][AfterRef?][Op]
+		minSize := entitySize + attrSize + txSize + tailSize
 		if len(key) < minSize {
 			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("EAVT key too short")
 		}
 		copy(entity[:], key[0:entitySize])
 		copy(attr[:], key[entitySize:entitySize+attrSize])
-		// Check if AfterRef is present
-		hasAfterRef := len(key) >= minSize+afterRefSize
-		if hasAfterRef {
-			op = key[len(key)-afterRefSize-opSize]
-			if datalog.CRDTOp(op).HasAfterRef() {
-				vEnd := len(key) - afterRefSize - opSize - txSize
-				value = key[entitySize+attrSize : vEnd]
-				tx = txFromDescending(key[vEnd : vEnd+txSize])
-				afterRef = txFromDescending(key[len(key)-afterRefSize:])
-			} else {
-				hasAfterRef = false
-			}
-		}
-		if !hasAfterRef {
-			op = key[len(key)-opSize]
-			vEnd := len(key) - opSize - txSize
-			value = key[entitySize+attrSize : vEnd]
-			tx = txFromDescending(key[vEnd : vEnd+txSize])
-		}
+		txStart := len(key) - tailSize - txSize
+		tx = txFromDescending(key[txStart : txStart+txSize])
+		value = key[entitySize+attrSize : txStart]
 
 	case EATV:
-		// [E][A][Tx][V][Op][AfterRef?]
-		minSize := entitySize + attrSize + txSize + opSize
+		// [E][A][Tx↓][V][AfterRef?][Op]
+		minSize := entitySize + attrSize + txSize + tailSize
 		if len(key) < minSize {
 			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("EATV key too short")
 		}
 		copy(entity[:], key[0:entitySize])
 		copy(attr[:], key[entitySize:entitySize+attrSize])
 		tx = txFromDescending(key[entitySize+attrSize : entitySize+attrSize+txSize])
-		// Check if AfterRef is present
-		hasAfterRef := len(key) >= minSize+afterRefSize
-		if hasAfterRef {
-			op = key[len(key)-afterRefSize-opSize]
-			if datalog.CRDTOp(op).HasAfterRef() {
-				vStart := entitySize + attrSize + txSize
-				value = key[vStart : len(key)-afterRefSize-opSize]
-				afterRef = txFromDescending(key[len(key)-afterRefSize:])
-			} else {
-				hasAfterRef = false
-			}
-		}
-		if !hasAfterRef {
-			vStart := entitySize + attrSize + txSize
-			value = key[vStart : len(key)-opSize]
-			op = key[len(key)-opSize]
-		}
+		vStart := entitySize + attrSize + txSize
+		value = key[vStart : len(key)-tailSize]
 
 	case AEVT:
-		// [A][E][V][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op
-		minSize := attrSize + entitySize + txSize + opSize
+		// [A][E][V][Tx↓][AfterRef?][Op]
+		minSize := attrSize + entitySize + txSize + tailSize
 		if len(key) < minSize {
 			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("AEVT key too short")
 		}
 		copy(attr[:], key[0:attrSize])
 		copy(entity[:], key[attrSize:attrSize+entitySize])
-		// Check if AfterRef is present
-		hasAfterRef := len(key) >= minSize+afterRefSize
-		if hasAfterRef {
-			op = key[len(key)-afterRefSize-opSize]
-			if datalog.CRDTOp(op).HasAfterRef() {
-				vEnd := len(key) - afterRefSize - opSize - txSize
-				value = key[attrSize+entitySize : vEnd]
-				tx = txFromDescending(key[vEnd : vEnd+txSize])
-				afterRef = txFromDescending(key[len(key)-afterRefSize:])
-			} else {
-				hasAfterRef = false
-			}
-		}
-		if !hasAfterRef {
-			op = key[len(key)-opSize]
-			vEnd := len(key) - opSize - txSize
-			value = key[attrSize+entitySize : vEnd]
-			tx = txFromDescending(key[vEnd : vEnd+txSize])
-		}
+		txStart := len(key) - tailSize - txSize
+		tx = txFromDescending(key[txStart : txStart+txSize])
+		value = key[attrSize+entitySize : txStart]
 
 	case AETV:
-		// [A][E][Tx][V][Op][AfterRef?] - A-primary CRDT: first entry is current (Tx descending)
-		minSize := attrSize + entitySize + txSize + opSize
+		// [A][E][Tx↓][V][AfterRef?][Op]
+		minSize := attrSize + entitySize + txSize + tailSize
 		if len(key) < minSize {
 			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("AETV key too short")
 		}
 		copy(attr[:], key[0:attrSize])
 		copy(entity[:], key[attrSize:attrSize+entitySize])
 		tx = txFromDescending(key[attrSize+entitySize : attrSize+entitySize+txSize])
-		// Check if AfterRef is present
-		hasAfterRef := len(key) >= minSize+afterRefSize
-		if hasAfterRef {
-			op = key[len(key)-afterRefSize-opSize]
-			if datalog.CRDTOp(op).HasAfterRef() {
-				vStart := attrSize + entitySize + txSize
-				value = key[vStart : len(key)-afterRefSize-opSize]
-				afterRef = txFromDescending(key[len(key)-afterRefSize:])
-			} else {
-				hasAfterRef = false
-			}
-		}
-		if !hasAfterRef {
-			vStart := attrSize + entitySize + txSize
-			value = key[vStart : len(key)-opSize]
-			op = key[len(key)-opSize]
-		}
+		vStart := attrSize + entitySize + txSize
+		value = key[vStart : len(key)-tailSize]
 
 	case AVET:
-		// [A][V][E][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op
-		minSize := attrSize + entitySize + txSize + opSize
+		// [A][V][E][Tx↓][AfterRef?][Op]
+		minSize := attrSize + entitySize + txSize + tailSize
 		if len(key) < minSize {
 			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("AVET key too short")
 		}
 		copy(attr[:], key[0:attrSize])
-		// Check if AfterRef is present
-		hasAfterRef := len(key) >= minSize+afterRefSize
-		if hasAfterRef {
-			op = key[len(key)-afterRefSize-opSize]
-			if datalog.CRDTOp(op).HasAfterRef() {
-				eStart := len(key) - afterRefSize - opSize - txSize - entitySize
-				copy(entity[:], key[eStart:eStart+entitySize])
-				tx = txFromDescending(key[eStart+entitySize : eStart+entitySize+txSize])
-				value = key[attrSize:eStart]
-				afterRef = txFromDescending(key[len(key)-afterRefSize:])
-			} else {
-				hasAfterRef = false
-			}
-		}
-		if !hasAfterRef {
-			op = key[len(key)-opSize]
-			eStart := len(key) - opSize - txSize - entitySize
-			copy(entity[:], key[eStart:eStart+entitySize])
-			tx = txFromDescending(key[eStart+entitySize : eStart+entitySize+txSize])
-			value = key[attrSize:eStart]
-		}
+		eStart := len(key) - tailSize - txSize - entitySize
+		copy(entity[:], key[eStart:eStart+entitySize])
+		tx = txFromDescending(key[eStart+entitySize : eStart+entitySize+txSize])
+		value = key[attrSize:eStart]
 
 	case VAET:
-		// [V][A][E][Tx][Op][AfterRef?] - Bug #5 fix: Tx before Op
-		minSize := attrSize + entitySize + txSize + opSize
+		// [V][A][E][Tx↓][AfterRef?][Op]
+		minSize := attrSize + entitySize + txSize + tailSize
 		if len(key) < minSize {
 			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("VAET key too short")
 		}
-		// Check if AfterRef is present
-		hasAfterRef := len(key) >= minSize+afterRefSize
-		if hasAfterRef {
-			op = key[len(key)-afterRefSize-opSize]
-			if datalog.CRDTOp(op).HasAfterRef() {
-				eStart := len(key) - afterRefSize - opSize - txSize - entitySize
-				aStart := eStart - attrSize
-				copy(entity[:], key[eStart:eStart+entitySize])
-				copy(attr[:], key[aStart:aStart+attrSize])
-				tx = txFromDescending(key[eStart+entitySize : eStart+entitySize+txSize])
-				value = key[0:aStart]
-				afterRef = txFromDescending(key[len(key)-afterRefSize:])
-			} else {
-				hasAfterRef = false
-			}
-		}
-		if !hasAfterRef {
-			op = key[len(key)-opSize]
-			eStart := len(key) - opSize - txSize - entitySize
-			aStart := eStart - attrSize
-			copy(entity[:], key[eStart:eStart+entitySize])
-			copy(attr[:], key[aStart:aStart+attrSize])
-			tx = txFromDescending(key[eStart+entitySize : eStart+entitySize+txSize])
-			value = key[0:aStart]
-		}
+		eStart := len(key) - tailSize - txSize - entitySize
+		aStart := eStart - attrSize
+		copy(entity[:], key[eStart:eStart+entitySize])
+		copy(attr[:], key[aStart:aStart+attrSize])
+		tx = txFromDescending(key[eStart+entitySize : eStart+entitySize+txSize])
+		value = key[0:aStart]
 
 	case TAEV:
-		// [Tx][A][E][V][Op][AfterRef?]
-		minSize := txSize + attrSize + entitySize + opSize
+		// [Tx↓][A][E][V][AfterRef?][Op]
+		minSize := txSize + attrSize + entitySize + tailSize
 		if len(key) < minSize {
 			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("TAEV key too short")
 		}
 		tx = txFromDescending(key[0:txSize])
 		copy(attr[:], key[txSize:txSize+attrSize])
 		copy(entity[:], key[txSize+attrSize:txSize+attrSize+entitySize])
-		// Check if AfterRef is present
-		hasAfterRef := len(key) >= minSize+afterRefSize
-		if hasAfterRef {
-			op = key[len(key)-afterRefSize-opSize]
-			if datalog.CRDTOp(op).HasAfterRef() {
-				value = key[txSize+attrSize+entitySize : len(key)-afterRefSize-opSize]
-				afterRef = txFromDescending(key[len(key)-afterRefSize:])
-			} else {
-				hasAfterRef = false
-			}
-		}
-		if !hasAfterRef {
-			value = key[txSize+attrSize+entitySize : len(key)-opSize]
-			op = key[len(key)-opSize]
-		}
+		value = key[txSize+attrSize+entitySize : len(key)-tailSize]
 
 	default:
 		return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("unknown index type: %v", index)
