@@ -2582,6 +2582,10 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 //	var person Person
 //	err := db.PullInto(entityID, &person)
 func (d *Database) PullInto(entityID datalog.Identity, v interface{}) error {
+	if entityID == nil {
+		return fmt.Errorf("PullInto: entity ID is nil")
+	}
+
 	// Generate pull pattern from struct
 	patternStr := dlreflect.GeneratePullPattern(v, d.Schema())
 	if patternStr == "" {

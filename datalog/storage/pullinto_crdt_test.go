@@ -357,3 +357,32 @@ func TestPullInto_AnyField(t *testing.T) {
 	assert.True(t, ok, "Age should be int64, got %T", person.Age)
 	assert.Equal(t, int64(30), age)
 }
+
+// TestPullInto_NilEntity_NoPanic verifies that PullInto with a nil entity ID
+// returns an error instead of panicking.
+//
+// See: docs/bugs/BUG_PULLINTO_NIL_ENTITY_PANIC.md
+func TestPullInto_NilEntity_NoPanic(t *testing.T) {
+	db, cleanup := createPullIntoCRDTTestDB(t)
+	defer cleanup()
+
+	s, err := schema.NewBuilder().
+		Attribute(":entity/name").Type(schema.TypeString).One().Add().
+		Build()
+	require.NoError(t, err)
+	db.SetSchema(s)
+
+	// Write some data so the database isn't empty
+	id := datalog.NewIdentity("test")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(id, datalog.NewKeyword(":entity/name"), "Test"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// PullInto with nil entity must not panic
+	var result struct {
+		Name string `datalog:"entity/name"`
+	}
+	err = db.PullInto(nil, &result)
+	assert.Error(t, err, "PullInto(nil) should return an error, not panic")
+}

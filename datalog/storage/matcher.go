@@ -787,6 +787,10 @@ func indexName(idx IndexType) string {
 // For cardinality-one, returns the current value (highest Tx via LWW).
 // For cardinality-many, returns one of the current set members.
 func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+	if entity == nil {
+		return nil, false
+	}
+
 	// Convert to storage format
 	eBytes := entity.Bytes()
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
@@ -934,6 +938,10 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 // LookupAllAttributes retrieves all values of a cardinality-many attribute for an entity.
 // Returns all matching values, or empty slice if none found.
 func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) []interface{} {
+	if entity == nil {
+		return nil
+	}
+
 	// Convert to storage format
 	eBytes := entity.Bytes()
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
