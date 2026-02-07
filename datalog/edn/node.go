@@ -36,13 +36,16 @@ type Node struct {
 	Tagged *Node  // For tagged values
 }
 
-// String returns a string representation of the node
+// String returns a valid EDN representation of the node.
+// The output can be parsed back by edn.Parse() for round-trip fidelity.
 func (n Node) String() string {
 	switch n.Type {
 	case NodeNil:
 		return "nil"
-	case NodeBool, NodeInt, NodeFloat, NodeString, NodeChar, NodeSymbol, NodeKeyword:
+	case NodeBool, NodeInt, NodeFloat, NodeChar, NodeSymbol, NodeKeyword:
 		return n.Value
+	case NodeString:
+		return ednQuoteString(n.Value)
 	case NodeList:
 		parts := make([]string, len(n.Nodes))
 		for i, node := range n.Nodes {
@@ -130,4 +133,28 @@ func (n Node) IsNil() bool {
 // IsCollection returns true if the node is a collection type
 func (n Node) IsCollection() bool {
 	return n.Type == NodeList || n.Type == NodeVector || n.Type == NodeMap || n.Type == NodeSet
+}
+
+// ednQuoteString wraps a raw string value in EDN double-quotes with proper escaping.
+func ednQuoteString(s string) string {
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			sb.WriteString(`\"`)
+		case '\\':
+			sb.WriteString(`\\`)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\r`)
+		case '\t':
+			sb.WriteString(`\t`)
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String()
 }

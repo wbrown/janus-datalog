@@ -120,115 +120,176 @@ func (d *Database) Import(r io.Reader) error {
 	return nil
 }
 
-// FormatDatomEDN formats a single datom as an EDN vector string.
-// The format is: [#identity "L85" :attribute value tx-id]
-func FormatDatomEDN(d *datalog.Datom) string {
-	var sb strings.Builder
-	sb.WriteString("[")
-	sb.WriteString(FormatIdentityEDN(d.E))
-	sb.WriteString(" ")
-	sb.WriteString(d.A.String())
-	sb.WriteString(" ")
-	sb.WriteString(FormatValueEDN(d.V))
-	sb.WriteString(" ")
-	// Format ElementID as [lamport replica] tuple for EDN
-	sb.WriteString(fmt.Sprintf("[%d %d]", d.Tx.Lamport, d.Tx.ReplicaID))
-	sb.WriteString("]")
-	return sb.String()
-}
-
-// FormatIdentityEDN formats an entity Identity as EDN.
-// Always uses L85 encoding for consistency.
-func FormatIdentityEDN(id datalog.Identity) string {
-	if id == nil {
-		return "nil"
+// FormatCRDTOpEDN formats a CRDTOp as an EDN keyword string.
+func FormatCRDTOpEDN(op datalog.CRDTOp) string {
+	switch op {
+	case datalog.OpNone:
+		return ":op/none"
+	case datalog.OpCRDTAdd:
+		return ":op/add"
+	case datalog.OpCRDTRemove:
+		return ":op/remove"
+	case datalog.OpRGAInsert:
+		return ":op/rga-insert"
+	case datalog.OpRGATombstone:
+		return ":op/rga-tombstone"
+	default:
+		return fmt.Sprintf(":op/unknown-%d", op)
 	}
-	return fmt.Sprintf("#identity %s", formatStringEDN(id.L85()))
 }
 
-// FormatValueEDN formats a value as EDN with proper type representation.
-func FormatValueEDN(v interface{}) string {
+// ParseCRDTOpNode parses a CRDTOp from an EDN keyword node.
+func ParseCRDTOpNode(node *edn.Node) (datalog.CRDTOp, error) {
+	if node.Type != edn.NodeKeyword {
+		return datalog.OpNone, fmt.Errorf("expected keyword for op, got %s", nodeTypeName(node.Type))
+	}
+	switch node.Value {
+	case ":op/none":
+		return datalog.OpNone, nil
+	case ":op/add":
+		return datalog.OpCRDTAdd, nil
+	case ":op/remove":
+		return datalog.OpCRDTRemove, nil
+	case ":op/rga-insert":
+		return datalog.OpRGAInsert, nil
+	case ":op/rga-tombstone":
+		return datalog.OpRGATombstone, nil
+	default:
+		return datalog.OpNone, fmt.Errorf("unknown op keyword: %s", node.Value)
+	}
+}
+
+// FormatDatomEDN formats a single datom as an EDN vector string.
+// The format is: [#identity "L85" :attribute value tx-id op [after-ref]]
+func FormatDatomEDN(d *datalog.Datom) string {
+	nodes := []edn.Node{
+		IdentityNode(d.E),
+		{Type: edn.NodeKeyword, Value: d.A.String()},
+		ValueNode(d.V),
+		ElementIDNode(d.Tx),
+		{Type: edn.NodeKeyword, Value: FormatCRDTOpEDN(d.Op)},
+	}
+	if d.Op.HasAfterRef() {
+		nodes = append(nodes, ElementIDNode(d.AfterRef))
+	}
+	vec := edn.Node{Type: edn.NodeVector, Nodes: nodes}
+	return vec.String()
+}
+
+// IdentityNode builds an EDN node for an entity Identity.
+func IdentityNode(id datalog.Identity) edn.Node {
+	if id == nil {
+		return edn.Node{Type: edn.NodeNil}
+	}
+	return edn.Node{
+		Type: edn.NodeTagged,
+		Tag:  "identity",
+		Tagged: &edn.Node{
+			Type:  edn.NodeString,
+			Value: id.L85(),
+		},
+	}
+}
+
+// FormatIdentityEDN formats an entity Identity as EDN string.
+func FormatIdentityEDN(id datalog.Identity) string {
+	return IdentityNode(id).String()
+}
+
+// ElementIDNode builds an EDN [lamport replica] vector node.
+func ElementIDNode(eid datalog.ElementID) edn.Node {
+	return edn.Node{
+		Type: edn.NodeVector,
+		Nodes: []edn.Node{
+			{Type: edn.NodeInt, Value: strconv.FormatUint(eid.Lamport, 10)},
+			{Type: edn.NodeInt, Value: strconv.FormatUint(eid.ReplicaID, 10)},
+		},
+	}
+}
+
+// ValueNode builds an EDN node for a value.
+func ValueNode(v interface{}) edn.Node {
 	if v == nil {
-		return "nil"
+		return edn.Node{Type: edn.NodeNil}
 	}
 
 	switch val := v.(type) {
 	case string:
-		return formatStringEDN(val)
+		return edn.Node{Type: edn.NodeString, Value: val}
 
 	case int64:
-		return strconv.FormatInt(val, 10)
+		return edn.Node{Type: edn.NodeInt, Value: strconv.FormatInt(val, 10)}
 
 	case int:
-		return strconv.Itoa(val)
+		return edn.Node{Type: edn.NodeInt, Value: strconv.Itoa(val)}
 
 	case float64:
-		// Use %g for compact representation, but ensure it has a decimal point
 		s := strconv.FormatFloat(val, 'g', -1, 64)
 		if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
 			s += ".0"
 		}
-		return s
+		return edn.Node{Type: edn.NodeFloat, Value: s}
 
 	case bool:
 		if val {
-			return "true"
+			return edn.Node{Type: edn.NodeBool, Value: "true"}
 		}
-		return "false"
+		return edn.Node{Type: edn.NodeBool, Value: "false"}
 
 	case time.Time:
-		// EDN instant format - always UTC
-		return fmt.Sprintf("#inst %s", formatStringEDN(val.UTC().Format(time.RFC3339Nano)))
+		return edn.Node{
+			Type: edn.NodeTagged,
+			Tag:  "inst",
+			Tagged: &edn.Node{
+				Type:  edn.NodeString,
+				Value: val.UTC().Format(time.RFC3339Nano),
+			},
+		}
 
 	case []byte:
-		// L85 encoded bytes
-		if len(val) == 0 {
-			return `#bytes ""`
+		encoded := ""
+		if len(val) > 0 {
+			encoded = codec.EncodeL85(val)
 		}
-		return fmt.Sprintf("#bytes %s", formatStringEDN(codec.EncodeL85(val)))
+		return edn.Node{
+			Type: edn.NodeTagged,
+			Tag:  "bytes",
+			Tagged: &edn.Node{
+				Type:  edn.NodeString,
+				Value: encoded,
+			},
+		}
 
 	case datalog.Identity:
-		// Entity reference - use #identity tag
-		return FormatIdentityEDN(val)
+		return IdentityNode(val)
 
 	case datalog.Keyword:
-		return val.String()
+		return edn.Node{Type: edn.NodeKeyword, Value: val.String()}
 
 	case datalog.Symbol:
-		return val.String()
+		return edn.Node{Type: edn.NodeSymbol, Value: val.String()}
 
 	case datalog.ElementID:
-		// ElementID as #eid [lamport replica-id]
-		return fmt.Sprintf("#eid [%d %d]", val.Lamport, val.ReplicaID)
+		return edn.Node{
+			Type: edn.NodeTagged,
+			Tag:  "eid",
+			Tagged: &edn.Node{
+				Type: edn.NodeVector,
+				Nodes: []edn.Node{
+					{Type: edn.NodeInt, Value: strconv.FormatUint(val.Lamport, 10)},
+					{Type: edn.NodeInt, Value: strconv.FormatUint(val.ReplicaID, 10)},
+				},
+			},
+		}
 
 	default:
-		// Fallback to string representation
-		return formatStringEDN(fmt.Sprintf("%v", val))
+		return edn.Node{Type: edn.NodeString, Value: fmt.Sprintf("%v", val)}
 	}
 }
 
-// formatStringEDN formats a string with proper EDN escaping.
-func formatStringEDN(s string) string {
-	var sb strings.Builder
-	sb.WriteString("\"")
-	for _, r := range s {
-		switch r {
-		case '"':
-			sb.WriteString("\\\"")
-		case '\\':
-			sb.WriteString("\\\\")
-		case '\n':
-			sb.WriteString("\\n")
-		case '\r':
-			sb.WriteString("\\r")
-		case '\t':
-			sb.WriteString("\\t")
-		default:
-			sb.WriteRune(r)
-		}
-	}
-	sb.WriteString("\"")
-	return sb.String()
+// FormatValueEDN formats a value as EDN string.
+func FormatValueEDN(v interface{}) string {
+	return ValueNode(v).String()
 }
 
 // ParseDatomEDN parses a single EDN vector into a Datom.
@@ -244,8 +305,9 @@ func ParseDatomEDN(s string) (*datalog.Datom, error) {
 		return nil, fmt.Errorf("expected vector, got %s", nodeTypeName(node.Type))
 	}
 
-	if len(node.Nodes) != 4 {
-		return nil, fmt.Errorf("expected 4 elements [e a v tx], got %d", len(node.Nodes))
+	nElems := len(node.Nodes)
+	if nElems < 4 || nElems > 6 {
+		return nil, fmt.Errorf("expected 4-6 elements [e a v tx [op [after-ref]]], got %d", nElems)
 	}
 
 	// Parse entity
@@ -290,11 +352,41 @@ func ParseDatomEDN(s string) (*datalog.Datom, error) {
 		elemID = datalog.ElementID{Lamport: txID, ReplicaID: 0}
 	}
 
+	// Parse Op (5th element, optional for backward compatibility)
+	var op datalog.CRDTOp
+	if nElems >= 5 {
+		parsedOp, err := ParseCRDTOpNode(&node.Nodes[4])
+		if err != nil {
+			return nil, fmt.Errorf("invalid op: %w", err)
+		}
+		op = parsedOp
+	}
+
+	// Parse AfterRef (6th element, only present when Op requires it)
+	var afterRef datalog.ElementID
+	if nElems >= 6 {
+		arNode := &node.Nodes[5]
+		if arNode.Type != edn.NodeVector || len(arNode.Nodes) != 2 {
+			return nil, fmt.Errorf("invalid after-ref: expected [lamport replica] vector")
+		}
+		lamport, err := parseUintNode(&arNode.Nodes[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid after-ref lamport: %w", err)
+		}
+		replica, err := parseUintNode(&arNode.Nodes[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid after-ref replica: %w", err)
+		}
+		afterRef = datalog.ElementID{Lamport: lamport, ReplicaID: replica}
+	}
+
 	return &datalog.Datom{
-		E:  entity,
-		A:  attr,
-		V:  value,
-		Tx: elemID,
+		E:        entity,
+		A:        attr,
+		V:        value,
+		Tx:       elemID,
+		Op:       op,
+		AfterRef: afterRef,
 	}, nil
 }
 
