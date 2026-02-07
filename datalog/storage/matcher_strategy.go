@@ -144,9 +144,9 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 					Type:            SinglePositionReuse,
 					Position:        position,
 					Index:           indexType,
-					NeedsValidation: true,           // Assume cardinality-one; caller clears for many
-					ValidationIndex: EATV,           // Point lookup on (E, A)
-					BoundA:          aConst.Value,   // For validation lookups
+					NeedsValidation: true,         // Assume cardinality-one; caller clears for many
+					ValidationIndex: EATV,         // Point lookup on (E, A)
+					BoundA:          aConst.Value, // For validation lookups
 				}, bindingRel
 			} else {
 				// A is variable: use VAET for V-primary scan
@@ -157,7 +157,7 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 					Type:            SinglePositionReuse,
 					Position:        position,
 					Index:           indexType,
-					NeedsValidation: true,   // Must validate since A varies
+					NeedsValidation: true, // Must validate since A varies
 					ValidationIndex: EATV,
 				}, bindingRel
 			}

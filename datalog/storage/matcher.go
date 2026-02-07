@@ -569,10 +569,10 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 			}
 
 			// Only E bound - use EATV for CRDT resolution
-		// EATV: E → A → Tx↓ → V - first entry for each (E, A) is LWW winner
-		// This is required for CRDTResolvingIterator's "first entry wins" logic
-		start, end := encoder.EncodePrefixRange(EATV, eBytes[:])
-		return EATV, start, end
+			// EATV: E → A → Tx↓ → V - first entry for each (E, A) is LWW winner
+			// This is required for CRDTResolvingIterator's "first entry wins" logic
+			start, end := encoder.EncodePrefixRange(EATV, eBytes[:])
+			return EATV, start, end
 		}
 	} else if a != nil {
 		// A is bound but not E

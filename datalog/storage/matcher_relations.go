@@ -559,10 +559,10 @@ func (m *BadgerMatcher) matchWithVValidation(
 // then post-validates CardinalityOne emissions with EATV point lookup.
 //
 // Architecture (per proof doc):
-// 1. VAET scan wrapped with CRDTResolvingIterator
-// 2. CRDTResolvingIterator handles: group deduplication (O(1) space),
-//    add-wins with same-Tx tiebreaking, RGA for vectors
-// 3. Only CardinalityOne needs post-validation (LWW winner may have different V)
+//  1. VAET scan wrapped with CRDTResolvingIterator
+//  2. CRDTResolvingIterator handles: group deduplication (O(1) space),
+//     add-wins with same-Tx tiebreaking, RGA for vectors
+//  3. Only CardinalityOne needs post-validation (LWW winner may have different V)
 type validatingVBoundIterator struct {
 	matcher     *BadgerMatcher
 	pattern     *query.DataPattern

@@ -21,10 +21,10 @@ type CRDTResolvingIterator struct {
 	txID   uint64 // For as-of queries: only consider datoms with Tx.Lamport <= txID
 
 	// Current (E, A) group tracking
-	currentE  datalog.Identity
-	currentA  datalog.Keyword
-	hasGroup  bool
-	card      schema.Cardinality
+	currentE datalog.Identity
+	currentA datalog.Keyword
+	hasGroup bool
+	card     schema.Cardinality
 
 	// CardinalityMany: streaming state (no buffering!)
 	// Because we iterate Tx descending:
