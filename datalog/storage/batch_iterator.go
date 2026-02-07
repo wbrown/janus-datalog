@@ -256,11 +256,8 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 	}
 
 	// Wrap with CRDT resolution to ensure we only see resolved values
-	if it.matcher.schema != nil {
-		it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
-	} else {
-		it.storageIter = rawIter
-	}
+	// Always applied: CRDTResolvingIterator handles nil schema correctly
+	it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
 	it.totalScans++
 
 	// Build a map of binding values for quick lookup

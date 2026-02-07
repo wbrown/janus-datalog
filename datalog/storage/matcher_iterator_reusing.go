@@ -70,11 +70,8 @@ func (it *reusingIterator) Next() bool {
 		}
 
 		// Wrap with CRDT resolution to ensure we only see resolved values
-		if it.matcher.schema != nil {
-			it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
-		} else {
-			it.storageIter = rawIter
-		}
+		// Always applied: CRDTResolvingIterator handles nil schema correctly
+		it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
 
 		// Reset to first tuple for actual processing
 		it.updateBoundPattern(firstTuple)

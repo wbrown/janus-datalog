@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // TestExecuteQuery tests basic query execution without parameters
@@ -190,6 +191,20 @@ func TestExecuteQueryWithCollectionInput(t *testing.T) {
 		t.Fatalf("Failed to create database: %v", err)
 	}
 	defer db.Close()
+
+	// :person/likes is CardinalityMany — multiple values per entity
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/name"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityOne,
+	})
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/likes"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityMany,
+	})
+	db.SetSchema(s)
 
 	// Add test data
 	tx := db.NewTransaction()

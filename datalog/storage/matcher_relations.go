@@ -377,13 +377,10 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			return nil, fmt.Errorf("key mask scan failed: %w", err)
 		}
 
-		// Wrap with CRDT resolution when schema exists
-		// This ensures per-(E, A) group resolution regardless of bound/unbound status
-		if m.schema != nil {
-			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
-		} else {
-			maskIter.storageIter = rawStorageIter
-		}
+		// Wrap with CRDT resolution for per-(E, A) group resolution
+		// Always applied: CRDTResolvingIterator handles nil schema correctly
+		// (defaults to CardinalityUnknown → add-wins semantics)
+		maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
 		iter = maskIter
 	} else {
 		// Use regular iterator
@@ -410,14 +407,10 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
-		// Wrap with CRDT resolution when schema exists
-		// This ensures per-(E, A) group resolution for ALL patterns, not just [?e :attr ?v]
-		// BUG FIX: Previously only wrapped when e == nil && a != nil, missing patterns like [?e ?a ?v]
-		if m.schema != nil {
-			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
-		} else {
-			regularIter.storageIter = rawStorageIter
-		}
+		// Wrap with CRDT resolution for per-(E, A) group resolution
+		// Always applied: CRDTResolvingIterator handles nil schema correctly
+		// (defaults to CardinalityUnknown → add-wins semantics)
+		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
 		iter = regularIter
 	}
 

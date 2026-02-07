@@ -133,11 +133,15 @@ func (it *CRDTResolvingIterator) Next() bool {
 		switch it.card {
 		case schema.CardinalityOne:
 			if isNewGroup {
-				// First entry for this (E, A) - emit immediately
+				if datom.Op == datalog.OpCRDTRemove {
+					// Value was retracted — attribute doesn't exist. Skip group.
+					continue
+				}
+				// First entry for this (E, A) — emit (LWW winner)
 				it.currentDatom = datom
 				return true
 			}
-			// Same (E, A) - skip (we already emitted the winner)
+			// Same (E, A) — skip (already emitted or skipped the winner)
 			continue
 
 		case schema.CardinalityMany:
@@ -152,11 +156,12 @@ func (it *CRDTResolvingIterator) Next() bool {
 			continue
 
 		case schema.CardinalityUnknown:
-			// No schema definition - use add-wins (same as CardinalityMany)
-			// This respects explicit Remove() operations while not requiring schema
-			// See INDEX_SELECTION_PROOF.md Theorem 3b
-			if result := it.processAddWins(datom); result != nil {
-				it.currentDatom = result
+			// Default is CardinalityOne (LWW) — same resolution as CardinalityOne
+			if isNewGroup {
+				if datom.Op == datalog.OpCRDTRemove {
+					continue
+				}
+				it.currentDatom = datom
 				return true
 			}
 			continue
@@ -172,7 +177,7 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 
 	// Determine cardinality from schema
 	// If no schema definition exists for this attribute, use CardinalityUnknown
-	// which uses add-wins semantics (same as CardinalityMany)
+	// which defaults to CardinalityOne (LWW) semantics
 	it.card = schema.CardinalityUnknown
 	if it.schema != nil {
 		if attr := it.schema.GetAttribute(datom.A); attr != nil {
@@ -190,9 +195,7 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	case schema.CardinalityVector:
 		it.rgaElements = it.rgaElements[:0]
 	case schema.CardinalityUnknown:
-		// Same as CardinalityMany - use add-wins
-		it.emitted = make(map[any]bool)
-		it.tombstones = make(map[any]uint64)
+		// Default is CardinalityOne (LWW) — no state needed
 	}
 }
 
