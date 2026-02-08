@@ -370,3 +370,357 @@ func TestCardinalityOneRemove_UnboundQuery(t *testing.T) {
 	unboundResults := queryUnboundForEA(t, db, e, a)
 	assert.Len(t, unboundResults, 0, "unbound query should not find removed attribute")
 }
+
+// =============================================================================
+// P1×S7: Streaming (:in-bound E) with Set() + Remove
+// =============================================================================
+
+func TestCardinalityOneRemove_SetThenRemove(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	// Set (not Add)
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	// Remove
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	results := queryBoundValue(t, db, e, a)
+	assert.Len(t, results, 0, "bound query: attribute should not exist after Set then Remove")
+}
+
+// =============================================================================
+// P2×S2-S7: Streaming (unbound E) — full scenario coverage
+// =============================================================================
+
+func TestCardinalityOneRemove_Unbound_AfterOverwrite(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Add(e, a, "Bob"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	tx3 := db.NewTransaction()
+	require.NoError(t, tx3.Remove(e, a, "Bob"))
+	_, err = tx3.Commit()
+	require.NoError(t, err)
+
+	results := queryUnboundForEA(t, db, e, a)
+	assert.Len(t, results, 0, "unbound: attribute should not exist after overwrite then Remove")
+}
+
+func TestCardinalityOneRemove_Unbound_ThenReAdd(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	tx3 := db.NewTransaction()
+	require.NoError(t, tx3.Add(e, a, "Bob"))
+	_, err = tx3.Commit()
+	require.NoError(t, err)
+
+	results := queryUnboundForEA(t, db, e, a)
+	require.Len(t, results, 1, "unbound: attribute should exist after re-Add")
+	assert.Equal(t, "Bob", results[0][2])
+}
+
+func TestCardinalityOneRemove_Unbound_BeforeAnyAdd(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Remove(e, a, "phantom"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Add(e, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	results := queryUnboundForEA(t, db, e, a)
+	require.Len(t, results, 1, "unbound: Add should win over earlier Remove")
+	assert.Equal(t, "Alice", results[0][2])
+}
+
+func TestCardinalityOneRemove_Unbound_VIsIrrelevant(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e, a, "Bob"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	results := queryUnboundForEA(t, db, e, a)
+	assert.Len(t, results, 0, "unbound: V is irrelevant for CardinalityOne Remove")
+}
+
+func TestCardinalityOneRemove_Unbound_MultipleEntities(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e1 := datalog.NewIdentity("alice")
+	e2 := datalog.NewIdentity("bob")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e1, a, "Alice"))
+	require.NoError(t, tx.Add(e2, a, "Bob"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e1, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	results1 := queryUnboundForEA(t, db, e1, a)
+	assert.Len(t, results1, 0, "unbound: entity1 should not exist after Remove")
+
+	results2 := queryUnboundForEA(t, db, e2, a)
+	require.Len(t, results2, 1, "unbound: entity2 should still exist")
+	assert.Equal(t, "Bob", results2[0][2])
+}
+
+func TestCardinalityOneRemove_Unbound_SetThenRemove(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	results := queryUnboundForEA(t, db, e, a)
+	assert.Len(t, results, 0, "unbound: attribute should not exist after Set then Remove")
+}
+
+// =============================================================================
+// P3×S2-S7: Streaming (V-bound) — full scenario coverage
+// =============================================================================
+
+// helper: count V-bound pattern matches for a given attribute and value
+func vBoundMatchCount(t *testing.T, db *Database, a datalog.Keyword, v interface{}) int {
+	t.Helper()
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(db.Schema())
+
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: a},
+			query.Constant{Value: v},
+			query.Blank{},
+		},
+	}
+
+	results, err := matcher.Match(pattern, nil)
+	require.NoError(t, err)
+
+	count := 0
+	iter := results.Iterator()
+	for iter.Next() {
+		count++
+	}
+	iter.Close()
+	return count
+}
+
+func TestCardinalityOneRemove_VBound_AfterOverwrite(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Add(e, a, "Bob"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	tx3 := db.NewTransaction()
+	require.NoError(t, tx3.Remove(e, a, "Bob"))
+	_, err = tx3.Commit()
+	require.NoError(t, err)
+
+	// V-bound for "Bob" (last written value) → 0
+	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Bob"),
+		"V-bound: Bob should not match after Remove")
+	// V-bound for "Alice" (earlier value) → also 0, attribute is gone
+	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+		"V-bound: Alice should not match after Remove (attribute tombstoned)")
+}
+
+func TestCardinalityOneRemove_VBound_ThenReAdd(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	tx3 := db.NewTransaction()
+	require.NoError(t, tx3.Add(e, a, "Bob"))
+	_, err = tx3.Commit()
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Bob"),
+		"V-bound: Bob should match after re-Add")
+	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+		"V-bound: Alice should not match (superseded by Bob)")
+}
+
+func TestCardinalityOneRemove_VBound_BeforeAnyAdd(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Remove(e, a, "phantom"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Add(e, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Alice"),
+		"V-bound: Alice should match — Add wins over earlier Remove")
+}
+
+func TestCardinalityOneRemove_VBound_VIsIrrelevant(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	// Remove with different V
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e, a, "Bob"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Attribute is tombstoned regardless of V in Remove
+	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+		"V-bound: Alice should not match — attribute tombstoned regardless of Remove V")
+}
+
+func TestCardinalityOneRemove_VBound_MultipleEntities(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e1 := datalog.NewIdentity("alice")
+	e2 := datalog.NewIdentity("bob")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e1, a, "Alice"))
+	require.NoError(t, tx.Add(e2, a, "Bob"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e1, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+		"V-bound: Alice should not match after Remove on entity1")
+	assert.Equal(t, 1, vBoundMatchCount(t, db, a, "Bob"),
+		"V-bound: Bob should still match on entity2")
+}
+
+func TestCardinalityOneRemove_VBound_SetThenRemove(t *testing.T) {
+	db, cleanup := createCardinalityOneDB(t)
+	defer cleanup()
+
+	e := datalog.NewIdentity("alice")
+	a := datalog.NewKeyword(":person/name")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(e, a, "Alice"))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Remove(e, a, "Alice"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, vBoundMatchCount(t, db, a, "Alice"),
+		"V-bound: should not match after Set then Remove")
+}

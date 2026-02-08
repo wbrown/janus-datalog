@@ -50,6 +50,11 @@ func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementI
 		if err != nil {
 			return nil, datalog.ElementID{}, err
 		}
+		// Check Op: if the latest operation is a tombstone, the attribute doesn't exist.
+		// Return nil value with the tombstone's ElementID for cache freshness tracking.
+		if datom.Op == datalog.OpCRDTRemove {
+			return nil, datom.Tx, nil
+		}
 		return datom.V, datom.Tx, nil
 	}
 

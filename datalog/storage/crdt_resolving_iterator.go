@@ -8,17 +8,14 @@ import (
 // CRDTResolvingIterator wraps a storage iterator and applies CRDT resolution
 // per (E, A) group using streaming.
 //
-// Key insight: EATV index stores Tx in descending order (highest Tx first).
-// This means resolution is just filtering - no buffering needed.
-//
 // Resolution strategies by cardinality:
-//   - CardinalityOne: Emit first entry, skip rest. Zero state.
+//   - CardinalityOne: First entry wins (Tx descending). Emit if not tombstoned.
 //   - CardinalityMany: Emit qualifying ADDs immediately. Minimal state.
-//   - CardinalityVector: TODO - needs discussion.
+//   - CardinalityVector: RGA tree reconstruction.
 type CRDTResolvingIterator struct {
-	source Iterator
-	schema schema.SchemaProvider
-	txID   uint64 // For as-of queries: only consider datoms with Tx.Lamport <= txID
+	source     Iterator
+	schema     schema.SchemaProvider
+	txID       uint64 // For as-of queries: only consider datoms with Tx.Lamport <= txID
 
 	// Current (E, A) group tracking
 	currentE datalog.Identity

@@ -277,6 +277,25 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 				useMembershipCheck = true
 			}
 		}
+	} else if e == nil && a != nil && v != nil && card == schema.CardinalityOne {
+		// E is unbound, A is bound, V is constant, cardinality-one
+		// V-bound scan (AVET) only sees datoms with this V, but the LWW winner
+		// may have a different V. Use candidate + validate pattern.
+		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 2 & 5.
+		dummyCol := datalog.NewSymbol("__v_bound_dummy__")
+		bindingRel := executor.NewMaterializedRelation(
+			[]query.Symbol{dummyCol},
+			[]executor.Tuple{{v}},
+		)
+		strategy := ReuseStrategy{
+			Type:            SinglePositionReuse,
+			NeedsValidation: true,
+			Index:           AVET,
+			ValidationIndex: EATV,
+			BoundA:          a,
+			BoundV:          v,
+		}
+		return m.matchWithVValidation(pattern, bindingRel, columns, strategy, nil)
 	} else if e == nil && a != nil && card == schema.CardinalityMany {
 		// E is unbound, A is bound, cardinality-many
 		// Need to scan all entities with this attribute and apply add-wins resolution
@@ -693,6 +712,12 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 
 	winner, err := rawIter.Datom()
 	if err != nil {
+		return false
+	}
+
+	// Check Op: if the latest operation is a tombstone, the attribute doesn't exist.
+	// No V can match a tombstoned attribute.
+	if winner.Op == datalog.OpCRDTRemove {
 		return false
 	}
 

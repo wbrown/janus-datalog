@@ -8,6 +8,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -33,6 +34,15 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 		t.Fatalf("Failed to create database: %v", err)
 	}
 	defer db.Close()
+
+	// :scenario/task is cardinality-many (a scenario can have multiple tasks)
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":scenario/task"),
+		ValueType:   schema.TypeRef,
+		Cardinality: schema.CardinalityMany,
+	})
+	db.SetSchema(s)
 
 	// Insert test data: scenarios with tasks
 	tx := db.NewTransaction()
@@ -87,7 +97,9 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 
 	// Use executor with annotations to trace execution
 	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
+	matcher := storage.NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+	exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 
 	ctx := executor.NewContext(func(event annotations.Event) {
 		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
