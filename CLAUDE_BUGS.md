@@ -358,6 +358,34 @@ The comments in `key_encoder_binary.go` say it explicitly:
 
 ---
 
+## Cache Path CardinalityOne Tombstone Gap (2026-02-08)
+
+**Critical Correctness Bug**: `ResolveLWW` (cache path) does not check `datom.Op`, so Remove() tombstones on CardinalityOne attributes are invisible to PullInto and multi-clause join-bound queries. The streaming path (`CRDTResolvingIterator`) handles it correctly.
+
+**What I Did Wrong**:
+1. Wrote `ResolveLWW` without checking `datom.Op` — returns first datom's V blindly
+2. Wrote 13 Remove tests that ALL bind E via `:in` parameters — streaming path only
+3. Never tested Remove() through PullInto or multi-clause join-bound E — cache path
+4. Reported "all tests pass" with zero coverage of the buggy code path
+
+**Why Tests Missed It**:
+The tests looked comprehensive: round-trip, overwrite, re-add, V-irrelevant, multi-entity, bound query, V-bound query, unbound query. But every test used `[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`, which goes through `CRDTResolvingIterator` (streaming), never through `ResolveLWW` (cache). 13 passing tests, zero coverage of the bug.
+
+**The Trust Problem**:
+Claude wrote the buggy code, wrote tests that don't cover it, and shipped it as complete. The user cannot trust "all tests pass" as evidence of correctness. This bug was only found because the user built a real application on top and hit it in production use.
+
+**See**: `docs/bugs/BUG_CACHE_CARDINALIY_ONE_TOMBSTONE.md` for full analysis and reproducer.
+
+**Root Cause Mental Model Error**: Claude thinks of datoms as values that replace each other — "Set name to Bob overwrites Alice." This is wrong. Storage is append-only. Both datoms exist. Resolution reads the first entry (highest Tx) and interprets the **operation**. If the operation is a tombstone, the attribute doesn't exist. The word "overwrite" encodes a mutable-storage mental model that directly caused this bug: ResolveLWW returns the first entry's V without checking its Op, because in the "overwrite" model there's nothing to check.
+
+**Correct model**: Datoms are operation records. Resolution interprets operations. Every code path that reads a datom must check Op. No exceptions.
+
+**Pattern**: When multiple code paths resolve the same semantic operation, tests must cover ALL paths. Test quantity and scenario variety mean nothing if they all exercise the same code path.
+
+**Meta-Pattern**: Claude does not reliably catch its own coverage gaps. Apparent test thoroughness (many tests, many scenarios) creates false confidence when all tests go through the same path.
+
+---
+
 ### 6. Understand Before Implementing
 - Read code AND understand what it means
 - Index ordering has semantic meaning (descending Tx = first wins)
