@@ -176,6 +176,36 @@ This ensures cheap filtering happens early, and expensive subqueries only execut
 
 The invariant `Keep ⊆ Provides` ensures the executor never tries to pass forward a symbol that doesn't exist in the relation. Columns not in `Keep` are projected away between phases, keeping intermediate results narrow.
 
+### Streaming Execution: Relation-Centric Volcano
+
+The executor uses a variant of the Volcano iterator model (Graefe 1994), but with a key difference: it's **relation-centric** instead of operator-centric.
+
+In classic Volcano, each operator (filter, project, join) is an iterator that pulls from child operators. The problem is that Volcano iterators are single-pass — once consumed, the data is gone. This breaks down when you need to re-iterate (hash join build sides, aggregation grouping, subquery correlation). Classic databases solve this by materializing at strategic points, but the decision of *when* to materialize is baked into the operator tree.
+
+Janus separates the decision. Every intermediate result is a `Relation`, which can be either:
+- **StreamingRelation** — wraps an `Iterator`, single-pass, lazy. Nothing materializes until `Next()` is called.
+- **MaterializedRelation** — tuples in memory, supports random access and re-iteration.
+
+The transition between them is explicit and lazy:
+- `relation.Materialize()` doesn't materialize immediately — it sets a flag
+- First `Iterator()` call on a marked relation wraps the base iterator with `CachingIterator`, which copies tuples to a buffer as a side effect of iteration
+- Subsequent `Iterator()` calls return a slice iterator over the cached buffer
+- `BufferedIterator` wraps any iterator for re-iteration without requiring the full `Relation` interface
+
+This means a typical query pipeline looks like:
+
+```
+StorageScan → FilterIterator → ProjectIterator → DedupIterator
+  → hashJoinIterator (build side materialized, probe side streams)
+  → ProjectIterator → FilterIterator → collect results
+```
+
+Only the hash join build side materializes. Everything else streams. The 4x speedup and 89% memory reduction from iterator composition comes from this: most of the pipeline never allocates intermediate tuple slices.
+
+**Symmetric hash join** (optional, `EnableSymmetricHashJoin`) extends this to stream-to-stream joins: both sides materialize incrementally into hash tables, processing in interleaved batches. Neither side needs to be fully consumed before results start flowing. Trade-off: slightly slower than standard hash join (~37% overhead) but enables full pipeline streaming when both inputs are themselves streaming.
+
+**Forced materialization** happens only when semantically required: aggregation (must see all groups), order-by (must sort), and `Size()` calls on streaming relations (though `EnableTrueStreaming=true` returns -1 instead of forcing consumption).
+
 ### Phase Execution Detail
 
 Within the executor, each phase is a mini-query. The planner decided the ordering; the executor just follows it:
@@ -184,15 +214,15 @@ Within the executor, each phase is a mini-query. The planner decided the orderin
 For each phase in plan:
   Input relations from previous phase's Keep columns
   For each clause in phase.Query.Where (planner-ordered):
-    ├── DataPattern  → matcher.Match(pattern, bindings) → new Relation
-    ├── Expression   → evaluate over existing relations → add column
-    ├── Predicate    → filter existing relations
+    ├── DataPattern  → matcher.Match(pattern, bindings) → new StreamingRelation
+    ├── Expression   → evaluate over existing relations → add column (lazy)
+    ├── Predicate    → filter existing relations (lazy)
     ├── Subquery     → recursive ExecuteQuery
     ├── NOT clause   → anti-join (filter where inner query matches)
     └── OR clause    → union branches or per-tuple fallback
   After each clause: collapse relation groups (join on shared symbols)
   Early terminate if any group is empty
-  Project to Keep columns for next phase
+  Project to Keep columns for next phase (lazy)
 ```
 
 ## How Writes Work
