@@ -111,13 +111,63 @@ results, err := db.ExecuteQueryWithInputs(query,
 
 **How it works**: `buildSourceMap` creates a `SourceRouter` that wraps all sources. The router becomes the executor's `PatternMatcher`. During execution, each `DataPattern` clause is routed to its declared source (`$` by default). Cross-source joins happen naturally through the relation collapsing algorithm.
 
+### How the Planner Shapes Execution
+
+The planner is the bridge between a declarative query (an unordered set of clauses) and an executable plan (an ordered sequence of phases). It makes three decisions that determine whether a query runs in milliseconds or explodes:
+
+**1. Clause ordering via selectivity scoring.** The planner scores each clause based on how much it will filter data. The key heuristic: constants get 10x the weight of available variables, because a constant like `:person/name` in a pattern actually filters storage, while an available variable like `?e` only enables a join.
+
+```
+Score = 100 (base) + (constants × 100) + (available_vars × 10)
+
+[?e :name "Alice"]    → 300  (2 constants: :name, "Alice")
+[?e :skills ?s]       → 200  (1 constant: :skills)
+[?e ?a ?v]            → 100  (no constants)
+```
+
+This means the most selective patterns execute first, producing smaller intermediate results for everything downstream.
+
+**2. Phase boundaries as Cartesian product barriers.** A new phase starts when a clause needs symbols that aren't available yet. This forces data to flow through explicit symbol channels (`Keep` sets) rather than allowing unconstrained cross-products between unrelated patterns.
+
+```
+Phase 1: [?e :person/name ?name]     ← binds ?e, ?name
+         [?e :person/age ?age]       ← ?e available, joins naturally
+
+Phase 2: [?dept :dept/member ?e]     ← needs ?e from Phase 1
+         [?dept :dept/name ?dname]   ← ?dept available from above
+```
+
+If two patterns share no symbols and no expression bridges them, the executor errors with "Cartesian products not supported" rather than silently producing billions of tuples.
+
+**3. Operation deferral.** Different clause types get different base scores, which controls when they execute:
+
+| Clause Type | Base Score | Rationale |
+|-------------|-----------|-----------|
+| DataPattern | +100 | Produces data, highest priority |
+| OR clause | +80 | Data source (union of branches) |
+| Expression | +10 | Needs inputs bound first |
+| Predicate | +5 | Filter, needs inputs bound |
+| NOT clause | +2 | Anti-join, needs all inner symbols |
+| Subquery | -50 | Expensive, defer as long as possible |
+
+This ensures cheap filtering happens early, and expensive subqueries only execute after the result set has been narrowed.
+
+**4. Symbol lifetime management.** The planner computes three symbol sets per phase that form the contract with the executor:
+
+- **Available**: What's bound when this phase starts (from `:in` + previous `Keep`)
+- **Provides**: What this phase's clauses produce
+- **Keep**: What the next phase needs (computed by scanning all remaining clauses + `:find`)
+
+The invariant `Keep ⊆ Provides` ensures the executor never tries to pass forward a symbol that doesn't exist in the relation. Columns not in `Keep` are projected away between phases, keeping intermediate results narrow.
+
 ### Phase Execution Detail
 
-Within the executor, each phase is a mini-query:
+Within the executor, each phase is a mini-query. The planner decided the ordering; the executor just follows it:
 
 ```
 For each phase in plan:
-  For each clause in phase.Query.Where:
+  Input relations from previous phase's Keep columns
+  For each clause in phase.Query.Where (planner-ordered):
     ├── DataPattern  → matcher.Match(pattern, bindings) → new Relation
     ├── Expression   → evaluate over existing relations → add column
     ├── Predicate    → filter existing relations
@@ -126,6 +176,7 @@ For each phase in plan:
     └── OR clause    → union branches or per-tuple fallback
   After each clause: collapse relation groups (join on shared symbols)
   Early terminate if any group is empty
+  Project to Keep columns for next phase
 ```
 
 ## How Writes Work
@@ -325,17 +376,32 @@ Core types in the top-level package:
 
 ### Query Planning (`datalog/planner/`)
 
-Single planner: `ClauseBasedPlanner`. Greedy phasing algorithm:
+Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` (unordered clauses) into a `RealizedPlan` (ordered phases with symbol flow contracts).
 
+**Core algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
 1. Start with input symbols as available
-2. Score all executable clauses (requirements satisfied by available symbols)
-3. Select highest-scoring clause, add to current phase
-4. Update available symbols
-5. Repeat until no clauses can execute; start new phase with remaining
+2. Score all executable clauses (all required symbols are available)
+3. Select highest-scoring clause, add to current phase, mark its output symbols as available
+4. Repeat until no more clauses can execute in this phase
+5. Start new phase with remaining clauses (new phase inherits `Keep` from previous)
 
-Output: `RealizedPlan` — sequence of phases, each containing a `*query.Query` fragment with `Available`, `Provides`, and `Keep` symbol sets.
+**Scoring** (`clause_utils.go`): Visibility-based selectivity — constants weight 10x over available variables because they filter storage directly. Patterns scored 100+, OR at 80, expressions at 10, predicates at 5, NOT at 2, subqueries at -50. This naturally orders operations from most-selective data access down to expensive deferred operations.
 
-**Key invariant**: `Keep ⊆ Provides ∩ Available` — can only carry forward symbols that exist in the relation and are needed later.
+**Phase boundaries**: A clause that needs symbols not yet available forces a new phase. This is the mechanism that prevents Cartesian products — symbols must flow through explicit `Keep` channels between phases.
+
+**Output**: `RealizedPlan` — sequence of `RealizedPhase`, each containing:
+- `Query`: Self-contained `*query.Query` fragment (`:find`, `:in`, `:where` clauses in execution order)
+- `Available`: Symbols bound when this phase starts
+- `Provides`: Symbols this phase's clauses produce
+- `Keep`: Symbols to pass to next phase (projected away otherwise)
+
+**Key invariant**: `Keep ⊆ Provides` — can only carry forward symbols that exist in the relation.
+
+**Plan caching** (`cache.go`): SHA256 of query structure → cached `RealizedPlan`. LRU eviction at 1000 plans, 5-minute TTL. 3x speedup on repeated queries. Hit/miss counters for monitoring.
+
+**Explain support** (`explain_analysis.go`): Optional population of per-phase `Patterns`, `Expressions`, `Predicates`, `Subqueries` with index selection, selectivity scores, and binding analysis for plan inspection.
+
+**NOT/OR/Subquery handling**: All treated as first-class clauses in the greedy algorithm. NOT requires all inner symbols bound (score +2, naturally deferred). OR provides the intersection of all branch outputs in union mode, or the union in fallback mode. Subqueries require all `:in` correlation symbols (score -50, executed last).
 
 ### Query Execution (`datalog/executor/`)
 
