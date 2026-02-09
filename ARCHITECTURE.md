@@ -113,9 +113,19 @@ results, err := db.ExecuteQueryWithInputs(query,
 
 ### How the Planner Shapes Execution
 
-The planner is the bridge between a declarative query (an unordered set of clauses) and an executable plan (an ordered sequence of phases). It makes three decisions that determine whether a query runs in milliseconds or explodes:
+The planner is the bridge between a declarative query (an unordered set of clauses) and an executable plan (an ordered sequence of phases). It operates in two stages: **rewrite**, then **phase**.
 
-**1. Clause ordering via selectivity scoring.** The planner scores each clause based on how much it will filter data. The key heuristic: constants get 10x the weight of available variables, because a constant like `:person/name` in a pattern actually filters storage, while an available variable like `?e` only enables a join.
+**Clause rewriting (optimize first).** Before any ordering happens, the planner rewrites clauses to enable more efficient execution:
+
+- **Time extraction folding**: `[(year ?t) ?y] + [(= ?y 2025)]` is rewritten to `[(>= ?t 2025-01-01T00:00:00Z)] + [(< ?t 2026-01-01T00:00:00Z)]`. This eliminates the per-tuple expression evaluation and replaces it with range predicates that can push down to storage index scans. Works for any combination of `year`, `month`, `day`, `hour`, `minute`, `second` — components compose into a single time range.
+
+- **Tx range inversion**: Transaction IDs use bitwise-NOT encoding in storage (highest Lamport sorts first for LWW). User-facing range queries like `[(tx-between ?tx 1000 2000)]` get their bounds inverted so BadgerDB scans in the correct direction.
+
+- **Constant-bindable scalar detection**: Scalar inputs that only appear in predicates/expressions (not data patterns) are flagged in phase metadata. The executor resolves these as constants rather than creating separate relation groups, avoiding unnecessary joins.
+
+After rewriting, the planner phases the transformed clause list **once** — the "optimize first, phase once" architecture.
+
+**Clause ordering via selectivity scoring.** The planner scores each clause based on how much it will filter data. The key heuristic: constants get 10x the weight of available variables, because a constant like `:person/name` in a pattern actually filters storage, while an available variable like `?e` only enables a join.
 
 ```
 Score = 100 (base) + (constants × 100) + (available_vars × 10)
@@ -127,7 +137,7 @@ Score = 100 (base) + (constants × 100) + (available_vars × 10)
 
 This means the most selective patterns execute first, producing smaller intermediate results for everything downstream.
 
-**2. Phase boundaries as Cartesian product barriers.** A new phase starts when a clause needs symbols that aren't available yet. This forces data to flow through explicit symbol channels (`Keep` sets) rather than allowing unconstrained cross-products between unrelated patterns.
+**Phase boundaries as Cartesian product barriers.** A new phase starts when a clause needs symbols that aren't available yet. This forces data to flow through explicit symbol channels (`Keep` sets) rather than allowing unconstrained cross-products between unrelated patterns.
 
 ```
 Phase 1: [?e :person/name ?name]     ← binds ?e, ?name
@@ -139,7 +149,7 @@ Phase 2: [?dept :dept/member ?e]     ← needs ?e from Phase 1
 
 If two patterns share no symbols and no expression bridges them, the executor errors with "Cartesian products not supported" rather than silently producing billions of tuples.
 
-**3. Operation deferral.** Different clause types get different base scores, which controls when they execute:
+**Operation deferral.** Different clause types get different base scores, which controls when they execute:
 
 | Clause Type | Base Score | Rationale |
 |-------------|-----------|-----------|
@@ -152,7 +162,7 @@ If two patterns share no symbols and no expression bridges them, the executor er
 
 This ensures cheap filtering happens early, and expensive subqueries only execute after the result set has been narrowed.
 
-**4. Symbol lifetime management.** The planner computes three symbol sets per phase that form the contract with the executor:
+**Symbol lifetime management.** The planner computes three symbol sets per phase that form the contract with the executor:
 
 - **Available**: What's bound when this phase starts (from `:in` + previous `Keep`)
 - **Provides**: What this phase's clauses produce
@@ -376,7 +386,9 @@ Core types in the top-level package:
 
 ### Query Planning (`datalog/planner/`)
 
-Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` (unordered clauses) into a `RealizedPlan` (ordered phases with symbol flow contracts).
+Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` (unordered clauses) into a `RealizedPlan` (ordered phases with symbol flow contracts). Architecture: **optimize first, phase once** — clause rewrites happen before phasing, so the greedy algorithm works on an already-optimized clause list.
+
+**Clause rewriting** (`semantic_rewriter.go`, `tx_range_rewriter.go`): Time extraction + equality patterns folded into range predicates. Tx range bounds inverted for storage encoding. Constant-bindable scalar inputs detected and flagged.
 
 **Core algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
 1. Start with input symbols as available
