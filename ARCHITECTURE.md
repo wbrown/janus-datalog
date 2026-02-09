@@ -4,9 +4,15 @@
 
 ## Overview
 
-Janus Datalog is a Datomic-style Datalog query engine implemented in Go. It combines EAVT storage with CRDT conflict resolution, a streaming query executor, and multiple query entry points (EDN strings, type-safe builder, struct reflection).
+Janus Datalog is a Datalog query engine in Go that makes three bets most Datalog implementations don't:
 
-This document describes how the system works — how data flows through it, where the architectural seams are, and what each component is responsible for.
+**CRDT conflict resolution instead of MVCC.** Where Datomic uses a single transactor with monotonic transaction IDs, Janus uses CRDTs — last-writer-wins for scalar attributes, add-wins sets for multi-valued attributes, and RGA for ordered vectors. Transaction IDs are ElementIDs (Lamport clock + ReplicaID), not sequential integers. This means the storage layer is designed from the ground up for a world where multiple writers exist and conflicts are resolved by data structure semantics, not coordination. The choice of cardinality *is* the choice of conflict resolution strategy.
+
+**Go structs as first-class participants in the data model.** Most Datalog engines treat the host language as a string-passing client — you construct an EDN query string, ship it to the engine, and get untyped rows back. Janus provides that path, but also: a type-safe query builder that produces query ASTs directly (no parsing), struct reflection that bridges Go types to datoms and back (struct tags define the schema, `SaveStruct` writes, `PullInto` reads), and `QueryInto` that maps query results into typed structs. The impedance mismatch between Go and Datalog is treated as an engineering problem to solve, not an inherent cost to accept.
+
+**Phase-based query composition with formal symbol contracts.** The query planner decomposes queries into phases — each an independent relational algebra expression — connected by explicit symbol flow (`Available`, `Provides`, `Keep`). This abstraction originated from Elasticsearch's parent-child document constraint (one relationship level per request), but it turned out to be a correct compositional model: phases compose via natural join with provable correctness, dependencies are checkable by construction, and the explicit metadata makes query execution debuggable at every boundary. It's kept not because the storage needs it, but because it's the right abstraction.
+
+The result is a production-grade engine (~85% Datalog feature coverage, ~70-75% Datomic compatibility) that takes a pragmatic middle ground: single-node performance with the data model foundations for multi-writer replication.
 
 ## How Queries Work
 
