@@ -4,9 +4,9 @@ This guide is for developers familiar with Datomic who want to understand what j
 
 ## Quick Summary
 
-**Estimated feature parity: ~70%** (weighted by typical usage frequency)
+**Estimated feature parity: ~80%** (weighted by typical usage frequency)
 
-Janus-datalog implements a substantial subset of Datomic's Datalog query language:
+Janus-datalog implements most of Datomic's Datalog query language. The core query path — patterns, joins, predicates, expressions, aggregations, subqueries, NOT/OR, Pull API, schema, database functions, time-travel queries — is fully implemented. The main gaps are rules/recursion, transaction functions, and the Entity API (largely superseded by Pull). Go-specific features (Struct Reflection, QueryInto, Query Builder) go beyond what Datomic offers.
 
 **Core Features (fully implemented):**
 - ✅ Query patterns, expressions, aggregations, subqueries, order-by
@@ -27,9 +27,13 @@ Janus-datalog implements a substantial subset of Datomic's Datalog query languag
 - ✅ Export/Import to EDN format for backup and migration
 
 **Not Implemented:**
-- ❌ Rules (recursive queries)
+- ⚠️ Rules: non-recursive rules (named, reusable query fragments) are fully
+  covered by Go functions + Query Builder, but not available through EDN
+  queries. Recursive rules (transitive closure, graph walking) are not
+  supported — though Datomic's own recursion lacks fixed-point evaluation
+  and termination guarantees.
 - ❌ Transaction functions
-- ❌ Entity API (navigation)
+- ❌ Entity API (navigation) — largely superseded by Pull API
 - ❌ Distributed queries (single-node only)
 
 ## Implemented Datomic Features
@@ -507,18 +511,42 @@ See [docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md) for compl
 
 ## Missing Datomic Features
 
-### 1. Rules ❌
+### 1. Rules ⚠️
 
-No rule definitions or recursive queries:
+**Non-recursive rules** (named, reusable query fragments) are fully supported
+via Go functions + Query Builder. A Go function that returns clauses IS a rule
+— with compile-time safety, IDE support, and parameterization:
+
+```go
+// Equivalent to Datomic rule: [(active-employee ?e ?name) ...]
+func ActiveEmployee(e, name *qb.Var) []interface{} {
+    return []interface{}{
+        qb.Pat(e, EmployeeName, name),
+        qb.Pat(e, EmployeeStatus, qb.V("active")),
+        qb.Not(qb.Pat(e, EmployeeArchived, qb.V(true))),
+    }
+}
+
+// Composed into queries just like Datomic rule invocation
+q := qb.Query().Find(name).Where(ActiveEmployee(e, name)...).MustBuild()
+```
+
+This is not available through the EDN query path — only via Go.
+
+**Recursive rules** (transitive closure, graph walking) are not supported:
 
 ```clojure
-; NOT SUPPORTED:
+; NOT SUPPORTED — self-referential recursion:
 [[(ancestor ?a ?d)
   [?a :parent ?d]]
  [(ancestor ?a ?d)
   [?a :parent ?p]
   (ancestor ?p ?d)]]
 ```
+
+Note: Datomic's recursion is also limited — rules can call themselves, but
+there is no automatic fixed-point evaluation or termination guarantees.
+Deep recursion on large graphs can cause stack overflows in Datomic.
 
 ### 2. Schema (Partial Support) ⚠️
 
@@ -649,7 +677,6 @@ No advanced database operations:
 - **Nested expressions in predicates**: Cannot do `[(< (- ?t2 ?t1) 300)]`
 - **Distinct in aggregations**: No `(count-distinct ?x)`
 - **Custom aggregation functions**
-- **Query caching or prepared queries**
 - **Distributed queries** (single-node only)
 
 ## Key Differences from Datomic
@@ -696,7 +723,8 @@ No advanced database operations:
 - Database functions (get-else, missing?, get-some)
 
 **Require refactoring:**
-- Rules → inline the logic or handle recursion in application code
+- Non-recursive rules → Go functions + Query Builder (compile-time safe, composable)
+- Recursive rules → handle recursion in application code
 - Entity navigation → use Pull API or explicit joins
 
 **Not possible:**

@@ -291,7 +291,7 @@ The storage layer connects the query engine to BadgerDB:
 17. **Table formatter** - Markdown table formatting using tablewriter library
 18. **Order-by clause** - Full implementation with multi-column sorting and direction control
 19. **Time comparison fix** - Proper time.Time comparison in aggregations and predicates
-20. **Datomic compatibility** - ~50-60% feature parity (see DATOMIC_COMPATIBILITY.md)
+20. **Datomic compatibility** - ~80% feature parity (see DATOMIC_COMPATIBILITY.md)
 21. **Relations migration** - Multi-value variable support throughout codebase
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
 23. **Schema support** - Type validation, cardinality (one/many), uniqueness constraints; optional and additive
@@ -537,7 +537,7 @@ Note: While our planner is explicit and feature-complete, the **information flow
 ## Important Documentation
 
 ### Core Documentation
-- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Comprehensive compatibility guide for Datomic users (~50-60% feature parity)
+- **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Comprehensive compatibility guide for Datomic users (~80% feature parity)
 - **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** - Current performance status, active optimizations, and benchmarks
 - **[TODO.md](TODO.md)** - Active task tracking with completed and pending features
 - **[DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)** - Complete documentation navigation
