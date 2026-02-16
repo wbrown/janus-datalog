@@ -73,6 +73,16 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 				continue
 			}
 
+			// Defer data patterns that use variables from pending expressions.
+			// Without this, the greedy scorer picks high-scoring patterns before
+			// low-scoring expressions, causing patterns to execute without the
+			// expression-provided variables and producing cross-product joins.
+			if p, ok := clause.(*query.DataPattern); ok {
+				if patternDependsOnPendingExpression(p, available, remaining, selected) {
+					continue
+				}
+			}
+
 			// Compute what OTHER clauses could provide (excluding this one)
 			otherProvidable := computeOtherProvidable(remaining, selected, i)
 			if !canExecuteClauseWithContext(clause, available, otherProvidable) {
