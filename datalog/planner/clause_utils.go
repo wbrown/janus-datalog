@@ -368,6 +368,46 @@ func extractOrJoinClauseSymbols(o *query.OrJoinClause) ClauseSymbols {
 	}
 }
 
+// patternDependsOnPendingExpression checks if a data pattern uses a variable
+// that a pending (unselected) expression provides but that isn't yet available.
+// This prevents the planner from reordering data patterns before the expressions
+// that provide variables they need for correct join semantics.
+//
+// Without this check, the greedy scorer picks high-scoring data patterns (~210)
+// before low-scoring expressions (~20). When a pattern like [?item :item/color ?color]
+// runs before [(enumerate ?vec) [?idx ?item]], ?item isn't in the accumulated
+// relation, so the join is on ?color alone — producing a cross-product.
+func patternDependsOnPendingExpression(p *query.DataPattern, available map[query.Symbol]bool, remaining []query.Clause, selected map[int]bool) bool {
+	// Collect variables this pattern references that aren't yet available
+	needed := make(map[query.Symbol]bool)
+	for _, elem := range p.Elements {
+		if v, ok := elem.(query.Variable); ok {
+			if !available[v.Name] {
+				needed[v.Name] = true
+			}
+		}
+	}
+	if len(needed) == 0 {
+		return false
+	}
+
+	// Check if any pending expression provides one of these variables
+	for i, clause := range remaining {
+		if selected[i] {
+			continue
+		}
+		if _, ok := clause.(*query.Expression); ok {
+			symbols := extractClauseSymbols(clause)
+			for _, sym := range symbols.Provides {
+				if needed[sym] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // computeOtherProvidable computes what symbols could be provided by OTHER clauses
 // (excluding the clause at excludeIdx and already selected clauses)
 func computeOtherProvidable(clauses []query.Clause, selected map[int]bool, excludeIdx int) map[query.Symbol]bool {

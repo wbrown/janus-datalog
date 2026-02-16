@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -1438,6 +1439,193 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 	assert.Equal(t, "Apple", results[0][1].(string))
 }
 
+// TestVectorEnumerateRefWithJoinsAndFilter adds an indirection layer: instance
+// entities reference template entities via a ref, and the templates have ref
+// vectors to child entities. The query joins through the indirection, enumerates,
+// then filters by child attribute.
+func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-enumerate-ref-join-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":instance/template").Type(schema.TypeRef).Add().
+		Attribute(":instance/room").Type(schema.TypeRef).Add().
+		Attribute(":instance/active").Type(schema.TypeBoolean).Add().
+		Attribute(":folder/name").Type(schema.TypeString).Add().
+		Attribute(":folder/items").Type(schema.TypeRef).Vector().Add().
+		Attribute(":item/color").Type(schema.TypeKeyword).Add().
+		Attribute(":item/label").Type(schema.TypeString).Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Child entities
+	redItem := datalog.NewIdentity("red-item")
+	blueItem := datalog.NewIdentity("blue-item")
+
+	red := datalog.NewKeyword(":color/red")
+	blue := datalog.NewKeyword(":color/blue")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(redItem, datalog.NewKeyword(":item/color"), red))
+	require.NoError(t, tx.Add(redItem, datalog.NewKeyword(":item/label"), "Apple"))
+	require.NoError(t, tx.Add(blueItem, datalog.NewKeyword(":item/color"), blue))
+	require.NoError(t, tx.Add(blueItem, datalog.NewKeyword(":item/label"), "Sky"))
+
+	// Template entities (folders) with ref vectors
+	folderA := datalog.NewIdentity("folder-a")
+	folderB := datalog.NewIdentity("folder-b")
+	require.NoError(t, tx.Add(folderA, datalog.NewKeyword(":folder/name"), "Folder-A"))
+	require.NoError(t, tx.Add(folderA, datalog.NewKeyword(":folder/items"), redItem))
+	require.NoError(t, tx.Add(folderB, datalog.NewKeyword(":folder/name"), "Folder-B"))
+	require.NoError(t, tx.Add(folderB, datalog.NewKeyword(":folder/items"), blueItem))
+
+	// Instance entities referencing templates (like crawl actors referencing template actors)
+	room := datalog.NewIdentity("room-1")
+	instA := datalog.NewIdentity("inst-a")
+	instB := datalog.NewIdentity("inst-b")
+	require.NoError(t, tx.Add(instA, datalog.NewKeyword(":instance/template"), folderA))
+	require.NoError(t, tx.Add(instA, datalog.NewKeyword(":instance/room"), room))
+	require.NoError(t, tx.Add(instA, datalog.NewKeyword(":instance/active"), true))
+	require.NoError(t, tx.Add(instB, datalog.NewKeyword(":instance/template"), folderB))
+	require.NoError(t, tx.Add(instB, datalog.NewKeyword(":instance/room"), room))
+	require.NoError(t, tx.Add(instB, datalog.NewKeyword(":instance/active"), true))
+
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Step 1: Without instance joins (should work — proven by TestVectorEnumerateRefWithFilter)
+	r1, err := db.ExecuteQueryWithInputs(
+		`[:find ?folderName ?itemLabel
+		  :in $ ?color
+		  :where
+		  [?folder :folder/name ?folderName]
+		  [?folder :folder/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/color ?color]
+		  [?item :item/label ?itemLabel]]`,
+		red)
+	require.NoError(t, err)
+	t.Logf("step1 (no instance joins): %d rows: %v", len(r1), r1)
+	require.Len(t, r1, 1, "step1: only Folder-A has a red item")
+
+	// Step 2: Add instance→template join but no :in room filter
+	r2, err := db.ExecuteQuery(
+		`[:find ?folderName ?itemLabel
+		  :where
+		  [?inst :instance/template ?folder]
+		  [?folder :folder/name ?folderName]
+		  [?folder :folder/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/color :color/red]
+		  [?item :item/label ?itemLabel]]`)
+	require.NoError(t, err)
+	t.Logf("step2 (instance join, inline color): %d rows: %v", len(r2), r2)
+	require.Len(t, r2, 1, "step2: only Folder-A has a red item")
+
+	// Step 2b: Instance join + :in color (no :in room)
+	r2b, err := db.ExecuteQueryWithInputs(
+		`[:find ?folderName ?itemLabel
+		  :in $ ?color
+		  :where
+		  [?inst :instance/template ?folder]
+		  [?folder :folder/name ?folderName]
+		  [?folder :folder/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/color ?color]
+		  [?item :item/label ?itemLabel]]`,
+		red)
+	require.NoError(t, err)
+	t.Logf("step2b (instance join, :in color): %d rows: %v", len(r2b), r2b)
+	require.Len(t, r2b, 1, "step2b: only Folder-A has a red item")
+
+	// Step 2c: Instance join + :in room + inline color
+	r2c, err := db.ExecuteQueryWithInputs(
+		`[:find ?folderName ?itemLabel
+		  :in $ ?room
+		  :where
+		  [?inst :instance/room ?room]
+		  [?inst :instance/template ?folder]
+		  [?folder :folder/name ?folderName]
+		  [?folder :folder/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/color :color/red]
+		  [?item :item/label ?itemLabel]]`,
+		room)
+	require.NoError(t, err)
+	t.Logf("step2c (instance join, :in room, inline color): %d rows: %v", len(r2c), r2c)
+	require.Len(t, r2c, 1, "step2c: only Folder-A has a red item")
+
+	// Step 2d: Enumerate only (no color filter) with both :in params
+	r2d, err := db.ExecuteQueryWithInputs(
+		`[:find ?folderName ?itemLabel ?idx
+		  :in $ ?room ?color
+		  :where
+		  [?inst :instance/room ?room]
+		  [?inst :instance/active true]
+		  [?inst :instance/template ?folder]
+		  [?folder :folder/name ?folderName]
+		  [?folder :folder/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/label ?itemLabel]]`,
+		room, red)
+	require.NoError(t, err)
+	t.Logf("step2d (enumerate only, both :in params, no color filter): %d rows: %v", len(r2d), r2d)
+
+	// Step 2e: Without label join — just enumerate + color filter, find ?item entity
+	// Enable annotation tracing for this query
+	db.SetAnnotationHandler(func(event annotations.Event) {
+		if event.Name == annotations.JoinHash {
+			t.Logf("ANNOTATION [%s]: left.attrs=%v right.attrs=%v result.attrs=%v left.size=%v right.size=%v result.size=%v",
+				event.Name,
+				event.Data["left.attrs"], event.Data["right.attrs"], event.Data["result.attrs"],
+				event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
+		}
+	})
+	r2e, err := db.ExecuteQueryWithInputs(
+		`[:find ?folderName ?item ?color
+		  :in $ ?room ?color
+		  :where
+		  [?inst :instance/room ?room]
+		  [?inst :instance/active true]
+		  [?inst :instance/template ?folder]
+		  [?folder :folder/name ?folderName]
+		  [?folder :folder/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/color ?color]]`,
+		room, red)
+	require.NoError(t, err)
+	for i, row := range r2e {
+		t.Logf("step2e row[%d]: folderName=%v item=%v color=%v", i, row[0], row[1], row[2])
+	}
+	t.Logf("step2e (enumerate + color filter, find ?item): %d rows", len(r2e))
+	db.SetAnnotationHandler(nil) // disable after step2e
+
+	// Step 3: Full query with :in room and color
+	r3, err := db.ExecuteQueryWithInputs(
+		`[:find ?folderName ?itemLabel
+		  :in $ ?room ?color
+		  :where
+		  [?inst :instance/room ?room]
+		  [?inst :instance/active true]
+		  [?inst :instance/template ?folder]
+		  [?folder :folder/name ?folderName]
+		  [?folder :folder/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/color ?color]
+		  [?item :item/label ?itemLabel]]`,
+		room, red)
+	require.NoError(t, err)
+	t.Logf("step3 (full query): %d rows: %v", len(r3), r3)
+	require.Len(t, r3, 1, "step3: only Folder-A has a red item")
+	assert.Equal(t, "Folder-A", r3[0][0].(string))
+	assert.Equal(t, "Apple", r3[0][1].(string))
+}
+
 // TestVectorSetTruncate verifies Set() handles removing elements from the end.
 func TestVectorSetTruncate(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vector-set-truncate-test")
@@ -1480,4 +1668,84 @@ func TestVectorSetTruncate(t *testing.T) {
 	require.Len(t, vec, 2)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
+}
+
+// TestPlannerReordersDataPatternBeforeEnumerate reproduces a bug where the
+// greedy clause planner reorders a data pattern (e.g. [?item :item/color ?color])
+// before the enumerate expression that provides ?item. Data patterns score ~210
+// (100 base + 100 per constant + 10 per available var) while expressions score
+// ~20, so the planner always picks patterns first. When the pattern runs without
+// ?item from enumerate, it scans ALL items matching the color and joins on ?color
+// alone — producing a cross-product instead of a per-container filtered join.
+//
+// Trigger condition: two :in parameters where one (?room) anchors early patterns
+// and the other (?color) is used in a post-enumerate pattern. Both end up in the
+// same input relation, so ?color is "available" when scoring the color pattern,
+// boosting its score above enumerate's.
+func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "planner-reorder-enumerate-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":container/name").Type(schema.TypeString).Add().
+		Attribute(":container/room").Type(schema.TypeRef).Add().
+		Attribute(":container/items").Type(schema.TypeRef).Vector().Add().
+		Attribute(":item/color").Type(schema.TypeKeyword).Add().
+		Attribute(":item/label").Type(schema.TypeString).Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	red := datalog.NewKeyword(":color/red")
+	blue := datalog.NewKeyword(":color/blue")
+	room := datalog.NewIdentity("room-1")
+	redItem := datalog.NewIdentity("red-item")
+	blueItem := datalog.NewIdentity("blue-item")
+	containerA := datalog.NewIdentity("container-a")
+	containerB := datalog.NewIdentity("container-b")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(redItem, datalog.NewKeyword(":item/color"), red))
+	require.NoError(t, tx.Add(redItem, datalog.NewKeyword(":item/label"), "Apple"))
+	require.NoError(t, tx.Add(blueItem, datalog.NewKeyword(":item/color"), blue))
+	require.NoError(t, tx.Add(blueItem, datalog.NewKeyword(":item/label"), "Sky"))
+	require.NoError(t, tx.Add(containerA, datalog.NewKeyword(":container/name"), "A"))
+	require.NoError(t, tx.Add(containerA, datalog.NewKeyword(":container/room"), room))
+	require.NoError(t, tx.Add(containerA, datalog.NewKeyword(":container/items"), redItem))
+	require.NoError(t, tx.Add(containerB, datalog.NewKeyword(":container/name"), "B"))
+	require.NoError(t, tx.Add(containerB, datalog.NewKeyword(":container/room"), room))
+	require.NoError(t, tx.Add(containerB, datalog.NewKeyword(":container/items"), blueItem))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// The query: find container names and item labels where the container is in
+	// the given room and contains an item of the given color.
+	//
+	// Correct clause order: room pattern → name → items → enumerate → color → label
+	// Buggy planner order: room → name → items → color (before enumerate!) → label → enumerate
+	//
+	// With the bug, [?item :item/color ?color] runs before enumerate provides ?item,
+	// so it scans ALL items with color=red. The join with the accumulated relation
+	// is on ?color only (not ?item), creating a cross-product: every container gets
+	// ?item=redItem regardless of what's actually in its vector.
+	rows, err := db.ExecuteQueryWithInputs(
+		`[:find ?name ?label
+		  :in $ ?room ?color
+		  :where
+		  [?c :container/room ?room]
+		  [?c :container/name ?name]
+		  [?c :container/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/color ?color]
+		  [?item :item/label ?label]]`,
+		room, red)
+	require.NoError(t, err)
+	t.Logf("rows: %v", rows)
+	require.Len(t, rows, 1, "only container A has a red item; container B has blue")
+	assert.Equal(t, "A", rows[0][0])
+	assert.Equal(t, "Apple", rows[0][1])
 }
