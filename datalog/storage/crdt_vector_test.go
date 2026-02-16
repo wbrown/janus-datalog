@@ -1413,7 +1413,7 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 	itemsAttr := datalog.NewKeyword(":folder/items")
 
 	require.NoError(t, tx.Add(folderA, nameAttr, "Folder-A"))
-	require.NoError(t, tx.Add(folderA, itemsAttr, redItem))   // Folder-A has red item
+	require.NoError(t, tx.Add(folderA, itemsAttr, redItem)) // Folder-A has red item
 	require.NoError(t, tx.Add(folderB, nameAttr, "Folder-B"))
 	require.NoError(t, tx.Add(folderB, itemsAttr, blueItem))  // Folder-B has blue item
 	require.NoError(t, tx.Add(folderB, itemsAttr, greenItem)) // Folder-B also has green item

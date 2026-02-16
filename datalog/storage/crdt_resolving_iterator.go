@@ -13,9 +13,9 @@ import (
 //   - CardinalityMany: Emit qualifying ADDs immediately. Minimal state.
 //   - CardinalityVector: RGA tree reconstruction.
 type CRDTResolvingIterator struct {
-	source     Iterator
-	schema     schema.SchemaProvider
-	txID       uint64 // For as-of queries: only consider datoms with Tx.Lamport <= txID
+	source Iterator
+	schema schema.SchemaProvider
+	txID   uint64 // For as-of queries: only consider datoms with Tx.Lamport <= txID
 
 	// Current (E, A) group tracking
 	currentE datalog.Identity
