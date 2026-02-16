@@ -211,6 +211,40 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			result = gsr.Value
 		}
 
+		// Handle multi-row expansion (e.g., enumerate returns [][]interface{})
+		if multiRows, ok := result.([][]interface{}); ok {
+			if tb, ok := expr.Binding.(query.TupleBinding); ok {
+				for _, subTuple := range multiRows {
+					if len(subTuple) != len(tb.Variables) {
+						continue
+					}
+					if hasAllBindings {
+						newTuple := make(Tuple, len(tuple))
+						copy(newTuple, tuple)
+						for i, bindSym := range tb.Variables {
+							if idx, exists := existingBindingIndices[bindSym]; exists {
+								newTuple[idx] = subTuple[i]
+							}
+						}
+						newTuples = append(newTuples, newTuple)
+					} else {
+						newTuple := make(Tuple, len(newColumns))
+						copy(newTuple, tuple)
+						for i, bindSym := range tb.Variables {
+							for j := len(columns); j < len(newColumns); j++ {
+								if newColumns[j] == bindSym {
+									newTuple[j] = subTuple[i]
+									break
+								}
+							}
+						}
+						newTuples = append(newTuples, newTuple)
+					}
+				}
+				continue
+			}
+		}
+
 		// Create new tuple with result
 		if len(bindingSymbols) == 0 {
 			// No binding, just keep original tuple

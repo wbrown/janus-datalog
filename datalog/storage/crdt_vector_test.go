@@ -1255,6 +1255,189 @@ func TestVectorSetFromEmpty(t *testing.T) {
 	assert.Equal(t, "lockpicking", vec[2])
 }
 
+// TestVectorEnumerateQuery verifies that [(enumerate ?vec) [?idx ?val]] expands
+// a vector into multiple result rows in a Datalog query.
+func TestVectorEnumerateQuery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-enumerate-query-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":product/label").Type(schema.TypeString).Add().
+		Attribute(":product/tags").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	widget := datalog.NewIdentity("widget")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(widget, datalog.NewKeyword(":product/label"), "Widget"))
+	require.NoError(t, tx.Add(widget, datalog.NewKeyword(":product/tags"), "waterproof"))
+	require.NoError(t, tx.Add(widget, datalog.NewKeyword(":product/tags"), "lightweight"))
+	require.NoError(t, tx.Add(widget, datalog.NewKeyword(":product/tags"), "durable"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// enumerate should expand the vector into 3 rows, one per element
+	results, err := db.ExecuteQuery(
+		`[:find ?idx ?tag
+		  :where
+		  [?e :product/label "Widget"]
+		  [?e :product/tags ?vec]
+		  [(enumerate ?vec) [?idx ?tag]]]`)
+	require.NoError(t, err)
+	require.Len(t, results, 3, "enumerate should produce one row per vector element")
+
+	// Verify index-value pairs
+	type pair struct {
+		idx int64
+		tag string
+	}
+	var pairs []pair
+	for _, row := range results {
+		pairs = append(pairs, pair{
+			idx: row[0].(int64),
+			tag: row[1].(string),
+		})
+	}
+
+	assert.Contains(t, pairs, pair{0, "waterproof"})
+	assert.Contains(t, pairs, pair{1, "lightweight"})
+	assert.Contains(t, pairs, pair{2, "durable"})
+}
+
+// TestVectorEnumerateMultipleEntities verifies enumerate correctly scopes to
+// each entity's own vector, preventing cross-joins between entities.
+func TestVectorEnumerateMultipleEntities(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-enumerate-multi-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":product/label").Type(schema.TypeString).Add().
+		Attribute(":product/tags").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	widget := datalog.NewIdentity("widget")
+	gadget := datalog.NewIdentity("gadget")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(widget, datalog.NewKeyword(":product/label"), "Widget"))
+	require.NoError(t, tx.Add(widget, datalog.NewKeyword(":product/tags"), "waterproof"))
+	require.NoError(t, tx.Add(widget, datalog.NewKeyword(":product/tags"), "lightweight"))
+	require.NoError(t, tx.Add(gadget, datalog.NewKeyword(":product/label"), "Gadget"))
+	require.NoError(t, tx.Add(gadget, datalog.NewKeyword(":product/tags"), "portable"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Each entity's vector should expand independently:
+	// Widget: 2 tags, Gadget: 1 tag → 3 total rows
+	results, err := db.ExecuteQuery(
+		`[:find ?label ?tag
+		  :where
+		  [?e :product/label ?label]
+		  [?e :product/tags ?vec]
+		  [(enumerate ?vec) [?idx ?tag]]]`)
+	require.NoError(t, err)
+	require.Len(t, results, 3, "should get Widget's 2 tags + Gadget's 1 tag = 3 rows")
+
+	// Count per product
+	productTags := make(map[string][]string)
+	for _, row := range results {
+		label := row[0].(string)
+		tag := row[1].(string)
+		productTags[label] = append(productTags[label], tag)
+	}
+
+	require.Len(t, productTags["Widget"], 2, "Widget should have 2 tags")
+	require.Len(t, productTags["Gadget"], 1, "Gadget should have 1 tag")
+	assert.Contains(t, productTags["Widget"], "waterproof")
+	assert.Contains(t, productTags["Widget"], "lightweight")
+	assert.Contains(t, productTags["Gadget"], "portable")
+}
+
+// TestVectorEnumerateRefWithFilter verifies enumerate on ref vectors with
+// subsequent attribute filtering on the referenced entities. Two parent entities
+// each have a ref vector pointing to different child entities. Enumerate +
+// filter by child attribute should correctly scope results per parent.
+func TestVectorEnumerateRefWithFilter(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-enumerate-ref-filter-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":folder/name").Type(schema.TypeString).Add().
+		Attribute(":folder/items").Type(schema.TypeRef).Vector().Add().
+		Attribute(":item/color").Type(schema.TypeKeyword).Add().
+		Attribute(":item/label").Type(schema.TypeString).Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create child entities (items) with different colors
+	redItem := datalog.NewIdentity("red-item")
+	blueItem := datalog.NewIdentity("blue-item")
+	greenItem := datalog.NewIdentity("green-item")
+
+	colorAttr := datalog.NewKeyword(":item/color")
+	labelAttr := datalog.NewKeyword(":item/label")
+	red := datalog.NewKeyword(":color/red")
+	blue := datalog.NewKeyword(":color/blue")
+	green := datalog.NewKeyword(":color/green")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(redItem, colorAttr, red))
+	require.NoError(t, tx.Add(redItem, labelAttr, "Apple"))
+	require.NoError(t, tx.Add(blueItem, colorAttr, blue))
+	require.NoError(t, tx.Add(blueItem, labelAttr, "Sky"))
+	require.NoError(t, tx.Add(greenItem, colorAttr, green))
+	require.NoError(t, tx.Add(greenItem, labelAttr, "Leaf"))
+
+	// Create parent entities (folders) with ref vectors to items
+	folderA := datalog.NewIdentity("folder-a")
+	folderB := datalog.NewIdentity("folder-b")
+	nameAttr := datalog.NewKeyword(":folder/name")
+	itemsAttr := datalog.NewKeyword(":folder/items")
+
+	require.NoError(t, tx.Add(folderA, nameAttr, "Folder-A"))
+	require.NoError(t, tx.Add(folderA, itemsAttr, redItem))   // Folder-A has red item
+	require.NoError(t, tx.Add(folderB, nameAttr, "Folder-B"))
+	require.NoError(t, tx.Add(folderB, itemsAttr, blueItem))  // Folder-B has blue item
+	require.NoError(t, tx.Add(folderB, itemsAttr, greenItem)) // Folder-B also has green item
+
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Query: enumerate folder items, filter to red only
+	// Should return only Folder-A's red item, NOT Folder-B
+	results, err := db.ExecuteQueryWithInputs(
+		`[:find ?folderName ?itemLabel
+		  :in $ ?color
+		  :where
+		  [?f :folder/name ?folderName]
+		  [?f :folder/items ?vec]
+		  [(enumerate ?vec) [?idx ?item]]
+		  [?item :item/color ?color]
+		  [?item :item/label ?itemLabel]]`,
+		red)
+	require.NoError(t, err)
+	require.Len(t, results, 1, "only Folder-A has a red item")
+	assert.Equal(t, "Folder-A", results[0][0].(string))
+	assert.Equal(t, "Apple", results[0][1].(string))
+}
+
 // TestVectorSetTruncate verifies Set() handles removing elements from the end.
 func TestVectorSetTruncate(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vector-set-truncate-test")
