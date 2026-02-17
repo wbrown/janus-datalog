@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/codec"
+	"github.com/wbrown/janus-datalog/datalog/edn"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/storage"
@@ -26,6 +29,8 @@ func main() {
 	var exportPath string
 	var importPath string
 
+	var inputValues ednSliceFlag
+
 	flag.StringVar(&dbPath, "db", "", "database path")
 	flag.BoolVar(&interactive, "i", false, "interactive mode")
 	flag.BoolVar(&help, "h", false, "show help")
@@ -34,6 +39,7 @@ func main() {
 	flag.BoolVar(&enableDecorrelation, "decorrelate", true, "enable subquery decorrelation optimization (default: true)")
 	flag.StringVar(&exportPath, "export", "", "export database to EDN file")
 	flag.StringVar(&importPath, "import", "", "import database from EDN file")
+	flag.Var(&inputValues, "in", "input parameter as EDN value (repeatable, one per :in binding)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [database_path]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "A Datalog query engine with persistent storage.\n\n")
@@ -48,6 +54,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -verbose           # Verbose mode with query annotations\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -verbose -i        # Interactive mode with annotations\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -query '[:find ?x :where [?x :person/name _]]'  # Run single query\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -query '[:find ?n :in $ ?age :where [?p :person/age ?age] [?p :person/name ?n]]' -in 30  # With input binding\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -export data.edn  # Export database to EDN file\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db newdata.db -import data.edn # Import EDN file into database\n", os.Args[0])
 	}
@@ -106,7 +113,7 @@ func main() {
 
 	if queryStr != "" {
 		// Run single query mode
-		runSingleQuery(db, handler, queryStr, enableDecorrelation)
+		runSingleQuery(db, handler, queryStr, enableDecorrelation, inputValues)
 	} else if interactive {
 		runInteractive(db, handler, enableDecorrelation)
 	} else {
@@ -449,7 +456,7 @@ func runImport(dbPath, importPath string) {
 }
 
 // runSingleQuery executes a single query and exits
-func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr string, enableDecorrelation bool) {
+func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr string, enableDecorrelation bool, inputs []string) {
 	// Parse query
 	q, err := parser.ParseQuery(queryStr)
 	if err != nil {
@@ -460,19 +467,28 @@ func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr 
 	// Print the formatted query
 	fmt.Printf("Query:\n%s\n\n", q.String())
 
-	// Create executor with optimizations
-	opts := storage.DefaultPlannerOptions()
-	opts.EnableSubqueryDecorrelation = enableDecorrelation
-	exec := db.NewExecutorWithOptions(opts)
+	// Parse input values from EDN strings
+	goInputs, err := parseEDNInputs(inputs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Input error: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Execute query with timing
 	start := time.Now()
 	var result executor.Relation
-	if handler != nil {
-		ctx := executor.NewContext(handler)
-		result, err = exec.ExecuteWithContext(ctx, q)
+	if len(goInputs) > 0 {
+		result, err = db.ExecuteQueryRelation(q, goInputs...)
 	} else {
-		result, err = exec.Execute(q)
+		opts := storage.DefaultPlannerOptions()
+		opts.EnableSubqueryDecorrelation = enableDecorrelation
+		exec := db.NewExecutorWithOptions(opts)
+		if handler != nil {
+			ctx := executor.NewContext(handler)
+			result, err = exec.ExecuteWithContext(ctx, q)
+		} else {
+			result, err = exec.Execute(q)
+		}
 	}
 	elapsed := time.Since(start)
 
@@ -495,4 +511,118 @@ func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr 
 		}
 	}
 	fmt.Print(strings.Join(lines, "\n"))
+}
+
+// ednSliceFlag implements flag.Value for a repeatable -in flag.
+type ednSliceFlag []string
+
+func (f *ednSliceFlag) String() string { return strings.Join(*f, ", ") }
+func (f *ednSliceFlag) Set(val string) error {
+	*f = append(*f, val)
+	return nil
+}
+
+// parseEDNInputs converts EDN string values to Go values for query inputs.
+func parseEDNInputs(inputs []string) ([]interface{}, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	result := make([]interface{}, len(inputs))
+	for i, input := range inputs {
+		val, err := parseEDNValue(input)
+		if err != nil {
+			return nil, fmt.Errorf("input %d (%q): %w", i+1, input, err)
+		}
+		result[i] = val
+	}
+	return result, nil
+}
+
+// parseEDNValue parses a single EDN value string into a Go value.
+func parseEDNValue(s string) (interface{}, error) {
+	node, err := edn.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("invalid EDN: %w", err)
+	}
+	if node == nil {
+		return nil, fmt.Errorf("empty EDN value")
+	}
+	return ednNodeToGo(node)
+}
+
+// ednNodeToGo converts an EDN AST node to a Go value.
+func ednNodeToGo(node *edn.Node) (interface{}, error) {
+	switch node.Type {
+	case edn.NodeInt:
+		return strconv.ParseInt(node.Value, 10, 64)
+	case edn.NodeFloat:
+		return strconv.ParseFloat(node.Value, 64)
+	case edn.NodeString:
+		return node.Value, nil
+	case edn.NodeBool:
+		return node.Value == "true", nil
+	case edn.NodeKeyword:
+		return datalog.NewKeyword(node.Value), nil
+	case edn.NodeSymbol:
+		return datalog.NewSymbol(node.Value), nil
+	case edn.NodeVector:
+		vals := make([]interface{}, len(node.Nodes))
+		for i := range node.Nodes {
+			v, err := ednNodeToGo(&node.Nodes[i])
+			if err != nil {
+				return nil, err
+			}
+			vals[i] = v
+		}
+		return vals, nil
+	case edn.NodeTagged:
+		return ednTaggedToGo(node)
+	default:
+		return nil, fmt.Errorf("unsupported EDN type: %v", node.Type)
+	}
+}
+
+// ednTaggedToGo converts an EDN tagged literal to a Go value.
+func ednTaggedToGo(node *edn.Node) (interface{}, error) {
+	if node.Tagged == nil {
+		return nil, fmt.Errorf("tagged literal missing value")
+	}
+	val := node.Tagged
+	switch node.Tag {
+	case "identity":
+		if val.Type != edn.NodeString {
+			return nil, fmt.Errorf("#identity requires string value")
+		}
+		hash, err := codec.DecodeFixed20(val.Value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid L85 in #identity: %w", err)
+		}
+		return datalog.NewIdentityFromHash(hash), nil
+	case "inst":
+		if val.Type != edn.NodeString {
+			return nil, fmt.Errorf("#inst requires string value")
+		}
+		t, err := time.Parse(time.RFC3339Nano, val.Value)
+		if err != nil {
+			t, err = time.Parse(time.RFC3339, val.Value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid instant: %w", err)
+			}
+		}
+		return t.UTC(), nil
+	case "bytes":
+		if val.Type != edn.NodeString {
+			return nil, fmt.Errorf("#bytes requires string value")
+		}
+		if val.Value == "" {
+			return []byte{}, nil
+		}
+		decoded, err := codec.DecodeL85(val.Value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid L85 in #bytes: %w", err)
+		}
+		return decoded, nil
+	default:
+		return nil, fmt.Errorf("unsupported tagged literal: #%s", node.Tag)
+	}
 }
