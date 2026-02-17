@@ -2,6 +2,7 @@ package parser
 
 import (
 	"testing"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -60,6 +61,82 @@ func TestParseSourceQualifiedPattern(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseTaggedLiteralsInPatterns(t *testing.T) {
+	// #identity in entity position - look up a specific entity by hash
+	t.Run("identity in entity position", func(t *testing.T) {
+		alice := datalog.NewIdentity("alice")
+		q, err := ParseQuery(`[:find ?a ?v :where [#identity "` + alice.L85() + `" ?a ?v]]`)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		pat := q.Where[0].(*query.DataPattern)
+		c, ok := pat.Elements[0].(query.Constant)
+		if !ok {
+			t.Fatalf("expected Constant, got %T", pat.Elements[0])
+		}
+		got, ok := c.Value.(datalog.Identity)
+		if !ok {
+			t.Fatalf("expected Identity value, got %T", c.Value)
+		}
+		if !got.Equal(alice) {
+			t.Errorf("expected identity %s, got %s", alice.L85(), got.L85())
+		}
+	})
+
+	// #identity in value position - match a ref value
+	t.Run("identity in value position", func(t *testing.T) {
+		bob := datalog.NewIdentity("bob")
+		q, err := ParseQuery(`[:find ?e :where [?e :person/friend #identity "` + bob.L85() + `"]]`)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		pat := q.Where[0].(*query.DataPattern)
+		c, ok := pat.Elements[2].(query.Constant)
+		if !ok {
+			t.Fatalf("expected Constant, got %T", pat.Elements[2])
+		}
+		got, ok := c.Value.(datalog.Identity)
+		if !ok {
+			t.Fatalf("expected Identity value, got %T", c.Value)
+		}
+		if !got.Equal(bob) {
+			t.Errorf("expected identity %s, got %s", bob.L85(), got.L85())
+		}
+	})
+
+	// #inst in value position - match a timestamp
+	t.Run("inst in value position", func(t *testing.T) {
+		q, err := ParseQuery(`[:find ?e :where [?e :event/date #inst "2024-06-15T10:30:00Z"]]`)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		pat := q.Where[0].(*query.DataPattern)
+		c, ok := pat.Elements[2].(query.Constant)
+		if !ok {
+			t.Fatalf("expected Constant, got %T", pat.Elements[2])
+		}
+		got, ok := c.Value.(time.Time)
+		if !ok {
+			t.Fatalf("expected time.Time value, got %T", c.Value)
+		}
+		want := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
+		if !got.Equal(want) {
+			t.Errorf("expected %v, got %v", want, got)
+		}
+	})
+
+	// #inst in predicate position
+	t.Run("inst in predicate", func(t *testing.T) {
+		q, err := ParseQuery(`[:find ?e :where [?e :event/date ?d] [(> ?d #inst "2024-01-01T00:00:00Z")]]`)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if len(q.Where) != 2 {
+			t.Fatalf("expected 2 where clauses, got %d", len(q.Where))
+		}
+	})
 }
 
 func TestParseSourceQualifiedPatternRoundTrip(t *testing.T) {
