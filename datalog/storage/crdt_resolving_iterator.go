@@ -281,8 +281,8 @@ func (it *CRDTResolvingIterator) emitRGAGroup() bool {
 	return false
 }
 
-// resolveRGAGroup reconstructs the RGA tree and returns ordered datoms.
-// Reconstructs datoms from stored state - no datom pointer storage needed.
+// resolveRGAGroup reconstructs the RGA tree and returns a single datom
+// with V = the resolved vector ([]any), matching the cache path behavior.
 func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 	if len(it.rgaElements) == 0 {
 		return nil
@@ -319,8 +319,9 @@ func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 		sortRGAByID(children[k])
 	}
 
-	// DFS from HEAD, reconstruct datoms
-	var result []*datalog.Datom
+	// DFS from HEAD, collect values into a single resolved list
+	var values []any
+	var maxTx datalog.ElementID
 	visited := make(map[datalog.ElementID]bool)
 	var walk func(id datalog.ElementID)
 	walk = func(id datalog.ElementID) {
@@ -331,22 +332,26 @@ func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 
 		for _, child := range children[id] {
 			if child.tombstoneID == nil && child.value != nil {
-				// Reconstruct datom from stored state
-				result = append(result, &datalog.Datom{
-					E:        it.currentE,
-					A:        it.currentA,
-					V:        child.value,
-					Tx:       child.id,
-					Op:       datalog.OpRGAInsert,
-					AfterRef: child.afterRef,
-				})
+				values = append(values, child.value)
+				if maxTx.Less(child.id) {
+					maxTx = child.id
+				}
 			}
 			walk(child.id)
 		}
 	}
 	walk(HEAD)
 
-	return result
+	if len(values) == 0 {
+		return nil
+	}
+
+	return []*datalog.Datom{{
+		E:  it.currentE,
+		A:  it.currentA,
+		V:  values,
+		Tx: maxTx,
+	}}
 }
 
 func sortRGAByID(elems []*rgaElement) {

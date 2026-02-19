@@ -81,12 +81,20 @@ func (m *BadgerMatcher) MatchWithConstraints(
 
 	// Check for vector cardinality - requires special handling with bound E from bindings
 	// This intercepts BEFORE normal join paths since vectors need RGA resolution
-	if a := m.extractValue(pattern.GetA()); a != nil {
+	var aResolved interface{}
+	aResolved = m.extractValue(pattern.GetA())
+	if aResolved == nil {
+		if aVar, ok := pattern.GetA().(query.Variable); ok {
+			if kw, found := resolveKeywordFromBindings(aVar, bindings); found {
+				aResolved = kw
+			}
+		}
+	}
+	if aResolved != nil {
 		if m.schema != nil {
-			if kw, ok := a.(datalog.Keyword); ok {
+			if kw, ok := aResolved.(datalog.Keyword); ok {
 				if attr := m.schema.GetAttribute(kw); attr != nil {
 					if attr.Cardinality == schema.CardinalityVector {
-						// E is bound from bindings, A is a constant - use vector resolution
 						return m.matchVectorWithBindings(pattern, bindingRel, columns, kw)
 					}
 				}
@@ -94,15 +102,13 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		}
 	}
 
-	// CACHE OPTIMIZATION: When A is a constant and E comes from bindings,
+	// CACHE OPTIMIZATION: When A is known (from pattern constant or bindings),
 	// use the cache for each E value instead of storage scans.
-	if m.cache != nil && m.txID == 0 {
-		if a := m.extractValue(pattern.GetA()); a != nil {
-			if aKw, ok := a.(datalog.Keyword); ok {
-				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw)
-				if handled {
-					return cacheResult, nil
-				}
+	if m.cache != nil && m.txID == 0 && aResolved != nil {
+		if aKw, ok := aResolved.(datalog.Keyword); ok {
+			cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw)
+			if handled {
+				return cacheResult, nil
 			}
 		}
 	}
@@ -1083,7 +1089,41 @@ func (m *BadgerMatcher) matchFromCache(
 	return nil, false // Unknown cardinality, fallback to storage
 }
 
-// matchWithBindingsFromCache handles patterns where E comes from bindings and A is constant.
+// findVariableColumn returns the column index for a variable in a relation, or -1.
+func findVariableColumn(sym query.Symbol, rel executor.Relation) int {
+	for i, col := range rel.Columns() {
+		if col == sym {
+			return i
+		}
+	}
+	return -1
+}
+
+// resolveKeywordFromBindings searches all binding relations for a single-row relation
+// containing the given variable and returns its value as a Keyword. This covers scalar
+// inputs and single-row tuple inputs where A has exactly one known value.
+func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations) (datalog.Keyword, bool) {
+	for _, rel := range bindings {
+		idx := findVariableColumn(aVar.Name, rel)
+		if idx < 0 {
+			continue
+		}
+		if rel.Size() != 1 {
+			return nil, false // multi-row — can't extract single value
+		}
+		iter := rel.Iterator()
+		defer iter.Close()
+		if iter.Next() {
+			if kw, ok := iter.Tuple()[idx].(datalog.Keyword); ok {
+				return kw, true
+			}
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+// matchWithBindingsFromCache handles patterns where E comes from bindings and A is known.
 // Uses cache for O(1) lookup per bound E value instead of storage scans.
 // Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
 func (m *BadgerMatcher) matchWithBindingsFromCache(
