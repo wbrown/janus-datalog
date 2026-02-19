@@ -426,6 +426,205 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 }
 
 // =============================================================================
+// Phase 2 Tests: Per-row A from relation/join bindings
+// =============================================================================
+
+// TestEACacheBypass_PerRowA_UsesCache tests that the cache is used when both E and A
+// are columns in the binding relation with multiple rows (per-row A from join results).
+// This is the Phase 2 optimization target.
+//
+// Setup: Each entity has a :config/attr that names its own value attribute.
+// Pattern 1 resolves the attribute name. Pattern 2 looks up the value.
+// After pattern 1, the binding for pattern 2 has multiple rows with varying (E, A).
+func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
+	dir := t.TempDir()
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	require.NoError(t, err)
+	defer db.Close()
+
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":config/attr"),
+		ValueType:   schema.TypeKeyword,
+		Cardinality: schema.CardinalityOne,
+	})
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/name"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityOne,
+	})
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/age"),
+		ValueType:   schema.TypeLong,
+		Cardinality: schema.CardinalityOne,
+	})
+	db.SetSchema(s)
+
+	configAttr := datalog.NewKeyword(":config/attr")
+	nameAttr := datalog.NewKeyword(":person/name")
+	ageAttr := datalog.NewKeyword(":person/age")
+
+	entity1 := datalog.NewIdentity("entity-1")
+	entity2 := datalog.NewIdentity("entity-2")
+
+	tx := db.NewTransaction()
+	// entity-1: config/attr = :person/name, person/name = "Alice"
+	tx.Set(entity1, configAttr, nameAttr)
+	tx.Set(entity1, nameAttr, "Alice")
+	// entity-2: config/attr = :person/age, person/age = 30
+	tx.Set(entity2, configAttr, ageAttr)
+	tx.Set(entity2, ageAttr, int64(30))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	var events []annotations.Event
+	db.SetAnnotationHandler(func(e annotations.Event) {
+		events = append(events, e)
+	})
+	defer db.SetAnnotationHandler(nil)
+
+	// Query: for each entity in the collection, look up its config/attr to get ?a,
+	// then look up [?e ?a ?v]. After pattern 1, binding has 2 rows with varying A.
+	results, err := db.ExecuteQueryWithInputs(
+		`[:find ?e ?a ?v :in $ [?e ...] :where
+		  [?e :config/attr ?a]
+		  [?e ?a ?v]]`,
+		[]interface{}{entity1, entity2})
+	require.NoError(t, err)
+	require.Len(t, results, 2, "Should get 2 results (one per entity)")
+
+	// Check that storage/reuse-strategy is NOT used for pattern 2
+	// Before Phase 2 fix: FAILS — reuse-strategy IS present (cache bypassed)
+	// After Phase 2 fix: passes — per-row A uses cache
+	assert.False(t, hasReuseStrategyEvent(events),
+		"Per-row A from join should use cache path, not storage/reuse-strategy scans")
+}
+
+func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createEACacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			person1 := datalog.NewIdentity("person-1")
+			nameAttr := datalog.NewKeyword(":person/name")
+			contentAttr := datalog.NewKeyword(":doc/content")
+
+			tx := db.NewTransaction()
+			tx.Set(person1, nameAttr, "Alice")
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			tx2 := db.NewTransaction()
+			tx2.Set(person1, contentAttr, []interface{}{"a", "b", "c"})
+			_, err = tx2.Commit()
+			require.NoError(t, err)
+
+			var events []annotations.Event
+			db.SetAnnotationHandler(func(e annotations.Event) {
+				events = append(events, e)
+			})
+
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
+				[][]any{
+					{person1, nameAttr},
+					{person1, contentAttr},
+				})
+			require.NoError(t, err)
+
+			db.SetAnnotationHandler(nil)
+
+			if len(results) != 2 {
+				t.Logf("[%s] Got %d results: %v", mode.name, len(results), results)
+				for _, e := range events {
+					t.Logf("[%s] EVENT: %s %v", mode.name, e.Name, e.Data)
+				}
+			}
+			assert.Len(t, results, 2,
+				"[%s] Per-row vector: 1 name + 1 resolved vector = 2 results, got %d", mode.name, len(results))
+		})
+	}
+}
+
+func TestEACacheBypass_CacheMissFallback(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, cleanup := createEACacheTestDB(t, mode.disableCache)
+			defer cleanup()
+
+			person1 := datalog.NewIdentity("person-1")
+			person2 := datalog.NewIdentity("person-nonexistent")
+			nameAttr := datalog.NewKeyword(":person/name")
+
+			tx := db.NewTransaction()
+			tx.Set(person1, nameAttr, "Alice")
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
+				[][]any{
+					{person1, nameAttr},
+					{person2, nameAttr},
+				})
+			require.NoError(t, err)
+			assert.Len(t, results, 1,
+				"[%s] Should return 1 result (Alice only, nonexistent entity skipped)", mode.name)
+		})
+	}
+}
+
+func TestEACacheBypass_JoinBoundA(t *testing.T) {
+	for _, mode := range cacheTestModes {
+		t.Run(mode.name, func(t *testing.T) {
+			dir := t.TempDir()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:         dir,
+				DisableCache: mode.disableCache,
+			})
+			require.NoError(t, err)
+			defer db.Close()
+
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":meta/target-attr"),
+				ValueType:   schema.TypeKeyword,
+				Cardinality: schema.CardinalityOne,
+			})
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
+
+			metaID := datalog.NewIdentity("meta-1")
+			personID := datalog.NewIdentity("person-1")
+			targetAttr := datalog.NewKeyword(":meta/target-attr")
+			nameAttr := datalog.NewKeyword(":person/name")
+
+			tx := db.NewTransaction()
+			tx.Set(metaID, targetAttr, nameAttr)
+			tx.Set(personID, nameAttr, "Alice")
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			results, err := db.ExecuteQueryWithInputs(
+				`[:find ?v :in $ ?meta :where
+				  [?meta :meta/target-attr ?a]
+				  [?person ?a ?v]]`,
+				metaID)
+			require.NoError(t, err)
+			require.Len(t, results, 1,
+				"[%s] Join-bound A should return 1 result", mode.name)
+			assert.Equal(t, "Alice", results[0][0],
+				"[%s] Join-bound A should find person's name", mode.name)
+		})
+	}
+}
+
+// =============================================================================
 // Benchmark (cache enabled vs cache disabled)
 // =============================================================================
 
@@ -512,6 +711,26 @@ func BenchmarkEACacheBypass(b *testing.B) {
 					}
 					if len(results) != 1 {
 						b.Fatalf("expected 1 result, got %d", len(results))
+					}
+				}
+			})
+
+			b.Run("A_as_relation_input", func(b *testing.B) {
+				b.ReportAllocs()
+				relInput := make([][]any, 100)
+				for i := 0; i < 100; i++ {
+					relInput[i] = []any{entities[i], nameAttr}
+				}
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					results, err := db.ExecuteQueryWithInputs(
+						`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
+						relInput)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(results) != 100 {
+						b.Fatalf("expected 100 results, got %d", len(results))
 					}
 				}
 			})
