@@ -55,6 +55,8 @@ func Type(v Value) ValueType {
 		return TypeSymbol
 	case ElementID:
 		return TypeElementID
+	case *ElementID:
+		return TypeElementID
 	default:
 		panic(fmt.Sprintf("unknown value type: %T", val))
 	}
@@ -108,6 +110,11 @@ func ValueBytes(v Value) []byte {
 	case ElementID:
 		// Uses natural order encoding (not bitwise NOT like key encoding)
 		return val.Bytes()
+	case *ElementID:
+		if val != nil {
+			return val.Bytes()
+		}
+		return make([]byte, ElementIDSize)
 	default:
 		panic(fmt.Sprintf("cannot encode value type: %T", v))
 	}

@@ -393,8 +393,20 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 	case TAEV: // 4
 		// TAEV: Transaction-Attribute-Entity-Value
-		// Transaction-first index is rarely used for prefix scanning
-		// Just include the index prefix
+		// Tx must be encoded with bitwise-NOT for descending sort order
+		if tx != nil {
+			if txID, ok := tx.(uint64); ok {
+				storageTx := NewTxFromUint(txID)
+				encTx := encoder.EncodeTxForPrefix(storageTx)
+				startParts = append(startParts, encTx)
+				endParts = append(endParts, encTx)
+			} else if eid, ok := datalog.DerefElementID(tx); ok {
+				storageTx := NewTxFromElementID(eid)
+				encTx := encoder.EncodeTxForPrefix(storageTx)
+				startParts = append(startParts, encTx)
+				endParts = append(endParts, encTx)
+			}
+		}
 	}
 
 	start := encoder.EncodePrefix(index, startParts...)
@@ -454,6 +466,9 @@ func valueToHashKey(v interface{}) string {
 	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
 	if ptr, ok := v.(*uint64); ok {
 		v = *ptr
+	}
+	if eid, ok := datalog.DerefElementID(v); ok {
+		return eid.String()
 	}
 
 	switch val := v.(type) {
@@ -685,6 +700,16 @@ func compareJoinKeys(a, b interface{}) int {
 				return 1
 			}
 			return 0
+		}
+	case datalog.ElementID:
+		if bEid, ok := datalog.DerefElementID(b); ok {
+			return aVal.Compare(bEid)
+		}
+	case *datalog.ElementID:
+		if aVal != nil {
+			if bEid, ok := datalog.DerefElementID(b); ok {
+				return aVal.Compare(bEid)
+			}
 		}
 	}
 

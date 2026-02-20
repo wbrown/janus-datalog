@@ -110,6 +110,8 @@ func (s *simpleBatchScanner) valueToKey(v interface{}) string {
 		v = *ptr
 	} else if ptr, ok := v.(*uint64); ok {
 		v = *ptr
+	} else if eid, ok := datalog.DerefElementID(v); ok {
+		v = eid
 	}
 
 	switch val := v.(type) {
@@ -124,6 +126,8 @@ func (s *simpleBatchScanner) valueToKey(v interface{}) string {
 		return val.String()
 	case string:
 		return val
+	case datalog.ElementID:
+		return val.String()
 	case uint64:
 		return fmt.Sprintf("%d", val)
 	default:
@@ -247,10 +251,16 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 		}
 		return encoder.EncodePrefix(s.index, parts...)
 	case 4: // TAEV
-		if tx, ok := value.(uint64); ok {
-			// Convert uint64 to 20-byte Tx format
+		// Tx must be encoded with bitwise-NOT for descending sort order
+		if eid, ok := datalog.DerefElementID(value); ok {
+			txBytes := NewTxFromElementID(eid)
+			encTx := encoder.EncodeTxForPrefix(txBytes)
+			parts := [][]byte{encTx}
+			return encoder.EncodePrefix(s.index, parts...)
+		} else if tx, ok := value.(uint64); ok {
 			txBytes := NewTxFromUint(tx)
-			parts := [][]byte{txBytes[:]}
+			encTx := encoder.EncodeTxForPrefix(txBytes)
+			parts := [][]byte{encTx}
 			return encoder.EncodePrefix(s.index, parts...)
 		}
 	}

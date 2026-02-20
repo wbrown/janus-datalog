@@ -178,12 +178,12 @@ func (it *reusingIterator) Next() bool {
 					case 3: // Transaction bound (TAEV index)
 						// TAEV: Tx + Attribute + Entity + Value
 						// When transaction changes, we're past this binding
-						if expectedTx, ok := bindingTuple[0].(uint64); ok {
-							if datom.Tx.Lamport != expectedTx {
+						if eid, ok := datalog.DerefElementID(bindingTuple[0]); ok {
+							if datom.Tx != eid {
 								movedPast = true
 							}
-						} else if expectedTx, ok := bindingTuple[0].(datalog.ElementID); ok {
-							if datom.Tx != expectedTx {
+						} else if expectedTx, ok := bindingTuple[0].(uint64); ok {
+							if datom.Tx.Lamport != expectedTx {
 								movedPast = true
 							}
 						}
@@ -278,7 +278,7 @@ func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) ([]byte
 	}
 
 	// Extract values based on pattern
-	var e, a, v interface{}
+	var e, a, v, tx interface{}
 
 	// Get E value
 	if c, ok := it.pattern.GetE().(query.Constant); ok {
@@ -305,8 +305,25 @@ func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) ([]byte
 		}
 	}
 
-	// Use the existing chooseIndex logic but just for the key calculation
-	_, start, end := it.matcher.chooseIndex(e, a, v, nil)
+	// Get T value
+	if len(it.pattern.Elements) > 3 {
+		if c, ok := it.pattern.GetT().(query.Constant); ok {
+			tx = c.Value
+		} else if sym, ok := it.pattern.GetT().(query.Variable); ok {
+			if idx, found := colIndex[sym.Name]; found && idx < len(bindingTuple) {
+				tx = bindingTuple[idx]
+			}
+		}
+	}
+
+	// Use the existing chooseIndex logic but just for the key calculation.
+	// When the strategy chose TAEV (position 3), only pass tx to avoid
+	// chooseIndex selecting AETV due to a constant A in the pattern.
+	if it.position == 3 && it.index == TAEV {
+		_, start, end := it.matcher.chooseIndex(nil, nil, nil, tx)
+		return start, end
+	}
+	_, start, end := it.matcher.chooseIndex(e, a, v, tx)
 	return start, end
 }
 

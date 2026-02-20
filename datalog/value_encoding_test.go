@@ -129,6 +129,38 @@ func TestElementIDValueType_Distinct(t *testing.T) {
 	}
 }
 
+// TestElementIDPointerValueEncoding tests that *ElementID works in Type() and
+// ValueBytes() without panicking. The InternedTupleBuilder stores Tx as
+// *ElementID, and any code path that calls Type() or ValueBytes() on tuple
+// values must handle both pointer and value forms.
+func TestElementIDPointerValueEncoding(t *testing.T) {
+	eid := ElementID{Lamport: 1234, ReplicaID: 5678}
+
+	// *ElementID should return TypeElementID
+	ptrType := Type(&eid)
+	if ptrType != TypeElementID {
+		t.Errorf("Type(&ElementID) = %d, want TypeElementID (%d)", ptrType, TypeElementID)
+	}
+
+	// *ElementID should produce same bytes as ElementID value
+	ptrBytes := ValueBytes(&eid)
+	valBytes := ValueBytes(eid)
+	if len(ptrBytes) != len(valBytes) {
+		t.Fatalf("ValueBytes(&eid) len = %d, ValueBytes(eid) len = %d", len(ptrBytes), len(valBytes))
+	}
+	for i := range ptrBytes {
+		if ptrBytes[i] != valBytes[i] {
+			t.Errorf("ValueBytes(&eid)[%d] = %d, ValueBytes(eid)[%d] = %d", i, ptrBytes[i], i, valBytes[i])
+		}
+	}
+
+	// nil *ElementID should not panic in Type()
+	var nilPtr *ElementID
+	nilType := Type(nilPtr)
+	// We don't care about the exact type for nil, just that it doesn't panic
+	_ = nilType
+}
+
 func TestElementIDValueBytes_NaturalOrder(t *testing.T) {
 	// Value encoding should use natural order (not bitwise NOT like key encoding)
 	// This means lower Lamport values should encode to smaller bytes

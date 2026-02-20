@@ -530,6 +530,34 @@ func TestCompareJoinKeys(t *testing.T) {
 			datalog.NewKeyword(":test/a"),
 			1,
 		},
+		// ElementID value-value
+		{
+			"equal ElementID value-value",
+			datalog.ElementID{Lamport: 100, ReplicaID: 5},
+			datalog.ElementID{Lamport: 100, ReplicaID: 5},
+			0,
+		},
+		// ElementID pointer-value
+		{
+			"equal ElementID pointer-value",
+			&datalog.ElementID{Lamport: 100, ReplicaID: 5},
+			datalog.ElementID{Lamport: 100, ReplicaID: 5},
+			0,
+		},
+		// ElementID value-pointer less
+		{
+			"less ElementID value-pointer",
+			datalog.ElementID{Lamport: 100, ReplicaID: 5},
+			&datalog.ElementID{Lamport: 200, ReplicaID: 5},
+			-1,
+		},
+		// ElementID pointer-pointer greater
+		{
+			"greater ElementID pointer-pointer",
+			&datalog.ElementID{Lamport: 200, ReplicaID: 5},
+			&datalog.ElementID{Lamport: 100, ReplicaID: 5},
+			1,
+		},
 	}
 
 	for _, tt := range tests {

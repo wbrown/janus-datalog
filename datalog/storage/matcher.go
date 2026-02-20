@@ -661,10 +661,15 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 		return VAET, start, end
 	} else if tx != nil {
 		// Use TAEV index
+		var storageTx Tx
 		if txID, ok := tx.(uint64); ok {
-			// Convert to storage tx (20 bytes)
-			storageTx := NewTxFromUint(txID)
-			start, end := encoder.EncodePrefixRange(TAEV, storageTx[:])
+			storageTx = NewTxFromUint(txID)
+		} else if eid, ok := datalog.DerefElementID(tx); ok {
+			storageTx = NewTxFromElementID(eid)
+		}
+		if storageTx != (Tx{}) {
+			encTx := encoder.EncodeTxForPrefix(storageTx)
+			start, end := encoder.EncodePrefixRange(TAEV, encTx)
 			return TAEV, start, end
 		}
 	}
@@ -681,6 +686,9 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 	// Note: Identity is always a pointer type now, no dereferencing needed
 	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
 	if ptr, ok := tx.(*uint64); ok {
+		tx = *ptr
+	}
+	if ptr, ok := tx.(*datalog.ElementID); ok {
 		tx = *ptr
 	}
 

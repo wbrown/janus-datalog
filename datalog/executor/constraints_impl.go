@@ -49,8 +49,8 @@ func (c *equalityConstraint) Evaluate(datom *datalog.Datom) bool {
 		}
 		return datalog.ValuesEqual(datom.V, c.value)
 	case 3: // Transaction
-		if tx, ok := c.value.(datalog.ElementID); ok {
-			return datom.Tx == tx
+		if eid, ok := datalog.DerefElementID(c.value); ok {
+			return datom.Tx == eid
 		}
 		// Backward compatibility: also support uint64 comparison by Lamport
 		if tx, ok := c.value.(uint64); ok {
