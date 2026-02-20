@@ -104,7 +104,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 
 	// CACHE OPTIMIZATION: When A is known (from pattern constant or bindings),
 	// use the cache for each E value instead of storage scans.
-	if m.cache != nil && m.txID == (datalog.ElementID{}) {
+	if m.cache != nil && m.txID == nil {
 		if aResolved != nil {
 			// Phase 1: A has a single known value (from constant or single-row binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
@@ -267,7 +267,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 
 	// CACHE OPTIMIZATION: When E and A are bound and we're querying latest state,
 	// use the cache for O(1) access instead of storage scans.
-	if m.cache != nil && m.txID == (datalog.ElementID{}) && e != nil && a != nil {
+	if m.cache != nil && m.txID == nil && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
 				cacheResult, handled := m.matchFromCache(pattern, columns, eIdent, aKw, v, card)
@@ -329,6 +329,16 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			// V bound: find all entities where this value is in the set
 			useAddWinsScanAllEntitiesWithValue = true
 		}
+	}
+
+	// In history mode, disable all CRDT resolution flags — return raw datoms
+	if m.isHistoryMode() {
+		returnOnlyFirst = false
+		useAddWinsResolution = false
+		useMembershipCheck = false
+		useAddWinsScanAllEntities = false
+		useAddWinsScanAllEntitiesWithValue = false
+		useVectorResolution = false
 	}
 
 	// For cardinality-vector with E+A bound: use vector resolution
@@ -419,10 +429,12 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			return nil, fmt.Errorf("key mask scan failed: %w", err)
 		}
 
-		// Wrap with CRDT resolution for per-(E, A) group resolution
-		// Always applied: CRDTResolvingIterator handles nil schema correctly
-		// (defaults to CardinalityUnknown → add-wins semantics)
-		maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
+		// Wrap with CRDT resolution unless in history mode (raw datoms)
+		if m.isHistoryMode() {
+			maskIter.storageIter = rawStorageIter
+		} else {
+			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID())
+		}
 		iter = maskIter
 	} else {
 		// Use regular iterator
@@ -449,10 +461,12 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
-		// Wrap with CRDT resolution for per-(E, A) group resolution
-		// Always applied: CRDTResolvingIterator handles nil schema correctly
-		// (defaults to CardinalityUnknown → add-wins semantics)
-		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.txID)
+		// Wrap with CRDT resolution unless in history mode (raw datoms)
+		if m.isHistoryMode() {
+			regularIter.storageIter = rawStorageIter
+		} else {
+			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID())
+		}
 		iter = regularIter
 	}
 

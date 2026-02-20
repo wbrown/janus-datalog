@@ -193,10 +193,13 @@ func (m *BadgerMatcher) matchWithHashJoin(
 		return nil, fmt.Errorf("hash join scan failed: %w", err)
 	}
 
-	// PHASE 3.5: Wrap with CRDT resolution
-	// Always applied: CRDTResolvingIterator handles nil schema correctly
-	// (defaults to CardinalityUnknown → add-wins semantics)
-	resolvedIter := NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
+	// PHASE 3.5: Wrap with CRDT resolution unless in history mode
+	var resolvedIter Iterator
+	if m.isHistoryMode() {
+		resolvedIter = storageIter
+	} else {
+		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID())
+	}
 
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
@@ -578,9 +581,13 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 		return nil, fmt.Errorf("merge join scan failed: %w", err)
 	}
 
-	// PHASE 3.5: Wrap with CRDT resolution
-	// Always applied: CRDTResolvingIterator handles nil schema correctly
-	resolvedIterMerge := NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
+	// PHASE 3.5: Wrap with CRDT resolution unless in history mode
+	var resolvedIterMerge Iterator
+	if m.isHistoryMode() {
+		resolvedIterMerge = storageIter
+	} else {
+		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID())
+	}
 
 	// PHASE 4: Create streaming merge join iterator
 	iter := &mergeJoinIterator{
@@ -754,7 +761,7 @@ func (it *hashJoinIterator) Next() bool {
 		it.datomsScanned++
 
 		// Check transaction validity
-		if it.matcher.txID != (datalog.ElementID{}) && it.matcher.txID.Less(datom.Tx) {
+		if it.matcher.shouldFilterTx(datom.Tx) {
 			continue
 		}
 
@@ -842,7 +849,7 @@ func (it *mergeJoinIterator) Next() bool {
 		}
 
 		// Check transaction validity
-		if it.matcher.txID != (datalog.ElementID{}) && it.matcher.txID.Less(datom.Tx) {
+		if it.matcher.shouldFilterTx(datom.Tx) {
 			continue
 		}
 

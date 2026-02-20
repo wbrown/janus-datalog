@@ -30,7 +30,7 @@ type PersonResult struct {
 
 ```go
 var results []PersonResult
-err := db.QueryInto(&results, `
+err := d.QueryInto(&results, `
     [:find ?name ?age
      :where [?e :person/name ?name]
             [?e :person/age ?age]]
@@ -45,7 +45,7 @@ for _, r := range results {
 
 ```go
 var result PersonResult
-found, err := db.QueryOneInto(&result, `
+found, err := d.QueryOneInto(&result, `
     [:find ?name ?age
      :where [?e :person/name ?name]
             [?e :person/age ?age]
@@ -66,21 +66,21 @@ For single-column queries, use scalar slices or values directly without structs:
 ```go
 // Get all names as []string
 var names []string
-err := db.QueryInto(&names, `
+err := d.QueryInto(&names, `
     [:find ?name
      :where [?e :person/name ?name]]
 `)
 
 // Get all entity IDs as []datalog.Identity
 var entities []datalog.Identity
-err := db.QueryInto(&entities, `
+err := d.QueryInto(&entities, `
     [:find ?e
      :where [?e :person/name ?name]]
 `)
 
 // Get a single value
 var age int64
-found, err := db.QueryOneInto(&age, `
+found, err := d.QueryOneInto(&age, `
     [:find ?age
      :where [?e :person/name "Alice"]
             [?e :person/age ?age]]
@@ -147,7 +147,7 @@ Use `:in` clause with additional arguments:
 
 ```go
 var results []PersonResult
-err := db.QueryInto(&results, `
+err := d.QueryInto(&results, `
     [:find ?name ?age
      :in $ ?min-age
      :where [?e :person/name ?name]
@@ -213,7 +213,7 @@ if errors.Is(err, dlreflect.ErrSymbolNotFound) {
 var result struct {
     Count int64 `datalog:"(count ?e)"`
 }
-found, err := db.QueryOneInto(&result, `
+found, err := d.QueryOneInto(&result, `
     [:find (count ?e)
      :where [?e :person/name "NonExistent"]]
 `)
@@ -236,7 +236,7 @@ type CountResult struct {
 }
 
 var result CountResult
-found, err := db.QueryOneInto(&result, `
+found, err := d.QueryOneInto(&result, `
     [:find (count ?e)
      :where [?e :user/status "active"]]
 `)
@@ -253,11 +253,11 @@ if found {
 Or as a helper:
 
 ```go
-func countActiveUsers(db *Database) (int64, error) {
+func countActiveUsers(d *db.DB) (int64, error) {
     var result struct {
         Count int64 `datalog:"(count ?e)"`
     }
-    found, err := db.QueryOneInto(&result, `
+    found, err := d.QueryOneInto(&result, `
         [:find (count ?e)
          :where [?e :user/status "active"]]
     `)
@@ -277,13 +277,11 @@ func countActiveUsers(db *Database) (int64, error) {
 package main
 
 import (
-    "errors"
     "fmt"
     "os"
 
     "github.com/wbrown/janus-datalog/datalog"
-    dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
-    "github.com/wbrown/janus-datalog/datalog/storage"
+    "github.com/wbrown/janus-datalog/datalog/db"
 )
 
 type EmployeeStats struct {
@@ -296,11 +294,11 @@ func main() {
     tmpDir, _ := os.MkdirTemp("", "example")
     defer os.RemoveAll(tmpDir)
 
-    db, _ := storage.NewDatabase(tmpDir)
-    defer db.Close()
+    d, _ := db.Open(tmpDir)
+    defer d.Close()
 
     // Add test data
-    tx := db.NewTransaction()
+    tx := d.NewTransaction()
     for _, emp := range []struct {
         name   string
         dept   string
@@ -319,7 +317,7 @@ func main() {
 
     // Query with aggregates into typed slice
     var stats []EmployeeStats
-    err := db.QueryInto(&stats, `
+    err := d.QueryInto(&stats, `
         [:find ?dept (avg ?salary) (count ?emp)
          :where [?emp :employee/dept ?dept]
                 [?emp :employee/salary ?salary]]
@@ -345,7 +343,7 @@ Sales: 80000 avg salary, 1 employees
 
 **Before (manual):**
 ```go
-results, err := db.ExecuteQuery(`[:find ?name ?age :where ...]`)
+results, err := d.Query(`[:find ?name ?age :where ...]`)
 if err != nil {
     return err
 }
@@ -377,7 +375,7 @@ type Person struct {
 }
 
 var people []Person
-err := db.QueryInto(&people, `[:find ?name ?age :where ...]`)
+err := d.QueryInto(&people, `[:find ?name ?age :where ...]`)
 ```
 
 ## Performance
@@ -394,17 +392,17 @@ err := db.QueryInto(&people, `[:find ?name ?age :where ...]`)
 | `QueryInto` | Query results → struct slice | Typed query results |
 | `QueryOneInto` | Query results → single struct | Single-row queries |
 | `PullInto` | Entity → struct | Load entity by ID |
-| `ExecuteQuery` | Query → `[][]interface{}` | Dynamic/untyped results |
+| `Query` | Query → `[][]interface{}` | Dynamic/untyped results |
 
 ## Package Reference
 
 ```go
-import "github.com/wbrown/janus-datalog/datalog/storage"
+import "github.com/wbrown/janus-datalog/datalog/db"
 import dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 
 // Database methods
-db.QueryInto(dest interface{}, queryStr string, inputs ...interface{}) error
-db.QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) (found bool, err error)
+d.QueryInto(dest interface{}, queryStr string, inputs ...interface{}) error
+d.QueryOneInto(dest interface{}, queryStr string, inputs ...interface{}) (found bool, err error)
 
 // Error types
 dlreflect.ErrMultipleResults

@@ -45,8 +45,13 @@ The Janus Datalog engine delivers production-ready performance through architect
 
 **Key Difference**: The 2× speedup comes from QueryExecutor's clause-by-clause streaming execution, not from better plan quality. Both planners produce equivalent-quality plans.
 
-**Configuration**: Enabled by default
+**Configuration**: Enabled by default. The `db.Open` API uses these defaults automatically:
 ```go
+// Public API — uses default planner/executor configuration
+d, _ := db.Open("path/to/db")
+d.Query(`[:find ?e ?v :where [?e :price/close ?v]]`)
+
+// Advanced: direct executor construction for non-default options
 exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
     UseClauseBasedPlanner: true,  // Default
 })
@@ -300,7 +305,7 @@ During development, benchmarks showed dramatic speedups (49-4802×) comparing li
 ```go
 // For hot paths, cache the parsed pattern
 pattern, _ := parser.ParsePullPattern(`[:user/name :user/age]`)
-puller := executor.NewPullExecutor(db.Matcher())
+puller := executor.NewPullExecutor(d.Unwrap().Matcher())
 
 // Reuse pattern across calls
 for _, entity := range entities {
@@ -413,7 +418,7 @@ for _, entity := range entities {
 
 CRDT semantics add negligible overhead to writes while providing:
 - Conflict-free replication capability
-- Time-travel queries via `[(history)]` and `[(as-of ?tx N)]`
+- Time-travel queries via `d.History()` and `d.AsOf(elementID)`
 - Multi-replica merge support
 
 ### 11. CRDT Allocation Optimization (COMPLETE - February 2026)
@@ -770,13 +775,20 @@ These were **tried and measured** - data showed they're not worth the complexity
 **Production Configuration** (all settings are measured and proven):
 
 ```go
-// Use new architecture (2× faster on complex queries)
+// Public API — uses all production defaults automatically
+d, _ := db.Open("path/to/db")
+d.Query(`[:find ?e ?v :where [?e :price/close ?v]]`)
+
+// With schema:
+d, _ := db.Open("path/to/db", db.WithSchema(s))
+
+// For advanced planner tuning, use the internal packages directly:
 exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
     UseClauseBasedPlanner: true,  // ✅ DEFAULT - works with QueryExecutor
 })
 exec.SetUseQueryExecutor(true)    // ✅ Use QueryExecutor (DEFAULT - clause-by-clause streaming)
 
-// Recommended planner options
+// Recommended planner options (these are the db.Open defaults)
 PlannerOptions{
     UseClauseBasedPlanner:        true,  // ✅ DEFAULT - required for QueryExecutor
     EnablePredicatePushdown:      true,  // ✅ DEFAULT - early filtering

@@ -22,7 +22,7 @@
 - Relation collapsing algorithm (prevents memory explosion)
 - **CRDT storage: LWW for cardinality-one, add-wins for cardinality-many, RGA for vectors**
 - **NOT/OR clauses: `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics**
-- **History/time-travel queries: `[(history)]` and `[(as-of ?tx N)]` predicates**
+- **History/time-travel queries: `db.History()` and `db.AsOf(elementID)` API**
 - **Multi-source queries: named sources, SourceRouter, cross-source joins**
 - **QueryInto API: typed query results via struct tag mapping**
 - **Database export/import: EDN format for backup and migration**
@@ -92,7 +92,7 @@ These items have been completed and are preserved for historical context:
 
 These were originally listed as "out of scope" but got implemented anyway:
 
-- ~~Full history/time-travel queries~~ → ✅ **Done** via CRDT storage with `[(history)]` and `[(as-of ?tx N)]`
+- ~~Full history/time-travel queries~~ → ✅ **Done** via CRDT storage with `db.History()` and `db.AsOf(elementID)`
 - ~~Would need different storage model~~ → The CRDT refactor made it natural
 
 ### Actually Won't Do

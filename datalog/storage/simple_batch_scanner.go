@@ -71,9 +71,13 @@ func (s *simpleBatchScanner) Scan() error {
 		return fmt.Errorf("failed to open scan: %w", err)
 	}
 
-	// Wrap with CRDT resolution to ensure we only see resolved values
-	// Always applied: CRDTResolvingIterator handles nil schema correctly
-	iter := NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.txID)
+	// Wrap with CRDT resolution unless in history mode
+	var iter Iterator
+	if s.matcher.isHistoryMode() {
+		iter = rawIter
+	} else {
+		iter = NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.crdtTxID())
+	}
 	defer iter.Close()
 
 	// Step 4: Scan and filter
@@ -280,7 +284,7 @@ func (s *simpleBatchScanner) scanAndFilter(iter Iterator, bindingSet map[string]
 		datomCount++
 
 		// Check transaction validity
-		if s.matcher.txID != (datalog.ElementID{}) && s.matcher.txID.Less(datom.Tx) {
+		if s.matcher.shouldFilterTx(datom.Tx) {
 			continue
 		}
 

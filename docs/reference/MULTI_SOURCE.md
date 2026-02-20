@@ -134,15 +134,15 @@ q := qb.Query().
 
 ## Source Types
 
-### Database (`*storage.Database`)
+### Database (`*db.DB`)
 
-Any `*Database` implements `PatternMatcher`. Use this for cross-database joins:
+Any `*db.DB` implements `PatternMatcher`. Use this for cross-database joins:
 
 ```go
-usersDB, _ := storage.NewDatabase("users.db")
-permsDB, _ := storage.NewDatabase("perms.db")
+usersDB, _ := db.Open("users.db")
+permsDB, _ := db.Open("perms.db")
 
-results, err := usersDB.ExecuteQueryWithInputs(query,
+results, err := usersDB.Query(query,
     storage.WithSources(map[query.Symbol]executor.PatternMatcher{
         query.Symbol("$users"): usersDB,
         query.Symbol("$perms"): permsDB,
@@ -167,7 +167,7 @@ cache := executor.NewMemoryPatternMatcher(datoms)
 Pass as a named source:
 
 ```go
-results, err := db.ExecuteQueryWithInputs(query,
+results, err := d.Query(query,
     storage.WithSources(map[query.Symbol]executor.PatternMatcher{
         query.Symbol("$cache"): cache,
     }),
@@ -198,7 +198,7 @@ ruleSource := executor.NewSliceSource(rules, executor.AttributeSchema[Rule]{
 Query it like any other source:
 
 ```go
-results, err := db.ExecuteQueryWithInputs(
+results, err := d.Query(
     `[:find ?dep
       :in $rules ?key
       :where [$rules ?r :rule/key ?key]
@@ -215,7 +215,7 @@ results, err := db.ExecuteQueryWithInputs(
 
 ### WithSources Option
 
-`WithSources` is a functional option passed to `ExecuteQueryWithInputs`. It adds named sources to the query's execution context:
+`WithSources` is a functional option passed to `d.Query()`. It adds named sources to the query's execution context. The consumer imports `storage` for `WithSources` in multi-source scenarios:
 
 ```go
 func WithSources(sources map[query.Symbol]executor.PatternMatcher) QueryOption
@@ -224,7 +224,7 @@ func WithSources(sources map[query.Symbol]executor.PatternMatcher) QueryOption
 Sources are mixed into the variadic `inputs` parameter alongside regular query inputs (scalars, collections, relations):
 
 ```go
-results, err := db.ExecuteQueryWithInputs(query,
+results, err := d.Query(query,
     storage.WithSources(map[query.Symbol]executor.PatternMatcher{
         query.Symbol("$rules"): ruleSource,
     }),
@@ -240,7 +240,7 @@ At execution time, the engine validates that every source declared in `:in` is p
 
 ```go
 // Query declares $users but doesn't provide it
-_, err := db.ExecuteQueryWithInputs(
+_, err := d.Query(
     `[:find ?e :in $users :where [$users ?e :attr ?v]]`,
 )
 // err: "query declares source $users in :in but no PatternMatcher was provided for it"
@@ -317,7 +317,7 @@ If your source supports predicate pushdown, the `SourceRouter` will call `MatchW
 Pass your custom source via `WithSources`:
 
 ```go
-results, err := db.ExecuteQueryWithInputs(query,
+results, err := d.Query(query,
     storage.WithSources(map[query.Symbol]executor.PatternMatcher{
         query.Symbol("$custom"): myCustomSource,
     }),

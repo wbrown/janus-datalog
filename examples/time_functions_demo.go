@@ -20,7 +20,7 @@ func main() {
 	dbPath := "/tmp/datalog-timefunc"
 	os.RemoveAll(dbPath)
 
-	db, err := storage.NewDatabaseWithTimeTx(dbPath)
+	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
 		log.Fatal("Failed to create database:", err)
 	}

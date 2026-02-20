@@ -15,7 +15,7 @@ Janus-datalog implements most of Datomic's Datalog query language. The core quer
 - ✅ Database functions: `get-else`, `missing?`, `get-some`
 - ✅ Schema: type validation, cardinality (one/many/vector), uniqueness
 - ✅ CRDT storage: LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector
-- ✅ Time queries: `[(history)]`, `[(as-of ?tx N)]`, `[(tx-between ?tx low high)]`
+- ✅ Time queries: `d.AsOf(elementID).Query(...)`, `d.History().Query(...)`, `[(tx-between ?tx low high)]`
 
 **Go-Specific Ergonomics:**
 - ✅ Struct Reflection API: Go structs ↔ datoms with automatic schema generation
@@ -266,14 +266,30 @@ This differs from Datomic, where OR always uses union semantics. See [OR_FALLBAC
 
 ### 9. Time-Based Queries
 
-Query database as of specific times:
+Query database at specific points in time using database-level temporal filters:
 
 ```go
-// Query as of a timestamp
-db.AsOf(timestamp)
+// Commit() returns a full ElementID (Lamport clock + ReplicaID)
+tx := d.NewTransaction()
+tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice")
+txID, _ := tx.Commit()  // txID is datalog.ElementID
+
+// Query as of a specific transaction — CRDT-resolved state at that point
+results, _ := d.AsOf(txID).Query(myQuery)
+
+// Raw history — all datoms, no CRDT resolution
+allVersions, _ := d.History().Query(myQuery)
 ```
 
-Every datom includes a transaction ID for temporal queries.
+**Three temporal modes:**
+
+| Mode | API | CRDT resolution | Tx filtering |
+|------|-----|-----------------|--------------|
+| Latest (default) | `d.Query(...)` | Yes | No |
+| As-of | `d.AsOf(elementID).Query(...)` | Yes | Yes |
+| History (raw) | `d.History().Query(...)` | No | No |
+
+Every datom includes a full ElementID (Lamport + ReplicaID) for temporal ordering.
 
 ### 10. Storage Model
 
@@ -309,11 +325,11 @@ Declarative entity attribute retrieval with nested reference following:
 **Standalone API (Go):**
 ```go
 // Single entity
-result, err := db.Pull(entityID, `[:user/name :user/age]`)
+result, err := d.Pull(entityID, `[:user/name :user/age]`)
 // result: map[string]interface{}{"user/name": "Alice", "user/age": 30}
 
 // Multiple entities
-results, err := db.PullMany(entityIDs, `[:user/name]`)
+results, err := d.PullMany(entityIDs, `[:user/name]`)
 ```
 
 **Supported pull patterns:**
@@ -340,7 +356,10 @@ results, err := db.PullMany(entityIDs, `[:user/name]`)
 **Go-specific feature** for ergonomic struct ↔ datom conversion:
 
 ```go
-import "github.com/wbrown/janus-datalog/datalog/reflect"
+import (
+    "github.com/wbrown/janus-datalog/datalog/db"
+    "github.com/wbrown/janus-datalog/datalog/reflect"
+)
 
 // Define domain types with struct tags
 type Person struct {
@@ -353,17 +372,18 @@ type Person struct {
 
 // Generate schema from struct
 schema, _ := reflect.SchemaFromStruct(Person{})
-db, _ := storage.NewDatabaseWithSchema(path, schema)
+d, _ := db.Open(path, db.WithSchema(schema))
+defer d.Close()
 
 // Write struct as datoms
 alice := &Person{Name: "Alice", Age: 30, Tags: []string{"dev"}}
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 aliceID, _ := tx.AddStructAuto(alice)  // Auto-generate ID
 tx.Commit()
 
 // Read datoms into struct
 var loaded Person
-db.PullInto(aliceID, &loaded)
+d.PullInto(aliceID, &loaded)
 // loaded.Name == "Alice", loaded.Tags == ["dev"]
 ```
 
@@ -409,7 +429,7 @@ type TradeResult struct {
 
 // Query directly into typed slice
 var results []TradeResult
-err := db.QueryInto(&results, `
+err := d.QueryInto(&results, `
     [:find ?symbol ?price ?date
      :where [?t :trade/symbol ?symbol]
             [?t :trade/price ?price]
@@ -424,7 +444,7 @@ type DeptStats struct {
 }
 
 var stats []DeptStats
-err := db.QueryInto(&stats, `
+err := d.QueryInto(&stats, `
     [:find ?dept (sum ?salary) (count ?emp)
      :where [?e :employee/dept ?dept]
             [?e :employee/salary ?salary]]
@@ -432,7 +452,7 @@ err := db.QueryInto(&stats, `
 
 // QueryOneInto for single-result queries
 var result TradeResult
-found, err := db.QueryOneInto(&result, `
+found, err := d.QueryOneInto(&result, `
     [:find ?symbol ?price ?date
      :where [?t :trade/id ?id]
             [(= ?id 12345)]
@@ -443,10 +463,10 @@ found, err := db.QueryOneInto(&result, `
 
 // Scalar queries - single column, no struct needed
 var names []string
-db.QueryInto(&names, `[:find ?name :where [?e :person/name ?name]]`)
+d.QueryInto(&names, `[:find ?name :where [?e :person/name ?name]]`)
 
 var count int64
-found, err := db.QueryOneInto(&count, `[:find (count ?e) :where [?e :person/name _]]`)
+found, err := d.QueryOneInto(&count, `[:find (count ?e) :where [?e :person/name _]]`)
 ```
 
 **Scalar types supported:** `string`, `int64`, `float64`, `bool`, `time.Time`, `datalog.Identity`, `datalog.Keyword`, `[]byte`
@@ -468,7 +488,10 @@ See [docs/reference/QUERY_INTO.md](docs/reference/QUERY_INTO.md) for complete do
 **Go-specific feature** for compile-time safe query construction:
 
 ```go
-import "github.com/wbrown/janus-datalog/datalog/qb"
+import (
+    "github.com/wbrown/janus-datalog/datalog/db"
+    "github.com/wbrown/janus-datalog/datalog/qb"
+)
 
 // Define attributes as constants - typos caught at compile time
 var PersonName = qb.Kw(":person/name")
@@ -489,7 +512,7 @@ q := qb.Query().
     MustBuild()
 
 // Use with any query method
-results, err := db.ExecuteQuery(q)
+results, err := d.Query(q)
 ```
 
 **Key benefits:**
@@ -570,13 +593,13 @@ Schema is supported but with limitations vs Datomic:
 
 **Schema definition via Go API:**
 ```go
-schema, _ := schema.NewBuilder().
+s, _ := schema.NewBuilder().
     Attribute(":person/name").Type(schema.TypeString).Add().
     Attribute(":person/friends").Type(schema.TypeRef).Many().Add().
     Attribute(":person/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
     Build()
 
-db, _ := storage.NewDatabaseWithSchema(path, schema)
+d, _ := db.Open(path, db.WithSchema(s))
 ```
 
 **Schema behavior:**
@@ -634,32 +657,41 @@ No entity navigation:
 
 **Supported:**
 - CRDT storage inherently preserves all writes with ElementIDs (Lamport + ReplicaID)
-- `[(history)]` predicate returns all historical versions
-- `[(as-of ?tx N)]` returns value as of Lamport time N
+- `d.History()` returns a database view that exposes all raw datoms (no CRDT resolution)
+- `d.AsOf(elementID)` returns a database view with CRDT-resolved state at a specific point in causal time
+- `Commit()` returns `datalog.ElementID` (full Lamport + ReplicaID)
 - `[(tx-between ?tx low high)]` filters results to a Lamport range
 
-**History Query API:**
+**Three-Mode Temporal API:**
 ```go
-// All writes are preserved with CRDT semantics - no special mode needed
-db, _ := storage.NewDatabase("/path/to/db")
+d, _ := db.Open("/path/to/db")
+defer d.Close()
 
 // Make changes over time
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice")
-tx.Commit()  // Lamport 1
+tx1, _ := tx.Commit()  // tx1 is datalog.ElementID{Lamport: 1, ReplicaID: 42}
 
-tx2 := db.NewTransaction()
+tx2 := d.NewTransaction()
 tx2.Add(alice, datalog.NewKeyword(":person/name"), "Alicia")  // LWW: replaces "Alice"
-tx2.Commit()  // Lamport 2
+tx2ID, _ := tx2.Commit()  // tx2ID is datalog.ElementID{Lamport: 2, ReplicaID: 42}
 
-// Query current state - returns latest value
-results, _ := db.ExecuteQuery(`[:find ?name :where [?e :person/name ?name]]`)
+// Latest mode (default) - CRDT-resolved, returns latest value
+results, _ := d.Query(`[:find ?name :where [?e :person/name ?name]]`)
 // Returns: [["Alicia"]]
 
-// Query ALL historical values using [(history)] predicate
-history, _ := db.ExecuteQuery(`[:find ?name ?tx :where [?e :person/name ?name ?tx] [(history)]]`)
+// History mode - all raw datoms, no CRDT resolution
+history, _ := d.History().Query(
+    `[:find ?name ?tx :where [?e :person/name ?name ?tx]]`)
 // Returns: [["Alice" <ElementID@1>] ["Alicia" <ElementID@2>]]
+
+// As-of mode - CRDT-resolved state at tx1
+asOf, _ := d.AsOf(tx1).Query(
+    `[:find ?name :where [?e :person/name ?name]]`)
+// Returns: [["Alice"]]
 ```
+
+**Design note:** Temporal filters are applied at the database level (following Datomic's pattern), not as query predicates. `[(history)]` and `[(as-of ?tx N)]` predicates exist in the parser but are not yet wired to the executor — use `d.History().Query(...)` and `d.AsOf(elementID).Query(...)` instead.
 
 **Not supported:**
 - No `since` queries (use `[(tx-between ?tx start ∞)]` instead)
@@ -719,7 +751,7 @@ No advanced database operations:
 - NOT/OR clauses
 - Subqueries with tuple/relation bindings
 - Order-by clauses
-- Time-travel queries via `[(history)]` and `[(as-of ?tx N)]`
+- Time-travel queries via `d.History().Query(...)` and `d.AsOf(elementID).Query(...)`
 - Database functions (get-else, missing?, get-some)
 
 **Require refactoring:**
@@ -806,7 +838,7 @@ For Datomic users, the transition is straightforward:
 2. Use subqueries for complex aggregations with proper scoping
 3. Define schema for type validation and cardinality support (one/many/vector)
 4. Use Pull API for efficient entity navigation (replaces Entity API)
-5. CRDT storage preserves full history automatically - use `[(history)]` for time-travel queries
+5. CRDT storage preserves full history automatically - use `d.History().Query(...)` for raw datoms and `d.AsOf(elementID).Query(...)` for point-in-time queries
 
 **For Go developers**, additional ergonomic APIs are available:
 - **Struct Reflection API** (`datalog/reflect`): Go structs ↔ datoms with automatic schema generation

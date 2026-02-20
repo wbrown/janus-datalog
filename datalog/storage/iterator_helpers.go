@@ -34,11 +34,11 @@ import (
 // (the constraint loop makes it too complex for the Go compiler's inliner).
 func validateDatomWithConstraints(
 	datom *datalog.Datom,
-	txID datalog.ElementID,
+	txID *datalog.ElementID,
 	constraints []executor.StorageConstraint,
 ) bool {
-	// Check transaction validity
-	if txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
+	// Check transaction validity (skip datoms from after the as-of target)
+	if txID != nil && *txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
 		return false
 	}
 

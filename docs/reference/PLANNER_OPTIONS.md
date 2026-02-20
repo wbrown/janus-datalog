@@ -25,6 +25,17 @@ Janus Datalog uses a single `PlannerOptions` struct to configure both query plan
 3. **No Global State**: Configuration belongs to instances, not globals
 4. **Options Propagation**: Settings flow through entire execution pipeline
 
+### Public API vs Advanced Configuration
+
+Most users should use the `db.Open` API, which applies sensible defaults automatically:
+
+```go
+d, _ := db.Open("path/to/db")
+d.Query(`[:find ?name :where [?p :person/name ?name]]`)
+```
+
+The planner options documented below are for **advanced usage** -- tuning non-default planner behavior. To access the internal executor/planner for custom configuration, use `d.Unwrap()` or construct via the `storage` and `executor` packages directly.
+
 ---
 
 ## Unified Configuration
@@ -93,6 +104,8 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 
 ### How It Works
 
+The `db.Open` API handles all of this automatically with sensible defaults. Internally:
+
 ```go
 // 1. Database creates executor with default options
 func (d *Database) NewExecutor() *executor.Executor {
@@ -116,6 +129,7 @@ func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions)
 - Single configuration to manage
 - Streaming enabled by default
 - Clean architecture with no breaking changes
+- `db.Open` applies all defaults; advanced users can override via internal packages
 
 ---
 
@@ -395,12 +409,12 @@ The October 2025 defaults are optimized for **complex queries** and **safety**. 
 - Performance-critical path
 - Queries are well-constrained
 
-**Custom configuration for simple queries**:
+**Custom configuration for simple queries** (requires internal packages):
 ```go
 opts := storage.DefaultPlannerOptions()
 opts.EnableDynamicReordering = false
 opts.EnableFineGrainedPhases = false
-exec := db.NewExecutorWithOptions(opts)
+exec := database.NewExecutorWithOptions(opts)
 ```
 
 **Measured improvement**: 20-40% faster on simple queries (see DEFAULT_PLANNER_OPTIONS_FEEDBACK.md)
@@ -524,12 +538,18 @@ executor.EnableTrueStreaming = true
 exec := executor.NewExecutor(matcher)
 ```
 
-**✅ NEW CODE** (required):
+**✅ NEW CODE** (simplest -- uses all defaults):
+```go
+d, _ := db.Open("path/to/db")
+d.Query(queryStr)
+```
+
+**✅ NEW CODE** (advanced -- custom planner options):
 ```go
 opts := storage.DefaultPlannerOptions()
 opts.EnableIteratorComposition = true
 opts.EnableTrueStreaming = true
-exec := db.NewExecutorWithOptions(opts)
+exec := database.NewExecutorWithOptions(opts)
 ```
 
 ### From Separate ExecutorOptions (Old)
@@ -541,7 +561,12 @@ plannerOpts := planner.PlannerOptions{...}
 // Duplicated configuration
 ```
 
-**✅ NEW CODE**:
+**✅ NEW CODE** (simplest):
+```go
+d, _ := db.Open("path/to/db")  // uses sensible defaults
+```
+
+**✅ NEW CODE** (advanced -- custom planner options):
 ```go
 opts := storage.DefaultPlannerOptions()
 // Single configuration point

@@ -38,28 +38,18 @@ type Database struct {
 	txCounter         atomic.Uint64
 	mu                sync.RWMutex
 	activeTx          map[*Transaction]bool
-	useTimeTx         bool                  // Use time-based transaction IDs
 	planCache         *planner.PlanCache    // Shared query plan cache
 	schema            schema.SchemaProvider // Optional schema for validation
 	annotationHandler annotations.Handler   // Optional handler for query tracing
 	clock             *LamportClock         // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
 	replicaID         uint64                // CRDT: This database's replica identifier
 	cache             *Cache                // CRDT: Unified cache for resolved CRDT views
+	temporalTxID      *datalog.ElementID    // nil = current; set = temporal mode (AsOf/History)
 }
 
 // NewDatabase creates a new database with BadgerDB storage
 func NewDatabase(path string) (*Database, error) {
 	return NewDatabaseWithOptions(DatabaseOptions{Path: path})
-}
-
-// NewDatabaseWithTimeTx creates a database that uses time-based transaction IDs
-func NewDatabaseWithTimeTx(path string) (*Database, error) {
-	db, err := NewDatabase(path)
-	if err != nil {
-		return nil, err
-	}
-	db.useTimeTx = true
-	return db, nil
 }
 
 // NewDatabaseWithSchema creates a database with schema validation
@@ -75,7 +65,6 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
 	Path              string                // Path to the database directory
-	UseTimeTx         bool                  // Use time-based transaction IDs (legacy, kept for compatibility)
 	Schema            schema.SchemaProvider // Optional schema for validation
 	AnnotationHandler annotations.Handler   // Optional handler for query tracing
 	ReplicaID         uint64                // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
@@ -87,7 +76,6 @@ type DatabaseOptions struct {
 //
 // Options:
 //   - Path: Required. Directory for BadgerDB storage.
-//   - UseTimeTx: Legacy option, kept for compatibility.
 //   - Schema: Optional schema for validation.
 //   - ReplicaID: For CRDT mode. 0 = auto-generate random; non-zero = use specified.
 //   - DisableCache: Disable EA cache; queries resolve directly from storage.
@@ -155,7 +143,6 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		store:             store,
 		activeTx:          make(map[*Transaction]bool),
 		planCache:         planner.NewPlanCache(1000, 0),
-		useTimeTx:         opts.UseTimeTx,
 		schema:            opts.Schema,
 		annotationHandler: opts.AnnotationHandler,
 		clock:             clock,
@@ -389,6 +376,10 @@ func (d *Database) Matcher() executor.PatternMatcher {
 	if d.cache != nil {
 		matcher.SetCache(d.cache)
 	}
+	// Apply temporal mode if set (AsOf/History)
+	if d.temporalTxID != nil {
+		return matcher.AsOf(*d.temporalTxID)
+	}
 	return matcher
 }
 
@@ -401,32 +392,35 @@ func (d *Database) Match(pattern *query.DataPattern, bindings executor.Relations
 // Compile-time verification that Database implements PatternMatcher
 var _ executor.PatternMatcher = (*Database)(nil)
 
-// AsOf returns a PatternMatcher for a specific transaction
-func (d *Database) AsOf(txID datalog.ElementID) executor.PatternMatcher {
-	// Convert default planner options to executor options
-	opts := DefaultPlannerOptions()
-	execOpts := executor.ExecutorOptions{
-		EnableIteratorComposition:       opts.EnableIteratorComposition,
-		EnableTrueStreaming:             opts.EnableTrueStreaming,
-		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
-		EnableStreamingJoins:            opts.EnableStreamingJoins,
-		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
-		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
-		EnableDebugLogging:              opts.EnableDebugLogging,
-		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
+// AsOf returns a new Database handle that queries state as of the given transaction.
+// The returned handle uses CRDT resolution filtered to that point in causal time.
+func (d *Database) AsOf(txID datalog.ElementID) *Database {
+	return &Database{
+		store:             d.store,
+		schema:            d.schema,
+		annotationHandler: d.annotationHandler,
+		planCache:         d.planCache,
+		cache:             d.cache,
+		clock:             d.clock,
+		replicaID:         d.replicaID,
+		temporalTxID:      &txID,
 	}
-	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
-	// Set schema for CRDT cardinality-aware resolution
-	if d.schema != nil {
-		matcher.SetSchema(d.schema)
+}
+
+// History returns a new Database handle that returns all raw datoms without
+// CRDT resolution. Every write is visible, including superseded values.
+func (d *Database) History() *Database {
+	empty := datalog.ElementID{}
+	return &Database{
+		store:             d.store,
+		schema:            d.schema,
+		annotationHandler: d.annotationHandler,
+		planCache:         d.planCache,
+		cache:             d.cache,
+		clock:             d.clock,
+		replicaID:         d.replicaID,
+		temporalTxID:      &empty,
 	}
-	// Set cache for CRDT resolution O(1) access
-	if d.cache != nil {
-		matcher.SetCache(d.cache)
-	}
-	return matcher.AsOf(txID)
 }
 
 // DefaultPlannerOptions returns the default planner and executor options for the database

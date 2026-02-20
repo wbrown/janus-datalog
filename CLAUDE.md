@@ -178,6 +178,7 @@ This implementation supports a hybrid approach:
 When implementing, organize code as:
 ```
 datalog/
+├── db/          # Public API package (db.Open, d.Query, d.History, d.AsOf)
 ├── parser/      # EDN and Datalog parsers
 ├── types/       # Core type definitions
 ├── query/       # Query structures and types
@@ -284,7 +285,7 @@ The storage layer connects the query engine to BadgerDB:
 10. **Storage integration** - Database and Transaction API, BadgerMatcher for pattern matching
 11. **Value encoding** - Proper serialization for all value types including entity references
 12. **Aggregation functions** - `sum`, `count`, `avg`, `min`, `max` with grouping support (with proper time.Time support)
-13. **Time-based queries** - Time-based transaction IDs and as-of queries
+13. **Temporal queries** - ElementID-based AsOf/History queries for time-travel
 14. **Time extraction functions** - `year`, `month`, `day`, `hour`, `minute`, `second` for temporal analysis
 15. **Subqueries** - Full implementation with TupleBinding and RelationBinding support
 16. **Result/Relation unification** - Eliminated redundant Result type, unified API
@@ -295,7 +296,7 @@ The storage layer connects the query engine to BadgerDB:
 21. **Relations migration** - Multi-value variable support throughout codebase
 22. **Pull API** - Declarative entity attribute retrieval with nested refs, cycle detection, wildcards (9× faster than queries)
 23. **Schema support** - Type validation, cardinality (one/many), uniqueness constraints; optional and additive
-24. **CRDT storage** - LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector; all writes preserved with ElementIDs; `[(history)]` and `[(as-of ?tx N)]` predicates for time-travel queries
+24. **CRDT storage** - LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector; all writes preserved with ElementIDs; `db.History()` for raw datom access, `db.AsOf(elementID)` for point-in-time queries; three-mode `*ElementID` matcher (`nil`=latest, `&ElementID{}`=history, `&ElementID{L,R}`=as-of)
 25. **NOT/OR clauses** - Full support for `(not ...)`, `(not-join ...)`, `(or ...)`, `(or-join ...)` with Datomic-compatible semantics; OR supports fallback expressions for default values
 26. **QueryInto API** - Typed query results via `QueryInto()` and `QueryOneInto()` with struct tag mapping for variables and aggregates
 27. **Multi-source queries** - Named sources (`$name`), `SourceRouter`, cross-source joins, `MemoryPatternMatcher`, `SliceSource[T]`, query builder `Source()`/`PatFrom()`
@@ -447,13 +448,14 @@ handler := func(event annotations.Event) {
     // Process event (log, store, analyze, etc.)
 }
 
-// Wrap the matcher with annotation decorator
-baseMatcher := storage.NewBadgerMatcher(db.Store())
-matcher := executor.WrapMatcher(baseMatcher, handler)
+// Using the db.Open API — pass handler as an option
+d, _ := db.Open("path/to/db", db.WithAnnotationHandler(handler))
+// All queries through d.Query() will emit annotation events
 
-// Use matcher normally - annotations are transparent
-// Second parameter is EntityResolver (db) for CRDT resolution in Pull operations
-executor := executor.NewExecutor(matcher, db)
+// Internal equivalent (for advanced usage):
+// baseMatcher := storage.NewBadgerMatcher(database.Store())
+// matcher := executor.WrapMatcher(baseMatcher, handler)
+// exec := executor.NewExecutor(matcher, database)
 ```
 
 **Key Design Principles**:

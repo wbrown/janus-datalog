@@ -256,16 +256,16 @@ Understand how the engine detects and prevents accidental Cartesian products.
 
 ---
 
-### Level 6: Time-Based Queries
+### Level 6: Temporal Queries
 
 Work with temporal data and historical queries.
 
 #### `financial_time_demo.go`
-**What it demonstrates:** Time-based transactions
-**Concepts:** Transaction IDs as timestamps, temporal ordering
+**What it demonstrates:** Temporal queries with ElementID ordering
+**Concepts:** Lamport clock transaction ordering, temporal queries
 **Time:** 15 minutes
 
-Use timestamps as transaction IDs for time-ordered data.
+Use ElementID-based transaction ordering for time-ordered data.
 
 #### `financial_asof_demo.go`
 **What it demonstrates:** As-of queries (point-in-time)

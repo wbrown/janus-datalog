@@ -18,6 +18,8 @@ Both planners produce **phases** as their output format, but they differ fundame
 - Planning overhead is **negligible** (1-15 microseconds vs milliseconds of execution)
 - Combined with new executor: **2× faster on complex queries**
 
+**Note**: The `db.Open` public API uses the new clause-based planner and QueryExecutor by default. The internal planner/executor configuration shown in this document is for advanced users who need non-default planner options. Most users do not need to interact with these internals directly.
+
 ---
 
 ## Architectural Comparison
@@ -338,6 +340,14 @@ go test -bench=Benchmark -benchmem ./datalog/executor/ > benchmark_results.txt
 - Old executor still available for compatibility
 
 ### Recommended Configuration
+
+For most users, the `db.Open` API applies all recommended defaults:
+```go
+d, _ := db.Open("path/to/db")
+d.Query(`[:find ?e ?v :where [?e :price/close ?v]]`)
+```
+
+For advanced planner tuning (internal packages):
 ```go
 // Production: Use new architecture
 exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
@@ -346,7 +356,7 @@ exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
 exec.SetUseQueryExecutor(true)    // Use new executor
 
 // Enable decorrelation for subquery-heavy workloads
-executor := executor.NewQueryExecutor(matcher, executor.ExecutorOptions{
+exec := executor.NewQueryExecutor(matcher, executor.ExecutorOptions{
     EnableSubqueryDecorrelation: true,
 })
 ```

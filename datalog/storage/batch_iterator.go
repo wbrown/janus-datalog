@@ -255,9 +255,12 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 		return
 	}
 
-	// Wrap with CRDT resolution to ensure we only see resolved values
-	// Always applied: CRDTResolvingIterator handles nil schema correctly
-	it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
+	// Wrap with CRDT resolution unless in history mode
+	if it.matcher.isHistoryMode() {
+		it.storageIter = rawIter
+	} else {
+		it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID())
+	}
 	it.totalScans++
 
 	// Build a map of binding values for quick lookup
@@ -283,7 +286,7 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 		datomCount++
 
 		// Check transaction validity
-		if it.matcher.txID != (datalog.ElementID{}) && it.matcher.txID.Less(datom.Tx) {
+		if it.matcher.shouldFilterTx(datom.Tx) {
 			continue
 		}
 

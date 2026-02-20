@@ -115,12 +115,30 @@ The plan above recommended `datom.Tx.Lamport > m.txID.Lamport` for as-of filteri
 - **`datalog/storage/matcher_relations.go` line 868**: `NewCRDTResolvingIterator(rawIter, m.schema, 0)` → `datalog.ElementID{}`.
 - **`examples/*.go`**: Left unchanged — these have `//go:build example` tags and need a larger rewrite to use the Transaction API properly instead of fabricating ElementIDs from timestamps. Tracked as separate work.
 
+### Phase 3: Three-mode `*ElementID` pointer — COMPLETE
+
+Changed `BadgerMatcher.txID` from `datalog.ElementID` (value) to `*datalog.ElementID` (pointer) for three-mode semantics:
+
+| Pointer value | Mode | CRDT resolution | Tx filtering |
+|---------------|------|-----------------|--------------|
+| `nil` | Latest | Yes | No |
+| `&ElementID{}` | History (raw) | **No** | No |
+| `&ElementID{L,R}` | As-of | Yes | Yes |
+
+**Changes:**
+- Added `isHistoryMode()`, `shouldFilterTx()`, `crdtTxID()` helpers — all confirmed inlined by compiler (`go build -gcflags='-m'`)
+- Added `BadgerMatcher.History()` and `Database.History()` methods
+- All 8 `NewCRDTResolvingIterator` call sites: conditional wrapping (skip in history mode)
+- All inline filter checks replaced with `shouldFilterTx()`
+- All cache eligibility checks changed to `m.txID == nil`
+- `validateDatomWithConstraints` signature: `*datalog.ElementID`
+- History mode disables all cardinality-based CRDT flags (`returnOnlyFirst`, `useAddWinsResolution`, etc.) in `matchUnboundAsRelation`
+- New tests: `TestHistoryMode` (cardinality-one, 3 LWW versions all visible) and `TestHistoryModeCardinalityMany` (2 adds + 1 remove all visible)
+
 ### Next steps (not yet implemented)
 
-- **`BadgerMatcher.txID` should become `*datalog.ElementID`**: Currently `ElementID{}` (zero value) means "no as-of filter, latest resolved state." We want to distinguish three modes:
-  - `nil` → no AsOf called, latest CRDT-resolved state (current default)
-  - `&ElementID{}` → history mode, no CRDT resolution (raw datoms)
-  - `&ElementID{Lamport: N, ReplicaID: R}` → CRDT-resolved as-of that point
 - **`[(as-of ?tx N)]` predicate is parsed but not wired up** to the executor. The Datomic approach is to apply as-of at the database level, not in the query. A `:as-of` parameter at the EDN query root level would be the right design.
+- **`[(history)]` predicate is parsed but not wired up** — `db.History()` now provides this at the database level.
 - **`HistoryPredicate.TargetLamport` is still `uint64`** — needs to become `ElementID` if the predicate is kept.
 - **`TxRangePredicate.Low`/`.High` are still `uint64`** — same issue.
+- **`examples/*.go`** need rewrite to use Transaction API instead of fabricating ElementIDs from timestamps.

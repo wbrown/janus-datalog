@@ -500,3 +500,117 @@ func TestSchemalessDefaultsToCardinalityOne(t *testing.T) {
 		t.Errorf("Expected 1 result (schemaless defaults to cardinality-one), got %d", resultCount)
 	}
 }
+
+// TestHistoryMode verifies that db.History() returns raw datoms without CRDT
+// resolution. For cardinality-one (LWW), this means ALL historical values are
+// returned, not just the winner.
+func TestHistoryMode(t *testing.T) {
+	dir, err := os.MkdirTemp("", "crdt-history-mode-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Create schema with cardinality-one attribute
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/name"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityOne,
+	})
+	db.SetSchema(s)
+
+	entityID := datalog.NewIdentity("test-entity")
+
+	// Write 3 versions of the same attribute
+	var txIDs []datalog.ElementID
+	for i := 0; i < 3; i++ {
+		tx := db.NewTransaction()
+		err := tx.Set(entityID, datalog.NewKeyword(":person/name"), fmt.Sprintf("Name%d", i))
+		if err != nil {
+			t.Fatalf("Set failed: %v", err)
+		}
+		txID, err := tx.Commit()
+		if err != nil {
+			t.Fatalf("Commit failed: %v", err)
+		}
+		txIDs = append(txIDs, txID)
+	}
+
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Constant{Value: entityID},
+			query.Constant{Value: datalog.NewKeyword(":person/name")},
+			query.Variable{Name: datalog.NewSymbol("?name")},
+			query.Blank{},
+		},
+	}
+
+	// Latest mode: should return only 1 result (LWW winner)
+	latestMatcher := db.Matcher()
+	latestResults, err := latestMatcher.Match(pattern, nil)
+	if err != nil {
+		t.Fatalf("Latest Match failed: %v", err)
+	}
+	latestCount := 0
+	latestIter := latestResults.Iterator()
+	for latestIter.Next() {
+		latestCount++
+	}
+	if latestCount != 1 {
+		t.Errorf("Latest mode: expected 1 result, got %d", latestCount)
+	}
+
+	// History mode: should return ALL 3 raw datoms
+	historyMatcher := db.History()
+	historyResults, err := historyMatcher.Match(pattern, nil)
+	if err != nil {
+		t.Fatalf("History Match failed: %v", err)
+	}
+	historyCount := 0
+	historyIter := historyResults.Iterator()
+	var historyNames []string
+	for historyIter.Next() {
+		historyCount++
+		tuple := historyIter.Tuple()
+		if len(tuple) > 0 {
+			if name, ok := tuple[0].(string); ok {
+				historyNames = append(historyNames, name)
+			}
+		}
+	}
+	if historyCount != 3 {
+		t.Errorf("History mode: expected 3 results (all versions), got %d", historyCount)
+	}
+
+	// As-of mode: should return 1 result (LWW winner at that point)
+	asOfMatcher := db.AsOf(txIDs[1])
+	asOfResults, err := asOfMatcher.Match(pattern, nil)
+	if err != nil {
+		t.Fatalf("AsOf Match failed: %v", err)
+	}
+	asOfCount := 0
+	asOfIter := asOfResults.Iterator()
+	var asOfName string
+	for asOfIter.Next() {
+		asOfCount++
+		tuple := asOfIter.Tuple()
+		if len(tuple) > 0 {
+			if name, ok := tuple[0].(string); ok {
+				asOfName = name
+			}
+		}
+	}
+	if asOfCount != 1 {
+		t.Errorf("AsOf mode: expected 1 result, got %d", asOfCount)
+	}
+	if asOfName != "Name1" {
+		t.Errorf("AsOf mode: expected 'Name1', got '%s'", asOfName)
+	}
+}

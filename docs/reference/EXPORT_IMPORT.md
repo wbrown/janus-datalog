@@ -89,15 +89,15 @@ diff data.edn data2.edn
 ```go
 import (
     "os"
-    "github.com/wbrown/janus-datalog/datalog/storage"
+    "github.com/wbrown/janus-datalog/datalog/db"
 )
 
 // Open database
-db, err := storage.NewDatabase("mydata.db")
+d, err := db.Open("mydata.db")
 if err != nil {
     log.Fatal(err)
 }
-defer db.Close()
+defer d.Close()
 
 // Export to file
 f, err := os.Create("backup.edn")
@@ -106,7 +106,7 @@ if err != nil {
 }
 defer f.Close()
 
-if err := db.Export(f); err != nil {
+if err := d.Export(f); err != nil {
     log.Fatal(err)
 }
 ```
@@ -115,11 +115,11 @@ if err := db.Export(f); err != nil {
 
 ```go
 // Open/create database
-db, err := storage.NewDatabase("newdata.db")
+d, err := db.Open("newdata.db")
 if err != nil {
     log.Fatal(err)
 }
-defer db.Close()
+defer d.Close()
 
 // Import from file
 f, err := os.Open("backup.edn")
@@ -128,7 +128,7 @@ if err != nil {
 }
 defer f.Close()
 
-if err := db.Import(f); err != nil {
+if err := d.Import(f); err != nil {
     log.Fatal(err)
 }
 ```
@@ -137,7 +137,7 @@ if err := db.Import(f); err != nil {
 
 ```go
 var buf bytes.Buffer
-if err := db.Export(&buf); err != nil {
+if err := d.Export(&buf); err != nil {
     log.Fatal(err)
 }
 

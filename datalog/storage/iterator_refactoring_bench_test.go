@@ -12,11 +12,11 @@ import (
 // validateDatomWithConstraintsHelper is the proposed helper function
 func validateDatomWithConstraintsHelper(
 	datom *datalog.Datom,
-	txID datalog.ElementID,
+	txID *datalog.ElementID,
 	constraints []executor.StorageConstraint,
 ) bool {
 	// Check transaction validity
-	if txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
+	if txID != nil && *txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
 		return false
 	}
 
@@ -32,11 +32,11 @@ func validateDatomWithConstraintsHelper(
 // Inline version (current approach)
 func validateDatomInline(
 	datom *datalog.Datom,
-	txID datalog.ElementID,
+	txID *datalog.ElementID,
 	constraints []executor.StorageConstraint,
 ) bool {
 	// Check transaction validity
-	if txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
+	if txID != nil && *txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
 		return false
 	}
 
@@ -73,18 +73,19 @@ func BenchmarkIteratorValidation(b *testing.B) {
 		Tx: datalog.ElementID{Lamport: 100, ReplicaID: 1},
 	}
 
+	asOfTx := datalog.ElementID{Lamport: 50, ReplicaID: 1}
 	scenarios := []struct {
 		name           string
-		txID           datalog.ElementID
+		txID           *datalog.ElementID
 		constraintCnt  int
 		constraintPass bool
 	}{
-		{"no_tx_check_no_constraints", datalog.ElementID{}, 0, true},
-		{"with_tx_check_no_constraints", datalog.ElementID{Lamport: 50, ReplicaID: 1}, 0, true},
-		{"no_tx_check_1_constraint", datalog.ElementID{}, 1, true},
-		{"no_tx_check_3_constraints", datalog.ElementID{}, 3, true},
-		{"with_tx_check_3_constraints", datalog.ElementID{Lamport: 50, ReplicaID: 1}, 3, true},
-		{"with_tx_check_5_constraints", datalog.ElementID{Lamport: 50, ReplicaID: 1}, 5, true},
+		{"no_tx_check_no_constraints", nil, 0, true},
+		{"with_tx_check_no_constraints", &asOfTx, 0, true},
+		{"no_tx_check_1_constraint", nil, 1, true},
+		{"no_tx_check_3_constraints", nil, 3, true},
+		{"with_tx_check_3_constraints", &asOfTx, 3, true},
+		{"with_tx_check_5_constraints", &asOfTx, 5, true},
 	}
 
 	for _, scenario := range scenarios {
@@ -165,11 +166,12 @@ func BenchmarkIteratorLoop(b *testing.B) {
 
 	b.Run("helper", func(b *testing.B) {
 		matched := 0
+		benchTxID := datalog.ElementID{Lamport: 500, ReplicaID: 1}
 		b.ResetTimer()
 		for n := 0; n < b.N; n++ {
 			for _, datom := range datoms {
 				// Helper function approach
-				if validateDatomWithConstraintsHelper(datom, datalog.ElementID{Lamport: 500, ReplicaID: 1}, constraints) {
+				if validateDatomWithConstraintsHelper(datom, &benchTxID, constraints) {
 					matched++
 				}
 			}
