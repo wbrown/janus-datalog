@@ -1249,9 +1249,9 @@ func TestCacheMatrix_CardinalityVector(t *testing.T) {
 				docID, contentAttr)
 			require.NoError(t, err)
 
-			// Should return 4 results (current vector elements)
-			// NOT 9 results (all historical elements)
-			assert.Len(t, results, 4, "[%s] CardinalityVector should return current vector only", mode.name)
+			// Should return 1 result (the resolved vector as a single value)
+			// NOT 4 individual elements or 9 historical elements
+			assert.Len(t, results, 1, "[%s] CardinalityVector should return resolved vector as single value", mode.name)
 
 			t.Logf("[%s] Results: %v", mode.name, results)
 		})

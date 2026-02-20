@@ -40,6 +40,12 @@ type CRDTResolvingIterator struct {
 	// For detecting end of source
 	sourceExhausted bool
 
+	// Pending datom from Vector group transition: when a Vector group ends
+	// and the boundary datom starts a new group, we must emit the vector
+	// buffer first. This field saves the boundary datom so it is processed
+	// on the next call to Next() instead of being lost.
+	pendingDatom *datalog.Datom
+
 	// Current datom being yielded
 	currentDatom *datalog.Datom
 }
@@ -76,52 +82,66 @@ func (it *CRDTResolvingIterator) Next() bool {
 	}
 
 	for {
-		if !it.source.Next() {
-			// Source exhausted - emit final group if CardinalityVector
-			it.sourceExhausted = true
-			if it.hasGroup && it.card == schema.CardinalityVector {
-				return it.emitRGAGroup()
-			}
-			return false
-		}
-
-		datom, err := it.source.Datom()
-		if err != nil {
-			continue
-		}
-
-		// Apply as-of filtering
-		if it.txID > 0 && datom.Tx.Lamport > it.txID {
-			continue
-		}
-
-		// Check if (E, A) changed
+		// Check for pending datom saved from a Vector group transition.
+		// startNewGroup was already called for this datom — skip group
+		// detection and go straight to cardinality processing.
+		var datom *datalog.Datom
 		isNewGroup := false
-		if !it.hasGroup {
+
+		if it.pendingDatom != nil {
+			datom = it.pendingDatom
+			it.pendingDatom = nil
 			isNewGroup = true
 		} else {
-			eHash := datom.E.Hash()
-			currentEHash := it.currentE.Hash()
-			if eHash != currentEHash || datom.A != it.currentA {
-				isNewGroup = true
-			}
-		}
-
-		if isNewGroup {
-			// Emit pending CardinalityVector results before starting new group
-			if it.hasGroup && it.card == schema.CardinalityVector {
-				// For Vector, we need to buffer this datom and emit the old group
-				// This is the ONE place we need a copy - at group boundary for Vector
-				it.emitBuffer = it.resolveRGAGroup()
-				it.emitIdx = 0
-				it.startNewGroup(datom)
-				if len(it.emitBuffer) > 0 {
-					it.currentDatom = it.emitBuffer[it.emitIdx]
-					it.emitIdx++
-					return true
+			if !it.source.Next() {
+				// Source exhausted - emit final group if CardinalityVector
+				it.sourceExhausted = true
+				if it.hasGroup && it.card == schema.CardinalityVector {
+					return it.emitRGAGroup()
 				}
-				// Empty RGA group, continue with new group
+				return false
+			}
+
+			var err error
+			datom, err = it.source.Datom()
+			if err != nil {
+				continue
+			}
+
+			// Apply as-of filtering
+			if it.txID > 0 && datom.Tx.Lamport > it.txID {
+				continue
+			}
+
+			// Check if (E, A) changed
+			if !it.hasGroup {
+				isNewGroup = true
 			} else {
+				eHash := datom.E.Hash()
+				currentEHash := it.currentE.Hash()
+				if eHash != currentEHash || datom.A != it.currentA {
+					isNewGroup = true
+				}
+			}
+
+			if isNewGroup {
+				// Emit pending CardinalityVector results before starting new group
+				if it.hasGroup && it.card == schema.CardinalityVector {
+					it.emitBuffer = it.resolveRGAGroup()
+					it.emitIdx = 0
+					it.startNewGroup(datom)
+					// Save boundary datom — it will be processed on the next
+					// call to Next() after the emit buffer is drained.
+					it.pendingDatom = datom
+					if len(it.emitBuffer) > 0 {
+						it.currentDatom = it.emitBuffer[it.emitIdx]
+						it.emitIdx++
+						return true
+					}
+					// Empty RGA group — pendingDatom will be picked up on
+					// next loop iteration.
+					continue
+				}
 				it.startNewGroup(datom)
 			}
 		}
@@ -281,8 +301,8 @@ func (it *CRDTResolvingIterator) emitRGAGroup() bool {
 	return false
 }
 
-// resolveRGAGroup reconstructs the RGA tree and returns ordered datoms.
-// Reconstructs datoms from stored state - no datom pointer storage needed.
+// resolveRGAGroup reconstructs the RGA tree and returns a single datom
+// with V = the resolved vector ([]any), matching the cache path behavior.
 func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 	if len(it.rgaElements) == 0 {
 		return nil
@@ -319,8 +339,9 @@ func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 		sortRGAByID(children[k])
 	}
 
-	// DFS from HEAD, reconstruct datoms
-	var result []*datalog.Datom
+	// DFS from HEAD, collect values into a single resolved list
+	var values []any
+	var maxTx datalog.ElementID
 	visited := make(map[datalog.ElementID]bool)
 	var walk func(id datalog.ElementID)
 	walk = func(id datalog.ElementID) {
@@ -331,22 +352,26 @@ func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 
 		for _, child := range children[id] {
 			if child.tombstoneID == nil && child.value != nil {
-				// Reconstruct datom from stored state
-				result = append(result, &datalog.Datom{
-					E:        it.currentE,
-					A:        it.currentA,
-					V:        child.value,
-					Tx:       child.id,
-					Op:       datalog.OpRGAInsert,
-					AfterRef: child.afterRef,
-				})
+				values = append(values, child.value)
+				if maxTx.Less(child.id) {
+					maxTx = child.id
+				}
 			}
 			walk(child.id)
 		}
 	}
 	walk(HEAD)
 
-	return result
+	if len(values) == 0 {
+		return nil
+	}
+
+	return []*datalog.Datom{{
+		E:  it.currentE,
+		A:  it.currentA,
+		V:  values,
+		Tx: maxTx,
+	}}
 }
 
 func sortRGAByID(elems []*rgaElement) {
@@ -380,6 +405,7 @@ func (it *CRDTResolvingIterator) Seek(key []byte) {
 	it.emitBuffer = nil
 	it.emitIdx = 0
 	it.sourceExhausted = false
+	it.pendingDatom = nil
 	it.currentDatom = nil
 	it.source.Seek(key)
 }

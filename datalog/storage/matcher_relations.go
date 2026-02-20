@@ -81,12 +81,20 @@ func (m *BadgerMatcher) MatchWithConstraints(
 
 	// Check for vector cardinality - requires special handling with bound E from bindings
 	// This intercepts BEFORE normal join paths since vectors need RGA resolution
-	if a := m.extractValue(pattern.GetA()); a != nil {
+	var aResolved interface{}
+	aResolved = m.extractValue(pattern.GetA())
+	if aResolved == nil {
+		if aVar, ok := pattern.GetA().(query.Variable); ok {
+			if kw, found := resolveKeywordFromBindings(aVar, bindings); found {
+				aResolved = kw
+			}
+		}
+	}
+	if aResolved != nil {
 		if m.schema != nil {
-			if kw, ok := a.(datalog.Keyword); ok {
+			if kw, ok := aResolved.(datalog.Keyword); ok {
 				if attr := m.schema.GetAttribute(kw); attr != nil {
 					if attr.Cardinality == schema.CardinalityVector {
-						// E is bound from bindings, A is a constant - use vector resolution
 						return m.matchVectorWithBindings(pattern, bindingRel, columns, kw)
 					}
 				}
@@ -94,14 +102,29 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		}
 	}
 
-	// CACHE OPTIMIZATION: When A is a constant and E comes from bindings,
+	// CACHE OPTIMIZATION: When A is known (from pattern constant or bindings),
 	// use the cache for each E value instead of storage scans.
 	if m.cache != nil && m.txID == 0 {
-		if a := m.extractValue(pattern.GetA()); a != nil {
-			if aKw, ok := a.(datalog.Keyword); ok {
-				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw)
+		if aResolved != nil {
+			// Phase 1: A has a single known value (from constant or single-row binding)
+			if aKw, ok := aResolved.(datalog.Keyword); ok {
+				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw, -1)
 				if handled {
 					return cacheResult, nil
+				}
+			}
+		} else if aVar, ok := pattern.GetA().(query.Variable); ok {
+			// Phase 2: A varies per row in bindingRel (e.g., from join results)
+			aIdx := findVariableColumn(aVar.Name, bindingRel)
+			eVar, eIsVar := pattern.GetE().(query.Variable)
+			if aIdx >= 0 && eIsVar {
+				eIdx := findVariableColumn(eVar.Name, bindingRel)
+				if eIdx >= 0 {
+					cacheResult, handled := m.matchWithBindingsFromCache(
+						pattern, bindingRel, columns, nil, aIdx)
+					if handled {
+						return cacheResult, nil
+					}
 				}
 			}
 		}
@@ -1083,14 +1106,53 @@ func (m *BadgerMatcher) matchFromCache(
 	return nil, false // Unknown cardinality, fallback to storage
 }
 
-// matchWithBindingsFromCache handles patterns where E comes from bindings and A is constant.
+// findVariableColumn returns the column index for a variable in a relation, or -1.
+func findVariableColumn(sym query.Symbol, rel executor.Relation) int {
+	for i, col := range rel.Columns() {
+		if col == sym {
+			return i
+		}
+	}
+	return -1
+}
+
+// resolveKeywordFromBindings searches all binding relations for a single-row relation
+// containing the given variable and returns its value as a Keyword. This covers scalar
+// inputs and single-row tuple inputs where A has exactly one known value.
+func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations) (datalog.Keyword, bool) {
+	for _, rel := range bindings {
+		idx := findVariableColumn(aVar.Name, rel)
+		if idx < 0 {
+			continue
+		}
+		if rel.Size() != 1 {
+			return nil, false // multi-row — can't extract single value
+		}
+		iter := rel.Iterator()
+		defer iter.Close()
+		if iter.Next() {
+			if kw, ok := iter.Tuple()[idx].(datalog.Keyword); ok {
+				return kw, true
+			}
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+// matchWithBindingsFromCache handles patterns where E comes from bindings and A is known.
 // Uses cache for O(1) lookup per bound E value instead of storage scans.
 // Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
+//
+// When aColIdx >= 0, A is extracted per-row from bindingRel[aColIdx] instead of using
+// the fixed `a` parameter. This handles the case where both E and A are columns in the
+// binding relation (e.g., from join results with varying attributes per row).
 func (m *BadgerMatcher) matchWithBindingsFromCache(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
 	columns []query.Symbol,
 	a datalog.Keyword,
+	aColIdx int,
 ) (executor.Relation, bool) {
 	// Find which column in the binding relation has E
 	eVar, isVar := pattern.GetE().(query.Variable)
@@ -1110,12 +1172,18 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 		return nil, false // E variable not in bindings
 	}
 
-	// Determine cardinality
-	card := schema.CardinalityOne
-	if m.schema != nil {
-		if def := m.schema.GetAttribute(a); def != nil {
-			card = def.Cardinality
+	// Pre-compute fixed-A values when A is constant across all rows
+	var fixedCard schema.Cardinality
+	var fixedAAttr Attribute
+	if aColIdx < 0 {
+		fixedCard = schema.CardinalityOne
+		if m.schema != nil {
+			if def := m.schema.GetAttribute(a); def != nil {
+				fixedCard = def.Cardinality
+			}
 		}
+		aStorage := ToStorageDatom(datalog.Datom{A: a}).A
+		copy(fixedAAttr[:], aStorage[:])
 	}
 
 	// Extract V if bound
@@ -1124,17 +1192,14 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 		v = m.extractValue(elem)
 	}
 
-	// Get storage format for attribute
-	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
-	var aAttr Attribute
-	copy(aAttr[:], aStorage[:])
-
 	// Get tuple builder
 	tupleBuilder := m.getTupleBuilder(pattern, columns)
 
-	// Pre-allocate datom buffer with constant A
+	// Pre-allocate datom buffer
 	var datomBuf datalog.Datom
-	datomBuf.A = a
+	if aColIdx < 0 {
+		datomBuf.A = a // constant A across all rows
+	}
 
 	buildTuple := func(e datalog.Identity, val interface{}, tx datalog.ElementID) executor.Tuple {
 		datomBuf.E = e
@@ -1166,9 +1231,35 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 			}
 		}
 
+		// Determine A and cardinality for this row
+		var rowCard schema.Cardinality
+		var rowAAttr Attribute
+		if aColIdx >= 0 {
+			// Per-row A: extract from binding tuple
+			if aColIdx >= len(tuple) {
+				continue
+			}
+			aKw, ok := tuple[aColIdx].(datalog.Keyword)
+			if !ok {
+				continue
+			}
+			rowCard = schema.CardinalityOne
+			if m.schema != nil {
+				if def := m.schema.GetAttribute(aKw); def != nil {
+					rowCard = def.Cardinality
+				}
+			}
+			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
+			copy(rowAAttr[:], aStorage[:])
+			datomBuf.A = aKw
+		} else {
+			rowCard = fixedCard
+			rowAAttr = fixedAAttr
+		}
+
 		// Build cache key
 		eBytes := Entity(eIdent.Hash())
-		key := CacheKey{E: eBytes, A: aAttr}
+		key := CacheKey{E: eBytes, A: rowAAttr}
 
 		// Get from cache
 		entry := m.cache.GetOrResolve(key, m)
@@ -1178,7 +1269,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 		}
 
 		// Process based on cardinality
-		switch card {
+		switch rowCard {
 		case schema.CardinalityOne:
 			val := entry.OneValue()
 			if val == nil {

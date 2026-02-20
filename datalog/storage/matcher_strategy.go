@@ -211,13 +211,18 @@ func chooseBestMultiPositionStrategy(
 		bindingRel = streamRel.Materialize()
 	}
 
-	// Count distinct values for each bound position
-	positionCardinalities := make(map[int]int)
-	positionIndices := make(map[int]int) // column index in binding relation
+	// Track column index and distinct count per bound position.
+	// Uses a slice parallel to boundPositions for deterministic iteration
+	// (maps cause nondeterministic tiebreaking via random iteration order).
+	type posInfo struct {
+		pos      int // datom position (0=E, 1=A, 2=V, 3=T)
+		colIdx   int // column index in binding relation (-1 if not found)
+		distinct int // count of distinct values
+	}
+	info := make([]posInfo, 0, len(boundPositions))
 
 	// Build position-to-column-index mapping
-	for i, pos := range boundPositions {
-		_ = i // unused
+	for _, pos := range boundPositions {
 		var varName query.Symbol
 		switch pos {
 		case 0: // E
@@ -244,48 +249,56 @@ func chooseBestMultiPositionStrategy(
 			continue
 		}
 
-		// Find column index in binding relation
-		for colIdx, col := range bindingRel.Columns() {
+		colIdx := -1
+		for ci, col := range bindingRel.Columns() {
 			if col == varName {
-				positionIndices[pos] = colIdx
+				colIdx = ci
 				break
 			}
 		}
+		info = append(info, posInfo{pos: pos, colIdx: colIdx})
 	}
 
 	// Count distinct values for each position
-	distinctValues := make(map[int]map[interface{}]bool)
-	for pos := range positionIndices {
-		distinctValues[pos] = make(map[interface{}]bool)
+	sets := make([]map[interface{}]bool, len(info))
+	for i := range sets {
+		sets[i] = make(map[interface{}]bool)
 	}
 
-	// Iterate through binding relation to count distinct values
 	it := bindingRel.Iterator()
 	for it.Next() {
 		tuple := it.Tuple()
-		for pos, colIdx := range positionIndices {
-			if colIdx < len(tuple) {
-				distinctValues[pos][tuple[colIdx]] = true
+		for i, pi := range info {
+			if pi.colIdx >= 0 && pi.colIdx < len(tuple) {
+				sets[i][tuple[pi.colIdx]] = true
 			}
 		}
 	}
 	it.Close()
 
-	// Record cardinalities
-	for pos := range positionIndices {
-		positionCardinalities[pos] = len(distinctValues[pos])
+	for i := range info {
+		info[i].distinct = len(sets[i])
 	}
 
-	// Find the position with the MOST distinct values
-	// This is the position we want to use for iterator reuse (seeking)
-	// The position with fewer distinct values becomes the grouping/hash dimension
-	bestPosition := -1
+	// Find the position with the MOST distinct values.
+	// On ties, prefer A (position 1) over E (position 0) because A-primary
+	// indices (AETV) produce scans with uniform cardinality per scan — each
+	// attribute has exactly one CRDT resolution strategy. E-primary indices
+	// (EATV) mix cardinalities within a scan (one entity may have One, Many,
+	// and Vector attributes), forcing the CRDTResolvingIterator through
+	// cross-cardinality group transitions.
+	bestIdx := -1
 	maxCardinality := 0
-	for pos, card := range positionCardinalities {
-		if card > maxCardinality {
-			maxCardinality = card
-			bestPosition = pos
+	for i, pi := range info {
+		if pi.distinct > maxCardinality || (pi.distinct == maxCardinality && bestIdx >= 0 && pi.pos > info[bestIdx].pos) {
+			maxCardinality = pi.distinct
+			bestIdx = i
 		}
+	}
+
+	bestPosition := -1
+	if bestIdx >= 0 {
+		bestPosition = info[bestIdx].pos
 	}
 
 	if bestPosition == -1 {
