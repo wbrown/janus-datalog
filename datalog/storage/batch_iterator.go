@@ -283,7 +283,7 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 		datomCount++
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
+		if it.matcher.txID != (datalog.ElementID{}) && it.matcher.txID.Less(datom.Tx) {
 			continue
 		}
 

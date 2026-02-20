@@ -104,7 +104,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 
 	// CACHE OPTIMIZATION: When A is known (from pattern constant or bindings),
 	// use the cache for each E value instead of storage scans.
-	if m.cache != nil && m.txID == 0 {
+	if m.cache != nil && m.txID == (datalog.ElementID{}) {
 		if aResolved != nil {
 			// Phase 1: A has a single known value (from constant or single-row binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
@@ -267,7 +267,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 
 	// CACHE OPTIMIZATION: When E and A are bound and we're querying latest state,
 	// use the cache for O(1) access instead of storage scans.
-	if m.cache != nil && m.txID == 0 && e != nil && a != nil {
+	if m.cache != nil && m.txID == (datalog.ElementID{}) && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
 				cacheResult, handled := m.matchFromCache(pattern, columns, eIdent, aKw, v, card)
@@ -865,7 +865,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// - Add-wins with same-Tx tiebreaking for CardinalityMany
 	// - RGA for CardinalityVector
 	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
-	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, 0)
+	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, datalog.ElementID{})
 
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{

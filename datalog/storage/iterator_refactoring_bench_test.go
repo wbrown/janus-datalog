@@ -12,11 +12,11 @@ import (
 // validateDatomWithConstraintsHelper is the proposed helper function
 func validateDatomWithConstraintsHelper(
 	datom *datalog.Datom,
-	txID uint64,
+	txID datalog.ElementID,
 	constraints []executor.StorageConstraint,
 ) bool {
 	// Check transaction validity
-	if txID > 0 && datom.Tx.Lamport > txID {
+	if txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
 		return false
 	}
 
@@ -32,11 +32,11 @@ func validateDatomWithConstraintsHelper(
 // Inline version (current approach)
 func validateDatomInline(
 	datom *datalog.Datom,
-	txID uint64,
+	txID datalog.ElementID,
 	constraints []executor.StorageConstraint,
 ) bool {
 	// Check transaction validity
-	if txID > 0 && datom.Tx.Lamport > txID {
+	if txID != (datalog.ElementID{}) && txID.Less(datom.Tx) {
 		return false
 	}
 
@@ -75,16 +75,16 @@ func BenchmarkIteratorValidation(b *testing.B) {
 
 	scenarios := []struct {
 		name           string
-		txID           uint64
+		txID           datalog.ElementID
 		constraintCnt  int
 		constraintPass bool
 	}{
-		{"no_tx_check_no_constraints", 0, 0, true},
-		{"with_tx_check_no_constraints", 50, 0, true},
-		{"no_tx_check_1_constraint", 0, 1, true},
-		{"no_tx_check_3_constraints", 0, 3, true},
-		{"with_tx_check_3_constraints", 50, 3, true},
-		{"with_tx_check_5_constraints", 50, 5, true},
+		{"no_tx_check_no_constraints", datalog.ElementID{}, 0, true},
+		{"with_tx_check_no_constraints", datalog.ElementID{Lamport: 50, ReplicaID: 1}, 0, true},
+		{"no_tx_check_1_constraint", datalog.ElementID{}, 1, true},
+		{"no_tx_check_3_constraints", datalog.ElementID{}, 3, true},
+		{"with_tx_check_3_constraints", datalog.ElementID{Lamport: 50, ReplicaID: 1}, 3, true},
+		{"with_tx_check_5_constraints", datalog.ElementID{Lamport: 50, ReplicaID: 1}, 5, true},
 	}
 
 	for _, scenario := range scenarios {
@@ -169,7 +169,7 @@ func BenchmarkIteratorLoop(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			for _, datom := range datoms {
 				// Helper function approach
-				if validateDatomWithConstraintsHelper(datom, 500, constraints) {
+				if validateDatomWithConstraintsHelper(datom, datalog.ElementID{Lamport: 500, ReplicaID: 1}, constraints) {
 					matched++
 				}
 			}

@@ -790,10 +790,10 @@ func TestExportImport_PreservesTxIDs(t *testing.T) {
 	for _, line := range lines {
 		datom, err := ParseDatomEDN(line)
 		require.NoError(t, err)
-		if datom.Tx.Lamport == txID1 {
+		if datom.Tx == txID1 {
 			foundTx1 = true
 		}
-		if datom.Tx.Lamport == txID2 {
+		if datom.Tx == txID2 {
 			foundTx2 = true
 		}
 	}

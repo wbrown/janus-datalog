@@ -57,7 +57,7 @@ func TestBatchScanPerformance(t *testing.T) {
 	// Get the matcher
 	matcher := &BadgerMatcher{
 		store: db.store,
-		txID:  0,
+		txID:  datalog.ElementID{},
 	}
 
 	// Pattern: [?bar :price/time ?time]
@@ -91,7 +91,7 @@ func TestBatchScanPerformance(t *testing.T) {
 		// We'll do this by creating a new matcher
 		matcher2 := &BadgerMatcher{
 			store: db.store,
-			txID:  0,
+			txID:  datalog.ElementID{},
 		}
 
 		start := time.Now()

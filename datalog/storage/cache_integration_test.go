@@ -234,7 +234,6 @@ func TestAsOfDoesNotUseCache(t *testing.T) {
 	assert.Equal(t, "Bob", val)
 
 	// As-of tx1 should still return "Alice" (bypassing cache)
-	// tx1ID is already a uint64 (Lamport timestamp)
 	asOfMatcher := db.AsOf(tx1ID).(*BadgerMatcher)
 	asOfVal, found := asOfMatcher.LookupAttribute(e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)

@@ -280,7 +280,7 @@ func (s *simpleBatchScanner) scanAndFilter(iter Iterator, bindingSet map[string]
 		datomCount++
 
 		// Check transaction validity
-		if s.matcher.txID > 0 && datom.Tx.Lamport > s.matcher.txID {
+		if s.matcher.txID != (datalog.ElementID{}) && s.matcher.txID.Less(datom.Tx) {
 			continue
 		}
 

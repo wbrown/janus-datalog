@@ -165,7 +165,7 @@ func runDemo(db *storage.Database, handler annotations.Handler, enableDecorrelat
 	if err != nil {
 		log.Fatalf("Failed to commit: %v", err)
 	}
-	fmt.Printf("Committed transaction %d\n", txID)
+	fmt.Printf("Committed transaction %v\n", txID)
 
 	// Run some queries
 	fmt.Println("\n=== Running Queries ===")
@@ -346,7 +346,7 @@ func addInteractiveData(db *storage.Database, scanner *bufio.Scanner) {
 		if err != nil {
 			fmt.Printf("Commit failed: %v\n", err)
 		} else {
-			fmt.Printf("Committed %d datoms in transaction %d\n", count, txID)
+			fmt.Printf("Committed %d datoms in transaction %v\n", count, txID)
 		}
 	} else {
 		tx.Rollback()

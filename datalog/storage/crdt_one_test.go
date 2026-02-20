@@ -169,16 +169,16 @@ func TestCardinalityOneAsOf(t *testing.T) {
 
 	entityID := datalog.NewIdentity("test-entity")
 
-	// Write multiple versions and track their Lamport times
-	var lamports []uint64
+	// Write multiple versions and track their transaction IDs
+	var txIDs []datalog.ElementID
 	for i := 0; i < 5; i++ {
 		tx := db.NewTransaction()
 		tx.Add(entityID, datalog.NewKeyword(":person/name"), fmt.Sprintf("Name%d", i))
-		lamport, err := tx.Commit()
+		txID, err := tx.Commit()
 		if err != nil {
 			t.Fatalf("Commit failed: %v", err)
 		}
-		lamports = append(lamports, lamport)
+		txIDs = append(txIDs, txID)
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
@@ -192,27 +192,27 @@ func TestCardinalityOneAsOf(t *testing.T) {
 		},
 	}
 
-	// Query as-of each Lamport time should return the value from that transaction
-	for i, targetLamport := range lamports {
-		results, err := matcher.MatchAsOf(pattern, targetLamport)
+	// Query as-of each transaction should return the value from that transaction
+	for i, targetTx := range txIDs {
+		results, err := matcher.MatchAsOf(pattern, targetTx)
 		if err != nil {
 			t.Fatalf("MatchAsOf failed: %v", err)
 		}
 
 		if len(results) != 1 {
-			t.Errorf("MatchAsOf(Lamport=%d): expected 1 result, got %d", targetLamport, len(results))
+			t.Errorf("MatchAsOf(Tx=%v): expected 1 result, got %d", targetTx, len(results))
 			continue
 		}
 
 		expectedName := fmt.Sprintf("Name%d", i)
 		if results[0].V.(string) != expectedName {
-			t.Errorf("MatchAsOf(Lamport=%d): expected '%s', got '%s'",
-				targetLamport, expectedName, results[0].V)
+			t.Errorf("MatchAsOf(Tx=%v): expected '%s', got '%s'",
+				targetTx, expectedName, results[0].V)
 		}
 	}
 
-	// Query as-of Lamport 0 should return no results (before any writes)
-	results, err := matcher.MatchAsOf(pattern, 0)
+	// Query as-of zero ElementID should return no results (before any writes)
+	results, err := matcher.MatchAsOf(pattern, datalog.ElementID{})
 	if err != nil {
 		t.Fatalf("MatchAsOf(0) failed: %v", err)
 	}

@@ -402,7 +402,7 @@ func (d *Database) Match(pattern *query.DataPattern, bindings executor.Relations
 var _ executor.PatternMatcher = (*Database)(nil)
 
 // AsOf returns a PatternMatcher for a specific transaction
-func (d *Database) AsOf(txID uint64) executor.PatternMatcher {
+func (d *Database) AsOf(txID datalog.ElementID) executor.PatternMatcher {
 	// Convert default planner options to executor options
 	opts := DefaultPlannerOptions()
 	execOpts := executor.ExecutorOptions{
@@ -1951,17 +1951,17 @@ func (t *Transaction) SaveStruct(v interface{}) (datalog.Identity, error) {
 }
 
 // Commit commits the transaction
-func (t *Transaction) Commit() (uint64, error) {
+func (t *Transaction) Commit() (datalog.ElementID, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if t.closed {
-		return 0, fmt.Errorf("transaction is closed")
+		return datalog.ElementID{}, fmt.Errorf("transaction is closed")
 	}
 
 	// Validate uniqueness constraints before committing
 	if err := t.validateUniqueness(); err != nil {
-		return 0, err
+		return datalog.ElementID{}, err
 	}
 
 	// Record transaction time for metadata
@@ -1982,14 +1982,14 @@ func (t *Transaction) Commit() (uint64, error) {
 	// Apply retractions first
 	if len(t.retracts) > 0 {
 		if err := t.db.store.Retract(t.retracts); err != nil {
-			return 0, fmt.Errorf("failed to retract datoms: %w", err)
+			return datalog.ElementID{}, fmt.Errorf("failed to retract datoms: %w", err)
 		}
 	}
 
 	// Then apply assertions
 	if len(t.datoms) > 0 {
 		if err := t.db.store.Assert(t.datoms); err != nil {
-			return 0, fmt.Errorf("failed to assert datoms: %w", err)
+			return datalog.ElementID{}, fmt.Errorf("failed to assert datoms: %w", err)
 		}
 	}
 
@@ -2056,8 +2056,9 @@ func (t *Transaction) Commit() (uint64, error) {
 	delete(t.db.activeTx, t)
 	t.db.mu.Unlock()
 
-	// Return the metadata's Lamport as the "transaction ID" - it's the highest from this tx
-	return metadataElemID.Lamport, nil
+	// Return the metadata ElementID - it has the highest Lamport in this tx,
+	// making it the correct high-water mark for as-of queries
+	return metadataElemID, nil
 }
 
 // validateUniqueness checks uniqueness constraints for all datoms in the transaction

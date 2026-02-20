@@ -754,7 +754,7 @@ func (it *hashJoinIterator) Next() bool {
 		it.datomsScanned++
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
+		if it.matcher.txID != (datalog.ElementID{}) && it.matcher.txID.Less(datom.Tx) {
 			continue
 		}
 
@@ -842,7 +842,7 @@ func (it *mergeJoinIterator) Next() bool {
 		}
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
+		if it.matcher.txID != (datalog.ElementID{}) && it.matcher.txID.Less(datom.Tx) {
 			continue
 		}
 

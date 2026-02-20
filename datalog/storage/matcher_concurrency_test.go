@@ -65,7 +65,7 @@ func TestTupleBuilderCacheSharing(t *testing.T) {
 	defer db.Close()
 
 	baseMatcher := NewBadgerMatcher(db.Store())
-	asOfMatcher := baseMatcher.AsOf(100)
+	asOfMatcher := baseMatcher.AsOf(datalog.ElementID{Lamport: 100})
 
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
