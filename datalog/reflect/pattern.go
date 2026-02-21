@@ -86,6 +86,7 @@ func generatePullPatternRecursive(t reflect.Type, s schema.SchemaProvider, visit
 			elemType != timeType &&
 			elemType != identityType &&
 			elemType != keywordType &&
+			elemType != elementIDType &&
 			!isOrderedSetType(elemType) // OrderedSet is a value type, not a nested entity
 
 		if isNestedStruct {

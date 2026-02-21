@@ -83,6 +83,11 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 			continue
 		}
 
+		// Apply temporal filtering for AsOf queries
+		if m.shouldFilterTx(datom.Tx) {
+			continue
+		}
+
 		if datom.Op == datalog.OpRGAInsert {
 			// Insert: ID is Tx, AfterRef is position reference
 			rgaElem := RGAElement{

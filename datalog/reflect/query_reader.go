@@ -377,6 +377,17 @@ func setQueryValue(fieldVal reflect.Value, fieldType reflect.Type, value interfa
 		fieldVal.Set(reflect.ValueOf(t))
 		return nil
 
+	case elementIDType:
+		switch v := value.(type) {
+		case datalog.ElementID:
+			fieldVal.Set(reflect.ValueOf(v))
+		case *datalog.ElementID:
+			fieldVal.Set(reflect.ValueOf(*v))
+		default:
+			return fmt.Errorf("expected ElementID, got %T", value)
+		}
+		return nil
+
 	case identityType:
 		// Identity is now always a pointer type (*identity)
 		if v, ok := value.(datalog.Identity); ok {
