@@ -506,9 +506,11 @@ Tx = (Lamport:8, ReplicaID:8) with bitwise NOT
    ```
 
 4. **Queryable history without reconstruction:**
-   ```clojure
-   ;; Get all historical values - just scan the index
-   [:find ?name ?tx :where [?e :person/name ?name ?tx] [(history)]]
+   ```go
+   // Get all historical values - just scan the index
+   histMatcher := db.History()
+   exec := executor.NewExecutor(histMatcher, db)
+   exec.ExecuteQuery(`[:find ?name ?tx :where [?e :person/name ?name ?tx]]`)
    ```
 
 5. **Scalar ElementID vs Vector Clocks:**

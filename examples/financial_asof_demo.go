@@ -16,11 +16,11 @@ import (
 )
 
 func main() {
-	// Create a database with time-based transactions
+	// Create a database
 	dbPath := "/tmp/datalog-asof"
 	os.RemoveAll(dbPath)
 
-	db, err := storage.NewDatabaseWithTimeTx(dbPath)
+	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
 		log.Fatal("Failed to create database:", err)
 	}
@@ -153,8 +153,8 @@ func main() {
 	fmt.Printf("Looking for transactions <= %d\n", asOfDate.UnixNano())
 
 	// Use AsOf matcher
-	asOfMatcher := db.AsOf(uint64(asOfDate.UnixNano()))
-	asOfExec := executor.NewExecutor(asOfMatcher)
+	asOfDB := db.AsOf(datalog.ElementID{Lamport: uint64(asOfDate.UnixNano())})
+	asOfExec := executor.NewExecutor(asOfDB, asOfDB)
 
 	// First check if we can find the security
 	qCheck, _ := parser.ParseQuery(`

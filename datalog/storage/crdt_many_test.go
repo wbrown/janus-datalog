@@ -2032,3 +2032,95 @@ func TestAVETAddWinsResolution(t *testing.T) {
 		t.Error("entity3 should have 'warrior' tag (remove then add)")
 	}
 }
+
+// TestHistoryModeCardinalityMany verifies that db.History() returns raw
+// datoms including retract operations, bypassing add-wins CRDT resolution.
+func TestHistoryModeCardinalityMany(t *testing.T) {
+	dir, err := os.MkdirTemp("", "crdt-many-history-mode-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":person/tags"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityMany,
+	})
+	db.SetSchema(s)
+
+	entityID := datalog.NewIdentity("test-entity")
+	attr := datalog.NewKeyword(":person/tags")
+
+	// Add two tags
+	tx1 := db.NewTransaction()
+	err = tx1.Add(entityID, attr, "warrior")
+	if err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	err = tx1.Add(entityID, attr, "veteran")
+	if err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	_, err = tx1.Commit()
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Remove one tag
+	tx2 := db.NewTransaction()
+	err = tx2.Remove(entityID, attr, "warrior")
+	if err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+	_, err = tx2.Commit()
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Constant{Value: entityID},
+			query.Constant{Value: attr},
+			query.Variable{Name: datalog.NewSymbol("?tag")},
+			query.Blank{},
+		},
+	}
+
+	// Latest mode: add-wins resolution should show only "veteran"
+	latestMatcher := db.Matcher()
+	latestResults, err := latestMatcher.Match(pattern, nil)
+	if err != nil {
+		t.Fatalf("Latest Match failed: %v", err)
+	}
+	latestCount := 0
+	latestIter := latestResults.Iterator()
+	for latestIter.Next() {
+		latestCount++
+	}
+	if latestCount != 1 {
+		t.Errorf("Latest mode: expected 1 result (add-wins resolved), got %d", latestCount)
+	}
+
+	// History mode: should return ALL raw operations (2 adds + 1 remove = 3 datoms)
+	historyMatcher := db.History()
+	historyResults, err := historyMatcher.Match(pattern, nil)
+	if err != nil {
+		t.Fatalf("History Match failed: %v", err)
+	}
+	historyCount := 0
+	historyIter := historyResults.Iterator()
+	for historyIter.Next() {
+		historyCount++
+	}
+	if historyCount != 3 {
+		t.Errorf("History mode: expected 3 results (2 adds + 1 remove), got %d", historyCount)
+	}
+}

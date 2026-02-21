@@ -129,6 +129,15 @@ func hashValue(v interface{}) uint64 {
 		}
 		return 0
 
+	case datalog.ElementID:
+		return val.Lamport ^ (val.ReplicaID * 1099511628211)
+
+	case *datalog.ElementID:
+		if val == nil {
+			return 0
+		}
+		return val.Lamport ^ (val.ReplicaID * 1099511628211)
+
 	case nil:
 		return 0
 

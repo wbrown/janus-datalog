@@ -337,7 +337,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 			hasTxColumn := false
 			if txIndex < len(firstTuple) {
 				switch firstTuple[txIndex].(type) {
-				case uint64, int64, int:
+				case uint64, int64, int, datalog.ElementID, *datalog.ElementID:
 					hasTxColumn = true
 					if opts.EnableDebugLogging {
 						fmt.Printf("[HashJoin] Confirmed tx column at index %d with type %T\n", txIndex, firstTuple[txIndex])
@@ -372,6 +372,12 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 					txID = uint64(v)
 				case int:
 					txID = uint64(v)
+				case datalog.ElementID:
+					txID = v.Lamport
+				case *datalog.ElementID:
+					if v != nil {
+						txID = v.Lamport
+					}
 				}
 
 				// Keep only if this is newer than what we have
@@ -395,6 +401,12 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 						txID = uint64(v)
 					case int:
 						txID = uint64(v)
+					case datalog.ElementID:
+						txID = v.Lamport
+					case *datalog.ElementID:
+						if v != nil {
+							txID = v.Lamport
+						}
 					}
 
 					// Keep only if this is newer than what we have

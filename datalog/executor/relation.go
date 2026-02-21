@@ -479,7 +479,7 @@ func (r *MaterializedRelation) ProjectFromPattern(pattern *query.DataPattern) Re
 		symbolIndices[col] = i
 	}
 
-	// Check each position in the pattern
+	// Check each position in the pattern (E, A, V, T)
 	if sym, ok := pattern.GetE().(query.Variable); ok {
 		if _, exists := symbolIndices[sym.Name]; exists {
 			neededSymbols = append(neededSymbols, sym.Name)
@@ -493,6 +493,13 @@ func (r *MaterializedRelation) ProjectFromPattern(pattern *query.DataPattern) Re
 	if sym, ok := pattern.GetV().(query.Variable); ok {
 		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
+		}
+	}
+	if len(pattern.Elements) > 3 {
+		if sym, ok := pattern.GetT().(query.Variable); ok {
+			if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+				neededSymbols = append(neededSymbols, sym.Name)
+			}
 		}
 	}
 
@@ -1006,7 +1013,7 @@ func (r *StreamingRelation) ProjectFromPattern(pattern *query.DataPattern) Relat
 		symbolIndices[col] = i
 	}
 
-	// Check each position in the pattern
+	// Check each position in the pattern (E, A, V, T)
 	if sym, ok := pattern.GetE().(query.Variable); ok {
 		if _, exists := symbolIndices[sym.Name]; exists {
 			neededSymbols = append(neededSymbols, sym.Name)
@@ -1020,6 +1027,13 @@ func (r *StreamingRelation) ProjectFromPattern(pattern *query.DataPattern) Relat
 	if sym, ok := pattern.GetV().(query.Variable); ok {
 		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
+		}
+	}
+	if len(pattern.Elements) > 3 {
+		if sym, ok := pattern.GetT().(query.Variable); ok {
+			if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+				neededSymbols = append(neededSymbols, sym.Name)
+			}
 		}
 	}
 

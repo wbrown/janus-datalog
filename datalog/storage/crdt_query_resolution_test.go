@@ -37,7 +37,6 @@ func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dir,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -110,7 +109,6 @@ func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *te
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dir,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -190,7 +188,6 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dir,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -281,7 +278,6 @@ func TestSchemaAwareness_InQueryExecution(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dir,
-		UseTimeTx: true,
 		Schema:    s,
 	})
 	require.NoError(t, err)
@@ -313,7 +309,6 @@ func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dir,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()

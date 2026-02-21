@@ -71,9 +71,13 @@ func (s *simpleBatchScanner) Scan() error {
 		return fmt.Errorf("failed to open scan: %w", err)
 	}
 
-	// Wrap with CRDT resolution to ensure we only see resolved values
-	// Always applied: CRDTResolvingIterator handles nil schema correctly
-	iter := NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.txID)
+	// Wrap with CRDT resolution unless in history mode
+	var iter Iterator
+	if s.matcher.isHistoryMode() {
+		iter = rawIter
+	} else {
+		iter = NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.crdtTxID())
+	}
 	defer iter.Close()
 
 	// Step 4: Scan and filter
@@ -110,6 +114,8 @@ func (s *simpleBatchScanner) valueToKey(v interface{}) string {
 		v = *ptr
 	} else if ptr, ok := v.(*uint64); ok {
 		v = *ptr
+	} else if eid, ok := datalog.DerefElementID(v); ok {
+		v = eid
 	}
 
 	switch val := v.(type) {
@@ -124,6 +130,8 @@ func (s *simpleBatchScanner) valueToKey(v interface{}) string {
 		return val.String()
 	case string:
 		return val
+	case datalog.ElementID:
+		return val.String()
 	case uint64:
 		return fmt.Sprintf("%d", val)
 	default:
@@ -247,10 +255,16 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 		}
 		return encoder.EncodePrefix(s.index, parts...)
 	case 4: // TAEV
-		if tx, ok := value.(uint64); ok {
-			// Convert uint64 to 20-byte Tx format
+		// Tx must be encoded with bitwise-NOT for descending sort order
+		if eid, ok := datalog.DerefElementID(value); ok {
+			txBytes := NewTxFromElementID(eid)
+			encTx := encoder.EncodeTxForPrefix(txBytes)
+			parts := [][]byte{encTx}
+			return encoder.EncodePrefix(s.index, parts...)
+		} else if tx, ok := value.(uint64); ok {
 			txBytes := NewTxFromUint(tx)
-			parts := [][]byte{txBytes[:]}
+			encTx := encoder.EncodeTxForPrefix(txBytes)
+			parts := [][]byte{encTx}
 			return encoder.EncodePrefix(s.index, parts...)
 		}
 	}
@@ -270,7 +284,7 @@ func (s *simpleBatchScanner) scanAndFilter(iter Iterator, bindingSet map[string]
 		datomCount++
 
 		// Check transaction validity
-		if s.matcher.txID > 0 && datom.Tx.Lamport > s.matcher.txID {
+		if s.matcher.shouldFilterTx(datom.Tx) {
 			continue
 		}
 

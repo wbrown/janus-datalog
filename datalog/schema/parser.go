@@ -152,6 +152,8 @@ func parseValueType(node *edn.Node) (ValueType, error) {
 		return TypeRef, nil
 	case "db.type/keyword":
 		return TypeKeyword, nil
+	case "db.type/tx":
+		return TypeTx, nil
 	default:
 		return "", fmt.Errorf("unknown value type: %s", node.Value)
 	}

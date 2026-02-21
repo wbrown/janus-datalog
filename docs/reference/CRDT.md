@@ -368,7 +368,7 @@ For databases with millions of entities, this could consume significant memory. 
 **Process Restart**: Cache is empty after restart:
 - `maxVersions` map starts empty
 - First access to each (E, A) triggers rebuild from storage
-- Use `db.WarmCache(attributes)` for performance-critical attributes
+- Use `d.WarmCache(attributes)` for performance-critical attributes
 
 ---
 
@@ -666,7 +666,7 @@ This section provides formal complexity analysis for all CRDT operations.
 | Vector | O(1) | O(n log n) | O(1) | Write-optimized, expensive rebuild |
 | OrderedSet | O(d+k) | O(n log n) | O(1) | Uniqueness costs at write time |
 
-**Key insight**: The system is write-optimized. Writes are always O(1) or O(d+k) for OrderedSet. Read performance depends on cache hit rate. For read-heavy workloads, use `db.WarmCache()` at startup.
+**Key insight**: The system is write-optimized. Writes are always O(1) or O(d+k) for OrderedSet. Read performance depends on cache hit rate. For read-heavy workloads, use `d.WarmCache()` at startup.
 
 ---
 
@@ -674,7 +674,7 @@ This section provides formal complexity analysis for all CRDT operations.
 
 ### Memory
 
-Cache entries are rebuilt on demand. After process restart, first access to each (E, A) triggers rebuild. Use `db.WarmCache(attributes)` at startup for performance-critical attributes.
+Cache entries are rebuilt on demand. After process restart, first access to each (E, A) triggers rebuild. Use `d.WarmCache(attributes)` at startup for performance-critical attributes.
 
 ---
 
@@ -725,23 +725,40 @@ See [CRDT_STREAMING_RESOLUTION.md](CRDT_STREAMING_RESOLUTION.md) for detailed de
 
 ## History and Time-Travel
 
-All writes are preserved. Use history predicates for time-travel queries:
+All writes are preserved. Use database-level temporal modes for time-travel queries:
 
-```clojure
-;; All historical values
-[:find ?name ?tx :where [?e :person/name ?name ?tx] [(history)]]
+```go
+import "github.com/wbrown/janus-datalog/datalog/db"
 
-;; Value as of specific Lamport time
-[:find ?name :where [?e :person/name ?name ?tx] [(as-of ?tx 5000)]]
+d, _ := db.Open("/path/to/data")
+defer d.Close()
+
+// History mode — all raw datoms, no CRDT resolution
+hist := d.History()
+history, _ := hist.Query(
+    `[:find ?name ?tx :where [?e :person/name ?name ?tx]]`)
+
+// As-of mode — CRDT-resolved state at a specific point in time
+asOf := d.AsOf(txID)  // txID is datalog.ElementID from Commit()
+asOfResult, _ := asOf.Query(
+    `[:find ?name :where [?e :person/name ?name]]`)
 ```
 
-The cache stores current value only. History queries bypass the cache and scan storage directly.
+**Three database modes** (controlled via `*datalog.ElementID` pointer on `BadgerMatcher.txID`):
+
+| Mode | API | `txID` value | CRDT resolution | Tx filtering |
+|------|-----|-------------|-----------------|--------------|
+| Latest | `d.Query(q)` | `nil` | Yes | No |
+| As-of | `d.AsOf(elemID).Query(q)` | `&ElementID{L,R}` | Yes | Yes |
+| History | `d.History().Query(q)` | `&ElementID{}` | No | No |
+
+The cache stores current value only. History and as-of queries bypass the cache and scan storage directly.
 
 ---
 
 ## Pull API and CRDT Resolution
 
-The Pull API (`db.Pull()`, `db.PullInto()`, and pull expressions in queries) uses CRDT resolution to return current values.
+The Pull API (`d.Pull()`, `d.PullInto()`, and pull expressions in queries) uses CRDT resolution to return current values.
 
 ### EntityResolver Interface
 
@@ -760,7 +777,7 @@ The Database implements this interface, delegating to `ResolveEntityAttributes` 
 Wildcard pulls (`[*]`) resolve all attributes for an entity:
 
 ```go
-result, _ := db.Pull(entity, "[*]")
+result, _ := d.Pull(entity, "[*]")
 // Returns CRDT-resolved values:
 // - CardinalityOne: single value (LWW)
 // - CardinalityMany: []interface{} (add-wins set)
@@ -779,7 +796,7 @@ Pull expressions in queries also use CRDT resolution:
 [:find (pull ?e [*]) :where [?e :task/name "test"]]
 ```
 
-Both standalone `db.PullInto()` and query pull expressions use the same resolution path through `EntityResolver`.
+Both standalone `d.PullInto()` and query pull expressions use the same resolution path through `EntityResolver`.
 
 ### Return Types by Cardinality
 

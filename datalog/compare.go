@@ -66,12 +66,11 @@ func CompareValues(left, right interface{}) int {
 		return -1
 	}
 
-	// Handle ElementID comparison - use the Compare method
-	if eid1, ok := left.(ElementID); ok {
-		if eid2, ok := right.(ElementID); ok {
+	// Handle ElementID comparison — dereference pointers, then compare by value
+	if eid1, ok := DerefElementID(left); ok {
+		if eid2, ok := DerefElementID(right); ok {
 			return eid1.Compare(eid2)
 		}
-		// ElementID vs non-ElementID: type mismatch
 		return -1
 	}
 
@@ -293,9 +292,9 @@ func ValuesEqual(a, b interface{}) bool {
 		return false
 	}
 
-	// ElementID comparison - use the Equal method
-	if eid1, ok := a.(ElementID); ok {
-		if eid2, ok := b.(ElementID); ok {
+	// ElementID comparison — dereference pointers, then compare by value
+	if eid1, ok := DerefElementID(a); ok {
+		if eid2, ok := DerefElementID(b); ok {
 			return eid1.Equal(eid2)
 		}
 		return false
@@ -337,5 +336,20 @@ func stringValue(v interface{}) string {
 	default:
 		// Use fmt.Sprintf for other types
 		return fmt.Sprintf("%v", v)
+	}
+}
+
+// DerefElementID extracts an ElementID from either ElementID or *ElementID.
+func DerefElementID(v interface{}) (ElementID, bool) {
+	switch e := v.(type) {
+	case ElementID:
+		return e, true
+	case *ElementID:
+		if e != nil {
+			return *e, true
+		}
+		return ElementID{}, false
+	default:
+		return ElementID{}, false
 	}
 }

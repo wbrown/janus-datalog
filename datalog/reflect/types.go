@@ -12,9 +12,10 @@ import (
 
 // Well-known types for comparison
 var (
-	timeType     = reflect.TypeOf(time.Time{})
-	identityType = reflect.TypeOf((datalog.Identity)(nil))
-	keywordType  = reflect.TypeOf((datalog.Keyword)(nil)) // Keyword is *keyword, no .Elem()
+	timeType      = reflect.TypeOf(time.Time{})
+	identityType  = reflect.TypeOf((datalog.Identity)(nil))
+	keywordType   = reflect.TypeOf((datalog.Keyword)(nil)) // Keyword is *keyword, no .Elem()
+	elementIDType = reflect.TypeOf(datalog.ElementID{})
 )
 
 // isOrderedSetType checks if the type is datalog.OrderedSet[T]
@@ -89,6 +90,9 @@ func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
 		}
 		if t == keywordType {
 			return schema.TypeKeyword, nil
+		}
+		if t == elementIDType {
+			return schema.TypeTx, nil
 		}
 		// Check for OrderedSet[T] - get element type
 		if isOrderedSetType(t) {
@@ -169,7 +173,7 @@ func IsRefType(t reflect.Type) bool {
 
 	// Struct (other than well-known types) = nested entity reference
 	if t.Kind() == reflect.Struct {
-		if t == timeType || t == keywordType {
+		if t == timeType || t == keywordType || t == elementIDType {
 			return false
 		}
 		return true

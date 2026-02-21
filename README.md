@@ -45,7 +45,10 @@ go get github.com/wbrown/janus-datalog
 **Define your schema attributes as constants:**
 
 ```go
-import "github.com/wbrown/janus-datalog/datalog/qb"
+import (
+    "github.com/wbrown/janus-datalog/datalog/db"
+    "github.com/wbrown/janus-datalog/datalog/qb"
+)
 
 var (
     UserName = qb.Kw(":user/name")
@@ -56,8 +59,8 @@ var (
 **Write data:**
 
 ```go
-db, _ := storage.NewDatabase("my.db")
-tx := db.NewTransaction()
+d, _ := db.Open("my.db")
+tx := d.NewTransaction()
 
 alice := datalog.NewIdentity("user:alice")
 tx.Add(alice, UserName.Keyword(), "Alice")
@@ -81,7 +84,7 @@ q := qb.Query().
     ).
     MustBuild()
 
-results, _ := db.ExecuteQuery(q)
+results, _ := d.Query(q)
 ```
 
 **Output:**
@@ -90,7 +93,7 @@ results, _ := db.ExecuteQuery(q)
 [["Alice" 30]]
 ```
 
-That's it. No schema required. No connection pools. No query tuning. Typos caught at compile time.
+That's it. One import, one `Open()` call, one `Query()`. No schema required. No connection pools. No query tuning. Typos caught at compile time.
 
 ## Query Builder vs EDN Strings
 
@@ -119,7 +122,7 @@ q := qb.Query().
     ).
     MustBuild()
 
-results, _ := db.ExecuteQuery(q)
+results, _ := d.Query(q)
 ```
 
 **Why use it:**
@@ -133,7 +136,7 @@ results, _ := db.ExecuteQuery(q)
 For REPL exploration, porting Datomic queries, or when you prefer Datalog syntax:
 
 ```go
-results, _ := db.ExecuteQuery(`
+results, _ := d.Query(`
     [:find ?name ?age
      :where [?e :person/name ?name]
             [?e :person/age ?age]
@@ -301,33 +304,35 @@ All writes are preserved with CRDT semantics - history is inherent:
 
 ```go
 // Make changes over time
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
 tx.Commit()  // Lamport 1
 
-tx2 := db.NewTransaction()
+tx2 := d.NewTransaction()
 tx2.Add(alice, datalog.NewKeyword(":user/name"), "Alicia")  // LWW: replaces "Alice"
-tx2.Commit()  // Lamport 2
+tx1ID, _ := tx2.Commit()  // Lamport 2
 
 // Query current state - returns latest value (LWW semantics)
-db.ExecuteQuery(`[:find ?name :where [_ :user/name ?name]]`)
+d.Query(`[:find ?name :where [_ :user/name ?name]]`)
 // Returns: [["Alicia"]]
 
-// Query ALL historical values using [(history)] predicate
-db.ExecuteQuery(`[:find ?name ?tx :where [_ :user/name ?name ?tx] [(history)]]`)
+// Query ALL historical values — no CRDT resolution
+hist := d.History()
+hist.Query(`[:find ?name ?tx :where [_ :user/name ?name ?tx]]`)
 // Returns: [["Alice" <ElementID@1>] ["Alicia" <ElementID@2>]]
 
-// Query value as of a specific Lamport time
-db.ExecuteQuery(`[:find ?name :where [_ :user/name ?name ?tx] [(as-of ?tx 1)]]`)
+// Query value as of a specific transaction
+asOf := d.AsOf(tx1ID)  // tx1ID is datalog.ElementID from Commit()
+asOf.Query(`[:find ?name :where [_ :user/name ?name]]`)
 // Returns: [["Alice"]]
 ```
 
 **Key concepts:**
 - CRDT storage preserves all writes with ElementIDs (Lamport + ReplicaID)
 - Current-state queries return resolved values (LWW for cardinality-one)
-- `[(history)]` predicate returns all historical versions
-- `[(as-of ?tx N)]` returns value as of Lamport time N
-- `[(tx-between ?tx low high)]` filters to a Lamport range
+- `d.History()` returns a new `*DB` handle — all datoms, no CRDT resolution
+- `d.AsOf(elementID)` returns a new `*DB` handle with CRDT-resolved state at a point in time
+- `Commit()` returns `datalog.ElementID` for use with `AsOf()`
 
 ### Subqueries
 
@@ -364,7 +369,7 @@ Shared variables (`?uid`) create joins across sources automatically.
 **Execution with `WithSources`:**
 
 ```go
-results, err := usersDB.ExecuteQueryWithInputs(query,
+results, err := usersDB.Query(query,
     storage.WithSources(map[query.Symbol]executor.PatternMatcher{
         query.Symbol("$users"): usersDB,
         query.Symbol("$perms"): permsDB,
@@ -397,7 +402,10 @@ See [docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md) for the com
 Schema is **completely optional** but provides type safety and cardinality-many support:
 
 ```go
-import "github.com/wbrown/janus-datalog/datalog/schema"
+import (
+    "github.com/wbrown/janus-datalog/datalog/db"
+    "github.com/wbrown/janus-datalog/datalog/schema"
+)
 
 // Define schema with builder API
 s, _ := schema.NewBuilder().
@@ -407,7 +415,7 @@ s, _ := schema.NewBuilder().
     Build()
 
 // Create database with schema
-db, _ := storage.NewDatabaseWithSchema("my.db", s)
+d, _ := db.Open("my.db", db.WithSchema(s))
 ```
 
 **What schema gives you:**
@@ -439,7 +447,7 @@ Retrieve entity attributes declaratively:
  :where [?user :user/active true]]
 
 // Standalone
-result, _ := db.Pull(userId, `[:user/name :user/email {:user/friends [:user/name]}]`)
+result, _ := d.Pull(userId, `[:user/name :user/email {:user/friends [:user/name]}]`)
 ```
 
 **Features:**
@@ -455,7 +463,10 @@ See [DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md) for Pull API details.
 For Go developers, janus-datalog provides a reflection-based API that maps structs directly to datoms:
 
 ```go
-import "github.com/wbrown/janus-datalog/datalog/reflect"
+import (
+    "github.com/wbrown/janus-datalog/datalog/db"
+    "github.com/wbrown/janus-datalog/datalog/reflect"
+)
 
 // Define your domain type with struct tags
 type Person struct {
@@ -468,18 +479,18 @@ type Person struct {
 
 // Generate schema from struct
 schema, _ := reflect.SchemaFromStruct(Person{})
-db, _ := storage.NewDatabaseWithSchema("my.db", schema)
+d, _ := db.Open("my.db", db.WithSchema(schema))
 
 // Write structs directly
 alice := &Person{Name: "Alice", Age: 30, Tags: []string{"dev", "lead"}}
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 aliceID, _ := tx.AddStructAuto(alice)  // ID auto-generated
 tx.Commit()
 // alice.ID is now populated
 
 // Read into structs
 var loaded Person
-db.PullInto(aliceID, &loaded)
+d.PullInto(aliceID, &loaded)
 fmt.Println(loaded.Name)  // "Alice"
 fmt.Println(loaded.Tags)  // ["dev", "lead"]
 ```
@@ -507,7 +518,7 @@ type TradeResult struct {
 
 // Query into typed slice
 var results []TradeResult
-err := db.QueryInto(&results, `
+err := d.QueryInto(&results, `
     [:find ?symbol ?price ?volume
      :where [?t :trade/symbol ?symbol]
             [?t :trade/price ?price]
@@ -529,7 +540,7 @@ type DeptStats struct {
 }
 
 var stats []DeptStats
-db.QueryInto(&stats, `
+d.QueryInto(&stats, `
     [:find ?dept (avg ?salary) (count ?emp)
      :where [?e :employee/dept ?dept]
             [?e :employee/salary ?salary]]
@@ -540,7 +551,7 @@ db.QueryInto(&stats, `
 
 ```go
 var result TradeResult
-err := db.QueryOneInto(&result, `[:find ?symbol ?price ?volume :where ...]`)
+err := d.QueryOneInto(&result, `[:find ?symbol ?price ?volume :where ...]`)
 // Returns ErrNotFound if no results, ErrMultipleResults if >1
 ```
 
@@ -565,7 +576,7 @@ query := q.Where(
 ).MustBuild()
 
 var results []PersonResult
-db.QueryInto(&results, query)  // tags guaranteed to match
+d.QueryInto(&results, query)  // tags guaranteed to match
 ```
 
 - `q.Find(&f.Field)` - returns `*Var` and adds to Find clause
@@ -669,29 +680,29 @@ This happens when you write a query with no join paths between patterns. Instead
 
 ```go
 // Each write gets a unique ElementID (Lamport clock + ReplicaID)
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 tx.Add(alice, UserName.Keyword(), "Alice")   // ElementID: (Lamport=1, Replica=42)
 tx.Commit()
 
-tx2 := db.NewTransaction()
+tx2 := d.NewTransaction()
 tx2.Add(alice, UserName.Keyword(), "Alicia") // ElementID: (Lamport=2, Replica=42)
 tx2.Commit()
 
 // Current value: "Alicia" (higher Lamport wins)
-// But "Alice" is preserved - query it with [(history)]
+// But "Alice" is preserved - query it with d.History()
 ```
 
 **Multi-replica scenarios:**
 - Two replicas can accept writes independently (offline-first)
-- Merge via `db.Merge(datomsFromOtherReplica)`
+- Merge via `d.Merge(datomsFromOtherReplica)`
 - Conflicts resolve deterministically - same result on all nodes
 - No coordination required, no conflict resolution callbacks
 
-**History is inherent:**
-- Every write is preserved with its ElementID
-- `[(history)]` predicate returns all versions
-- `[(as-of ?tx N)]` returns state at Lamport time N
-- No separate "history mode" to enable - it's always there
+**Three temporal modes:**
+- Every write is preserved with its ElementID (Lamport + ReplicaID)
+- `d.History()` returns a new `*DB` handle — all datoms, no CRDT resolution
+- `d.AsOf(elementID)` returns a new `*DB` handle with CRDT-resolved state at a specific point in time
+- `Commit()` returns `datalog.ElementID` for use with `AsOf()`
 
 **Why this matters:**
 - **Edge computing**: Devices work offline, sync when connected
@@ -1002,7 +1013,7 @@ Janus implements **~70% of Datomic's feature set** (weighted by typical usage), 
 - Aggregations: sum, count, avg, min, max
 - Subqueries: Full q support
 - Time queries: as-of, time functions
-- History queries: Full audit trail with `ExecuteHistoryQuery`
+- History queries: Full audit trail with `d.History().Query()`
 - Pull API: Nested references, cycle detection, wildcards
 - Schema: Type validation, cardinality, uniqueness constraints
 - Storage: Persistent BadgerDB backend

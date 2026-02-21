@@ -55,11 +55,11 @@ func (q *QueryBuilder) GetAttributeValue(attr datalog.Keyword, value interface{}
 }
 
 // GetTimeRange returns all datoms within a time range
-func (q *QueryBuilder) GetTimeRange(startTx, endTx uint64) ([]*datalog.Datom, error) {
-	// Convert uint64 to bytes
+func (q *QueryBuilder) GetTimeRange(startTx, endTx datalog.ElementID) ([]*datalog.Datom, error) {
+	// Convert Lamport to bytes for TAEV index prefix
 	var startBytes, endBytes [8]byte
-	binary.BigEndian.PutUint64(startBytes[:], startTx)
-	binary.BigEndian.PutUint64(endBytes[:], endTx)
+	binary.BigEndian.PutUint64(startBytes[:], startTx.Lamport)
+	binary.BigEndian.PutUint64(endBytes[:], endTx.Lamport)
 
 	start := q.encoder.EncodePrefix(TAEV, startBytes[:])
 	end := q.encoder.EncodePrefix(TAEV, endBytes[:])
@@ -67,17 +67,17 @@ func (q *QueryBuilder) GetTimeRange(startTx, endTx uint64) ([]*datalog.Datom, er
 }
 
 // GetEntityTimeRange returns datoms for an entity within a time range
-func (q *QueryBuilder) GetEntityTimeRange(entity datalog.Identity, startTx, endTx uint64) ([]*datalog.Datom, error) {
+func (q *QueryBuilder) GetEntityTimeRange(entity datalog.Identity, startTx, endTx datalog.ElementID) ([]*datalog.Datom, error) {
 	// Need to scan EAVT and filter by time
 	allDatoms, err := q.GetEntity(entity)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter by time range (compare Lamport component)
+	// Filter by time range using full ElementID comparison
 	var result []*datalog.Datom
 	for _, d := range allDatoms {
-		if d.Tx.Lamport >= startTx && d.Tx.Lamport < endTx {
+		if !d.Tx.Less(startTx) && d.Tx.Less(endTx) {
 			result = append(result, d)
 		}
 	}

@@ -109,7 +109,9 @@ schema, err := reflect.SchemaFromStructs(Person{}, Company{}, Order{})
 ### Using Generated Schema
 
 ```go
-db, err := storage.NewDatabaseWithSchema(path, schema)
+import "github.com/wbrown/janus-datalog/datalog/db"
+
+d, err := db.Open(path, db.WithSchema(schema))
 ```
 
 ## Writing Structs
@@ -125,7 +127,7 @@ person := &Person{
     Tags:  []string{"developer", "team-lead"},
 }
 
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 id, err := tx.SaveStruct(person)  // ID auto-generated
 tx.Commit()
 
@@ -142,7 +144,7 @@ person := &Person{
     Age:  30,
 }
 
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 id, err := tx.SaveStruct(person)  // Uses provided ID
 tx.Commit()
 ```
@@ -163,7 +165,7 @@ For single-value fields, `SaveStruct` automatically:
 alice.Name = "Alice Smith"
 alice.Age = 31
 
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 tx.SaveStruct(&alice)
 tx.Commit()
 // Now: Alice Smith, age 31 (old values retracted)
@@ -180,7 +182,7 @@ For slice fields, `SaveStruct` uses diff-based updates:
 // Original tags: ["developer", "golang"]
 alice.Tags = []string{"developer", "rust", "architect"}
 
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 tx.SaveStruct(&alice)
 tx.Commit()
 // Result: ["developer", "rust", "architect"]
@@ -200,18 +202,18 @@ For cardinality-many fields, `nil` and empty slices have different meanings:
 ```go
 // Load entity - alice has tags ["go", "rust"]
 var alice Person
-db.PullInto(aliceID, &alice)
+d.PullInto(aliceID, &alice)
 
 // Partial update - only change name, leave tags alone
 update := Person{ID: aliceID, Name: "Alice Smith", Tags: nil}
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 tx.SaveStruct(&update)
 tx.Commit()
 // tags still ["go", "rust"]
 
 // Clear all tags
 clear := Person{ID: aliceID, Name: "Alice Smith", Tags: []string{}}
-tx2 := db.NewTransaction()
+tx2 := d.NewTransaction()
 tx2.SaveStruct(&clear)
 tx2.Commit()
 // tags now empty
@@ -237,7 +239,7 @@ s, _ := schema.NewBuilder().
     Attribute(":character/skills").Type(schema.TypeString).Vector().Add().  // .Vector() !
     Build()
 
-db, _ := storage.NewDatabaseWithSchema(path, s)
+d, _ := db.Open(path, db.WithSchema(s))
 ```
 
 **Vector update semantics differ from sets:**
@@ -280,7 +282,7 @@ See [CRDT.md](CRDT.md) for detailed RGA (Replicated Growable Array) semantics.
 ```go
 // Load existing entity
 var person Person
-db.PullInto(personID, &person)
+d.PullInto(personID, &person)
 
 // Modify fields
 person.Name = "Alice Smith"
@@ -288,7 +290,7 @@ person.Age = 31
 person.Tags = []string{"senior-developer", "team-lead"}
 
 // Save with upsert semantics
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 _, err := tx.SaveStruct(&person)
 if err != nil {
     return err
@@ -302,7 +304,7 @@ tx.Commit()
 
 ```go
 var person Person
-err := db.PullInto(entityID, &person)
+err := d.PullInto(entityID, &person)
 
 fmt.Println(person.Name)  // "Alice"
 fmt.Println(person.Tags)  // ["developer", "team-lead"]
@@ -312,7 +314,7 @@ fmt.Println(person.Tags)  // ["developer", "team-lead"]
 
 ```go
 var people []Person
-err := db.PullIntoMany(entityIDs, &people)
+err := d.PullIntoMany(entityIDs, &people)
 
 for _, p := range people {
     fmt.Println(p.Name)
@@ -323,7 +325,7 @@ for _, p := range people {
 
 ```go
 var people []*Person
-err := db.PullIntoMany(entityIDs, &people)
+err := d.PullIntoMany(entityIDs, &people)
 ```
 
 ## Reference Handling
@@ -335,7 +337,7 @@ References to other entities use the `datalog.Identity` type:
 ```go
 // Create manager
 manager := &Person{Name: "Carol", Age: 35}
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 managerID, _ := tx.SaveStruct(manager)
 
 // Create employee with manager reference
@@ -359,13 +361,13 @@ When reading, reference fields contain only the ID (not full nested data) unless
 
 ```go
 var person Person
-db.PullInto(aliceID, &person)
+d.PullInto(aliceID, &person)
 
 // person.Manager has only the ID field populated
 if person.Manager != nil {
     // Load manager's data separately
     var manager Person
-    db.PullInto(person.Manager.ID, &manager)
+    d.PullInto(person.Manager.ID, &manager)
 }
 ```
 
@@ -408,8 +410,8 @@ import (
     "os"
 
     "github.com/wbrown/janus-datalog/datalog"
+    "github.com/wbrown/janus-datalog/datalog/db"
     "github.com/wbrown/janus-datalog/datalog/reflect"
-    "github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 type Person struct {
@@ -425,8 +427,8 @@ func main() {
 
     // Generate schema from struct
     schema, _ := reflect.SchemaFromStruct(Person{})
-    db, _ := storage.NewDatabaseWithSchema(tmpDir, schema)
-    defer db.Close()
+    d, _ := db.Open(tmpDir, db.WithSchema(schema))
+    defer d.Close()
 
     // Create
     alice := &Person{
@@ -434,7 +436,7 @@ func main() {
         Age:  30,
         Tags: []string{"developer", "mentor"},
     }
-    tx := db.NewTransaction()
+    tx := d.NewTransaction()
     aliceID, _ := tx.SaveStruct(alice)
     tx.Commit()
 
@@ -442,7 +444,7 @@ func main() {
 
     // Read
     var loaded Person
-    db.PullInto(aliceID, &loaded)
+    d.PullInto(aliceID, &loaded)
 
     fmt.Printf("Name: %s\n", loaded.Name)
     fmt.Printf("Age: %d\n", loaded.Age)
@@ -451,13 +453,13 @@ func main() {
     // Update
     loaded.Age = 31
     loaded.Tags = []string{"developer", "mentor", "architect"}
-    tx2 := db.NewTransaction()
+    tx2 := d.NewTransaction()
     tx2.SaveStruct(&loaded)
     tx2.Commit()
 
     // Verify update
     var updated Person
-    db.PullInto(aliceID, &updated)
+    d.PullInto(aliceID, &updated)
     fmt.Printf("Updated Age: %d\n", updated.Age)
     fmt.Printf("Updated Tags: %v\n", updated.Tags)
 }
@@ -511,8 +513,8 @@ tx.SaveStruct(v interface{}) (datalog.Identity, error)
 
 ```go
 // Read entity into struct
-db.PullInto(entityID datalog.Identity, v interface{}) error
+d.PullInto(entityID datalog.Identity, v interface{}) error
 
 // Read multiple entities into slice
-db.PullIntoMany(entityIDs []datalog.Identity, v interface{}) error
+d.PullIntoMany(entityIDs []datalog.Identity, v interface{}) error
 ```

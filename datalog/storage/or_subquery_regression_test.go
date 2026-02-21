@@ -22,7 +22,6 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true, // Same as user's code
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -92,7 +91,6 @@ func TestScenarioSummaryQuery_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -207,7 +205,6 @@ func TestNestedSubqueryInOr_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -270,7 +267,6 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -342,7 +338,6 @@ func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -394,7 +389,6 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -452,7 +446,6 @@ func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -502,7 +495,6 @@ func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -553,7 +545,6 @@ func TestFullScenarioSummaryQuery_E2E(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:      dbPath,
-		UseTimeTx: true,
 	})
 	require.NoError(t, err)
 	defer db.Close()

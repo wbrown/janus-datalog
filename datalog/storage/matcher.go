@@ -15,7 +15,7 @@ import (
 // BadgerMatcher implements the executor.PatternMatcher interface using BadgerStore
 type BadgerMatcher struct {
 	store             *BadgerStore
-	txID              uint64                   // For as-of queries (0 means latest)
+	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
 	timeRanges        []executor.TimeRange     // For time range optimization
 	builderCache      *sync.Map                // map[string]*query.InternedTupleBuilder - Thread-safe cache for tuple builders
 	builderCacheOnce  sync.Once                // Ensures builderCache is initialized exactly once
@@ -26,11 +26,32 @@ type BadgerMatcher struct {
 	cache             *Cache                   // CRDT resolution cache for O(1) access to resolved views
 }
 
+// isHistoryMode returns true when raw (non-CRDT-resolved) datoms are requested.
+func (m *BadgerMatcher) isHistoryMode() bool {
+	return m.txID != nil && *m.txID == (datalog.ElementID{})
+}
+
+// shouldFilterTx returns true if a datom should be skipped because it's
+// from after the as-of target. Returns false in latest mode (nil) and
+// history mode (&ElementID{}).
+func (m *BadgerMatcher) shouldFilterTx(datomTx datalog.ElementID) bool {
+	return m.txID != nil && *m.txID != (datalog.ElementID{}) && m.txID.Less(datomTx)
+}
+
+// crdtTxID returns the ElementID to pass to CRDTResolvingIterator.
+// In latest mode returns ElementID{} (no filter). In as-of mode returns the target.
+// Must NOT be called in history mode (caller should check isHistoryMode first).
+func (m *BadgerMatcher) crdtTxID() datalog.ElementID {
+	if m.txID != nil {
+		return *m.txID
+	}
+	return datalog.ElementID{}
+}
+
 // NewBadgerMatcher creates a new pattern matcher for the BadgerStore
 func NewBadgerMatcher(store *BadgerStore) *BadgerMatcher {
 	return &BadgerMatcher{
 		store:        store,
-		txID:         0,
 		builderCache: &sync.Map{},
 		options:      executor.ExecutorOptions{}, // Default options
 	}
@@ -40,14 +61,14 @@ func NewBadgerMatcher(store *BadgerStore) *BadgerMatcher {
 func NewBadgerMatcherWithOptions(store *BadgerStore, opts executor.ExecutorOptions) *BadgerMatcher {
 	return &BadgerMatcher{
 		store:        store,
-		txID:         0,
 		builderCache: &sync.Map{},
 		options:      opts,
 	}
 }
 
-// AsOf creates a matcher that sees the database as of a specific transaction
-func (m *BadgerMatcher) AsOf(txID uint64) *BadgerMatcher {
+// AsOf creates a matcher that sees the database as of a specific transaction.
+// Passing a zero ElementID enters history mode (raw datoms, no CRDT resolution).
+func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 	// Ensure cache is initialized before sharing it
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
@@ -57,14 +78,20 @@ func (m *BadgerMatcher) AsOf(txID uint64) *BadgerMatcher {
 
 	return &BadgerMatcher{
 		store:        m.store,
-		txID:         txID,
+		txID:         &txID,
 		timeRanges:   m.timeRanges,
 		builderCache: m.builderCache,
 		handler:      m.handler,
-		options:      m.options, // Preserve options
-		schema:       m.schema,  // Preserve schema for cardinality-aware index selection
-		cache:        m.cache,   // Preserve cache for CRDT resolution
+		options:      m.options,
+		schema:       m.schema,
+		cache:        m.cache,
 	}
+}
+
+// History creates a matcher that returns raw datoms without CRDT resolution.
+// All historical versions are visible, including retracted values.
+func (m *BadgerMatcher) History() *BadgerMatcher {
+	return m.AsOf(datalog.ElementID{})
 }
 
 // SetHandler configures the handler for detailed storage events.
@@ -244,7 +271,7 @@ func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog
 		}
 
 		// Check if datom is valid for our transaction view
-		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+		if m.shouldFilterTx(datom.Tx) {
 			continue
 		}
 
@@ -307,7 +334,7 @@ func (m *BadgerMatcher) MatchWithHistory(pattern *query.DataPattern) ([]datalog.
 		}
 
 		// Check if datom is valid for our transaction view (as-of still applies)
-		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+		if m.shouldFilterTx(datom.Tx) {
 			continue
 		}
 
@@ -323,7 +350,7 @@ func (m *BadgerMatcher) MatchWithHistory(pattern *query.DataPattern) ([]datalog.
 // MatchAsOf matches a pattern and returns the value as of a specific Lamport time.
 // This finds the first entry with Lamport <= targetLamport (the value that was current then).
 // If no value existed at that time, returns nil.
-func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetLamport uint64) ([]datalog.Datom, error) {
+func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetTx datalog.ElementID) ([]datalog.Datom, error) {
 	// Extract values from pattern
 	var e, a, v, tx interface{}
 
@@ -360,12 +387,12 @@ func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetLamport uint
 		}
 
 		// Skip entries newer than target time
-		if datom.Tx.Lamport > targetLamport {
+		if targetTx.Less(datom.Tx) {
 			continue
 		}
 
 		// Also apply as-of filter if set
-		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+		if m.shouldFilterTx(datom.Tx) {
 			continue
 		}
 
@@ -428,7 +455,7 @@ func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]
 			}
 
 			// Check transaction filter
-			if m.txID > 0 && datom.Tx.Lamport > m.txID {
+			if m.shouldFilterTx(datom.Tx) {
 				continue
 			}
 
@@ -661,10 +688,15 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 		return VAET, start, end
 	} else if tx != nil {
 		// Use TAEV index
+		var storageTx Tx
 		if txID, ok := tx.(uint64); ok {
-			// Convert to storage tx (20 bytes)
-			storageTx := NewTxFromUint(txID)
-			start, end := encoder.EncodePrefixRange(TAEV, storageTx[:])
+			storageTx = NewTxFromUint(txID)
+		} else if eid, ok := datalog.DerefElementID(tx); ok {
+			storageTx = NewTxFromElementID(eid)
+		}
+		if storageTx != (Tx{}) {
+			encTx := encoder.EncodeTxForPrefix(storageTx)
+			start, end := encoder.EncodePrefixRange(TAEV, encTx)
 			return TAEV, start, end
 		}
 	}
@@ -681,6 +713,9 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 	// Note: Identity is always a pointer type now, no dereferencing needed
 	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
 	if ptr, ok := tx.(*uint64); ok {
+		tx = *ptr
+	}
+	if ptr, ok := tx.(*datalog.ElementID); ok {
 		tx = *ptr
 	}
 
@@ -806,7 +841,7 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	}
 
 	// Try cache first for O(1) access (only for latest state, not as-of queries)
-	if m.cache != nil && m.txID == 0 {
+	if m.cache != nil && m.txID == nil {
 		eEntity := Entity(eBytes)
 		var aAttr Attribute
 		copy(aAttr[:], aStorage[:])
@@ -860,7 +895,7 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 			}
 
 			// Check transaction filter for as-of queries
-			if m.txID > 0 && datom.Tx.Lamport > m.txID {
+			if m.shouldFilterTx(datom.Tx) {
 				continue
 			}
 
@@ -904,7 +939,7 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		}
 
 		// Check transaction filter for as-of queries
-		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+		if m.shouldFilterTx(datom.Tx) {
 			continue
 		}
 
@@ -947,7 +982,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
 
 	// Try cache first for O(1) access (only for latest state, not as-of queries)
-	if m.cache != nil && m.txID == 0 {
+	if m.cache != nil && m.txID == nil {
 		eEntity := Entity(eBytes)
 		var aAttr Attribute
 		copy(aAttr[:], aStorage[:])
@@ -1003,7 +1038,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 		}
 
 		// Check transaction filter for as-of queries
-		if m.txID > 0 && datom.Tx.Lamport > m.txID {
+		if m.shouldFilterTx(datom.Tx) {
 			continue
 		}
 

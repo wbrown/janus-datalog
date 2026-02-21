@@ -23,7 +23,7 @@ func main() {
 	dbPath := "/tmp/gopher-street-db"
 	os.RemoveAll(dbPath)
 
-	db, err := storage.NewDatabaseWithTimeTx(dbPath)
+	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
 		log.Fatal("Failed to create database:", err)
 	}
@@ -166,8 +166,8 @@ func main() {
 	fmt.Println("\n=== Example 6: Historical Position Analysis ===")
 	// Get positions as of yesterday
 	yesterday := time.Now().Add(-24 * time.Hour)
-	asOfMatcher := db.AsOf(uint64(yesterday.UnixNano()))
-	asOfExec := executor.NewExecutor(asOfMatcher)
+	asOfDB := db.AsOf(datalog.ElementID{Lamport: uint64(yesterday.UnixNano())})
+	asOfExec := executor.NewExecutor(asOfDB, asOfDB)
 
 	fmt.Printf("Positions as of %s:\n", yesterday.Format("2006-01-02"))
 	result, _ = asOfExec.Execute(positionQuery)

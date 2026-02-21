@@ -15,7 +15,7 @@ import (
 type CRDTResolvingIterator struct {
 	source Iterator
 	schema schema.SchemaProvider
-	txID   uint64 // For as-of queries: only consider datoms with Tx.Lamport <= txID
+	txID   datalog.ElementID // For as-of queries: only consider datoms with Tx.Lamport <= txID
 
 	// Current (E, A) group tracking
 	currentE datalog.Identity
@@ -59,7 +59,7 @@ type rgaElement struct {
 }
 
 // NewCRDTResolvingIterator creates a new CRDT-resolving iterator wrapper.
-func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID uint64) *CRDTResolvingIterator {
+func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID) *CRDTResolvingIterator {
 	return &CRDTResolvingIterator{
 		source: source,
 		schema: schema,
@@ -109,7 +109,7 @@ func (it *CRDTResolvingIterator) Next() bool {
 			}
 
 			// Apply as-of filtering
-			if it.txID > 0 && datom.Tx.Lamport > it.txID {
+			if it.txID != (datalog.ElementID{}) && it.txID.Less(datom.Tx) {
 				continue
 			}
 

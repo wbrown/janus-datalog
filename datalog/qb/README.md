@@ -27,7 +27,7 @@ var (
 )
 
 // 2. Build queries with Go variables
-func FindAdultsInCity(db *storage.Database, city string) ([][]interface{}, error) {
+func FindAdultsInCity(d *db.DB, city string) ([][]interface{}, error) {
     e := qb.NewVar("e")
     name := qb.NewVar("name")
     age := qb.NewVar("age")
@@ -44,7 +44,7 @@ func FindAdultsInCity(db *storage.Database, city string) ([][]interface{}, error
         ).
         MustBuild()
 
-    return db.ExecuteQueryWithInputs(q, city)
+    return d.Query(q, city)
 }
 ```
 
@@ -86,13 +86,13 @@ q := qb.Query().
     ).
     MustBuild()
 
-results, err := db.ExecuteQuery(q)
+results, err := d.Query(q)
 ```
 
 ### EDN String (Fallback)
 
 ```go
-results, err := db.ExecuteQuery(`
+results, err := d.Query(`
     [:find ?name ?age
      :where
      [?e :person/name ?name]

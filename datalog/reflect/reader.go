@@ -133,6 +133,20 @@ func (sr *StructReader) setFieldValue(fieldVal reflect.Value, field *FieldInfo, 
 		return fmt.Errorf("expected Keyword, got %T", value)
 	}
 
+	// Handle ElementID (value struct, not a reference)
+	if fieldType == elementIDType {
+		switch v := value.(type) {
+		case datalog.ElementID:
+			fieldVal.Set(reflect.ValueOf(v))
+			return nil
+		case *datalog.ElementID:
+			fieldVal.Set(reflect.ValueOf(*v))
+			return nil
+		default:
+			return fmt.Errorf("expected ElementID, got %T", value)
+		}
+	}
+
 	// Handle pointer fields (but not Identity/Keyword which are handled above)
 	if fieldType.Kind() == reflect.Ptr {
 		// Create new value and set pointer
@@ -282,7 +296,8 @@ func (sr *StructReader) setSingleValue(fieldVal reflect.Value, fieldType reflect
 	if fieldType.Kind() == reflect.Struct &&
 		fieldType != timeType &&
 		fieldType != identityType &&
-		fieldType != keywordType {
+		fieldType != keywordType &&
+		fieldType != elementIDType {
 
 		// Could be a map (nested pull result) or Identity (ref without nested pattern)
 		switch v := value.(type) {
@@ -331,6 +346,17 @@ func (sr *StructReader) setSingleValue(fieldVal reflect.Value, fieldType reflect
 			return fmt.Errorf("expected Keyword, got %T", value)
 		}
 		fieldVal.Set(reflect.ValueOf(kw))
+		return nil
+
+	case elementIDType:
+		switch v := value.(type) {
+		case datalog.ElementID:
+			fieldVal.Set(reflect.ValueOf(v))
+		case *datalog.ElementID:
+			fieldVal.Set(reflect.ValueOf(*v))
+		default:
+			return fmt.Errorf("expected ElementID, got %T", value)
+		}
 		return nil
 	}
 

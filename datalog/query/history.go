@@ -1,6 +1,10 @@
 package query
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/wbrown/janus-datalog/datalog"
+)
 
 // HistoryPredicateType indicates the type of history query
 type HistoryPredicateType int
@@ -125,13 +129,14 @@ func (t *TxRangePredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
 		lamport = uint64(v)
 	case int:
 		lamport = uint64(v)
-	default:
-		// Try to extract Lamport from ElementID if available
-		if elemID, ok := txVal.(interface{ GetLamport() uint64 }); ok {
-			lamport = elemID.GetLamport()
-		} else {
-			return false, fmt.Errorf("tx-between: cannot extract Lamport from %T", txVal)
+	case datalog.ElementID:
+		lamport = v.Lamport
+	case *datalog.ElementID:
+		if v != nil {
+			lamport = v.Lamport
 		}
+	default:
+		return false, fmt.Errorf("tx-between: cannot extract Lamport from %T", txVal)
 	}
 
 	return lamport >= t.Low && lamport <= t.High, nil

@@ -193,10 +193,13 @@ func (m *BadgerMatcher) matchWithHashJoin(
 		return nil, fmt.Errorf("hash join scan failed: %w", err)
 	}
 
-	// PHASE 3.5: Wrap with CRDT resolution
-	// Always applied: CRDTResolvingIterator handles nil schema correctly
-	// (defaults to CardinalityUnknown → add-wins semantics)
-	resolvedIter := NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
+	// PHASE 3.5: Wrap with CRDT resolution unless in history mode
+	var resolvedIter Iterator
+	if m.isHistoryMode() {
+		resolvedIter = storageIter
+	} else {
+		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID())
+	}
 
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
@@ -393,8 +396,20 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 	case TAEV: // 4
 		// TAEV: Transaction-Attribute-Entity-Value
-		// Transaction-first index is rarely used for prefix scanning
-		// Just include the index prefix
+		// Tx must be encoded with bitwise-NOT for descending sort order
+		if tx != nil {
+			if txID, ok := tx.(uint64); ok {
+				storageTx := NewTxFromUint(txID)
+				encTx := encoder.EncodeTxForPrefix(storageTx)
+				startParts = append(startParts, encTx)
+				endParts = append(endParts, encTx)
+			} else if eid, ok := datalog.DerefElementID(tx); ok {
+				storageTx := NewTxFromElementID(eid)
+				encTx := encoder.EncodeTxForPrefix(storageTx)
+				startParts = append(startParts, encTx)
+				endParts = append(endParts, encTx)
+			}
+		}
 	}
 
 	start := encoder.EncodePrefix(index, startParts...)
@@ -454,6 +469,9 @@ func valueToHashKey(v interface{}) string {
 	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
 	if ptr, ok := v.(*uint64); ok {
 		v = *ptr
+	}
+	if eid, ok := datalog.DerefElementID(v); ok {
+		return eid.String()
 	}
 
 	switch val := v.(type) {
@@ -563,9 +581,13 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 		return nil, fmt.Errorf("merge join scan failed: %w", err)
 	}
 
-	// PHASE 3.5: Wrap with CRDT resolution
-	// Always applied: CRDTResolvingIterator handles nil schema correctly
-	resolvedIterMerge := NewCRDTResolvingIterator(storageIter, m.schema, m.txID)
+	// PHASE 3.5: Wrap with CRDT resolution unless in history mode
+	var resolvedIterMerge Iterator
+	if m.isHistoryMode() {
+		resolvedIterMerge = storageIter
+	} else {
+		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID())
+	}
 
 	// PHASE 4: Create streaming merge join iterator
 	iter := &mergeJoinIterator{
@@ -686,6 +708,16 @@ func compareJoinKeys(a, b interface{}) int {
 			}
 			return 0
 		}
+	case datalog.ElementID:
+		if bEid, ok := datalog.DerefElementID(b); ok {
+			return aVal.Compare(bEid)
+		}
+	case *datalog.ElementID:
+		if aVal != nil {
+			if bEid, ok := datalog.DerefElementID(b); ok {
+				return aVal.Compare(bEid)
+			}
+		}
 	}
 
 	// Fall back to string comparison for unknown types
@@ -729,7 +761,7 @@ func (it *hashJoinIterator) Next() bool {
 		it.datomsScanned++
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
+		if it.matcher.shouldFilterTx(datom.Tx) {
 			continue
 		}
 
@@ -817,7 +849,7 @@ func (it *mergeJoinIterator) Next() bool {
 		}
 
 		// Check transaction validity
-		if it.matcher.txID > 0 && datom.Tx.Lamport > it.matcher.txID {
+		if it.matcher.shouldFilterTx(datom.Tx) {
 			continue
 		}
 

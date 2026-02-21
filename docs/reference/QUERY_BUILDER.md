@@ -14,7 +14,7 @@ var (
     PersonCity = qb.Kw(":person/city")
 )
 
-func FindAdults(db *storage.Database) ([][]interface{}, error) {
+func FindAdults(d *db.DB) ([][]interface{}, error) {
     // Variables are created per-query - same pointer = same logical variable
     e := qb.NewVar("e")
     name := qb.NewVar("name")
@@ -29,7 +29,7 @@ func FindAdults(db *storage.Database) ([][]interface{}, error) {
         ).
         MustBuild()
 
-    return db.ExecuteQuery(q)
+    return d.Query(q)
 }
 ```
 
@@ -376,7 +376,7 @@ q := qb.Query().
     MustBuild()
 
 // Execute with input value
-results, err := db.ExecuteQueryWithInputs(q, "Alice")
+results, err := d.Query(q, "Alice")
 ```
 
 ### Collection Input Example
@@ -395,7 +395,7 @@ q := qb.Query().
     MustBuild()
 
 // Execute with multiple values - returns results for each
-results, err := db.ExecuteQueryWithInputs(q, []string{"Alice", "Bob", "Charlie"})
+results, err := d.Query(q, []string{"Alice", "Bob", "Charlie"})
 ```
 
 ### Relation Input Example
@@ -416,7 +416,7 @@ q := qb.Query().
     MustBuild()
 
 // Execute with relation - finds matching (name, city) pairs
-results, err := db.ExecuteQueryWithInputs(q, [][]interface{}{
+results, err := d.Query(q, [][]interface{}{
     {"Alice", "NYC"},
     {"Bob", "LA"},
 })
@@ -447,7 +447,7 @@ q := qb.Query().
     MustBuild()
 
 // Execute with named sources
-results, err := db.ExecuteQueryWithInputs(q,
+results, err := d.Query(q,
     storage.WithSources(map[query.Symbol]executor.PatternMatcher{
         query.Symbol("$users"): usersDB,
         query.Symbol("$perms"): permsDB,
@@ -611,11 +611,11 @@ All database query methods accept both `*query.Query` and EDN strings:
 
 ```go
 // Basic execution
-results, err := db.ExecuteQuery(q)
-results, err := db.ExecuteQueryWithInputs(q, inputs...)
+results, err := d.Query(q)
+results, err := d.Query(q, inputs...)
 
 // Explain query plan
-plan, err := db.Explain(q)
+plan, err := d.Explain(q)
 ```
 
 ### QueryInto - Typed Results
@@ -635,7 +635,7 @@ type PersonResult struct {
     Age  int64   // maps to second Find() element
 }
 
-func FindAdults(db *storage.Database) ([]PersonResult, error) {
+func FindAdults(d *db.DB) ([]PersonResult, error) {
     e := qb.NewVar("e")
     name := qb.NewVar("name")
     age := qb.NewVar("age")
@@ -650,7 +650,7 @@ func FindAdults(db *storage.Database) ([]PersonResult, error) {
         MustBuild()
 
     var results []PersonResult
-    err := db.QueryInto(&results, q)
+    err := d.QueryInto(&results, q)
     return results, err
 }
 ```
@@ -660,7 +660,7 @@ func FindAdults(db *storage.Database) ([]PersonResult, error) {
 For queries that return exactly one result:
 
 ```go
-func FindPerson(db *storage.Database, personName string) (*PersonResult, error) {
+func FindPerson(d *db.DB, personName string) (*PersonResult, error) {
     e := qb.NewVar("e")
     name := qb.NewVar("name")
     age := qb.NewVar("age")
@@ -675,7 +675,7 @@ func FindPerson(db *storage.Database, personName string) (*PersonResult, error) 
         MustBuild()
 
     var result PersonResult
-    found, err := db.QueryOneInto(&result, q, personName)
+    found, err := d.QueryOneInto(&result, q, personName)
     if err != nil {
         return nil, err
     }
@@ -697,7 +697,7 @@ type DeptStats struct {
     Count     int64    // maps to third Find() element (count emp)
 }
 
-func GetDeptStats(db *storage.Database) ([]DeptStats, error) {
+func GetDeptStats(d *db.DB) ([]DeptStats, error) {
     emp := qb.NewVar("emp")
     dept := qb.NewVar("dept")
     salary := qb.NewVar("salary")
@@ -711,7 +711,7 @@ func GetDeptStats(db *storage.Database) ([]DeptStats, error) {
         MustBuild()
 
     var stats []DeptStats
-    err := db.QueryInto(&stats, q)
+    err := d.QueryInto(&stats, q)
     return stats, err
 }
 ```
@@ -729,7 +729,7 @@ type PersonResult struct {
     Age  int64  `datalog:"?age"`
 }
 
-func FindAdults(db *storage.Database) ([]PersonResult, error) {
+func FindAdults(d *db.DB) ([]PersonResult, error) {
     // QueryFor derives variables from struct tags
     q := qb.QueryFor[PersonResult]()
     f := &q.F
@@ -743,7 +743,7 @@ func FindAdults(db *storage.Database) ([]PersonResult, error) {
 
     // Results map directly to struct - tags guaranteed to match
     var results []PersonResult
-    err := db.QueryInto(&results, query)
+    err := d.QueryInto(&results, query)
     return results, err
 }
 ```
@@ -768,7 +768,7 @@ type DeptStats struct {
     Emp       int64   `datalog:"?emp"`     // base variable
 }
 
-func GetDeptStats(db *storage.Database) ([]DeptStats, error) {
+func GetDeptStats(d *db.DB) ([]DeptStats, error) {
     q := qb.QueryFor[DeptStats]()
     f := &q.F
     e := qb.NewVar("e")
@@ -784,7 +784,7 @@ func GetDeptStats(db *storage.Database) ([]DeptStats, error) {
         MustBuild()
 
     var stats []DeptStats
-    err := db.QueryInto(&stats, query)
+    err := d.QueryInto(&stats, query)
     return stats, err
 }
 ```
@@ -796,8 +796,8 @@ package main
 
 import (
     "fmt"
+    "github.com/wbrown/janus-datalog/datalog/db"
     "github.com/wbrown/janus-datalog/datalog/qb"
-    "github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 // Define attributes once
@@ -808,8 +808,8 @@ var (
 )
 
 func main() {
-    db, _ := storage.NewDatabase("example.db")
-    defer db.Close()
+    d, _ := db.Open("example.db")
+    defer d.Close()
 
     // Find adults in specific cities
     e := qb.NewVar("e")
@@ -829,7 +829,7 @@ func main() {
         OrderBy(qb.Desc(age)).
         MustBuild()
 
-    results, err := db.ExecuteQueryWithInputs(q, []string{"NYC", "LA"})
+    results, err := d.Query(q, []string{"NYC", "LA"})
     if err != nil {
         panic(err)
     }

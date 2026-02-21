@@ -327,6 +327,56 @@ func TestElementIDValuesEqual(t *testing.T) {
 	}
 }
 
+// TestElementIDPointerValueCrossComparison tests CompareValues and ValuesEqual
+// with *ElementID ↔ ElementID cross-type comparisons. The InternedTupleBuilder
+// stores Tx as *ElementID (pointer) while user bindings pass ElementID (value).
+// Both forms must compare correctly.
+func TestElementIDPointerValueCrossComparison(t *testing.T) {
+	a := ElementID{Lamport: 100, ReplicaID: 5}
+	b := ElementID{Lamport: 100, ReplicaID: 5} // equal to a
+	c := ElementID{Lamport: 200, ReplicaID: 5} // different from a
+
+	// CompareValues: pointer left, value right
+	if cmp := CompareValues(&a, b); cmp != 0 {
+		t.Errorf("CompareValues(&a, b) = %d, want 0", cmp)
+	}
+
+	// CompareValues: value left, pointer right
+	if cmp := CompareValues(a, &b); cmp != 0 {
+		t.Errorf("CompareValues(a, &b) = %d, want 0", cmp)
+	}
+
+	// CompareValues: both pointers, equal
+	if cmp := CompareValues(&a, &b); cmp != 0 {
+		t.Errorf("CompareValues(&a, &b) = %d, want 0", cmp)
+	}
+
+	// CompareValues: both pointers, different
+	if cmp := CompareValues(&a, &c); cmp >= 0 {
+		t.Errorf("CompareValues(&a, &c) = %d, want < 0", cmp)
+	}
+
+	// ValuesEqual: pointer/value mix
+	if !ValuesEqual(&a, b) {
+		t.Error("ValuesEqual(&a, b) should be true")
+	}
+
+	// ValuesEqual: value/pointer mix
+	if !ValuesEqual(a, &b) {
+		t.Error("ValuesEqual(a, &b) should be true")
+	}
+
+	// ValuesEqual: both pointers, different
+	if ValuesEqual(&a, &c) {
+		t.Error("ValuesEqual(&a, &c) should be false")
+	}
+
+	// ValuesEqual: nil pointer vs value
+	if ValuesEqual((*ElementID)(nil), a) {
+		t.Error("ValuesEqual(nil *ElementID, a) should be false")
+	}
+}
+
 // TestElementIDZeroValues tests comparison with zero/HEAD ElementID
 func TestElementIDZeroValues(t *testing.T) {
 	zero := ElementIDZero

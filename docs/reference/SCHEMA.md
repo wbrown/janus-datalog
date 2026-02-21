@@ -45,12 +45,14 @@ s, err := schema.NewBuilder().
 ## Using Schema with Database
 
 ```go
+import "github.com/wbrown/janus-datalog/datalog/db"
+
 // Create database with schema
-db, err := storage.NewDatabaseWithSchema("/path/to/db", s)
+d, err := db.Open("/path/to/db", db.WithSchema(s))
 
 // Or add schema to existing database
-db, _ := storage.NewDatabase("/path/to/db")
-db.SetSchema(s)
+d, _ := db.Open("/path/to/db")
+d.SetSchema(s)
 ```
 
 ## Supported Attributes
@@ -112,7 +114,7 @@ Documentation string for the attribute.
 Type validation occurs at `Transaction.Add()` time:
 
 ```go
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 
 // OK - string value for string attribute
 tx.Add(alice, kw(":person/name"), "Alice")
@@ -128,12 +130,12 @@ Uniqueness validation occurs at `Transaction.Commit()` time:
 
 ```go
 // First transaction succeeds
-tx1 := db.NewTransaction()
+tx1 := d.NewTransaction()
 tx1.Add(alice, kw(":person/email"), "alice@example.com")
 tx1.Commit()
 
 // Second transaction fails - email already exists
-tx2 := db.NewTransaction()
+tx2 := d.NewTransaction()
 tx2.Add(bob, kw(":person/email"), "alice@example.com")
 _, err := tx2.Commit()
 // err: "uniqueness violation for :person/email: value alice@example.com already exists on entity ..."
@@ -142,7 +144,7 @@ _, err := tx2.Commit()
 Uniqueness is also checked within a single transaction:
 
 ```go
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 tx.Add(alice, kw(":person/email"), "shared@example.com")
 tx.Add(bob, kw(":person/email"), "shared@example.com")
 _, err := tx.Commit()
@@ -154,12 +156,12 @@ _, err := tx.Commit()
 Asserting the same value for the same entity is allowed:
 
 ```go
-tx1 := db.NewTransaction()
+tx1 := d.NewTransaction()
 tx1.Add(alice, kw(":person/email"), "alice@example.com")
 tx1.Commit()
 
 // OK - same entity, same value
-tx2 := db.NewTransaction()
+tx2 := d.NewTransaction()
 tx2.Add(alice, kw(":person/email"), "alice@example.com")
 tx2.Commit() // succeeds
 ```
@@ -180,7 +182,7 @@ result, _ := puller.Pull(alice, pattern)
 
 ```go
 // Resolve pattern with schema
-resolved := schema.ResolvePullPattern(pattern, db.Schema())
+resolved := schema.ResolvePullPattern(pattern, d.Schema())
 
 // Execute with resolved pattern
 result, _ := puller.PullResolved(alice, resolved)
@@ -190,41 +192,25 @@ result, _ := puller.PullResolved(alice, resolved)
 ### Complete Example
 
 ```go
+import "github.com/wbrown/janus-datalog/datalog/db"
+
 // Schema with cardinality-many
 s, _ := schema.NewBuilder().
     Attribute(":person/name").Type(schema.TypeString).Add().
     Attribute(":person/friends").Type(schema.TypeRef).Many().Add().
     Build()
 
-db, _ := storage.NewDatabaseWithSchema(tmpDir, s)
+d, _ := db.Open(tmpDir, db.WithSchema(s))
 
 // Add data
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 tx.Add(alice, kw(":person/name"), "Alice")
 tx.Add(alice, kw(":person/friends"), bob)
 tx.Add(alice, kw(":person/friends"), carol)
 tx.Commit()
 
-// Pull pattern with nested refs
-pattern := &query.PullPattern{
-    Specs: []query.PullAttrSpec{
-        &query.PullAttribute{Attr: kw(":person/name")},
-        &query.PullMapSpec{
-            Attr: kw(":person/friends"),
-            Pattern: &query.PullPattern{
-                Specs: []query.PullAttrSpec{
-                    &query.PullAttribute{Attr: kw(":person/name")},
-                },
-            },
-        },
-    },
-}
-
-// Resolve and execute (recommended: use db.Pull() instead)
-resolved := schema.ResolvePullPattern(pattern, s)
-matcher := storage.NewBadgerMatcher(db.Store())
-puller := executor.NewPullExecutor(matcher, db) // db implements EntityResolver for CRDT resolution
-result, _ := puller.PullResolved(alice, resolved)
+// Use the high-level Pull API directly
+result, _ := d.Pull(alice, "[:person/name {:person/friends [:person/name]}]")
 
 // Result:
 // {

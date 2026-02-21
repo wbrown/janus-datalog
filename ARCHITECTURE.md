@@ -54,10 +54,10 @@ All query paths converge on the same planner and executor. The difference is how
 The most direct path. An EDN string is parsed, planned, and executed:
 
 ```go
-results, err := db.ExecuteQuery(`[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
+results, err := d.Query(`[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
 ```
 
-**Call chain**: `ExecuteQuery` → `resolveQuery` (detects string → calls `parser.ParseQuery`) → `ExecuteQueryWithInputs` → planner → executor → `[][]interface{}`
+**Call chain**: `Query` → `resolveQuery` (detects string → calls `parser.ParseQuery`) → `ExecuteQueryWithInputs` → planner → executor → `[][]interface{}`
 
 ### Entry Point 2: Query Builder (`qb/`)
 
@@ -71,10 +71,10 @@ q := qb.Query().
         qb.Pat("?e", ":person/age", "?age"),
     ).MustBuild()
 
-results, err := db.ExecuteQuery(q)  // *query.Query passed directly
+results, err := d.Query(q)  // *query.Query passed directly
 ```
 
-**Call chain**: `ExecuteQuery` → `resolveQuery` (detects `*query.Query` → returns it as-is) → same path from there. No parsing overhead.
+**Call chain**: `Query` → `resolveQuery` (detects `*query.Query` → returns it as-is) → same path from there. No parsing overhead.
 
 ### Entry Point 3: QueryInto
 
@@ -82,7 +82,7 @@ Wraps any query path with struct-mapped result delivery:
 
 ```go
 var people []Person
-err := db.QueryInto(&people, query, inputs...)
+err := d.QueryInto(&people, query, inputs...)
 ```
 
 **Call chain**: Normal query execution → `[][]interface{}` → `reflect.QueryResultMapper.MapAll()` → populates struct slice via field tags.
@@ -94,7 +94,7 @@ For scalar types (single-column queries), extracts the first column directly wit
 Pull does **not** go through the query planner. It's direct pattern matching against storage:
 
 ```go
-result, err := db.Pull(entityID, "[:person/name :person/age {:person/friends [:person/name]}]")
+result, err := d.Pull(entityID, "[:person/name :person/age {:person/friends [:person/name]}]")
 ```
 
 **Call chain**: `parser.ParsePullPattern` → `PullExecutor.Pull` → recursive `pullWithVisited`:
@@ -109,7 +109,7 @@ result, err := db.Pull(entityID, "[:person/name :person/age {:person/friends [:p
 Any query path supports multiple data sources via `WithSources`:
 
 ```go
-results, err := db.ExecuteQueryWithInputs(query,
+results, err := d.Query(query,
     WithSources(map[Symbol]PatternMatcher{
         "$":      mainDB.Matcher(),
         "$users": userSliceSource,
@@ -264,7 +264,7 @@ For each phase in plan:
 
 ### Transaction Lifecycle
 
-1. **`db.NewTransaction()`** — Creates transaction, holds `[]Datom` buffer
+1. **`d.NewTransaction()`** — Creates transaction, holds `[]Datom` buffer
 2. **`tx.Add(entity, attr, value)`** — Per-datom:
    - Schema validation (type check against declared attribute type, skipped if no schema)
    - Lamport clock increment → `ElementID{Lamport, ReplicaID}`
@@ -285,7 +285,7 @@ For each phase in plan:
 The reflect API converts Go structs to transactions:
 
 ```go
-tx := db.NewTransaction()
+tx := d.NewTransaction()
 id, err := tx.SaveStruct(&person)  // Person{Name: "Alice", Age: 30}
 tx.Commit()
 ```
@@ -475,6 +475,10 @@ Go struct ↔ datom bridging:
 - **Writer**: Struct tags → datoms via `tx.Add()`. Handles cardinality-many (slices), references (nested structs), update-with-diff semantics
 - **Reader**: Query results / Pull results → struct population
 - **Schema inference**: Struct tags → schema definitions (types, cardinality, uniqueness)
+
+### Public API (`datalog/db/`)
+
+The recommended entry point for consumers. Provides `db.Open()` with functional options, type aliases (`DB = storage.Database`, `Transaction = storage.Transaction`), `MustParseQuery()` for compile-time query constants, and `Querier`/`EntityReader` interfaces. All methods on `*storage.Database` (`Query`, `QueryInto`, `Pull`, `AsOf`, `History`, etc.) are available directly on the `*DB` handle. For advanced use cases (custom planner options, annotation handlers, multi-source queries with `WithSources`), consumers can still use the `storage` package directly.
 
 ### Query Builder (`datalog/qb/`)
 

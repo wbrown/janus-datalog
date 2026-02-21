@@ -16,12 +16,12 @@ import (
 )
 
 func main() {
-	// Create a database with time-based transactions
+	// Create a database
 	dbPath := "/tmp/datalog-financial"
 	os.RemoveAll(dbPath)
 
-	// Use time-based transaction IDs for financial data
-	db, err := storage.NewDatabaseWithTimeTx(dbPath)
+	// Create database for financial data
+	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
 		log.Fatal("Failed to create database:", err)
 	}

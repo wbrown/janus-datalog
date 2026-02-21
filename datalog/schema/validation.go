@@ -61,6 +61,15 @@ func ValidateValue(value interface{}, expected ValueType) error {
 		}
 		actualType = "Keyword"
 
+	case TypeTx:
+		switch value.(type) {
+		case datalog.ElementID:
+			ok = true
+		case *datalog.ElementID:
+			ok = true
+		}
+		actualType = "ElementID"
+
 	default:
 		// Unknown type constraint, allow anything
 		return nil
