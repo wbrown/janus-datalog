@@ -48,7 +48,7 @@ type scalarInput struct {
 //	        qb.Gte(age, minAge),
 //	    ).MustBuild()
 //
-//	db.ExecuteQueryWithInputs(q, 21)  // 21 is bound to minAge
+//	db.Query(q, 21)  // 21 is bound to minAge
 func Scalar(v *Var) InputSpec {
 	return scalarInput{v: v}
 }
@@ -75,7 +75,7 @@ type collectionInput struct {
 //	    Where(qb.Pat(e, PersonID, id), qb.Pat(e, PersonName, name)).
 //	    MustBuild()
 //
-//	db.ExecuteQueryWithInputs(q, []string{"id1", "id2", "id3"})
+//	db.Query(q, []string{"id1", "id2", "id3"})
 func Collection(v *Var) InputSpec {
 	return collectionInput{v: v}
 }
@@ -101,7 +101,7 @@ type tupleInput struct {
 //	    Where(...).
 //	    MustBuild()
 //
-//	db.ExecuteQueryWithInputs(q, []interface{}{10, 20})
+//	db.Query(q, []interface{}{10, 20})
 func Tuple(vars ...*Var) InputSpec {
 	return tupleInput{vars: vars}
 }
@@ -131,7 +131,7 @@ type relationInput struct {
 //	    Where(...).
 //	    MustBuild()
 //
-//	db.ExecuteQueryWithInputs(q, [][]interface{}{{1, 2}, {3, 4}})
+//	db.Query(q, [][]interface{}{{1, 2}, {3, 4}})
 func Relation(vars ...*Var) InputSpec {
 	return relationInput{vars: vars}
 }

@@ -215,11 +215,11 @@ func TestWorkspaceRegression_PredicateFilter(t *testing.T) {
 	defer cleanup()
 
 	// Query with predicate
-	results, err := db.ExecuteQuery(`
+	results, err := executor.CollectTuples(db.Query(`
 		[:find ?e ?age
 		 :where [?e :person/age ?age]
 		        [(>= ?age 25)]]
-	`)
+	`))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -253,10 +253,10 @@ func TestWorkspaceRegression_Projection(t *testing.T) {
 	defer cleanup()
 
 	// Query projecting only age
-	results, err := db.ExecuteQuery(`
+	results, err := executor.CollectTuples(db.Query(`
 		[:find ?age
 		 :where [?e :person/age ?age]]
-	`)
+	`))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -292,11 +292,11 @@ func TestWorkspaceRegression_FilterThenProject(t *testing.T) {
 	db, cleanup := createWorkspaceTestDB(t)
 	defer cleanup()
 
-	results, err := db.ExecuteQuery(`
+	results, err := executor.CollectTuples(db.Query(`
 		[:find ?age
 		 :where [?e :person/age ?age]
 		        [(>= ?age 25)]]
-	`)
+	`))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

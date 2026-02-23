@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -368,7 +369,7 @@ func BenchmarkCRDTQuery(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			result, err := db.ExecuteQuery(`[:find ?e ?name :where [?e :person/name ?name]]`)
+			result, err := executor.CollectTuples(db.Query(`[:find ?e ?name :where [?e :person/name ?name]]`))
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -399,7 +400,7 @@ func BenchmarkCRDTQuery(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			result, err := db.ExecuteQuery(`[:find ?e ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
+			result, err := executor.CollectTuples(db.Query(`[:find ?e ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`))
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -431,7 +432,7 @@ func BenchmarkCRDTQuery(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			result, err := db.ExecuteQuery(`[:find ?e :where [?e :person/tags "common"]]`)
+			result, err := executor.CollectTuples(db.Query(`[:find ?e :where [?e :person/tags "common"]]`))
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -464,7 +465,7 @@ func BenchmarkCRDTQuery(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			result, err := db.ExecuteQuery(`[:find ?name ?skills :where [?e :person/name ?name] [?e :person/skills ?skills]]`)
+			result, err := executor.CollectTuples(db.Query(`[:find ?name ?skills :where [?e :person/name ?name] [?e :person/skills ?skills]]`))
 			if err != nil {
 				b.Fatal(err)
 			}

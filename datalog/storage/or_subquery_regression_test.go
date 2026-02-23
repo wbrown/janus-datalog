@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // TestOrClauseWithCorrelatedSubquery_E2E reproduces the bug where
@@ -60,7 +61,7 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 	                             $ ?scenario) [[?count]]]
 	                         [(ground 0) ?count])]`
 
-	tuples, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestScenarioSummaryQuery_E2E(t *testing.T) {
 	                      $ ?scenario) [[?taskCount]]]
 	                  [(ground 0) ?taskCount])]`
 
-	tuples, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestNestedSubqueryInOr_E2E(t *testing.T) {
 	                      $ ?scenario) [[?lastKey]]]
 	                  [(ground :none) ?lastKey])]`
 
-	tuples, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
@@ -319,7 +320,7 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 	              ;; Comparison binding
 	              [(> ?openingCount 0) ?complete]]`
 
-	tuples, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
@@ -370,7 +371,7 @@ func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 	                      $ ?scenario) [[?taskCount]]]
 	                  [(ground 0) ?taskCount])]`
 
-	tuples, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
@@ -427,7 +428,7 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 	                      $ ?scenario) [[?count2]]]
 	                  [(ground 0) ?count2])]`
 
-	tuples, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
@@ -476,7 +477,7 @@ func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 	                  (and [(ground 0) ?taskCount]
 	                       [(ground 0) ?totalTokens]))]`
 
-	tuples, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
@@ -526,7 +527,7 @@ func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 	                  (and [(ground 0) ?taskCount]
 	                       [(ground 0) ?totalTokens]))]`
 
-	tuples, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
@@ -575,7 +576,7 @@ func TestFullScenarioSummaryQuery_E2E(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	tuples, err := db.ExecuteQuery(scenarioSummaryQueryFull)
+	tuples, err := executor.CollectTuples(db.Query(scenarioSummaryQueryFull))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}

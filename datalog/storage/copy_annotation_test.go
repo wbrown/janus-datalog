@@ -45,7 +45,7 @@ func TestJoinCopyAnnotationE2E(t *testing.T) {
                   :where [?p :person/name ?name]
                          [?p :person/dept ?dept]]`
 
-	results, err := db.ExecuteQuery(queryStr)
+	results, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

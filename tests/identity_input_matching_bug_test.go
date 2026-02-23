@@ -7,6 +7,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/codec"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -73,10 +74,10 @@ func TestIdentityInputMatchingBug(t *testing.T) {
 	t.Logf("child2: %v (refs parent2)", child2)
 
 	// Query: find children of parent1
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?c ?code :in $ ?parent :where [?c :test/ref ?parent] [?c :test/code ?code]]`,
 		parent1,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -111,10 +112,10 @@ func TestIdentityInputMatchingBug(t *testing.T) {
 			child1.Hash(), foundID.Hash(), child1.L85(), foundID.L85())
 
 		// Debug: what is the actual ref of the found entity?
-		refs, _ := db.ExecuteQueryWithInputs(
+		refs, _ := executor.CollectTuples(db.Query(
 			`[:find ?ref :in $ ?e :where [?e :test/ref ?ref]]`,
 			foundID,
-		)
+		))
 		if len(refs) > 0 {
 			t.Logf("Found entity's actual ref (L85): %v", refs[0][0])
 			t.Logf("Our parent1 (L85):               %v", parent1.L85())
@@ -176,10 +177,10 @@ func TestIdentityInputMatchingWithMultipleConstraints(t *testing.T) {
 	t.Logf("Created dungeon: %v with map=%v", dungeonID, mapID)
 
 	// Query: find dungeon by map, code, and type
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?e :in $ ?map ?code :where [?e :entity/map ?map] [?e :entity/code ?code] [?e :entity/type :entity.type/dungeon]]`,
 		mapID, "POI A",
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -203,10 +204,10 @@ func TestIdentityInputMatchingWithMultipleConstraints(t *testing.T) {
 		t.Errorf("Wrong entity returned:\n  expected hash: %x\n  got hash:      %x", dungeonID.Hash(), foundID.Hash())
 
 		// Debug: what are the actual attributes of the found entity?
-		attrs, _ := db.ExecuteQueryWithInputs(
+		attrs, _ := executor.CollectTuples(db.Query(
 			`[:find ?a ?v :in $ ?e :where [?e ?a ?v]]`,
 			foundID,
-		)
+		))
 		t.Logf("Found entity attributes:")
 		for _, attr := range attrs {
 			t.Logf("  %v = %v", attr[0], attr[1])

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -231,11 +232,11 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 
 	// Test that we can query for all attributes of alice via standard query
 	t.Run("QueryAllAttributes", func(t *testing.T) {
-		results, err := db.ExecuteQueryWithInputs(`
+		results, err := executor.CollectTuples(db.Query(`
 			[:find ?a ?v
 			 :in $ ?e
 			 :where [?e ?a ?v]]
-		`, alice)
+		`, alice))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -395,10 +396,10 @@ func TestPullIntegration_InQuery(t *testing.T) {
 
 	// Test pull in query
 	t.Run("PullInFindClause", func(t *testing.T) {
-		results, err := db.ExecuteQuery(`
+		results, err := executor.CollectTuples(db.Query(`
 			[:find (pull ?e [:person/name :person/age])
 			 :where [?e :entity/type :type/person]]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -443,10 +444,10 @@ func TestPullIntegration_InQuery(t *testing.T) {
 
 	// Test mixed find clause (pull + regular variable)
 	t.Run("MixedFindClause", func(t *testing.T) {
-		results, err := db.ExecuteQuery(`
+		results, err := executor.CollectTuples(db.Query(`
 			[:find ?type (pull ?e [:person/name])
 			 :where [?e :entity/type ?type]]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}

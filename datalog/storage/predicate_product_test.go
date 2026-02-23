@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -105,14 +106,14 @@ func TestScalarInput_InequalityPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?self
 		  :where
 		  [?e :person/name ?name]
 		  [(not= ?e ?self)]]`,
 		tdb.Alice,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestScalarInput_ComparisonPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?min-age
 		  :where
@@ -143,7 +144,7 @@ func TestScalarInput_ComparisonPredicate(t *testing.T) {
 		  [?e :person/age ?age]
 		  [(> ?age ?min-age)]]`,
 		int64(30),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -167,14 +168,14 @@ func TestScalarInput_EqualityPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?target-team
 		  :where
 		  [?e :person/name ?name]
 		  [?e :person/team ?target-team]]`,
 		"alpha",
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestScalarInput_MultipleBridgingPredicates(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?self ?min-age
 		  :where
@@ -206,7 +207,7 @@ func TestScalarInput_MultipleBridgingPredicates(t *testing.T) {
 		  [(not= ?e ?self)]
 		  [(> ?age ?min-age)]]`,
 		tdb.Alice, int64(28),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -230,7 +231,7 @@ func TestScalarInput_ExpressionBridge(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name ?adjusted
 		  :in $ ?bonus
 		  :where
@@ -238,7 +239,7 @@ func TestScalarInput_ExpressionBridge(t *testing.T) {
 		  [?e :person/age ?age]
 		  [(+ ?age ?bonus) ?adjusted]]`,
 		int64(10),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -274,7 +275,7 @@ func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?other-name
 		  :in $ ?target-name
 		  :where
@@ -284,7 +285,7 @@ func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
 		  [?other :person/name ?other-name]
 		  [(not= ?other ?e)]]`,
 		"Alice",
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -317,14 +318,14 @@ func TestCollectionInput_BridgingPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ [?excluded-name ...]
 		  :where
 		  [?e :person/name ?name]
 		  [(not= ?name ?excluded-name)]]`,
 		[]string{"Alice", "Bob"},
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -350,7 +351,7 @@ func TestCollectionInput_ComparisonBridge(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name ?age
 		  :in $ [?threshold ...]
 		  :where
@@ -358,7 +359,7 @@ func TestCollectionInput_ComparisonBridge(t *testing.T) {
 		  [?e :person/age ?age]
 		  [(> ?age ?threshold)]]`,
 		[]interface{}{int64(25), int64(35)},
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -408,13 +409,13 @@ func TestDisjointPatterns_BridgedByPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?n1 ?n2
 		  :where
 		  [?e1 :person/name ?n1] [?e1 :person/team "alpha"]
 		  [?e2 :person/name ?n2] [?e2 :person/team "beta"]
 		  [(not= ?e1 ?e2)]]`,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -452,13 +453,13 @@ func TestDisjointGroups_ExpressionBridge(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?n1 ?n2 ?combined
 		  :where
 		  [?e1 :person/name ?n1] [?e1 :person/team "alpha"]
 		  [?e2 :person/name ?n2] [?e2 :person/team "beta"]
 		  [(str ?n1 " & " ?n2) ?combined]]`,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -497,7 +498,7 @@ func TestScalarInput_AllExcluded(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?min-age
 		  :where
@@ -505,7 +506,7 @@ func TestScalarInput_AllExcluded(t *testing.T) {
 		  [?e :person/age ?age]
 		  [(> ?age ?min-age)]]`,
 		int64(100),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -538,14 +539,14 @@ func TestScalarInput_SingleEntitySelfExclusion(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name
 		  :in $ ?self
 		  :where
 		  [?e :person/name ?name]
 		  [(not= ?e ?self)]]`,
 		alice,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}

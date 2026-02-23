@@ -245,7 +245,7 @@ The storage layer connects the query engine to BadgerDB:
 ### Multi-Source Query Architecture
 - **One interface**: `PatternMatcher` is the sole interface for all data sources. No separate `DataSource` type.
 - **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source) and `EntityLookupMatcher` (delegates to default `$` source for `get-else`, `missing?`, `get-some`).
-- **Source threading**: Sources are an execution context built once at the top level. `ExecuteQueryWithInputs` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
+- **Source threading**: Sources are an execution context built once at the top level. `Query()` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
 - **IsSourceSymbol**: Helper `strings.HasPrefix(string(sym), "$")` replacing all hardcoded `sym == "$"` checks.
 - **Adding new source types**: Implement `PatternMatcher`. Optionally implement `PredicateAwareMatcher` for predicate pushdown. Pass via `WithSources`.
 - **Key files**: `executor/source_router.go`, `executor/slice_source.go`, `storage/database.go` (`WithSources`, `buildSourceMap`, `validateQuerySources`), `qb/source.go`

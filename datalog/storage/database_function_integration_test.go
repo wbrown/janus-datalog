@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // =============================================================================
@@ -96,7 +97,7 @@ func TestGetElseBasic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results, err := db.ExecuteQuery(tt.query)
+			results, err := executor.CollectTuples(db.Query(tt.query))
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
@@ -142,7 +143,7 @@ func TestGetElseNumericDefault(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	results, err := db.ExecuteQuery(`[:find ?name ?discount :where [?e :product/name ?name] [(get-else $ ?e :product/discount 0) ?discount]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?discount :where [?e :product/name ?name] [(get-else $ ?e :product/discount 0) ?discount]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestMissingAsPredicate(t *testing.T) {
 	}
 
 	// Find users WITHOUT email - should only return Bob
-	results, err := db.ExecuteQuery(`[:find ?name :where [?e :user/name ?name] [(missing? $ ?e :user/email)]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :user/name ?name] [(missing? $ ?e :user/email)]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -256,7 +257,7 @@ func TestMissingAsExpression(t *testing.T) {
 	}
 
 	// Get missing status as a boolean symbol
-	results, err := db.ExecuteQuery(`[:find ?name ?needs_verification :where [?e :user/name ?name] [(missing? $ ?e :user/verified) ?needs_verification]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?needs_verification :where [?e :user/name ?name] [(missing? $ ?e :user/verified) ?needs_verification]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -329,7 +330,7 @@ func TestMissingMultipleAttributes(t *testing.T) {
 	}
 
 	// Find contacts missing BOTH phone AND email
-	results, err := db.ExecuteQuery(`[:find ?name :where [?e :contact/name ?name] [(missing? $ ?e :contact/phone)] [(missing? $ ?e :contact/email)]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :contact/name ?name] [(missing? $ ?e :contact/phone)] [(missing? $ ?e :contact/email)]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -390,7 +391,7 @@ func TestGetSomeBasic(t *testing.T) {
 	}
 
 	// get-some with three fallback options: nickname -> fullname -> email
-	results, err := db.ExecuteQuery(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/email) ?display]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/email) ?display]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -458,7 +459,7 @@ func TestGetSomeNoMatch(t *testing.T) {
 	}
 
 	// get-some should filter out User2 since none of the attrs exist
-	results, err := db.ExecuteQuery(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/displayname) ?display]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/displayname) ?display]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -514,7 +515,7 @@ func TestCombinedDatabaseFunctions(t *testing.T) {
 
 	// Use get-else to get phone with default "N/A"
 	// AND check if email is missing
-	results, err := db.ExecuteQuery(`[:find ?name ?phone ?email_missing :where [?e :person/name ?name] [(get-else $ ?e :person/phone "N/A") ?phone] [(missing? $ ?e :person/email) ?email_missing]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?phone ?email_missing :where [?e :person/name ?name] [(get-else $ ?e :person/phone "N/A") ?phone] [(missing? $ ?e :person/email) ?email_missing]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -582,7 +583,7 @@ func TestDatabaseFunctionWithAggregation(t *testing.T) {
 	}
 
 	// Sum of discounts, with 0 as default for items without discount
-	results, err := db.ExecuteQuery(`[:find (sum ?discount) :where [?e :item/name ?name] [(get-else $ ?e :item/discount 0) ?discount]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find (sum ?discount) :where [?e :item/name ?name] [(get-else $ ?e :item/discount 0) ?discount]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -642,7 +643,7 @@ func TestDatabaseFunctionWithOrderBy(t *testing.T) {
 	}
 
 	// Order by score descending (Bob gets 0 as default)
-	results, err := db.ExecuteQuery(`[:find ?name ?score :where [?e :person/name ?name] [(get-else $ ?e :person/score 0) ?score] :order-by [[?score :desc]]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?score :where [?e :person/name ?name] [(get-else $ ?e :person/score 0) ?score] :order-by [[?score :desc]]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -695,7 +696,7 @@ func TestGetElseWithNullishValues(t *testing.T) {
 	}
 
 	// The empty string should be returned (not the default)
-	results, err := db.ExecuteQuery(`[:find ?name ?desc :where [?e :entity/name ?name] [(get-else $ ?e :entity/description "DEFAULT") ?desc]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?desc :where [?e :entity/name ?name] [(get-else $ ?e :entity/description "DEFAULT") ?desc]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -749,10 +750,10 @@ func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 	}
 
 	// Use input parameter for default value
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name ?status :in $ ?default-status :where [?e :user/name ?name] [(get-else $ ?e :user/status ?default-status) ?status]]`,
 		"pending",
-	)
+	))
 	if err != nil {
 		// This might fail because get-else expects a constant default, not a variable
 		// Let's verify this is the expected behavior

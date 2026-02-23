@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -54,10 +55,10 @@ func createCardinalityOneDB(t *testing.T) (*Database, func()) {
 // helper: run a bound query for a single attribute value
 func queryBoundValue(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) [][]interface{} {
 	t.Helper()
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 		e, a,
-	)
+	))
 	require.NoError(t, err)
 	return results
 }
@@ -65,9 +66,9 @@ func queryBoundValue(t *testing.T, db *Database, e datalog.Identity, a datalog.K
 // helper: run an unbound query and filter for a specific (E, A)
 func queryUnboundForEA(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) [][]interface{} {
 	t.Helper()
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?a ?v :where [?e ?a ?v]]`,
-	)
+	))
 	require.NoError(t, err)
 
 	var filtered [][]interface{}
@@ -294,10 +295,10 @@ func TestCardinalityOneRemove_BoundQuery(t *testing.T) {
 	require.NoError(t, err)
 
 	// Bound query with E and A from :in
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 		e, a,
-	)
+	))
 	require.NoError(t, err)
 	assert.Len(t, results, 0, "bound query should return empty after Remove")
 }

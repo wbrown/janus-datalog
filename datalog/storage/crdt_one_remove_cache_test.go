@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -313,8 +314,8 @@ func TestCacheRemove_JoinBoundE_RoundTrip(t *testing.T) {
 
 	// Verify both exist via multi-clause query
 	// :person/city binds ?e, then :person/name resolves with bound E → cache path
-	results, err := db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	require.Len(t, results, 1, "precondition: should find 1 result")
 
@@ -325,8 +326,8 @@ func TestCacheRemove_JoinBoundE_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// Multi-clause query → name clause should fail to match (tombstoned)
-	results, err = db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err = executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	assert.Len(t, results, 0,
 		"BUG: join-bound query returns stale data after Remove(). "+
@@ -360,8 +361,8 @@ func TestCacheRemove_JoinBoundE_ThenReAdd(t *testing.T) {
 	require.NoError(t, err)
 
 	// Latest Add wins
-	results, err := db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	require.Len(t, results, 1, "should find 1 result after re-Add")
 	assert.Equal(t, "Bob", results[0][0])
@@ -391,8 +392,8 @@ func TestCacheRemove_JoinBoundE_MultipleEntities(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query: entity1 should not appear, entity2 should
-	results, err := db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	assert.Len(t, results, 1, "only entity2 should appear")
 	if len(results) == 1 {
@@ -422,8 +423,8 @@ func TestCacheRemove_JoinBoundE_VIsIrrelevant(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should return 0 results — name is tombstoned regardless of V
-	results, err := db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	assert.Len(t, results, 0,
 		"attribute should not exist — V is irrelevant for CardinalityOne Remove")
@@ -560,8 +561,8 @@ func TestCacheRemove_StaleInvalidation(t *testing.T) {
 			"Cache invalidation or rebuild doesn't handle tombstone.")
 
 	// Also verify via multi-clause join query
-	results, err := db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	assert.Len(t, results, 0,
 		"BUG: Join query returns stale cached data after Remove()")
@@ -629,8 +630,8 @@ func TestCacheRemove_JoinBoundE_SetThenRemove(t *testing.T) {
 	require.NoError(t, err)
 
 	// Join query → absent
-	results, err := db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	assert.Len(t, results, 0,
 		"BUG: Join query returns value after Set() then Remove()")
@@ -700,8 +701,8 @@ func TestCacheRemove_JoinBoundE_AfterOverwrite(t *testing.T) {
 	require.NoError(t, err)
 
 	// Join query → absent
-	results, err := db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	assert.Len(t, results, 0,
 		"attribute should not exist after overwrite then Remove")
@@ -733,8 +734,8 @@ func TestCacheRemove_JoinBoundE_BeforeAnyAdd(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add has higher Tx, wins
-	results, err := db.ExecuteQuery(
-		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?city :where [?e :person/city ?city] [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	require.Len(t, results, 1, "Add should win over earlier Remove")
 	assert.Equal(t, "Alice", results[0][0])

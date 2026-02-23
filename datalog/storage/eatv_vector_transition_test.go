@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // TestEATV_VectorTransitionDropsDatom reproduces the CRDT vector group
@@ -47,9 +48,9 @@ func TestEATV_VectorTransitionDropsDatom(t *testing.T) {
 
 	// Collection input [?e ...] — only E is bound, A is free → forces EATV
 	entitySlice := []any{entities[0], entities[1], entities[2]}
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?a ?v :in $ [?e ...] :where [?e ?a ?v]]`,
-		entitySlice)
+		entitySlice))
 	require.NoError(t, err)
 
 	db.SetAnnotationHandler(nil)

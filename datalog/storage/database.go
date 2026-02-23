@@ -313,7 +313,7 @@ func (d *Database) AnnotationHandler() annotations.Handler {
 }
 
 // SetAnnotationHandler sets a handler for query tracing and performance observability.
-// When set, all queries executed via ExecuteQueryWithInputs will emit annotation events.
+// When set, all queries executed via Query will emit annotation events.
 // Pass nil to disable annotations.
 //
 // Example:
@@ -590,129 +590,6 @@ func extractQueryOptions(inputs []interface{}) (queryOptions, []interface{}) {
 	return opts, regularInputs
 }
 
-// ExecuteQuery executes a Datalog query and returns results as a slice of tuples.
-// The query can be either an EDN string or a *query.Query from the query builder.
-//
-// Example with string:
-//
-//	results, err := db.ExecuteQuery(`[:find ?name :where [?e :person/name ?name]]`)
-//
-// Example with query builder:
-//
-//	e, name := qb.NewVar("e"), qb.NewVar("name")
-//	q := qb.Query().Find(name).Where(qb.Pat(e, PersonName, name)).MustBuild()
-//	results, err := db.ExecuteQuery(q)
-func (d *Database) ExecuteQuery(q interface{}) ([][]interface{}, error) {
-	return d.ExecuteQueryWithInputs(q)
-}
-
-// ExecuteQueryWithInputs executes a parameterized Datalog query with input parameters.
-// The query can be either an EDN string or a *query.Query from the query builder.
-// This provides type-safe query execution without string formatting.
-//
-// Input parameters are matched with the :in clause in order (after the $ database parameter):
-//   - Scalar inputs: ?name
-//   - Collection inputs: [?foods ...]
-//   - Tuple inputs: [[?name ?age]]
-//   - Relation inputs: [[?name ?age] ...]
-//
-// Examples:
-//
-//	// Scalar input with string query
-//	results, err := db.ExecuteQueryWithInputs(
-//	    `[:find ?e :in $ ?name :where [?e :person/name ?name]]`,
-//	    "Alice",
-//	)
-//
-//	// Scalar input with query builder
-//	e, name, minAge := qb.NewVar("e"), qb.NewVar("name"), qb.NewVar("minAge")
-//	q := qb.Query().Find(e).In(qb.DB, qb.Scalar(minAge)).Where(...).MustBuild()
-//	results, err := db.ExecuteQueryWithInputs(q, 25)
-//
-//	// Collection input
-//	results, err := db.ExecuteQueryWithInputs(
-//	    `[:find ?e ?food :in $ [?food ...] :where [?e :person/likes ?food]]`,
-//	    []string{"pizza", "pasta"},
-//	)
-func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...interface{}) ([][]interface{}, error) {
-	// Separate QueryOptions from regular inputs
-	opts, regularInputs := extractQueryOptions(inputs)
-
-	// Resolve the query (string or *query.Query)
-	q, err := resolveQuery(queryInput)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Build source map — database is always $
-	sources := buildSourceMap(opts.sources, d.Matcher())
-
-	// Validate declared sources exist
-	if err := validateQuerySources(q, sources); err != nil {
-		return nil, err
-	}
-
-	// Create SourceRouter with full source map
-	router := executor.NewSourceRouter(sources)
-
-	// Convert inputs to Relations based on :in clause
-	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Execute with the SourceRouter as the PatternMatcher
-	planOpts := DefaultPlannerOptions()
-	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, d, planOpts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
-	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
-	}
-
-	// Convert result to [][]interface{}
-	return relationToSlice(result), nil
-}
-
-// ExecuteQueryRelation executes a query and returns the Relation directly.
-// This preserves symbol names (via Symbols()) which are lost in ExecuteQuery.
-func (d *Database) ExecuteQueryRelation(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
-	// Separate QueryOptions from regular inputs
-	opts, regularInputs := extractQueryOptions(inputs)
-
-	q, err := resolveQuery(queryInput)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Build source map — database is always $
-	sources := buildSourceMap(opts.sources, d.Matcher())
-
-	// Validate declared sources exist
-	if err := validateQuerySources(q, sources); err != nil {
-		return nil, err
-	}
-
-	// Create SourceRouter with full source map
-	router := executor.NewSourceRouter(sources)
-
-	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Execute with the SourceRouter as the PatternMatcher
-	planOpts := DefaultPlannerOptions()
-	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, d, planOpts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
-	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
-	}
-
-	return result, nil
-}
-
 // Explain returns the query plan for a query without executing it.
 // The query can be either an EDN string or a *query.Query from the query builder.
 // This is useful for understanding index selection, phase structure, and
@@ -736,7 +613,7 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate inputs match :in clause (same validation as ExecuteQueryWithInputs)
+	// Validate inputs match :in clause (same validation as Query)
 	_, err = d.convertInputsToRelations(q, inputs)
 	if err != nil {
 		return nil, err
@@ -957,7 +834,7 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	}
 
 	// Execute query as streaming relation
-	rel, err := d.ExecuteQueryRelation(q, inputs...)
+	rel, err := d.Query(q, inputs...)
 	if err != nil {
 		return err
 	}
@@ -1054,7 +931,7 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 	}
 
 	// Execute query as streaming relation
-	rel, err := d.ExecuteQueryRelation(q, inputs...)
+	rel, err := d.Query(q, inputs...)
 	if err != nil {
 		return false, err
 	}
@@ -2309,36 +2186,6 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 	}
 
 	return inputRelations, nil
-}
-
-// relationToSlice converts an executor.Relation to [][]interface{}
-func relationToSlice(rel executor.Relation) [][]interface{} {
-	// Handle nil relation (e.g., query returned no results)
-	if rel == nil {
-		return [][]interface{}{}
-	}
-	// Don't preallocate if size is unknown (-1)
-	size := rel.Size()
-	var tuples [][]interface{}
-	if size >= 0 {
-		tuples = make([][]interface{}, 0, size)
-	} else {
-		tuples = make([][]interface{}, 0)
-	}
-
-	it := rel.Iterator()
-	defer it.Close()
-
-	for it.Next() {
-		src := it.Tuple()
-		t := make([]interface{}, len(src))
-		for i, v := range src {
-			t[i] = v
-		}
-		tuples = append(tuples, t)
-	}
-
-	return tuples
 }
 
 // Pull retrieves entity data according to a pull pattern

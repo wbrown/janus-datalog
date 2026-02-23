@@ -12,6 +12,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/edn"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -1194,8 +1195,8 @@ func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query original: should see "veteran" and "leader" but not "warrior"
-	results1, err := db1.ExecuteQueryWithInputs(
-		`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id)
+	results1, err := executor.CollectTuples(db1.Query(
+		`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id))
 	require.NoError(t, err)
 	tags1 := extractStringValues(results1)
 	assert.Contains(t, tags1, "veteran")
@@ -1215,8 +1216,8 @@ func TestDatabaseRoundTrip_CRDTSemantics(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query imported DB: same semantic result — "warrior" must still be dead
-	results2, err := db2.ExecuteQueryWithInputs(
-		`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id)
+	results2, err := executor.CollectTuples(db2.Query(
+		`[:find ?tag :in $ ?e :where [?e :person/tags ?tag]]`, id))
 	require.NoError(t, err)
 	tags2 := extractStringValues(results2)
 	assert.Contains(t, tags2, "veteran")

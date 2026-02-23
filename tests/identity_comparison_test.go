@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -50,10 +51,10 @@ func TestIdentityComparisonBestPractices(t *testing.T) {
 	}
 
 	// Query to find the child
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?c :in $ ?parent :where [?c :test/ref ?parent]]`,
 		parent,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}

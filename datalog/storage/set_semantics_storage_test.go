@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // =============================================================================
@@ -67,7 +68,7 @@ func TestSetSemantics_StorageQuery(t *testing.T) {
 	}
 
 	t.Run("Query projecting to value only - [:find ?v :where [_ :test/value ?v]]", func(t *testing.T) {
-		result, err := db.ExecuteQuery(`[:find ?v :where [_ :test/value ?v]]`)
+		result, err := executor.CollectTuples(db.Query(`[:find ?v :where [_ :test/value ?v]]`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -80,7 +81,7 @@ func TestSetSemantics_StorageQuery(t *testing.T) {
 	})
 
 	t.Run("Query projecting entity and value - [:find ?e ?v :where [?e :test/value ?v]]", func(t *testing.T) {
-		result, err := db.ExecuteQuery(`[:find ?e ?v :where [?e :test/value ?v]]`)
+		result, err := executor.CollectTuples(db.Query(`[:find ?e ?v :where [?e :test/value ?v]]`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -129,11 +130,11 @@ func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
 
 	t.Run("Join then project to overlapping values", func(t *testing.T) {
 		// This query joins on entity, producing tuples that might duplicate after projection
-		result, err := db.ExecuteQuery(`
+		result, err := executor.CollectTuples(db.Query(`
 			[:find ?city
 			 :where [?e :person/name ?name]
 			        [?e :person/city ?city]]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -146,11 +147,11 @@ func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
 	})
 
 	t.Run("Multiple projection symbols", func(t *testing.T) {
-		result, err := db.ExecuteQuery(`
+		result, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?city
 			 :where [?e :person/name ?name]
 			        [?e :person/city ?city]]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -193,11 +194,11 @@ func TestSetSemantics_StorageQuery_WithPredicates(t *testing.T) {
 	}
 
 	t.Run("Filter then project to repeated values", func(t *testing.T) {
-		result, err := db.ExecuteQuery(`
+		result, err := executor.CollectTuples(db.Query(`
 			[:find ?age
 			 :where [?e :person/age ?age]
 			        [(>= ?age 25)]]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -250,11 +251,11 @@ func TestSetSemantics_StorageQuery_Aggregation(t *testing.T) {
 
 	t.Run("Count with potential duplicates", func(t *testing.T) {
 		// Count employees per department
-		result, err := db.ExecuteQuery(`
+		result, err := executor.CollectTuples(db.Query(`
 			[:find ?dept (count ?e)
 			 :where [?e :employee/dept ?dept]
 			        [?e :employee/salary ?salary]]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -303,11 +304,11 @@ func TestSetSemantics_StorageQuery_NotClause(t *testing.T) {
 	}
 
 	t.Run("NOT clause with projection", func(t *testing.T) {
-		result, err := db.ExecuteQuery(`
+		result, err := executor.CollectTuples(db.Query(`
 			[:find ?role
 			 :where [?e :user/role ?role]
 			        (not [?e :user/status "inactive"])]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -360,12 +361,12 @@ func TestSetSemantics_StorageQuery_OrClause(t *testing.T) {
 	t.Run("OR clause with overlapping results", func(t *testing.T) {
 		// Items that are either pending OR high priority
 		// e1, e2, e3, e4 match - but projecting to priority should dedupe
-		result, err := db.ExecuteQuery(`
+		result, err := executor.CollectTuples(db.Query(`
 			[:find ?priority
 			 :where [?e :item/priority ?priority]
 			        (or [?e :item/status "pending"]
 			            [?e :item/priority "high"])]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}

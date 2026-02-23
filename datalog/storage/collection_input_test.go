@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -45,9 +46,9 @@ func TestCollectionInput_SingleCollection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with single collection input
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ [?e ...] :where [?e :person/name ?v]]`,
-		entities)
+		entities))
 	require.NoError(t, err)
 
 	t.Logf("Results (%d):", len(results))
@@ -76,9 +77,9 @@ func TestCollectionInput_SingleElement(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with single-element collection
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ [?e ...] :where [?e :person/name ?v]]`,
-		[]datalog.Identity{entity})
+		[]datalog.Identity{entity}))
 	require.NoError(t, err)
 
 	assert.Len(t, results, 1, "should return one result for single-element collection")
@@ -101,9 +102,9 @@ func TestCollectionInput_EmptyCollection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with empty collection
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ [?e ...] :where [?e :person/name ?v]]`,
-		[]datalog.Identity{})
+		[]datalog.Identity{}))
 	require.NoError(t, err)
 
 	assert.Len(t, results, 0, "empty collection should return no results")
@@ -158,9 +159,9 @@ func TestCollectionInput_TwoCollections(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with two collection inputs - should get cross-product
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]`,
-		entities, attrs)
+		entities, attrs))
 	require.NoError(t, err)
 
 	t.Logf("Results (%d):", len(results))
@@ -209,9 +210,9 @@ func TestCollectionInput_ThreeCollections(t *testing.T) {
 
 	// Query: find all (entity, tag) pairs where tag matches input collection
 	// Using entity collection and value collection
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ [?e ...] [?v ...] :where [?e :person/tag ?v]]`,
-		entities, tags)
+		entities, tags))
 	require.NoError(t, err)
 
 	t.Logf("Results (%d):", len(results))
@@ -252,9 +253,9 @@ func TestCollectionInput_ScalarPlusCollection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with scalar attribute and collection of entities
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ ?a [?e ...] :where [?e ?a ?v]]`,
-		attr, entities)
+		attr, entities))
 	require.NoError(t, err)
 
 	t.Logf("Results (%d):", len(results))
@@ -289,9 +290,9 @@ func TestCollectionInput_CollectionPlusScalar(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with collection first, then scalar
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ [?e ...] ?a :where [?e ?a ?v]]`,
-		entities, attr)
+		entities, attr))
 	require.NoError(t, err)
 
 	assert.Len(t, results, 2, "should return one result per entity")
@@ -324,9 +325,9 @@ func TestCollectionInput_KeywordCollection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with collection of keywords (attributes)
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?a ?v :in $ ?e [?a ...] :where [?e ?a ?v]]`,
-		entity, attrs)
+		entity, attrs))
 	require.NoError(t, err)
 
 	t.Logf("Results (%d):", len(results))
@@ -366,9 +367,9 @@ func TestCollectionInput_IntCollection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with collection of integers
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ ?e [?v ...] :where [?e :item/score ?v]]`,
-		entity, scores)
+		entity, scores))
 	require.NoError(t, err)
 
 	assert.Len(t, results, 3, "should return one result per score in collection")
@@ -403,9 +404,9 @@ func TestCollectionInput_StringCollection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with collection of strings
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ ?e [?v ...] :where [?e :person/tag ?v]]`,
-		entity, tags)
+		entity, tags))
 	require.NoError(t, err)
 
 	assert.Len(t, results, 3, "should return one result per tag in collection")

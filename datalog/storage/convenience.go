@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
@@ -18,10 +20,42 @@ var queryGetAttr = func() *query.Query {
 
 // Query executes a Datalog query and returns a streaming Relation.
 // The caller should iterate via rel.Iterator() and must call iter.Close()
-// when done. For full materialization, call rel.Materialize() or use
-// ExecuteQueryWithInputs() which returns [][]any.
+// when done.
 func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
-	return d.ExecuteQueryRelation(queryInput, inputs...)
+	// Separate QueryOptions from regular inputs
+	opts, regularInputs := extractQueryOptions(inputs)
+
+	q, err := resolveQuery(queryInput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve query: %w", err)
+	}
+
+	// Build source map — database is always $
+	sources := buildSourceMap(opts.sources, d.Matcher())
+
+	// Validate declared sources exist
+	if err := validateQuerySources(q, sources); err != nil {
+		return nil, err
+	}
+
+	// Create SourceRouter with full source map
+	router := executor.NewSourceRouter(sources)
+
+	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Execute with the SourceRouter as the PatternMatcher
+	planOpts := DefaultPlannerOptions()
+	planOpts.Cache = d.planCache
+	exec := executor.NewExecutorWithOptions(router, d, planOpts)
+	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	return result, nil
 }
 
 // Assert adds datoms in a single transaction.

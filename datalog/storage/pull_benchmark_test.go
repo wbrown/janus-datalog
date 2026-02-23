@@ -242,7 +242,7 @@ func BenchmarkPullBadger_VsQuery(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _ = db.ExecuteQueryWithInputs(queryStr, entity)
+			_, _ = executor.CollectTuples(db.Query(queryStr, entity))
 		}
 	})
 }

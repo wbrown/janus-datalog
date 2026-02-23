@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // TestGetSome_WithScalarInput reproduces a bug where a query using get-some
@@ -44,10 +45,10 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 	}
 
 	// Query: get-some should return :entity/code value since entity has it
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]`,
 		entity,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -69,10 +70,10 @@ func TestGetSome_WithScalarInput(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	results2, err := db.ExecuteQueryWithInputs(
+	results2, err := executor.CollectTuples(db.Query(
 		`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]`,
 		entity2,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed for entity2: %v", err)
 	}
@@ -113,10 +114,10 @@ func TestGetSome_WithScalarInput_NoMatch(t *testing.T) {
 	}
 
 	// Query: get-some should return empty (entity has neither requested attr)
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?id :in $ ?e :where [(get-some $ ?e :entity/code :entity/name) ?id]]`,
 		entity,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}

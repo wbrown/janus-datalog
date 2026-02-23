@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -77,9 +78,9 @@ func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.
 	assert.Equal(t, expectedName, person.Name, "PullInto should return LWW-resolved value")
 
 	// THE BUG: ExecuteQueryWithInputs returns ALL historical values
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-		personID, nameAttr)
+		personID, nameAttr))
 	require.NoError(t, err)
 
 	t.Logf("ExecuteQueryWithInputs returned %d results: %v", len(results), results)
@@ -158,9 +159,9 @@ func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *te
 	t.Logf("PullInto returned tags: %v", person.Tags)
 
 	// THE BUG: ExecuteQueryWithInputs returns ALL ever-added tags
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-		personID, tagsAttr)
+		personID, tagsAttr))
 	require.NoError(t, err)
 
 	t.Logf("ExecuteQueryWithInputs returned %d results", len(results))
@@ -249,9 +250,9 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 	}
 
 	// Also test ExecuteQueryWithInputs for comparison
-	queryResults, err := db.ExecuteQueryWithInputs(
+	queryResults, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-		personID, nameAttr)
+		personID, nameAttr))
 	require.NoError(t, err)
 
 	t.Logf("ExecuteQueryWithInputs returned %d results", len(queryResults))
@@ -427,8 +428,8 @@ func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 	// 4. ExecuteQuery (basic, no inputs)
 	t.Run("ExecuteQuery", func(t *testing.T) {
 		// Use a query that doesn't need inputs by hardcoding the entity lookup
-		queryResults, err := db.ExecuteQuery(
-			`[:find ?v :where [?e :person/name ?v]]`)
+		queryResults, err := executor.CollectTuples(db.Query(
+			`[:find ?v :where [?e :person/name ?v]]`))
 		require.NoError(t, err)
 
 		count := len(queryResults)
@@ -444,9 +445,9 @@ func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 
 	// 5. ExecuteQueryWithInputs (known broken)
 	t.Run("ExecuteQueryWithInputs", func(t *testing.T) {
-		queryResults, err := db.ExecuteQueryWithInputs(
+		queryResults, err := executor.CollectTuples(db.Query(
 			`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-			personID, nameAttr)
+			personID, nameAttr))
 		require.NoError(t, err)
 
 		count := len(queryResults)
@@ -460,9 +461,9 @@ func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 		t.Logf("ExecuteQueryWithInputs: %d results, correct=%v", count, correct)
 	})
 
-	// 6. ExecuteQueryRelation
-	t.Run("ExecuteQueryRelation", func(t *testing.T) {
-		rel, err := db.ExecuteQueryRelation(
+	// 6. Query (streaming Relation)
+	t.Run("Query", func(t *testing.T) {
+		rel, err := db.Query(
 			`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
 			personID, nameAttr)
 		require.NoError(t, err)
@@ -476,8 +477,8 @@ func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 		}
 
 		correct := count == 1
-		results = append(results, methodResult{"ExecuteQueryRelation", count, value, correct})
-		t.Logf("ExecuteQueryRelation: %d results, correct=%v", count, correct)
+		results = append(results, methodResult{"Query", count, value, correct})
+		t.Logf("Query (streaming): %d results, correct=%v", count, correct)
 	})
 
 	// 7. QueryInto

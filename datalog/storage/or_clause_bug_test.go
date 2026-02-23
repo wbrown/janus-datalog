@@ -59,7 +59,7 @@ func TestOrClauseBug(t *testing.T) {
 	 [?t :task/type ?type]
 	 [?t :task/type :type/a]]`
 
-	results, err := db.ExecuteQuery(queryWithoutOr)
+	results, err := executor.CollectTuples(db.Query(queryWithoutOr))
 	assert.NoError(t, err)
 	t.Logf("Without or (expect 1 result with :type/a): %d results", len(results))
 	for _, r := range results {
@@ -77,7 +77,7 @@ func TestOrClauseBug(t *testing.T) {
 	 (or [?t :task/type :type/a]
 	     [?t :task/type :type/b])]`
 
-	results, err = db.ExecuteQuery(queryWithOr)
+	results, err = executor.CollectTuples(db.Query(queryWithOr))
 	assert.NoError(t, err)
 	t.Logf("With or (expect 2 results with :type/a or :type/b): %d results", len(results))
 	for _, r := range results {

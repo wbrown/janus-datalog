@@ -57,7 +57,7 @@ The most direct path. An EDN string is parsed, planned, and executed:
 results, err := d.Query(`[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
 ```
 
-**Call chain**: `Query` → `resolveQuery` (detects string → calls `parser.ParseQuery`) → `ExecuteQueryWithInputs` → planner → executor → `[][]interface{}`
+**Call chain**: `Query` → `resolveQuery` (detects string → calls `parser.ParseQuery`) → planner → executor → `executor.Relation` (streaming)
 
 ### Entry Point 2: Query Builder (`qb/`)
 
@@ -219,7 +219,7 @@ For each phase in plan:
     ├── DataPattern  → matcher.Match(pattern, bindings) → new StreamingRelation
     ├── Expression   → evaluate over existing relations → add symbol (lazy)
     ├── Predicate    → filter existing relations (lazy)
-    ├── Subquery     → recursive ExecuteQuery
+    ├── Subquery     → recursive Query
     ├── NOT clause   → anti-join (filter where inner query matches)
     └── OR clause    → union branches or per-tuple fallback
   After each clause: collapse relation groups (join on shared symbols)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 	"github.com/wbrown/janus-datalog/datalog/storage"
@@ -434,10 +435,10 @@ func TestSaveStructCardinalityOne(t *testing.T) {
 
 	// Verify there's only ONE age value (not both 30 and 31)
 	// Query for all age values of this entity
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?age :in $ ?e :where [?e :person/age ?age]]`,
 		id,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -478,10 +479,10 @@ func TestSaveStructCardinalityMany(t *testing.T) {
 	}
 
 	// Verify initial tags
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?tag :in $ ?e :where [?e :person-with-tags/tags ?tag]]`,
 		id,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -501,10 +502,10 @@ func TestSaveStructCardinalityMany(t *testing.T) {
 	}
 
 	// Verify only new tags exist
-	results, err = db.ExecuteQueryWithInputs(
+	results, err = executor.CollectTuples(db.Query(
 		`[:find ?tag :in $ ?e :where [?e :person-with-tags/tags ?tag]]`,
 		id,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -569,10 +570,10 @@ func TestNilVsEmptySliceSemantics(t *testing.T) {
 	}
 
 	// Verify tags unchanged
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?tag :in $ ?e :where [?e :person-with-tags/tags ?tag]]`,
 		id,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -592,10 +593,10 @@ func TestNilVsEmptySliceSemantics(t *testing.T) {
 	}
 
 	// Verify tags cleared
-	results, err = db.ExecuteQueryWithInputs(
+	results, err = executor.CollectTuples(db.Query(
 		`[:find ?tag :in $ ?e :where [?e :person-with-tags/tags ?tag]]`,
 		id,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -668,10 +669,10 @@ func TestSaveStructUpsertSemantics(t *testing.T) {
 	}
 
 	// Verify only one value for each attribute (no duplicates)
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?age :in $ ?e :where [?e :person/age ?age]]`,
 		id,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -741,10 +742,10 @@ func TestPullInto_CardinalityManyRefs(t *testing.T) {
 	t.Logf("Created Alice with ID: %s", aliceID.L85()[:20])
 
 	// Verify all 5 friends are stored via direct query
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?f :in $ ?alice :where [?alice :person-with-friend-refs/friends ?f]]`,
 		aliceID,
-	)
+	))
 	if err != nil {
 		t.Fatalf("direct query failed: %v", err)
 	}
@@ -832,10 +833,10 @@ func TestPullInto_CardinalityManyRefs_ManualSchema(t *testing.T) {
 	t.Logf("Created Alice with ID: %s", aliceID.L85()[:20])
 
 	// Verify all 5 friends are stored via direct query
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?f :in $ ?alice :where [?alice :person-with-friend-refs/friends ?f]]`,
 		aliceID,
-	)
+	))
 	if err != nil {
 		t.Fatalf("direct query failed: %v", err)
 	}
@@ -921,10 +922,10 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 	}
 
 	// Verify query also works (sanity check)
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name ?age :in $ ?e :where [?e :person/name ?name] [?e :person/age ?age]]`,
 		id,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1272,10 +1273,10 @@ func TestSaveStructAndPullInto_WorldEntity(t *testing.T) {
 	// This mimics store_world.go findWorldEntity() + GetWorldTags()
 	t.Run("QueryThenPullInto", func(t *testing.T) {
 		// First, let's see what's actually stored for this entity
-		debugTuples, err := db.ExecuteQueryWithInputs(
+		debugTuples, err := executor.CollectTuples(db.Query(
 			`[:find ?a ?v :in $ ?e :where [?e ?a ?v]]`,
 			worldID,
-		)
+		))
 		if err != nil {
 			t.Fatalf("debug query failed: %v", err)
 		}
@@ -1286,10 +1287,10 @@ func TestSaveStructAndPullInto_WorldEntity(t *testing.T) {
 
 		// Check if the type attribute is stored correctly
 		// Note: struct tag "entity/type" contains "/" so it's a full path :entity/type
-		typeTuples, err := db.ExecuteQueryWithInputs(
+		typeTuples, err := executor.CollectTuples(db.Query(
 			`[:find ?type :in $ ?e :where [?e :entity/type ?type]]`,
 			worldID,
-		)
+		))
 		if err != nil {
 			t.Fatalf("type query failed: %v", err)
 		}
@@ -1300,12 +1301,12 @@ func TestSaveStructAndPullInto_WorldEntity(t *testing.T) {
 
 		// Query to find the world entity by type and map (like findWorldEntity)
 		// Note: struct tags with "/" are treated as full paths, not prefixed with struct name
-		tuples, err := db.ExecuteQueryWithInputs(
+		tuples, err := executor.CollectTuples(db.Query(
 			`[:find ?e :in $ ?map :where
 			  [?e :entity/type :entity.type/world]
 			  [?e :entity/map ?map]]`,
 			mapID,
-		)
+		))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -1464,10 +1465,10 @@ func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
 	t.Logf("Created dungeon with ID: %s", dungeonID.L85())
 
 	// Query raw datoms to verify all hooks are stored
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e :where [?e :dungeon/hooks ?v]]`,
 		dungeonID,
-	)
+	))
 	if err != nil {
 		t.Fatalf("direct query failed: %v", err)
 	}

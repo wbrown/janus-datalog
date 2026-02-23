@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -94,9 +95,9 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 		})
 		defer db.SetAnnotationHandler(nil)
 
-		results, err := db.ExecuteQueryWithInputs(
+		results, err := executor.CollectTuples(db.Query(
 			`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
-			personID)
+			personID))
 		require.NoError(t, err)
 		require.Len(t, results, 1)
 		assert.Equal(t, "Charlie", results[0][0])
@@ -112,9 +113,9 @@ func TestEACacheBypass_Reproduction(t *testing.T) {
 		})
 		defer db.SetAnnotationHandler(nil)
 
-		results, err := db.ExecuteQueryWithInputs(
+		results, err := executor.CollectTuples(db.Query(
 			`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-			personID, nameAttr)
+			personID, nameAttr))
 		require.NoError(t, err)
 		require.Len(t, results, 1, "Should return 1 result (LWW winner)")
 		assert.Equal(t, "Charlie", results[0][0])
@@ -145,15 +146,15 @@ func TestEACacheBypass_CardinalityOne(t *testing.T) {
 			}
 
 			// A as constant
-			constantResults, err := db.ExecuteQueryWithInputs(
+			constantResults, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
-				personID)
+				personID))
 			require.NoError(t, err)
 
 			// A as scalar input
-			inputResults, err := db.ExecuteQueryWithInputs(
+			inputResults, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, nameAttr)
+				personID, nameAttr))
 			require.NoError(t, err)
 
 			require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result", mode.name)
@@ -186,15 +187,15 @@ func TestEACacheBypass_CardinalityMany(t *testing.T) {
 			require.NoError(t, err)
 
 			// A as constant
-			constantResults, err := db.ExecuteQueryWithInputs(
+			constantResults, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e :where [?e :person/tags ?v]]`,
-				personID)
+				personID))
 			require.NoError(t, err)
 
 			// A as scalar input
-			inputResults, err := db.ExecuteQueryWithInputs(
+			inputResults, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, tagsAttr)
+				personID, tagsAttr))
 			require.NoError(t, err)
 
 			require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result (add-wins)", mode.name)
@@ -220,15 +221,15 @@ func TestEACacheBypass_CardinalityVector(t *testing.T) {
 			require.NoError(t, err)
 
 			// A as constant
-			constantResults, err := db.ExecuteQueryWithInputs(
+			constantResults, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e :where [?e :doc/content ?v]]`,
-				docID)
+				docID))
 			require.NoError(t, err)
 
 			// A as scalar input
-			inputResults, err := db.ExecuteQueryWithInputs(
+			inputResults, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				docID, contentAttr)
+				docID, contentAttr))
 			require.NoError(t, err)
 
 			require.Len(t, constantResults, 1, "[%s] A-as-constant: should return 1 result (resolved vector)", mode.name)
@@ -259,9 +260,9 @@ func TestEACacheBypass_TupleInput(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
-				[]any{personID, nameAttr})
+				[]any{personID, nameAttr}))
 			require.NoError(t, err)
 			require.Len(t, results, 1, "[%s] Tuple input should return 1 result", mode.name)
 			assert.Equal(t, "Charlie", results[0][0])
@@ -286,12 +287,12 @@ func TestEACacheBypass_RelationInput(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
 				[][]any{
 					{person1, nameAttr},
 					{person2, ageAttr},
-				})
+				}))
 			require.NoError(t, err)
 			require.Len(t, results, 2, "[%s] Relation input should return 2 results", mode.name)
 		})
@@ -317,10 +318,10 @@ func TestEACacheBypass_CollectionEWithScalarA(t *testing.T) {
 				}
 			}
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?v :in $ [?e ...] ?a :where [?e ?a ?v]]`,
 				[]datalog.Identity{entities[0], entities[1], entities[2]},
-				nameAttr)
+				nameAttr))
 			require.NoError(t, err)
 			require.Len(t, results, 3, "[%s] Should return 3 results (one LWW winner per entity)", mode.name)
 		})
@@ -346,9 +347,9 @@ func TestEACacheBypass_NonexistentAttribute(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, ageAttr)
+				personID, ageAttr))
 			require.NoError(t, err)
 			assert.Len(t, results, 0, "[%s] Nonexistent attribute should return 0 results", mode.name)
 		})
@@ -369,9 +370,9 @@ func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, nameAttr)
+				personID, nameAttr))
 			require.NoError(t, err)
 			require.Len(t, results, 1)
 			assert.Equal(t, "Alice", results[0][0])
@@ -381,9 +382,9 @@ func TestEACacheBypass_CacheInvalidation(t *testing.T) {
 			_, err = tx2.Commit()
 			require.NoError(t, err)
 
-			results, err = db.ExecuteQueryWithInputs(
+			results, err = executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, nameAttr)
+				personID, nameAttr))
 			require.NoError(t, err)
 			require.Len(t, results, 1)
 			assert.Equal(t, "Bob", results[0][0], "[%s] Should see new value after write", mode.name)
@@ -412,12 +413,12 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 			_, err = tx2.Commit()
 			require.NoError(t, err)
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
 				[][]any{
 					{person1, nameAttr},
 					{person1, tagsAttr},
-				})
+				}))
 			require.NoError(t, err)
 			assert.Len(t, results, 3,
 				"[%s] Mixed cardinalities: 1 name + 2 tags = 3 results, got %d", mode.name, len(results))
@@ -485,11 +486,11 @@ func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
 
 	// Query: for each entity in the collection, look up its config/attr to get ?a,
 	// then look up [?e ?a ?v]. After pattern 1, binding has 2 tuples with varying A.
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?a ?v :in $ [?e ...] :where
 		  [?e :config/attr ?a]
 		  [?e ?a ?v]]`,
-		[]interface{}{entity1, entity2})
+		[]interface{}{entity1, entity2}))
 	require.NoError(t, err)
 	require.Len(t, results, 2, "Should get 2 results (one per entity)")
 
@@ -525,12 +526,12 @@ func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
 				events = append(events, e)
 			})
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
 				[][]any{
 					{person1, nameAttr},
 					{person1, contentAttr},
-				})
+				}))
 			require.NoError(t, err)
 
 			db.SetAnnotationHandler(nil)
@@ -562,12 +563,12 @@ func TestEACacheBypass_CacheMissFallback(t *testing.T) {
 			_, err := tx.Commit()
 			require.NoError(t, err)
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
 				[][]any{
 					{person1, nameAttr},
 					{person2, nameAttr},
-				})
+				}))
 			require.NoError(t, err)
 			assert.Len(t, results, 1,
 				"[%s] Should return 1 result (Alice only, nonexistent entity skipped)", mode.name)
@@ -610,11 +611,11 @@ func TestEACacheBypass_JoinBoundA(t *testing.T) {
 			_, err = tx.Commit()
 			require.NoError(t, err)
 
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?meta :where
 				  [?meta :meta/target-attr ?a]
 				  [?person ?a ?v]]`,
-				metaID)
+				metaID))
 			require.NoError(t, err)
 			require.Len(t, results, 1,
 				"[%s] Join-bound A should return 1 result", mode.name)
@@ -673,8 +674,8 @@ func BenchmarkEACacheBypass(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					e := entities[i%100]
-					results, err := db.ExecuteQueryWithInputs(
-						`[:find ?v :in $ ?e :where [?e :person/name ?v]]`, e)
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e :where [?e :person/name ?v]]`, e))
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -688,8 +689,8 @@ func BenchmarkEACacheBypass(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					e := entities[i%100]
-					results, err := db.ExecuteQueryWithInputs(
-						`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`, e, nameAttr)
+					results, err := executor.CollectTuples(db.Query(
+						`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`, e, nameAttr))
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -703,9 +704,9 @@ func BenchmarkEACacheBypass(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					e := entities[i%100]
-					results, err := db.ExecuteQueryWithInputs(
+					results, err := executor.CollectTuples(db.Query(
 						`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
-						[]any{e, nameAttr})
+						[]any{e, nameAttr}))
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -723,9 +724,9 @@ func BenchmarkEACacheBypass(b *testing.B) {
 				}
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					results, err := db.ExecuteQueryWithInputs(
+					results, err := executor.CollectTuples(db.Query(
 						`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
-						relInput)
+						relInput))
 					if err != nil {
 						b.Fatal(err)
 					}

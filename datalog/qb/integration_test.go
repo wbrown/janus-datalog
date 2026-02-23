@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/qb"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
@@ -93,7 +94,7 @@ func TestIntegration_BasicQuery(t *testing.T) {
 		Where(qb.Pat(e, PersonName, name)).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestIntegration_JoinQuery(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestIntegration_PredicateQuery(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestIntegration_MultiplePredicates(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -252,7 +253,7 @@ func TestIntegration_AggregationQuery(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -301,7 +302,7 @@ func TestIntegration_CountAggregation(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -344,7 +345,7 @@ func TestIntegration_InputParameters(t *testing.T) {
 		MustBuild()
 
 	// Find person named "Alice" and return their age
-	results, err := db.ExecuteQueryWithInputs(q, "Alice")
+	results, err := executor.CollectTuples(db.Query(q, "Alice"))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -384,7 +385,7 @@ func TestIntegration_CollectionInput(t *testing.T) {
 		MustBuild()
 
 	// Find people named Alice or Bob and their ages
-	results, err := db.ExecuteQueryWithInputs(q, []string{"Alice", "Bob"})
+	results, err := executor.CollectTuples(db.Query(q, []string{"Alice", "Bob"}))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -423,7 +424,7 @@ func TestIntegration_OrderBy(t *testing.T) {
 		OrderBy(qb.Desc(age)).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -619,12 +620,12 @@ func TestIntegration_CompareWithEDN(t *testing.T) {
 		MustBuild()
 
 	// Execute both
-	ednResults, err := db.ExecuteQuery(ednQuery)
+	ednResults, err := executor.CollectTuples(db.Query(ednQuery))
 	if err != nil {
 		t.Fatalf("EDN query failed: %v", err)
 	}
 
-	builtResults, err := db.ExecuteQuery(builtQuery)
+	builtResults, err := executor.CollectTuples(db.Query(builtQuery))
 	if err != nil {
 		t.Fatalf("Built query failed: %v", err)
 	}
@@ -674,7 +675,7 @@ func TestIntegration_ConstantValue(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -704,7 +705,7 @@ func TestIntegration_BooleanPredicate(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -731,7 +732,7 @@ func TestIntegration_AvgAggregation(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -769,12 +770,12 @@ func TestIntegration_MinMaxAggregation(t *testing.T) {
 		Where(qb.Pat(e, PersonSalary, salary)).
 		MustBuild()
 
-	minResults, err := db.ExecuteQuery(minQ)
+	minResults, err := executor.CollectTuples(db.Query(minQ))
 	if err != nil {
 		t.Fatalf("Min query failed: %v", err)
 	}
 
-	maxResults, err := db.ExecuteQuery(maxQ)
+	maxResults, err := executor.CollectTuples(db.Query(maxQ))
 	if err != nil {
 		t.Fatalf("Max query failed: %v", err)
 	}
@@ -813,7 +814,7 @@ func TestIntegration_ThreeWayJoin(t *testing.T) {
 		).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -905,7 +906,7 @@ func TestIntegration_TupleInput(t *testing.T) {
 		MustBuild()
 
 	// Find person with name "Alice" and age 30
-	results, err := db.ExecuteQueryWithInputs(q, []interface{}{"Alice", int64(30)})
+	results, err := executor.CollectTuples(db.Query(q, []interface{}{"Alice", int64(30)}))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -950,10 +951,10 @@ func TestIntegration_RelationInput(t *testing.T) {
 		MustBuild()
 
 	// Find people matching (name, city) pairs
-	results, err := db.ExecuteQueryWithInputs(q, [][]interface{}{
+	results, err := executor.CollectTuples(db.Query(q, [][]interface{}{
 		{"Alice", "NYC"},
 		{"Eve", "LA"},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -995,10 +996,10 @@ func TestIntegration_RelationInputNoMatch(t *testing.T) {
 		MustBuild()
 
 	// Alice is in NYC, not LA - should not match
-	results, err := db.ExecuteQueryWithInputs(q, [][]interface{}{
+	results, err := executor.CollectTuples(db.Query(q, [][]interface{}{
 		{"Alice", "LA"},
 		{"Bob", "NYC"},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1031,7 +1032,7 @@ func TestIntegration_MultipleScalarInputs(t *testing.T) {
 		MustBuild()
 
 	// Find Alice in NYC
-	results, err := db.ExecuteQueryWithInputs(q, "Alice", "NYC")
+	results, err := executor.CollectTuples(db.Query(q, "Alice", "NYC"))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1072,12 +1073,12 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 			).
 			MustBuild()
 
-		ednResults, err := db.ExecuteQueryWithInputs(ednQuery, "Bob")
+		ednResults, err := executor.CollectTuples(db.Query(ednQuery, "Bob"))
 		if err != nil {
 			t.Fatalf("EDN query failed: %v", err)
 		}
 
-		builtResults, err := db.ExecuteQueryWithInputs(builtQuery, "Bob")
+		builtResults, err := executor.CollectTuples(db.Query(builtQuery, "Bob"))
 		if err != nil {
 			t.Fatalf("Built query failed: %v", err)
 		}
@@ -1113,12 +1114,12 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 			).
 			MustBuild()
 
-		ednResults, err := db.ExecuteQueryWithInputs(ednQuery, []string{"Alice", "Charlie"})
+		ednResults, err := executor.CollectTuples(db.Query(ednQuery, []string{"Alice", "Charlie"}))
 		if err != nil {
 			t.Fatalf("EDN query failed: %v", err)
 		}
 
-		builtResults, err := db.ExecuteQueryWithInputs(builtQuery, []string{"Alice", "Charlie"})
+		builtResults, err := executor.CollectTuples(db.Query(builtQuery, []string{"Alice", "Charlie"}))
 		if err != nil {
 			t.Fatalf("Built query failed: %v", err)
 		}
@@ -1162,12 +1163,12 @@ func TestIntegration_CompareInputBindingsWithEDN(t *testing.T) {
 			{"Bob", "LA"},
 		}
 
-		ednResults, err := db.ExecuteQueryWithInputs(ednQuery, input)
+		ednResults, err := executor.CollectTuples(db.Query(ednQuery, input))
 		if err != nil {
 			t.Fatalf("EDN query failed: %v", err)
 		}
 
-		builtResults, err := db.ExecuteQueryWithInputs(builtQuery, input)
+		builtResults, err := executor.CollectTuples(db.Query(builtQuery, input))
 		if err != nil {
 			t.Fatalf("Built query failed: %v", err)
 		}
@@ -1207,7 +1208,7 @@ func TestIntegration_ComparisonBinding(t *testing.T) {
 		OrderBy(qb.Asc(name)).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1270,12 +1271,12 @@ func TestIntegration_ComparisonBindingEDNEquivalence(t *testing.T) {
 		).
 		MustBuild()
 
-	ednResults, err := db.ExecuteQuery(ednQuery)
+	ednResults, err := executor.CollectTuples(db.Query(ednQuery))
 	if err != nil {
 		t.Fatalf("EDN query failed: %v", err)
 	}
 
-	builtResults, err := db.ExecuteQuery(builtQuery)
+	builtResults, err := executor.CollectTuples(db.Query(builtQuery))
 	if err != nil {
 		t.Fatalf("Built query failed: %v", err)
 	}
@@ -1311,7 +1312,7 @@ func TestIntegration_ChainedComparisonBinding(t *testing.T) {
 		OrderBy(qb.Asc(name)).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1429,7 +1430,7 @@ func TestIntegration_GetElse(t *testing.T) {
 		OrderBy(qb.Asc(name)).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1488,12 +1489,12 @@ func TestIntegration_GetElseEDNEquivalence(t *testing.T) {
 		).
 		MustBuild()
 
-	ednResults, err := db.ExecuteQuery(ednQuery)
+	ednResults, err := executor.CollectTuples(db.Query(ednQuery))
 	if err != nil {
 		t.Fatalf("EDN query failed: %v", err)
 	}
 
-	builtResults, err := db.ExecuteQuery(builtQuery)
+	builtResults, err := executor.CollectTuples(db.Query(builtQuery))
 	if err != nil {
 		t.Fatalf("Built query failed: %v", err)
 	}
@@ -1526,7 +1527,7 @@ func TestIntegration_MissingPredicate(t *testing.T) {
 		OrderBy(qb.Asc(name)).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1572,12 +1573,12 @@ func TestIntegration_MissingPredicateEDNEquivalence(t *testing.T) {
 		).
 		MustBuild()
 
-	ednResults, err := db.ExecuteQuery(ednQuery)
+	ednResults, err := executor.CollectTuples(db.Query(ednQuery))
 	if err != nil {
 		t.Fatalf("EDN query failed: %v", err)
 	}
 
-	builtResults, err := db.ExecuteQuery(builtQuery)
+	builtResults, err := executor.CollectTuples(db.Query(builtQuery))
 	if err != nil {
 		t.Fatalf("Built query failed: %v", err)
 	}
@@ -1611,7 +1612,7 @@ func TestIntegration_MissingExpression(t *testing.T) {
 		OrderBy(qb.Asc(name)).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1665,7 +1666,7 @@ func TestIntegration_GetSome(t *testing.T) {
 		OrderBy(qb.Asc(name)).
 		MustBuild()
 
-	results, err := db.ExecuteQuery(q)
+	results, err := executor.CollectTuples(db.Query(q))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}

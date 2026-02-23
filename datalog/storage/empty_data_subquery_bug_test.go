@@ -48,7 +48,7 @@ func TestEmptyDataSubqueryBug(t *testing.T) {
 	            $ ?s ?year ?month ?day) [[?open-price]]]]`
 
 	// Execute with default options (EnableFineGrainedPhases=true)
-	results, err := db.ExecuteQueryWithInputs(query, "AAPL")
+	results, err := executor.CollectTuples(db.Query(query, "AAPL"))
 
 	// Should succeed with empty results, NOT fail with projection error
 	if err != nil {
@@ -156,7 +156,7 @@ func TestEmptyDataSubqueryBug_FullGopherStreetQuery(t *testing.T) {
 	            $ ?s ?year ?month ?day) [[?total-volume]]]]`
 
 	// Execute with default options (EnableFineGrainedPhases=true)
-	results, err := db.ExecuteQueryWithInputs(query, "AAPL")
+	results, err := executor.CollectTuples(db.Query(query, "AAPL"))
 
 	if err != nil {
 		t.Logf("BUG REPRODUCED! Error: %v", err)

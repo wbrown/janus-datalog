@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // TestGetElseWithConstantEntity reproduces a bug where get-else fails when
@@ -52,13 +53,13 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 	t.Run("entity from input parameter", func(t *testing.T) {
 		// Pass entity as input parameter - get-else should still work
 		// The entity is constant-bound via :in clause, not from a pattern
-		results, err := db.ExecuteQueryWithInputs(
+		results, err := executor.CollectTuples(db.Query(
 			`[:find ?nick
 			  :in $ ?entity
 			  :where
 			  [(get-else $ ?entity :person/nickname "No Nickname") ?nick]]`,
 			alice,
-		)
+		))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -76,13 +77,13 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 	t.Run("entity from input with default value", func(t *testing.T) {
 		charlie := datalog.NewIdentity("charlie")
 		// Charlie doesn't exist - should return default
-		results, err := db.ExecuteQueryWithInputs(
+		results, err := executor.CollectTuples(db.Query(
 			`[:find ?nick
 			  :in $ ?entity
 			  :where
 			  [(get-else $ ?entity :person/nickname "Unknown") ?nick]]`,
 			charlie,
-		)
+		))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -99,13 +100,13 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 
 	t.Run("missing? with constant entity", func(t *testing.T) {
 		// Similar bug for missing? with constant entity
-		results, err := db.ExecuteQueryWithInputs(
+		results, err := executor.CollectTuples(db.Query(
 			`[:find ?is-missing
 			  :in $ ?entity
 			  :where
 			  [(missing? $ ?entity :person/email) ?is-missing]]`,
 			alice,
-		)
+		))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -122,13 +123,13 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 
 	t.Run("get-else with no patterns at all", func(t *testing.T) {
 		// Edge case: query with ONLY get-else, no patterns
-		results, err := db.ExecuteQueryWithInputs(
+		results, err := executor.CollectTuples(db.Query(
 			`[:find ?name
 			  :in $ ?entity
 			  :where
 			  [(get-else $ ?entity :person/name "Anon") ?name]]`,
 			alice,
-		)
+		))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -150,14 +151,14 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 		// Query has a pattern [?i :item/name ?item-name] which creates groups
 		// But get-else uses ?entity which is constant-bound from input
 		// This triggers: len(groups) > 0 && len(unresolvedExprSyms) == 0
-		results, err := db.ExecuteQueryWithInputs(
+		results, err := executor.CollectTuples(db.Query(
 			`[:find ?item-name ?nick
 			  :in $ ?entity
 			  :where
 			  [?i :item/name ?item-name]
 			  [(get-else $ ?entity :person/nickname "No Nickname") ?nick]]`,
 			alice,
-		)
+		))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -176,14 +177,14 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 	})
 
 	t.Run("missing? with unrelated pattern - BUG CASE", func(t *testing.T) {
-		results, err := db.ExecuteQueryWithInputs(
+		results, err := executor.CollectTuples(db.Query(
 			`[:find ?item-name ?is-missing
 			  :in $ ?entity
 			  :where
 			  [?i :item/name ?item-name]
 			  [(missing? $ ?entity :person/email) ?is-missing]]`,
 			alice,
-		)
+		))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}

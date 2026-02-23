@@ -478,7 +478,7 @@ func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr 
 	start := time.Now()
 	var result executor.Relation
 	if len(goInputs) > 0 {
-		result, err = db.ExecuteQueryRelation(q, goInputs...)
+		result, err = db.Query(q, goInputs...)
 	} else {
 		opts := storage.DefaultPlannerOptions()
 		opts.EnableSubqueryDecorrelation = enableDecorrelation

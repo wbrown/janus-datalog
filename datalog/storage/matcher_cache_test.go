@@ -379,7 +379,7 @@ func BenchmarkCachePathTupleBuilding(b *testing.B) {
 	b.Run("Query_CacheHit", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			result, _ := db.ExecuteQuery(`[:find ?e ?name :where [?e :person/name ?name]]`)
+			result, _ := executor.CollectTuples(db.Query(`[:find ?e ?name :where [?e :person/name ?name]]`))
 			if len(result) != 100 {
 				b.Fatalf("expected 100 results, got %d", len(result))
 			}
@@ -478,7 +478,7 @@ func BenchmarkCachePathWithBindings(b *testing.B) {
 	b.Run("JoinQuery_CachePath", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			result, err := db.ExecuteQuery(`[:find ?e ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
+			result, err := executor.CollectTuples(db.Query(`[:find ?e ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`))
 			if err != nil {
 				b.Fatal(err)
 			}

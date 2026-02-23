@@ -77,7 +77,7 @@ func BenchmarkHashJoinIteration(b *testing.B) {
 	_, _ = tx.Commit()
 
 	// Warm up
-	_, _ = db.ExecuteQuery(`[:find ?e :where [?e :task/scenario ?s]]`)
+	_, _ = executor.CollectTuples(db.Query(`[:find ?e :where [?e :task/scenario ?s]]`))
 
 	matcher := db.Matcher().(*BadgerMatcher)
 	pattern := &query.DataPattern{

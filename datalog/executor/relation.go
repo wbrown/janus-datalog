@@ -38,6 +38,32 @@ func collectTuplesInto(dest *[]Tuple, rel Relation) {
 	it.Close()
 }
 
+// CollectTuples materializes a Relation into [][]interface{}.
+// Accepts the (Relation, error) pair returned by Query() directly:
+//
+//	results, err := executor.CollectTuples(db.Query(...))
+func CollectTuples(rel Relation, err error) ([][]interface{}, error) {
+	if err != nil {
+		return nil, err
+	}
+	if rel == nil {
+		return [][]interface{}{}, nil
+	}
+	var tuples [][]interface{}
+	it := rel.Iterator()
+	defer it.Close()
+	for it.Next() {
+		src := it.Tuple()
+		t := make([]interface{}, len(src))
+		copy(t, src)
+		tuples = append(tuples, t)
+	}
+	if tuples == nil {
+		tuples = [][]interface{}{}
+	}
+	return tuples, nil
+}
+
 // Relation represents a set of tuples with named symbols
 type Relation interface {
 	// Symbols returns the symbols (attribute names) of this relation
