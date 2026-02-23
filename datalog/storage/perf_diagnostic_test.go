@@ -188,8 +188,8 @@ func BenchmarkDatomFromKeyToTuple(b *testing.B) {
 			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
-	tupleBuilder := query.NewInternedTupleBuilder(pattern, columns)
+	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+	tupleBuilder := query.NewInternedTupleBuilder(pattern, symbols)
 
 	b.ResetTimer()
 	b.ReportAllocs()

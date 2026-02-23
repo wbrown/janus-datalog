@@ -63,10 +63,10 @@ The proper fix requires:
 1. **Query optimization**: Reorder patterns to use available constraints early
 2. **Constraint propagation**: Understand relationships between attributes and constraints
 3. **Index support**: Add composite indices for common query patterns (symbol+date)
-4. **Single-row optimization**: Special handling for single-row binding relations
+4. **Single-tuple optimization**: Special handling for single-tuple binding relations
 
 ## Impact
 
-Current: Fetching 7088 rows per subquery execution (37 times = 261,256 rows)
-Optimal: Fetching ~200 rows per subquery execution (37 times = 7,400 rows)
+Current: Fetching 7088 tuples per subquery execution (37 times = 261,256 tuples)
+Optimal: Fetching ~200 tuples per subquery execution (37 times = 7,400 tuples)
 Performance impact: ~35x more data fetched than necessary

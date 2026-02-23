@@ -193,7 +193,7 @@ func TestAggregateMixedWithNonAggregated(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 
-	// Should have 2 rows (Electronics and Books)
+	// Should have 2 tuples (Electronics and Books)
 	assert.Equal(t, 2, result.Size())
 
 	// Check results

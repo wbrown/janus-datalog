@@ -501,9 +501,9 @@ func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 	require.Len(t, result, 3, "should return one result per entity")
 
 	// Verify each entity got its LWW winner
-	for _, row := range result {
-		entity := row[0].(datalog.Identity)
-		name := row[1].(string)
+	for _, tuple := range result {
+		entity := tuple[0].(datalog.Identity)
+		name := tuple[1].(string)
 
 		hash := entity.Hash()
 		expected := expectedNames[string(hash[:])]
@@ -557,8 +557,8 @@ func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
 	require.Len(t, result, 5, "should return one result per entity")
 
 	// All should have "completed" (last write)
-	for _, row := range result {
-		status := row[1].(string)
+	for _, tuple := range result {
+		status := tuple[1].(string)
 		assert.Equal(t, "completed", status, "all entities should have LWW winner")
 	}
 }

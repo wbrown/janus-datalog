@@ -11,14 +11,14 @@ import (
 
 func TestExecuteAggregations(t *testing.T) {
 	// Create test data
-	columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?score")}
+	symbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?score")}
 	tuples := []Tuple{
 		{"Alice", int64(30), 85.5},
 		{"Bob", int64(25), 92.0},
 		{"Charlie", int64(35), 78.5},
 		{"Dave", int64(25), 88.0},
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	tests := []struct {
 		name         string
@@ -36,9 +36,9 @@ func TestExecuteAggregations(t *testing.T) {
 			expectedCols: []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age")},
 			expectedRows: 4,
 			validate: func(t *testing.T, result Relation) {
-				// Should have all 4 rows with just name and age
+				// Should have all 4 tuples with just name and age
 				if result.Size() != 4 {
-					t.Errorf("expected 4 rows, got %d", result.Size())
+					t.Errorf("expected 4 tuples, got %d", result.Size())
 				}
 			},
 		},
@@ -106,7 +106,7 @@ func TestExecuteAggregations(t *testing.T) {
 			expectedCols: []query.Symbol{datalog.NewSymbol("?age"), datalog.NewSymbol("(count ?name)"), datalog.NewSymbol("(avg ?score)")},
 			expectedRows: 3, // 3 unique ages: 25, 30, 35
 			validate: func(t *testing.T, result Relation) {
-				// Find the row for age 25 (should have count=2, avg=90)
+				// Find the tuple for age 25 (should have count=2, avg=90)
 				it := result.Iterator()
 				defer it.Close()
 				found25 := false
@@ -159,14 +159,14 @@ func TestExecuteAggregations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ExecuteAggregations(rel, tt.findElements)
 
-			// Check column count
-			if len(result.Columns()) != len(tt.expectedCols) {
-				t.Errorf("expected %d columns, got %d", len(tt.expectedCols), len(result.Columns()))
+			// Check symbol count
+			if len(result.Symbols()) != len(tt.expectedCols) {
+				t.Errorf("expected %d symbols, got %d", len(tt.expectedCols), len(result.Symbols()))
 			}
 
-			// Check row count
+			// Check tuple count
 			if result.Size() != tt.expectedRows {
-				t.Errorf("expected %d rows, got %d", tt.expectedRows, result.Size())
+				t.Errorf("expected %d tuples, got %d", tt.expectedRows, result.Size())
 			}
 
 			// Run custom validation
@@ -178,13 +178,13 @@ func TestExecuteAggregations(t *testing.T) {
 }
 
 func TestProjectColumns(t *testing.T) {
-	columns := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")}
+	symbols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")}
 	tuples := []Tuple{
 		{1, 2, 3, 4},
 		{5, 6, 7, 8},
 		{9, 10, 11, 12},
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	tests := []struct {
 		name         string
@@ -231,40 +231,40 @@ func TestProjectColumns(t *testing.T) {
 				t.Fatalf("Project failed: %v", err)
 			}
 
-			// Check columns
-			resultCols := result.Columns()
+			// Check symbols
+			resultCols := result.Symbols()
 			if len(resultCols) != len(tt.expectedCols) {
-				t.Fatalf("expected %d columns, got %d", len(tt.expectedCols), len(resultCols))
+				t.Fatalf("expected %d symbols, got %d", len(tt.expectedCols), len(resultCols))
 			}
 			for i, col := range resultCols {
 				if col != tt.expectedCols[i] {
-					t.Errorf("column %d: expected %s, got %s", i, tt.expectedCols[i], col)
+					t.Errorf("symbol %d: expected %s, got %s", i, tt.expectedCols[i], col)
 				}
 			}
 
 			// Check values
 			it := result.Iterator()
 			defer it.Close()
-			row := 0
+			idx := 0
 			for it.Next() {
 				tuple := it.Tuple()
-				if row >= len(tt.expectedVals) {
-					t.Errorf("too many rows: expected %d", len(tt.expectedVals))
+				if idx >= len(tt.expectedVals) {
+					t.Errorf("too many tuples: expected %d", len(tt.expectedVals))
 					break
 				}
-				expected := tt.expectedVals[row]
+				expected := tt.expectedVals[idx]
 				if len(tuple) != len(expected) {
-					t.Errorf("row %d: expected %d values, got %d", row, len(expected), len(tuple))
+					t.Errorf("tuple %d: expected %d values, got %d", idx, len(expected), len(tuple))
 				}
 				for i, val := range tuple {
 					if val != expected[i] {
-						t.Errorf("row %d col %d: expected %v, got %v", row, i, expected[i], val)
+						t.Errorf("tuple %d col %d: expected %v, got %v", idx, i, expected[i], val)
 					}
 				}
-				row++
+				idx++
 			}
-			if row != len(tt.expectedVals) {
-				t.Errorf("expected %d rows, got %d", len(tt.expectedVals), row)
+			if idx != len(tt.expectedVals) {
+				t.Errorf("expected %d tuples, got %d", len(tt.expectedVals), idx)
 			}
 		})
 	}
@@ -276,13 +276,13 @@ func TestAggregationWithTimeValues(t *testing.T) {
 	date2 := time.Date(2023, 6, 10, 0, 0, 0, 0, time.UTC)
 	date3 := time.Date(2023, 3, 20, 0, 0, 0, 0, time.UTC)
 
-	columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?date")}
+	symbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?date")}
 	tuples := []Tuple{
 		{"Alice", date1},
 		{"Bob", date2},
 		{"Charlie", date3},
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	// Test min/max with dates
 	result := ExecuteAggregations(rel, []query.FindElement{
@@ -291,7 +291,7 @@ func TestAggregationWithTimeValues(t *testing.T) {
 	})
 
 	if result.Size() != 1 {
-		t.Fatalf("expected 1 row, got %d", result.Size())
+		t.Fatalf("expected 1 tuple, got %d", result.Size())
 	}
 
 	it := result.Iterator()
@@ -340,7 +340,7 @@ func TestEmptyRelationAggregation(t *testing.T) {
 	})
 
 	if result.Size() != 0 {
-		t.Fatalf("expected 0 rows (empty result), got %d", result.Size())
+		t.Fatalf("expected 0 tuples (empty result), got %d", result.Size())
 	}
 
 	// Other aggregates on empty also return empty results
@@ -352,6 +352,6 @@ func TestEmptyRelationAggregation(t *testing.T) {
 	})
 
 	if result.Size() != 0 {
-		t.Fatalf("expected 0 rows (empty result), got %d", result.Size())
+		t.Fatalf("expected 0 tuples (empty result), got %d", result.Size())
 	}
 }

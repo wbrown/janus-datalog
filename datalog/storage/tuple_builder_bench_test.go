@@ -26,7 +26,7 @@ func BenchmarkTupleBuilding(b *testing.B) {
 		},
 	}
 
-	columns := []query.Symbol{
+	symbols := []query.Symbol{
 		datalog.NewSymbol("?e"),
 		datalog.NewSymbol("?a"),
 		datalog.NewSymbol("?v"),
@@ -36,12 +36,12 @@ func BenchmarkTupleBuilding(b *testing.B) {
 	b.Run("DatomToTuple", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_ = query.DatomToTuple(*datom, pattern, columns)
+			_ = query.DatomToTuple(*datom, pattern, symbols)
 		}
 	})
 
 	b.Run("TupleBuilder", func(b *testing.B) {
-		tb := query.NewTupleBuilder(pattern, columns)
+		tb := query.NewTupleBuilder(pattern, symbols)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -50,7 +50,7 @@ func BenchmarkTupleBuilding(b *testing.B) {
 	})
 
 	b.Run("OptimizedTupleBuilder", func(b *testing.B) {
-		tb := query.NewOptimizedTupleBuilder(pattern, columns)
+		tb := query.NewOptimizedTupleBuilder(pattern, symbols)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -59,7 +59,7 @@ func BenchmarkTupleBuilding(b *testing.B) {
 	})
 
 	b.Run("OptimizedTupleBuilder_Pooled", func(b *testing.B) {
-		tb := query.NewOptimizedTupleBuilder(pattern, columns)
+		tb := query.NewOptimizedTupleBuilder(pattern, symbols)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -70,9 +70,9 @@ func BenchmarkTupleBuilding(b *testing.B) {
 	})
 
 	b.Run("OptimizedTupleBuilder_Into", func(b *testing.B) {
-		tb := query.NewOptimizedTupleBuilder(pattern, columns)
+		tb := query.NewOptimizedTupleBuilder(pattern, symbols)
 		// Pre-allocate workspace
-		workspace := make(query.Tuple, len(columns))
+		workspace := make(query.Tuple, len(symbols))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -81,7 +81,7 @@ func BenchmarkTupleBuilding(b *testing.B) {
 	})
 
 	b.Run("InternedTupleBuilder", func(b *testing.B) {
-		tb := query.NewInternedTupleBuilder(pattern, columns)
+		tb := query.NewInternedTupleBuilder(pattern, symbols)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -90,9 +90,9 @@ func BenchmarkTupleBuilding(b *testing.B) {
 	})
 
 	b.Run("InternedTupleBuilder_Into", func(b *testing.B) {
-		tb := query.NewInternedTupleBuilder(pattern, columns)
+		tb := query.NewInternedTupleBuilder(pattern, symbols)
 		// Pre-allocate workspace
-		workspace := make(query.Tuple, len(columns))
+		workspace := make(query.Tuple, len(symbols))
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -106,7 +106,7 @@ func BenchmarkTupleBuildingScenarios(b *testing.B) {
 	scenarios := []struct {
 		name    string
 		pattern *query.DataPattern
-		columns []query.Symbol
+		symbols []query.Symbol
 	}{
 		{
 			name: "2_vars",
@@ -117,7 +117,7 @@ func BenchmarkTupleBuildingScenarios(b *testing.B) {
 					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
-			columns: []query.Symbol{
+			symbols: []query.Symbol{
 				datalog.NewSymbol("?e"),
 				datalog.NewSymbol("?v"),
 			},
@@ -131,7 +131,7 @@ func BenchmarkTupleBuildingScenarios(b *testing.B) {
 					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
-			columns: []query.Symbol{
+			symbols: []query.Symbol{
 				datalog.NewSymbol("?e"),
 				datalog.NewSymbol("?a"),
 				datalog.NewSymbol("?v"),
@@ -147,7 +147,7 @@ func BenchmarkTupleBuildingScenarios(b *testing.B) {
 					query.Variable{Name: datalog.NewSymbol("?t")},
 				},
 			},
-			columns: []query.Symbol{
+			symbols: []query.Symbol{
 				datalog.NewSymbol("?e"),
 				datalog.NewSymbol("?a"),
 				datalog.NewSymbol("?v"),
@@ -168,12 +168,12 @@ func BenchmarkTupleBuildingScenarios(b *testing.B) {
 			b.Run("DatomToTuple", func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					_ = query.DatomToTuple(*datom, scenario.pattern, scenario.columns)
+					_ = query.DatomToTuple(*datom, scenario.pattern, scenario.symbols)
 				}
 			})
 
 			b.Run("OptimizedTupleBuilder", func(b *testing.B) {
-				tb := query.NewOptimizedTupleBuilder(scenario.pattern, scenario.columns)
+				tb := query.NewOptimizedTupleBuilder(scenario.pattern, scenario.symbols)
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {

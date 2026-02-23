@@ -154,7 +154,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 				b.Fatalf("Failed to execute query: %v", err)
 			}
 			if result.Size() != 10 {
-				b.Errorf("Expected 10 rows, got %d", result.Size())
+				b.Errorf("Expected 10 tuples, got %d", result.Size())
 			}
 		}
 	})
@@ -175,7 +175,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 				b.Fatalf("Failed to execute query: %v", err)
 			}
 			if result.Size() != 10 {
-				b.Errorf("Expected 10 rows, got %d", result.Size())
+				b.Errorf("Expected 10 tuples, got %d", result.Size())
 			}
 		}
 	})
@@ -198,7 +198,7 @@ func BenchmarkSubqueryExecution(b *testing.B) {
 				b.Fatalf("Failed to execute query: %v", err)
 			}
 			if result.Size() != 10 {
-				b.Errorf("Expected 10 rows, got %d", result.Size())
+				b.Errorf("Expected 10 tuples, got %d", result.Size())
 			}
 		}
 	})
@@ -303,9 +303,9 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 			if err != nil {
 				b.Fatalf("Failed to execute query: %v", err)
 			}
-			// Query groups by day, should have 50 rows (50 days) or less
+			// Query groups by day, should have 50 tuples (50 days) or less
 			if result.Size() < 1 {
-				b.Errorf("Expected at least 1 row, got %d", result.Size())
+				b.Errorf("Expected at least 1 tuple, got %d", result.Size())
 			}
 		}
 	})
@@ -326,9 +326,9 @@ func BenchmarkSubqueryExecutionLarge(b *testing.B) {
 			if err != nil {
 				b.Fatalf("Failed to execute query: %v", err)
 			}
-			// Query groups by day, should have 50 rows (50 days) or less
+			// Query groups by day, should have 50 tuples (50 days) or less
 			if result.Size() < 1 {
-				b.Errorf("Expected at least 1 row, got %d", result.Size())
+				b.Errorf("Expected at least 1 tuple, got %d", result.Size())
 			}
 		}
 	})

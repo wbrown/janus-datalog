@@ -507,14 +507,14 @@ func parseSubqueryPattern(list *edn.Node, bindingNode *edn.Node) (*query.Subquer
 
 // parseBindingForm parses a binding form for subqueries
 // Datomic binding forms:
-//   - ?var         = Scalar binding (expects single row, single column)
-//   - [?var ...]   = Collection binding (collects all values from single column)
-//   - [[?a ?b]]    = Tuple binding (expects single row, multiple columns)
-//   - [[?a ?b] ...] = Relation binding (multiple rows and columns)
+//   - ?var         = Scalar binding (expects single tuple, single symbol)
+//   - [?var ...]   = Collection binding (collects all values from single symbol)
+//   - [[?a ?b]]    = Tuple binding (expects single tuple, multiple symbols)
+//   - [[?a ?b] ...] = Relation binding (multiple tuples and symbols)
 func parseBindingForm(node *edn.Node) (query.BindingForm, error) {
 	switch node.Type {
 	case edn.NodeSymbol:
-		// Scalar binding: ?var (expects one row, one column)
+		// Scalar binding: ?var (expects one tuple, one symbol)
 		sym := datalog.NewSymbol(node.Value)
 		if !sym.IsVariable() {
 			return nil, fmt.Errorf("scalar binding must be a variable, got %s", sym)

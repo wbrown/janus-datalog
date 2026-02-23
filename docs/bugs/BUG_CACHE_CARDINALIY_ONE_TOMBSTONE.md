@@ -41,7 +41,7 @@ Three reproduction scenarios:
 --- FAIL
 
 === RUN   TestCacheRemove_JoinBoundE_RoundTrip
-    Matched rows after Remove(): 1 (expected 0)
+    Matched tuples after Remove(): 1 (expected 0)
     BUG: Query returns stale data after Remove() on CardinalityOne.
 --- FAIL
 
@@ -210,7 +210,7 @@ affected resolution path.
 ### 2. Test matrix
 
 Every scenario must be tested through every resolution path. The scenarios
-are the rows; the resolution paths are the columns.
+are the tuples; the resolution paths are the symbols.
 
 **Scenarios** (operation sequences):
 
@@ -224,7 +224,7 @@ are the rows; the resolution paths are the columns.
 | S6 | Two entities, remove one | Removed entity absent, other unaffected |
 | S7 | Set() → Remove (uses Set not Add) | Attribute absent |
 
-**Resolution paths** (columns):
+**Resolution paths** (symbols):
 
 | Path | How exercised | File |
 |------|---------------|------|
@@ -829,7 +829,7 @@ To trigger the V-bound validation path, we need V as a Variable in the
 pattern, bound via a binding relation. The test needs:
 1. Create an as-of matcher: `matcher.AsOf(tx1Lamport)`
 2. Create a pattern: `[?e :person/name ?name _]` (V is variable)
-3. Create a binding relation with column `?name` containing the test value
+3. Create a binding relation with symbol `?name` containing the test value
 4. Call `asOfMatcher.Match(pattern, bindingRel)`
 5. Count results
 
@@ -853,7 +853,7 @@ func vBoundMatchCountAsOf(t *testing.T, db *Database, a datalog.Keyword,
     }
 
     // Binding relation: single tuple with ?name = v
-    bindingRel := <create relation with column ?name, single row [v]>
+    bindingRel := <create relation with symbol ?name, single tuple [v]>
 
     results, err := asOfMatcher.Match(pattern, bindingRel)
     // ... count and return
@@ -1263,7 +1263,7 @@ Constant and nil input, the code path is:
 
 ```
 Match(pattern, nil)
-  → matchUnboundAsRelation(pattern, columns, constraints)
+  → matchUnboundAsRelation(pattern, symbols, constraints)
     → chooseIndex(e=nil, a=constant, v=constant, tx=nil)
       → returns AVET
     → regular scan + CRDTResolvingIterator
@@ -1301,10 +1301,10 @@ The actual fix was **12 lines** in `matchUnboundAsRelation`.
 
 The key insight (from the user, not Claude): `matchWithVValidation` already
 implements candidate+validate. It takes a binding relation. A constant V
-is just... a single-row binding relation. So:
+is just... a single-tuple binding relation. So:
 
 1. Detect: `e == nil && a != nil && v != nil && card == CardinalityOne`
-2. Create a one-row `MaterializedRelation` containing the V constant
+2. Create a one-tuple `MaterializedRelation` containing the V constant
 3. Call `matchWithVValidation` with it
 4. Done
 
@@ -1342,7 +1342,7 @@ When the fix requires behavior that already exists on a different code
 path, the right question is: "what's the minimal adapter to reach that
 path?" Not: "how do I reimplement that behavior from scratch?"
 
-Here, the adapter was a single-row `MaterializedRelation`. The entire
+Here, the adapter was a single-tuple `MaterializedRelation`. The entire
 `matchWithVValidation` → `validatingVBoundIterator` → `validateCandidate`
 pipeline was already correct. It just needed to be reachable from the
 constant-V code path.

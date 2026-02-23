@@ -37,11 +37,11 @@ func DualTestExecutorVariantsWithBase(base planner.PlannerOptions) []TestExecuto
 	}
 }
 
-// CompareRelations compares two relations for equality (column names and sorted tuples).
+// CompareRelations compares two relations for equality (symbol names and sorted tuples).
 // Returns true if they are equal.
 func CompareRelations(a, b Relation) bool {
-	// Compare columns
-	if !compareColumns(a.Columns(), b.Columns()) {
+	// Compare symbols
+	if !compareSymbols(a.Symbols(), b.Symbols()) {
 		return false
 	}
 
@@ -62,22 +62,22 @@ func CompareRelations(a, b Relation) bool {
 	return true
 }
 
-// CompareRelationsIgnoreColumnOrder compares relations allowing different column orders.
+// CompareRelationsIgnoreColumnOrder compares relations allowing different symbol orders.
 func CompareRelationsIgnoreColumnOrder(a, b Relation) bool {
-	aCols := a.Columns()
-	bCols := b.Columns()
+	aSyms := a.Symbols()
+	bSyms := b.Symbols()
 
-	if len(aCols) != len(bCols) {
+	if len(aSyms) != len(bSyms) {
 		return false
 	}
 
-	// Build column index mapping from b to a's order
-	colMap := make(map[int]int) // b index -> a index
-	for i, aCol := range aCols {
+	// Build symbol index mapping from b to a's order
+	symMap := make(map[int]int) // b index -> a index
+	for i, aSym := range aSyms {
 		found := false
-		for j, bCol := range bCols {
-			if aCol == bCol {
-				colMap[j] = i
+		for j, bSym := range bSyms {
+			if aSym == bSym {
+				symMap[j] = i
 				found = true
 				break
 			}
@@ -89,7 +89,7 @@ func CompareRelationsIgnoreColumnOrder(a, b Relation) bool {
 
 	// Collect tuples
 	aTuples := collectSortedTuples(a)
-	bTuples := collectSortedTuplesReordered(b, colMap)
+	bTuples := collectSortedTuplesReordered(b, symMap)
 
 	if len(aTuples) != len(bTuples) {
 		return false
@@ -108,9 +108,9 @@ func CompareRelationsIgnoreColumnOrder(a, b Relation) bool {
 func RelationDiff(a, b Relation) string {
 	result := ""
 
-	// Compare columns
-	if !compareColumns(a.Columns(), b.Columns()) {
-		result += fmt.Sprintf("Column mismatch:\n  a: %v\n  b: %v\n", a.Columns(), b.Columns())
+	// Compare symbols
+	if !compareSymbols(a.Symbols(), b.Symbols()) {
+		result += fmt.Sprintf("Symbol mismatch:\n  a: %v\n  b: %v\n", a.Symbols(), b.Symbols())
 	}
 
 	// Compare sizes
@@ -139,7 +139,7 @@ func RelationDiff(a, b Relation) string {
 		}
 
 		if !compareTuplesEqual(aTuple, bTuple) {
-			result += fmt.Sprintf("Row %d differs:\n  a: %v\n  b: %v\n", i, aTuple, bTuple)
+			result += fmt.Sprintf("Tuple %d differs:\n  a: %v\n  b: %v\n", i, aTuple, bTuple)
 			diffCount++
 		}
 	}
@@ -155,7 +155,7 @@ func RelationDiff(a, b Relation) string {
 	return result
 }
 
-// FormatRelationSummary formats a relation for display (first 20 rows).
+// FormatRelationSummary formats a relation for display (first 20 tuples).
 func FormatRelationSummary(rel Relation) string {
 	var tuples []string
 	it := rel.Iterator()
@@ -167,12 +167,12 @@ func FormatRelationSummary(rel Relation) string {
 	if rel.Size() > 20 {
 		tuples = append(tuples, fmt.Sprintf("... and %d more", rel.Size()-20))
 	}
-	return fmt.Sprintf("columns=%v, tuples=%v", rel.Columns(), tuples)
+	return fmt.Sprintf("symbols=%v, tuples=%v", rel.Symbols(), tuples)
 }
 
 // Helper functions (unexported)
 
-func compareColumns(a, b []query.Symbol) bool {
+func compareSymbols(a, b []query.Symbol) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -198,13 +198,13 @@ func collectSortedTuples(rel Relation) []Tuple {
 	return tuples
 }
 
-func collectSortedTuplesReordered(rel Relation, colMap map[int]int) []Tuple {
+func collectSortedTuplesReordered(rel Relation, symMap map[int]int) []Tuple {
 	var tuples []Tuple
 	it := rel.Iterator()
 	for it.Next() {
 		origTuple := it.Tuple()
 		newTuple := make(Tuple, len(origTuple))
-		for origIdx, newIdx := range colMap {
+		for origIdx, newIdx := range symMap {
 			newTuple[newIdx] = origTuple[origIdx]
 		}
 		tuples = append(tuples, newTuple)

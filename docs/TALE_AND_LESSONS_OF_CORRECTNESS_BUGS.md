@@ -353,7 +353,7 @@ TestComprehensiveExecutorValidation/all_features_combined
 
 The errors:
 ```
-Legacy error: projection failed: cannot project: column ?total not found
+Legacy error: projection failed: cannot project: symbol ?total not found
 New error: <nil>
 ```
 

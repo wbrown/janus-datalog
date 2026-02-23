@@ -10,7 +10,7 @@ import (
 // SimpleFilter is a simple filter function that implements the Filter interface
 type SimpleFilter struct {
 	filterFunc func(Tuple) bool
-	columns    []query.Symbol
+	symbols    []query.Symbol
 }
 
 // NewSimpleFilter creates a filter from a function
@@ -24,7 +24,7 @@ func (f *SimpleFilter) RequiredSymbols() []query.Symbol {
 }
 
 // Evaluate applies the filter function
-func (f *SimpleFilter) Evaluate(tuple Tuple, columns []query.Symbol) bool {
+func (f *SimpleFilter) Evaluate(tuple Tuple, symbols []query.Symbol) bool {
 	return f.filterFunc(tuple)
 }
 
@@ -38,15 +38,15 @@ type FilterIterator struct {
 	source  Iterator
 	filter  Filter
 	current Tuple
-	columns []query.Symbol
+	symbols []query.Symbol
 }
 
 // NewFilterIterator creates a new filtering iterator
-func NewFilterIterator(source Iterator, columns []query.Symbol, filter Filter) *FilterIterator {
+func NewFilterIterator(source Iterator, symbols []query.Symbol, filter Filter) *FilterIterator {
 	return &FilterIterator{
 		source:  source,
 		filter:  filter,
-		columns: columns,
+		symbols: symbols,
 	}
 }
 
@@ -54,7 +54,7 @@ func NewFilterIterator(source Iterator, columns []query.Symbol, filter Filter) *
 func (it *FilterIterator) Next() bool {
 	for it.source.Next() {
 		it.current = it.source.Tuple()
-		if it.filter.Evaluate(it.current, it.columns) {
+		if it.filter.Evaluate(it.current, it.symbols) {
 			return true
 		}
 	}
@@ -71,22 +71,22 @@ func (it *FilterIterator) Close() error {
 	return it.source.Close()
 }
 
-// ProjectIterator projects specific columns from the source relation
+// ProjectIterator projects specific symbols from the source relation
 type ProjectIterator struct {
 	relation   Relation // Source relation (may be cached/materialized)
 	source     Iterator // Lazily obtained from relation.Iterator()
-	indices    []int    // Indices of columns to keep from source
+	indices    []int    // Indices of symbols to keep from source
 	current    Tuple
-	newColumns []query.Symbol
+	newSymbols []query.Symbol
 }
 
 // NewProjectIterator creates a new projection iterator
-func NewProjectIterator(relation Relation, sourceColumns []query.Symbol, targetColumns []query.Symbol) *ProjectIterator {
+func NewProjectIterator(relation Relation, sourceSymbols []query.Symbol, targetSymbols []query.Symbol) *ProjectIterator {
 	// Compute indices for projection
-	indices := make([]int, len(targetColumns))
-	for i, targetCol := range targetColumns {
-		for j, sourceCol := range sourceColumns {
-			if sourceCol == targetCol {
+	indices := make([]int, len(targetSymbols))
+	for i, targetSym := range targetSymbols {
+		for j, sourceSym := range sourceSymbols {
+			if sourceSym == targetSym {
 				indices[i] = j
 				break
 			}
@@ -96,7 +96,7 @@ func NewProjectIterator(relation Relation, sourceColumns []query.Symbol, targetC
 	return &ProjectIterator{
 		relation:   relation,
 		indices:    indices,
-		newColumns: targetColumns,
+		newSymbols: targetSymbols,
 	}
 }
 
@@ -219,16 +219,16 @@ func (it *ConcatIterator) Close() error {
 type PredicateFilterIterator struct {
 	source    Iterator
 	predicate query.Predicate
-	columns   []query.Symbol
+	symbols   []query.Symbol
 	current   Tuple
 }
 
 // NewPredicateFilterIterator creates a new predicate-based filtering iterator
-func NewPredicateFilterIterator(source Iterator, columns []query.Symbol, predicate query.Predicate) *PredicateFilterIterator {
+func NewPredicateFilterIterator(source Iterator, symbols []query.Symbol, predicate query.Predicate) *PredicateFilterIterator {
 	return &PredicateFilterIterator{
 		source:    source,
 		predicate: predicate,
-		columns:   columns,
+		symbols:   symbols,
 	}
 }
 
@@ -239,9 +239,9 @@ func (it *PredicateFilterIterator) Next() bool {
 
 		// Create bindings for predicate evaluation
 		bindings := make(map[query.Symbol]interface{})
-		for i, col := range it.columns {
+		for i, sym := range it.symbols {
 			if i < len(it.current) {
-				bindings[col] = it.current[i]
+				bindings[sym] = it.current[i]
 			}
 		}
 
@@ -264,25 +264,25 @@ func (it *PredicateFilterIterator) Close() error {
 	return it.source.Close()
 }
 
-// FunctionEvaluatorIterator adds a new column by evaluating a function
+// FunctionEvaluatorIterator adds a new symbol by evaluating a function
 type FunctionEvaluatorIterator struct {
 	source       Iterator
 	function     query.Function
 	outputColumn query.Symbol
-	columns      []query.Symbol // Original columns
-	newColumns   []query.Symbol // Columns after adding function output
+	symbols      []query.Symbol // Original symbols
+	newSymbols   []query.Symbol // Symbols after adding function output
 	current      Tuple
 }
 
-// NewFunctionEvaluatorIterator creates an iterator that adds a column via function evaluation
-func NewFunctionEvaluatorIterator(source Iterator, columns []query.Symbol, function query.Function, outputColumn query.Symbol) *FunctionEvaluatorIterator {
-	newColumns := append(columns, outputColumn)
+// NewFunctionEvaluatorIterator creates an iterator that adds a symbol via function evaluation
+func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, function query.Function, outputColumn query.Symbol) *FunctionEvaluatorIterator {
+	newSymbols := append(symbols, outputColumn)
 	return &FunctionEvaluatorIterator{
 		source:       source,
 		function:     function,
 		outputColumn: outputColumn,
-		columns:      columns,
-		newColumns:   newColumns,
+		symbols:      symbols,
+		newSymbols:   newSymbols,
 	}
 }
 
@@ -296,9 +296,9 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 
 	// Create bindings for function evaluation
 	bindings := make(map[query.Symbol]interface{})
-	for i, col := range it.columns {
+	for i, sym := range it.symbols {
 		if i < len(sourceTuple) {
-			bindings[col] = sourceTuple[i]
+			bindings[sym] = sourceTuple[i]
 		}
 	}
 

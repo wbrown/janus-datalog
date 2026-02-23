@@ -88,7 +88,7 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 				// Verify join correctness: name and age must match
 				for _, tuple := range results {
 					if len(tuple) != 2 {
-						t.Errorf("Expected 2 columns, got %d", len(tuple))
+						t.Errorf("Expected 2 symbols, got %d", len(tuple))
 						continue
 					}
 

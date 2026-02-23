@@ -15,7 +15,7 @@ The `Relation` interface (in `datalog/executor/relation.go`) is the fundamental 
 ```go
 type Relation interface {
     // Core Operations (Relational Algebra)
-    Project(columns []Symbol) (Relation, error)      // π (projection)
+    Project(symbols []Symbol) (Relation, error)      // π (projection)
     Filter(filter Filter) Relation                   // σ (selection)
     Join(other Relation) Relation                    // ⋈ (natural join)
     HashJoin(other Relation, cols []Symbol) Relation // ⋈ (equi-join)
@@ -29,7 +29,7 @@ type Relation interface {
     FilterWithPredicate(pred Predicate) Relation
 
     // Metadata & Access
-    Columns() []Symbol          // Schema
+    Symbols() []Symbol          // Schema
     Iterator() Iterator         // Streaming access
     Size() int                 // Cardinality
     IsEmpty() bool             // Empty check
@@ -61,7 +61,7 @@ type Relation interface {
 // Example: Chaining operations without materialization
 result := storageRelation.
     Filter(predicate).      // Applied during iteration
-    Project(columns).       // Applied during iteration
+    Project(symbols).       // Applied during iteration
     HashJoin(other, cols)   // Only materializes hash table
 ```
 
@@ -80,7 +80,7 @@ The `Relations.Collapse()` method implements a greedy join algorithm:
 
 ```go
 func (rs Relations) Collapse(ctx Context) Relations {
-    // Groups relations by shared columns
+    // Groups relations by shared symbols
     // Joins them progressively as encountered
     // Short-circuits on empty results
     // Returns independent groups if disjoint
@@ -88,7 +88,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
 ```
 
 **Algorithm Steps**:
-1. **Group by connectivity**: Relations sharing columns can join
+1. **Group by connectivity**: Relations sharing symbols can join
 2. **Progressive joining**: Add relations in the order received
 3. **Early termination**: Stop if any join produces empty result
 4. **Disjoint handling**: Keep independent groups separate
@@ -103,10 +103,10 @@ The query planner is responsible for providing relations in a sensible order.
 **Example Execution**:
 ```
 Query planner provides: R2(100 tuples), R3(10K tuples), R1(1M tuples)
-Shared columns: R1↔R3, R2↔R3
+Shared symbols: R1↔R3, R2↔R3
 
 Step 1: Start with R2
-Step 2: Join R2⋈R3 → 50 tuples (if shared columns)
+Step 2: Join R2⋈R3 → 50 tuples (if shared symbols)
 Step 3: Join (R2⋈R3)⋈R1 → 25 tuples
 Result: Single relation with 25 tuples
 ```
@@ -116,12 +116,12 @@ Result: Single relation with 25 tuples
 ## Join Algorithms
 
 ### 1. Natural Join
-Joins on ALL shared columns:
+Joins on ALL shared symbols:
 ```go
 func (r *MaterializedRelation) Join(other Relation) Relation {
     sharedCols := findSharedColumns(r, other)
     if len(sharedCols) == 0 {
-        return crossProduct(r, other) // No shared columns
+        return crossProduct(r, other) // No shared symbols
     }
     return r.HashJoin(other, sharedCols)
 }
@@ -193,8 +193,8 @@ func Aggregate(rel Relation, groupBy []Symbol, aggs []Aggregate) Relation {
 
     // Aggregate phase
     for key, group := range groups {
-        row := append(key.Values(), computeAggregates(group, aggs)...)
-        output(row)
+        tuple := append(key.Values(), computeAggregates(group, aggs)...)
+        output(tuple)
     }
 }
 ```
@@ -244,7 +244,7 @@ Phase 3: [(year ?t) ?y]                      // Uses ?t, provides ?y
 
 1. **Pattern Matching**: Storage scans produce initial relations
 2. **Progressive Joining**: Relations collapse within each phase
-3. **Expression Evaluation**: Computed columns added
+3. **Expression Evaluation**: Computed symbols added
 4. **Predicate Application**: Filtering based on conditions
 5. **Cross-Phase Joins**: Results flow between phases
 6. **Final Operations**: Sorting, aggregation, projection
@@ -300,7 +300,7 @@ func ExecutePhase(phase *Phase, input Relation) Relation {
 
 **Streaming Operations** (constant memory):
 - Filter
-- Project (column subset)
+- Project (symbol subset)
 - Scan from storage
 
 **Materializing Operations** (O(n) memory):
@@ -348,7 +348,7 @@ The implementation respects fundamental laws:
 1. **Commutativity**: `R ⋈ S = S ⋈ R`
 2. **Associativity**: `(R ⋈ S) ⋈ T = R ⋈ (S ⋈ T)`
 3. **Distributivity**: `σ(R ⋈ S) = σ(R) ⋈ S` (when predicate only references R)
-4. **Idempotence**: `π(π(R)) = π(R)` (with proper column subset)
+4. **Idempotence**: `π(π(R)) = π(R)` (with proper symbol subset)
 
 ### Set Semantics
 
@@ -362,7 +362,7 @@ Following Datalog tradition:
 The query planner applies standard optimizations:
 - **Predicate Pushdown**: Apply filters early
 - **Join Reordering**: Start with most selective
-- **Early Projection**: Remove unnecessary columns
+- **Early Projection**: Remove unnecessary symbols
 - **Join Elimination**: Remove redundant joins
 
 ## Comparison with Other Systems

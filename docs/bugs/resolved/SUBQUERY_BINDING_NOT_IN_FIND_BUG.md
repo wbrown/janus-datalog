@@ -66,7 +66,7 @@ Include the subquery binding variable in the `:find` clause, even if you don't n
  ...]
 ```
 
-Then ignore the extra column in the result.
+Then ignore the extra symbol in the result.
 
 ## Impact
 

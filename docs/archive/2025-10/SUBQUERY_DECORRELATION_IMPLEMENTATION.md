@@ -308,13 +308,13 @@ type DecorrelatedSubqueryPlan struct {
     FilterGroups       []FilterGroup      // Groups of subqueries by filter
     MergedPlans        []*QueryPlan       // One plan per filter group
     CorrelationKeys    []query.Symbol     // Keys to join on (e.g., ?year, ?month, ?day, ?hour)
-    ColumnMapping      map[int]ResultMap  // Original subquery -> result columns
+    ColumnMapping      map[int]ResultMap  // Original subquery -> result symbols
 }
 
-// ResultMap maps original subquery to columns in merged result
+// ResultMap maps original subquery to symbols in merged result
 type ResultMap struct {
     FilterGroupIdx int   // Which merged query produced this result
-    ColumnIndices  []int // Which columns in that result
+    ColumnIndices  []int // Which symbols in that result
 }
 ```
 
@@ -328,10 +328,10 @@ plan := DecorrelatedSubqueryPlan{
     MergedPlans: [3 query plans],
     CorrelationKeys: []query.Symbol{"?year", "?month", "?day", "?hour"},
     ColumnMapping: map[int]ResultMap{
-        0: {FilterGroupIdx: 0, ColumnIndices: []int{4, 5}},    // SubQ1 -> columns 4,5 of Group A (high, low)
-        1: {FilterGroupIdx: 1, ColumnIndices: []int{4}},       // SubQ2 -> column 4 of Group B (open)
-        2: {FilterGroupIdx: 2, ColumnIndices: []int{4}},       // SubQ3 -> column 4 of Group C (close)
-        3: {FilterGroupIdx: 0, ColumnIndices: []int{6}},       // SubQ4 -> column 6 of Group A (volume)
+        0: {FilterGroupIdx: 0, ColumnIndices: []int{4, 5}},    // SubQ1 -> symbols 4,5 of Group A (high, low)
+        1: {FilterGroupIdx: 1, ColumnIndices: []int{4}},       // SubQ2 -> symbol 4 of Group B (open)
+        2: {FilterGroupIdx: 2, ColumnIndices: []int{4}},       // SubQ3 -> symbol 4 of Group C (close)
+        3: {FilterGroupIdx: 0, ColumnIndices: []int{6}},       // SubQ4 -> symbol 6 of Group A (volume)
     },
 }
 ```
@@ -555,7 +555,7 @@ func createDecorrelatedPlan(phase *Phase, group DecorrelationGroup) (*Decorrelat
 
         mergedPlans = append(mergedPlans, mergedPlan)
 
-        // Update column mapping
+        // Update symbol mapping
         for subqIdx, cols := range colMap {
             columnMapping[subqIdx] = ResultMap{
                 FilterGroupIdx: groupIdx,
@@ -733,9 +733,9 @@ func joinDecorrelatedResults(results []Relation, keys []query.Symbol) (Relation,
     return combined, nil
 }
 
-// hashJoinOnKeys performs hash join on specified key columns
+// hashJoinOnKeys performs hash join on specified key symbols
 func hashJoinOnKeys(left, right Relation, keys []query.Symbol) Relation {
-    // Find key column indices in both relations
+    // Find key symbol indices in both relations
     leftIndices := make([]int, len(keys))
     rightIndices := make([]int, len(keys))
 
@@ -773,7 +773,7 @@ func hashJoinOnKeys(left, right Relation, keys []query.Symbol) Relation {
 
     // Probe and build result
     var resultTuples []Tuple
-    resultColumns := append(left.Columns(), filterColumns(right.Columns(), keys)...)
+    resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), keys)...)
 
     it = probeRel.Iterator()
     for it.Next() {
@@ -809,15 +809,15 @@ func makeJoinKey(tuple Tuple, indices []int) string {
     return strings.Join(parts, "|")
 }
 
-// filterColumns removes key columns from column list
-func filterColumns(columns []query.Symbol, keys []query.Symbol) []query.Symbol {
+// filterColumns removes key symbols from symbol list
+func filterColumns(symbols []query.Symbol, keys []query.Symbol) []query.Symbol {
     keySet := make(map[query.Symbol]bool)
     for _, key := range keys {
         keySet[key] = true
     }
 
     var result []query.Symbol
-    for _, col := range columns {
+    for _, col := range symbols {
         if !keySet[col] {
             result = append(result, col)
         }

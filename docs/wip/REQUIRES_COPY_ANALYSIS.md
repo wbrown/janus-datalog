@@ -66,16 +66,16 @@ Add `requiresCopy bool` field to `StreamingRelation`:
 
 ```go
 type StreamingRelation struct {
-    columns      []query.Symbol
+    symbols      []query.Symbol
     iterator     Iterator
     options      ExecutorOptions
     requiresCopy bool  // NEW: set at construction
     // ...
 }
 
-func NewStreamingRelationWithOptions(columns []query.Symbol, iterator Iterator, opts ExecutorOptions, requiresCopy bool) *StreamingRelation {
+func NewStreamingRelationWithOptions(symbols []query.Symbol, iterator Iterator, opts ExecutorOptions, requiresCopy bool) *StreamingRelation {
     return &StreamingRelation{
-        columns:      columns,
+        symbols:      symbols,
         iterator:     iterator,
         options:      opts,
         requiresCopy: requiresCopy,

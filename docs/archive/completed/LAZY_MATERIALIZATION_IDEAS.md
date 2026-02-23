@@ -22,7 +22,7 @@ for _, rel := range allResults {
     }
     it.Close()
 }
-result := NewMaterializedRelation(columns, allTuples)
+result := NewMaterializedRelation(symbols, allTuples)
 ```
 
 ## The Clojure/Lazy Approach
@@ -39,7 +39,7 @@ Input Combinations (lazy seq)
 ```
 
 ### Benefits
-1. **Memory Efficiency**: Process millions of rows without loading all into memory
+1. **Memory Efficiency**: Process millions of tuples without loading all into memory
 2. **Early Termination**: If parent only needs first N results, don't compute rest
 3. **Pipeline Parallelism**: Different stages could run concurrently
 4. **Composability**: Operations naturally compose without intermediate collections
@@ -153,10 +153,10 @@ func (it *lazyUnionIterator) Next() bool {
 
 ### 3. Streaming Transformations
 ```go
-// Project columns without materializing
+// Project symbols without materializing
 type ProjectedRelation struct {
     source      Relation
-    projection  []int  // Column indices to keep
+    projection  []int  // Symbol indices to keep
 }
 
 func (r *ProjectedRelation) Iterator() RelationIterator {
@@ -216,11 +216,11 @@ A practical approach might be:
 ```go
 type Relation interface {
     Iterator() RelationIterator
-    Columns() []Symbol
+    Symbols() []Symbol
     
     // Lazy operations return lazy relations
     Filter(predicate) Relation
-    Project(columns) Relation
+    Project(symbols) Relation
     
     // Operations that might materialize
     Join(other Relation) Relation  // Might materialize build side

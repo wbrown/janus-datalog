@@ -162,13 +162,13 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 			t.Fatalf("Query failed: %v", err)
 		}
 
-		// Should return 2 rows (one per item), each with Alice's nickname
+		// Should return 2 tuples (one per item), each with Alice's nickname
 		if len(results) != 2 {
 			t.Fatalf("Expected 2 results, got %d", len(results))
 		}
 
-		for _, row := range results {
-			nick := row[1].(string)
+		for _, tuple := range results {
+			nick := tuple[1].(string)
 			if nick != "Ali" {
 				t.Errorf("Expected 'Ali', got %q", nick)
 			}
@@ -192,8 +192,8 @@ func TestGetElseWithConstantEntity(t *testing.T) {
 			t.Fatalf("Expected 2 results, got %d", len(results))
 		}
 
-		for _, row := range results {
-			isMissing := row[1].(bool)
+		for _, tuple := range results {
+			isMissing := tuple[1].(bool)
 			if !isMissing {
 				t.Errorf("Expected true, got %v", isMissing)
 			}

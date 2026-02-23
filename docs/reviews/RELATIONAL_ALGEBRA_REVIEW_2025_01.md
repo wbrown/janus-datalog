@@ -102,7 +102,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
         currentGroup := remaining[0]  // Start with first relation
         remaining = remaining[1:]
 
-        // Keep joining relations that share columns
+        // Keep joining relations that share symbols
         changed := true
         for changed {
             changed = false
@@ -123,7 +123,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
 
 ### Complexity Analysis
 
-**Best case (all relations share columns):** O(n) - each relation joins exactly once
+**Best case (all relations share symbols):** O(n) - each relation joins exactly once
 
 **Worst case (all disjoint):** O(n²) - checks every pair
 
@@ -169,7 +169,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
 **1. hasSharedColumns is O(cols1 × cols2)**
 
 Could use a map for O(cols1 + cols2), but:
-- Typical column count: 2-5
+- Typical symbol count: 2-5
 - 10-25 comparisons (pointer equality, ~5ns each)
 - Map allocation overhead > savings at this scale
 
@@ -185,7 +185,7 @@ Could swap-with-last for O(1), but:
 
 **3. Repeated checking of disjoint relations**
 
-After joining, loop restarts and re-checks all relations, including ones that don't share columns.
+After joining, loop restarts and re-checks all relations, including ones that don't share symbols.
 
 **Example pathology:**
 ```
@@ -193,7 +193,7 @@ currentGroup = R1(?x, ?y)
 remaining = [R2(?a, ?b), R3(?y, ?z)]
 
 First pass:
-- Check R2: no shared columns
+- Check R2: no shared symbols
 - Check R3: shares ?y, JOIN
 
 After join:
@@ -201,7 +201,7 @@ After join:
 - remaining = [R2(?a, ?b)]
 
 Second pass:
-- Check R2 again: still no shared columns (wasted work!)
+- Check R2 again: still no shared symbols (wasted work!)
 ```
 
 **When does this matter?**
@@ -226,7 +226,7 @@ For n completely disjoint relations:
 
 **Executor:**
 - Matches patterns → Relations
-- Collapses greedily based on shared columns
+- Collapses greedily based on shared symbols
 - Handles actual data
 
 **Interface:**
@@ -449,7 +449,7 @@ The buffer reuse and performance optimization are **implementation details** sup
 
 ### Low Priority (Nice to Have)
 
-6. **hasSharedColumns optimization** - Use map if column count typically >10 (need data)
+6. **hasSharedColumns optimization** - Use map if symbol count typically >10 (need data)
 7. **Adaptive collapse** - Track if repeated disjoint checks are actually happening
 8. **Benchmark collapse overhead** - Measure actual impact on real queries
 

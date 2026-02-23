@@ -426,16 +426,16 @@ func TestEACacheBypass_MixedCardinalities_RelationInput(t *testing.T) {
 }
 
 // =============================================================================
-// Phase 2 Tests: Per-row A from relation/join bindings
+// Phase 2 Tests: Per-tuple A from relation/join bindings
 // =============================================================================
 
 // TestEACacheBypass_PerRowA_UsesCache tests that the cache is used when both E and A
-// are columns in the binding relation with multiple rows (per-row A from join results).
+// are symbols in the binding relation with multiple tuples (per-tuple A from join results).
 // This is the Phase 2 optimization target.
 //
 // Setup: Each entity has a :config/attr that names its own value attribute.
 // Pattern 1 resolves the attribute name. Pattern 2 looks up the value.
-// After pattern 1, the binding for pattern 2 has multiple rows with varying (E, A).
+// After pattern 1, the binding for pattern 2 has multiple tuples with varying (E, A).
 func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
@@ -484,7 +484,7 @@ func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
 	defer db.SetAnnotationHandler(nil)
 
 	// Query: for each entity in the collection, look up its config/attr to get ?a,
-	// then look up [?e ?a ?v]. After pattern 1, binding has 2 rows with varying A.
+	// then look up [?e ?a ?v]. After pattern 1, binding has 2 tuples with varying A.
 	results, err := db.ExecuteQueryWithInputs(
 		`[:find ?e ?a ?v :in $ [?e ...] :where
 		  [?e :config/attr ?a]
@@ -495,9 +495,9 @@ func TestEACacheBypass_PerRowA_UsesCache(t *testing.T) {
 
 	// Check that storage/reuse-strategy is NOT used for pattern 2
 	// Before Phase 2 fix: FAILS — reuse-strategy IS present (cache bypassed)
-	// After Phase 2 fix: passes — per-row A uses cache
+	// After Phase 2 fix: passes — per-tuple A uses cache
 	assert.False(t, hasReuseStrategyEvent(events),
-		"Per-row A from join should use cache path, not storage/reuse-strategy scans")
+		"Per-tuple A from join should use cache path, not storage/reuse-strategy scans")
 }
 
 func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
@@ -542,7 +542,7 @@ func TestEACacheBypass_PerRowVector_RelationInput(t *testing.T) {
 				}
 			}
 			assert.Len(t, results, 2,
-				"[%s] Per-row vector: 1 name + 1 resolved vector = 2 results, got %d", mode.name, len(results))
+				"[%s] Per-tuple vector: 1 name + 1 resolved vector = 2 results, got %d", mode.name, len(results))
 		})
 	}
 }

@@ -49,10 +49,10 @@ func TestPatternExtractor_Variables(t *testing.T) {
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")
 
-	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
+	symbols := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice, nameAttr, "Alice"}
 
-	extractor := NewPatternExtractor(pattern, columns)
+	extractor := NewPatternExtractor(pattern, symbols)
 	values := extractor.Extract(bindingTuple)
 
 	if values.E == nil || !values.E.(datalog.Identity).Equal(alice) {
@@ -82,10 +82,10 @@ func TestPatternExtractor_MixedConstantsAndVariables(t *testing.T) {
 	}
 
 	alice := datalog.NewIdentity("user:alice")
-	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+	symbols := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice, "Alice"}
 
-	extractor := NewPatternExtractor(pattern, columns)
+	extractor := NewPatternExtractor(pattern, symbols)
 	values := extractor.Extract(bindingTuple)
 
 	if values.E == nil || !values.E.(datalog.Identity).Equal(alice) {
@@ -111,10 +111,10 @@ func TestPatternExtractor_Blanks(t *testing.T) {
 		},
 	}
 
-	columns := []Symbol{datalog.NewSymbol("?v")}
+	symbols := []Symbol{datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{"Alice"}
 
-	extractor := NewPatternExtractor(pattern, columns)
+	extractor := NewPatternExtractor(pattern, symbols)
 	values := extractor.Extract(bindingTuple)
 
 	if values.E != nil {
@@ -139,10 +139,10 @@ func TestPatternExtractor_VariableNotInBinding(t *testing.T) {
 	}
 
 	alice := datalog.NewIdentity("user:alice")
-	columns := []Symbol{datalog.NewSymbol("?e")}
+	symbols := []Symbol{datalog.NewSymbol("?e")}
 	bindingTuple := Tuple{alice}
 
-	extractor := NewPatternExtractor(pattern, columns)
+	extractor := NewPatternExtractor(pattern, symbols)
 	values := extractor.Extract(bindingTuple)
 
 	if values.E == nil || !values.E.(datalog.Identity).Equal(alice) {
@@ -170,10 +170,10 @@ func TestPatternExtractor_WithTransaction(t *testing.T) {
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")
 
-	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v"), datalog.NewSymbol("?t")}
+	symbols := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v"), datalog.NewSymbol("?t")}
 	bindingTuple := Tuple{alice, nameAttr, "Alice", uint64(123)}
 
-	extractor := NewPatternExtractor(pattern, columns)
+	extractor := NewPatternExtractor(pattern, symbols)
 	values := extractor.Extract(bindingTuple)
 
 	if values.E == nil || !values.E.(datalog.Identity).Equal(alice) {
@@ -203,10 +203,10 @@ func TestPatternExtractor_IndividualExtractors(t *testing.T) {
 		},
 	}
 
-	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+	symbols := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice, "Alice"}
 
-	extractor := NewPatternExtractor(pattern, columns)
+	extractor := NewPatternExtractor(pattern, symbols)
 
 	e := extractor.ExtractE(bindingTuple)
 	if e == nil || !e.(datalog.Identity).Equal(alice) {
@@ -229,9 +229,9 @@ func TestPatternExtractor_IndividualExtractors(t *testing.T) {
 	}
 }
 
-func TestBuildColumnIndexMap(t *testing.T) {
-	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
-	colMap := BuildColumnIndexMap(columns)
+func TestBuildSymbolIndexMap(t *testing.T) {
+	symbols := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
+	colMap := BuildSymbolIndexMap(symbols)
 
 	if colMap[datalog.NewSymbol("?e")] != 0 {
 		t.Errorf("Expected ?e at index 0, got %d", colMap[datalog.NewSymbol("?e")])
@@ -257,10 +257,10 @@ func TestExtractPatternValues_ConvenienceFunction(t *testing.T) {
 		},
 	}
 
-	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+	symbols := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice, "Alice"}
 
-	e, a, v, tx := ExtractPatternValues(pattern, columns, bindingTuple)
+	e, a, v, tx := ExtractPatternValues(pattern, symbols, bindingTuple)
 
 	if e == nil || !e.(datalog.Identity).Equal(alice) {
 		t.Errorf("Expected E=%v, got %v", alice, e)
@@ -277,7 +277,7 @@ func TestExtractPatternValues_ConvenienceFunction(t *testing.T) {
 }
 
 func TestPatternExtractor_OutOfBoundsTuple(t *testing.T) {
-	// Pattern expects more columns than the binding tuple has
+	// Pattern expects more symbols than the binding tuple has
 	pattern := &DataPattern{
 		Elements: []PatternElement{
 			Variable{Name: datalog.NewSymbol("?e")},
@@ -287,10 +287,10 @@ func TestPatternExtractor_OutOfBoundsTuple(t *testing.T) {
 	}
 
 	alice := datalog.NewIdentity("user:alice")
-	columns := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
+	symbols := []Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
 	bindingTuple := Tuple{alice} // Only has 1 value instead of 3
 
-	extractor := NewPatternExtractor(pattern, columns)
+	extractor := NewPatternExtractor(pattern, symbols)
 	values := extractor.Extract(bindingTuple)
 
 	if values.E == nil || !values.E.(datalog.Identity).Equal(alice) {
@@ -328,7 +328,7 @@ func TestPatternExtractor_EmptyPattern(t *testing.T) {
 }
 
 func TestPatternExtractor_ColumnsInDifferentOrder(t *testing.T) {
-	// Test that column ordering doesn't matter - it's the symbol name that counts
+	// Test that symbol ordering doesn't matter - it's the symbol name that counts
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")
 
@@ -340,11 +340,11 @@ func TestPatternExtractor_ColumnsInDifferentOrder(t *testing.T) {
 		},
 	}
 
-	// Columns in different order: ?v, ?e, ?a
-	columns := []Symbol{datalog.NewSymbol("?v"), datalog.NewSymbol("?e"), datalog.NewSymbol("?a")}
+	// Symbols in different order: ?v, ?e, ?a
+	symbols := []Symbol{datalog.NewSymbol("?v"), datalog.NewSymbol("?e"), datalog.NewSymbol("?a")}
 	bindingTuple := Tuple{"Alice", alice, nameAttr}
 
-	extractor := NewPatternExtractor(pattern, columns)
+	extractor := NewPatternExtractor(pattern, symbols)
 	values := extractor.Extract(bindingTuple)
 
 	if values.E == nil || !values.E.(datalog.Identity).Equal(alice) {

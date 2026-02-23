@@ -12,7 +12,7 @@ import (
 //
 // Relations in Datalog are SETS, not BAGS. This means:
 // - No duplicate tuples should ever appear in a relation
-// - Projection must deduplicate (projecting away columns can create duplicates)
+// - Projection must deduplicate (projecting away symbols can create duplicates)
 // - All relation operations must maintain set semantics
 //
 // These tests verify set semantics are maintained throughout the pipeline.
@@ -78,7 +78,7 @@ func setTestCollectTuples(rel Relation) []Tuple {
 
 func TestSetSemantics_MaterializedRelation(t *testing.T) {
 	t.Run("NewMaterializedRelation deduplicates", func(t *testing.T) {
-		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 		tuples := []Tuple{
 			{1, "a"},
 			{2, "b"},
@@ -87,7 +87,7 @@ func TestSetSemantics_MaterializedRelation(t *testing.T) {
 			{2, "b"}, // duplicate
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		if rel.Size() != 3 {
 			t.Errorf("expected 3 unique tuples, got %d", rel.Size())
@@ -96,7 +96,7 @@ func TestSetSemantics_MaterializedRelation(t *testing.T) {
 	})
 
 	t.Run("NewMaterializedRelationWithOptions deduplicates", func(t *testing.T) {
-		columns := []query.Symbol{datalog.NewSymbol("?x")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x")}
 		tuples := []Tuple{
 			{"foo"},
 			{"bar"},
@@ -104,7 +104,7 @@ func TestSetSemantics_MaterializedRelation(t *testing.T) {
 			{"foo"}, // duplicate
 		}
 
-		rel := NewMaterializedRelationWithOptions(columns, tuples, ExecutorOptions{})
+		rel := NewMaterializedRelationWithOptions(symbols, tuples, ExecutorOptions{})
 
 		if rel.Size() != 2 {
 			t.Errorf("expected 2 unique tuples, got %d", rel.Size())
@@ -120,7 +120,7 @@ func TestSetSemantics_MaterializedRelation(t *testing.T) {
 func TestSetSemantics_Projection(t *testing.T) {
 	t.Run("MaterializedRelation.Project deduplicates", func(t *testing.T) {
 		// Create relation with distinct full tuples that become duplicates after projection
-		columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+		symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 		tuples := []Tuple{
 			{"entity1", "same_value"},
 			{"entity2", "same_value"}, // Different entity, same value
@@ -128,7 +128,7 @@ func TestSetSemantics_Projection(t *testing.T) {
 			{"entity4", "same_value"}, // Another with same value
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		// Project to just ?v - should deduplicate
 		projected, err := rel.Project([]query.Symbol{datalog.NewSymbol("?v")})
@@ -145,7 +145,7 @@ func TestSetSemantics_Projection(t *testing.T) {
 
 	t.Run("StreamingRelation.Project deduplicates", func(t *testing.T) {
 		// Create streaming relation with tuples that become duplicates after projection
-		columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+		symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 		tuples := []Tuple{
 			{"entity1", "value_a"},
 			{"entity2", "value_a"}, // Same value, different entity
@@ -156,7 +156,7 @@ func TestSetSemantics_Projection(t *testing.T) {
 
 		// Create a streaming relation
 		iter := &sliceIterator{tuples: tuples, pos: -1}
-		rel := NewStreamingRelation(columns, iter)
+		rel := NewStreamingRelation(symbols, iter)
 
 		// Project to just ?v - should deduplicate
 		projected, err := rel.Project([]query.Symbol{datalog.NewSymbol("?v")})
@@ -175,9 +175,9 @@ func TestSetSemantics_Projection(t *testing.T) {
 		assertNoDuplicates(t, "StreamingRelation.Project", materialized)
 	})
 
-	t.Run("Multiple column projection deduplicates", func(t *testing.T) {
-		// Project from 3 columns to 2 columns
-		columns := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
+	t.Run("Multiple symbol projection deduplicates", func(t *testing.T) {
+		// Project from 3 symbols to 2 symbols
+		symbols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
 		tuples := []Tuple{
 			{1, "x", 100},
 			{1, "x", 200}, // Same ?a, ?b - different ?c
@@ -185,7 +185,7 @@ func TestSetSemantics_Projection(t *testing.T) {
 			{1, "x", 300}, // Same ?a, ?b again
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 		projected, err := rel.Project([]query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")})
 		if err != nil {
 			t.Fatalf("projection failed: %v", err)
@@ -195,7 +195,7 @@ func TestSetSemantics_Projection(t *testing.T) {
 		if projected.Size() != 2 {
 			t.Errorf("expected 2 unique tuples after projection, got %d", projected.Size())
 		}
-		assertNoDuplicates(t, "Multi-column projection", projected)
+		assertNoDuplicates(t, "Multi-symbol projection", projected)
 	})
 }
 
@@ -332,14 +332,14 @@ func TestSetSemantics_Union(t *testing.T) {
 
 func TestSetSemantics_Filter(t *testing.T) {
 	t.Run("Filter preserves set semantics", func(t *testing.T) {
-		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 		tuples := []Tuple{
 			{1, "a"},
 			{2, "b"},
 			{3, "c"},
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 		filtered := rel.Select(func(t Tuple) bool {
 			return t[0].(int) > 1
 		})
@@ -385,7 +385,7 @@ func TestSetSemantics_Iterators(t *testing.T) {
 
 	t.Run("ProjectIterator should work with DedupIterator", func(t *testing.T) {
 		// This tests the fix: ProjectIterator output wrapped with DedupIterator
-		columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+		symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 		tuples := []Tuple{
 			{"e1", "same"},
 			{"e2", "same"},
@@ -393,10 +393,10 @@ func TestSetSemantics_Iterators(t *testing.T) {
 		}
 
 		source := &sliceIterator{tuples: tuples, pos: -1}
-		rel := NewStreamingRelation(columns, source)
+		rel := NewStreamingRelation(symbols, source)
 
 		// Create project iterator
-		projIter := NewProjectIterator(rel, columns, []query.Symbol{datalog.NewSymbol("?v")})
+		projIter := NewProjectIterator(rel, symbols, []query.Symbol{datalog.NewSymbol("?v")})
 
 		// Wrap with dedup (this is what the fix should do)
 		dedupIter := NewDedupIterator(projIter, 10)
@@ -423,7 +423,7 @@ func TestSetSemantics_EndToEnd(t *testing.T) {
 		// Multiple entities with the same attribute value should produce one result
 
 		// This is what comes from storage: multiple datoms with same value
-		columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
+		symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?a"), datalog.NewSymbol("?v")}
 		tuples := []Tuple{
 			{"entity1", ":attr", "shared_value"},
 			{"entity2", ":attr", "shared_value"},
@@ -431,7 +431,7 @@ func TestSetSemantics_EndToEnd(t *testing.T) {
 			{"entity4", ":attr", "shared_value"},
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		// Project to just ?v (like :find ?v)
 		projected, err := rel.Project([]query.Symbol{datalog.NewSymbol("?v")})
@@ -450,7 +450,7 @@ func TestSetSemantics_EndToEnd(t *testing.T) {
 
 	t.Run("Streaming query projection deduplicates", func(t *testing.T) {
 		// Same test but with streaming relation
-		columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+		symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 		tuples := []Tuple{
 			{"e1", "val1"},
 			{"e2", "val1"}, // duplicate value
@@ -460,7 +460,7 @@ func TestSetSemantics_EndToEnd(t *testing.T) {
 		}
 
 		iter := &sliceIterator{tuples: tuples, pos: -1}
-		rel := NewStreamingRelation(columns, iter)
+		rel := NewStreamingRelation(symbols, iter)
 
 		// Project and materialize
 		projected, err := rel.Project([]query.Symbol{datalog.NewSymbol("?v")})
@@ -487,7 +487,7 @@ func TestSetSemantics_Aggregation(t *testing.T) {
 	t.Run("Aggregation receives deduplicated input", func(t *testing.T) {
 		// When aggregating, the input should be deduplicated
 		// This matters for COUNT - counting duplicates would be wrong
-		columns := []query.Symbol{datalog.NewSymbol("?group"), datalog.NewSymbol("?value")}
+		symbols := []query.Symbol{datalog.NewSymbol("?group"), datalog.NewSymbol("?value")}
 		tuples := []Tuple{
 			{"A", int64(10)},
 			{"A", int64(20)},
@@ -495,7 +495,7 @@ func TestSetSemantics_Aggregation(t *testing.T) {
 			{"B", int64(30)},
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		// The relation should already be deduplicated
 		if rel.Size() != 3 {
@@ -511,7 +511,7 @@ func TestSetSemantics_Aggregation(t *testing.T) {
 
 func TestSetSemantics_OperationChain(t *testing.T) {
 	t.Run("Filter then Project maintains set semantics", func(t *testing.T) {
-		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 		tuples := []Tuple{
 			{1, "a", 100},
 			{2, "a", 200}, // Same ?y as above
@@ -519,7 +519,7 @@ func TestSetSemantics_OperationChain(t *testing.T) {
 			{4, "a", 400}, // Same ?y as first two
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		// Filter to x > 1
 		filtered := rel.Select(func(t Tuple) bool {
@@ -638,14 +638,14 @@ func TestSetSemantics_Contract_ProjectionAlwaysDeduplicates(t *testing.T) {
 	// SEMANTIC CONTRACT: Projection MUST deduplicate, regardless of input relation type.
 	// This is not an implementation detail - it's fundamental to relational algebra.
 
-	columns := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
+	symbols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
 	// Create tuples that are unique in full form but duplicate after projection
 	inputTuples := []Tuple{
 		{1, "x", 100},
 		{2, "x", 200}, // Same ?b
 		{3, "y", 300},
 		{4, "x", 400}, // Same ?b again
-		{5, "y", 500}, // Same ?b as row 3
+		{5, "y", 500}, // Same ?b as tuple 3
 	}
 
 	testCases := []struct {
@@ -655,35 +655,35 @@ func TestSetSemantics_Contract_ProjectionAlwaysDeduplicates(t *testing.T) {
 		expectSize int
 	}{
 		{
-			name: "MaterializedRelation project to single column",
+			name: "MaterializedRelation project to single symbol",
 			createRel: func() Relation {
-				return NewMaterializedRelation(columns, inputTuples)
+				return NewMaterializedRelation(symbols, inputTuples)
 			},
 			projectTo:  []query.Symbol{datalog.NewSymbol("?b")},
 			expectSize: 2, // "x" and "y"
 		},
 		{
-			name: "StreamingRelation project to single column",
+			name: "StreamingRelation project to single symbol",
 			createRel: func() Relation {
 				iter := &sliceIterator{tuples: inputTuples, pos: -1}
-				return NewStreamingRelation(columns, iter)
+				return NewStreamingRelation(symbols, iter)
 			},
 			projectTo:  []query.Symbol{datalog.NewSymbol("?b")},
 			expectSize: 2, // "x" and "y"
 		},
 		{
-			name: "MaterializedRelation project to two columns",
+			name: "MaterializedRelation project to two symbols",
 			createRel: func() Relation {
-				return NewMaterializedRelation(columns, inputTuples)
+				return NewMaterializedRelation(symbols, inputTuples)
 			},
 			projectTo:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 			expectSize: 5, // All unique (a,b) pairs
 		},
 		{
-			name: "StreamingRelation project to two columns",
+			name: "StreamingRelation project to two symbols",
 			createRel: func() Relation {
 				iter := &sliceIterator{tuples: inputTuples, pos: -1}
-				return NewStreamingRelation(columns, iter)
+				return NewStreamingRelation(symbols, iter)
 			},
 			projectTo:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 			expectSize: 5, // All unique (a,b) pairs
@@ -786,7 +786,7 @@ func TestSetSemantics_Contract_FilterPreservesSetSemantics(t *testing.T) {
 	// SEMANTIC CONTRACT: Filter cannot introduce duplicates.
 	// Input is a set, output must be a set.
 
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{1, "a"},
 		{2, "b"},
@@ -795,21 +795,21 @@ func TestSetSemantics_Contract_FilterPreservesSetSemantics(t *testing.T) {
 	}
 
 	t.Run("Filter then project must deduplicate", func(t *testing.T) {
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		// Filter to x > 1
 		filtered := rel.Select(func(t Tuple) bool {
 			return t[0].(int) > 1
 		})
 
-		// Project to ?y - should dedupe "a" (from row 3) and "b", "c"
+		// Project to ?y - should dedupe "a" (from tuple 3) and "b", "c"
 		projected, err := filtered.Project([]query.Symbol{datalog.NewSymbol("?y")})
 		if err != nil {
 			t.Fatalf("projection failed: %v", err)
 		}
 
 		collected := setTestCollectTuples(projected.Materialize())
-		// Rows 2,3,4 pass filter -> ?y values are "b", "a", "c" -> 3 unique
+		// Tuples 2,3,4 pass filter -> ?y values are "b", "a", "c" -> 3 unique
 		if len(collected) != 3 {
 			t.Errorf("expected 3 unique values, got %d: %v", len(collected), collected)
 		}
@@ -818,7 +818,7 @@ func TestSetSemantics_Contract_FilterPreservesSetSemantics(t *testing.T) {
 
 	t.Run("Streaming filter then project must deduplicate", func(t *testing.T) {
 		iter := &sliceIterator{tuples: tuples, pos: -1}
-		rel := NewStreamingRelation(columns, iter)
+		rel := NewStreamingRelation(symbols, iter)
 
 		filtered := rel.Select(func(t Tuple) bool {
 			return t[0].(int) > 1
@@ -875,7 +875,7 @@ func TestSetSemantics_Contract_ChainedOperationsPreserveSetSemantics(t *testing.
 		}
 
 		collected := setTestCollectTuples(projected.Materialize())
-		// After filter: rows with a=2,3,4 -> b values "x", "y", "x"
+		// After filter: tuples with a=2,3,4 -> b values "x", "y", "x"
 		// After project to ?b: should be 2 unique ("x", "y")
 		if len(collected) != 2 {
 			t.Errorf("expected 2 unique values, got %d: %v", len(collected), collected)
@@ -888,11 +888,11 @@ func TestSetSemantics_Contract_IteratorMultiplePassesSameResults(t *testing.T) {
 	// SEMANTIC CONTRACT: Multiple iterations over a relation must produce identical results.
 	// This ensures the relation behaves as a stable set, not a stream that changes.
 
-	columns := []query.Symbol{datalog.NewSymbol("?x")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := []Tuple{{1}, {2}, {3}, {2}, {1}} // With duplicates
 
 	t.Run("MaterializedRelation multiple iterations", func(t *testing.T) {
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		// First iteration
 		var first []Tuple
@@ -943,13 +943,13 @@ func TestSetSemantics_StoragePattern(t *testing.T) {
 		}
 
 		// Convert to tuples as pattern matcher would
-		columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+		symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 		tuples := make([]Tuple, len(datoms))
 		for i, d := range datoms {
 			tuples[i] = Tuple{d.E, d.V}
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		// Project to just ?v (the find clause)
 		projected, err := rel.Project([]query.Symbol{datalog.NewSymbol("?v")})

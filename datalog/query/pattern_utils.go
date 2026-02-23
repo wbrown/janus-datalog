@@ -4,21 +4,21 @@ package query
 // This consolidates logic that was previously duplicated across multiple iterators.
 type PatternExtractor struct {
 	pattern *DataPattern
-	columns []Symbol
-	colMap  map[Symbol]int
+	symbols []Symbol
+	symMap  map[Symbol]int
 }
 
-// NewPatternExtractor creates a new pattern extractor for the given pattern and binding columns.
-func NewPatternExtractor(pattern *DataPattern, columns []Symbol) *PatternExtractor {
-	colMap := make(map[Symbol]int, len(columns))
-	for i, col := range columns {
-		colMap[col] = i
+// NewPatternExtractor creates a new pattern extractor for the given pattern and binding symbols.
+func NewPatternExtractor(pattern *DataPattern, symbols []Symbol) *PatternExtractor {
+	symMap := make(map[Symbol]int, len(symbols))
+	for i, sym := range symbols {
+		symMap[sym] = i
 	}
 
 	return &PatternExtractor{
 		pattern: pattern,
-		columns: columns,
-		colMap:  colMap,
+		symbols: symbols,
+		symMap:  symMap,
 	}
 }
 
@@ -54,7 +54,7 @@ func (pe *PatternExtractor) extractElement(elem PatternElement, bindingTuple Tup
 
 	// Variables look up the value in the binding tuple
 	if v, ok := elem.(Variable); ok {
-		if idx, found := pe.colMap[v.Name]; found && idx < len(bindingTuple) {
+		if idx, found := pe.symMap[v.Name]; found && idx < len(bindingTuple) {
 			return bindingTuple[idx]
 		}
 	}
@@ -83,22 +83,22 @@ func (pe *PatternExtractor) ExtractT(bindingTuple Tuple) interface{} {
 	return pe.extractElement(pe.pattern.GetT(), bindingTuple)
 }
 
-// BuildColumnIndexMap creates a map from symbols to their column indices.
-// This is a utility function for code that needs to build column maps independently.
-func BuildColumnIndexMap(columns []Symbol) map[Symbol]int {
-	colMap := make(map[Symbol]int, len(columns))
-	for i, col := range columns {
-		colMap[col] = i
+// BuildSymbolIndexMap creates a map from symbols to their index positions.
+// This is a utility function for code that needs to build symbol maps independently.
+func BuildSymbolIndexMap(symbols []Symbol) map[Symbol]int {
+	symMap := make(map[Symbol]int, len(symbols))
+	for i, sym := range symbols {
+		symMap[sym] = i
 	}
-	return colMap
+	return symMap
 }
 
 // ExtractPatternValues is a convenience function that extracts E, A, V, T values
 // from a pattern without creating a PatternExtractor.
 // Use this for one-off extractions. For repeated extractions on the same pattern,
 // create a PatternExtractor and reuse it.
-func ExtractPatternValues(pattern *DataPattern, columns []Symbol, bindingTuple Tuple) (e, a, v, t interface{}) {
-	extractor := NewPatternExtractor(pattern, columns)
+func ExtractPatternValues(pattern *DataPattern, symbols []Symbol, bindingTuple Tuple) (e, a, v, t interface{}) {
+	extractor := NewPatternExtractor(pattern, symbols)
 	values := extractor.Extract(bindingTuple)
 	return values.E, values.A, values.V, values.T
 }

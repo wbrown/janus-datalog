@@ -79,11 +79,11 @@ When the cache path is taken (`matchFromCache` in matcher_relations.go:527), CRD
 case schema.CardinalityOne:
     val := entry.OneValue()
     if val == nil {
-        return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+        return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
     }
     // Returns single-tuple relation with resolved value
     tuple := buildTuple(val, entry.Version())
-    return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+    return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
 ```
 
 - CardinalityOne → returns `entry.OneValue()` (single value)

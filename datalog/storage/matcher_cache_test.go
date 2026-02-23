@@ -512,7 +512,7 @@ func BenchmarkCachePathWithBindings(b *testing.B) {
 			query.Variable{Name: datalog.NewSymbol("?age")},
 		},
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?age")}
+	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?age")}
 
 	b.Run("MatcherMatch_WithBindings", func(b *testing.B) {
 		b.ReportAllocs()
@@ -535,5 +535,5 @@ func BenchmarkCachePathWithBindings(b *testing.B) {
 		}
 	})
 
-	_ = columns // Used in pattern setup
+	_ = symbols // Used in pattern setup
 }

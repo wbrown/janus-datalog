@@ -378,15 +378,15 @@ func main() {
 		log.Fatal("Failed to execute query 6:", err)
 	}
 
-	fmt.Printf("\nResults (3 rows, one per day with correct OHLC data, sorted by date):\n")
+	fmt.Printf("\nResults (3 tuples, one per day with correct OHLC data, sorted by date):\n")
 	executor.PrintResult(result6)
 
 	fmt.Println("\nWithout subqueries, this query would produce 3 days × multiple bars per day")
-	fmt.Println("= many incorrect rows due to Cartesian product!")
+	fmt.Println("= many incorrect tuples due to Cartesian product!")
 
 	fmt.Println("\nNote: Without subqueries, combining aggregated values (max/min) with")
 	fmt.Println("non-aggregated values (specific open/close) in a single query would")
-	fmt.Println("produce a Cartesian product with many incorrect rows, as described in")
+	fmt.Println("produce a Cartesian product with many incorrect tuples, as described in")
 	fmt.Println("the bug report. Subqueries properly scope each aggregation and lookup!")
 	fmt.Println("\nThis solves the issue reported in ../gopher-street/datalog_aggregation_bug_report.md")
 }

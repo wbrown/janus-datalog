@@ -77,7 +77,7 @@ func (s *TupleSet) Contains(tuple Tuple) bool {
 
 ### Option 2: Interned Value Fast Path
 
-For single-column projections on interned types (`*Identity`, `*Keyword`), use pointer comparison:
+For single-symbol projections on interned types (`*Identity`, `*Keyword`), use pointer comparison:
 
 ```go
 type SingleColumnSet struct {
@@ -93,7 +93,7 @@ func (s *SingleColumnSet) Add(val interface{}) bool {
 }
 ```
 
-**When applicable**: Projection to single column of interned type.
+**When applicable**: Projection to single symbol of interned type.
 **Expected speedup**: Significant - avoids hashing entirely, uses Go's native map.
 
 ### Option 3: Adaptive Strategy
@@ -101,8 +101,8 @@ func (s *SingleColumnSet) Add(val interface{}) bool {
 Choose strategy based on projection characteristics:
 
 ```go
-func NewDedupIterator(source Iterator, columns []Symbol) Iterator {
-    if len(columns) == 1 && isInternedType(columns[0]) {
+func NewDedupIterator(source Iterator, symbols []Symbol) Iterator {
+    if len(symbols) == 1 && isInternedType(symbols[0]) {
         return &SingleColumnDedupIterator{...}
     }
     if expectedCardinality < 100 {
@@ -122,8 +122,8 @@ Use Bloom filter for approximate membership. **Rejected** because false positive
    - Simple change, no behavior difference
    - Measure improvement
 
-2. **Phase 2**: Add single-column fast path (Option 2)
-   - Requires detecting projection column types
+2. **Phase 2**: Add single-symbol fast path (Option 2)
+   - Requires detecting projection symbol types
    - Only if Phase 1 shows insufficient improvement
 
 3. **Phase 3**: Adaptive strategy (Option 3)

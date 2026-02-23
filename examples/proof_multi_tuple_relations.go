@@ -86,7 +86,7 @@ func main() {
 				{bob},
 			},
 		)
-		fmt.Printf("Binding relation has %d rows: Alice and Bob\n", bindingRel.Size())
+		fmt.Printf("Binding relation has %d tuples: Alice and Bob\n", bindingRel.Size())
 
 		// Pattern: [?person :person/age ?age]
 		pattern := &query.DataPattern{
@@ -128,11 +128,11 @@ func main() {
 		}
 	}
 
-	// PROOF 2: Multi-column relation binds multiple variables
-	fmt.Println("\n\nPROOF 2: Multi-column relation binds multiple variables")
+	// PROOF 2: Multi-symbol relation binds multiple variables
+	fmt.Println("\n\nPROOF 2: Multi-symbol relation binds multiple variables")
 	fmt.Println("-------------------------------------------------------")
 	{
-		// Create a multi-column relation with person-attribute pairs
+		// Create a multi-symbol relation with person-attribute pairs
 		bindingRel := executor.NewMaterializedRelation(
 			[]query.Symbol{"?p", "?attr"},
 			[]executor.Tuple{
@@ -141,10 +141,10 @@ func main() {
 				{charlie, cityAttr}, // Get Charlie's city
 			},
 		)
-		fmt.Printf("Binding relation has %d rows with 2 columns each\n", bindingRel.Size())
-		fmt.Println("  Row 1: (alice, :person/name)")
-		fmt.Println("  Row 2: (bob, :person/age)")
-		fmt.Println("  Row 3: (charlie, :person/city)")
+		fmt.Printf("Binding relation has %d tuples with 2 symbols each\n", bindingRel.Size())
+		fmt.Println("  Tuple 1: (alice, :person/name)")
+		fmt.Println("  Tuple 2: (bob, :person/age)")
+		fmt.Println("  Tuple 3: (charlie, :person/city)")
 
 		// Pattern: [?p ?attr ?value]
 		pattern := &query.DataPattern{
@@ -155,7 +155,7 @@ func main() {
 			},
 		}
 
-		// Match with multi-column binding
+		// Match with multi-symbol binding
 		results, err := matcher.Match(pattern, executor.Relations{bindingRel})
 		if err != nil {
 			log.Fatal(err)
@@ -170,7 +170,7 @@ func main() {
 		it.Close()
 
 		if results.Size() == 3 {
-			fmt.Println("✅ SUCCESS: Multi-column relation correctly bound multiple variables")
+			fmt.Println("✅ SUCCESS: Multi-symbol relation correctly bound multiple variables")
 		} else {
 			fmt.Println("❌ FAILED: Expected exactly 3 results")
 		}
@@ -185,7 +185,7 @@ func main() {
 			[]query.Symbol{"?person"},
 			[]executor.Tuple{}, // No tuples!
 		)
-		fmt.Printf("Empty relation has %d rows\n", emptyRel.Size())
+		fmt.Printf("Empty relation has %d tuples\n", emptyRel.Size())
 
 		// Pattern that would normally match all names
 		pattern := &query.DataPattern{

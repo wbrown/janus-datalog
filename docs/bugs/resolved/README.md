@@ -49,7 +49,7 @@ Each bug report follows a consistent format:
 ### [PHASE_REORDERING_CONDITIONAL_AGGREGATE_BUG.md](./PHASE_REORDERING_CONDITIONAL_AGGREGATE_BUG.md)
 **Fixed:** October 14-17, 2025 (during fix-buffered-iterator-architecture branch)
 
-**Problem:** Phase reordering alone was breaking all subquery execution, returning 0 rows when it should return multiple rows. Initially thought to be interaction with conditional aggregates, but turned out to be core phase reordering issue.
+**Problem:** Phase reordering alone was breaking all subquery execution, returning 0 tuples when it should return multiple tuples. Initially thought to be interaction with conditional aggregates, but turned out to be core phase reordering issue.
 
 **Key Lesson:** Test optimization interactions - bugs can be masked by other optimizations that happen to work around them.
 

@@ -16,7 +16,7 @@ type batchScanIterator struct {
 	tuples      []executor.Tuple
 	position    int       // Which position is changing (0=E, 1=A, 2=V)
 	index       IndexType // Which index to use
-	columns     []query.Symbol
+	symbols     []query.Symbol
 	constraints []executor.StorageConstraint
 
 	// Batch state
@@ -56,7 +56,7 @@ func newBatchScanIterator(
 	tuples []executor.Tuple,
 	position int,
 	index IndexType,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	constraints []executor.StorageConstraint,
 ) *batchScanIterator {
 	return &batchScanIterator{
@@ -66,7 +66,7 @@ func newBatchScanIterator(
 		tuples:      tuples,
 		position:    position,
 		index:       index,
-		columns:     columns,
+		symbols:     symbols,
 		constraints: constraints,
 		batchSize:   100, // Default batch size - tune based on performance
 		batchStart:  0,
@@ -326,7 +326,7 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 
 		if satisfiesAll {
 			// Convert to tuple and add to results
-			resultTuple := query.DatomToTuple(*datom, it.pattern, it.columns)
+			resultTuple := query.DatomToTuple(*datom, it.pattern, it.symbols)
 			if resultTuple != nil {
 				it.pendingMatches = append(it.pendingMatches, resultTuple)
 				it.datomsMatched++

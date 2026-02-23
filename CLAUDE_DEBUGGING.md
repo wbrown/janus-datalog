@@ -87,7 +87,7 @@ fmt.Printf("DEBUG Phase %d: patterns=%d, expressions=%d, " +
 
 // Before/after key operations
 fmt.Printf("DEBUG before expression eval: size=%d, cols=%v\n",
-    group.Size(), group.Columns())
+    group.Size(), group.Symbols())
 ```
 
 **Strategic locations**:
@@ -128,11 +128,11 @@ if phaseIndex > 0 {
 
 // Output invariant
 assert(result != nil, "Phase returns nil result")
-assert(result.Columns() matches phase.Provides or phase.Keep)
+assert(result.Symbols() matches phase.Provides or phase.Keep)
 
 // Data flow invariant
 if phase.Available includes ?x {
-    assert(previousResult.Columns() includes ?x OR ?x is input parameter)
+    assert(previousResult.Symbols() includes ?x OR ?x is input parameter)
 }
 ```
 
@@ -141,7 +141,7 @@ if phase.Available includes ?x {
 ## Common Bug Patterns
 
 ### 1. Zero tuples from non-empty input
-- Check: Failed join (no shared columns)
+- Check: Failed join (no shared symbols)
 - Check: Predicate filtered everything
 - Check: Expression-only phase got empty relations ← **This bug**
 

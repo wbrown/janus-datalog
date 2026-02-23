@@ -35,8 +35,8 @@ type BadgerMatcher struct {
     builderMutex sync.RWMutex
 }
 
-func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, columns []query.Symbol) *InternedTupleBuilder {
-    key := builderCacheKey{pattern: pattern, columns: columns}
+func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *InternedTupleBuilder {
+    key := builderCacheKey{pattern: pattern, symbols: symbols}
 
     m.builderMutex.RLock()
     builder, exists := m.builderCache[key]
@@ -47,7 +47,7 @@ func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, columns []qu
     }
 
     // Create new builder and cache it
-    builder = NewInternedTupleBuilder(columns)
+    builder = NewInternedTupleBuilder(symbols)
     m.builderMutex.Lock()
     m.builderCache[key] = builder
     m.builderMutex.Unlock()
@@ -58,7 +58,7 @@ func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, columns []qu
 
 ### Key Design Decisions
 
-1. **Cache key**: (pattern, columns) uniquely identifies builder configuration
+1. **Cache key**: (pattern, symbols) uniquely identifies builder configuration
 2. **Thread-safe**: RWMutex allows concurrent reads, serialized writes
 3. **Lifetime**: Builders cached for matcher lifetime (acceptable memory)
 4. **Reuse**: Same builder instance used for all matches with same pattern

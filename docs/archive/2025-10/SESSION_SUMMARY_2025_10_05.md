@@ -19,7 +19,7 @@ Implement hash join strategy to fix large binding set performance issues.
 **Performance Results**:
 ```
 Test 2 (aggregation with date filters):  timeout → 523ms
-Test 3 (79 rows with filters):           61+ sec → 69ms (880x speedup!)
+Test 3 (79 tuples with filters):           61+ sec → 69ms (880x speedup!)
 Test 4 (simple subquery):                fast    → 35ms (already optimal)
 Test 5 (complex OHLC 4 subqueries):      27 sec  → 210ms (128x speedup!)
 ```

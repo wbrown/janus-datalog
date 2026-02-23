@@ -232,22 +232,22 @@ func TestWorkspaceRegression_PredicateFilter(t *testing.T) {
 	}
 
 	// Check that all ages are >= 25
-	for i, row := range results {
-		if len(row) >= 2 {
-			age, ok := row[1].(int64)
+	for i, tuple := range results {
+		if len(tuple) >= 2 {
+			age, ok := tuple[1].(int64)
 			if !ok {
-				t.Errorf("row %d: unexpected age type %T", i, row[1])
+				t.Errorf("tuple %d: unexpected age type %T", i, tuple[1])
 				continue
 			}
 			if age < 25 {
-				t.Errorf("row %d: age %d should not pass filter >= 25", i, age)
+				t.Errorf("tuple %d: age %d should not pass filter >= 25", i, age)
 			}
-			t.Logf("Row %d: age=%d", i, age)
+			t.Logf("Tuple %d: age=%d", i, age)
 		}
 	}
 }
 
-// Test 4: Projection to single column
+// Test 4: Projection to single symbol
 func TestWorkspaceRegression_Projection(t *testing.T) {
 	db, cleanup := createWorkspaceTestDB(t)
 	defer cleanup()
@@ -270,9 +270,9 @@ func TestWorkspaceRegression_Projection(t *testing.T) {
 
 	// Collect ages
 	ageSet := make(map[int64]bool)
-	for _, row := range results {
-		if len(row) >= 1 {
-			if age, ok := row[0].(int64); ok {
+	for _, tuple := range results {
+		if len(tuple) >= 1 {
+			if age, ok := tuple[0].(int64); ok {
 				ageSet[age] = true
 				t.Logf("Age: %d", age)
 			}
@@ -310,9 +310,9 @@ func TestWorkspaceRegression_FilterThenProject(t *testing.T) {
 
 	// Verify the ages are correct
 	ageSet := make(map[int64]bool)
-	for _, row := range results {
-		if len(row) >= 1 {
-			if age, ok := row[0].(int64); ok {
+	for _, tuple := range results {
+		if len(tuple) >= 1 {
+			if age, ok := tuple[0].(int64); ok {
 				ageSet[age] = true
 				if age < 25 {
 					t.Errorf("age %d should not be in results (filter >= 25)", age)

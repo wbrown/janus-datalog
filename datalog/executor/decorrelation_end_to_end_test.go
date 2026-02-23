@@ -87,11 +87,11 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 		t.Fatalf("query execution failed: %v", err)
 	}
 
-	// Check columns
+	// Check symbols
 	expectedCols := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?high"), datalog.NewSymbol("?low")}
-	if !columnsEqualTest(result.Columns(), expectedCols) {
-		t.Errorf("column mismatch:\n  got=%v\n  want=%v",
-			result.Columns(), expectedCols)
+	if !columnsEqualTest(result.Symbols(), expectedCols) {
+		t.Errorf("symbol mismatch:\n  got=%v\n  want=%v",
+			result.Symbols(), expectedCols)
 	}
 
 	// Check results
@@ -182,7 +182,7 @@ func columnsEqualTest(a, b []query.Symbol) bool {
 }
 
 func dumpRelationTest(t *testing.T, rel Relation) {
-	t.Logf("Relation columns: %v", rel.Columns())
+	t.Logf("Relation symbols: %v", rel.Symbols())
 	it := rel.Iterator()
 	defer it.Close()
 	count := 0

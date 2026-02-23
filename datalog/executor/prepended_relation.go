@@ -10,7 +10,7 @@ import (
 // PrependedRelation wraps a relation with a pre-peeked first tuple.
 // This allows checking if a relation has results without losing the first tuple.
 type PrependedRelation struct {
-	columns      []query.Symbol
+	symbols      []query.Symbol
 	firstTuple   Tuple
 	restRelation Relation
 	options      ExecutorOptions
@@ -19,9 +19,9 @@ type PrependedRelation struct {
 
 // NewPrependedRelation creates a streaming relation that yields firstTuple first,
 // then continues with the rest of the relation.
-func NewPrependedRelation(columns []query.Symbol, firstTuple Tuple, restRelation Relation, options ExecutorOptions) *PrependedRelation {
+func NewPrependedRelation(symbols []query.Symbol, firstTuple Tuple, restRelation Relation, options ExecutorOptions) *PrependedRelation {
 	return &PrependedRelation{
-		columns:      columns,
+		symbols:      symbols,
 		firstTuple:   firstTuple,
 		restRelation: restRelation,
 		options:      options,
@@ -42,12 +42,8 @@ func (r *PrependedRelation) Iterator() Iterator {
 	}
 }
 
-func (r *PrependedRelation) Columns() []query.Symbol {
-	return r.columns
-}
-
 func (r *PrependedRelation) Symbols() []query.Symbol {
-	return r.columns
+	return r.symbols
 }
 
 func (r *PrependedRelation) Size() int {
@@ -63,11 +59,11 @@ func (r *PrependedRelation) Get(i int) Tuple {
 }
 
 func (r *PrependedRelation) String() string {
-	var symbols []string
-	for _, col := range r.columns {
-		symbols = append(symbols, col.String())
+	var symStrs []string
+	for _, sym := range r.symbols {
+		symStrs = append(symStrs, sym.String())
 	}
-	return fmt.Sprintf("PrependedRelation([%s], streaming)", strings.Join(symbols, " "))
+	return fmt.Sprintf("PrependedRelation([%s], streaming)", strings.Join(symStrs, " "))
 }
 
 func (r *PrependedRelation) Table() string {
@@ -82,8 +78,8 @@ func (r *PrependedRelation) Sorted() []Tuple {
 	return r.Materialize().Sorted()
 }
 
-func (r *PrependedRelation) Project(columns []query.Symbol) (Relation, error) {
-	return r.Materialize().Project(columns)
+func (r *PrependedRelation) Project(symbols []query.Symbol) (Relation, error) {
+	return r.Materialize().Project(symbols)
 }
 
 func (r *PrependedRelation) Materialize() Relation {
@@ -100,7 +96,7 @@ func (r *PrependedRelation) Materialize() Relation {
 	}
 	it.Close()
 
-	return NewMaterializedRelationWithOptions(r.columns, tuples, r.options)
+	return NewMaterializedRelationWithOptions(r.symbols, tuples, r.options)
 }
 
 func (r *PrependedRelation) Sort(orderBy []query.OrderByClause) Relation {
@@ -124,7 +120,7 @@ func (r *PrependedRelation) Select(pred func(Tuple) bool) Relation {
 }
 
 func (r *PrependedRelation) Join(other Relation) Relation {
-	common := CommonColumns(r, other)
+	common := CommonSymbols(r, other)
 	if len(common) == 0 {
 		return crossProduct(r, other)
 	}

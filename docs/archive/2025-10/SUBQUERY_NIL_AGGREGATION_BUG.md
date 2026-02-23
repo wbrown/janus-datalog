@@ -25,7 +25,7 @@ github.com/wbrown/gopher-street.ExtractDailyFromDatalogAccurate(0xc000ee6500)
 	/Users/wbrown/go/src/github.com/wbrown/gopher-street/extract_datalog.go:930 +0x730
 ```
 
-Line 930: `High: row[2].(float64)` - panics because `row[2]` is nil
+Line 930: `High: tuple[2].(float64)` - panics because `tuple[2]` is nil
 
 ## Reproduction
 

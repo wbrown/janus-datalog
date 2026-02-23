@@ -274,14 +274,14 @@ All tests follow the same data setup pattern as the existing `TestElementIDBindi
 - **Query**: `[:find ?v :in $ [[?e ?tx] ...] :where [?e :person/name ?v ?tx]]`
 - **Input**: `[][]interface{}{{aliceIdentity, aliceTx}, {bobIdentity, bobTx}}`
 - **Assert**: Returns 2 results with correct names
-- **Exercises**: Multi-column hash join with ElementID, `valueToHashKey(ElementID)`, `compareJoinKeys(ElementID)`
+- **Exercises**: Multi-symbol hash join with ElementID, `valueToHashKey(ElementID)`, `compareJoinKeys(ElementID)`
 
 #### `TestElementIDBinding_TxJoin`
-- **Purpose**: Two patterns joined on `?tx` where Tx column holds `*ElementID`
+- **Purpose**: Two patterns joined on `?tx` where Tx symbol holds `*ElementID`
 - **Setup**: 2 entities with 2 attributes each, written in separate transactions
 - **Query**: `[:find ?name ?age :where [?e1 :person/name ?name ?tx] [?e2 :person/age ?age ?tx]]`
 - **Assert**: Each transaction's name/age pairs are joined correctly
-- **Exercises**: Hash join on `*ElementID` column (both sides from storage), `TupleKey` hashing
+- **Exercises**: Hash join on `*ElementID` symbol (both sides from storage), `TupleKey` hashing
 
 #### `TestElementIDBinding_ComparisonPredicate`
 - **Purpose**: `[(= ?tx ?target-tx)]` predicate with ElementID binding

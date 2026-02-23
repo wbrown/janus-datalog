@@ -6,7 +6,7 @@
 
 ## Overview
 
-Input parameters (from `:in` clause) have specific semantics in query planning and execution that differ from both pattern-derived variables and relation columns. Understanding these semantics is critical for correct query planning.
+Input parameters (from `:in` clause) have specific semantics in query planning and execution that differ from both pattern-derived variables and relation symbols. Understanding these semantics is critical for correct query planning.
 
 ## The Three-Level Type System
 
@@ -26,8 +26,8 @@ Janus Datalog maintains a clear separation between three different "levels" of s
 - **Location**: Both `Phase.Provides` (where produced) and subsequent `Phase.Available`
 - **Analogy**: Local variables that persist through computation
 
-### 3. Relation Columns (Data Level)
-- **Actual data**: Columns in the physical relations produced by phases
+### 3. Relation Symbols (Data Level)
+- **Actual data**: Symbols in the physical relations produced by phases
 - **Scope**: Only exist in specific phase outputs
 - **Purpose**: Carry actual query results
 - **Location**: `Phase.Provides` only (what the relation actually contains)
@@ -38,7 +38,7 @@ Janus Datalog maintains a clear separation between three different "levels" of s
 ### Invariant 1: Available ≠ Provides
 ```
 Available = Environment symbols (inputs + previous outputs)
-Provides = Relation columns (what THIS phase produces)
+Provides = Relation symbols (what THIS phase produces)
 ```
 
 Input parameters are in `Available` (can be used) but NOT in `Provides` (not in result).
@@ -93,15 +93,15 @@ Keep:      [?time ?s]                  ← What's needed for find clause
 
 ## Common Pitfalls
 
-### Pitfall 1: Treating Input Parameters as Relation Columns
+### Pitfall 1: Treating Input Parameters as Relation Symbols
 ```go
 // WRONG: Try to keep input parameter
 Keep: [?time ?close ?symbol]  // ?symbol not in Provides!
 ```
 
-**Error**: "cannot project: column ?symbol not found in relation"
+**Error**: "cannot project: symbol ?symbol not found in relation"
 
-**Why**: Input parameters are environment symbols, not data columns.
+**Why**: Input parameters are environment symbols, not data symbols.
 
 **Fix**: Only keep symbols that are in `Provides`:
 ```go
@@ -238,11 +238,11 @@ for i := range phases {
 This is the core insight that resolves confusion:
 
 - **Metadata**: Information ABOUT the query execution (input parameters)
-- **Data**: Information IN the query result (relation columns)
+- **Data**: Information IN the query result (relation symbols)
 
-Just as SQL prepared statements have parameters that don't appear in result columns:
+Just as SQL prepared statements have parameters that don't appear in result symbols:
 ```sql
--- ?symbol is a parameter, not a column
+-- ?symbol is a parameter, not a symbol
 SELECT time, close
 FROM prices
 WHERE symbol = ?  -- ?symbol filters but doesn't appear in output

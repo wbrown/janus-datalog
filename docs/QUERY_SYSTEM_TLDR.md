@@ -157,7 +157,7 @@ func Collapse(relations []Relation) []Relation {
         merged := false
         for i, group := range groups {
             if shareColumns(rel, group) {
-                groups[i] = hashJoin(group, rel)  // Join on shared columns
+                groups[i] = hashJoin(group, rel)  // Join on shared symbols
                 merged = true
                 break
             }
@@ -170,7 +170,7 @@ func Collapse(relations []Relation) []Relation {
 }
 ```
 
-**Result**: Multiple "disjoint groups" if relations don't share columns.
+**Result**: Multiple "disjoint groups" if relations don't share symbols.
 
 **Error case**: If disjoint groups remain at the end → query would require Cartesian product → reject with error.
 
@@ -178,21 +178,21 @@ func Collapse(relations []Relation) []Relation {
 
 ## Join Strategy: Hash Join
 
-When joining two relations on shared columns:
+When joining two relations on shared symbols:
 
 ```
-Relation A: [?e, ?name]     (10,000 rows)
-Relation B: [?e, ?age]      (10,000 rows)
+Relation A: [?e, ?name]     (10,000 tuples)
+Relation B: [?e, ?age]      (10,000 tuples)
 Join on: ?e
 
 Algorithm:
 1. Build hash table from SMALLER relation
-   hash[?e] → [?name rows...]
+   hash[?e] → [?name tuples...]
 
 2. Probe with LARGER relation
    for each (?e, ?age) in B:
        lookup hash[?e]
-       emit combined rows
+       emit combined tuples
 
 Complexity: O(n + m) instead of O(n × m)
 ```
@@ -212,8 +212,8 @@ Pattern 2: [?e :salary ?s]       → Now works on pre-filtered set
 ```
 
 **Why not wait?**
-- Filtering 10K rows to 1K is cheap
-- Subsequent patterns only process 1K rows instead of 10K
+- Filtering 10K tuples to 1K is cheap
+- Subsequent patterns only process 1K tuples instead of 10K
 - Memory stays bounded
 
 **Game analogy**: Like early-out in raymarching. Check cheap bounds before expensive SDF evaluation.
@@ -255,7 +255,7 @@ Step 1: [?player :player/weapon ?weapon]
 
 Step 2: [?weapon :weapon/damage ?damage]
 
-        For each row from Step 1:
+        For each tuple from Step 1:
           Execute pattern with ?weapon = sword_5
           Execute pattern with ?weapon = axe_3
           ...
@@ -339,13 +339,13 @@ Round 4:
 ```
 Step 1: [?player :player/weapon ?weapon]
         Index: AEVT (attribute bound)
-        Result: Relation([?player, ?weapon], 10000 rows)
+        Result: Relation([?player, ?weapon], 10000 tuples)
         Groups: [Rel1]
 
 Step 2: [?weapon :weapon/damage ?damage]
         Binding: Use Rel1's ?weapon values
         Index: EAVT per weapon (entity bound)
-        Result: Relation([?weapon, ?damage], 10000 rows)
+        Result: Relation([?weapon, ?damage], 10000 tuples)
         Groups: [Rel1, Rel2]
         Collapse: Rel1 ∩ Rel2 on ?weapon → Rel3([?player, ?weapon, ?damage])
         Groups: [Rel3]
@@ -353,17 +353,17 @@ Step 2: [?weapon :weapon/damage ?damage]
 Step 3: [?player :player/name ?name]
         Binding: Use Rel3's ?player values
         Index: EAVT per player
-        Result: Relation([?player, ?name], 10000 rows)
+        Result: Relation([?player, ?name], 10000 tuples)
         Collapse: Rel3 ∩ Rel4 on ?player → Rel5([?player, ?weapon, ?damage, ?name])
         Groups: [Rel5]
 
 Step 4: [(> ?damage 50)]
         Filter Rel5 where ?damage > 50
-        Result: Rel6 (maybe 2000 rows)
+        Result: Rel6 (maybe 2000 tuples)
         Groups: [Rel6]
 
 Project: Keep only [?name, ?damage]
-Return: 2000 rows
+Return: 2000 tuples
 ```
 
 ---
@@ -374,7 +374,7 @@ Return: 2000 rows
 |----------|--------|-----------------|
 | **Clause order** | Score by type, respect dependencies | Task priority + job graph |
 | **When to join** | After every clause (collapse) | Incremental scene merging |
-| **Join algorithm** | Hash join on shared columns | Spatial hashing |
+| **Join algorithm** | Hash join on shared symbols | Spatial hashing |
 | **Index selection** | Based on bound variables | Choosing accel structure |
 | **Binding strategy** | Score by selectivity position | Instance culling |
 | **Predicate timing** | ASAP when symbols available | Early-out optimization |

@@ -38,12 +38,8 @@ func collectTuplesInto(dest *[]Tuple, rel Relation) {
 	it.Close()
 }
 
-// Relation represents a set of tuples with named columns
+// Relation represents a set of tuples with named symbols
 type Relation interface {
-	// Columns returns the column names (symbols) in order
-	// Deprecated: Use Symbols() instead for consistency with relational theory
-	Columns() []query.Symbol
-
 	// Symbols returns the symbols (attribute names) of this relation
 	// In relational theory, a tuple is a map from symbols to values
 	Symbols() []query.Symbol
@@ -74,9 +70,9 @@ type Relation interface {
 	// First symbol is primary sort key, second is secondary, etc.
 	Sorted() []Tuple
 
-	// Project returns a new relation with only the specified columns
-	// Returns an error if any requested column doesn't exist
-	Project(columns []query.Symbol) (Relation, error)
+	// Project returns a new relation with only the specified symbols
+	// Returns an error if any requested symbol doesn't exist
+	Project(symbols []query.Symbol) (Relation, error)
 
 	// Materialize converts a streaming relation to a materialized one
 	// For already-materialized relations, returns self
@@ -91,8 +87,8 @@ type Relation interface {
 	// FilterWithPredicate returns a new relation filtered by a query.Predicate
 	FilterWithPredicate(pred query.Predicate) Relation
 
-	// EvaluateFunction evaluates a function and adds its result as a new column
-	EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation
+	// EvaluateFunction evaluates a function and adds its result as a new symbol
+	EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation
 
 	// Select returns a new relation with only tuples that satisfy the predicate
 	Select(pred func(Tuple) bool) Relation
@@ -100,14 +96,14 @@ type Relation interface {
 	// Join performs a natural join with another relation
 	Join(other Relation) Relation
 
-	// HashJoin performs an equi-join on specified columns
-	HashJoin(other Relation, joinCols []query.Symbol) Relation
+	// HashJoin performs an equi-join on specified symbols
+	HashJoin(other Relation, joinSyms []query.Symbol) Relation
 
 	// SemiJoin returns tuples from this relation that have matches in the other
-	SemiJoin(other Relation, joinCols []query.Symbol) Relation
+	SemiJoin(other Relation, joinSyms []query.Symbol) Relation
 
 	// AntiJoin returns tuples from this relation that have no matches in the other
-	AntiJoin(other Relation, joinCols []query.Symbol) Relation
+	AntiJoin(other Relation, joinSyms []query.Symbol) Relation
 
 	// Aggregate performs aggregation operations
 	Aggregate(findElements []query.FindElement) Relation
@@ -278,29 +274,29 @@ func (ci *CachingIterator) signalComplete() {
 
 // MaterializedRelation holds all tuples in memory
 type MaterializedRelation struct {
-	columns []query.Symbol
+	symbols []query.Symbol
 	tuples  []Tuple
 	options ExecutorOptions
 }
 
-func NewMaterializedRelation(columns []query.Symbol, tuples []Tuple) *MaterializedRelation {
+func NewMaterializedRelation(symbols []query.Symbol, tuples []Tuple) *MaterializedRelation {
 	// Deduplicate tuples at creation
 	dedupedTuples := deduplicateTuples(tuples)
 
 	return &MaterializedRelation{
-		columns: columns,
+		symbols: symbols,
 		tuples:  dedupedTuples,
 		options: ExecutorOptions{}, // Default options
 	}
 }
 
 // NewMaterializedRelationWithOptions creates a materialized relation with specific options
-func NewMaterializedRelationWithOptions(columns []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
+func NewMaterializedRelationWithOptions(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
 	// Deduplicate tuples at creation
 	dedupedTuples := deduplicateTuples(tuples)
 
 	return &MaterializedRelation{
-		columns: columns,
+		symbols: symbols,
 		tuples:  dedupedTuples,
 		options: opts,
 	}
@@ -308,18 +304,18 @@ func NewMaterializedRelationWithOptions(columns []query.Symbol, tuples []Tuple, 
 
 // NewMaterializedRelationNoDedupe creates a materialized relation without deduplication
 // Use this when you know the tuples are already unique (e.g., from storage scans)
-func NewMaterializedRelationNoDedupe(columns []query.Symbol, tuples []Tuple) *MaterializedRelation {
+func NewMaterializedRelationNoDedupe(symbols []query.Symbol, tuples []Tuple) *MaterializedRelation {
 	return &MaterializedRelation{
-		columns: columns,
+		symbols: symbols,
 		tuples:  tuples,
 		options: ExecutorOptions{}, // Default options
 	}
 }
 
 // NewMaterializedRelationNoDedupeWithOptions creates a new relation without deduplication, with options
-func NewMaterializedRelationNoDedupeWithOptions(columns []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
+func NewMaterializedRelationNoDedupeWithOptions(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
 	return &MaterializedRelation{
-		columns: columns,
+		symbols: symbols,
 		tuples:  tuples,
 		options: opts,
 	}
@@ -327,10 +323,10 @@ func NewMaterializedRelationNoDedupeWithOptions(columns []query.Symbol, tuples [
 
 // NewUnitRelation returns a relation with one empty tuple (identity for joins).
 // Used when OR fallback needs a base case with no outer context.
-// The unit relation has no columns and one tuple with no values.
+// The unit relation has no symbols and one tuple with no values.
 func NewUnitRelation(opts ExecutorOptions) *MaterializedRelation {
 	return &MaterializedRelation{
-		columns: []query.Symbol{},
+		symbols: []query.Symbol{},
 		tuples:  []Tuple{{}}, // One empty tuple
 		options: opts,
 	}
@@ -357,12 +353,8 @@ func deduplicateTuples(tuples []Tuple) []Tuple {
 	return result
 }
 
-func (r *MaterializedRelation) Columns() []query.Symbol {
-	return r.columns
-}
-
 func (r *MaterializedRelation) Symbols() []query.Symbol {
-	return r.columns
+	return r.symbols
 }
 
 func (r *MaterializedRelation) Iterator() Iterator {
@@ -399,29 +391,29 @@ func (r *MaterializedRelation) Get(i int) Tuple {
 	return r.tuples[i]
 }
 
-// ColumnIndex returns the index of a column by symbol
-func (r *MaterializedRelation) ColumnIndex(sym query.Symbol) int {
-	for i, col := range r.columns {
-		if col == sym {
+// SymbolIndex returns the index of a symbol in this relation
+func (r *MaterializedRelation) SymbolIndex(sym query.Symbol) int {
+	for i, s := range r.symbols {
+		if s == sym {
 			return i
 		}
 	}
 	return -1
 }
 
-// GetValue returns a specific value by row and column symbol
-func (r *MaterializedRelation) GetValue(row int, sym query.Symbol) (interface{}, bool) {
-	tuple := r.Get(row)
+// GetValue returns a specific value by tuple index and symbol
+func (r *MaterializedRelation) GetValue(tupleIdx int, sym query.Symbol) (interface{}, bool) {
+	tuple := r.Get(tupleIdx)
 	if tuple == nil {
 		return nil, false
 	}
 
-	col := r.ColumnIndex(sym)
-	if col < 0 {
+	idx := r.SymbolIndex(sym)
+	if idx < 0 {
 		return nil, false
 	}
 
-	return tuple[col], true
+	return tuple[idx], true
 }
 
 // Tuples returns all tuples (for backward compatibility)
@@ -432,9 +424,9 @@ func (r *MaterializedRelation) Tuples() []Tuple {
 // String returns a compact string representation for annotations
 func (r *MaterializedRelation) String() string {
 	// Format as: Relation([?x ?y], N Tuples) with colors
-	var symbols []string
-	for _, col := range r.columns {
-		symbols = append(symbols, col.String())
+	var symStrs []string
+	for _, sym := range r.symbols {
+		symStrs = append(symStrs, sym.String())
 	}
 
 	// Color the tuple count based on size
@@ -453,7 +445,7 @@ func (r *MaterializedRelation) String() string {
 
 	return fmt.Sprintf("%s%s%s%s%s %s%s",
 		color.BlueString("Relation(["),
-		color.CyanString(strings.Join(symbols, " ")),
+		color.CyanString(strings.Join(symStrs, " ")),
 		color.BlueString("]"),
 		color.BlueString(", "),
 		countStr,
@@ -474,9 +466,9 @@ func (r *MaterializedRelation) ProjectFromPattern(pattern *query.DataPattern) Re
 	neededSymbols := []query.Symbol{}
 	symbolIndices := make(map[query.Symbol]int)
 
-	// Build index of our columns
-	for i, col := range r.columns {
-		symbolIndices[col] = i
+	// Build index of our symbols
+	for i, sym := range r.symbols {
+		symbolIndices[sym] = i
 	}
 
 	// Check each position in the pattern (E, A, V, T)
@@ -522,9 +514,9 @@ func (r *MaterializedRelation) Sorted() []Tuple {
 	sorted := make([]Tuple, len(r.tuples))
 	copy(sorted, r.tuples)
 
-	// Sort tuples lexicographically by columns
+	// Sort tuples lexicographically by symbols
 	sort.Slice(sorted, func(i, j int) bool {
-		for k := 0; k < len(r.columns) && k < len(sorted[i]) && k < len(sorted[j]); k++ {
+		for k := 0; k < len(r.symbols) && k < len(sorted[i]) && k < len(sorted[j]); k++ {
 			cmp := datalog.CompareValues(sorted[i][k], sorted[j][k])
 			if cmp < 0 {
 				return true
@@ -538,26 +530,26 @@ func (r *MaterializedRelation) Sorted() []Tuple {
 	return sorted
 }
 
-// Project returns a new relation with only the specified columns
-func (r *MaterializedRelation) Project(columns []query.Symbol) (Relation, error) {
+// Project returns a new relation with only the specified symbols
+func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// Empty projection is invalid in Datalog - must have at least one find element
-	if len(columns) == 0 {
-		return nil, fmt.Errorf("cannot project empty column list - invalid query")
+	if len(symbols) == 0 {
+		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
 	}
 
-	// Find column indices
-	indices := make([]int, len(columns))
-	for i, col := range columns {
+	// Find symbol indices
+	indices := make([]int, len(symbols))
+	for i, sym := range symbols {
 		idx := -1
-		for j, existing := range r.columns {
-			if existing == col {
+		for j, existing := range r.symbols {
+			if existing == sym {
 				idx = j
 				break
 			}
 		}
 		if idx < 0 {
-			// Column not found - this is a query error in Datalog
-			return nil, fmt.Errorf("cannot project: column %s not found in relation (has columns: %v)", col, r.columns)
+			// Symbol not found - this is a query error in Datalog
+			return nil, fmt.Errorf("cannot project: symbol %s not found in relation (has symbols: %v)", sym, r.symbols)
 		}
 		indices[i] = idx
 	}
@@ -572,7 +564,7 @@ func (r *MaterializedRelation) Project(columns []query.Symbol) (Relation, error)
 		projected[i] = projTuple
 	}
 
-	return NewMaterializedRelationWithOptions(columns, projected, r.options), nil
+	return NewMaterializedRelationWithOptions(symbols, projected, r.options), nil
 }
 
 // Materialize returns self since MaterializedRelation is already materialized
@@ -591,27 +583,27 @@ func (r *MaterializedRelation) Filter(filter Filter) Relation {
 	// Check if all required symbols are present
 	for _, sym := range filter.RequiredSymbols() {
 		found := false
-		for _, col := range r.columns {
-			if col == sym {
+		for _, s := range r.symbols {
+			if s == sym {
 				found = true
 				break
 			}
 		}
 		if !found {
 			// Missing required symbol - return empty relation
-			return NewMaterializedRelationWithOptions(r.columns, nil, r.options)
+			return NewMaterializedRelationWithOptions(r.symbols, nil, r.options)
 		}
 	}
 
 	// Apply filter directly to our tuples
 	var filtered []Tuple
 	for _, tuple := range r.tuples {
-		if filter.Evaluate(tuple, r.columns) {
+		if filter.Evaluate(tuple, r.symbols) {
 			filtered = append(filtered, tuple)
 		}
 	}
 
-	return NewMaterializedRelationWithOptions(r.columns, filtered, r.options)
+	return NewMaterializedRelationWithOptions(r.symbols, filtered, r.options)
 }
 
 // FilterWithPredicate filters the relation using a query.Predicate
@@ -620,8 +612,8 @@ func (r *MaterializedRelation) FilterWithPredicate(pred query.Predicate) Relatio
 	var filtered []Tuple
 	for _, tuple := range r.tuples {
 		bindings := make(map[query.Symbol]interface{})
-		for i, col := range r.columns {
-			bindings[col] = tuple[i]
+		for i, sym := range r.symbols {
+			bindings[sym] = tuple[i]
 		}
 
 		// Apply the predicate
@@ -630,7 +622,7 @@ func (r *MaterializedRelation) FilterWithPredicate(pred query.Predicate) Relatio
 		}
 	}
 
-	return NewMaterializedRelationWithOptions(r.columns, filtered, r.options)
+	return NewMaterializedRelationWithOptions(r.symbols, filtered, r.options)
 }
 
 // Select returns a new relation with only tuples that satisfy the predicate
@@ -640,28 +632,28 @@ func (r *MaterializedRelation) Select(pred func(Tuple) bool) Relation {
 
 // Join performs a natural join with another relation
 func (r *MaterializedRelation) Join(other Relation) Relation {
-	common := CommonColumns(r, other)
+	common := CommonSymbols(r, other)
 	if len(common) == 0 {
-		// No common columns - cross product (expensive!)
+		// No common symbols - cross product (expensive!)
 		return crossProduct(r, other)
 	}
 	// Use hash join for efficiency
 	return r.HashJoin(other, common)
 }
 
-// HashJoin performs an equi-join on specified columns
-func (r *MaterializedRelation) HashJoin(other Relation, joinCols []query.Symbol) Relation {
-	return HashJoin(r, other, joinCols)
+// HashJoin performs an equi-join on specified symbols
+func (r *MaterializedRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return HashJoin(r, other, joinSyms)
 }
 
 // SemiJoin returns tuples from this relation that have matches in the other
-func (r *MaterializedRelation) SemiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return SemiJoin(r, other, joinCols)
+func (r *MaterializedRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return SemiJoin(r, other, joinSyms)
 }
 
 // AntiJoin returns tuples from this relation that have no matches in the other
-func (r *MaterializedRelation) AntiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return AntiJoin(r, other, joinCols)
+func (r *MaterializedRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return AntiJoin(r, other, joinSyms)
 }
 
 // Aggregate performs aggregation operations
@@ -669,18 +661,18 @@ func (r *MaterializedRelation) Aggregate(findElements []query.FindElement) Relat
 	return ExecuteAggregations(r, findElements)
 }
 
-// EvaluateFunction evaluates a function and adds its result as a new column
-func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
-	// Add the output column
-	newColumns := append(r.columns, outputColumn)
+// EvaluateFunction evaluates a function and adds its result as a new symbol
+func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
+	// Add the output symbol
+	newSymbols := append(r.symbols, outputSymbol)
 
 	// Process each tuple
 	var newTuples []Tuple
 	for _, tuple := range r.tuples {
 		// Create bindings from tuple
 		bindings := make(map[query.Symbol]interface{})
-		for i, col := range r.columns {
-			bindings[col] = tuple[i]
+		for i, sym := range r.symbols {
+			bindings[sym] = tuple[i]
 		}
 
 		// Evaluate the function
@@ -695,7 +687,7 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputColumn 
 		newTuples = append(newTuples, newTuple)
 	}
 
-	return NewMaterializedRelation(newColumns, newTuples)
+	return NewMaterializedRelation(newSymbols, newTuples)
 }
 
 // contains checks if a symbol is in a slice
@@ -732,7 +724,7 @@ func (it *sliceIterator) Close() error {
 
 // StreamingRelation wraps an iterator as a relation
 type StreamingRelation struct {
-	columns  []query.Symbol
+	symbols  []query.Symbol
 	iterator Iterator
 	size     int             // -1 if unknown
 	options  ExecutorOptions // Options from the factory that created this relation
@@ -758,9 +750,9 @@ type StreamingRelation struct {
 	iteratorCalled bool              // Track if Iterator() was already called (for single-use enforcement)
 }
 
-func NewStreamingRelation(columns []query.Symbol, iterator Iterator) *StreamingRelation {
+func NewStreamingRelation(symbols []query.Symbol, iterator Iterator) *StreamingRelation {
 	return &StreamingRelation{
-		columns:  columns,
+		symbols:  symbols,
 		iterator: iterator,
 		size:     -1,
 		options:  ExecutorOptions{}, // Default options - for backward compatibility
@@ -768,21 +760,17 @@ func NewStreamingRelation(columns []query.Symbol, iterator Iterator) *StreamingR
 }
 
 // NewStreamingRelationWithOptions creates a streaming relation with specific options
-func NewStreamingRelationWithOptions(columns []query.Symbol, iterator Iterator, opts ExecutorOptions) *StreamingRelation {
+func NewStreamingRelationWithOptions(symbols []query.Symbol, iterator Iterator, opts ExecutorOptions) *StreamingRelation {
 	return &StreamingRelation{
-		columns:  columns,
+		symbols:  symbols,
 		iterator: iterator,
 		size:     -1,
 		options:  opts,
 	}
 }
 
-func (r *StreamingRelation) Columns() []query.Symbol {
-	return r.columns
-}
-
 func (r *StreamingRelation) Symbols() []query.Symbol {
-	return r.columns
+	return r.symbols
 }
 
 func (r *StreamingRelation) Iterator() Iterator {
@@ -957,9 +945,9 @@ func (r *StreamingRelation) Get(i int) Tuple {
 // String returns a compact string representation for annotations
 func (r *StreamingRelation) String() string {
 	// Format as: Relation([?x ?y], N Tuples) with colors
-	var symbols []string
-	for _, col := range r.columns {
-		symbols = append(symbols, col.String())
+	var symStrs []string
+	for _, sym := range r.symbols {
+		symStrs = append(symStrs, sym.String())
 	}
 
 	// For streaming relations, we might not know the size
@@ -979,7 +967,7 @@ func (r *StreamingRelation) String() string {
 
 		return fmt.Sprintf("%s%s%s%s%s %s%s",
 			color.BlueString("Relation(["),
-			color.CyanString(strings.Join(symbols, " ")),
+			color.CyanString(strings.Join(symStrs, " ")),
 			color.BlueString("]"),
 			color.BlueString(", "),
 			countStr,
@@ -990,7 +978,7 @@ func (r *StreamingRelation) String() string {
 	// Size unknown
 	return fmt.Sprintf("%s%s%s%s",
 		color.BlueString("Relation(["),
-		color.CyanString(strings.Join(symbols, " ")),
+		color.CyanString(strings.Join(symStrs, " ")),
 		color.BlueString("]"),
 		color.BlueString(", streaming)"))
 }
@@ -1008,9 +996,9 @@ func (r *StreamingRelation) ProjectFromPattern(pattern *query.DataPattern) Relat
 	neededSymbols := []query.Symbol{}
 	symbolIndices := make(map[query.Symbol]int)
 
-	// Build index of our columns
-	for i, col := range r.columns {
-		symbolIndices[col] = i
+	// Build index of our symbols
+	for i, sym := range r.symbols {
+		symbolIndices[sym] = i
 	}
 
 	// Check each position in the pattern (E, A, V, T)
@@ -1060,9 +1048,9 @@ func (r *StreamingRelation) Sorted() []Tuple {
 	var tuples []Tuple
 	collectTuplesInto(&tuples, r)
 
-	// Sort tuples lexicographically by columns
+	// Sort tuples lexicographically by symbols
 	sort.Slice(tuples, func(i, j int) bool {
-		for k := 0; k < len(r.columns) && k < len(tuples[i]) && k < len(tuples[j]); k++ {
+		for k := 0; k < len(r.symbols) && k < len(tuples[i]) && k < len(tuples[j]); k++ {
 			cmp := datalog.CompareValues(tuples[i][k], tuples[j][k])
 			if cmp < 0 {
 				return true
@@ -1076,38 +1064,38 @@ func (r *StreamingRelation) Sorted() []Tuple {
 	return tuples
 }
 
-// Project returns a new relation with only the specified columns
-func (r *StreamingRelation) Project(columns []query.Symbol) (Relation, error) {
+// Project returns a new relation with only the specified symbols
+func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// Empty projection is invalid in Datalog - must have at least one find element
-	if len(columns) == 0 {
-		return nil, fmt.Errorf("cannot project empty column list - invalid query")
+	if len(symbols) == 0 {
+		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
 	}
 
 	// Streaming is now the default behavior
-	// Validate columns exist
-	for _, col := range columns {
+	// Validate symbols exist
+	for _, sym := range symbols {
 		found := false
-		for _, existing := range r.columns {
-			if existing == col {
+		for _, existing := range r.symbols {
+			if existing == sym {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("cannot project: column %s not found in relation", col)
+			return nil, fmt.Errorf("cannot project: symbol %s not found in relation", sym)
 		}
 	}
 	// CRITICAL FIX: Pass the relation itself to ProjectIterator, not the raw iterator
 	// This allows ProjectIterator to call r.Iterator(), which respects caching/materialization
 	// When r.shouldCache=true, the first Iterator() call builds the cache, and both the
 	// original relation and the projection can iterate from cached data
-	projIter := NewProjectIterator(r, r.columns, columns)
+	projIter := NewProjectIterator(r, r.symbols, symbols)
 	// SET SEMANTICS: Wrap with DedupIterator to ensure projection maintains set semantics.
 	// Projection can produce duplicates when multiple distinct input tuples map to the same
-	// projected tuple (e.g., [(1,a), (2,a)] projected to column 2 yields [a, a]).
+	// projected tuple (e.g., [(1,a), (2,a)] projected to symbol 2 yields [a, a]).
 	dedupIter := NewDedupIterator(projIter, 0)
 	// BUGFIX: Preserve options (especially EnableTrueStreaming) to prevent re-scanning
-	return NewStreamingRelationWithOptions(columns, dedupIter, r.options), nil
+	return NewStreamingRelationWithOptions(symbols, dedupIter, r.options), nil
 }
 
 // Materialize converts this streaming relation to a materialized one
@@ -1145,7 +1133,7 @@ func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	collectTuplesInto(&tuples, r)
 
 	// Create MaterializedRelation and delegate to its Sort
-	mat := NewMaterializedRelationWithOptions(r.columns, tuples, r.options)
+	mat := NewMaterializedRelationWithOptions(r.symbols, tuples, r.options)
 	return mat.Sort(orderBy)
 }
 
@@ -1153,8 +1141,8 @@ func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 func (r *StreamingRelation) Filter(filter Filter) Relation {
 	if r.options.EnableIteratorComposition {
 		// Use iterator composition for true streaming
-		filterIter := NewFilterIterator(r.iterator, r.columns, filter)
-		return NewStreamingRelationWithOptions(r.columns, filterIter, r.options)
+		filterIter := NewFilterIterator(r.iterator, r.symbols, filter)
+		return NewStreamingRelationWithOptions(r.symbols, filterIter, r.options)
 	}
 	// Fall back to current behavior
 	return FilterRelation(r, filter)
@@ -1164,25 +1152,25 @@ func (r *StreamingRelation) Filter(filter Filter) Relation {
 func (r *StreamingRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	if r.options.EnableIteratorComposition {
 		// Use iterator composition for true streaming
-		predIter := NewPredicateFilterIterator(r.iterator, r.columns, pred)
-		return NewStreamingRelationWithOptions(r.columns, predIter, r.options)
+		predIter := NewPredicateFilterIterator(r.iterator, r.symbols, pred)
+		return NewStreamingRelationWithOptions(r.symbols, predIter, r.options)
 	}
 	// Fall back to current behavior - materialize then filter
 	materialized := r.Materialize()
 	return materialized.FilterWithPredicate(pred)
 }
 
-// EvaluateFunction evaluates a function and adds its result as a new column
-func (r *StreamingRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
+// EvaluateFunction evaluates a function and adds its result as a new symbol
+func (r *StreamingRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
 	if r.options.EnableIteratorComposition {
 		// Use iterator composition for true streaming
-		evalIter := NewFunctionEvaluatorIterator(r.iterator, r.columns, fn, outputColumn)
-		newColumns := append(r.columns, outputColumn)
-		return NewStreamingRelationWithOptions(newColumns, evalIter, r.options)
+		evalIter := NewFunctionEvaluatorIterator(r.iterator, r.symbols, fn, outputSymbol)
+		newSymbols := append(r.symbols, outputSymbol)
+		return NewStreamingRelationWithOptions(newSymbols, evalIter, r.options)
 	}
 	// Fall back to current behavior - materialize then evaluate
 	materialized := r.Materialize()
-	return materialized.EvaluateFunction(fn, outputColumn)
+	return materialized.EvaluateFunction(fn, outputSymbol)
 }
 
 // Select returns a new relation with only tuples that satisfy the predicate
@@ -1192,28 +1180,28 @@ func (r *StreamingRelation) Select(pred func(Tuple) bool) Relation {
 
 // Join performs a natural join with another relation
 func (r *StreamingRelation) Join(other Relation) Relation {
-	common := CommonColumns(r, other)
+	common := CommonSymbols(r, other)
 	if len(common) == 0 {
-		// No common columns - cross product (expensive!)
+		// No common symbols - cross product (expensive!)
 		return crossProduct(r, other)
 	}
 	// Use hash join for efficiency
 	return r.HashJoin(other, common)
 }
 
-// HashJoin performs an equi-join on specified columns
-func (r *StreamingRelation) HashJoin(other Relation, joinCols []query.Symbol) Relation {
-	return HashJoin(r, other, joinCols)
+// HashJoin performs an equi-join on specified symbols
+func (r *StreamingRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return HashJoin(r, other, joinSyms)
 }
 
 // SemiJoin returns tuples from this relation that have matches in the other
-func (r *StreamingRelation) SemiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return SemiJoin(r, other, joinCols)
+func (r *StreamingRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return SemiJoin(r, other, joinSyms)
 }
 
 // AntiJoin returns tuples from this relation that have no matches in the other
-func (r *StreamingRelation) AntiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return AntiJoin(r, other, joinCols)
+func (r *StreamingRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return AntiJoin(r, other, joinSyms)
 }
 
 // Aggregate performs aggregation operations
@@ -1232,29 +1220,29 @@ type PatternBinding struct {
 
 // Utility functions for working with relations
 
-// ColumnIndex returns the index of a column, or -1 if not found
-func ColumnIndex(rel Relation, sym query.Symbol) int {
-	cols := rel.Columns()
-	for i, col := range cols {
-		if col == sym {
+// SymbolIndex returns the index of a symbol in a relation, or -1 if not found
+func SymbolIndex(rel Relation, sym query.Symbol) int {
+	syms := rel.Symbols()
+	for i, s := range syms {
+		if s == sym {
 			return i
 		}
 	}
 	return -1
 }
 
-// CommonColumns returns columns that appear in both relations
-func CommonColumns(r1, r2 Relation) []query.Symbol {
-	cols1 := r1.Columns()
-	cols2Set := make(map[query.Symbol]bool)
-	for _, col := range r2.Columns() {
-		cols2Set[col] = true
+// CommonSymbols returns symbols that appear in both relations
+func CommonSymbols(r1, r2 Relation) []query.Symbol {
+	syms1 := r1.Symbols()
+	syms2Set := make(map[query.Symbol]bool)
+	for _, sym := range r2.Symbols() {
+		syms2Set[sym] = true
 	}
 
 	var common []query.Symbol
-	for _, col := range cols1 {
-		if cols2Set[col] {
-			common = append(common, col)
+	for _, sym := range syms1 {
+		if syms2Set[sym] {
+			common = append(common, sym)
 		}
 	}
 	return common
@@ -1277,14 +1265,14 @@ func Select(rel Relation, pred func(Tuple) bool) Relation {
 		}
 	}
 
-	return NewMaterializedRelation(rel.Columns(), selected)
+	return NewMaterializedRelation(rel.Symbols(), selected)
 }
 
 // ProductRelation represents a streaming Cartesian product of multiple relations
 // Used for expressions/predicates that reference symbols from disjoint relations
 type ProductRelation struct {
 	relations []Relation
-	columns   []query.Symbol
+	symbols   []query.Symbol
 	options   ExecutorOptions
 }
 
@@ -1293,15 +1281,15 @@ func NewProductRelation(relations []Relation) *ProductRelation {
 	if len(relations) == 0 {
 		return &ProductRelation{
 			relations: relations,
-			columns:   nil,
+			symbols:   nil,
 			options:   ExecutorOptions{},
 		}
 	}
 
-	// Combine columns from all relations
-	var allColumns []query.Symbol
+	// Combine symbols from all relations
+	var allSymbols []query.Symbol
 	for _, rel := range relations {
-		allColumns = append(allColumns, rel.Columns()...)
+		allSymbols = append(allSymbols, rel.Symbols()...)
 	}
 
 	// Extract options from first relation
@@ -1309,17 +1297,13 @@ func NewProductRelation(relations []Relation) *ProductRelation {
 
 	return &ProductRelation{
 		relations: relations,
-		columns:   allColumns,
+		symbols:   allSymbols,
 		options:   opts,
 	}
 }
 
-func (p *ProductRelation) Columns() []query.Symbol {
-	return p.columns
-}
-
 func (p *ProductRelation) Symbols() []query.Symbol {
-	return p.columns
+	return p.symbols
 }
 
 func (p *ProductRelation) Iterator() Iterator {
@@ -1365,7 +1349,7 @@ func (p *ProductRelation) Get(i int) Tuple {
 }
 
 func (p *ProductRelation) String() string {
-	return fmt.Sprintf("Product(%d relations, %d columns)", len(p.relations), len(p.columns))
+	return fmt.Sprintf("Product(%d relations, %d symbols)", len(p.relations), len(p.symbols))
 }
 
 func (p *ProductRelation) Table() string {
@@ -1381,36 +1365,36 @@ func (p *ProductRelation) Sorted() []Tuple {
 	return p.Materialize().Sorted()
 }
 
-func (p *ProductRelation) Project(columns []query.Symbol) (Relation, error) {
+func (p *ProductRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// Empty projection is invalid in Datalog - must have at least one find element
-	if len(columns) == 0 {
-		return nil, fmt.Errorf("cannot project empty column list - invalid query")
+	if len(symbols) == 0 {
+		return nil, fmt.Errorf("cannot project empty symbol list - invalid query")
 	}
 
-	// Validate columns exist
-	for _, col := range columns {
+	// Validate symbols exist
+	for _, sym := range symbols {
 		found := false
-		for _, existing := range p.Columns() {
-			if existing == col {
+		for _, existing := range p.Symbols() {
+			if existing == sym {
 				found = true
 				break
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("cannot project: column %s not found in relation", col)
+			return nil, fmt.Errorf("cannot project: symbol %s not found in relation", sym)
 		}
 	}
 	// Product relations are streaming - use iterator composition
 	// Pass the relation itself so ProjectIterator can call Iterator() when needed
-	projIter := NewProjectIterator(p, p.Columns(), columns)
+	projIter := NewProjectIterator(p, p.Symbols(), symbols)
 	// Use default options since ProductRelation is a wrapper
-	return NewStreamingRelation(columns, projIter), nil
+	return NewStreamingRelation(symbols, projIter), nil
 }
 
 func (p *ProductRelation) Materialize() Relation {
 	var tuples []Tuple
 	collectTuplesInto(&tuples, p)
-	return NewMaterializedRelationWithOptions(p.columns, tuples, p.options)
+	return NewMaterializedRelationWithOptions(p.symbols, tuples, p.options)
 }
 
 func (p *ProductRelation) Sort(orderBy []query.OrderByClause) Relation {
@@ -1427,9 +1411,9 @@ func (p *ProductRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	return p.Materialize().FilterWithPredicate(pred)
 }
 
-func (p *ProductRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
+func (p *ProductRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
 	// Materialize then evaluate
-	return p.Materialize().EvaluateFunction(fn, outputColumn)
+	return p.Materialize().EvaluateFunction(fn, outputSymbol)
 }
 
 func (p *ProductRelation) Select(pred func(Tuple) bool) Relation {
@@ -1441,18 +1425,18 @@ func (p *ProductRelation) Join(other Relation) Relation {
 	return p.Materialize().Join(other)
 }
 
-func (p *ProductRelation) HashJoin(other Relation, joinCols []query.Symbol) Relation {
-	return HashJoinWithOptions(p, other, joinCols, p.options)
+func (p *ProductRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return HashJoinWithOptions(p, other, joinSyms, p.options)
 }
 
-func (p *ProductRelation) SemiJoin(other Relation, joinCols []query.Symbol) Relation {
+func (p *ProductRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
 	// Materialize then semi-join
-	return p.Materialize().SemiJoin(other, joinCols)
+	return p.Materialize().SemiJoin(other, joinSyms)
 }
 
-func (p *ProductRelation) AntiJoin(other Relation, joinCols []query.Symbol) Relation {
+func (p *ProductRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
 	// Materialize then anti-join
-	return p.Materialize().AntiJoin(other, joinCols)
+	return p.Materialize().AntiJoin(other, joinSyms)
 }
 
 func (p *ProductRelation) Aggregate(findElements []query.FindElement) Relation {

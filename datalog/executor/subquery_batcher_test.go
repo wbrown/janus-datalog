@@ -32,15 +32,15 @@ func TestBatcher_BuildBatchedInput(t *testing.T) {
 	// Build batched input
 	rel := batcher.BuildBatchedInput(combinations, inputSymbols)
 
-	// Verify columns (should exclude $)
+	// Verify symbols (should exclude $)
 	expectedColumns := []query.Symbol{datalog.NewSymbol("?sym"), datalog.NewSymbol("?hour")}
-	columns := rel.Columns()
-	if len(columns) != len(expectedColumns) {
-		t.Fatalf("Expected %d columns, got %d", len(expectedColumns), len(columns))
+	symbols := rel.Symbols()
+	if len(symbols) != len(expectedColumns) {
+		t.Fatalf("Expected %d symbols, got %d", len(expectedColumns), len(symbols))
 	}
-	for i, col := range columns {
+	for i, col := range symbols {
 		if col != expectedColumns[i] {
-			t.Errorf("Column %d: expected %v, got %v", i, expectedColumns[i], col)
+			t.Errorf("Symbol %d: expected %v, got %v", i, expectedColumns[i], col)
 		}
 	}
 
@@ -80,12 +80,12 @@ func TestBatcher_BuildBatchedInput_SingleColumn(t *testing.T) {
 
 	rel := batcher.BuildBatchedInput(combinations, inputSymbols)
 
-	// Verify single column (excluding $)
-	if len(rel.Columns()) != 1 {
-		t.Fatalf("Expected 1 column, got %d", len(rel.Columns()))
+	// Verify single symbol (excluding $)
+	if len(rel.Symbols()) != 1 {
+		t.Fatalf("Expected 1 symbol, got %d", len(rel.Symbols()))
 	}
-	if rel.Columns()[0] != datalog.NewSymbol("?sym") {
-		t.Errorf("Expected column ?sym, got %v", rel.Columns()[0])
+	if rel.Symbols()[0] != datalog.NewSymbol("?sym") {
+		t.Errorf("Expected symbol ?sym, got %v", rel.Symbols()[0])
 	}
 
 	// Verify tuples
@@ -103,9 +103,9 @@ func TestBatcher_BuildBatchedInput_Empty(t *testing.T) {
 
 	rel := batcher.BuildBatchedInput(combinations, inputSymbols)
 
-	// Should return empty relation with correct columns
-	if len(rel.Columns()) != 1 {
-		t.Errorf("Expected 1 column, got %d", len(rel.Columns()))
+	// Should return empty relation with correct symbols
+	if len(rel.Symbols()) != 1 {
+		t.Errorf("Expected 1 symbol, got %d", len(rel.Symbols()))
 	}
 	if rel.Size() != 0 {
 		t.Errorf("Expected 0 tuples, got %d", rel.Size())

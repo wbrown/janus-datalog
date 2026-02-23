@@ -54,7 +54,7 @@ func TestQueryWithOrderBy(t *testing.T) {
 	tests := []struct {
 		name     string
 		query    string
-		expected []string // Expected first column values in order
+		expected []string // Expected first symbol values in order
 	}{
 		{
 			name: "Sort by name ascending",
@@ -97,7 +97,7 @@ func TestQueryWithOrderBy(t *testing.T) {
 			expected: []string{"Bob", "Alice", "Charlie", "Dave"},
 		},
 		{
-			name: "Multi-column sort: age then name",
+			name: "Multi-symbol sort: age then name",
 			query: `[:find ?name ?age ?score
 			         :where [?e :user/name ?name]
 			                [?e :user/age ?age]
@@ -131,7 +131,7 @@ func TestQueryWithOrderBy(t *testing.T) {
 				tuple := result.Get(i)
 				name := tuple[0].(string)
 				if name != tt.expected[i] {
-					t.Errorf("row %d: expected %s, got %s", i, tt.expected[i], name)
+					t.Errorf("tuple %d: expected %s, got %s", i, tt.expected[i], name)
 				}
 			}
 		})
@@ -157,7 +157,7 @@ func TestSortingEdgeCases(t *testing.T) {
 			},
 		},
 		{
-			name: "Sort with missing sort column",
+			name: "Sort with missing sort symbol",
 			query: `[:find ?name
 			         :where [?e :user/name ?name]
 			         :order-by [[?age :asc]]]`, // ?age not in find
@@ -166,7 +166,7 @@ func TestSortingEdgeCases(t *testing.T) {
 			},
 		},
 		{
-			name: "Sort single row",
+			name: "Sort single tuple",
 			query: `[:find ?name ?age
 			         :where [?e :user/name ?name]
 			                [?e :user/age ?age]
@@ -186,7 +186,7 @@ func TestSortingEdgeCases(t *testing.T) {
 			// Parse query
 			q, err := parser.ParseQuery(tt.query)
 			if err != nil {
-				// Some edge cases might have parse errors (like missing sort column)
+				// Some edge cases might have parse errors (like missing sort symbol)
 				// That's OK for testing error handling
 				return
 			}

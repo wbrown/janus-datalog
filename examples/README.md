@@ -158,7 +158,7 @@ Compute aggregate statistics across groups of data.
 
 ### Level 4: Advanced Features
 
-Tackle complex queries with subqueries, time-based queries, and multi-row relations.
+Tackle complex queries with subqueries, time-based queries, and multi-tuple relations.
 
 #### `subquery_simple_demo.go`
 **What it demonstrates:** Basic subqueries
@@ -190,16 +190,16 @@ Sophisticated subquery usage with multiple subqueries and bindings.
 
 Calculate stock market OHLC prices using subqueries - a complete real-world example.
 
-#### `multi_row_relation_demo.go`
-**What it demonstrates:** Multi-row relation binding
+#### `multi_tuple_relation_demo.go`
+**What it demonstrates:** Multi-tuple relation binding
 **Concepts:** Relations as inputs, filtering with relation sets, batch operations
 **Time:** 15 minutes
 
 Pass multiple tuples into patterns for efficient batch filtering.
 
-#### `proof_multi_row_relations.go`
+#### `proof_multi_tuple_relations.go`
 **What it demonstrates:** Relation-based filtering mechanics
-**Concepts:** How Relations constrain pattern matches, multi-column binding
+**Concepts:** How Relations constrain pattern matches, multi-symbol binding
 **Time:** 10 minutes
 
 Proof-of-concept showing how the Relations API filters pattern matches.
@@ -341,8 +341,8 @@ Complete integration showing real-world financial market data queries.
 - `financial_asof_demo.go` - Point-in-time queries
 
 ### Relations
-- `multi_row_relation_demo.go` - Multi-row binding
-- `proof_multi_row_relations.go` - Relation mechanics
+- `multi_tuple_relation_demo.go` - Multi-tuple binding
+- `proof_multi_tuple_relations.go` - Relation mechanics
 
 ### Performance
 - `planner_demo.go` - Query planning

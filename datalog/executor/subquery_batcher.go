@@ -20,35 +20,35 @@ func NewSubqueryBatcher() *SubqueryBatcher {
 // - combinations: Map of symbol -> value for each input combination
 // - inputSymbols: List of symbols to extract (may include "$")
 //
-// Returns: Relation with columns matching inputSymbols (excluding "$")
+// Returns: Relation with symbols matching inputSymbols (excluding "$")
 func (b *SubqueryBatcher) BuildBatchedInput(
 	combinations []map[query.Symbol]interface{},
 	inputSymbols []query.Symbol,
 ) Relation {
 	if len(combinations) == 0 {
-		// Filter source markers from columns
-		var columns []query.Symbol
+		// Filter source markers from symbols
+		var symbols []query.Symbol
 		for _, sym := range inputSymbols {
 			if !sym.IsSource() {
-				columns = append(columns, sym)
+				symbols = append(symbols, sym)
 			}
 		}
-		return NewMaterializedRelation(columns, []Tuple{})
+		return NewMaterializedRelation(symbols, []Tuple{})
 	}
 
 	// Filter to only the symbols we're passing (exclude source markers)
-	var columns []query.Symbol
+	var symbols []query.Symbol
 	for _, sym := range inputSymbols {
 		if !sym.IsSource() {
-			columns = append(columns, sym)
+			symbols = append(symbols, sym)
 		}
 	}
 
 	// Build tuples from all combinations
 	var tuples []Tuple
 	for _, values := range combinations {
-		tuple := make(Tuple, len(columns))
-		for i, col := range columns {
+		tuple := make(Tuple, len(symbols))
+		for i, col := range symbols {
 			if val, ok := values[col]; ok {
 				tuple[i] = val
 			}
@@ -58,7 +58,7 @@ func (b *SubqueryBatcher) BuildBatchedInput(
 		tuples = append(tuples, tuple)
 	}
 
-	return NewMaterializedRelation(columns, tuples)
+	return NewMaterializedRelation(symbols, tuples)
 }
 
 // ExtractInputSymbols extracts variable symbols from subquery inputs
@@ -93,7 +93,7 @@ func (b *SubqueryBatcher) ExtractInputSymbols(inputs []query.InputSpec) []query.
 }
 
 // ExtractRelationSymbols extracts symbols from RelationInput only
-// This is useful when you need to know what columns the batched relation will have.
+// This is useful when you need to know what symbols the batched relation will have.
 //
 // Parameters:
 // - inputs: Subquery input specifications from :in clause

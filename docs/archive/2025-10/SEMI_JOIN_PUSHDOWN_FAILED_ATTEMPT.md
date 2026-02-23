@@ -139,10 +139,10 @@ Merged query **cross-joined** input relation with patterns, creating massive exp
 
 When we bypassed `executeWithRelationInputIteration`:
 - Input relation went to `BindQueryInputs`
-- Created a relation with correlation key columns: `Relation([?sym ?py ?pm ?pd ?ph], 260 tuples)`
+- Created a relation with correlation key symbols: `Relation([?sym ?py ?pm ?pd ?ph], 260 tuples)`
 - This relation entered the phase as **just another relation**
 - Phase executor naturally **joined** it with pattern results
-- Since `?sym` is the ONLY shared column, got a cross-product on the other columns
+- Since `?sym` is the ONLY shared symbol, got a cross-product on the other symbols
 
 ### What We Actually Need
 
@@ -161,7 +161,7 @@ But we don't have `contains-tuple?` predicate!
 
 **Option 2: Predicate pushdown**
 Transform equality predicates `[(= ?py ?y)]` into range scans BEFORE pattern execution.
-But this requires index support for multi-column constraints.
+But this requires index support for multi-symbol constraints.
 
 **Option 3: Iteration IS correct (current approach)**
 Execute query once per distinct group. This IS semantically correct - each tuple represents one aggregation group to compute.
@@ -223,7 +223,7 @@ All semi-join pushdown code has been reverted:
 
 **2. Predicate Pushdown (Real)**
 - Push `[(= ?py ?y)]` predicates into storage layer as range scans
-- Requires multi-column index support
+- Requires multi-symbol index support
 - Much more complex than our failed attempt
 
 **3. Parallel Iteration** ✅ ALREADY EXISTS

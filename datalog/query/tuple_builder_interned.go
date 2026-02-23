@@ -8,7 +8,7 @@ import (
 
 // InternedTupleBuilder uses interning to minimize allocations
 type InternedTupleBuilder struct {
-	columns []Symbol
+	symbols []Symbol
 
 	// Pre-computed indexes for each position (-1 means not captured)
 	eIndex int
@@ -28,18 +28,18 @@ type InternedTupleBuilder struct {
 }
 
 // NewInternedTupleBuilder creates a tuple builder that uses interning
-func NewInternedTupleBuilder(pattern *DataPattern, columns []Symbol) *InternedTupleBuilder {
+func NewInternedTupleBuilder(pattern *DataPattern, symbols []Symbol) *InternedTupleBuilder {
 	// Use shared indexer to compute indices
-	indexer := NewTupleIndexer(pattern, columns)
+	indexer := NewTupleIndexer(pattern, symbols)
 
 	return &InternedTupleBuilder{
-		columns:   columns,
+		symbols:   symbols,
 		eIndex:    indexer.EIndex,
 		aIndex:    indexer.AIndex,
 		vIndex:    indexer.VIndex,
 		tIndex:    indexer.TIndex,
 		numVars:   indexer.NumVars,
-		workspace: make(Tuple, len(columns)),
+		workspace: make(Tuple, len(symbols)),
 		txCache:   make(map[datalog.ElementID]*datalog.ElementID),
 	}
 }
@@ -61,7 +61,7 @@ func (tb *InternedTupleBuilder) getTxPtr(tx datalog.ElementID) *datalog.ElementI
 
 // BuildTupleInterned builds a tuple using interned values to minimize allocations
 func (tb *InternedTupleBuilder) BuildTupleInterned(datom *datalog.Datom) Tuple {
-	result := make(Tuple, len(tb.columns))
+	result := make(Tuple, len(tb.symbols))
 
 	// Use interned values where possible - store pointers to avoid interface boxing
 	if tb.eIndex >= 0 {

@@ -181,7 +181,7 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 
 	t.Logf("Sequential execution: %d results", resultNoDecor.Size())
 	for i := 0; i < resultNoDecor.Size(); i++ {
-		t.Logf("  Row %d: %v", i, resultNoDecor.Get(i))
+		t.Logf("  Tuple %d: %v", i, resultNoDecor.Get(i))
 	}
 
 	// Execute with decorrelation ENABLED (with parallel execution)
@@ -211,20 +211,20 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 		t.Errorf("Expected 3 hours, got %d", resultWithDecor.Size())
 	}
 
-	// Verify each row matches
+	// Verify each tuple matches
 	for i := 0; i < resultWithDecor.Size(); i++ {
 		rowDecor := resultWithDecor.Get(i)
 		rowNoDecor := resultNoDecor.Get(i)
 
 		if len(rowDecor) != len(rowNoDecor) {
-			t.Errorf("Row %d column count mismatch: decorrelated=%d, sequential=%d",
+			t.Errorf("Tuple %d symbol count mismatch: decorrelated=%d, sequential=%d",
 				i, len(rowDecor), len(rowNoDecor))
 			continue
 		}
 
 		for j := range rowDecor {
 			if rowDecor[j] != rowNoDecor[j] {
-				t.Errorf("Row %d, col %d mismatch: decorrelated=%v, sequential=%v",
+				t.Errorf("Tuple %d, col %d mismatch: decorrelated=%v, sequential=%v",
 					i, j, rowDecor[j], rowNoDecor[j])
 			}
 		}

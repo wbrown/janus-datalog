@@ -76,7 +76,7 @@ func TestStreamingIntegration(t *testing.T) {
 		_, isStreaming = joined.(*StreamingRelation)
 		assert.True(t, isStreaming, "Join should return StreamingRelation")
 
-		// Project to keep only certain columns
+		// Project to keep only certain symbols
 		projected, err := joined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
 		assert.NoError(t, err)
 
@@ -104,7 +104,7 @@ func TestStreamingIntegration(t *testing.T) {
 
 		// Verify we can iterate the collected results
 		// Create a materialized relation from the results we already collected
-		materialized := NewMaterializedRelation(projected.Columns(), results)
+		materialized := NewMaterializedRelation(projected.Symbols(), results)
 		it2 := materialized.Iterator()
 		count := 0
 		for it2.Next() {
@@ -170,10 +170,10 @@ func TestStreamingIntegration(t *testing.T) {
 			{50, 60},
 			{70, 80},
 		}
-		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 		source := newMockIterator(tuples)
-		rel := NewStreamingRelationWithOptions(columns, source, opts)
+		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 		// Apply predicate filter (x > 30)
 		pred := &query.Comparison{
@@ -215,10 +215,10 @@ func TestStreamingIntegration(t *testing.T) {
 			{10, 20},
 			{30, 40},
 		}
-		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 		source := newMockIterator(tuples)
-		rel := NewStreamingRelationWithOptions(columns, source, opts)
+		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 		// Apply function evaluation (x + y)
 		fn := query.ArithmeticFunction{
@@ -233,8 +233,8 @@ func TestStreamingIntegration(t *testing.T) {
 		_, isStreaming := withFunction.(*StreamingRelation)
 		assert.True(t, isStreaming)
 
-		// Check columns
-		assert.Equal(t, []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?sum")}, withFunction.Columns())
+		// Check symbols
+		assert.Equal(t, []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?sum")}, withFunction.Symbols())
 
 		// Iterate results
 		it := withFunction.Iterator()
@@ -264,10 +264,10 @@ func TestStreamingIntegration(t *testing.T) {
 		for i := 0; i < 1000; i++ {
 			largeTuples = append(largeTuples, Tuple{i, i * 2, i * 3})
 		}
-		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 		source := newMockIterator(largeTuples)
-		rel := NewStreamingRelationWithOptions(columns, source, opts)
+		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 		// Apply aggressive filter (only 1% pass)
 		filter := NewSimpleFilter(func(t Tuple) bool {
@@ -275,7 +275,7 @@ func TestStreamingIntegration(t *testing.T) {
 		})
 		filtered := rel.Filter(filter)
 
-		// Project to single column
+		// Project to single symbol
 		projected, err := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
 		assert.NoError(t, err)
 
@@ -305,7 +305,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 	for i := 0; i < size; i++ {
 		tuples = append(tuples, Tuple{i, i * 2, i * 3})
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 	b.Run("Materialized", func(b *testing.B) {
 		opts := ExecutorOptions{
@@ -316,7 +316,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			source := newMockIterator(tuples)
-			rel := NewStreamingRelationWithOptions(columns, source, opts)
+			rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 			// Filter to 1%
 			filtered := rel.Filter(NewSimpleFilter(func(t Tuple) bool {
@@ -344,7 +344,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			source := newMockIterator(tuples)
-			rel := NewStreamingRelationWithOptions(columns, source, opts)
+			rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 			// Filter to 1%
 			filtered := rel.Filter(NewSimpleFilter(func(t Tuple) bool {
@@ -375,7 +375,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			source := newMockIterator(tuples)
-			rel := NewStreamingRelationWithOptions(columns, source, opts)
+			rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 			// Filter to 1%
 			filtered := rel.Filter(NewSimpleFilter(func(t Tuple) bool {

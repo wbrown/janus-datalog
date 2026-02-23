@@ -47,7 +47,7 @@ func TestMultiPositionDebug(t *testing.T) {
 			{entity1, "A"},
 		},
 	)
-	t.Logf("Binding columns: %v", bindingRel.Columns())
+	t.Logf("Binding symbols: %v", bindingRel.Symbols())
 
 	it := bindingRel.Iterator()
 	for it.Next() {
@@ -56,7 +56,7 @@ func TestMultiPositionDebug(t *testing.T) {
 	it.Close()
 
 	// Test the pattern extractor
-	extractor := query.NewPatternExtractor(pattern, bindingRel.Columns())
+	extractor := query.NewPatternExtractor(pattern, bindingRel.Symbols())
 	bindingTuple := executor.Tuple{entity1, "A"}
 	values := extractor.Extract(bindingTuple)
 	t.Logf("Extracted values:")

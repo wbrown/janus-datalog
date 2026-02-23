@@ -86,7 +86,7 @@ func TestRelationInputIteration(t *testing.T) {
 		for it.Next() {
 			tuple := it.Tuple()
 			if len(tuple) != 3 {
-				t.Errorf("Expected 3 columns, got %d", len(tuple))
+				t.Errorf("Expected 3 symbols, got %d", len(tuple))
 				continue
 			}
 			name := tuple[0].(string)
@@ -210,7 +210,7 @@ func TestRelationInputIterationParallel(t *testing.T) {
 		for it.Next() {
 			tuple := it.Tuple()
 			if len(tuple) != 3 {
-				t.Errorf("Expected 3 columns, got %d", len(tuple))
+				t.Errorf("Expected 3 symbols, got %d", len(tuple))
 				continue
 			}
 			name := tuple[0].(string)

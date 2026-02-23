@@ -19,13 +19,13 @@ type OrFallbackRelation struct {
 	ctx           Context
 	clause        *query.OrClause
 	outerRel      Relation
-	columns       []query.Symbol // Determined lazily from first result
+	symbols       []query.Symbol // Determined lazily from first result
 	options       ExecutorOptions
 	iteratorCount int // Track how many iterators have been created (for debugging)
 }
 
 // NewOrFallbackRelation creates a streaming OR fallback relation.
-// The columns are computed upfront from the outer relation and OR clause
+// The symbols are computed upfront from the outer relation and OR clause
 // to avoid needing to peek at results.
 func NewOrFallbackRelation(
 	executor *DefaultQueryExecutor,
@@ -34,23 +34,23 @@ func NewOrFallbackRelation(
 	outerRel Relation,
 	options ExecutorOptions,
 ) *OrFallbackRelation {
-	// Compute output columns statically:
-	// Output = outer columns + symbols produced by branches (that aren't in outer)
-	outerCols := outerRel.Columns()
-	outerColSet := make(map[query.Symbol]bool)
-	for _, col := range outerCols {
-		outerColSet[col] = true
+	// Compute output symbols statically:
+	// Output = outer symbols + symbols produced by branches (that aren't in outer)
+	outerSyms := outerRel.Symbols()
+	outerSymSet := make(map[query.Symbol]bool)
+	for _, sym := range outerSyms {
+		outerSymSet[sym] = true
 	}
 
 	// Collect symbols that branches produce (common across all branches)
 	branchOutputs := computeOrBranchOutputSymbols(clause)
 
-	// Build output columns: outer columns first, then new symbols from branches
-	columns := make([]query.Symbol, len(outerCols))
-	copy(columns, outerCols)
+	// Build output symbols: outer symbols first, then new symbols from branches
+	symbols := make([]query.Symbol, len(outerSyms))
+	copy(symbols, outerSyms)
 	for _, sym := range branchOutputs {
-		if !outerColSet[sym] {
-			columns = append(columns, sym)
+		if !outerSymSet[sym] {
+			symbols = append(symbols, sym)
 		}
 	}
 
@@ -59,7 +59,7 @@ func NewOrFallbackRelation(
 		ctx:      ctx,
 		clause:   clause,
 		outerRel: outerRel,
-		columns:  columns,
+		symbols:  symbols,
 		options:  options,
 	}
 }
@@ -182,7 +182,7 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 			Start: time.Now(),
 			Data: map[string]interface{}{
 				"iterator_count": r.iteratorCount,
-				"outer_columns":  fmt.Sprintf("%v", r.outerRel.Columns()),
+				"outer_symbols":  fmt.Sprintf("%v", r.outerRel.Symbols()),
 				"outer_type":     fmt.Sprintf("%T", r.outerRel),
 			},
 		})
@@ -193,19 +193,15 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		ctx:        r.ctx,
 		clause:     r.clause,
 		outerIter:  outerIter,
-		outerCols:  r.outerRel.Columns(),
-		outputCols: r.columns, // Use pre-computed columns
+		outerSyms:  r.outerRel.Symbols(),
+		outputSyms: r.symbols, // Use pre-computed symbols
 		options:    r.options,
 	}
 }
 
-func (r *OrFallbackRelation) Columns() []query.Symbol {
-	// Columns are computed at construction time - no peeking needed
-	return r.columns
-}
-
 func (r *OrFallbackRelation) Symbols() []query.Symbol {
-	return r.Columns()
+	// Symbols are computed at construction time - no peeking needed
+	return r.symbols
 }
 
 func (r *OrFallbackRelation) Size() int {
@@ -223,11 +219,11 @@ func (r *OrFallbackRelation) Get(i int) Tuple {
 }
 
 func (r *OrFallbackRelation) String() string {
-	var symbols []string
-	for _, col := range r.Columns() {
-		symbols = append(symbols, col.String())
+	var symStrs []string
+	for _, sym := range r.Symbols() {
+		symStrs = append(symStrs, sym.String())
 	}
-	return fmt.Sprintf("OrFallbackRelation([%s], streaming)", strings.Join(symbols, " "))
+	return fmt.Sprintf("OrFallbackRelation([%s], streaming)", strings.Join(symStrs, " "))
 }
 
 func (r *OrFallbackRelation) Table() string {
@@ -242,19 +238,19 @@ func (r *OrFallbackRelation) Sorted() []Tuple {
 	return r.Materialize().Sorted()
 }
 
-func (r *OrFallbackRelation) Project(columns []query.Symbol) (Relation, error) {
-	return r.Materialize().Project(columns)
+func (r *OrFallbackRelation) Project(symbols []query.Symbol) (Relation, error) {
+	return r.Materialize().Project(symbols)
 }
 
 func (r *OrFallbackRelation) Materialize() Relation {
 	var tuples []Tuple
 	collectTuplesInto(&tuples, r)
 
-	cols := r.columns
-	if cols == nil {
-		cols = r.Columns()
+	syms := r.symbols
+	if syms == nil {
+		syms = r.Symbols()
 	}
-	return NewMaterializedRelationWithOptions(cols, tuples, r.options)
+	return NewMaterializedRelationWithOptions(syms, tuples, r.options)
 }
 
 func (r *OrFallbackRelation) Sort(orderBy []query.OrderByClause) Relation {
@@ -278,7 +274,7 @@ func (r *OrFallbackRelation) Select(pred func(Tuple) bool) Relation {
 }
 
 func (r *OrFallbackRelation) Join(other Relation) Relation {
-	common := CommonColumns(r, other)
+	common := CommonSymbols(r, other)
 	if len(common) == 0 {
 		return crossProduct(r, other)
 	}
@@ -317,14 +313,14 @@ type OrFallbackIterator struct {
 	ctx       Context
 	clause    *query.OrClause
 	outerIter Iterator
-	outerCols []query.Symbol
+	outerSyms []query.Symbol
 	options   ExecutorOptions
 
 	// Current state
 	currentBranchIter     Iterator
 	currentBranchRelation Relation // Track relation for RequiresCopy check
 	currentTuple          Tuple
-	outputCols            []query.Symbol
+	outputSyms            []query.Symbol
 	done                  bool
 	err                   error
 }
@@ -376,12 +372,12 @@ func (it *OrFallbackIterator) Next() bool {
 		}
 
 		// Build single-tuple relation for this input.
-		// Special case: if outer has no columns (unit relation), pass nil to avoid
+		// Special case: if outer has no symbols (unit relation), pass nil to avoid
 		// creating a ProductRelation that would try to re-iterate streaming results.
 		var inputRel Relation
-		if len(it.outerCols) > 0 {
+		if len(it.outerSyms) > 0 {
 			inputRel = NewMaterializedRelationWithOptions(
-				it.outerCols,
+				it.outerSyms,
 				[]Tuple{outerTuple},
 				it.options,
 			)
@@ -401,7 +397,7 @@ func (it *OrFallbackIterator) Next() bool {
 				branchIter := branchResult.Iterator()
 				if branchIter.Next() {
 					// This branch has results - use it
-					// (outputCols is pre-computed at iterator construction)
+					// (outputSyms is pre-computed at iterator construction)
 
 					// Emit annotation for branch success
 					if collector := it.ctx.Collector(); collector != nil {
@@ -410,20 +406,20 @@ func (it *OrFallbackIterator) Next() bool {
 							Start: time.Now(),
 							Data: map[string]interface{}{
 								"branch_index": branchIdx,
-								"branch_cols":  fmt.Sprintf("%v", branchResult.Columns()),
+								"branch_syms":  fmt.Sprintf("%v", branchResult.Symbols()),
 								"first_tuple":  fmt.Sprintf("%v", branchIter.Tuple()),
 							},
 						})
 					}
 
-					// Project tuple to match output columns if needed
+					// Project tuple to match output symbols if needed
 					// Different branches may produce different schemas (e.g., subquery vs ground)
-					branchCols := branchResult.Columns()
+					branchSyms := branchResult.Symbols()
 					firstTuple := branchIter.Tuple()
 
-					if len(branchCols) != len(it.outputCols) || !columnsMatch(branchCols, it.outputCols) {
+					if len(branchSyms) != len(it.outputSyms) || !symbolsMatch(branchSyms, it.outputSyms) {
 						// Projection allocates new slice - no additional copy needed
-						it.currentTuple = projectTupleToColumns(firstTuple, branchCols, it.outputCols)
+						it.currentTuple = projectTupleToSymbols(firstTuple, branchSyms, it.outputSyms)
 					} else if branchResult.RequiresCopy() {
 						// No projection but unsafe source - copy once
 						it.currentTuple = copyTuple(firstTuple)
@@ -434,8 +430,8 @@ func (it *OrFallbackIterator) Next() bool {
 					it.currentBranchIter = &projectedIterator{
 						inner:          branchIter,
 						branchRelation: branchResult,
-						branchCols:     branchCols,
-						outputCols:     it.outputCols,
+						branchSyms:     branchSyms,
+						outputSyms:     it.outputSyms,
 					}
 					return true
 				}
@@ -467,8 +463,8 @@ func (it *OrFallbackIterator) Error() error {
 	return it.err
 }
 
-// columnsMatch checks if two column slices have the same columns in the same order
-func columnsMatch(a, b []query.Symbol) bool {
+// symbolsMatch checks if two symbol slices have the same symbols in the same order
+func symbolsMatch(a, b []query.Symbol) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -480,21 +476,21 @@ func columnsMatch(a, b []query.Symbol) bool {
 	return true
 }
 
-// projectTupleToColumns projects a tuple from source columns to target columns
-func projectTupleToColumns(tuple Tuple, srcCols, dstCols []query.Symbol) Tuple {
-	// Build index for source columns
+// projectTupleToSymbols projects a tuple from source symbols to target symbols
+func projectTupleToSymbols(tuple Tuple, srcSyms, dstSyms []query.Symbol) Tuple {
+	// Build index for source symbols
 	srcIdx := make(map[query.Symbol]int)
-	for i, col := range srcCols {
-		srcIdx[col] = i
+	for i, sym := range srcSyms {
+		srcIdx[sym] = i
 	}
 
 	// Create projected tuple
-	result := make(Tuple, len(dstCols))
-	for i, col := range dstCols {
-		if idx, ok := srcIdx[col]; ok {
+	result := make(Tuple, len(dstSyms))
+	for i, sym := range dstSyms {
+		if idx, ok := srcIdx[sym]; ok {
 			result[i] = tuple[idx]
 		}
-		// If column not found, leave as nil (shouldn't happen with proper schema)
+		// If symbol not found, leave as nil (shouldn't happen with proper schema)
 	}
 	return result
 }
@@ -503,8 +499,8 @@ func projectTupleToColumns(tuple Tuple, srcCols, dstCols []query.Symbol) Tuple {
 type projectedIterator struct {
 	inner          Iterator
 	branchRelation Relation // For RequiresCopy check
-	branchCols     []query.Symbol
-	outputCols     []query.Symbol
+	branchSyms     []query.Symbol
+	outputSyms     []query.Symbol
 }
 
 func (it *projectedIterator) Next() bool {
@@ -514,9 +510,9 @@ func (it *projectedIterator) Next() bool {
 func (it *projectedIterator) Tuple() Tuple {
 	tuple := it.inner.Tuple()
 
-	if len(it.branchCols) != len(it.outputCols) || !columnsMatch(it.branchCols, it.outputCols) {
+	if len(it.branchSyms) != len(it.outputSyms) || !symbolsMatch(it.branchSyms, it.outputSyms) {
 		// Projection allocates new slice - no additional copy needed
-		return projectTupleToColumns(tuple, it.branchCols, it.outputCols)
+		return projectTupleToSymbols(tuple, it.branchSyms, it.outputSyms)
 	}
 
 	// No projection - copy if source is unsafe

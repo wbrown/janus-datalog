@@ -34,7 +34,7 @@ type IndexedMemoryMatcher struct {
 type boundDatomIterator struct {
 	matcher       *IndexedMemoryMatcher
 	pattern       *query.DataPattern
-	columns       []query.Symbol
+	symbols       []query.Symbol
 	constraints   []StorageConstraint
 	boundTuples   []Tuple
 	bindingRel    Relation
@@ -50,7 +50,7 @@ func (it *boundDatomIterator) Next() bool {
 		for it.datomIdx < len(it.currentDatoms) {
 			datom := it.currentDatoms[it.datomIdx]
 			it.datomIdx++
-			if tuple := query.DatomToTuple(datom, it.pattern, it.columns); tuple != nil {
+			if tuple := query.DatomToTuple(datom, it.pattern, it.symbols); tuple != nil {
 				it.current = tuple
 				return true
 			}
@@ -163,7 +163,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	// Build indices on first use (lazy initialization)
 	m.buildIndices()
 
-	columns := pattern.ExtractColumns()
+	symbols := pattern.ExtractColumns()
 
 	// Extract options: prefer bindings, fall back to matcher's options
 	m.optionsMutex.RLock()
@@ -176,7 +176,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	if bindings == nil || len(bindings) == 0 {
 		// No bindings - use index to match pattern
 		datoms := m.matchWithIndex(pattern, constraints)
-		return datomsToRelationWithOptions(datoms, pattern, columns, opts), nil
+		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}
 
 	// Find best binding relation
@@ -184,7 +184,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	if bindingRel == nil || bindingRel.Size() == 0 {
 		// No relevant bindings - use index
 		datoms := m.matchWithIndex(pattern, constraints)
-		return datomsToRelationWithOptions(datoms, pattern, columns, opts), nil
+		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}
 
 	// Match with bindings - use streaming iterator for lazy evaluation
@@ -197,7 +197,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	iterator := &boundDatomIterator{
 		matcher:     m,
 		pattern:     pattern,
-		columns:     columns,
+		symbols:     symbols,
 		constraints: constraints,
 		boundTuples: bindingRel.Sorted(),
 		bindingRel:  bindingRel,
@@ -205,7 +205,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 		datomIdx:    0,
 	}
 
-	return NewStreamingRelationWithOptions(columns, iterator, relOpts), nil
+	return NewStreamingRelationWithOptions(symbols, iterator, relOpts), nil
 }
 
 // matchWithIndex performs indexed pattern matching

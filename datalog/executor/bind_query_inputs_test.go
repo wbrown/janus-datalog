@@ -47,14 +47,14 @@ func TestBindQueryInputs_TwoCollectionsCrossProduct(t *testing.T) {
 		attrTuples,
 	)
 
-	t.Logf("Entity relation - columns: %v, size: %d", entityRel.Columns(), entityRel.Size())
+	t.Logf("Entity relation - symbols: %v, size: %d", entityRel.Symbols(), entityRel.Size())
 	it := entityRel.Iterator()
 	for it.Next() {
 		t.Logf("  Entity tuple: %v", it.Tuple())
 	}
 	it.Close()
 
-	t.Logf("Attr relation - columns: %v, size: %d", attrRel.Columns(), attrRel.Size())
+	t.Logf("Attr relation - symbols: %v, size: %d", attrRel.Symbols(), attrRel.Size())
 	it = attrRel.Iterator()
 	for it.Next() {
 		t.Logf("  Attr tuple: %v", it.Tuple())
@@ -65,7 +65,7 @@ func TestBindQueryInputs_TwoCollectionsCrossProduct(t *testing.T) {
 	inputRelations := []Relation{entityRel, attrRel}
 	bound := BindQueryInputs(q, inputRelations)
 
-	t.Logf("Bound relation - columns: %v, size: %d", bound.Columns(), bound.Size())
+	t.Logf("Bound relation - symbols: %v, size: %d", bound.Symbols(), bound.Size())
 	it = bound.Iterator()
 	var tuples []Tuple
 	for it.Next() {
@@ -79,11 +79,11 @@ func TestBindQueryInputs_TwoCollectionsCrossProduct(t *testing.T) {
 	// Should have cross-product: 2 entities × 2 attrs = 4 tuples
 	assert.Len(t, tuples, 4, "should produce cross-product of 2×2=4 tuples")
 
-	// Verify columns
+	// Verify symbols
 	assert.Equal(t, []query.Symbol{
 		datalog.NewSymbol("?e"),
 		datalog.NewSymbol("?a"),
-	}, bound.Columns())
+	}, bound.Symbols())
 }
 
 // TestBindQueryInputs_EmptyCollectionReturnsEmpty verifies that an empty
@@ -103,7 +103,7 @@ func TestBindQueryInputs_EmptyCollectionReturnsEmpty(t *testing.T) {
 	inputRelations := []Relation{entityRel}
 	bound := BindQueryInputs(q, inputRelations)
 
-	t.Logf("Bound relation - columns: %v, size: %d", bound.Columns(), bound.Size())
+	t.Logf("Bound relation - symbols: %v, size: %d", bound.Symbols(), bound.Size())
 
 	// An empty collection should result in empty bound relation (0 results)
 	// because there are no values to match against
@@ -133,8 +133,8 @@ func TestBindQueryInputs_SingleCollection(t *testing.T) {
 	inputRelations := []Relation{entityRel}
 	bound := BindQueryInputs(q, inputRelations)
 
-	t.Logf("Bound relation - columns: %v, size: %d", bound.Columns(), bound.Size())
+	t.Logf("Bound relation - symbols: %v, size: %d", bound.Symbols(), bound.Size())
 
 	assert.Equal(t, 3, bound.Size(), "should have 3 tuples for 3 entities")
-	assert.Equal(t, []query.Symbol{datalog.NewSymbol("?e")}, bound.Columns())
+	assert.Equal(t, []query.Symbol{datalog.NewSymbol("?e")}, bound.Symbols())
 }

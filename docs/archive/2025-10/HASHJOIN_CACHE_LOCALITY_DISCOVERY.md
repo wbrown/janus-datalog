@@ -205,7 +205,7 @@ result := rel.Join(other)
 ### 2. Size Hints May Not Be Worth The Cost
 
 If getting size information requires:
-- Counting rows (O(n) scan)
+- Counting tuples (O(n) scan)
 - Materializing a relation
 - Waiting for async operation
 

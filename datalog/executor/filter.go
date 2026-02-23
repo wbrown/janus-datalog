@@ -13,7 +13,7 @@ type Filter interface {
 	RequiredSymbols() []query.Symbol
 
 	// Evaluate returns true if the tuple passes the filter
-	Evaluate(tuple Tuple, columns []query.Symbol) bool
+	Evaluate(tuple Tuple, symbols []query.Symbol) bool
 
 	// String returns a string representation of the filter
 	String() string
@@ -30,11 +30,11 @@ func (f ComparisonFilter) RequiredSymbols() []query.Symbol {
 	return []query.Symbol{f.Symbol}
 }
 
-func (f ComparisonFilter) Evaluate(tuple Tuple, columns []query.Symbol) bool {
-	// Find the column index
+func (f ComparisonFilter) Evaluate(tuple Tuple, symbols []query.Symbol) bool {
+	// Find the symbol index
 	idx := -1
-	for i, col := range columns {
-		if col == f.Symbol {
+	for i, sym := range symbols {
+		if sym == f.Symbol {
 			idx = i
 			break
 		}
@@ -62,16 +62,16 @@ func (f BinaryFilter) RequiredSymbols() []query.Symbol {
 	return []query.Symbol{f.Left, f.Right}
 }
 
-func (f BinaryFilter) Evaluate(tuple Tuple, columns []query.Symbol) bool {
-	// Find column indices
+func (f BinaryFilter) Evaluate(tuple Tuple, symbols []query.Symbol) bool {
+	// Find symbol indices
 	leftIdx := -1
 	rightIdx := -1
 
-	for i, col := range columns {
-		if col == f.Left {
+	for i, sym := range symbols {
+		if sym == f.Left {
 			leftIdx = i
 		}
-		if col == f.Right {
+		if sym == f.Right {
 			rightIdx = i
 		}
 	}
@@ -94,25 +94,25 @@ type VariadicFilter struct {
 }
 
 func (f VariadicFilter) RequiredSymbols() []query.Symbol {
-	var symbols []query.Symbol
+	var syms []query.Symbol
 	for _, arg := range f.Args {
 		if v, ok := arg.(query.Variable); ok {
-			symbols = append(symbols, v.Name)
+			syms = append(syms, v.Name)
 		}
 	}
-	return symbols
+	return syms
 }
 
-func (f VariadicFilter) Evaluate(tuple Tuple, columns []query.Symbol) bool {
+func (f VariadicFilter) Evaluate(tuple Tuple, symbols []query.Symbol) bool {
 	// Resolve all arguments to values
 	values := make([]interface{}, len(f.Args))
 	for i, arg := range f.Args {
 		switch a := arg.(type) {
 		case query.Variable:
-			// Find the column index
+			// Find the symbol index
 			idx := -1
-			for j, col := range columns {
-				if col == a.Name {
+			for j, sym := range symbols {
+				if sym == a.Name {
 					idx = j
 					break
 				}
@@ -149,24 +149,24 @@ func (f VariadicFilter) String() string {
 // FilterRelation applies a filter to a relation
 func FilterRelation(rel Relation, filter Filter) Relation {
 	// Check if all required symbols are present
-	cols := rel.Columns()
+	syms := rel.Symbols()
 	for _, sym := range filter.RequiredSymbols() {
 		found := false
-		for _, col := range cols {
-			if col == sym {
+		for _, s := range syms {
+			if s == sym {
 				found = true
 				break
 			}
 		}
 		if !found {
 			// Missing required symbol - return empty relation
-			return NewMaterializedRelation(cols, nil)
+			return NewMaterializedRelation(syms, nil)
 		}
 	}
 
 	// Apply filter
 	predFunc := func(tuple Tuple) bool {
-		return filter.Evaluate(tuple, cols)
+		return filter.Evaluate(tuple, syms)
 	}
 
 	return Select(rel, predFunc)

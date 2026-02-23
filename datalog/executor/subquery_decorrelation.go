@@ -128,7 +128,7 @@ func executeDecorrelatedSubqueries(ctx Context,
 				if collector != nil {
 					collector.AddTiming(fmt.Sprintf("decorrelated_subqueries/merged_query_%d", idx), timings[idx], map[string]interface{}{
 						"result_size":    result.Size(),
-						"result_columns": result.Columns(),
+						"result_symbols": result.Symbols(),
 					})
 				}
 			}(i, mergedPlan)
@@ -155,7 +155,7 @@ func executeDecorrelatedSubqueries(ctx Context,
 			if collector != nil {
 				collector.AddTiming(fmt.Sprintf("decorrelated_subqueries/merged_query_%d", i), mergedStart, map[string]interface{}{
 					"result_size":    result.Size(),
-					"result_columns": result.Columns(),
+					"result_symbols": result.Symbols(),
 				})
 			}
 		}
@@ -180,7 +180,7 @@ func executeDecorrelatedSubqueries(ctx Context,
 			Start: start,
 			Data: map[string]interface{}{
 				"combined_size":    combinedResult.Size(),
-				"combined_columns": combinedResult.Columns(),
+				"combined_symbols": combinedResult.Symbols(),
 			},
 		})
 	}
@@ -198,14 +198,14 @@ func executeDecorrelatedSubqueries(ctx Context,
 			Start: start,
 			Data: map[string]interface{}{
 				"joined_size":    joined.Size(),
-				"joined_columns": joined.Columns(),
+				"joined_symbols": joined.Symbols(),
 			},
 		})
 	}
 
-	// Rename and reorder columns in one step to match original subquery order
-	// This fixes the parallel decorrelation column ordering bug
-	finalResult := applyBindingRenamesAndReorder(joined, groupResults, decorPlan, inputRelation.Columns())
+	// Rename and reorder symbols in one step to match original subquery order
+	// This fixes the parallel decorrelation symbol ordering bug
+	finalResult := applyBindingRenamesAndReorder(joined, groupResults, decorPlan, inputRelation.Symbols())
 
 	// Add completion event
 	if collector != nil {
@@ -218,54 +218,54 @@ func executeDecorrelatedSubqueries(ctx Context,
 	return finalResult, nil
 }
 
-// applyBindingRenamesAndReorder renames and reorders columns in one operation.
+// applyBindingRenamesAndReorder renames and reorders symbols in one operation.
 //
-// This function fixes the parallel decorrelation column ordering bug by:
-// 1. Building the final column list in original subquery order (from :where clause)
+// This function fixes the parallel decorrelation symbol ordering bug by:
+// 1. Building the final symbol list in original subquery order (from :where clause)
 // 2. Creating tuples with values in that order
 //
-// The joined result has: [input columns] + [aggregate columns in join order]
-// We transform to: [input columns] + [aggregate columns in original subquery order]
+// The joined result has: [input symbols] + [aggregate symbols in join order]
+// We transform to: [input symbols] + [aggregate symbols in original subquery order]
 func applyBindingRenamesAndReorder(joined Relation, groupResults []Relation, decorPlan *planner.DecorrelatedSubqueryPlan,
 	inputColumns []query.Symbol) Relation {
 
 	// Find the maximum original subquery index to determine how many subqueries there were
 	maxSubqIdx := -1
-	for subqIdx := range decorPlan.ColumnMapping {
+	for subqIdx := range decorPlan.SymbolMapping {
 		if subqIdx > maxSubqIdx {
 			maxSubqIdx = subqIdx
 		}
 	}
 
-	// Build final columns in correct order: [input columns] + [binding vars in original subquery order]
+	// Build final symbols in correct order: [input symbols] + [binding vars in original subquery order]
 	finalColumns := make([]query.Symbol, len(inputColumns))
 	copy(finalColumns, inputColumns)
 
 	// Collect binding variables in original subquery order
 	var orderedBindingVars []query.Symbol
 	for subqIdx := 0; subqIdx <= maxSubqIdx; subqIdx++ {
-		if resultMap, exists := decorPlan.ColumnMapping[subqIdx]; exists {
+		if resultMap, exists := decorPlan.SymbolMapping[subqIdx]; exists {
 			orderedBindingVars = append(orderedBindingVars, resultMap.BindingVars...)
 		}
 	}
 	finalColumns = append(finalColumns, orderedBindingVars...)
 
-	// Build mapping from binding variables to aggregate column symbols
+	// Build mapping from binding variables to aggregate symbol symbols
 	// We need to look at each filter group's output to know which aggregate corresponds to which binding var
 	bindingToSymbol := make(map[query.Symbol]query.Symbol)
 
 	for subqIdx := 0; subqIdx <= maxSubqIdx; subqIdx++ {
-		if resultMap, exists := decorPlan.ColumnMapping[subqIdx]; exists {
-			// Get this filter group's result columns
+		if resultMap, exists := decorPlan.SymbolMapping[subqIdx]; exists {
+			// Get this filter group's result symbols
 			filterGroupResult := groupResults[resultMap.FilterGroupIdx]
-			filterGroupCols := filterGroupResult.Columns()
+			filterGroupCols := filterGroupResult.Symbols()
 
-			// Map each binding variable to its actual column symbol in the filter group
+			// Map each binding variable to its actual symbol symbol in the filter group
 			for i, bindingVar := range resultMap.BindingVars {
-				if i < len(resultMap.ColumnIndices) {
-					colIdx := resultMap.ColumnIndices[i]
+				if i < len(resultMap.SymbolIndices) {
+					colIdx := resultMap.SymbolIndices[i]
 					if colIdx < len(filterGroupCols) {
-						// The actual column symbol (like "(max ?h)") in the filter group
+						// The actual symbol symbol (like "(max ?h)") in the filter group
 						bindingToSymbol[bindingVar] = filterGroupCols[colIdx]
 					}
 				}
@@ -273,14 +273,14 @@ func applyBindingRenamesAndReorder(joined Relation, groupResults []Relation, dec
 		}
 	}
 
-	// Build index mapping: for each final column position, where to find it in joined relation
-	oldColumns := joined.Columns()
+	// Build index mapping: for each final symbol position, where to find it in joined relation
+	oldColumns := joined.Symbols()
 	indexMapping := make([]int, len(finalColumns))
 
 	for finalIdx, col := range finalColumns {
 		// Check if this is a binding variable that maps to an aggregate
 		if aggSymbol, isBound := bindingToSymbol[col]; isBound {
-			// Find the aggregate column in the joined result
+			// Find the aggregate symbol in the joined result
 			for joinedIdx, joinedCol := range oldColumns {
 				if aggSymbol == joinedCol {
 					indexMapping[finalIdx] = joinedIdx
@@ -288,7 +288,7 @@ func applyBindingRenamesAndReorder(joined Relation, groupResults []Relation, dec
 				}
 			}
 		} else {
-			// This is an input column - find by name directly
+			// This is an input symbol - find by name directly
 			for joinedIdx, joinedCol := range oldColumns {
 				if col == joinedCol {
 					indexMapping[finalIdx] = joinedIdx
@@ -341,8 +341,8 @@ func joinDecorrelatedResults(results []Relation, keys []query.Symbol) (Relation,
 
 // hashJoinWithMapping performs hash join with different key names on each side
 //
-// leftKeys: key column names in left relation
-// rightKeys: key column names in right relation (must correspond positionally to leftKeys)
+// leftKeys: key symbol names in left relation
+// rightKeys: key symbol names in right relation (must correspond positionally to leftKeys)
 func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbol) Relation {
 	// Filter out source markers from keys
 	var filteredLeftKeys, filteredRightKeys []query.Symbol
@@ -358,17 +358,17 @@ func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbo
 		}
 	}
 
-	// Find key column indices in both relations
+	// Find key symbol indices in both relations
 	leftIndices := make([]int, len(filteredLeftKeys))
 	rightIndices := make([]int, len(filteredRightKeys))
 
 	for i := range filteredLeftKeys {
-		leftIndices[i] = ColumnIndex(left, filteredLeftKeys[i])
-		rightIndices[i] = ColumnIndex(right, filteredRightKeys[i])
+		leftIndices[i] = SymbolIndex(left, filteredLeftKeys[i])
+		rightIndices[i] = SymbolIndex(right, filteredRightKeys[i])
 
 		// If key not found in either relation, return empty
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
-			resultColumns := append(left.Columns(), filterColumns(right.Columns(), filteredRightKeys)...)
+			resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), filteredRightKeys)...)
 			return NewMaterializedRelation(resultColumns, []Tuple{})
 		}
 	}
@@ -405,7 +405,7 @@ func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbo
 
 	// Probe and build result
 	var resultTuples []Tuple
-	resultColumns := append(left.Columns(), filterColumns(right.Columns(), filteredRightKeys)...)
+	resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), filteredRightKeys)...)
 
 	it = probeRel.Iterator()
 	for it.Next() {
@@ -414,7 +414,7 @@ func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbo
 
 		if buildTuples, found := hashTable[key]; found {
 			for _, buildTuple := range buildTuples {
-				// Combine tuples, filtering out duplicate key columns from right side
+				// Combine tuples, filtering out duplicate key symbols from right side
 				var combined Tuple
 				if buildIsLeft {
 					// left is build, right is probe
@@ -434,26 +434,26 @@ func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbo
 	return NewMaterializedRelation(resultColumns, resultTuples)
 }
 
-// hashJoinOnKeys performs hash join on specified key columns
+// hashJoinOnKeys performs hash join on specified key symbols
 //
 // This is a standard hash join implementation:
 // 1. Build hash table from smaller relation
 // 2. Probe with larger relation
-// 3. Filter out duplicate key columns from result
+// 3. Filter out duplicate key symbols from result
 func hashJoinOnKeys(left, right Relation, keys []query.Symbol) Relation {
-	// Find key column indices in both relations
+	// Find key symbol indices in both relations
 	leftIndices := make([]int, len(keys))
 	rightIndices := make([]int, len(keys))
 
 	for i, key := range keys {
-		leftIndices[i] = ColumnIndex(left, key)
-		rightIndices[i] = ColumnIndex(right, key)
+		leftIndices[i] = SymbolIndex(left, key)
+		rightIndices[i] = SymbolIndex(right, key)
 
 		// If key not found in either relation, this is an error
 		// But we'll handle it gracefully by treating it as no match
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
 			// Return empty relation
-			resultColumns := append(left.Columns(), filterColumns(right.Columns(), keys)...)
+			resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), keys)...)
 			return NewMaterializedRelation(resultColumns, []Tuple{})
 		}
 	}
@@ -490,7 +490,7 @@ func hashJoinOnKeys(left, right Relation, keys []query.Symbol) Relation {
 
 	// Probe and build result
 	var resultTuples []Tuple
-	resultColumns := append(left.Columns(), filterColumns(right.Columns(), keys)...)
+	resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), keys)...)
 
 	it = probeRel.Iterator()
 	for it.Next() {
@@ -499,7 +499,7 @@ func hashJoinOnKeys(left, right Relation, keys []query.Symbol) Relation {
 
 		if buildTuples, found := hashTable[key]; found {
 			for _, buildTuple := range buildTuples {
-				// Combine tuples, filtering out duplicate key columns
+				// Combine tuples, filtering out duplicate key symbols
 				var combined Tuple
 				if buildIsLeft {
 					// left is build, right is probe
@@ -532,15 +532,15 @@ func makeJoinKey(tuple Tuple, indices []int) string {
 	return strings.Join(parts, "|")
 }
 
-// filterColumns removes key columns from column list (to avoid duplicates in join result)
-func filterColumns(columns []query.Symbol, keys []query.Symbol) []query.Symbol {
+// filterColumns removes key symbols from symbol list (to avoid duplicates in join result)
+func filterColumns(symbols []query.Symbol, keys []query.Symbol) []query.Symbol {
 	keySet := make(map[query.Symbol]bool)
 	for _, key := range keys {
 		keySet[key] = true
 	}
 
 	var result []query.Symbol
-	for _, col := range columns {
+	for _, col := range symbols {
 		if !keySet[col] {
 			result = append(result, col)
 		}
@@ -578,13 +578,13 @@ type timeKey struct {
 // extractTimeRanges converts correlation key tuples into time ranges
 // This enables semi-join pushdown by constraining merged queries to scan only relevant time periods
 func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) ([]TimeRange, error) {
-	// Get columns from input relation
-	cols := inputRelation.Columns()
+	// Get symbols from input relation
+	cols := inputRelation.Symbols()
 	if len(cols) == 0 {
 		return nil, nil
 	}
 
-	// Find column indices for time components
+	// Find symbol indices for time components
 	symYear := datalog.NewSymbol("?year")
 	symY := datalog.NewSymbol("?y")
 	symMonth := datalog.NewSymbol("?month")

@@ -675,7 +675,7 @@ func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...inte
 }
 
 // ExecuteQueryRelation executes a query and returns the Relation directly.
-// This preserves column names (via Symbols()) which are lost in ExecuteQuery.
+// This preserves symbol names (via Symbols()) which are lost in ExecuteQuery.
 func (d *Database) ExecuteQueryRelation(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
 	// Separate QueryOptions from regular inputs
 	opts, regularInputs := extractQueryOptions(inputs)
@@ -772,9 +772,9 @@ func (ar *AnalyzeResult) String() string {
 	sb.WriteString(fmt.Sprintf("  Total time: %v\n", ar.TotalTime))
 	size := ar.Result.Size()
 	if size >= 0 {
-		sb.WriteString(fmt.Sprintf("  Result rows: %d\n", size))
+		sb.WriteString(fmt.Sprintf("  Result tuples: %d\n", size))
 	} else {
-		sb.WriteString("  Result rows: (streaming - call Result.Size() to materialize)\n")
+		sb.WriteString("  Result tuples: (streaming - call Result.Size() to materialize)\n")
 	}
 
 	// Group events by type for summary
@@ -969,8 +969,8 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	// Identity is a pointer type alias and goes through scalar path automatically
 	if elemType.Kind() == reflect.Struct && !isScalarStructType(elemType) {
 		// Struct path - use mapper
-		findColumns := extractFindColumnStrings(q.Find)
-		mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
+		findSymbols := extractFindSymbolStrings(q.Find)
+		mapper, err := dlreflect.NewQueryResultMapper(elemType, findSymbols)
 		if err != nil {
 			return err
 		}
@@ -987,7 +987,7 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		return nil
 	}
 
-	// Scalar path - single column queries only
+	// Scalar path - single symbol queries only
 	if len(q.Find) != 1 {
 		return fmt.Errorf("scalar QueryInto requires exactly 1 find element, got %d", len(q.Find))
 	}
@@ -1024,7 +1024,7 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 
 // QueryOneInto executes a Datalog query expecting at most one result and populates a value.
 // The query can be either an EDN string or a *query.Query from the query builder.
-// Supports both struct destinations (multi-column) and scalar destinations (single-column).
+// Supports both struct destinations (multi-symbol) and scalar destinations (single-symbol).
 // Returns (true, nil) if a result was found and mapped successfully.
 // Returns (false, nil) if the query returns no results (empty result is valid, not an error).
 // Returns (false, ErrMultipleResults) if more than one result exists.
@@ -1077,8 +1077,8 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 	isStruct := elemType.Kind() == reflect.Struct && !isScalarStructType(elemType)
 
 	if isStruct {
-		findColumns := extractFindColumnStrings(q.Find)
-		mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
+		findSymbols := extractFindSymbolStrings(q.Find)
+		mapper, err := dlreflect.NewQueryResultMapper(elemType, findSymbols)
 		if err != nil {
 			return false, err
 		}
@@ -1088,7 +1088,7 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 		return true, nil
 	}
 
-	// Scalar path - single column queries only
+	// Scalar path - single symbol queries only
 	if len(q.Find) != 1 {
 		return false, fmt.Errorf("scalar QueryOneInto requires exactly 1 find element, got %d", len(q.Find))
 	}
@@ -1102,14 +1102,14 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 	return true, nil
 }
 
-// extractFindColumnStrings extracts column names from :find clause as strings.
+// extractFindSymbolStrings extracts symbol names from :find clause as strings.
 // For variables, returns "?name". For aggregates, returns "(sum ?x)".
-func extractFindColumnStrings(find []query.FindElement) []string {
-	columns := make([]string, len(find))
+func extractFindSymbolStrings(find []query.FindElement) []string {
+	symbols := make([]string, len(find))
 	for i, elem := range find {
-		columns[i] = elem.String()
+		symbols[i] = elem.String()
 	}
-	return columns
+	return symbols
 }
 
 // Scalar struct types - these are structs but treated as scalar values
@@ -1124,7 +1124,7 @@ func isScalarStructType(t reflect.Type) bool {
 	return t == timeType || t == identityType || t == keywordType
 }
 
-// mapScalarResults maps single-column query results to a scalar slice.
+// mapScalarResults maps single-symbol query results to a scalar slice.
 func mapScalarResults(results [][]interface{}, sliceVal reflect.Value, elemIsPtr bool) error {
 	elemType := sliceVal.Type().Elem()
 	if elemIsPtr {
@@ -1147,7 +1147,7 @@ func mapScalarResults(results [][]interface{}, sliceVal reflect.Value, elemIsPtr
 		}
 
 		if err := setScalarValue(elemVal, val); err != nil {
-			return fmt.Errorf("row %d: %w", i, err)
+			return fmt.Errorf("tuple %d: %w", i, err)
 		}
 
 		if elemIsPtr {
@@ -2130,17 +2130,17 @@ func (t *Transaction) validateUniqueness() error {
 			return fmt.Errorf("failed to check uniqueness for %s: %w", d.A.String(), err)
 		}
 
-		// Find the index of ?e in the result columns
-		columns := results.Columns()
+		// Find the index of ?e in the result symbols
+		symbols := results.Symbols()
 		eIndex := -1
-		for i, col := range columns {
-			if col == datalog.NewSymbol("?e") {
+		for i, sym := range symbols {
+			if sym == datalog.NewSymbol("?e") {
 				eIndex = i
 				break
 			}
 		}
 		if eIndex < 0 {
-			continue // No entity column in results (shouldn't happen)
+			continue // No entity symbol in results (shouldn't happen)
 		}
 
 		// Check if any existing datoms have a different entity
@@ -2319,26 +2319,26 @@ func relationToSlice(rel executor.Relation) [][]interface{} {
 	}
 	// Don't preallocate if size is unknown (-1)
 	size := rel.Size()
-	var rows [][]interface{}
+	var tuples [][]interface{}
 	if size >= 0 {
-		rows = make([][]interface{}, 0, size)
+		tuples = make([][]interface{}, 0, size)
 	} else {
-		rows = make([][]interface{}, 0)
+		tuples = make([][]interface{}, 0)
 	}
 
 	it := rel.Iterator()
 	defer it.Close()
 
 	for it.Next() {
-		tuple := it.Tuple()
-		row := make([]interface{}, len(tuple))
-		for i, v := range tuple {
-			row[i] = v
+		src := it.Tuple()
+		t := make([]interface{}, len(src))
+		for i, v := range src {
+			t[i] = v
 		}
-		rows = append(rows, row)
+		tuples = append(tuples, t)
 	}
 
-	return rows
+	return tuples
 }
 
 // Pull retrieves entity data according to a pull pattern

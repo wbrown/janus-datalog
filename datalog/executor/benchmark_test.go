@@ -12,12 +12,12 @@ import (
 // Benchmark expression evaluation
 func BenchmarkExpressionEvaluation(b *testing.B) {
 	// Create test data
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	tuples := make([]Tuple, 1000)
 	for i := 0; i < 1000; i++ {
 		tuples[i] = Tuple{int64(i), int64(i * 2), float64(i) * 1.5}
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	expr := &query.Expression{
 		Function: &query.ArithmeticFunction{
@@ -38,12 +38,12 @@ func BenchmarkExpressionEvaluation(b *testing.B) {
 // Benchmark aggregation operations
 func BenchmarkAggregation(b *testing.B) {
 	// Create test data with groups
-	columns := []query.Symbol{datalog.NewSymbol("?group"), datalog.NewSymbol("?value")}
+	symbols := []query.Symbol{datalog.NewSymbol("?group"), datalog.NewSymbol("?value")}
 	tuples := make([]Tuple, 10000)
 	for i := 0; i < 10000; i++ {
 		tuples[i] = Tuple{int64(i % 100), float64(i)}
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	b.Run("single_aggregation", func(b *testing.B) {
 		findElements := []query.FindElement{
@@ -128,7 +128,7 @@ func BenchmarkFullQuery(b *testing.B) {
 
 // Benchmark time-based aggregations
 func BenchmarkTimeAggregation(b *testing.B) {
-	columns := []query.Symbol{datalog.NewSymbol("?date"), datalog.NewSymbol("?value")}
+	symbols := []query.Symbol{datalog.NewSymbol("?date"), datalog.NewSymbol("?value")}
 	tuples := make([]Tuple, 1000)
 	baseTime := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -138,7 +138,7 @@ func BenchmarkTimeAggregation(b *testing.B) {
 			float64(i * 10),
 		}
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	findElements := []query.FindElement{
 		query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?date")},

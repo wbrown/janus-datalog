@@ -53,7 +53,7 @@ Basic Datalog queries work as expected:
 - `:find` - with variables and aggregations
 - `:where` - pattern matching and expressions
 - `:in` - database and parameter inputs
-- `:order-by` - result ordering with multi-column and direction support
+- `:order-by` - result ordering with multi-symbol and direction support
 
 **Pattern matching:**
 - `[?e ?a ?v]` - basic triple patterns
@@ -461,7 +461,7 @@ found, err := d.QueryOneInto(&result, `
             [?t :trade/date ?date]]
 `)
 
-// Scalar queries - single column, no struct needed
+// Scalar queries - single symbol, no struct needed
 var names []string
 d.QueryInto(&names, `[:find ?name :where [?e :person/name ?name]]`)
 
@@ -474,7 +474,7 @@ found, err := d.QueryOneInto(&count, `[:find (count ?e) :where [?e :person/name 
 **Tag mapping:**
 - Variables: `datalog:"?symbol"` matches `:find ?symbol`
 - Aggregates: `datalog:"(sum ?salary)"` matches `:find (sum ?salary)` exactly
-- Positional: Omit tags entirely to use field order = result column order
+- Positional: Omit tags entirely to use field order = result symbol order
 
 **Error handling:**
 - `ErrNotFound` - QueryOneInto returns no results

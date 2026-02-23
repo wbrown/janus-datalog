@@ -121,13 +121,13 @@ func (m *BadgerMatcher) estimatePatternCardinality(pattern *query.DataPattern) i
 func (m *BadgerMatcher) matchWithHashJoin(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	position int, // Datom position (0=E, 1=A, 2=V, 3=T)
 	index IndexType,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
 	// PHASE 1: Build hash set from binding relation
-	// Find which variable is at the datom position, then find its column index
+	// Find which variable is at the datom position, then find its symbol index
 	var joinSymbol query.Symbol
 	switch position {
 	case 0:
@@ -150,27 +150,27 @@ func (m *BadgerMatcher) matchWithHashJoin(
 		}
 	}
 
-	// Find the column index of joinSymbol in bindingRel
-	bindingCols := bindingRel.Columns()
-	columnIndex := -1
-	for i, col := range bindingCols {
-		if col == joinSymbol {
-			columnIndex = i
+	// Find the symbol index of joinSymbol in bindingRel
+	bindingSyms := bindingRel.Symbols()
+	symbolIndex := -1
+	for i, sym := range bindingSyms {
+		if sym == joinSymbol {
+			symbolIndex = i
 			break
 		}
 	}
 
-	if columnIndex == -1 {
+	if symbolIndex == -1 {
 		// Variable not in binding relation - shouldn't happen if strategy is correct
-		return executor.NewMaterializedRelationNoDedupeWithOptions(columns, nil, m.options), nil
+		return executor.NewMaterializedRelationNoDedupeWithOptions(symbols, nil, m.options), nil
 	}
 
-	// Build hash set using column index (not datom position)
-	hashSet := m.buildHashSet(bindingRel, columnIndex)
+	// Build hash set using symbol index (not datom position)
+	hashSet := m.buildHashSet(bindingRel, symbolIndex)
 
 	if len(hashSet) == 0 {
 		// No bindings - return empty result
-		return executor.NewMaterializedRelationNoDedupeWithOptions(columns, nil, m.options), nil
+		return executor.NewMaterializedRelationNoDedupeWithOptions(symbols, nil, m.options), nil
 	}
 
 	// PHASE 2: Determine scan range for the pattern
@@ -179,8 +179,8 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	if len(hashSet) == 1 {
 		// Extract the single bound value from the hash set
 		for _, tuples := range hashSet {
-			if len(tuples) > 0 && columnIndex < len(tuples[0]) {
-				boundValue = tuples[0][columnIndex]
+			if len(tuples) > 0 && symbolIndex < len(tuples[0]) {
+				boundValue = tuples[0][symbolIndex]
 			}
 			break
 		}
@@ -206,18 +206,18 @@ func (m *BadgerMatcher) matchWithHashJoin(
 		matcher:      m,
 		pattern:      pattern,
 		bindingRel:   bindingRel,
-		columns:      columns,
+		symbols:      symbols,
 		position:     position,
 		index:        index,
 		constraints:  constraints,
 		hashSet:      hashSet,
 		iter:         resolvedIter,
-		workspace:    make(executor.Tuple, len(columns)),
-		tupleBuilder: m.getTupleBuilder(pattern, columns),
+		workspace:    make(executor.Tuple, len(symbols)),
+		tupleBuilder: m.getTupleBuilder(pattern, symbols),
 	}
 
 	// Return streaming relation
-	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
 // scanRange holds start and end keys for a storage scan
@@ -421,7 +421,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 }
 
 // buildHashSet creates a hash set from binding relation for O(1) lookup
-// Returns map from key to ALL tuples with that key value (supporting multi-column bindings)
+// Returns map from key to ALL tuples with that key value (supporting multi-symbol bindings)
 func (m *BadgerMatcher) buildHashSet(bindingRel executor.Relation, position int) map[string][]executor.Tuple {
 	hashSet := make(map[string][]executor.Tuple)
 
@@ -500,11 +500,11 @@ func (m *BadgerMatcher) matchesWithBindingTuple(
 	bindingRel executor.Relation,
 	bindingTuple executor.Tuple,
 ) bool {
-	// Build column index for binding relation
-	columns := bindingRel.Columns()
-	colIndex := make(map[query.Symbol]int)
-	for i, col := range columns {
-		colIndex[col] = i
+	// Build symbol index for binding relation
+	symbols := bindingRel.Symbols()
+	symIndex := make(map[query.Symbol]int)
+	for i, sym := range symbols {
+		symIndex[sym] = i
 	}
 
 	// Extract bound values for E, A, V, T
@@ -514,7 +514,7 @@ func (m *BadgerMatcher) matchesWithBindingTuple(
 	if c, ok := pattern.GetE().(query.Constant); ok {
 		e = c.Value
 	} else if sym, ok := pattern.GetE().(query.Variable); ok {
-		if idx, found := colIndex[sym.Name]; found && idx < len(bindingTuple) {
+		if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
 			e = bindingTuple[idx]
 		}
 	}
@@ -523,7 +523,7 @@ func (m *BadgerMatcher) matchesWithBindingTuple(
 	if c, ok := pattern.GetA().(query.Constant); ok {
 		a = c.Value
 	} else if sym, ok := pattern.GetA().(query.Variable); ok {
-		if idx, found := colIndex[sym.Name]; found && idx < len(bindingTuple) {
+		if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
 			a = bindingTuple[idx]
 		}
 	}
@@ -532,7 +532,7 @@ func (m *BadgerMatcher) matchesWithBindingTuple(
 	if c, ok := pattern.GetV().(query.Constant); ok {
 		v = c.Value
 	} else if sym, ok := pattern.GetV().(query.Variable); ok {
-		if idx, found := colIndex[sym.Name]; found && idx < len(bindingTuple) {
+		if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
 			v = bindingTuple[idx]
 		}
 	}
@@ -542,7 +542,7 @@ func (m *BadgerMatcher) matchesWithBindingTuple(
 		if c, ok := pattern.GetT().(query.Constant); ok {
 			tx = c.Value
 		} else if sym, ok := pattern.GetT().(query.Variable); ok {
-			if idx, found := colIndex[sym.Name]; found && idx < len(bindingTuple) {
+			if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
 				tx = bindingTuple[idx]
 			}
 		}
@@ -558,7 +558,7 @@ func (m *BadgerMatcher) matchesWithBindingTuple(
 func (m *BadgerMatcher) matchWithMergeJoin(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	position int,
 	index IndexType,
 	constraints []executor.StorageConstraint,
@@ -569,7 +569,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 
 	if len(sortedTuples) == 0 {
 		// No bindings - return empty result
-		return executor.NewMaterializedRelationNoDedupeWithOptions(columns, nil, m.options), nil
+		return executor.NewMaterializedRelationNoDedupeWithOptions(symbols, nil, m.options), nil
 	}
 
 	// PHASE 2: Determine scan range for the pattern
@@ -594,19 +594,19 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 		matcher:      m,
 		pattern:      pattern,
 		bindingRel:   bindingRel,
-		columns:      columns,
+		symbols:      symbols,
 		position:     position,
 		index:        index,
 		constraints:  constraints,
 		sortedTuples: sortedTuples,
 		bindingIdx:   0,
 		iter:         resolvedIterMerge,
-		workspace:    make(executor.Tuple, len(columns)),
-		tupleBuilder: m.getTupleBuilder(pattern, columns),
+		workspace:    make(executor.Tuple, len(symbols)),
+		tupleBuilder: m.getTupleBuilder(pattern, symbols),
 	}
 
 	// Return streaming relation
-	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
 // extractBindingKey extracts the join key from a binding tuple at the specified position
@@ -737,7 +737,7 @@ type hashJoinIterator struct {
 	matcher       *BadgerMatcher
 	pattern       *query.DataPattern
 	bindingRel    executor.Relation
-	columns       []query.Symbol
+	symbols       []query.Symbol
 	position      int
 	index         IndexType
 	constraints   []executor.StorageConstraint
@@ -772,7 +772,7 @@ func (it *hashJoinIterator) Next() bool {
 		// Probe hash set (O(1) lookup)
 		if bindingTuples, found := it.hashSet[probeKeyStr]; found {
 			// Check against ALL binding tuples with this key
-			// (for multi-column bindings, there may be multiple tuples per key)
+			// (for multi-symbol bindings, there may be multiple tuples per key)
 			for _, bindingTuple := range bindingTuples {
 				// Verify full pattern match
 				if it.matcher.matchesWithBindingTuple(datom, it.pattern, it.bindingRel, bindingTuple) {
@@ -829,7 +829,7 @@ type mergeJoinIterator struct {
 	matcher      *BadgerMatcher
 	pattern      *query.DataPattern
 	bindingRel   executor.Relation
-	columns      []query.Symbol
+	symbols      []query.Symbol
 	position     int
 	index        IndexType
 	constraints  []executor.StorageConstraint

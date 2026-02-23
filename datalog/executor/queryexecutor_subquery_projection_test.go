@@ -11,13 +11,13 @@ import (
 )
 
 // TestQueryExecutorSubqueryProjection tests that QueryExecutor properly handles
-// subquery result columns for projection in the :find clause.
+// subquery result symbols for projection in the :find clause.
 //
-// Bug: QueryExecutor fails to preserve subquery result column names, causing
-// projection to fail with "cannot project: column ?xxx not found in relation"
+// Bug: QueryExecutor fails to preserve subquery result symbol names, causing
+// projection to fail with "cannot project: symbol ?xxx not found in relation"
 //
 // This reproduces the gopher-street bug:
-// "cannot project: column ?open-price not found in relation"
+// "cannot project: symbol ?open-price not found in relation"
 func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	// Create test data
 	alice := datalog.NewIdentity("alice")
@@ -36,7 +36,7 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 		{E: charlie, A: ageKw, V: int64(35), Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
 	}
 
-	// Query with subquery that projects a result column
+	// Query with subquery that projects a result symbol
 	// The outer query should be able to find ?max-age in its :find clause
 	queryStr := `[:find ?name ?max-age
 	              :where [?e :person/name ?name]
@@ -51,7 +51,7 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 	opts := planner.PlannerOptions{}
 	exec := NewExecutorWithOptions(matcher, nil, opts)
 	result, err := exec.Execute(q)
-	assert.NoError(t, err, "QueryExecutor should preserve subquery result column names")
+	assert.NoError(t, err, "QueryExecutor should preserve subquery result symbol names")
 
 	// Collect results (don't check Size() or IsEmpty() - may be streaming and would consume first tuple)
 	it := result.Iterator()
@@ -70,7 +70,7 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 }
 
 // TestQueryExecutorMultipleSubqueryProjections tests multiple subqueries
-// each contributing columns to the final projection
+// each contributing symbols to the final projection
 func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 	// Create test data - price bars for multiple symbols
 	aapl := datalog.NewIdentity("AAPL")
@@ -158,8 +158,8 @@ func TestQueryExecutorMultipleSubqueryProjections(t *testing.T) {
 		result, err := exec.Execute(q)
 
 		// BUG: This should succeed but fails with:
-		// "cannot project: column ?first-open (or other subquery columns) not found in relation"
-		assert.NoError(t, err, "QueryExecutor should preserve all subquery result column names")
+		// "cannot project: symbol ?first-open (or other subquery symbols) not found in relation"
+		assert.NoError(t, err, "QueryExecutor should preserve all subquery result symbol names")
 
 		// Collect results (don't check Size() - may be streaming)
 		it := result.Iterator()

@@ -56,7 +56,7 @@ Phase 2:
   Collapse() → joins on ?p
 
   Expression [(str ?name " works in " ?d) ?summary]
-  → adds column, might bridge disjoint groups
+  → adds symbol, might bridge disjoint groups
 ```
 
 ### The Key Differences
@@ -64,13 +64,13 @@ Phase 2:
 | Volcano | Janus |
 |---------|-------|
 | Plan tree fixed at compile time | Join order determined at runtime by `Collapse()` |
-| Operators statically linked | Relations are values, combined based on columns |
+| Operators statically linked | Relations are values, combined based on symbols |
 | Single pipeline | Multiple disjoint groups that might merge later |
-| Plan knows the shape | Shape emerges from what columns exist |
+| Plan knows the shape | Shape emerges from what symbols exist |
 
 ### Dynamic Bridging
 
-Expressions can create join columns that bridge previously disjoint groups:
+Expressions can create join symbols that bridge previously disjoint groups:
 
 ```
 Group 1: {?x, ?y}     Group 2: {?a, ?b}
@@ -84,7 +84,7 @@ Group 1: {?x, ?y, ?z}  Group 2: {?a, ?b, ?z}
               Collapse() joins them
 ```
 
-This isn't Volcano. Volcano doesn't rewire the plan based on what columns emerge from expressions.
+This isn't Volcano. Volcano doesn't rewire the plan based on what symbols emerge from expressions.
 
 **The characterization:** Schema-driven dataflow with Volcano-style iterators.
 
@@ -119,7 +119,7 @@ This isn't Volcano. Volcano doesn't rewire the plan based on what columns emerge
 | Pattern with 1 constant | 200 | Some filtering |
 | Pattern with 2 bound vars | 120 | Join only, no filtering |
 | OR clause | 80 | Data source but less predictable |
-| Expression producing symbol | 10 | Computed column |
+| Expression producing symbol | 10 | Computed symbol |
 | Filter predicate | 5 | Just filters |
 | NOT clause | 2 | Filters last |
 
@@ -131,7 +131,7 @@ This isn't Volcano. Volcano doesn't rewire the plan based on what columns emerge
 |----------------|---------|-------------------|
 | **When** | Before execution | During execution |
 | **Decides** | Which clauses can execute together | How to combine results |
-| **Based on** | Symbol dependencies (static) | Actual column overlap (dynamic) |
+| **Based on** | Symbol dependencies (static) | Actual symbol overlap (dynamic) |
 | **Join order** | No | Yes |
 | **Selectivity** | Orders clauses within phase | N/A |
 
@@ -139,7 +139,7 @@ This isn't Volcano. Volcano doesn't rewire the plan based on what columns emerge
 
 Traditional query planners do more work at plan time. Janus deliberately defers join ordering to runtime, which means:
 - Less optimization opportunity (no cost-based planning)
-- More flexibility (handles dynamic schemas, expressions that create join columns)
+- More flexibility (handles dynamic schemas, expressions that create join symbols)
 - Simpler planner (just dependency analysis + selectivity ordering)
 
 **The trade-off:** Simplicity over optimization. The planner ensures you start with small result sets. `Collapse()` handles the mechanical joining.
@@ -355,7 +355,7 @@ This is **premature documentation** instead of premature optimization - write do
 | Index attributes (`:skill/0`, `:skill/1`) | Renumber on insert |
 | Separate entity per element | N+1 queries, entity explosion |
 | Different database for vectors | Two databases, no joins |
-| Blob column | Complete surrender |
+| Blob symbol | Complete surrender |
 
 ### The Rabbit Hole
 

@@ -120,7 +120,7 @@ type relationInput struct {
 }
 
 // Relation creates a relation input parameter specification.
-// The corresponding input should be a slice of slices (rows).
+// The corresponding input should be a slice of slices (tuples).
 //
 // Example:
 //

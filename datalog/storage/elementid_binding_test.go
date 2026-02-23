@@ -225,7 +225,7 @@ func TestElementIDBinding_RelationInput(t *testing.T) {
 }
 
 // TestElementIDBinding_TxJoin verifies that two patterns joined on ?e correctly
-// return *ElementID Tx values as distinct columns. In CRDT storage, each Set()
+// return *ElementID Tx values as distinct symbols. In CRDT storage, each Set()
 // gets a unique ElementID, so ?tx1 != ?tx2 even for the same entity.
 func TestElementIDBinding_TxJoin(t *testing.T) {
 	dir := t.TempDir()
@@ -277,7 +277,7 @@ func TestElementIDBinding_TxJoin(t *testing.T) {
 	t.Logf("TxJoin results: %v", results)
 	require.Len(t, results, 2, "Should return 2 name/age pairs joined on entity")
 
-	// Verify results contain correct name/age pairs and that Tx columns are ElementIDs
+	// Verify results contain correct name/age pairs and that Tx symbols are ElementIDs
 	for _, r := range results {
 		name := r[0].(string)
 		age := r[1].(int64)

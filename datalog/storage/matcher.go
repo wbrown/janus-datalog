@@ -125,7 +125,7 @@ func (m *BadgerMatcher) WithTimeRanges(ranges []executor.TimeRange) executor.Tim
 }
 
 // getTupleBuilder returns a cached tuple builder or creates a new one
-func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, columns []query.Symbol) *query.InternedTupleBuilder {
+func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *query.InternedTupleBuilder {
 	// Initialize cache exactly once (for tests or code paths that don't use NewBadgerMatcher)
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
@@ -134,15 +134,15 @@ func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, columns []qu
 	})
 
 	key := pattern.String()
-	for _, col := range columns {
-		key += "|" + col.String()
+	for _, sym := range symbols {
+		key += "|" + sym.String()
 	}
 
 	if val, ok := m.builderCache.Load(key); ok {
 		return val.(*query.InternedTupleBuilder)
 	}
 
-	builder := query.NewInternedTupleBuilder(pattern, columns)
+	builder := query.NewInternedTupleBuilder(pattern, symbols)
 	actual, _ := m.builderCache.LoadOrStore(key, builder)
 	return actual.(*query.InternedTupleBuilder)
 }
@@ -158,7 +158,7 @@ func (m *BadgerMatcher) ForceJoinStrategy(strategy *JoinStrategy) {
 // bindPattern creates a new pattern with variables replaced by tuple values
 func (m *BadgerMatcher) bindPattern(pattern *query.DataPattern, tuple executor.Tuple, rel executor.Relation) *query.DataPattern {
 	// Get symbol positions in the relation
-	symbols := rel.Columns()
+	symbols := rel.Symbols()
 	symbolIndex := make(map[query.Symbol]int)
 	for i, sym := range symbols {
 		symbolIndex[sym] = i

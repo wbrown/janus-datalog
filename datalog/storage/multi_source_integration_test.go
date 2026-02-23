@@ -96,8 +96,8 @@ func TestMultiSource_MemorySourceOnly(t *testing.T) {
 	}
 
 	names := make(map[string]bool)
-	for _, row := range results {
-		names[row[0].(string)] = true
+	for _, tuple := range results {
+		names[tuple[0].(string)] = true
 	}
 	for _, expected := range []string{"Sword", "Shield", "Potion"} {
 		if !names[expected] {
@@ -149,8 +149,8 @@ func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
 	}
 
 	keys := make(map[string]bool)
-	for _, row := range results {
-		keys[row[0].(string)] = true
+	for _, tuple := range results {
+		keys[tuple[0].(string)] = true
 	}
 	if !keys["region-lore"] {
 		t.Error("expected region-lore in results")
@@ -198,8 +198,8 @@ func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 	}
 
 	deps := make(map[string]bool)
-	for _, row := range results {
-		deps[row[0].(string)] = true
+	for _, tuple := range results {
+		deps[tuple[0].(string)] = true
 	}
 	if !deps["world-lore"] {
 		t.Error("expected world-lore dependency")

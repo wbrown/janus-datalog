@@ -22,10 +22,10 @@ func assertResultNoDuplicates(t *testing.T, name string, results [][]interface{}
 	t.Helper()
 	seen := make(map[string]int)
 
-	for idx, row := range results {
-		key := fmt.Sprintf("%v", row)
+	for idx, tuple := range results {
+		key := fmt.Sprintf("%v", tuple)
 		if firstIdx, exists := seen[key]; exists {
-			t.Errorf("%s: duplicate row at index %d (first seen at %d): %v", name, idx, firstIdx, row)
+			t.Errorf("%s: duplicate tuple at index %d (first seen at %d): %v", name, idx, firstIdx, tuple)
 		}
 		seen[key] = idx
 	}
@@ -128,7 +128,7 @@ func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
 	}
 
 	t.Run("Join then project to overlapping values", func(t *testing.T) {
-		// This query joins on entity, producing rows that might duplicate after projection
+		// This query joins on entity, producing tuples that might duplicate after projection
 		result, err := db.ExecuteQuery(`
 			[:find ?city
 			 :where [?e :person/name ?name]
@@ -145,7 +145,7 @@ func TestSetSemantics_StorageQuery_MultipleAttributes(t *testing.T) {
 		assertResultNoDuplicates(t, "City projection after join", result)
 	})
 
-	t.Run("Multiple projection columns", func(t *testing.T) {
+	t.Run("Multiple projection symbols", func(t *testing.T) {
 		result, err := db.ExecuteQuery(`
 			[:find ?name ?city
 			 :where [?e :person/name ?name]

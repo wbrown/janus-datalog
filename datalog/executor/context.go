@@ -400,30 +400,30 @@ func (c *AnnotatedContext) JoinRelations(left, right Relation, fn func() Relatio
 		data["amplification"] = float64(resultSize) / float64(leftSize+rightSize)
 	}
 
-	// Add columns being joined
+	// Add symbols being joined
 	if left != nil && right != nil {
-		data["left.columns"] = left.Columns()
-		data["right.columns"] = right.Columns()
+		data["left.symbols"] = left.Symbols()
+		data["right.symbols"] = right.Symbols()
 	}
 
 	// Add relation attributes for rendering
 	if left != nil {
-		leftAttrs := make([]string, len(left.Columns()))
-		for i, col := range left.Columns() {
+		leftAttrs := make([]string, len(left.Symbols()))
+		for i, col := range left.Symbols() {
 			leftAttrs[i] = col.String()
 		}
 		data["left.attrs"] = leftAttrs
 	}
 	if right != nil {
-		rightAttrs := make([]string, len(right.Columns()))
-		for i, col := range right.Columns() {
+		rightAttrs := make([]string, len(right.Symbols()))
+		for i, col := range right.Symbols() {
 			rightAttrs[i] = col.String()
 		}
 		data["right.attrs"] = rightAttrs
 	}
 	if result != nil {
-		resultAttrs := make([]string, len(result.Columns()))
-		for i, col := range result.Columns() {
+		resultAttrs := make([]string, len(result.Symbols()))
+		for i, col := range result.Symbols() {
 			resultAttrs[i] = col.String()
 		}
 		data["result.attrs"] = resultAttrs

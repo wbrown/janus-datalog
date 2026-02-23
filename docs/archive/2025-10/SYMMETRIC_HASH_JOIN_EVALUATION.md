@@ -196,7 +196,7 @@ For interactive use, **43µs matters more than 7.1ms**.
 ```sql
 SELECT * FROM big_table JOIN other_table LIMIT 10
 ```
-- Processes ALL rows from big_table
+- Processes ALL tuples from big_table
 - Builds complete hash table
 - Returns first 10
 - **Wasteful**
@@ -205,7 +205,7 @@ SELECT * FROM big_table JOIN other_table LIMIT 10
 ```sql
 SELECT * FROM big_table JOIN other_table LIMIT 10
 ```
-- Processes ~100-200 rows
+- Processes ~100-200 tuples
 - Produces 10 results
 - Stops iteration
 - **44× faster**

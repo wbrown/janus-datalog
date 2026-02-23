@@ -85,21 +85,21 @@ func Subquery(innerQuery *QueryBuilder, inputs ...*Var) *SubqueryBuilder {
 }
 
 // BindTuple binds subquery results as a single tuple [[?a ?b]].
-// Use when the subquery returns exactly one row.
+// Use when the subquery returns exactly one tuple.
 func (s *SubqueryBuilder) BindTuple(vars ...*Var) *SubqueryBuilder {
 	s.binding = tupleBind{vars: vars}
 	return s
 }
 
 // BindRelation binds subquery results as a relation [[?a ?b] ...].
-// Use when the subquery may return multiple rows.
+// Use when the subquery may return multiple tuples.
 func (s *SubqueryBuilder) BindRelation(vars ...*Var) *SubqueryBuilder {
 	s.binding = relationBind{vars: vars}
 	return s
 }
 
 // BindCollection binds subquery results to a collection variable.
-// Use when the subquery returns a single column of values.
+// Use when the subquery returns a single symbol of values.
 func (s *SubqueryBuilder) BindCollection(v *Var) *SubqueryBuilder {
 	s.binding = collectionBind{v: v}
 	return s

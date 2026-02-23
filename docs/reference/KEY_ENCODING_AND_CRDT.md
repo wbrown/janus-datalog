@@ -28,7 +28,7 @@ Janus treats it as an **indexing problem**: "How do we structure keys so CRDT re
 
 **The key insight: The key IS the value.**
 
-In traditional databases, keys point to data stored elsewhere. In Janus, the key contains the complete datom: `[E][A][V][Tx][Op]`. There's no pointer chasing, no separate row fetch. Every index is a covering index by default. This is why CRDT resolution can be O(1) - the answer is in the key itself, not behind a pointer.
+In traditional databases, keys point to data stored elsewhere. In Janus, the key contains the complete datom: `[E][A][V][Tx][Op]`. There's no pointer chasing, no separate tuple fetch. Every index is a covering index by default. This is why CRDT resolution can be O(1) - the answer is in the key itself, not behind a pointer.
 
 The result:
 - **O(1) LWW resolution** even without caching (965ns to resolve current value when 1000 historical versions exist)
@@ -150,7 +150,7 @@ This is perhaps the most fundamental design insight in Janus, and it's easy to m
 ### Traditional Database Model
 
 ```
-Index Key → Pointer → Row/Document → Extract Field
+Index Key → Pointer → Tuple/Document → Extract Field
 ```
 
 In a traditional database:
@@ -173,10 +173,10 @@ In Janus:
 
 | Aspect | Traditional | Janus |
 |--------|-------------|-------|
-| Read one datom | Key lookup + row fetch | Key lookup only |
+| Read one datom | Key lookup + tuple fetch | Key lookup only |
 | Index overhead | Keys + pointers + separate data | Just keys (which ARE data) |
 | Covering index | Special optimization | Default for ALL indices |
-| Range scan | Fetch keys, then fetch each row | Scan keys, done |
+| Range scan | Fetch keys, then fetch each tuple | Scan keys, done |
 
 ### The CRDT Connection
 
@@ -198,7 +198,7 @@ There's no step 2-3. The key's sort order IS the resolution, and the key contain
 
 The seven indices aren't "7× overhead pointing to data stored elsewhere."
 
-Each index IS a complete copy of the data in a different sort order. There's no separate "row store" being indexed. The storage cost is:
+Each index IS a complete copy of the data in a different sort order. There's no separate "tuple store" being indexed. The storage cost is:
 
 ```
 7 indices × datom size = total storage
@@ -207,7 +207,7 @@ Each index IS a complete copy of the data in a different sort order. There's no 
 Not:
 
 ```
-1 row store + 6 indices pointing to it = total storage
+1 tuple store + 6 indices pointing to it = total storage
 ```
 
 This is more like 7 different sort orders of the same data than 7 indices plus a base table. The mental model from relational databases ("indices are overhead on top of tables") doesn't apply.
@@ -919,7 +919,7 @@ Most databases ask "how do we index our data?" Janus asks "what if the index IS 
 
 Most CRDT systems require loading and reconstructing documents to access data. Janus's key encoding makes CRDT resolution a property of the index structure itself:
 
-- **The key contains the complete datom** - no pointer chasing, no separate row fetch
+- **The key contains the complete datom** - no pointer chasing, no separate tuple fetch
 - **LWW**: Seek + read first key = current value is IN the key (O(1) in practice)
 - **Sets**: Scan keys grouped by value + add-wins comparison
 - **Vectors**: Load keys + RGA graph traversal

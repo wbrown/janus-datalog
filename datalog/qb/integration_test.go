@@ -104,8 +104,8 @@ func TestIntegration_BasicQuery(t *testing.T) {
 
 	// Verify all names are present
 	names := make(map[string]bool)
-	for _, row := range results {
-		if name, ok := row[0].(string); ok {
+	for _, tuple := range results {
+		if name, ok := tuple[0].(string); ok {
 			names[name] = true
 		}
 	}
@@ -146,9 +146,9 @@ func TestIntegration_JoinQuery(t *testing.T) {
 	}
 
 	// Verify Alice is 30
-	for _, row := range results {
-		if row[0] == "Alice" {
-			if age, ok := row[1].(int64); ok {
+	for _, tuple := range results {
+		if tuple[0] == "Alice" {
+			if age, ok := tuple[1].(int64); ok {
 				if age != 30 {
 					t.Errorf("Expected Alice age 30, got %d", age)
 				}
@@ -187,8 +187,8 @@ func TestIntegration_PredicateQuery(t *testing.T) {
 	}
 
 	names := make(map[string]bool)
-	for _, row := range results {
-		if name, ok := row[0].(string); ok {
+	for _, tuple := range results {
+		if name, ok := tuple[0].(string); ok {
 			names[name] = true
 		}
 	}
@@ -264,9 +264,9 @@ func TestIntegration_AggregationQuery(t *testing.T) {
 
 	// Verify totals
 	totals := make(map[string]float64)
-	for _, row := range results {
-		if d, ok := row[0].(string); ok {
-			if s, ok := row[1].(float64); ok {
+	for _, tuple := range results {
+		if d, ok := tuple[0].(string); ok {
+			if s, ok := tuple[1].(float64); ok {
 				totals[d] = s
 			}
 		}
@@ -307,9 +307,9 @@ func TestIntegration_CountAggregation(t *testing.T) {
 	}
 
 	counts := make(map[string]int64)
-	for _, row := range results {
-		if d, ok := row[0].(string); ok {
-			if c, ok := row[1].(int64); ok {
+	for _, tuple := range results {
+		if d, ok := tuple[0].(string); ok {
+			if c, ok := tuple[1].(int64); ok {
 				counts[d] = c
 			}
 		}
@@ -395,8 +395,8 @@ func TestIntegration_CollectionInput(t *testing.T) {
 	}
 
 	names := make(map[string]bool)
-	for _, row := range results {
-		if n, ok := row[0].(string); ok {
+	for _, tuple := range results {
+		if n, ok := tuple[0].(string); ok {
 			names[n] = true
 		}
 	}
@@ -638,13 +638,13 @@ func TestIntegration_CompareWithEDN(t *testing.T) {
 	ednNames := make(map[string]bool)
 	builtNames := make(map[string]bool)
 
-	for _, row := range ednResults {
-		if n, ok := row[0].(string); ok {
+	for _, tuple := range ednResults {
+		if n, ok := tuple[0].(string); ok {
 			ednNames[n] = true
 		}
 	}
-	for _, row := range builtResults {
-		if n, ok := row[0].(string); ok {
+	for _, tuple := range builtResults {
+		if n, ok := tuple[0].(string); ok {
 			builtNames[n] = true
 		}
 	}
@@ -823,13 +823,13 @@ func TestIntegration_ThreeWayJoin(t *testing.T) {
 	}
 
 	// Verify Alice's data
-	for _, row := range results {
-		if row[0] == "Alice" {
-			if row[1] != int64(30) {
-				t.Errorf("Expected Alice age 30, got %v", row[1])
+	for _, tuple := range results {
+		if tuple[0] == "Alice" {
+			if tuple[1] != int64(30) {
+				t.Errorf("Expected Alice age 30, got %v", tuple[1])
 			}
-			if row[2] != "NYC" {
-				t.Errorf("Expected Alice city NYC, got %v", row[2])
+			if tuple[2] != "NYC" {
+				t.Errorf("Expected Alice city NYC, got %v", tuple[2])
 			}
 		}
 	}
@@ -964,8 +964,8 @@ func TestIntegration_RelationInput(t *testing.T) {
 
 	// Verify we got Alice and Eve
 	names := make(map[string]bool)
-	for _, row := range results {
-		if n, ok := row[0].(string); ok {
+	for _, tuple := range results {
+		if n, ok := tuple[0].(string); ok {
 			names[n] = true
 		}
 	}
@@ -1219,9 +1219,9 @@ func TestIntegration_ComparisonBinding(t *testing.T) {
 
 	// Verify specific results
 	resultMap := make(map[string]bool)
-	for _, row := range results {
-		name := row[0].(string)
-		isOver30Val := row[2].(bool)
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		isOver30Val := tuple[2].(bool)
 		resultMap[name] = isOver30Val
 	}
 
@@ -1327,9 +1327,9 @@ func TestIntegration_ChainedComparisonBinding(t *testing.T) {
 	// Diana (28): 26 < 28 < 34 = true
 	// Eve (32): 26 < 32 < 34 = true
 	resultMap := make(map[string]bool)
-	for _, row := range results {
-		name := row[0].(string)
-		inRangeVal := row[2].(bool)
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		inRangeVal := tuple[2].(bool)
 		resultMap[name] = inRangeVal
 	}
 
@@ -1440,9 +1440,9 @@ func TestIntegration_GetElse(t *testing.T) {
 
 	// Verify results
 	resultMap := make(map[string]string)
-	for _, row := range results {
-		name := row[0].(string)
-		nick := row[1].(string)
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		nick := tuple[1].(string)
 		resultMap[name] = nick
 	}
 
@@ -1537,8 +1537,8 @@ func TestIntegration_MissingPredicate(t *testing.T) {
 	}
 
 	names := make(map[string]bool)
-	for _, row := range results {
-		names[row[0].(string)] = true
+	for _, tuple := range results {
+		names[tuple[0].(string)] = true
 	}
 
 	if !names["Charlie"] {
@@ -1622,9 +1622,9 @@ func TestIntegration_MissingExpression(t *testing.T) {
 
 	// Verify results
 	resultMap := make(map[string]bool)
-	for _, row := range results {
-		name := row[0].(string)
-		needsEmailVal := row[1].(bool)
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		needsEmailVal := tuple[1].(bool)
 		resultMap[name] = needsEmailVal
 	}
 

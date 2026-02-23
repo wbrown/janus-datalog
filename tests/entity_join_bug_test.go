@@ -70,7 +70,7 @@ func TestEntityJoinBug(t *testing.T) {
 	// Now test the Relation directly from the matcher (before executor)
 	highPattern := hq.Where[0].(*query.DataPattern)
 	highRel, _ := matcher.Match(highPattern, nil)
-	t.Logf("High pattern Match() returned type=%T, columns=%v", highRel, highRel.Columns())
+	t.Logf("High pattern Match() returned type=%T, columns=%v", highRel, highRel.Symbols())
 
 	// Iterate directly to see all tuples
 	hPatIt := highRel.Iterator()
@@ -108,7 +108,7 @@ func TestEntityJoinBug(t *testing.T) {
 	// Now test the low pattern directly
 	lowPattern := lq.Where[0].(*query.DataPattern)
 	lowRel, _ := matcher.Match(lowPattern, nil)
-	t.Logf("Low pattern Match() returned type=%T, columns=%v", lowRel, lowRel.Columns())
+	t.Logf("Low pattern Match() returned type=%T, columns=%v", lowRel, lowRel.Symbols())
 
 	// Iterate directly to see all tuples
 	lPatIt := lowRel.Iterator()

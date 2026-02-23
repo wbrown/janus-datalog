@@ -36,7 +36,7 @@ func (r *StreamingRelation) Iterator() Iterator {
             tuples = append(tuples, it.Tuple())  // ❌ BUG: Line 864 - No copy!
         }
         it.Close()
-        r.materialized = NewMaterializedRelationWithOptions(r.columns, tuples, r.options)
+        r.materialized = NewMaterializedRelationWithOptions(r.symbols, tuples, r.options)
     })
     return r.materialized.Iterator()
 }
@@ -74,7 +74,7 @@ DEBUG materializeRelationsForPattern: After Materialize, type=*executor.Material
 ```
 
 **Timeline**:
-1. First pattern creates StreamingRelation with `[?s]` columns
+1. First pattern creates StreamingRelation with `[?s]` symbols
 2. **Iterator() is called** with `shouldCache=false` (before Materialize())
 3. StreamingRelation enters fallback materialization path (lines 843-869)
 4. Line 864: `tuples = append(tuples, it.Tuple())` - NO COPY

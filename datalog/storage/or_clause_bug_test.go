@@ -16,10 +16,10 @@ import (
 // results as expected.
 //
 // Expected behavior: (or [?t :task/type :type/a] [?t :task/type :type/b])
-// should only return rows where ?t has type :type/a OR :type/b.
+// should only return tuples where ?t has type :type/a OR :type/b.
 //
 // Actual behavior: The `or` clause appears to be ignored entirely, returning
-// all rows regardless of whether they match either branch.
+// all tuples regardless of whether they match either branch.
 func TestOrClauseBug(t *testing.T) {
 	dbPath := "/tmp/test-or-clause-bug-" + t.Name()
 	defer os.RemoveAll(dbPath)

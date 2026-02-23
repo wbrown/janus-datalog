@@ -51,17 +51,17 @@ func BenchmarkExtractTimeRanges(b *testing.B) {
 				}
 			}
 
-			var columns []query.Symbol
+			var symbols []query.Symbol
 			var correlationKeys []query.Symbol
 			if bm.daily {
-				columns = []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")}
+				symbols = []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")}
 				correlationKeys = []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day")}
 			} else {
-				columns = []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")}
+				symbols = []query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")}
 				correlationKeys = []query.Symbol{datalog.NewSymbol("$"), datalog.NewSymbol("?s"), datalog.NewSymbol("?year"), datalog.NewSymbol("?month"), datalog.NewSymbol("?day"), datalog.NewSymbol("?hour")}
 			}
 
-			inputRel := NewMaterializedRelation(columns, inputTuples)
+			inputRel := NewMaterializedRelation(symbols, inputTuples)
 
 			// Reset timer before actual benchmark
 			b.ResetTimer()

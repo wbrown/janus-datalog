@@ -278,7 +278,7 @@ Equivalent EDN: `[(get-else $ ?e :person/nickname "Anonymous") ?nickname]`
 
 ### Missing - Check Attribute Absence
 
-**As a predicate** (filter rows where attribute is missing):
+**As a predicate** (filter tuples where attribute is missing):
 
 ```go
 q := qb.Query().
@@ -347,10 +347,10 @@ qb.Scalar(nameVar)
 // Collection input - iterate over values
 qb.Collection(nameVar)
 
-// Tuple input - single row of values
+// Tuple input - single tuple of values
 qb.Tuple(nameVar, ageVar)
 
-// Relation input - multiple rows
+// Relation input - multiple tuples
 qb.Relation(nameVar, ageVar)
 
 // Named source - additional database or PatternMatcher
@@ -541,9 +541,9 @@ q := qb.Query().
 ```
 
 Binding forms:
-- `BindTuple(vars...)` - single row result `[[?a ?b]]`
-- `BindRelation(vars...)` - multiple rows `[[?a ?b] ...]`
-- `BindCollection(v)` - single column `[?a ...]`
+- `BindTuple(vars...)` - single tuple result `[[?a ?b]]`
+- `BindRelation(vars...)` - multiple tuples `[[?a ?b] ...]`
+- `BindCollection(v)` - single symbol `[?a ...]`
 
 ### Variable Scoping in Subqueries
 
@@ -834,8 +834,8 @@ func main() {
         panic(err)
     }
 
-    for _, row := range results {
-        fmt.Printf("%s (%d) - %s\n", row[0], row[1], row[2])
+    for _, tuple := range results {
+        fmt.Printf("%s (%d) - %s\n", tuple[0], tuple[1], tuple[2])
     }
 }
 ```

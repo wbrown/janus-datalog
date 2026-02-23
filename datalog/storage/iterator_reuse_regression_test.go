@@ -427,7 +427,7 @@ func (m *instrumentedMatcher) Match(pattern *query.DataPattern, bindings executo
 		for _, elem := range pattern.Elements {
 			if v, ok := elem.(query.Variable); ok {
 				for _, rel := range bindings {
-					for _, col := range rel.Columns() {
+					for _, col := range rel.Symbols() {
 						if v.Name == col {
 							hasBindingVar = true
 							break

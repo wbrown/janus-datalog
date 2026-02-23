@@ -73,10 +73,10 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 	// but that's okay - the overhead of reuse with one binding is negligible
 
 	// Count which positions have variables that are bound
-	bindingCols := bindingRel.Columns()
+	bindingSyms := bindingRel.Symbols()
 	bindingSet := make(map[query.Symbol]bool)
-	for _, col := range bindingCols {
-		bindingSet[col] = true
+	for _, sym := range bindingSyms {
+		bindingSet[sym] = true
 	}
 
 	// Track which positions have bound variables
@@ -211,17 +211,17 @@ func chooseBestMultiPositionStrategy(
 		bindingRel = streamRel.Materialize()
 	}
 
-	// Track column index and distinct count per bound position.
+	// Track symbol index and distinct count per bound position.
 	// Uses a slice parallel to boundPositions for deterministic iteration
 	// (maps cause nondeterministic tiebreaking via random iteration order).
 	type posInfo struct {
 		pos      int // datom position (0=E, 1=A, 2=V, 3=T)
-		colIdx   int // column index in binding relation (-1 if not found)
+		symIdx   int // symbol index in binding relation (-1 if not found)
 		distinct int // count of distinct values
 	}
 	info := make([]posInfo, 0, len(boundPositions))
 
-	// Build position-to-column-index mapping
+	// Build position-to-symbol-index mapping
 	for _, pos := range boundPositions {
 		var varName query.Symbol
 		switch pos {
@@ -249,14 +249,14 @@ func chooseBestMultiPositionStrategy(
 			continue
 		}
 
-		colIdx := -1
-		for ci, col := range bindingRel.Columns() {
-			if col == varName {
-				colIdx = ci
+		symIdx := -1
+		for si, sym := range bindingRel.Symbols() {
+			if sym == varName {
+				symIdx = si
 				break
 			}
 		}
-		info = append(info, posInfo{pos: pos, colIdx: colIdx})
+		info = append(info, posInfo{pos: pos, symIdx: symIdx})
 	}
 
 	// Count distinct values for each position
@@ -269,8 +269,8 @@ func chooseBestMultiPositionStrategy(
 	for it.Next() {
 		tuple := it.Tuple()
 		for i, pi := range info {
-			if pi.colIdx >= 0 && pi.colIdx < len(tuple) {
-				sets[i][tuple[pi.colIdx]] = true
+			if pi.symIdx >= 0 && pi.symIdx < len(tuple) {
+				sets[i][tuple[pi.symIdx]] = true
 			}
 		}
 	}

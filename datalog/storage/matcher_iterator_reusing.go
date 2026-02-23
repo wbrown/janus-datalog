@@ -14,7 +14,7 @@ type reusingIterator struct {
 	tuples      []executor.Tuple
 	position    int       // Which position is changing (0=E, 1=A, 2=V)
 	index       IndexType // Which index to use
-	columns     []query.Symbol
+	symbols     []query.Symbol
 	constraints []executor.StorageConstraint
 
 	// Iterator state
@@ -250,11 +250,11 @@ func (it *reusingIterator) Close() error {
 	return nil
 }
 
-// getColumnIndex returns the index of a symbol in the binding relation columns
-func (it *reusingIterator) getColumnIndex(variable query.Variable) int {
-	columns := it.bindingRel.Columns()
-	for i, col := range columns {
-		if col == variable.Name {
+// getSymbolIndex returns the index of a symbol in the binding relation symbols
+func (it *reusingIterator) getSymbolIndex(variable query.Variable) int {
+	symbols := it.bindingRel.Symbols()
+	for i, sym := range symbols {
+		if sym == variable.Name {
 			return i
 		}
 	}
@@ -273,11 +273,11 @@ func (it *reusingIterator) updateBoundPattern(bindingTuple executor.Tuple) {
 
 // calculateSeekKey calculates the key to seek to based on binding tuple and position
 func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) ([]byte, []byte) {
-	// Get column mapping
-	columns := it.bindingRel.Columns()
-	colIndex := make(map[query.Symbol]int)
-	for i, col := range columns {
-		colIndex[col] = i
+	// Get symbol mapping
+	symbols := it.bindingRel.Symbols()
+	symIndex := make(map[query.Symbol]int)
+	for i, sym := range symbols {
+		symIndex[sym] = i
 	}
 
 	// Extract values based on pattern
@@ -287,7 +287,7 @@ func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) ([]byte
 	if c, ok := it.pattern.GetE().(query.Constant); ok {
 		e = c.Value
 	} else if sym, ok := it.pattern.GetE().(query.Variable); ok {
-		if idx, found := colIndex[sym.Name]; found && idx < len(bindingTuple) {
+		if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
 			e = bindingTuple[idx]
 		}
 	}
@@ -303,7 +303,7 @@ func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) ([]byte
 	if c, ok := it.pattern.GetV().(query.Constant); ok {
 		v = c.Value
 	} else if sym, ok := it.pattern.GetV().(query.Variable); ok {
-		if idx, found := colIndex[sym.Name]; found && idx < len(bindingTuple) {
+		if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
 			v = bindingTuple[idx]
 		}
 	}
@@ -313,7 +313,7 @@ func (it *reusingIterator) calculateSeekKey(bindingTuple executor.Tuple) ([]byte
 		if c, ok := it.pattern.GetT().(query.Constant); ok {
 			tx = c.Value
 		} else if sym, ok := it.pattern.GetT().(query.Variable); ok {
-			if idx, found := colIndex[sym.Name]; found && idx < len(bindingTuple) {
+			if idx, found := symIndex[sym.Name]; found && idx < len(bindingTuple) {
 				tx = bindingTuple[idx]
 			}
 		}

@@ -51,12 +51,12 @@ func TestExecuteQuery(t *testing.T) {
 
 	// Verify we got both names
 	names := make(map[string]bool)
-	for _, row := range results {
-		if len(row) != 1 {
-			t.Errorf("Expected 1 column, got %d", len(row))
+	for _, tuple := range results {
+		if len(tuple) != 1 {
+			t.Errorf("Expected 1 symbol, got %d", len(tuple))
 			continue
 		}
-		if name, ok := row[0].(string); ok {
+		if name, ok := tuple[0].(string); ok {
 			names[name] = true
 		}
 	}
@@ -115,7 +115,7 @@ func TestExecuteQueryWithScalarInput(t *testing.T) {
 		// The actual entity ID value doesn't matter as long as we found one match
 		t.Logf("Found entity: %v (type: %T)", results[0][0], results[0][0])
 	} else {
-		t.Error("Expected 1 result with 1 column")
+		t.Error("Expected 1 result with 1 symbol")
 	}
 }
 
@@ -404,8 +404,8 @@ func TestExecuteQueryWithTimeInput(t *testing.T) {
 
 	// Verify we have prices for all dates
 	prices := make(map[float64]bool)
-	for _, row := range results {
-		if close, ok := row[1].(float64); ok {
+	for _, tuple := range results {
+		if close, ok := tuple[1].(float64); ok {
 			prices[close] = true
 		}
 	}

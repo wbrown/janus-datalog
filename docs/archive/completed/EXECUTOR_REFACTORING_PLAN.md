@@ -28,7 +28,7 @@ These methods don't use any Executor fields - they're pure data transformations.
 
 ### 1.2 MaterializeResult  
 **Current**: `func (e *Executor) materializeResult(rel Relation, find []query.Symbol) Relation`
-**Target**: `func MaterializeResult(rel Relation, columns []query.Symbol) Relation`
+**Target**: `func MaterializeResult(rel Relation, symbols []query.Symbol) Relation`
 **Steps**:
 1. Create standalone function `MaterializeResult`
 2. Update method to call standalone function

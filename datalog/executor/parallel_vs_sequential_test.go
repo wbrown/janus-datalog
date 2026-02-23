@@ -229,20 +229,20 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 			t.Errorf("Size mismatch: sequential=%d, parallel=%d", resultSeq.Size(), resultPar.Size())
 		}
 
-		// Compare each row
+		// Compare each tuple
 		for i := 0; i < resultSeq.Size(); i++ {
 			rowSeq := resultSeq.Get(i)
 			rowPar := resultPar.Get(i)
 
 			if len(rowSeq) != len(rowPar) {
-				t.Errorf("Row %d length mismatch: sequential=%d, parallel=%d",
+				t.Errorf("Tuple %d length mismatch: sequential=%d, parallel=%d",
 					i, len(rowSeq), len(rowPar))
 				continue
 			}
 
 			for j := range rowSeq {
 				if rowSeq[j] != rowPar[j] {
-					t.Errorf("Row %d, col %d mismatch: sequential=%v, parallel=%v",
+					t.Errorf("Tuple %d, col %d mismatch: sequential=%v, parallel=%v",
 						i, j, rowSeq[j], rowPar[j])
 				}
 			}

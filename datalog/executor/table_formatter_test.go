@@ -21,30 +21,30 @@ func TestTableFormatter(t *testing.T) {
 	})
 
 	t.Run("FormatSimpleRelation", func(t *testing.T) {
-		columns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?active")}
+		symbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?active")}
 		tuples := []Tuple{
 			{"Alice", int64(30), true},
 			{"Bob", int64(25), false},
 			{"Charlie", int64(35), true},
 		}
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 
 		result := formatter.FormatRelation(rel)
 
 		// Check that it contains expected elements
 		if !strings.Contains(result, "?name") {
-			t.Error("Missing column ?name")
+			t.Error("Missing symbol ?name")
 		}
 		if !strings.Contains(result, "Alice") {
 			t.Error("Missing value Alice")
 		}
-		if !strings.Contains(result, "3 rows") {
-			t.Error("Missing row count")
+		if !strings.Contains(result, "3 tuples") {
+			t.Error("Missing tuple count")
 		}
 	})
 
 	t.Run("FormatWithDifferentTypes", func(t *testing.T) {
-		columns := []query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?keyword"), datalog.NewSymbol("?value"), datalog.NewSymbol("?time")}
+		symbols := []query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?keyword"), datalog.NewSymbol("?value"), datalog.NewSymbol("?time")}
 		testTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
 		tuples := []Tuple{
@@ -68,7 +68,7 @@ func TestTableFormatter(t *testing.T) {
 			},
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 		result := formatter.FormatRelation(rel)
 
 		// Check formatting
@@ -89,7 +89,7 @@ func TestTableFormatter(t *testing.T) {
 	t.Run("FormatWithLongStrings", func(t *testing.T) {
 		formatter.MaxWidth = 20
 
-		columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?description")}
+		symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?description")}
 		longString := "This is a very long string that should be truncated because it exceeds the maximum width"
 
 		tuples := []Tuple{
@@ -97,24 +97,24 @@ func TestTableFormatter(t *testing.T) {
 			{int64(2), "Short"},
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 		result := formatter.FormatRelation(rel)
 
 		// Tablewriter handles truncation differently - it wraps or shows full text
 		// Just check that the table is formatted
 		if !strings.Contains(result, "?id") {
-			t.Error("Missing column header")
+			t.Error("Missing symbol header")
 		}
 	})
 
 	t.Run("FormatMarkdownTable", func(t *testing.T) {
-		columns := []query.Symbol{datalog.NewSymbol("?symbol"), datalog.NewSymbol("?price"), datalog.NewSymbol("?volume")}
+		symbols := []query.Symbol{datalog.NewSymbol("?symbol"), datalog.NewSymbol("?price"), datalog.NewSymbol("?volume")}
 		tuples := []Tuple{
 			{"AAPL", 150.25, int64(1000000)},
 			{"GOOG", 2800.50, int64(500000)},
 		}
 
-		rel := NewMaterializedRelation(columns, tuples)
+		rel := NewMaterializedRelation(symbols, tuples)
 		result := formatter.FormatRelation(rel)
 
 		// Check markdown format - tablewriter uses different separator style
@@ -125,7 +125,7 @@ func TestTableFormatter(t *testing.T) {
 			t.Error("Missing markdown separator")
 		}
 		if !strings.Contains(result, "| AAPL") && !strings.Contains(result, "150.25") {
-			t.Error("Missing markdown row data")
+			t.Error("Missing markdown tuple data")
 		}
 	})
 
@@ -141,27 +141,27 @@ func TestTableFormatter(t *testing.T) {
 		formatted := formatter.FormatRelation(result)
 
 		if !strings.Contains(formatted, "?name") {
-			t.Error("Missing column in result format")
+			t.Error("Missing symbol in result format")
 		}
-		if !strings.Contains(formatted, "_2 rows_") {
-			t.Error("Missing row count in result format")
+		if !strings.Contains(formatted, "_2 tuples_") {
+			t.Error("Missing tuple count in result format")
 		}
 	})
 }
 
 func TestPrintHelpers(t *testing.T) {
 	// Just test that these don't panic
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{int64(1), "a"},
 		{int64(2), "b"},
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	// These print to stdout, so we just ensure they don't panic
 	PrintRelation(rel)
 
-	result := NewMaterializedRelation(columns, tuples)
+	result := NewMaterializedRelation(symbols, tuples)
 	PrintResult(result)
 
 	// Test string helpers
@@ -177,14 +177,14 @@ func TestPrintHelpers(t *testing.T) {
 // This is a regression test for the CLI empty results bug.
 func TestTableFormatterTupleCopying(t *testing.T) {
 	// Create a relation with streaming behavior enabled
-	columns := []query.Symbol{datalog.NewSymbol("x"), datalog.NewSymbol("y"), datalog.NewSymbol("z")}
+	symbols := []query.Symbol{datalog.NewSymbol("x"), datalog.NewSymbol("y"), datalog.NewSymbol("z")}
 	tuples := []Tuple{
 		{int64(1), int64(10), int64(100)},
 		{int64(2), int64(20), int64(200)},
 		{int64(3), int64(30), int64(300)},
 	}
 
-	rel := NewMaterializedRelationWithOptions(columns, tuples, ExecutorOptions{
+	rel := NewMaterializedRelationWithOptions(symbols, tuples, ExecutorOptions{
 		EnableTrueStreaming: true, // Enable streaming mode
 	})
 
@@ -192,7 +192,7 @@ func TestTableFormatterTupleCopying(t *testing.T) {
 	formatter := NewTableFormatter()
 	table := formatter.FormatRelation(rel)
 
-	// Verify all three rows appear in the output (not just the last one)
+	// Verify all three tuples appear in the output (not just the last one)
 	if !strings.Contains(table, "1") {
 		t.Errorf("Expected to find value 1 in table output:\n%s", table)
 	}
@@ -203,21 +203,21 @@ func TestTableFormatterTupleCopying(t *testing.T) {
 		t.Errorf("Expected to find value 3 in table output:\n%s", table)
 	}
 
-	// Verify row count
-	if !strings.Contains(table, "3 rows") {
-		t.Errorf("Expected '3 rows' in output, got:\n%s", table)
+	// Verify tuple count
+	if !strings.Contains(table, "3 tuples") {
+		t.Errorf("Expected '3 tuples' in output, got:\n%s", table)
 	}
 
-	// Verify column headers
+	// Verify symbol headers
 	if !strings.Contains(table, "x") || !strings.Contains(table, "y") || !strings.Contains(table, "z") {
-		t.Errorf("Expected column headers x, y, z in output, got:\n%s", table)
+		t.Errorf("Expected symbol headers x, y, z in output, got:\n%s", table)
 	}
 
-	// Verify all values from different rows are present
+	// Verify all values from different tuples are present
 	if !strings.Contains(table, "10") || !strings.Contains(table, "20") || !strings.Contains(table, "30") {
-		t.Errorf("Expected y-column values (10, 20, 30) in output, got:\n%s", table)
+		t.Errorf("Expected y-symbol values (10, 20, 30) in output, got:\n%s", table)
 	}
 	if !strings.Contains(table, "100") || !strings.Contains(table, "200") || !strings.Contains(table, "300") {
-		t.Errorf("Expected z-column values (100, 200, 300) in output, got:\n%s", table)
+		t.Errorf("Expected z-symbol values (100, 200, 300) in output, got:\n%s", table)
 	}
 }

@@ -33,8 +33,8 @@ func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, looku
 // thetaJoinPair performs a nested-loop join between two relations with optional predicate.
 // The outer relation streams; the inner is buffered for re-iteration via BufferedIterator.
 func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) Relation {
-	outerCols := outer.Columns()
-	innerCols := inner.Columns()
+	outerCols := outer.Symbols()
+	innerCols := inner.Symbols()
 	combinedCols := make([]query.Symbol, 0, len(outerCols)+len(innerCols))
 	combinedCols = append(combinedCols, outerCols...)
 	combinedCols = append(combinedCols, innerCols...)

@@ -27,7 +27,7 @@ func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relatio
 // ExecuteAggregationsWithContext applies aggregation operations with annotation support
 func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []query.FindElement) Relation {
 	if debugAggregation {
-		fmt.Printf("[ExecuteAggregations] Called with %d find elements, rel columns: %v\n", len(findElements), rel.Columns())
+		fmt.Printf("[ExecuteAggregations] Called with %d find elements, rel symbols: %v\n", len(findElements), rel.Symbols())
 		for i, elem := range findElements {
 			switch e := elem.(type) {
 			case query.FindAggregate:
@@ -137,7 +137,7 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		}
 		result := executeSingleAggregation(rel, aggregates)
 		if debugAggregation {
-			fmt.Printf("[ExecuteAggregations] executeSingleAggregation returned: Size=%d, Columns=%v\n", result.Size(), result.Columns())
+			fmt.Printf("[ExecuteAggregations] executeSingleAggregation returned: Size=%d, Symbols=%v\n", result.Size(), result.Symbols())
 			if result.Size() > 0 {
 				fmt.Printf("[ExecuteAggregations] First tuple: %v\n", result.Get(0))
 			}
@@ -192,14 +192,14 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 	it := rel.Iterator()
 	defer it.Close()
 
-	columns := rel.Columns()
+	symbols := rel.Symbols()
 
 	// Find predicate indices for conditional aggregates
 	predicateIndices := make([]int, len(aggregates))
 	for i, agg := range aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, col := range columns {
+			for j, col := range symbols {
 				if col == agg.Predicate {
 					predicateIndices[i] = j
 					break
@@ -221,13 +221,13 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 						continue // Skip this value (predicate is false or not boolean)
 					}
 				} else {
-					continue // Predicate column missing, skip
+					continue // Predicate symbol missing, skip
 				}
 			}
 
-			// Predicate passed (or no predicate), find column index for this aggregate
+			// Predicate passed (or no predicate), find symbol index for this aggregate
 			found := false
-			for j, col := range columns {
+			for j, col := range symbols {
 				if col == agg.Arg {
 					if j < len(tuple) {
 						aggValues[i] = append(aggValues[i], tuple[j])
@@ -236,9 +236,9 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 					break
 				}
 			}
-			// DEBUG: Log when column not found
-			if !found && len(columns) > 0 {
-				fmt.Printf("AGGREGATE BUG: Column %v not found in columns %v for aggregate %d\n", agg.Arg, columns, i)
+			// DEBUG: Log when symbol not found
+			if !found && len(symbols) > 0 {
+				fmt.Printf("AGGREGATE BUG: Symbol %v not found in symbols %v for aggregate %d\n", agg.Arg, symbols, i)
 			}
 		}
 	}
@@ -253,7 +253,7 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 		results[i] = computeAggregateValues(aggValues[i], agg.Function)
 	}
 
-	// Build result columns (aggregate functions as column names)
+	// Build result symbols (aggregate functions as symbol names)
 	resultColumns := make([]query.Symbol, len(aggregates))
 	for i, agg := range aggregates {
 		// Use String() method which handles conditional vs unconditional formatting
@@ -262,7 +262,7 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 
 	// Relational theory: empty input → empty output
 	// If no aggregate has any values (all predicates failed or input was empty),
-	// return empty result set instead of a row with nil values
+	// return empty result set instead of a tuple with nil values
 	opts := rel.Options()
 	if !hasAnyValues {
 		return NewMaterializedRelationWithOptions(resultColumns, []Tuple{}, opts)
@@ -273,11 +273,11 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 
 // executeGroupedAggregation performs aggregation with grouping
 func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggregates []query.FindAggregate) Relation {
-	// Create column mapping
-	columns := rel.Columns()
+	// Create symbol mapping
+	symbols := rel.Symbols()
 	groupIndices := make([]int, len(groupByVars))
 	for i, groupVar := range groupByVars {
-		for j, col := range columns {
+		for j, col := range symbols {
 			if col == groupVar {
 				groupIndices[i] = j
 				break
@@ -287,7 +287,7 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 
 	aggIndices := make([]int, len(aggregates))
 	for i, agg := range aggregates {
-		for j, col := range columns {
+		for j, col := range symbols {
 			if col == agg.Arg {
 				aggIndices[i] = j
 				break
@@ -300,13 +300,13 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	for i, agg := range aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, col := range columns {
+			for j, col := range symbols {
 				if col == agg.Predicate {
 					predicateIndices[i] = j
 					break
 				}
 			}
-			// If predicate column not found, we'll handle it during execution
+			// If predicate symbol not found, we'll handle it during execution
 		}
 	}
 
@@ -352,7 +352,7 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 							continue // Skip this value (predicate is false or not boolean)
 						}
 					} else {
-						continue // Predicate column missing, skip
+						continue // Predicate symbol missing, skip
 					}
 				}
 
@@ -391,7 +391,7 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 		resultTuples = append(resultTuples, resultTuple)
 	}
 
-	// Build result columns
+	// Build result symbols
 	resultColumns := make([]query.Symbol, len(groupByVars)+len(aggregates))
 	copy(resultColumns, groupByVars)
 	for i, agg := range aggregates {
@@ -556,19 +556,15 @@ func NewStreamingAggregateRelation(source Relation, groupByVars []query.Symbol, 
 	}
 }
 
-// Columns returns the output columns
-func (r *StreamingAggregateRelation) Columns() []query.Symbol {
-	resultColumns := make([]query.Symbol, len(r.groupByVars)+len(r.aggregates))
-	copy(resultColumns, r.groupByVars)
+// Symbols returns the output symbols
+func (r *StreamingAggregateRelation) Symbols() []query.Symbol {
+	resultSymbols := make([]query.Symbol, len(r.groupByVars)+len(r.aggregates))
+	copy(resultSymbols, r.groupByVars)
 	for i, agg := range r.aggregates {
 		// Use String() method which handles conditional vs unconditional formatting
-		resultColumns[len(r.groupByVars)+i] = datalog.NewSymbol(agg.String())
+		resultSymbols[len(r.groupByVars)+i] = datalog.NewSymbol(agg.String())
 	}
-	return resultColumns
-}
-
-func (r *StreamingAggregateRelation) Symbols() []query.Symbol {
-	return r.Columns()
+	return resultSymbols
 }
 
 // Options returns the executor options for this streaming aggregate relation
@@ -632,10 +628,10 @@ func (r *StreamingAggregateRelation) Sorted() []Tuple {
 	return r.materialized.Sorted()
 }
 
-// Project projects specific columns (delegates to materialized result)
-func (r *StreamingAggregateRelation) Project(columns []query.Symbol) (Relation, error) {
+// Project projects specific symbols (delegates to materialized result)
+func (r *StreamingAggregateRelation) Project(symbols []query.Symbol) (Relation, error) {
 	r.Iterator()
-	return r.materialized.Project(columns)
+	return r.materialized.Project(symbols)
 }
 
 // Materialize returns the materialized relation
@@ -662,7 +658,7 @@ func (r *StreamingAggregateRelation) FilterWithPredicate(pred query.Predicate) R
 	return r.materialized.FilterWithPredicate(pred)
 }
 
-// EvaluateFunction evaluates a function and adds result as new column
+// EvaluateFunction evaluates a function and adds result as new symbol
 func (r *StreamingAggregateRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
 	r.Iterator()
 	return r.materialized.EvaluateFunction(fn, outputColumn)
@@ -706,11 +702,11 @@ func (r *StreamingAggregateRelation) Aggregate(findElements []query.FindElement)
 
 // materialize performs the actual streaming aggregation
 func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
-	// Build column index mappings
-	columns := r.source.Columns()
+	// Build symbol index mappings
+	symbols := r.source.Symbols()
 
 	if r.options.EnableStreamingAggregationDebug {
-		fmt.Printf("[StreamingAggregateRelation.materialize] Source columns: %v\n", columns)
+		fmt.Printf("[StreamingAggregateRelation.materialize] Source symbols: %v\n", symbols)
 		fmt.Printf("[StreamingAggregateRelation.materialize] Group-by vars: %v\n", r.groupByVars)
 		fmt.Printf("[StreamingAggregateRelation.materialize] Aggregates: %v\n", r.aggregates)
 	}
@@ -720,7 +716,7 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 		groupIndices[i] = -1 // Initialize to -1 (not found)
 	}
 	for i, groupVar := range r.groupByVars {
-		for j, col := range columns {
+		for j, col := range symbols {
 			if col == groupVar {
 				groupIndices[i] = j
 				break
@@ -733,7 +729,7 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 		aggIndices[i] = -1 // Initialize to -1 (not found)
 	}
 	for i, agg := range r.aggregates {
-		for j, col := range columns {
+		for j, col := range symbols {
 			if col == agg.Arg {
 				aggIndices[i] = j
 				break
@@ -751,7 +747,7 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 	for i, agg := range r.aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, col := range columns {
+			for j, col := range symbols {
 				if col == agg.Predicate {
 					predicateIndices[i] = j
 					break
@@ -816,7 +812,7 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 							continue // Skip this value (predicate is false or not boolean)
 						}
 					} else {
-						continue // Predicate column missing, skip
+						continue // Predicate symbol missing, skip
 					}
 				}
 
@@ -860,5 +856,5 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 		resultTuples = append(resultTuples, resultTuple)
 	}
 
-	return NewMaterializedRelationWithOptions(r.Columns(), resultTuples, r.options)
+	return NewMaterializedRelationWithOptions(r.Symbols(), resultTuples, r.options)
 }

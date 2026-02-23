@@ -29,7 +29,7 @@ Original subquery (high/low example):
 Should execute as:
 - **Find clause**: `[:find (max ?h) (min ?l)]` - pure aggregation, no group-by
 - **Aggregation type**: Single aggregation over all matching tuples
-- **Expected result**: One row with two aggregate values
+- **Expected result**: One tuple with two aggregate values
 
 ### Actual Behavior
 
@@ -46,7 +46,7 @@ Debug output shows the subquery executes with:
 This is treated as:
 - **Find clause**: `[:find ?sym ?py ?pm ?pd (max ?h) (min ?l)]` - mixed variables and aggregates
 - **Aggregation type**: Grouped aggregation by `[?sym ?py ?pm ?pd]`
-- **Problem**: Input variables `?sym`, `?py`, `?pm`, `?pd` are treated as group-by columns
+- **Problem**: Input variables `?sym`, `?py`, `?pm`, `?pd` are treated as group-by symbols
 
 ## Why This Causes nil Values
 
@@ -55,13 +55,13 @@ With grouped aggregation:
 1. **First subquery execution** (for a specific date):
    - Groups by `[?sym=<identity> ?py=2025 ?pm=7 ?pd=31]`
    - Computes aggregates for that group
-   - Returns result with those grouping columns
+   - Returns result with those grouping symbols
 
 2. **Join with outer query**:
-   - Outer query doesn't have columns `?py`, `?pm`, `?pd`
-   - Join tries to match on these non-existent columns
-   - **Result**: Empty join or mismatched columns
-   - Aggregate columns end up as `nil`
+   - Outer query doesn't have symbols `?py`, `?pm`, `?pd`
+   - Join tries to match on these non-existent symbols
+   - **Result**: Empty join or mismatched symbols
+   - Aggregate symbols end up as `nil`
 
 3. **Last subquery** (volume) works because:
    - It's the final operation

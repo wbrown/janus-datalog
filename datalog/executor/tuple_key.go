@@ -17,7 +17,7 @@ type TupleKey struct {
 
 // NewTupleKey creates a key from specific tuple positions
 func NewTupleKey(tuple Tuple, indices []int) TupleKey {
-	// Special case for single column - avoid allocation
+	// Special case for single symbol - avoid allocation
 	if len(indices) == 1 {
 		val := tuple[indices[0]]
 		return TupleKey{

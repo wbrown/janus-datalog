@@ -71,12 +71,12 @@ func queryUnboundForEA(t *testing.T, db *Database, e datalog.Identity, a datalog
 	require.NoError(t, err)
 
 	var filtered [][]interface{}
-	for _, row := range results {
-		if len(row) >= 3 {
-			if rowE, ok := row[0].(datalog.Identity); ok {
-				if rowA, ok := row[1].(datalog.Keyword); ok {
+	for _, tuple := range results {
+		if len(tuple) >= 3 {
+			if rowE, ok := tuple[0].(datalog.Identity); ok {
+				if rowA, ok := tuple[1].(datalog.Keyword); ok {
 					if rowE.Hash() == e.Hash() && rowA == a {
-						filtered = append(filtered, row)
+						filtered = append(filtered, tuple)
 					}
 				}
 			}

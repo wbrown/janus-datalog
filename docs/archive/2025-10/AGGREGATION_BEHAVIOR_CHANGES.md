@@ -105,7 +105,7 @@ The fix preserves the fundamental difference between aggregation types:
 
 **Why this matters**: Adding input variables as grouping keys changes semantics:
 - Pure → Grouped changes from "global max" to "max per input"
-- Join conditions expect specific column structure
+- Join conditions expect specific symbol structure
 - Wrong structure → join failures → `nil` values
 
 ### 4. 📊 Test Suite Changes

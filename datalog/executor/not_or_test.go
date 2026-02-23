@@ -479,7 +479,7 @@ func TestOrFallbackWithGroundExpressionDirectQueryExecutor(t *testing.T) {
 		t.Fatalf("query executor failed: %v", err)
 	}
 
-	t.Logf("Final: columns=%v, size=%d", result.Columns(), result.Size())
+	t.Logf("Final: symbols=%v, size=%d", result.Symbols(), result.Size())
 
 	if result.Size() != 1 {
 		t.Errorf("Expected 1 result, got %d", result.Size())
@@ -903,7 +903,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 		t.Fatalf("query executor failed: %v", err)
 	}
 
-	t.Logf("Final: columns=%v, size=%d", result.Columns(), result.Size())
+	t.Logf("Final: symbols=%v, size=%d", result.Symbols(), result.Size())
 
 	// Should have 1 result with count=1 (one completed task)
 	if result.Size() != 1 {
@@ -1035,7 +1035,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 		t.Fatalf("query executor failed: %v", err)
 	}
 
-	t.Logf("Final: columns=%v, size=%d", result.Columns(), result.Size())
+	t.Logf("Final: symbols=%v, size=%d", result.Symbols(), result.Size())
 
 	// Should have 2 results: scenario1 with count=2, scenario2 with count=0
 	if result.Size() != 2 {
@@ -1055,8 +1055,8 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 }
 
 // TestOrFallbackWithPatternAndTupleGround tests the critical case where:
-// - Outer relation has multiple rows
-// - First OR branch is pattern-only (matches some rows, not others)
+// - Outer relation has multiple tuples
+// - First OR branch is pattern-only (matches some tuples, not others)
 // - Second OR branch is tuple ground fallback
 // This is the exact scenario from TestTupleGroundQBInOr
 func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
@@ -1145,10 +1145,10 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 		t.Fatalf("execution failed: %v", err)
 	}
 
-	t.Logf("Result columns: %v", result.Columns())
+	t.Logf("Result symbols: %v", result.Symbols())
 	t.Logf("Result size: %d", result.Size())
 	for i := 0; i < result.Size(); i++ {
-		t.Logf("Row %d: %v", i, result.Get(i))
+		t.Logf("Tuple %d: %v", i, result.Get(i))
 	}
 
 	// Log relevant annotations
@@ -1260,10 +1260,10 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 		t.Fatalf("execution failed: %v", err)
 	}
 
-	t.Logf("Result columns: %v", result.Columns())
+	t.Logf("Result symbols: %v", result.Symbols())
 	t.Logf("Result size: %d", result.Size())
 	for i := 0; i < result.Size(); i++ {
-		t.Logf("Row %d: %v", i, result.Get(i))
+		t.Logf("Tuple %d: %v", i, result.Get(i))
 	}
 
 	// Should have 2 results
@@ -1345,7 +1345,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 		t.Fatalf("query executor failed: %v", err)
 	}
 
-	t.Logf("Final: columns=%v, size=%d", result.Columns(), result.Size())
+	t.Logf("Final: symbols=%v, size=%d", result.Symbols(), result.Size())
 
 	// Should have 1 result with count=0 (fallback)
 	if result.Size() != 1 {

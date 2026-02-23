@@ -1281,12 +1281,12 @@ func TestDatabaseRoundTrip_RGA(t *testing.T) {
 // Helper functions
 // =============================================================================
 
-// extractStringValues extracts string values from query result tuples (first column)
+// extractStringValues extracts string values from query result tuples (first symbol)
 func extractStringValues(results [][]interface{}) []string {
 	var vals []string
-	for _, row := range results {
-		if len(row) > 0 {
-			if s, ok := row[0].(string); ok {
+	for _, tuple := range results {
+		if len(tuple) > 0 {
+			if s, ok := tuple[0].(string); ok {
 				vals = append(vals, s)
 			}
 		}

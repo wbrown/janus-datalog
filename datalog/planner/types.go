@@ -329,7 +329,7 @@ type DecorrelatedSubqueryPlan struct {
 	MergedPlans        []*QueryPlan      // One plan per filter group
 	CorrelationKeys    []query.Symbol    // Keys to join on from outer query (e.g., ?year, ?month, ?day, ?hour)
 	GroupingVars       [][]query.Symbol  // Actual grouping variables in merged queries (per filter group)
-	ColumnMapping      map[int]ResultMap // Original subquery -> result columns
+	SymbolMapping      map[int]ResultMap // Original subquery -> result symbols
 
 	// Metadata for annotations (captured at plan time, reported at execution time)
 	SignatureHash     string // Hash of the correlation signature
@@ -337,10 +337,10 @@ type DecorrelatedSubqueryPlan struct {
 	DecorrelatedCount int    // How many were actually decorrelated
 }
 
-// ResultMap maps original subquery to columns in merged result
+// ResultMap maps original subquery to symbols in merged result
 type ResultMap struct {
 	FilterGroupIdx int            // Which merged query produced this result
-	ColumnIndices  []int          // Which columns in that result
+	SymbolIndices  []int          // Which symbols in that result
 	BindingVars    []query.Symbol // Variable names from the binding form
 }
 

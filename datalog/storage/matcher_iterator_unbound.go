@@ -11,7 +11,7 @@ type unboundIterator struct {
 	index       IndexType
 	start, end  []byte
 	pattern     *query.DataPattern
-	columns     []query.Symbol
+	symbols     []query.Symbol
 	e, a, v, tx interface{}
 	constraints []executor.StorageConstraint
 
@@ -89,7 +89,7 @@ type unboundMaskIterator struct {
 	index       IndexType
 	start, end  []byte
 	pattern     *query.DataPattern
-	columns     []query.Symbol
+	symbols     []query.Symbol
 	e, a, v, tx interface{}
 	keyMask     *KeyMaskConstraint
 	constraints []executor.StorageConstraint // For non-mask constraints

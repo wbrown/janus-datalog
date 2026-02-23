@@ -15,7 +15,7 @@ import (
 
 // TableFormatter provides utilities for formatting Relations as tables
 type TableFormatter struct {
-	// MaxWidth is the maximum width for a column
+	// MaxWidth is the maximum width for a symbol
 	MaxWidth int
 	// TruncateString is the string to append when truncating
 	TruncateString string
@@ -39,20 +39,20 @@ func (tf *TableFormatter) FormatRelation(rel Relation) string {
 	var tuples []Tuple
 	collectTuplesInto(&tuples, rel)
 
-	columns := rel.Columns()
-	return tf.formatTable(columns, tuples)
+	symbols := rel.Symbols()
+	return tf.formatTable(symbols, tuples)
 }
 
-// formatTable formats columns and tuples as a markdown table
-func (tf *TableFormatter) formatTable(columns []query.Symbol, tuples []Tuple) string {
+// formatTable formats symbols and tuples as a markdown table
+func (tf *TableFormatter) formatTable(symbols []query.Symbol, tuples []Tuple) string {
 	if len(tuples) == 0 {
-		return fmt.Sprintf("_Columns: %v_\n\n_No rows_", columns)
+		return fmt.Sprintf("_Symbols: %v_\n\n_No tuples_", symbols)
 	}
 
 	tableString := &strings.Builder{}
 
-	// Create alignment array with all columns using AlignNone for simple separators
-	alignment := make([]tw.Align, len(columns))
+	// Create alignment array with all symbols using AlignNone for simple separators
+	alignment := make([]tw.Align, len(symbols))
 	for i := range alignment {
 		alignment[i] = tw.AlignNone
 	}
@@ -64,26 +64,26 @@ func (tf *TableFormatter) formatTable(columns []query.Symbol, tuples []Tuple) st
 	)
 
 	// Set headers
-	headers := make([]string, len(columns))
-	for i, col := range columns {
+	headers := make([]string, len(symbols))
+	for i, col := range symbols {
 		headers[i] = col.String()
 	}
 	table.Header(headers)
 
-	// Append rows
+	// Append tuples
 	for _, tuple := range tuples {
-		row := make([]string, len(tuple))
+		cells := make([]string, len(tuple))
 		for j, val := range tuple {
-			row[j] = tf.formatValue(val)
+			cells[j] = tf.formatValue(val)
 		}
-		table.Append(row)
+		table.Append(cells)
 	}
 
 	// Render the table
 	table.Render()
 
-	// Add row count
-	tableString.WriteString(fmt.Sprintf("\n_%d rows_\n", len(tuples)))
+	// Add tuple count
+	tableString.WriteString(fmt.Sprintf("\n_%d tuples_\n", len(tuples)))
 
 	return tableString.String()
 }
@@ -124,7 +124,7 @@ func (tf *TableFormatter) formatValue(val interface{}) string {
 	return tf.truncate(s)
 }
 
-// truncate shortens a string to MaxWidth display columns, appending TruncateString if truncated
+// truncate shortens a string to MaxWidth display symbols, appending TruncateString if truncated
 func (tf *TableFormatter) truncate(s string) string {
 	if tf.MaxWidth <= 0 || runewidth.StringWidth(s) <= tf.MaxWidth {
 		return s

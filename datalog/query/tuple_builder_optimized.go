@@ -38,7 +38,7 @@ func PutTuple(t Tuple) {
 
 // OptimizedTupleBuilder is a highly optimized tuple builder
 type OptimizedTupleBuilder struct {
-	columns []Symbol
+	symbols []Symbol
 
 	// Pre-computed indexes for each position (-1 means not captured)
 	eIndex int
@@ -54,18 +54,18 @@ type OptimizedTupleBuilder struct {
 }
 
 // NewOptimizedTupleBuilder creates an optimized tuple builder
-func NewOptimizedTupleBuilder(pattern *DataPattern, columns []Symbol) *OptimizedTupleBuilder {
+func NewOptimizedTupleBuilder(pattern *DataPattern, symbols []Symbol) *OptimizedTupleBuilder {
 	// Use shared indexer to compute indices
-	indexer := NewTupleIndexer(pattern, columns)
+	indexer := NewTupleIndexer(pattern, symbols)
 
 	return &OptimizedTupleBuilder{
-		columns:   columns,
+		symbols:   symbols,
 		eIndex:    indexer.EIndex,
 		aIndex:    indexer.AIndex,
 		vIndex:    indexer.VIndex,
 		tIndex:    indexer.TIndex,
 		numVars:   indexer.NumVars,
-		workspace: make(Tuple, len(columns)), // Pre-allocate workspace
+		workspace: make(Tuple, len(symbols)), // Pre-allocate workspace
 	}
 }
 
@@ -89,7 +89,7 @@ func (tb *OptimizedTupleBuilder) BuildTupleInto(datom *datalog.Datom, tuple Tupl
 
 // BuildTuplePooled builds a tuple using the pool to avoid allocation
 func (tb *OptimizedTupleBuilder) BuildTuplePooled(datom *datalog.Datom) Tuple {
-	tuple := GetTuple(len(tb.columns))
+	tuple := GetTuple(len(tb.symbols))
 	tb.BuildTupleInto(datom, tuple)
 	return tuple
 }
@@ -101,7 +101,7 @@ func (tb *OptimizedTupleBuilder) BuildTupleCopy(datom *datalog.Datom) Tuple {
 	tb.BuildTupleInto(datom, tb.workspace)
 
 	// Make a copy for storage
-	result := make(Tuple, len(tb.columns))
+	result := make(Tuple, len(tb.symbols))
 	copy(result, tb.workspace)
 	return result
 }

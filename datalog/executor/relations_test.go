@@ -32,9 +32,9 @@ func TestRelationsProject(t *testing.T) {
 		expected Relation
 	}{
 		{
-			name:     "exact match prefers fewer columns",
+			name:     "exact match prefers fewer symbols",
 			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
-			expected: r1, // r1 has exactly these columns, r2 has extra
+			expected: r1, // r1 has exactly these symbols, r2 has extra
 		},
 		{
 			name:     "requires all symbols",
@@ -49,7 +49,7 @@ func TestRelationsProject(t *testing.T) {
 		{
 			name:     "single symbol matches smallest relation",
 			symbols:  []query.Symbol{datalog.NewSymbol("?x")},
-			expected: r1, // both r1 and r2 have ?x, but r1 has fewer columns
+			expected: r1, // both r1 and r2 have ?x, but r1 has fewer symbols
 		},
 	}
 
@@ -65,19 +65,19 @@ func TestRelationsFindBestForPattern(t *testing.T) {
 	// Create test relations
 	rEntity := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?e")},
-		[]Tuple{{1}, {2}, {3}}, // 3 rows
+		[]Tuple{{1}, {2}, {3}}, // 3 tuples
 	)
 	rAttribute := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?a")},
-		[]Tuple{{1}, {2}}, // 2 rows
+		[]Tuple{{1}, {2}}, // 2 tuples
 	)
 	rValue := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?v")},
-		[]Tuple{{1}, {2}, {3}, {4}}, // 4 rows
+		[]Tuple{{1}, {2}, {3}, {4}}, // 4 tuples
 	)
 	rEntityValue := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
-		[]Tuple{{1, 10}, {2, 20}}, // 2 rows
+		[]Tuple{{1, 10}, {2, 20}}, // 2 tuples
 	)
 
 	tests := []struct {
@@ -182,7 +182,7 @@ func TestRelationsFindRelationsForSymbols(t *testing.T) {
 }
 
 func TestRelationsCollapse(t *testing.T) {
-	t.Run("joins relations with shared columns", func(t *testing.T) {
+	t.Run("joins relations with shared symbols", func(t *testing.T) {
 		// R1: ?person -> ?dept
 		r1 := NewMaterializedRelation(
 			[]query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept")},
@@ -215,15 +215,15 @@ func TestRelationsCollapse(t *testing.T) {
 		relations := Relations{r1, r2, r3}
 		groups := relations.Collapse(NewContext(nil))
 
-		// Should have exactly one group since all relations share columns
+		// Should have exactly one group since all relations share symbols
 		assert.Equal(t, 1, len(groups))
 
 		result := groups[0]
 		assert.False(t, result.IsEmpty())
 		assert.Equal(t, 2, result.Size()) // Alice and Bob's full paths
 
-		// Check columns
-		cols := result.Columns()
+		// Check symbols
+		cols := result.Symbols()
 		assert.Equal(t, 4, len(cols)) // ?person, ?dept, ?building, ?floor
 	})
 
@@ -253,7 +253,7 @@ func TestRelationsCollapse(t *testing.T) {
 		// Check the groups
 		var joinedGroup, disjointGroup Relation
 		for _, g := range groups {
-			cols := g.Columns()
+			cols := g.Symbols()
 			if len(cols) == 3 { // ?x, ?y, ?z
 				joinedGroup = g
 			} else if len(cols) == 2 { // ?a, ?b
@@ -268,7 +268,7 @@ func TestRelationsCollapse(t *testing.T) {
 	})
 
 	t.Run("returns empty for non-matching join", func(t *testing.T) {
-		// Relations share columns but values don't match
+		// Relations share symbols but values don't match
 		r1 := NewMaterializedRelation(
 			[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			[]Tuple{{1, 2}},

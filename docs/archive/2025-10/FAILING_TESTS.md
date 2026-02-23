@@ -17,7 +17,7 @@
 
 ### ✅ TestMultipleAggregateSubqueriesNilBug - FIXED
 - **File**: Root package test
-- **Issue**: Was returning 0 rows instead of 1 due to entity join bug
+- **Issue**: Was returning 0 tuples instead of 1 due to entity join bug
 - **Fix**: Fixed StreamingRelation.IsEmpty() consuming first tuple (see BUG_ENTITY_JOIN_LOSES_FIRST_TUPLE.md)
 
 ---
@@ -113,7 +113,7 @@
 
 **Tests Fixed**:
 - ✅ TestEntityJoinBug - Returns 5/5 results (was 4/5)
-- ✅ TestMultipleAggregateSubqueriesNilBug - Returns correct aggregates (was 0 rows)
+- ✅ TestMultipleAggregateSubqueriesNilBug - Returns correct aggregates (was 0 tuples)
 
 ---
 

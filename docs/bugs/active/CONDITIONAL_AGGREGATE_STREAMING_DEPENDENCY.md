@@ -15,7 +15,7 @@ Conditional aggregate rewriting exhibits non-deterministic failures when streami
 
 Running `BenchmarkConditionalAggregateWithStreaming/Rewriting_only_(no_streaming)` multiple times:
 - Run 1: ✅ PASS (1.77ms)
-- Run 2: ❌ FAIL - `projection failed: cannot project: column ?__cond_?pd not found`
+- Run 2: ❌ FAIL - `projection failed: cannot project: symbol ?__cond_?pd not found`
 - Run 3: ✅ PASS (1.72ms)
 - Run 4: ✅ PASS (1.70ms)
 - Run 5: ✅ PASS (1.71ms)
@@ -44,7 +44,7 @@ opts := planner.PlannerOptions{
 
 ## Root Cause (Hypothesis)
 
-The error message `?__cond_?pd not found in relation (has columns: [?p ?name ?ev ?t ?v ?pd])` suggests that:
+The error message `?__cond_?pd not found in relation (has symbols: [?p ?name ?ev ?t ?v ?pd])` suggests that:
 
 1. The condition variable `?__cond_?pd` was created during planning
 2. But somehow didn't make it into the relation at execution time
@@ -113,7 +113,7 @@ To reproduce (run multiple times until failure):
 go test -bench BenchmarkConditionalAggregateWithStreaming/Rewriting_only -benchtime=1x -count=10 ./tests
 ```
 
-Look for `projection failed: cannot project: column ?__cond_?pd not found`
+Look for `projection failed: cannot project: symbol ?__cond_?pd not found`
 
 ## Resolution Criteria
 

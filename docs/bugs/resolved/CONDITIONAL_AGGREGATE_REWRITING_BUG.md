@@ -15,7 +15,7 @@ The conditional aggregate rewriting optimization produces incorrect results beca
 
 **With rewriting enabled:** ❌ FAIL
 - Returns wrong results: `[(Alice, 15, Alice), (Alice, 16, Alice)]`
-- The third column should be the max value (150, 200) but returns the person name instead
+- The third symbol should be the max value (150, 200) but returns the person name instead
 
 ## Root Cause Analysis
 
@@ -94,8 +94,8 @@ Phase.Keep: [?day ?p]
 The aggregate metadata says to aggregate over `?v`, but:
 1. `?v` is in `Provides` (it gets computed)
 2. `?v` is NOT in `Keep` (it doesn't get projected forward!)
-3. The aggregation logic receives tuples with columns `[?name ?day ...]` but no `?v`
-4. It falls back to aggregating over the wrong column (probably column 0 = ?name)
+3. The aggregation logic receives tuples with symbols `[?name ?day ...]` but no `?v`
+4. It falls back to aggregating over the wrong symbol (probably symbol 0 = ?name)
 5. Result: "Alice" instead of 150
 
 ## The Architectural Problem
@@ -272,7 +272,7 @@ After implementing the fix:
 
 4. **Check projection logic:**
    - Executor properly projects aggregate variables before aggregation
-   - Final result has correct columns in correct order
+   - Final result has correct symbols in correct order
 
 ## Related Bugs Fixed
 
@@ -293,7 +293,7 @@ This encoder bug caused Identity values to be all zeros, which masked the condit
 The bug manifested in multi-phase queries where:
 1. Phase 0 executed the conditional aggregate rewriting and stored metadata
 2. Phase 1+ added additional patterns (like looking up `?name`)
-3. Phase 1+ didn't know about the aggregate requirements and projected away critical columns
+3. Phase 1+ didn't know about the aggregate requirements and projected away critical symbols
 
 **Concrete example from failing test:**
 ```
@@ -307,7 +307,7 @@ Phase 1: [?p :person/name ?name]
          → Keep: [?name ?day] ✗ WRONG! Dropped ?v and ?__cond_?pd
 
 Result: Aggregation receives [?name ?day] instead of [?name ?day ?v ?__cond_?pd]
-        → max() operates on wrong column → returns "Alice" instead of 150
+        → max() operates on wrong symbol → returns "Alice" instead of 150
 ```
 
 ### The Fix: Phase Symbol Metadata Propagation
@@ -316,7 +316,7 @@ Result: Aggregation receives [?name ?day] instead of [?name ?day ?v ?__cond_?pd]
 **Function:** `updatePhaseSymbols`
 **Lines:** 342-358
 
-The `updatePhaseSymbols` function recalculates `Keep` columns after phase reordering. It was only checking the current phase for aggregate metadata:
+The `updatePhaseSymbols` function recalculates `Keep` symbols after phase reordering. It was only checking the current phase for aggregate metadata:
 
 ```go
 // BEFORE (BROKEN):
@@ -334,7 +334,7 @@ if phases[i].Metadata != nil {
 }
 ```
 
-This failed because only Phase 0 had the metadata. Phase 1+ would drop the aggregate columns.
+This failed because only Phase 0 had the metadata. Phase 1+ would drop the aggregate symbols.
 
 **Fix:** Check ALL previous phases (0 through current) for aggregate metadata:
 
@@ -342,7 +342,7 @@ This failed because only Phase 0 had the metadata. Phase 1+ would drop the aggre
 // AFTER (FIXED):
 // 2b. Keep symbols needed for conditional aggregates in ANY phase
 // These are stored in phase metadata by the conditional aggregate rewriter
-// IMPORTANT: Aggregate required columns must be carried through ALL later phases,
+// IMPORTANT: Aggregate required symbols must be carried through ALL later phases,
 // not just the phase that has the metadata!
 for j := 0; j <= i; j++ {
     if phases[j].Metadata != nil {
@@ -359,7 +359,7 @@ for j := 0; j <= i; j++ {
 }
 ```
 
-**Why this works:** Aggregate metadata from Phase 0 now propagates to ALL subsequent phases. Each phase preserves the aggregate input columns (`?v`, `?__cond_?pd`) in its Keep list, ensuring they're available when the final aggregation executes.
+**Why this works:** Aggregate metadata from Phase 0 now propagates to ALL subsequent phases. Each phase preserves the aggregate input symbols (`?v`, `?__cond_?pd`) in its Keep list, ensuring they're available when the final aggregation executes.
 
 ### Verification: Before vs After
 
@@ -367,7 +367,7 @@ for j := 0; j <= i; j++ {
 ```
 Phase 0 Keep: [?day ?p ?v ?__cond_?pd] ✓
 Phase 1 Keep: [?name ?day] ✗
-currentResult columns: [?name ?day]
+currentResult symbols: [?name ?day]
 Result: [Alice, 15, Alice] ✗ WRONG!
 ```
 
@@ -375,7 +375,7 @@ Result: [Alice, 15, Alice] ✗ WRONG!
 ```
 Phase 0 Keep: [?day ?p ?v ?__cond_?pd] ✓
 Phase 1 Keep: [?name ?day ?v ?__cond_?pd] ✓
-currentResult columns: [?name ?day ?v ?__cond_?pd]
+currentResult symbols: [?name ?day ?v ?__cond_?pd]
 Result: [Alice, 15, 150] ✓ CORRECT!
 ```
 

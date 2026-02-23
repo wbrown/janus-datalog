@@ -48,7 +48,7 @@ Where:
             [?p-close :price/close ?close]]
     ?s ?d) [[?o ?c]]]
 
-;; Subquery returning multiple rows (collection)
+;; Subquery returning multiple tuples (collection)
 [(q [:find ?price ?time
      :in $ ?sym
      :where [?p :price/symbol ?sym]
@@ -102,12 +102,12 @@ type BindingForm interface {
     isBindingForm()
 }
 
-// TupleBinding binds a single row: [[?a ?b]]
+// TupleBinding binds a single tuple: [[?a ?b]]
 type TupleBinding struct {
     Variables []Variable
 }
 
-// CollectionBinding binds all rows: ?coll
+// CollectionBinding binds all tuples: ?coll
 type CollectionBinding struct {
     Variable Variable
 }
@@ -212,7 +212,7 @@ type Context interface {
 
 1. **OHLC query** - The motivating example should work correctly
 2. **Nested aggregations** - Subqueries within subqueries
-3. **Multiple row returns** - Collection and relation bindings
+3. **Multiple tuple returns** - Collection and relation bindings
 4. **Performance tests** - Ensure subqueries don't create performance issues
 
 ### Example Test Case
@@ -248,7 +248,7 @@ func TestSubqueryOHLC(t *testing.T) {
                 [?p-close :price/minute-of-day 960]
                 [?p-close :price/close ?close]]`
     
-    // Should return exactly 1 row with correct values
+    // Should return exactly 1 tuple with correct values
     result, err := executor.Execute(parseQuery(query))
     assert.NoError(t, err)
     assert.Equal(t, 1, result.Size())

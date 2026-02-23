@@ -571,7 +571,7 @@ Transforms correlated subqueries with aggregates into single-pass conditional ag
 [(q [:find (max ?v) :in $ ?person ?day :where ...] $ ?p ?day) [[?max-value]]]
 
 ;; After: Single pass with conditional aggregate
-(max ?v :when ?__cond_?pd)  ;; Condition filters which rows contribute
+(max ?v :when ?__cond_?pd)  ;; Condition filters which tuples contribute
 ```
 
 **Benchmark Results** (Apple M4 Max, 3 people × 10 days × 20 events = 600 events):
@@ -597,7 +597,7 @@ Transforms correlated subqueries with aggregates into single-pass conditional ag
 | Medium (3000 events, 100 groups) | 11.4 ms | 12.1 ms | +6% |
 
 **Why It's Fast**:
-- **Without rewriting**: Executes N separate subqueries (one per outer row), each scanning and filtering data
+- **Without rewriting**: Executes N separate subqueries (one per outer tuple), each scanning and filtering data
 - **With rewriting**: Single pass over data with grouped conditional aggregation
 - Eliminates repeated index scans, reduces from O(N × M) to O(M)
 
@@ -1053,7 +1053,7 @@ QueryExecutor couldn't handle conditional aggregate rewriting. Tests used `UseLe
 **Root Cause**:
 1. `rewriteCorrelatedAggregates` stored conditional aggregates in `phase.Metadata["conditional_aggregates"]`
 2. Legacy executor had special code to read metadata and apply aggregation
-3. QueryExecutor treated metadata as inert data - didn't create the aggregate output column
+3. QueryExecutor treated metadata as inert data - didn't create the aggregate output symbol
 4. Find clause injection was attempted but `updatePhaseSymbols` was overwriting it
 
 **Solution**:
@@ -1267,8 +1267,8 @@ With this constraint, we evaluated the remaining consolidation candidates:
 Problem statement: `relation.go` has 5-6 types (MaterializedRelation, StreamingRelation, EmptyRelation, etc.) each implementing ~26 methods. Initial estimate: 300-500 lines savings.
 
 Analysis revealed this is **NOT real duplication**:
-- `Columns()` → one-liner returning a field
-- `Symbols()` → same as `Columns()`
+- `Symbols()` → one-liner returning a field
+- `Symbols()` → same as `Symbols()`
 - `Options()` → one-liner returning a field
 - `Join()` → one-liner calling `HashJoin()`
 
@@ -1284,7 +1284,7 @@ Analysis revealed these are **different iteration strategies**, not duplicated c
 - `reusingIterator`: Complex range calculation, single scan across all bindings
 
 Shared elements are minimal:
-- Field declarations (`tupleBuilder`, `constraints`, `columns`)
+- Field declarations (`tupleBuilder`, `constraints`, `symbols`)
 - One-liner validation calls
 - Statistics tracking
 
@@ -1296,7 +1296,7 @@ The core `Next()` logic is completely different for each strategy. Unifying them
 |---------|---------|---------------------|
 | **Real duplication** | Two identical 15-line switch statements | ✅ YES |
 | **Structural similarity** | Multiple types with same field names | ❌ NO |
-| **Trivial accessors** | One-liner `Columns()` methods | ❌ NO |
+| **Trivial accessors** | One-liner `Symbols()` methods | ❌ NO |
 | **Different algorithms** | Multiple iterator strategies | ❌ NO |
 
 **Decision Criteria for Future Consolidation**:
@@ -1316,10 +1316,10 @@ In languages like Java or C#, the typical solution would be a base class or inte
 ```go
 // Hypothetical base relation (NOT IMPLEMENTED)
 type baseRelation struct {
-    columns []query.Symbol
+    symbols []query.Symbol
     options ExecutorOptions
 }
-func (b *baseRelation) Columns() []query.Symbol { return b.columns }
+func (b *baseRelation) Symbols() []query.Symbol { return b.symbols }
 // ... 20+ more delegating methods
 ```
 

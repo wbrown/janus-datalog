@@ -108,8 +108,8 @@ This work demonstrates that the theory-practice gap can be closed: classical dat
 
 | Symbol | Operation | Definition |
 |--------|-----------|------------|
-| π | Projection | Select columns |
-| σ | Selection | Filter rows |
+| π | Projection | Select symbols |
+| σ | Selection | Filter tuples |
 | ⋈ | Natural Join | Combine on shared attributes |
 | × | Cartesian Product | All combinations |
 | ∪ | Union | Set union |
@@ -220,7 +220,7 @@ Result = R1 ⋈_{p} R2
 **Where:**
 - EAVT is the storage relation (Entity-Attribute-Value-Transaction)
 - σ filters to specific attribute
-- π projects relevant columns
+- π projects relevant symbols
 - ⋈ joins on shared entity
 
 **Key insight:** Shared variables become natural join keys
@@ -312,7 +312,7 @@ Result = R1 ⋈_{p} R2
 ```go
 type Relation interface {
     // Core RA operations
-    Project(columns []Symbol) (Relation, error)    // π
+    Project(symbols []Symbol) (Relation, error)    // π
     Filter(predicate Predicate) Relation            // σ
     Join(other Relation) Relation                   // ⋈
     HashJoin(other Relation, cols []Symbol) Relation
@@ -322,7 +322,7 @@ type Relation interface {
     Sort(orderBy []OrderBy) Relation                // τ
 
     // Metadata
-    Columns() []Symbol
+    Symbols() []Symbol
     Iterator() Iterator
 
     // Properties: IMMUTABLE, DEDUPLICATED
@@ -377,7 +377,7 @@ func (it *FilterIterator) Next() bool {
 ```go
 type ProjectIterator struct {
     source  Iterator
-    indices []int  // Column indices to keep
+    indices []int  // Symbol indices to keep
 }
 
 func (it *ProjectIterator) Next() bool {
@@ -420,7 +420,7 @@ func HashJoin(left, right Relation, joinCols []Symbol) Relation {
 ```go
 result := storageRelation.
     Filter(predicate1).      // σ
-    Project(columns).         // π
+    Project(symbols).         // π
     Join(otherRelation).      // ⋈
     Filter(predicate2).       // σ
     Aggregate(aggs)           // γ
@@ -542,7 +542,7 @@ func (m *BadgerMatcher) Match(pattern *DataPattern) Relation {
 
     // Return as StreamingRelation
     return &StreamingRelation{
-        columns:  pattern.Symbols(),
+        symbols:  pattern.Symbols(),
         iterator: iterator,
     }
 }
@@ -643,7 +643,7 @@ ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
 ### 7.2 Relational Algebra Implementation
 
 **Volcano (Graefe, 1993):** Iterator-based operators
-**MonetDB (Boncz et al., 1999):** Column-oriented execution
+**MonetDB (Boncz et al., 1999):** Symbol-oriented execution
 
 **Similarity:** We also use iterators
 **Difference:** We target Datalog directly, prove RA suffices

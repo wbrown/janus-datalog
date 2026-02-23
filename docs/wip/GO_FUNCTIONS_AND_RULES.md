@@ -347,10 +347,10 @@ func (r *CompiledRule) Fire(db *Database) *Transaction {
     // Create transaction
     tx := db.NewTransaction()
 
-    // For each result row, apply effects with bound values
-    for _, row := range results {
+    // For each result tuple, apply effects with bound values
+    for _, tuple := range results {
         for _, effect := range r.effects {
-            effect.apply(tx, row)
+            effect.apply(tx, tuple)
         }
     }
 

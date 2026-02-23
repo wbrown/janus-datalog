@@ -222,7 +222,7 @@ func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr 
 
 	if it.Next() {
 		tuple := it.Tuple()
-		cols := rel.Columns()
+		cols := rel.Symbols()
 		symV := datalog.NewSymbol("?v")
 		for i, col := range cols {
 			if col == symV && i < len(tuple) {
@@ -266,8 +266,8 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 		return nil, nil
 	}
 
-	// Find column indices
-	cols := rel.Columns()
+	// Find symbol indices
+	cols := rel.Symbols()
 	symA := datalog.NewSymbol("?a")
 	symV := datalog.NewSymbol("?v")
 	aIdx := -1
@@ -281,7 +281,7 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 	}
 
 	if aIdx < 0 || vIdx < 0 {
-		return nil, fmt.Errorf("missing expected columns in result")
+		return nil, fmt.Errorf("missing expected symbols in result")
 	}
 
 	// Collect datoms
@@ -534,8 +534,8 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 		return nil
 	}
 
-	// Find value column index
-	cols := rel.Columns()
+	// Find value symbol index
+	cols := rel.Symbols()
 	symV := datalog.NewSymbol("?v")
 	vIdx := -1
 	for i, col := range cols {

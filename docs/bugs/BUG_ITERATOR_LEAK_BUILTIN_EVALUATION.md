@@ -107,7 +107,7 @@ for iter.Next() {
 // Line 329: iterator opened, closed at line 338
 iter := rel.Iterator()
 for iter.Next() {
-    // ... project columns ...
+    // ... project symbols ...
 }
 iter.Close()  // ← correctly closed
 ```

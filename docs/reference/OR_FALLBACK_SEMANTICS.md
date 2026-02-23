@@ -21,7 +21,7 @@ Consider a scenario where you want to count tasks but return 0 when none exist:
    $ ?scenario) [[?count]]]
 ```
 
-When no matching tasks exist, this subquery returns empty (no rows), causing the outer query row to be excluded entirely.
+When no matching tasks exist, this subquery returns empty (no tuples), causing the outer query tuple to be excluded entirely.
 
 With OR fallback semantics, you can provide a default:
 
@@ -44,7 +44,7 @@ When all branches contain only patterns, standard Datalog union semantics apply:
     [?e :user/premium true])
 ```
 
-Both branches execute, and results are merged (deduplicated on common columns).
+Both branches execute, and results are merged (deduplicated on common symbols).
 
 ### OR with Expressions (Fallback Semantics)
 

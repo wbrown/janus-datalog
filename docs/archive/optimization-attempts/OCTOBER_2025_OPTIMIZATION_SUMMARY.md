@@ -97,7 +97,7 @@ All optimizations production-ready with full test coverage.
 
 #### B. Tuple Builder Caching (15% reduction)
 **Problem**: Creating new InternedTupleBuilder per match
-**Solution**: Cache builders per (pattern, columns) combination
+**Solution**: Cache builders per (pattern, symbols) combination
 **Result**: 28.6 GB → 24.2 GB
 
 #### C. Bindings Map Reuse (53% reduction)

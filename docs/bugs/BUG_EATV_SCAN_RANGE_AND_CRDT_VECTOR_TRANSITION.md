@@ -115,7 +115,7 @@ This bug only manifests when:
 
 In this test, EATV sorts by E then A. Alphabetically `:doc/content` < `:person/name`, so the vector group comes first, triggering the bug.
 
-**Why AETV doesn't hit this**: With AETV (A-primary), each per-row call scans only one attribute's datoms. There's no group transition within a single scan, so the bug never triggers.
+**Why AETV doesn't hit this**: With AETV (A-primary), each per-tuple call scans only one attribute's datoms. There's no group transition within a single scan, so the bug never triggers.
 
 **Fix**: Save the boundary datom as a pending datom and process it before the next `source.Next()` call:
 
@@ -132,7 +132,7 @@ When emitting a Vector group at a boundary, save the boundary datom. On the next
 
 **File**: `datalog/storage/matcher_strategy.go`, `chooseBestMultiPositionStrategy`
 
-`chooseBestMultiPositionStrategy` iterated `positionCardinalities` (a `map[int]int`) to find the position with the most distinct values. When both E and A have equal cardinality (1 distinct value each from a single-row binding), Go's randomized map iteration determined which position "won":
+`chooseBestMultiPositionStrategy` iterated `positionCardinalities` (a `map[int]int`) to find the position with the most distinct values. When both E and A have equal cardinality (1 distinct value each from a single-tuple binding), Go's randomized map iteration determined which position "won":
 
 - Position 0 (E) wins → EATV → triggers bugs 1+2 → **FAIL**
 - Position 1 (A) wins → AETV → neither bug triggered → **PASS**
@@ -146,7 +146,7 @@ With EATV selected (failing case):
 storage/reuse-strategy  index:EATV position:0
 storage/join-strategy   index:EATV join_strategy:hash-join-scan
 matches->relations      binding.size:1 match.count:-1          # vector intercept (streaming)
-pattern/hash-join-complete  datoms.scanned:3 matches.found:0   # name row: 3 scanned, 0 matched
+pattern/hash-join-complete  datoms.scanned:3 matches.found:0   # name tuple: 3 scanned, 0 matched
 matches->relations      binding.size:1 match.count:1           # vector result materialized
 ```
 

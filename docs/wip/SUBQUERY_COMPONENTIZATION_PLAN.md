@@ -144,18 +144,18 @@ func (b *SubqueryBatcher) BuildBatchedInput(
 	}
 
 	// Filter to only the symbols we're passing (exclude $)
-	var columns []query.Symbol
+	var symbols []query.Symbol
 	for _, sym := range inputSymbols {
 		if sym != "$" {
-			columns = append(columns, sym)
+			symbols = append(symbols, sym)
 		}
 	}
 
 	// Build tuples from all combinations
 	var tuples []Tuple
 	for _, values := range combinations {
-		tuple := make(Tuple, len(columns))
-		for i, col := range columns {
+		tuple := make(Tuple, len(symbols))
+		for i, col := range symbols {
 			if val, ok := values[col]; ok {
 				tuple[i] = val
 			}
@@ -163,7 +163,7 @@ func (b *SubqueryBatcher) BuildBatchedInput(
 		tuples = append(tuples, tuple)
 	}
 
-	return NewMaterializedRelation(columns, tuples)
+	return NewMaterializedRelation(symbols, tuples)
 }
 
 // ExtractInputSymbols extracts variable symbols from subquery inputs (excludes $ and constants)
@@ -331,7 +331,7 @@ func (s *StreamingUnionBuilder) Union(relations []Relation) Relation {
 
 // unionStreaming creates a streaming union via channel
 func (s *StreamingUnionBuilder) unionStreaming(relations []Relation) Relation {
-	columns := relations[0].Columns()
+	symbols := relations[0].Symbols()
 
 	// Create channel for streaming
 	unionChan := make(chan relationItem, 1)
@@ -343,12 +343,12 @@ func (s *StreamingUnionBuilder) unionStreaming(relations []Relation) Relation {
 		}
 	}()
 
-	return NewUnionRelation(unionChan, columns, s.opts)
+	return NewUnionRelation(unionChan, symbols, s.opts)
 }
 
 // unionMaterialized combines all relations by materializing
 func (s *StreamingUnionBuilder) unionMaterialized(relations []Relation) Relation {
-	columns := relations[0].Columns()
+	symbols := relations[0].Symbols()
 	var allTuples []Tuple
 
 	for _, rel := range relations {
@@ -359,7 +359,7 @@ func (s *StreamingUnionBuilder) unionMaterialized(relations []Relation) Relation
 		}
 	}
 
-	return NewMaterializedRelation(columns, allTuples)
+	return NewMaterializedRelation(symbols, allTuples)
 }
 ```
 

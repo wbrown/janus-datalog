@@ -52,7 +52,7 @@ func TestQueryExecutorCorrelatedSubquery(t *testing.T) {
 
 	if err != nil {
 		t.Logf("Error: %v", err)
-		t.Logf("Result columns (if any): %v", result.Columns())
+		t.Logf("Result symbols (if any): %v", result.Symbols())
 	}
 
 	assert.NoError(t, err, "QueryExecutor should handle correlated subqueries")

@@ -140,7 +140,7 @@ func TestJoinCorrectnessEarlyTermination(t *testing.T) {
 // Helper: Get all join results
 func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rightCols []query.Symbol, symmetric bool) []Tuple {
 	left := &StreamingRelation{
-		columns:  leftCols,
+		symbols:  leftCols,
 		iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
@@ -150,7 +150,7 @@ func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rig
 		},
 	}
 	right := &StreamingRelation{
-		columns:  rightCols,
+		symbols:  rightCols,
 		iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
@@ -179,7 +179,7 @@ func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rig
 // Helper: Get limited join results
 func getJoinResultsWithLimit(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rightCols []query.Symbol, symmetric bool, limit int) []Tuple {
 	left := &StreamingRelation{
-		columns:  leftCols,
+		symbols:  leftCols,
 		iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
@@ -189,7 +189,7 @@ func getJoinResultsWithLimit(t *testing.T, leftTuples, rightTuples []Tuple, left
 		},
 	}
 	right := &StreamingRelation{
-		columns:  rightCols,
+		symbols:  rightCols,
 		iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{

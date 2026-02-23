@@ -64,7 +64,7 @@ func TestSubqueryFindClauseBug(t *testing.T) {
 	}
 
 	// Debug: print result structure
-	t.Logf("Result columns: %v", result.Columns())
+	t.Logf("Result symbols: %v", result.Symbols())
 	t.Logf("Result size: %d", result.Size())
 	if result.Size() > 0 {
 		t.Logf("First tuple: %v", result.Get(0))

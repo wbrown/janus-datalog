@@ -36,7 +36,7 @@ import (
 func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dir,
+		Path: dir,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -108,7 +108,7 @@ func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.
 func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dir,
+		Path: dir,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -187,7 +187,7 @@ func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *te
 func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dir,
+		Path: dir,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -277,8 +277,8 @@ func TestSchemaAwareness_InQueryExecution(t *testing.T) {
 
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dir,
-		Schema:    s,
+		Path:   dir,
+		Schema: s,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -308,7 +308,7 @@ func TestSchemaAwareness_InQueryExecution(t *testing.T) {
 func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 	dir := t.TempDir()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dir,
+		Path: dir,
 	})
 	require.NoError(t, err)
 	defer db.Close()

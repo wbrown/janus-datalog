@@ -104,8 +104,8 @@ func executeSubquerySequentialStreaming(ctx Context, parentExec *Executor, subqP
 	firstItem, ok := <-unionChan
 	if !ok {
 		// No results at all - empty
-		columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-		return NewMaterializedRelation(columns, []Tuple{}), nil
+		symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+		return NewMaterializedRelation(symbols, []Tuple{}), nil
 	}
 	if firstItem.err != nil {
 		// First result is an error - return it immediately
@@ -124,8 +124,8 @@ func executeSubquerySequentialStreaming(ctx Context, parentExec *Executor, subqP
 	}()
 
 	// Return UnionRelation that will consume from channel
-	columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-	return NewUnionRelation(newChan, columns, parentExec.options), nil
+	symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+	return NewUnionRelation(newChan, symbols, parentExec.options), nil
 }
 
 // executeSubquerySequentialMaterialized executes subqueries sequentially and materializes all results
@@ -247,8 +247,8 @@ func executeSubqueryParallelStreaming(ctx Context, parentExec *Executor, subqPla
 	firstItem, ok := <-unionChan
 	if !ok {
 		// No results at all - empty
-		columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-		return NewMaterializedRelation(columns, []Tuple{}), nil
+		symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+		return NewMaterializedRelation(symbols, []Tuple{}), nil
 	}
 	if firstItem.err != nil {
 		// First result is an error - return it immediately
@@ -267,8 +267,8 @@ func executeSubqueryParallelStreaming(ctx Context, parentExec *Executor, subqPla
 	}()
 
 	// Return UnionRelation that will consume from channel
-	columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-	return NewUnionRelation(newChan, columns, parentExec.options), nil
+	symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+	return NewUnionRelation(newChan, symbols, parentExec.options), nil
 }
 
 // executeSubqueryParallelMaterialized executes subqueries in parallel and materializes all results
@@ -386,21 +386,21 @@ func combineSubqueryResults(allResults []Relation, subqPlan planner.SubqueryPlan
 		}
 	}
 
-	// If no results - return empty relation with expected columns
+	// If no results - return empty relation with expected symbols
 	if len(validResults) == 0 {
-		columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-		return NewMaterializedRelation(columns, []Tuple{}), nil
+		symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+		return NewMaterializedRelation(symbols, []Tuple{}), nil
 	}
 
 	// Union all results by collecting all tuples
 	var allTuples []Tuple
-	columns := validResults[0].Columns()
+	symbols := validResults[0].Symbols()
 
 	for _, rel := range validResults {
 		collectTuplesInto(&allTuples, rel)
 	}
 
-	result := NewMaterializedRelation(columns, allTuples)
+	result := NewMaterializedRelation(symbols, allTuples)
 
 	return result, nil
 }
@@ -418,14 +418,14 @@ func executePhasesWithInputs(ctx Context, parentExec *Executor, plan *planner.Qu
 // getUniqueInputCombinations extracts unique combinations of input values.
 // This is a pure function that performs data transformation.
 func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) []map[query.Symbol]interface{} {
-	// Find column indices for input symbols
+	// Find symbol indices for input symbols
 	indices := make([]int, len(inputSymbols))
 	for i, sym := range inputSymbols {
 		if sym.IsSource() {
-			// Source marker - not a column, use special index
+			// Source marker - not a symbol, use special index
 			indices[i] = -1
 		} else {
-			indices[i] = ColumnIndex(rel, sym)
+			indices[i] = SymbolIndex(rel, sym)
 			if indices[i] < 0 {
 				// Symbol not found - should not happen if planner is correct
 				return nil
@@ -596,7 +596,7 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 			}
 
 		case query.CollectionInput:
-			// Create a single-column relation with one tuple per collection element
+			// Create a single-symbol relation with one tuple per collection element
 			if valueIndex < len(orderedValues) {
 				var tuples []Tuple
 
@@ -665,11 +665,11 @@ func createSubqueryContext(parentCtx Context, inputs []query.InputSpec, inputVal
 	}
 }
 
-// augmentWithInputValues adds input values as constant columns to a relation.
+// augmentWithInputValues adds input values as constant symbols to a relation.
 // This is a pure function that performs relation transformation.
 func augmentWithInputValues(rel Relation, inputSymbols []query.Symbol, inputValues []interface{}) Relation {
-	// Create new columns list
-	newColumns := append(rel.Columns(), inputSymbols...)
+	// Create new symbols list
+	newColumns := append(rel.Symbols(), inputSymbols...)
 
 	// Create augmented tuples
 	var augmentedTuples []Tuple
@@ -690,7 +690,7 @@ func augmentWithInputValues(rel Relation, inputSymbols []query.Symbol, inputValu
 // This is a pure function that handles different binding forms (TupleBinding, RelationBinding).
 func applyBindingForm(result Relation, binding query.BindingForm, inputValues map[query.Symbol]interface{}, inputSymbols []query.Symbol) (Relation, error) {
 	// fmt.Printf("DEBUG: applyBindingForm - binding type: %T, binding: %v\n", binding, binding)
-	// fmt.Printf("DEBUG: Result columns: %v\n", result.Columns)
+	// fmt.Printf("DEBUG: Result symbols: %v\n", result.Symbols)
 
 	switch b := binding.(type) {
 	case query.TupleBinding:
@@ -707,10 +707,10 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		// EMPTY RESULT = PATTERN FAILS TO MATCH
 		// Return empty relation instead of error (datalog semantics)
 		if result.Size() == 0 {
-			columns := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
-			copy(columns, realInputSymbols)
-			copy(columns[len(realInputSymbols):], b.Variables)
-			return NewMaterializedRelation(columns, []Tuple{}), nil
+			symbols := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
+			copy(symbols, realInputSymbols)
+			copy(symbols[len(realInputSymbols):], b.Variables)
+			return NewMaterializedRelation(symbols, []Tuple{}), nil
 		}
 
 		if result.Size() != 1 {
@@ -719,13 +719,13 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 
 		// fmt.Printf("DEBUG: TupleBinding variables: %v\n", b.Variables)
 
-		// Create relation with input columns + binding columns (excluding $)
-		columns := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
-		copy(columns, realInputSymbols)
-		copy(columns[len(realInputSymbols):], b.Variables)
+		// Create relation with input symbols + binding symbols (excluding $)
+		symbols := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
+		copy(symbols, realInputSymbols)
+		copy(symbols[len(realInputSymbols):], b.Variables)
 
 		// Create tuple with input values + result values (excluding $)
-		tuple := make(Tuple, len(columns))
+		tuple := make(Tuple, len(symbols))
 		for i, sym := range realInputSymbols {
 			tuple[i] = inputValues[sym]
 		}
@@ -742,7 +742,7 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		}
 
 		for i := range b.Variables {
-			// For aggregates, the result column is the aggregate expression (e.g., "(max ?price)")
+			// For aggregates, the result symbol is the aggregate expression (e.g., "(max ?price)")
 			// We need to match this with the binding variable
 			if i < len(resultTuple) {
 				tuple[len(realInputSymbols)+i] = resultTuple[i]
@@ -753,10 +753,10 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		}
 
 		// fmt.Printf("DEBUG: Final tuple: %v\n", tuple)
-		return NewMaterializedRelation(columns, []Tuple{tuple}), nil
+		return NewMaterializedRelation(symbols, []Tuple{tuple}), nil
 
 	case query.ScalarBinding:
-		// ?var - expect single result with single column, bind to variable
+		// ?var - expect single result with single symbol, bind to variable
 		// This is the Datomic scalar binding pattern used with scalar find spec
 
 		// Filter out source markers from input symbols
@@ -769,42 +769,42 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 
 		// EMPTY RESULT = PATTERN FAILS TO MATCH
 		if result.Size() == 0 {
-			columns := append(realInputSymbols, b.Variable)
-			return NewMaterializedRelation(columns, []Tuple{}), nil
+			symbols := append(realInputSymbols, b.Variable)
+			return NewMaterializedRelation(symbols, []Tuple{}), nil
 		}
 
-		// Scalar binding expects exactly 1 row
+		// Scalar binding expects exactly 1 tuple
 		if result.Size() != 1 {
 			return nil, fmt.Errorf("scalar binding expects 1 result, got %d", result.Size())
 		}
 
 		resultTuple := result.Get(0)
 
-		// Scalar binding expects exactly 1 column
+		// Scalar binding expects exactly 1 symbol
 		if len(resultTuple) != 1 {
-			return nil, fmt.Errorf("scalar binding expects 1 column, got %d", len(resultTuple))
+			return nil, fmt.Errorf("scalar binding expects 1 symbol, got %d", len(resultTuple))
 		}
 
-		// Create relation with input columns + binding variable
-		columns := append(realInputSymbols, b.Variable)
-		tuple := make(Tuple, len(columns))
+		// Create relation with input symbols + binding variable
+		symbols := append(realInputSymbols, b.Variable)
+		tuple := make(Tuple, len(symbols))
 		for i, sym := range realInputSymbols {
 			tuple[i] = inputValues[sym]
 		}
 		tuple[len(realInputSymbols)] = resultTuple[0]
 
-		return NewMaterializedRelation(columns, []Tuple{tuple}), nil
+		return NewMaterializedRelation(symbols, []Tuple{tuple}), nil
 
 	case query.CollectionBinding:
-		// [?coll ...] - collect all values from a single column into a collection
+		// [?coll ...] - collect all values from a single symbol into a collection
 		// For now, implement as a simple relation
 		return nil, fmt.Errorf("collection binding not yet implemented")
 
 	case query.RelationBinding:
-		// [[?a ?b] ...] - bind as relation with multiple columns
-		resultCols := result.Columns()
+		// [[?a ?b] ...] - bind as relation with multiple symbols
+		resultCols := result.Symbols()
 		if len(b.Variables) != len(resultCols) {
-			return nil, fmt.Errorf("relation binding expects %d columns, got %d", len(b.Variables), len(resultCols))
+			return nil, fmt.Errorf("relation binding expects %d symbols, got %d", len(b.Variables), len(resultCols))
 		}
 
 		// Filter out source markers from input symbols - they're not real variables
@@ -815,15 +815,15 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 			}
 		}
 
-		// Create relation with input columns + binding columns (excluding source markers)
-		columns := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
-		copy(columns, realInputSymbols)
-		copy(columns[len(realInputSymbols):], b.Variables)
+		// Create relation with input symbols + binding symbols (excluding source markers)
+		symbols := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
+		copy(symbols, realInputSymbols)
+		copy(symbols[len(realInputSymbols):], b.Variables)
 
-		// Create tuples with input values + each result row (excluding $)
+		// Create tuples with input values + each result tuple (excluding $)
 		var tuples []Tuple
 		for i := 0; i < result.Size(); i++ {
-			tuple := make(Tuple, len(columns))
+			tuple := make(Tuple, len(symbols))
 
 			// Add input values (excluding $)
 			for j, sym := range realInputSymbols {
@@ -839,31 +839,31 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 			tuples = append(tuples, tuple)
 		}
 
-		return NewMaterializedRelation(columns, tuples), nil
+		return NewMaterializedRelation(symbols, tuples), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported binding form: %T", binding)
 	}
 }
 
-// getBindingColumns returns the expected columns for a binding form.
+// getBindingColumns returns the expected symbols for a binding form.
 // This is a pure function that computes output schema.
 func getBindingColumns(binding query.BindingForm, inputSymbols []query.Symbol) []query.Symbol {
-	columns := make([]query.Symbol, len(inputSymbols))
-	copy(columns, inputSymbols)
+	symbols := make([]query.Symbol, len(inputSymbols))
+	copy(symbols, inputSymbols)
 
 	switch b := binding.(type) {
 	case query.TupleBinding:
-		columns = append(columns, b.Variables...)
+		symbols = append(symbols, b.Variables...)
 	case query.ScalarBinding:
-		columns = append(columns, b.Variable)
+		symbols = append(symbols, b.Variable)
 	case query.CollectionBinding:
-		columns = append(columns, b.Variable)
+		symbols = append(symbols, b.Variable)
 	case query.RelationBinding:
-		columns = append(columns, b.Variables...)
+		symbols = append(symbols, b.Variables...)
 	}
 
-	return columns
+	return symbols
 }
 
 // subqueryContext wraps a parent context and provides input bindings
@@ -900,12 +900,12 @@ func (sc *subqueryContext) MatchPattern(pattern query.Pattern, fn func() ([]data
 
 // matchesWithRelation checks if a datom matches pattern with given relation
 func (sc *subqueryContext) matchesWithRelation(datom datalog.Datom, pattern *query.DataPattern, rel Relation) bool {
-	// Get columns and build a map of values from the first tuple
+	// Get symbols and build a map of values from the first tuple
 	if rel == nil || rel.IsEmpty() {
 		return true // No constraints
 	}
 
-	cols := rel.Columns()
+	cols := rel.Symbols()
 	it := rel.Iterator()
 	if !it.Next() {
 		it.Close()
@@ -1022,20 +1022,20 @@ func canBatchSubquery(q *query.Query) bool {
 // the aggregation will compute over the entire dataset instead of per input tuple.
 func executeBatchedSubqueryWithCombinations(ctx Context, parentExec *Executor, subqPlan planner.SubqueryPlan, inputCombinations []map[query.Symbol]interface{}) (Relation, error) {
 	if len(inputCombinations) == 0 {
-		columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-		return NewMaterializedRelation(columns, []Tuple{}), nil
+		symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+		return NewMaterializedRelation(symbols, []Tuple{}), nil
 	}
 
 	// Build a relation with all input combinations
-	// The columns should match the input symbols from the subquery
-	var columns []query.Symbol
+	// The symbols should match the input symbols from the subquery
+	var symbols []query.Symbol
 	var allTuples []Tuple
 
 	// Extract the symbols we're passing (excluding $)
 	for _, input := range subqPlan.Subquery.Inputs {
 		switch inp := input.(type) {
 		case query.Variable:
-			columns = append(columns, inp.Name)
+			symbols = append(symbols, inp.Name)
 		case query.Constant:
 			// Skip source markers like $, $users, etc.
 			if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
@@ -1047,18 +1047,18 @@ func executeBatchedSubqueryWithCombinations(ctx Context, parentExec *Executor, s
 	// Build tuples from all combinations
 	for _, values := range inputCombinations {
 		var tuple Tuple
-		for _, col := range columns {
+		for _, col := range symbols {
 			if val, ok := values[col]; ok {
 				tuple = append(tuple, val)
 			}
 		}
-		if len(tuple) == len(columns) {
+		if len(tuple) == len(symbols) {
 			allTuples = append(allTuples, tuple)
 		}
 	}
 
 	// Create the batched input relation
-	batchedInputRel := NewMaterializedRelation(columns, allTuples)
+	batchedInputRel := NewMaterializedRelation(symbols, allTuples)
 
 	// Create input relations for the subquery
 	// We need to pass $ and the batched relation
@@ -1084,7 +1084,7 @@ func executeBatchedSubqueryWithCombinations(ctx Context, parentExec *Executor, s
 	}
 
 	// For batched execution, we can't apply the binding form per-input
-	// The result should already have all rows
+	// The result should already have all tuples
 	// Just apply the binding with empty input values (no scalar substitution needed)
 	boundResult, err := applyBindingForm(result, subqPlan.Subquery.Binding, nil, subqPlan.Inputs)
 	if err != nil {

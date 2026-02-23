@@ -221,7 +221,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 			t.Fatalf("Should succeed with empty results: %v", err)
 		}
 
-		// Convert to rows
+		// Convert to tuples
 		it := result.Iterator()
 		defer it.Close()
 		count := 0
@@ -247,7 +247,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 
 		assert.NoError(t, err, "Should succeed regardless of EnableFineGrainedPhases setting")
 
-		// Convert to rows
+		// Convert to tuples
 		it := result.Iterator()
 		defer it.Close()
 		count := 0

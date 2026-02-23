@@ -4,7 +4,7 @@
 **Codebase Size**: ~60,000 lines of Go code
 **Initial Duplication Identified**: ~1,900 lines
 **Completed Refactoring**: 445 lines eliminated
-**Investigated & Found Consolidated**: ~330-400 lines (Column Indexing, Value Comparison)
+**Investigated & Found Consolidated**: ~330-400 lines (Symbol Indexing, Value Comparison)
 **Actual Remaining Opportunities**: ~100-200 lines (Test Infrastructure only)
 **Total Actual Duplication**: ~545-645 lines (**0.9-1.1%** - exceptionally clean)
 
@@ -32,7 +32,7 @@ A comprehensive analysis of the janus-datalog codebase revealed **exceptionally 
 
 | Area | Estimated Lines | Investigation Result | Status |
 |------|----------------|---------------------|---------|
-| Column Indexing | 80-100 | Already exists as `TupleIndexer.ColIndex` | ✅ Consolidated |
+| Symbol Indexing | 80-100 | Already exists as `TupleIndexer.ColIndex` | ✅ Consolidated |
 | Value Comparison | 150-200 | Already exists in `datalog/compare.go` | ✅ Consolidated |
 | Value Hashing | 100-150 | Intentionally different: hashing vs equality | ⚠️ Not duplication |
 
@@ -122,7 +122,7 @@ This codebase is **exceptionally clean** at 1.5-1.7% duplication.
 ```go
 // 50+ lines of pattern extraction in reusingIterator
 colIndex := make(map[Symbol]int)
-for i, col := range columns {
+for i, col := range symbols {
     colIndex[col] = i
 }
 if c, ok := pattern.GetE().(query.Constant); ok {
@@ -137,7 +137,7 @@ if c, ok := pattern.GetE().(query.Constant); ok {
 
 **After:**
 ```go
-extractor := query.NewPatternExtractor(pattern, columns)
+extractor := query.NewPatternExtractor(pattern, symbols)
 values := extractor.Extract(bindingTuple)
 // Access via values.E, values.A, values.V, values.T
 ```
@@ -195,8 +195,8 @@ func emitIteratorStatistics(
 **Before (repeated in 3 files):**
 ```go
 // ~80 lines in each builder's constructor
-colIndex := make(map[Symbol]int, len(columns))
-for i, col := range columns {
+colIndex := make(map[Symbol]int, len(symbols))
+for i, col := range symbols {
     colIndex[col] = i
 }
 
@@ -211,7 +211,7 @@ if v, ok := pattern.GetE().(Variable); ok {
 
 **After:**
 ```go
-indexer := NewTupleIndexer(pattern, columns)
+indexer := NewTupleIndexer(pattern, symbols)
 return &InternedTupleBuilder{
     eIndex: indexer.EIndex,
     aIndex: indexer.AIndex,
@@ -237,7 +237,7 @@ return &InternedTupleBuilder{
 
 After completing the initial three phases, we investigated the remaining "opportunities" from the original analysis. **Result**: Most were already consolidated or not actual duplication.
 
-### Column Indexing Helper - Already Exists ✅
+### Symbol Indexing Helper - Already Exists ✅
 
 **Original Claim**: 38+ call sites building `map[Symbol]int`, ~80-100 lines of duplication
 
@@ -484,7 +484,7 @@ func TestQueryExecution(t *testing.T) {
 4. Add helpers incrementally as patterns emerge
 5. Don't force-fit - only use where it improves clarity
 
-**Note**: Sections 2 and 3 (Value Comparison and Column Indexing) were originally listed here but removed after investigation revealed they were already consolidated (see "Investigation Results" section above).
+**Note**: Sections 2 and 3 (Value Comparison and Symbol Indexing) were originally listed here but removed after investigation revealed they were already consolidated (see "Investigation Results" section above).
 
 ---
 
@@ -536,7 +536,7 @@ Three iterator implementations (`reusingIterator`, `nonReusingIterator`, `unboun
 - ✅ Explicit delegation makes it obvious what each type does
 
 **Methods that look duplicated but aren't:**
-- `Columns()`, `Options()` - Trivial accessors (1-2 lines, embedding wouldn't help)
+- `Symbols()`, `Options()` - Trivial accessors (1-2 lines, embedding wouldn't help)
 - `Project()`, `Filter()` - Different implementations for materialized vs streaming
 - `Join()` - Completely different strategies based on data representation
 
@@ -606,7 +606,7 @@ After investigation, only **one item** has actual duplication worth consolidatin
 
 ### Investigated & Found Already Consolidated ✅
 
-- ✅ **Column Indexing** - Already exists as `TupleIndexer.ColIndex` and `ColumnIndex()` helper
+- ✅ **Symbol Indexing** - Already exists as `TupleIndexer.ColIndex` and `ColumnIndex()` helper
 - ✅ **Value Comparison** - Already consolidated in `datalog/compare.go` (280 lines)
 - ⚠️ **Value Hashing** - Intentionally different operations (hashing vs equality), not duplication
 
@@ -685,7 +685,7 @@ These were initially identified as duplication (~700-1,200 lines) but represent 
 - ✅ **Helper functions** preferred over base classes (Go idioms)
 
 ### For Remaining Opportunities
-**If implementing test infrastructure, value comparison, or column indexing:**
+**If implementing test infrastructure, value comparison, or symbol indexing:**
 - Lines of code eliminated vs code added
 - Test coverage maintained or improved
 - Performance impact <5% in hot paths
@@ -701,14 +701,14 @@ After comprehensive analysis, investigation, and Go idioms review, the janus-dat
 
 - **Total actual duplication**: ~545-645 lines out of 60,000 = **0.9-1.1%** ✨
 - **Completed refactoring**: 445 lines eliminated (3 phases)
-- **Already consolidated**: ~330-400 lines (column indexing, value comparison)
+- **Already consolidated**: ~330-400 lines (symbol indexing, value comparison)
 - **Remaining true DRY**: ~100-200 lines (test infrastructure only)
 - **Reclassified as intentional**: ~700-1,200 lines (iterator types, relation delegation, etc.)
 
 ### Investigation Findings
 
 **What we discovered**:
-1. **Column Indexing** - Already exists as `TupleIndexer.ColIndex` ✅
+1. **Symbol Indexing** - Already exists as `TupleIndexer.ColIndex` ✅
 2. **Value Comparison** - Already consolidated in `datalog/compare.go` (280 lines) ✅
 3. **Value Hashing** - Intentionally different operations (hashing vs equality) ⚠️
 
@@ -739,7 +739,7 @@ After comprehensive analysis, investigation, and Go idioms review, the janus-dat
   - **Not urgent** - consider only if test maintenance becomes a pain point
 
 **Already Done ✅:**
-- ✅ Column Indexing - Use existing `TupleIndexer.ColIndex` and `ColumnIndex()` helper
+- ✅ Symbol Indexing - Use existing `TupleIndexer.ColIndex` and `ColumnIndex()` helper
 - ✅ Value Comparison - Use existing `datalog.ValuesEqual()` and `datalog.CompareValues()`
 
 **NOT Recommended:**

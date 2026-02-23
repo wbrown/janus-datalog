@@ -613,7 +613,7 @@ func TestQueryInto_ScalarMultiColumnError(t *testing.T) {
 	`)
 
 	if err == nil {
-		t.Fatal("expected error for multi-column query with scalar slice")
+		t.Fatal("expected error for multi-symbol query with scalar slice")
 	}
 }
 
@@ -689,7 +689,7 @@ func TestQueryOneInto_ScalarMultiColumnError(t *testing.T) {
 	`)
 
 	if err == nil {
-		t.Fatal("expected error for multi-column query with scalar destination")
+		t.Fatal("expected error for multi-symbol query with scalar destination")
 	}
 }
 
@@ -727,7 +727,7 @@ type PullResult struct {
 
 // MixedModeResult combines query variables with pull attributes
 type MixedModeResult struct {
-	// Query variable - comes from tuple column
+	// Query variable - comes from tuple symbol
 	PersonName string `datalog:"?name"`
 	// Attribute tags - come from pull result map in tuple
 	ID  datalog.Identity `datalog:"db/id"`

@@ -68,13 +68,13 @@ func TestTwoCollections_PlanAndBind(t *testing.T) {
 
 	// Test BindQueryInputs
 	bound := BindQueryInputs(q, inputRelations)
-	t.Logf("Bound relation - columns: %v, size: %d", bound.Columns(), bound.Size())
+	t.Logf("Bound relation - symbols: %v, size: %d", bound.Symbols(), bound.Size())
 	it := bound.Iterator()
 	for it.Next() {
 		t.Logf("  Bound tuple: %v", it.Tuple())
 	}
 	it.Close()
 
-	// The bound relation should have 4 tuples with [?e, ?a] columns
+	// The bound relation should have 4 tuples with [?e, ?a] symbols
 	require.Equal(t, 4, bound.Size(), "should have 4 tuples from cross-product")
 }

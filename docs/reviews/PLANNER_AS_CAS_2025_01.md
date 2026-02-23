@@ -513,7 +513,7 @@ Cost-based optimizers (PostgreSQL, Oracle) use statistics:
 ```sql
 -- PostgreSQL estimates cardinality from histograms
 SELECT * FROM users WHERE age > 25;
--- Estimates: 50,000 rows (from pg_stats)
+-- Estimates: 50,000 tuples (from pg_stats)
 ```
 
 This requires:
@@ -682,7 +682,7 @@ Because plans are deterministic (no statistics dependencies), caching is highly 
 The planner cannot predict intermediate result sizes:
 
 ```datalog
-:where [?e :person/name ?name]  # Could return 1 or 1,000,000 rows
+:where [?e :person/name ?name]  # Could return 1 or 1,000,000 tuples
        [?e :person/age ?age]
 ```
 
@@ -699,7 +699,7 @@ Entity grouping assumes patterns sharing entity variables join efficiently. This
 
 ### 3. No Adaptive Optimization
 
-Plans don't adapt based on execution feedback. If a pattern unexpectedly returns millions of rows, the plan doesn't adjust.
+Plans don't adapt based on execution feedback. If a pattern unexpectedly returns millions of tuples, the plan doesn't adjust.
 
 ### 4. Limited to Pattern Structure
 

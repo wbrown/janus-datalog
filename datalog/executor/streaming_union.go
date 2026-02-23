@@ -38,7 +38,7 @@ func (s *StreamingUnionBuilder) Union(relations []Relation) Relation {
 // unionStreaming creates a streaming union via channel
 // Results are consumed lazily as they're iterated
 func (s *StreamingUnionBuilder) unionStreaming(relations []Relation) Relation {
-	columns := relations[0].Columns()
+	symbols := relations[0].Symbols()
 
 	// Create channel for streaming
 	unionChan := make(chan relationItem, 1)
@@ -50,39 +50,39 @@ func (s *StreamingUnionBuilder) unionStreaming(relations []Relation) Relation {
 		}
 	}()
 
-	return NewUnionRelation(unionChan, columns, s.opts)
+	return NewUnionRelation(unionChan, symbols, s.opts)
 }
 
 // unionMaterialized combines all relations by materializing
 // All results are collected before returning
 func (s *StreamingUnionBuilder) unionMaterialized(relations []Relation) Relation {
-	columns := relations[0].Columns()
+	symbols := relations[0].Symbols()
 	var allTuples []Tuple
 
 	for _, rel := range relations {
 		collectTuplesInto(&allTuples, rel)
 	}
 
-	return NewMaterializedRelation(columns, allTuples)
+	return NewMaterializedRelation(symbols, allTuples)
 }
 
-// UnionWithColumns combines relations and ensures specific column schema
-// Useful when relations might have different column orders
+// UnionWithColumns combines relations and ensures specific symbol schema
+// Useful when relations might have different symbol orders
 //
 // Parameters:
 // - relations: Relations to combine
-// - columns: Desired column schema for result
+// - symbols: Desired symbol schema for result
 //
-// Returns: Combined relation with specified column schema
-func (s *StreamingUnionBuilder) UnionWithColumns(relations []Relation, columns []query.Symbol) (Relation, error) {
+// Returns: Combined relation with specified symbol schema
+func (s *StreamingUnionBuilder) UnionWithColumns(relations []Relation, symbols []query.Symbol) (Relation, error) {
 	if len(relations) == 0 {
-		return NewMaterializedRelation(columns, []Tuple{}), nil
+		return NewMaterializedRelation(symbols, []Tuple{}), nil
 	}
 	if len(relations) == 1 {
-		// Project to ensure correct column order
+		// Project to ensure correct symbol order
 		rel := relations[0]
-		if !symbolsEqual(rel.Columns(), columns) {
-			projected, err := rel.Project(columns)
+		if !symbolsEqual(rel.Symbols(), symbols) {
+			projected, err := rel.Project(symbols)
 			if err != nil {
 				return nil, err
 			}
@@ -91,10 +91,10 @@ func (s *StreamingUnionBuilder) UnionWithColumns(relations []Relation, columns [
 		return rel, nil
 	}
 
-	// Check if all relations have same column schema
+	// Check if all relations have same symbol schema
 	allMatch := true
 	for _, rel := range relations {
-		if !symbolsEqual(rel.Columns(), columns) {
+		if !symbolsEqual(rel.Symbols(), symbols) {
 			allMatch = false
 			break
 		}
@@ -108,7 +108,7 @@ func (s *StreamingUnionBuilder) UnionWithColumns(relations []Relation, columns [
 	// Slow path: need to project each relation first
 	projectedRelations := make([]Relation, len(relations))
 	for i, rel := range relations {
-		projected, err := rel.Project(columns)
+		projected, err := rel.Project(symbols)
 		if err != nil {
 			return nil, err
 		}

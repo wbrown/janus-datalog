@@ -11,7 +11,7 @@ This model breaks down for OR clauses with fallback semantics because:
 2. The planner can't distinguish between internal join variables and correlation variables
 3. OR clauses are analyzed in isolation, without context of the surrounding query
 
-**Result**: The planner incorrectly reorders OR clauses before patterns that should bind their correlation variables, breaking per-row fallback semantics.
+**Result**: The planner incorrectly reorders OR clauses before patterns that should bind their correlation variables, breaking per-tuple fallback semantics.
 
 ## Current Workaround
 

@@ -27,7 +27,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 
 	matcher := NewMemoryPatternMatcher(datoms)
 
-	// Test 1: Use a multi-row relation to bind multiple entities at once
+	// Test 1: Use a multi-tuple relation to bind multiple entities at once
 	t.Run("MultipleEntityBinding", func(t *testing.T) {
 		// Create a relation with multiple entities
 		bindingRel := NewMaterializedRelation(
@@ -48,12 +48,12 @@ func TestMultiRowRelationBinding(t *testing.T) {
 			},
 		}
 
-		// Match with the multi-row binding relation
+		// Match with the multi-tuple binding relation
 		results, err := matcher.Match(pattern, Relations{bindingRel})
 		assert.NoError(t, err)
 
-		// Check columns
-		cols := results.Columns()
+		// Check symbols
+		cols := results.Symbols()
 		assert.Equal(t, []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?age")}, cols)
 
 		// Check we got the right data
@@ -131,7 +131,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		assert.Equal(t, "Charlie", foundUsers[int64(35)])
 	})
 
-	// Test 3: Complex multi-column binding
+	// Test 3: Complex multi-symbol binding
 	t.Run("MultiColumnBinding", func(t *testing.T) {
 		// Create a more complex pattern with price data
 		priceAttr := datalog.NewKeyword(":product/price")

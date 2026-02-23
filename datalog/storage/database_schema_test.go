@@ -140,7 +140,7 @@ func TestSchemaUniquenessValue(t *testing.T) {
 	}
 	results, err := matcher.Match(pattern, nil)
 	require.NoError(t, err, "matcher.Match should succeed")
-	t.Logf("Result columns: %v", results.Columns())
+	t.Logf("Result symbols: %v", results.Symbols())
 
 	iter := results.Iterator()
 	count := 0

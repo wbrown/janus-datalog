@@ -16,20 +16,19 @@ import (
 // Its iterator overwrites a shared workspace slice on each Next() call,
 // just like storage iterators do with BuildTupleInternedInto.
 type mockUnsafeRelation struct {
-	columns []query.Symbol
+	symbols []query.Symbol
 	data    [][]interface{} // Source data (will be copied into workspace)
 	options ExecutorOptions
 }
 
-func newMockUnsafeRelation(columns []query.Symbol, data [][]interface{}) *mockUnsafeRelation {
+func newMockUnsafeRelation(symbols []query.Symbol, data [][]interface{}) *mockUnsafeRelation {
 	return &mockUnsafeRelation{
-		columns: columns,
+		symbols: symbols,
 		data:    data,
 	}
 }
 
-func (r *mockUnsafeRelation) Columns() []query.Symbol                                { return r.columns }
-func (r *mockUnsafeRelation) Symbols() []query.Symbol                                { return r.columns }
+func (r *mockUnsafeRelation) Symbols() []query.Symbol                                { return r.symbols }
 func (r *mockUnsafeRelation) Size() int                                              { return len(r.data) }
 func (r *mockUnsafeRelation) IsEmpty() bool                                          { return len(r.data) == 0 }
 func (r *mockUnsafeRelation) Get(i int) Tuple                                        { return nil }
@@ -57,7 +56,7 @@ func (r *mockUnsafeRelation) RequiresCopy() bool { return true }
 func (r *mockUnsafeRelation) Iterator() Iterator {
 	return &mockUnsafeIterator{
 		data:      r.data,
-		workspace: make(Tuple, len(r.columns)), // Shared workspace
+		workspace: make(Tuple, len(r.symbols)), // Shared workspace
 		pos:       -1,
 	}
 }
@@ -74,7 +73,7 @@ func (it *mockUnsafeIterator) Next() bool {
 	if it.pos >= len(it.data) {
 		return false
 	}
-	// Overwrite workspace with current row's data
+	// Overwrite workspace with current tuple's data
 	copy(it.workspace, it.data[it.pos])
 	return true
 }
@@ -538,8 +537,8 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 	projIt := &projectedIterator{
 		inner:          branchIt,
 		branchRelation: unsafeBranch, // This has RequiresCopy() = true
-		branchCols:     branchCols,
-		outputCols:     branchCols, // Same columns, no projection needed
+		branchSyms:     branchCols,
+		outputSyms:     branchCols, // Same symbols, no projection needed
 	}
 
 	var storedTuples []Tuple

@@ -9,31 +9,31 @@ import (
 type DatomIterator struct {
 	datoms  []datalog.Datom
 	pos     int
-	columns []query.Symbol
+	symbols []query.Symbol
 	pattern PatternBinding
 	current Tuple
 }
 
 func NewDatomIterator(datoms []datalog.Datom, binding PatternBinding) *DatomIterator {
-	// Build columns from binding
-	var columns []query.Symbol
+	// Build symbols from binding
+	var symbols []query.Symbol
 	if binding.EntitySym != nil {
-		columns = append(columns, *binding.EntitySym)
+		symbols = append(symbols, *binding.EntitySym)
 	}
 	if binding.AttributeSym != nil {
-		columns = append(columns, *binding.AttributeSym)
+		symbols = append(symbols, *binding.AttributeSym)
 	}
 	if binding.ValueSym != nil {
-		columns = append(columns, *binding.ValueSym)
+		symbols = append(symbols, *binding.ValueSym)
 	}
 	if binding.TxSym != nil {
-		columns = append(columns, *binding.TxSym)
+		symbols = append(symbols, *binding.TxSym)
 	}
 
 	return &DatomIterator{
 		datoms:  datoms,
 		pos:     -1,
-		columns: columns,
+		symbols: symbols,
 		pattern: binding,
 	}
 }
@@ -75,24 +75,24 @@ func (it *DatomIterator) Close() error {
 
 // NewDatomRelation creates a relation from datoms
 func NewDatomRelation(datoms []datalog.Datom, binding PatternBinding) Relation {
-	// Build columns from binding
-	var columns []query.Symbol
-	columnCount := 0
+	// Build symbols from binding
+	var symbols []query.Symbol
+	symbolCount := 0
 	if binding.EntitySym != nil {
-		columns = append(columns, *binding.EntitySym)
-		columnCount++
+		symbols = append(symbols, *binding.EntitySym)
+		symbolCount++
 	}
 	if binding.AttributeSym != nil {
-		columns = append(columns, *binding.AttributeSym)
-		columnCount++
+		symbols = append(symbols, *binding.AttributeSym)
+		symbolCount++
 	}
 	if binding.ValueSym != nil {
-		columns = append(columns, *binding.ValueSym)
-		columnCount++
+		symbols = append(symbols, *binding.ValueSym)
+		symbolCount++
 	}
 	if binding.TxSym != nil {
-		columns = append(columns, *binding.TxSym)
-		columnCount++
+		symbols = append(symbols, *binding.TxSym)
+		symbolCount++
 	}
 
 	// Pre-allocate tuples slice with exact capacity
@@ -101,7 +101,7 @@ func NewDatomRelation(datoms []datalog.Datom, binding PatternBinding) Relation {
 	// Build tuples directly without iterator overhead
 	for _, datom := range datoms {
 		// Pre-allocate tuple with exact size
-		tuple := make(Tuple, 0, columnCount)
+		tuple := make(Tuple, 0, symbolCount)
 
 		if binding.EntitySym != nil {
 			tuple = append(tuple, datom.E)
@@ -119,5 +119,5 @@ func NewDatomRelation(datoms []datalog.Datom, binding PatternBinding) Relation {
 		tuples = append(tuples, tuple)
 	}
 
-	return NewMaterializedRelation(columns, tuples)
+	return NewMaterializedRelation(symbols, tuples)
 }

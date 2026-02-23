@@ -52,19 +52,19 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	bindings executor.Relations,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
-	// Determine pattern columns
-	columns := pattern.ExtractColumns()
+	// Determine pattern symbols
+	symbols := pattern.ExtractColumns()
 
 	if bindings == nil || len(bindings) == 0 {
 		// Simple case - no bindings
-		return m.matchUnboundAsRelation(pattern, columns, constraints)
+		return m.matchUnboundAsRelation(pattern, symbols, constraints)
 	}
 
 	// Find best binding relation for this pattern
 	bindingRel := bindings.FindBestForPattern(pattern)
 	if bindingRel == nil {
 		// No relation binds any pattern variables
-		return m.matchUnboundAsRelation(pattern, columns, constraints)
+		return m.matchUnboundAsRelation(pattern, symbols, constraints)
 	}
 
 	// CRITICAL FIX: Don't call IsEmpty() on StreamingRelations - it consumes first tuple!
@@ -72,11 +72,11 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	// If relation is empty, subsequent iteration will discover that naturally.
 	if _, isStreaming := bindingRel.(*executor.StreamingRelation); !isStreaming {
 		if bindingRel.IsEmpty() {
-			return m.matchUnboundAsRelation(pattern, columns, constraints)
+			return m.matchUnboundAsRelation(pattern, symbols, constraints)
 		}
 	}
 
-	// Project the binding relation to only include columns used in the pattern
+	// Project the binding relation to only include symbols used in the pattern
 	bindingRel = bindingRel.ProjectFromPattern(pattern)
 
 	// Check for vector cardinality - requires special handling with bound E from bindings
@@ -95,7 +95,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			if kw, ok := aResolved.(datalog.Keyword); ok {
 				if attr := m.schema.GetAttribute(kw); attr != nil {
 					if attr.Cardinality == schema.CardinalityVector {
-						return m.matchVectorWithBindings(pattern, bindingRel, columns, kw)
+						return m.matchVectorWithBindings(pattern, bindingRel, symbols, kw)
 					}
 				}
 			}
@@ -106,22 +106,22 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	// use the cache for each E value instead of storage scans.
 	if m.cache != nil && m.txID == nil {
 		if aResolved != nil {
-			// Phase 1: A has a single known value (from constant or single-row binding)
+			// Phase 1: A has a single known value (from constant or single-tuple binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
-				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw, -1)
+				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw, -1)
 				if handled {
 					return cacheResult, nil
 				}
 			}
 		} else if aVar, ok := pattern.GetA().(query.Variable); ok {
-			// Phase 2: A varies per row in bindingRel (e.g., from join results)
-			aIdx := findVariableColumn(aVar.Name, bindingRel)
+			// Phase 2: A varies per tuple in bindingRel (e.g., from join results)
+			aIdx := findVariableSymbol(aVar.Name, bindingRel)
 			eVar, eIsVar := pattern.GetE().(query.Variable)
 			if aIdx >= 0 && eIsVar {
-				eIdx := findVariableColumn(eVar.Name, bindingRel)
+				eIdx := findVariableSymbol(eVar.Name, bindingRel)
 				if eIdx >= 0 {
 					cacheResult, handled := m.matchWithBindingsFromCache(
-						pattern, bindingRel, columns, nil, aIdx)
+						pattern, bindingRel, symbols, nil, aIdx)
 					if handled {
 						return cacheResult, nil
 					}
@@ -176,7 +176,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		// For V-bound cardinality-one queries, use candidate + validate pattern
 		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 4
 		if strategy.NeedsValidation {
-			return m.matchWithVValidation(pattern, bindingRel, columns, strategy, constraints)
+			return m.matchWithVValidation(pattern, bindingRel, symbols, strategy, constraints)
 		}
 
 		// Choose join strategy based on selectivity
@@ -199,31 +199,31 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		switch joinStrategy {
 		case HashJoinScan:
 			// Use hash join for medium selectivity (1-50%)
-			return m.matchWithHashJoin(pattern, bindingRel, columns, strategy.Position, strategy.Index, constraints)
+			return m.matchWithHashJoin(pattern, bindingRel, symbols, strategy.Position, strategy.Index, constraints)
 
 		case MergeJoin:
 			// Use merge join for high selectivity (>50%) with large binding sets
-			return m.matchWithMergeJoin(pattern, bindingRel, columns, strategy.Position, strategy.Index, constraints)
+			return m.matchWithMergeJoin(pattern, bindingRel, symbols, strategy.Position, strategy.Index, constraints)
 
 		case IndexNestedLoop:
 			// Use iterator reuse for small sets or high selectivity
-			return m.matchWithIteratorReuse(pattern, bindingRel, columns, strategy, constraints)
+			return m.matchWithIteratorReuse(pattern, bindingRel, symbols, strategy, constraints)
 
 		default:
 			// Fall back to iterator reuse
-			return m.matchWithIteratorReuse(pattern, bindingRel, columns, strategy, constraints)
+			return m.matchWithIteratorReuse(pattern, bindingRel, symbols, strategy, constraints)
 		}
 
 	case NoReuse:
 		fallthrough
 	default:
 		// Fall back to opening/closing iterator for each tuple
-		return m.matchWithoutIteratorReuse(pattern, bindingRel, columns, constraints)
+		return m.matchWithoutIteratorReuse(pattern, bindingRel, symbols, constraints)
 	}
 }
 
 // matchUnboundAsRelation matches a pattern without bindings and returns a Relation
-func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, columns []query.Symbol, constraints []executor.StorageConstraint) (executor.Relation, error) {
+func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbols []query.Symbol, constraints []executor.StorageConstraint) (executor.Relation, error) {
 	// Extract constant values from pattern
 	var e, a, v, tx interface{}
 
@@ -270,7 +270,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 	if m.cache != nil && m.txID == nil && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
-				cacheResult, handled := m.matchFromCache(pattern, columns, eIdent, aKw, v, card)
+				cacheResult, handled := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card)
 				if handled {
 					return cacheResult, nil
 				}
@@ -305,9 +305,9 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 		// V-bound scan (AVET) only sees datoms with this V, but the LWW winner
 		// may have a different V. Use candidate + validate pattern.
 		// See docs/reference/INDEX_SELECTION_PROOF.md Theorem 2 & 5.
-		dummyCol := datalog.NewSymbol("__v_bound_dummy__")
+		dummySym := datalog.NewSymbol("__v_bound_dummy__")
 		bindingRel := executor.NewMaterializedRelation(
-			[]query.Symbol{dummyCol},
+			[]query.Symbol{dummySym},
 			[]executor.Tuple{{v}},
 		)
 		strategy := ReuseStrategy{
@@ -318,7 +318,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			BoundA:          a,
 			BoundV:          v,
 		}
-		return m.matchWithVValidation(pattern, bindingRel, columns, strategy, nil)
+		return m.matchWithVValidation(pattern, bindingRel, symbols, strategy, nil)
 	} else if e == nil && a != nil && card == schema.CardinalityMany {
 		// E is unbound, A is bound, cardinality-many
 		// Need to scan all entities with this attribute and apply add-wins resolution
@@ -343,27 +343,27 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 
 	// For cardinality-vector with E+A bound: use vector resolution
 	if useVectorResolution {
-		return m.matchCardinalityVectorAsRelation(pattern, columns, e, a)
+		return m.matchCardinalityVectorAsRelation(pattern, symbols, e, a)
 	}
 
 	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
 	if useAddWinsResolution {
-		return m.matchCardinalityManyAsRelation(pattern, columns, e, a)
+		return m.matchCardinalityManyAsRelation(pattern, symbols, e, a)
 	}
 
 	// For cardinality-many with E+A+V bound: use membership check
 	if useMembershipCheck {
-		return m.matchCardinalityManyMembership(pattern, columns, e, a, v)
+		return m.matchCardinalityManyMembership(pattern, symbols, e, a, v)
 	}
 
 	// For cardinality-many with A bound, E unbound, V unbound: scan all entities
 	if useAddWinsScanAllEntities {
-		return m.matchCardinalityManyScanAllEntities(pattern, columns, a)
+		return m.matchCardinalityManyScanAllEntities(pattern, symbols, a)
 	}
 
 	// For cardinality-many with A bound, E unbound, V bound: find entities with value
 	if useAddWinsScanAllEntitiesWithValue {
-		return m.matchCardinalityManyFindEntitiesWithValue(pattern, columns, a, v)
+		return m.matchCardinalityManyFindEntitiesWithValue(pattern, symbols, a, v)
 	}
 
 	// Choose index and create scan range
@@ -411,15 +411,15 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			start:           start,
 			end:             end,
 			pattern:         pattern,
-			columns:         columns,
+			symbols:         symbols,
 			e:               e,
 			a:               a,
 			v:               v,
 			tx:              tx,
 			keyMask:         keyMask,
 			constraints:     constraints, // Still need for non-mask constraints
-			workspace:       make(executor.Tuple, len(columns)),
-			tupleBuilder:    m.getTupleBuilder(pattern, columns),
+			workspace:       make(executor.Tuple, len(symbols)),
+			tupleBuilder:    m.getTupleBuilder(pattern, symbols),
 			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 		}
 
@@ -444,14 +444,14 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 			start:           start,
 			end:             end,
 			pattern:         pattern,
-			columns:         columns,
+			symbols:         symbols,
 			e:               e,
 			a:               a,
 			v:               v,
 			tx:              tx,
 			constraints:     constraints,
-			workspace:       make(executor.Tuple, len(columns)),
-			tupleBuilder:    m.getTupleBuilder(pattern, columns),
+			workspace:       make(executor.Tuple, len(symbols)),
+			tupleBuilder:    m.getTupleBuilder(pattern, symbols),
 			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 		}
 
@@ -473,12 +473,12 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, colum
 	// Return streaming relation with lazy materialization
 	// The iterator will be consumed and cached on first call to Iterator(),
 	// eliminating the 6.3 GB of upfront allocations while maintaining correctness
-	rel := executor.NewStreamingRelationWithOptions(columns, iter, m.options)
+	rel := executor.NewStreamingRelationWithOptions(symbols, iter, m.options)
 	return rel, nil
 }
 
 // matchWithoutIteratorReuse uses separate scan for each binding tuple
-func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bindingRel executor.Relation, columns []query.Symbol, constraints []executor.StorageConstraint) (executor.Relation, error) {
+func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bindingRel executor.Relation, symbols []query.Symbol, constraints []executor.StorageConstraint) (executor.Relation, error) {
 	// Emit no-reuse path event
 	if m.handler != nil {
 		m.handler(annotations.Event{
@@ -509,23 +509,23 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 		pattern:          pattern,
 		bindingRel:       bindingRel,
 		bindingTuples:    bindingTuples,
-		columns:          columns,
+		symbols:          symbols,
 		constraints:      constraints,
 		currentIdx:       -1,
-		workspace:        make(executor.Tuple, len(columns)),
-		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Columns()),
-		tupleBuilder:     m.getTupleBuilder(pattern, columns),
+		workspace:        make(executor.Tuple, len(symbols)),
+		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Symbols()),
+		tupleBuilder:     m.getTupleBuilder(pattern, symbols),
 	}
 
 	// Return streaming relation with the iterator
-	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
 // matchWithIteratorReuse implements the optimized iterator reuse strategy
 func (m *BadgerMatcher) matchWithIteratorReuse(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	strategy ReuseStrategy,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
@@ -542,16 +542,16 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 		tuples:           sortedTuples,
 		position:         strategy.Position,
 		index:            strategy.Index,
-		columns:          columns,
+		symbols:          symbols,
 		constraints:      constraints,
 		currentIdx:       -1,
-		workspace:        make(executor.Tuple, len(columns)),
-		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Columns()),
-		tupleBuilder:     m.getTupleBuilder(pattern, columns),
+		workspace:        make(executor.Tuple, len(symbols)),
+		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Symbols()),
+		tupleBuilder:     m.getTupleBuilder(pattern, symbols),
 	}
 
 	// Return streaming relation with the iterator
-	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
 // matchWithVValidation implements the candidate + validate pattern for V-bound
@@ -564,7 +564,7 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 func (m *BadgerMatcher) matchWithVValidation(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	strategy ReuseStrategy,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
@@ -576,7 +576,7 @@ func (m *BadgerMatcher) matchWithVValidation(
 				"pattern":     pattern.String(),
 				"index":       indexName(strategy.Index),
 				"bound_a":     fmt.Sprintf("%v", strategy.BoundA),
-				"binding_rel": bindingRel.Columns(),
+				"binding_rel": bindingRel.Symbols(),
 			},
 		})
 	}
@@ -592,15 +592,15 @@ func (m *BadgerMatcher) matchWithVValidation(
 		candidateIndex:   strategy.Index,           // AVET or VAET for candidates
 		validationIndex:  strategy.ValidationIndex, // EATV for validation
 		boundA:           strategy.BoundA,          // Constant A value if any
-		columns:          columns,
+		symbols:          symbols,
 		constraints:      constraints,
 		currentTupleIdx:  -1,
-		workspace:        make(executor.Tuple, len(columns)),
-		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Columns()),
-		tupleBuilder:     m.getTupleBuilder(pattern, columns),
+		workspace:        make(executor.Tuple, len(symbols)),
+		patternExtractor: query.NewPatternExtractor(pattern, bindingRel.Symbols()),
+		tupleBuilder:     m.getTupleBuilder(pattern, symbols),
 	}
 
-	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
 // validatingVBoundIterator implements the semi-join pattern for V-bound queries.
@@ -617,7 +617,7 @@ type validatingVBoundIterator struct {
 	pattern     *query.DataPattern
 	bindingRel  executor.Relation
 	tuples      []executor.Tuple
-	columns     []query.Symbol
+	symbols     []query.Symbol
 	constraints []executor.StorageConstraint
 
 	// Index configuration
@@ -923,23 +923,23 @@ func (it *validatingVBoundIterator) encodeValue(v any) []byte {
 
 // buildTuple creates a result tuple from a validated datom
 func (it *validatingVBoundIterator) buildTuple(datom *datalog.Datom) executor.Tuple {
-	tuple := make(executor.Tuple, len(it.columns))
-	for i, col := range it.columns {
+	tuple := make(executor.Tuple, len(it.symbols))
+	for i, sym := range it.symbols {
 		// Check each pattern element - might be Variable or Constant
-		if v, ok := it.pattern.GetE().(query.Variable); ok && col == v.Name {
+		if v, ok := it.pattern.GetE().(query.Variable); ok && sym == v.Name {
 			tuple[i] = datom.E
 			continue
 		}
-		if v, ok := it.pattern.GetA().(query.Variable); ok && col == v.Name {
+		if v, ok := it.pattern.GetA().(query.Variable); ok && sym == v.Name {
 			tuple[i] = datom.A
 			continue
 		}
-		if v, ok := it.pattern.GetV().(query.Variable); ok && col == v.Name {
+		if v, ok := it.pattern.GetV().(query.Variable); ok && sym == v.Name {
 			tuple[i] = datom.V
 			continue
 		}
 		if len(it.pattern.Elements) > 3 {
-			if v, ok := it.pattern.GetT().(query.Variable); ok && col == v.Name {
+			if v, ok := it.pattern.GetT().(query.Variable); ok && sym == v.Name {
 				tuple[i] = datom.Tx
 			}
 		}
@@ -967,7 +967,7 @@ func (it *validatingVBoundIterator) Close() error {
 func (m *BadgerMatcher) matchWithSimpleBatchScanning(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	strategy ReuseStrategy,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
@@ -982,7 +982,7 @@ func (m *BadgerMatcher) matchWithSimpleBatchScanning(
 		bindingRel,
 		position,
 		IndexType(index),
-		columns,
+		symbols,
 		constraints,
 	)
 
@@ -993,14 +993,14 @@ func (m *BadgerMatcher) matchWithSimpleBatchScanning(
 
 	// Return streaming relation wrapping the scanner
 	// Note: scanner materializes internally but we avoid secondary materialization
-	return executor.NewStreamingRelationWithOptions(columns, scanner, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, scanner, m.options), nil
 }
 
 // matchWithBatchScanning uses batch scanning to process large binding sets efficiently
 func (m *BadgerMatcher) matchWithBatchScanning(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	strategy ReuseStrategy,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
@@ -1011,7 +1011,7 @@ func (m *BadgerMatcher) matchWithBatchScanning(
 		bindingRel,
 		strategy.Position,
 		strategy.Index,
-		columns,
+		symbols,
 		constraints,
 	)
 
@@ -1022,7 +1022,7 @@ func (m *BadgerMatcher) matchWithBatchScanning(
 
 	// Return streaming relation wrapping the scanner
 	// Note: scanner materializes internally but we avoid secondary materialization
-	return executor.NewStreamingRelationWithOptions(columns, scanner, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, scanner, m.options), nil
 }
 
 // matchFromCache attempts to resolve a pattern using the cache.
@@ -1030,7 +1030,7 @@ func (m *BadgerMatcher) matchWithBatchScanning(
 // This provides O(1) access for patterns with E and A bound when querying latest state.
 func (m *BadgerMatcher) matchFromCache(
 	pattern *query.DataPattern,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	e datalog.Identity,
 	a datalog.Keyword,
 	v interface{}, // nil if V is unbound
@@ -1050,7 +1050,7 @@ func (m *BadgerMatcher) matchFromCache(
 	}
 
 	// Get tuple builder for building tuples
-	tupleBuilder := m.getTupleBuilder(pattern, columns)
+	tupleBuilder := m.getTupleBuilder(pattern, symbols)
 
 	// Pre-allocate datom buffer with constant E and A
 	var datomBuf datalog.Datom
@@ -1069,30 +1069,30 @@ func (m *BadgerMatcher) matchFromCache(
 		val := entry.OneValue()
 		if val == nil {
 			// No value - return empty relation
-			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
 		}
 		if v != nil {
 			// V is bound - check if it matches
 			if !valuesEqual(val, v) {
-				return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+				return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
 			}
 		}
 		// Build tuple with the cached value
 		tuple := buildTuple(val, entry.Version())
-		return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+		return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
 
 	case schema.CardinalityMany:
 		set := entry.ManySet()
 		if len(set) == 0 {
-			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
 		}
 		if v != nil {
 			// V is bound - membership check
 			if set[v] {
 				tuple := buildTuple(v, entry.Version())
-				return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+				return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
 			}
-			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
 		}
 		// V is unbound - return all set members
 		tuples := make([]executor.Tuple, 0, len(set))
@@ -1100,12 +1100,12 @@ func (m *BadgerMatcher) matchFromCache(
 			tuple := buildTuple(val, entry.Version())
 			tuples = append(tuples, tuple)
 		}
-		return executor.NewMaterializedRelationWithOptions(columns, tuples, m.options), true
+		return executor.NewMaterializedRelationWithOptions(symbols, tuples, m.options), true
 
 	case schema.CardinalityVector:
 		list := entry.VectorList()
 		if len(list) == 0 {
-			return executor.NewMaterializedRelationWithOptions(columns, nil, m.options), true
+			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
 		}
 		if v != nil {
 			// V is bound - check if vector equals (for vector, V is the whole list)
@@ -1114,33 +1114,33 @@ func (m *BadgerMatcher) matchFromCache(
 		}
 		// V is unbound - return the vector as a single value
 		tuple := buildTuple(list, entry.Version())
-		return executor.NewMaterializedRelationWithOptions(columns, []executor.Tuple{tuple}, m.options), true
+		return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
 	}
 
 	return nil, false // Unknown cardinality, fallback to storage
 }
 
-// findVariableColumn returns the column index for a variable in a relation, or -1.
-func findVariableColumn(sym query.Symbol, rel executor.Relation) int {
-	for i, col := range rel.Columns() {
-		if col == sym {
+// findVariableSymbol returns the symbol index for a variable in a relation, or -1.
+func findVariableSymbol(sym query.Symbol, rel executor.Relation) int {
+	for i, s := range rel.Symbols() {
+		if s == sym {
 			return i
 		}
 	}
 	return -1
 }
 
-// resolveKeywordFromBindings searches all binding relations for a single-row relation
+// resolveKeywordFromBindings searches all binding relations for a single-tuple relation
 // containing the given variable and returns its value as a Keyword. This covers scalar
-// inputs and single-row tuple inputs where A has exactly one known value.
+// inputs and single-tuple tuple inputs where A has exactly one known value.
 func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations) (datalog.Keyword, bool) {
 	for _, rel := range bindings {
-		idx := findVariableColumn(aVar.Name, rel)
+		idx := findVariableSymbol(aVar.Name, rel)
 		if idx < 0 {
 			continue
 		}
 		if rel.Size() != 1 {
-			return nil, false // multi-row — can't extract single value
+			return nil, false // multi-tuple — can't extract single value
 		}
 		iter := rel.Iterator()
 		defer iter.Close()
@@ -1158,38 +1158,38 @@ func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations
 // Uses cache for O(1) lookup per bound E value instead of storage scans.
 // Returns (relation, true) if cache was used, (nil, false) if fallback to storage is needed.
 //
-// When aColIdx >= 0, A is extracted per-row from bindingRel[aColIdx] instead of using
-// the fixed `a` parameter. This handles the case where both E and A are columns in the
-// binding relation (e.g., from join results with varying attributes per row).
+// When aSymIdx >= 0, A is extracted per-tuple from bindingRel[aSymIdx] instead of using
+// the fixed `a` parameter. This handles the case where both E and A are symbols in the
+// binding relation (e.g., from join results with varying attributes per tuple).
 func (m *BadgerMatcher) matchWithBindingsFromCache(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	a datalog.Keyword,
-	aColIdx int,
+	aSymIdx int,
 ) (executor.Relation, bool) {
-	// Find which column in the binding relation has E
+	// Find which symbol in the binding relation has E
 	eVar, isVar := pattern.GetE().(query.Variable)
 	if !isVar {
 		return nil, false // E is not a variable, can't get it from bindings
 	}
 
-	bindingColumns := bindingRel.Columns()
-	eColIdx := -1
-	for i, col := range bindingColumns {
-		if col == eVar.Name {
-			eColIdx = i
+	bindingSymbols := bindingRel.Symbols()
+	eSymIdx := -1
+	for i, sym := range bindingSymbols {
+		if sym == eVar.Name {
+			eSymIdx = i
 			break
 		}
 	}
-	if eColIdx < 0 {
+	if eSymIdx < 0 {
 		return nil, false // E variable not in bindings
 	}
 
-	// Pre-compute fixed-A values when A is constant across all rows
+	// Pre-compute fixed-A values when A is constant across all tuples
 	var fixedCard schema.Cardinality
 	var fixedAAttr Attribute
-	if aColIdx < 0 {
+	if aSymIdx < 0 {
 		fixedCard = schema.CardinalityOne
 		if m.schema != nil {
 			if def := m.schema.GetAttribute(a); def != nil {
@@ -1207,12 +1207,12 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 	}
 
 	// Get tuple builder
-	tupleBuilder := m.getTupleBuilder(pattern, columns)
+	tupleBuilder := m.getTupleBuilder(pattern, symbols)
 
 	// Pre-allocate datom buffer
 	var datomBuf datalog.Datom
-	if aColIdx < 0 {
-		datomBuf.A = a // constant A across all rows
+	if aSymIdx < 0 {
+		datomBuf.A = a // constant A across all tuples
 	}
 
 	buildTuple := func(e datalog.Identity, val interface{}, tx datalog.ElementID) executor.Tuple {
@@ -1229,12 +1229,12 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 
 	for iter.Next() {
 		tuple := iter.Tuple()
-		if eColIdx >= len(tuple) {
+		if eSymIdx >= len(tuple) {
 			continue
 		}
 
 		// Get E value from binding
-		eVal := tuple[eColIdx]
+		eVal := tuple[eSymIdx]
 		eIdent, ok := eVal.(datalog.Identity)
 		if !ok {
 			// Try to convert if it's a different type
@@ -1245,15 +1245,15 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 			}
 		}
 
-		// Determine A and cardinality for this row
+		// Determine A and cardinality for this tuple
 		var rowCard schema.Cardinality
 		var rowAAttr Attribute
-		if aColIdx >= 0 {
-			// Per-row A: extract from binding tuple
-			if aColIdx >= len(tuple) {
+		if aSymIdx >= 0 {
+			// Per-tuple A: extract from binding tuple
+			if aSymIdx >= len(tuple) {
 				continue
 			}
-			aKw, ok := tuple[aColIdx].(datalog.Keyword)
+			aKw, ok := tuple[aSymIdx].(datalog.Keyword)
 			if !ok {
 				continue
 			}
@@ -1324,7 +1324,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 		}
 	}
 
-	return executor.NewMaterializedRelationWithOptions(columns, resultTuples, m.options), true
+	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true
 }
 
 // valuesEqual compares two values for equality
@@ -1363,7 +1363,7 @@ func valuesEqual(a, b interface{}) bool {
 // matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution
 func (m *BadgerMatcher) matchCardinalityManyAsRelation(
 	pattern *query.DataPattern,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	e, a interface{},
 ) (executor.Relation, error) {
 	// Get entity and attribute bytes
@@ -1384,24 +1384,24 @@ func (m *BadgerMatcher) matchCardinalityManyAsRelation(
 	}
 
 	// Build tuples from resolved members
-	// We need to map the values to the correct column positions
+	// We need to map the values to the correct symbol positions
 	tuples := make([]executor.Tuple, 0, len(result.Members))
 
 	for member := range result.Members {
-		tuple := make(executor.Tuple, len(columns))
-		for i, col := range columns {
+		tuple := make(executor.Tuple, len(symbols))
+		for i, sym := range symbols {
 			switch {
 			case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
-				pattern.GetE().(query.Variable).Name == col:
+				pattern.GetE().(query.Variable).Name == sym:
 				tuple[i] = e
 			case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
-				pattern.GetA().(query.Variable).Name == col:
+				pattern.GetA().(query.Variable).Name == sym:
 				tuple[i] = a
 			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
-				pattern.GetV().(query.Variable).Name == col:
+				pattern.GetV().(query.Variable).Name == sym:
 				tuple[i] = member
 			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
-				pattern.GetT().(query.Variable).Name == col:
+				pattern.GetT().(query.Variable).Name == sym:
 				// For cardinality-many, we don't have a single Tx
 				// Use the max ElementID as the "current" transaction
 				tuple[i] = result.MaxElementID
@@ -1411,14 +1411,14 @@ func (m *BadgerMatcher) matchCardinalityManyAsRelation(
 	}
 
 	// Return materialized relation with the resolved set members
-	return executor.NewMaterializedRelation(columns, tuples), nil
+	return executor.NewMaterializedRelation(symbols, tuples), nil
 }
 
 // matchCardinalityVectorAsRelation handles cardinality-vector patterns using RGA resolution.
 // Returns the entire reconstructed vector as a single value bound to the V variable.
 func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 	pattern *query.DataPattern,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	e, a interface{},
 ) (executor.Relation, error) {
 	// Get entity and attribute bytes
@@ -1440,32 +1440,32 @@ func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 
 	// If empty vector, return empty relation
 	if len(result.Elements) == 0 {
-		return executor.NewMaterializedRelation(columns, nil), nil
+		return executor.NewMaterializedRelation(symbols, nil), nil
 	}
 
 	// Build a single tuple with the entire vector as the V value
-	tuple := make(executor.Tuple, len(columns))
-	for i, col := range columns {
+	tuple := make(executor.Tuple, len(symbols))
+	for i, sym := range symbols {
 		switch {
 		case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
-			pattern.GetE().(query.Variable).Name == col:
+			pattern.GetE().(query.Variable).Name == sym:
 			tuple[i] = e
 		case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
-			pattern.GetA().(query.Variable).Name == col:
+			pattern.GetA().(query.Variable).Name == sym:
 			tuple[i] = a
 		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
-			pattern.GetV().(query.Variable).Name == col:
+			pattern.GetV().(query.Variable).Name == sym:
 			// Return the entire vector as a []any
 			tuple[i] = result.Elements
 		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
-			pattern.GetT().(query.Variable).Name == col:
+			pattern.GetT().(query.Variable).Name == sym:
 			// Use the max ElementID as the "current" transaction
 			tuple[i] = result.MaxElementID
 		}
 	}
 
-	// Return single-row relation with the vector
-	return executor.NewMaterializedRelation(columns, []executor.Tuple{tuple}), nil
+	// Return single-tuple relation with the vector
+	return executor.NewMaterializedRelation(symbols, []executor.Tuple{tuple}), nil
 }
 
 // matchVectorWithBindings handles vector patterns when E is bound via join bindings.
@@ -1474,28 +1474,28 @@ func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 func (m *BadgerMatcher) matchVectorWithBindings(
 	pattern *query.DataPattern,
 	bindingRel executor.Relation,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	attr datalog.Keyword,
 ) (executor.Relation, error) {
-	// Find which column in bindings provides the entity
-	var eColIdx int = -1
-	bindingCols := bindingRel.Columns()
+	// Find which symbol in bindings provides the entity
+	var eSymIdx int = -1
+	bindingSyms := bindingRel.Symbols()
 
-	// Find the entity variable in the pattern and match it to binding columns
+	// Find the entity variable in the pattern and match it to binding symbols
 	if pattern.GetE() != nil && pattern.GetE().IsVariable() {
 		eVar := pattern.GetE().(query.Variable).Name
-		for i, col := range bindingCols {
-			if col == eVar {
-				eColIdx = i
+		for i, sym := range bindingSyms {
+			if sym == eVar {
+				eSymIdx = i
 				break
 			}
 		}
 	}
 
-	if eColIdx == -1 {
+	if eSymIdx == -1 {
 		// E is not bound from bindings - fall back to normal path
 		// This shouldn't happen if we got here, but be safe
-		return executor.NewMaterializedRelation(columns, nil), nil
+		return executor.NewMaterializedRelation(symbols, nil), nil
 	}
 
 	// Get attribute bytes once
@@ -1509,7 +1509,7 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 
 	for it.Next() {
 		bindingTuple := it.Tuple()
-		eVal := bindingTuple[eColIdx]
+		eVal := bindingTuple[eSymIdx]
 
 		// Get entity bytes
 		var eBytes [20]byte
@@ -1531,26 +1531,26 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 		}
 
 		// Build output tuple
-		tuple := make(executor.Tuple, len(columns))
-		for i, col := range columns {
+		tuple := make(executor.Tuple, len(symbols))
+		for i, sym := range symbols {
 			switch {
 			case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
-				pattern.GetE().(query.Variable).Name == col:
+				pattern.GetE().(query.Variable).Name == sym:
 				tuple[i] = eVal
 			case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
-				pattern.GetA().(query.Variable).Name == col:
+				pattern.GetA().(query.Variable).Name == sym:
 				tuple[i] = attr
 			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
-				pattern.GetV().(query.Variable).Name == col:
+				pattern.GetV().(query.Variable).Name == sym:
 				// Return the entire vector as []any
 				tuple[i] = result.Elements
 			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
-				pattern.GetT().(query.Variable).Name == col:
+				pattern.GetT().(query.Variable).Name == sym:
 				tuple[i] = result.MaxElementID
 			default:
-				// Check if this column comes from bindings (pass through)
-				for j, bindCol := range bindingCols {
-					if bindCol == col && j < len(bindingTuple) {
+				// Check if this symbol comes from bindings (pass through)
+				for j, bindSym := range bindingSyms {
+					if bindSym == sym && j < len(bindingTuple) {
 						tuple[i] = bindingTuple[j]
 						break
 					}
@@ -1561,13 +1561,13 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 		tuples = append(tuples, tuple)
 	}
 
-	return executor.NewMaterializedRelation(columns, tuples), nil
+	return executor.NewMaterializedRelation(symbols, tuples), nil
 }
 
 // matchCardinalityManyMembership checks if a specific value is in a cardinality-many set
 func (m *BadgerMatcher) matchCardinalityManyMembership(
 	pattern *query.DataPattern,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	e, a, v interface{},
 ) (executor.Relation, error) {
 	// Get entity and attribute bytes
@@ -1589,30 +1589,30 @@ func (m *BadgerMatcher) matchCardinalityManyMembership(
 
 	// If not a member, return empty relation
 	if !isMember {
-		return executor.NewMaterializedRelation(columns, nil), nil
+		return executor.NewMaterializedRelation(symbols, nil), nil
 	}
 
 	// Value is in set - build result tuple
-	tuple := make(executor.Tuple, len(columns))
-	for i, col := range columns {
+	tuple := make(executor.Tuple, len(symbols))
+	for i, sym := range symbols {
 		switch {
 		case pattern.GetE() != nil && pattern.GetE().IsVariable() &&
-			pattern.GetE().(query.Variable).Name == col:
+			pattern.GetE().(query.Variable).Name == sym:
 			tuple[i] = e
 		case pattern.GetA() != nil && pattern.GetA().IsVariable() &&
-			pattern.GetA().(query.Variable).Name == col:
+			pattern.GetA().(query.Variable).Name == sym:
 			tuple[i] = a
 		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
-			pattern.GetV().(query.Variable).Name == col:
+			pattern.GetV().(query.Variable).Name == sym:
 			tuple[i] = v
 		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
-			pattern.GetT().(query.Variable).Name == col:
+			pattern.GetT().(query.Variable).Name == sym:
 			// For membership queries, we don't have a specific Tx
 			tuple[i] = datalog.ElementID{}
 		}
 	}
 
-	return executor.NewMaterializedRelation(columns, []executor.Tuple{tuple}), nil
+	return executor.NewMaterializedRelation(symbols, []executor.Tuple{tuple}), nil
 }
 
 // cardinalityManyScanAllEntitiesIterator streams results for [?e :attr ?v] patterns
@@ -1621,7 +1621,7 @@ func (m *BadgerMatcher) matchCardinalityManyMembership(
 type cardinalityManyScanAllEntitiesIterator struct {
 	matcher      *BadgerMatcher
 	pattern      *query.DataPattern
-	columns      []query.Symbol
+	symbols      []query.Symbol
 	a            interface{}
 	aBytes       [32]byte
 	storageIter  Iterator
@@ -1643,20 +1643,20 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			it.currentMemberIdx++
 
 			// Build tuple
-			tuple := make(executor.Tuple, len(it.columns))
-			for i, col := range it.columns {
+			tuple := make(executor.Tuple, len(it.symbols))
+			for i, sym := range it.symbols {
 				switch {
 				case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
-					it.pattern.GetE().(query.Variable).Name == col:
+					it.pattern.GetE().(query.Variable).Name == sym:
 					tuple[i] = it.currentEntity
 				case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
-					it.pattern.GetA().(query.Variable).Name == col:
+					it.pattern.GetA().(query.Variable).Name == sym:
 					tuple[i] = it.a
 				case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
-					it.pattern.GetV().(query.Variable).Name == col:
+					it.pattern.GetV().(query.Variable).Name == sym:
 					tuple[i] = member
 				case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
-					it.pattern.GetT().(query.Variable).Name == col:
+					it.pattern.GetT().(query.Variable).Name == sym:
 					tuple[i] = it.currentMaxElementID
 				}
 			}
@@ -1724,7 +1724,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 // Scans all entities with the attribute and resolves each set using add-wins
 func (m *BadgerMatcher) matchCardinalityManyScanAllEntities(
 	pattern *query.DataPattern,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	a interface{},
 ) (executor.Relation, error) {
 	// Get attribute bytes
@@ -1748,14 +1748,14 @@ func (m *BadgerMatcher) matchCardinalityManyScanAllEntities(
 	iter := &cardinalityManyScanAllEntitiesIterator{
 		matcher:      m,
 		pattern:      pattern,
-		columns:      columns,
+		symbols:      symbols,
 		a:            a,
 		aBytes:       aBytes,
 		storageIter:  storageIter,
 		seenEntities: make(map[[20]byte]bool),
 	}
 
-	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }
 
 // cardinalityManyAVETValueIterator streams results for [?e :attr "value"] patterns
@@ -1769,7 +1769,7 @@ func (m *BadgerMatcher) matchCardinalityManyScanAllEntities(
 type cardinalityManyAVETValueIterator struct {
 	matcher     *BadgerMatcher
 	pattern     *query.DataPattern
-	columns     []query.Symbol
+	symbols     []query.Symbol
 	a, v        interface{}
 	aBytes      [32]byte
 	storageIter Iterator
@@ -1876,20 +1876,20 @@ func (it *cardinalityManyAVETValueIterator) isCurrentEntityMember() bool {
 }
 
 func (it *cardinalityManyAVETValueIterator) buildTuple() {
-	tuple := make(executor.Tuple, len(it.columns))
-	for i, col := range it.columns {
+	tuple := make(executor.Tuple, len(it.symbols))
+	for i, sym := range it.symbols {
 		switch {
 		case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
-			it.pattern.GetE().(query.Variable).Name == col:
+			it.pattern.GetE().(query.Variable).Name == sym:
 			tuple[i] = it.currentEntity
 		case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
-			it.pattern.GetA().(query.Variable).Name == col:
+			it.pattern.GetA().(query.Variable).Name == sym:
 			tuple[i] = it.a
 		case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
-			it.pattern.GetV().(query.Variable).Name == col:
+			it.pattern.GetV().(query.Variable).Name == sym:
 			tuple[i] = it.v
 		case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
-			it.pattern.GetT().(query.Variable).Name == col:
+			it.pattern.GetT().(query.Variable).Name == sym:
 			tuple[i] = datalog.ElementID{}
 		}
 	}
@@ -1916,7 +1916,7 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 type cardinalityManyFindEntitiesWithValueIterator struct {
 	matcher      *BadgerMatcher
 	pattern      *query.DataPattern
-	columns      []query.Symbol
+	symbols      []query.Symbol
 	a, v         interface{}
 	aBytes       [32]byte
 	storageIter  Iterator
@@ -1951,20 +1951,20 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
 		}
 
 		// Value is in the set - build tuple
-		tuple := make(executor.Tuple, len(it.columns))
-		for i, col := range it.columns {
+		tuple := make(executor.Tuple, len(it.symbols))
+		for i, sym := range it.symbols {
 			switch {
 			case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
-				it.pattern.GetE().(query.Variable).Name == col:
+				it.pattern.GetE().(query.Variable).Name == sym:
 				tuple[i] = datom.E
 			case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
-				it.pattern.GetA().(query.Variable).Name == col:
+				it.pattern.GetA().(query.Variable).Name == sym:
 				tuple[i] = it.a
 			case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
-				it.pattern.GetV().(query.Variable).Name == col:
+				it.pattern.GetV().(query.Variable).Name == sym:
 				tuple[i] = it.v
 			case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
-				it.pattern.GetT().(query.Variable).Name == col:
+				it.pattern.GetT().(query.Variable).Name == sym:
 				tuple[i] = datalog.ElementID{}
 			}
 		}
@@ -1992,7 +1992,7 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Close() error {
 // instead of O(n) where n = all entities with the attribute.
 func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
 	pattern *query.DataPattern,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	a, v interface{},
 ) (executor.Relation, error) {
 	// Get attribute bytes
@@ -2022,12 +2022,12 @@ func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
 	iter := &cardinalityManyAVETValueIterator{
 		matcher:     m,
 		pattern:     pattern,
-		columns:     columns,
+		symbols:     symbols,
 		a:           a,
 		v:           v,
 		aBytes:      aBytes,
 		storageIter: storageIter,
 	}
 
-	return executor.NewStreamingRelationWithOptions(columns, iter, m.options), nil
+	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
 }

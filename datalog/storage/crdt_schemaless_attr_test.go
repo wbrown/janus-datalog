@@ -97,12 +97,12 @@ func TestSchemalessAttrUnboundQuery_BugRepro(t *testing.T) {
 
 			// Should find at least the schemaless attribute
 			found := false
-			for _, row := range results {
-				if len(row) >= 3 {
-					if kw, ok := row[1].(datalog.Keyword); ok {
+			for _, tuple := range results {
+				if len(tuple) >= 3 {
+					if kw, ok := tuple[1].(datalog.Keyword); ok {
 						if kw.String() == ":test/data" {
 							found = true
-							assert.Equal(t, "hello", row[2],
+							assert.Equal(t, "hello", tuple[2],
 								"[%s] Should find correct value for schemaless attr", mode.name)
 						}
 					}
@@ -160,11 +160,11 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 			require.NoError(t, err)
 
 			var counterValues []any
-			for _, row := range unboundResults {
-				if len(row) >= 3 {
-					if kw, ok := row[1].(datalog.Keyword); ok {
+			for _, tuple := range unboundResults {
+				if len(tuple) >= 3 {
+					if kw, ok := tuple[1].(datalog.Keyword); ok {
 						if kw.String() == ":test/counter" {
-							counterValues = append(counterValues, row[2])
+							counterValues = append(counterValues, tuple[2])
 						}
 					}
 				}
@@ -237,9 +237,9 @@ func TestSchemalessRemove_RoundTrip(t *testing.T) {
 				`[:find ?e ?a ?v :where [?e ?a ?v]]`,
 			)
 			require.NoError(t, err)
-			for _, row := range unboundResults {
-				if len(row) >= 3 {
-					if kw, ok := row[1].(datalog.Keyword); ok {
+			for _, tuple := range unboundResults {
+				if len(tuple) >= 3 {
+					if kw, ok := tuple[1].(datalog.Keyword); ok {
 						assert.NotEqual(t, ":test/data", kw.String(),
 							"[%s] unbound query should not find removed schemaless attribute", mode.name)
 					}

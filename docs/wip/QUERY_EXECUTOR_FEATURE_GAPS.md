@@ -55,8 +55,8 @@ The QueryExecutor (clause-based execution) now has feature parity for all critic
 - `executor.go:executeRealizedNonIterating()` - Core QueryExecutor path per tuple
 
 **Parity Tests**: `TestRelationInputDualExecutorParity` in `dual_executor_test.go`
-- Simple RelationInput with two columns
-- Single column RelationInput
+- Simple RelationInput with two symbols
+- Single symbol RelationInput
 - RelationInput with no aggregation
 - RelationInput with predicate filter
 - Empty RelationInput
@@ -133,7 +133,7 @@ The QueryExecutor (clause-based execution) now has feature parity for all critic
 
 **QueryExecutor Gap**:
 - Projects directly to find symbols without checking input parameters
-- Missing columns cause projection errors
+- Missing symbols cause projection errors
 
 **Impact**: Rare edge case - queries where input parameters only appear in `:find` (not in patterns) may fail.
 
@@ -149,11 +149,11 @@ The QueryExecutor (clause-based execution) now has feature parity for all critic
 
 **QueryExecutor**: May not handle expression-only phases correctly. Needs verification with conditional aggregate rewriting tests.
 
-### Aggregate Required Columns Tracking
+### Aggregate Required Symbols Tracking
 
-**Legacy**: Reads `"aggregate_required_columns"` from metadata to prevent dropping columns needed for aggregation.
+**Legacy**: Reads `"aggregate_required_columns"` from metadata to prevent dropping symbols needed for aggregation.
 
-**QueryExecutor**: May eliminate columns prematurely. Lower risk since aggregation tests pass.
+**QueryExecutor**: May eliminate symbols prematurely. Lower risk since aggregation tests pass.
 
 ### Disjoint Relation Group Handling
 

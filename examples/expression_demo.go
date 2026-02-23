@@ -27,21 +27,21 @@ func (m *MockMatcher) Match(pattern *query.DataPattern, bindings executor.Relati
 		}
 	}
 
-	// Extract pattern variables to determine columns
-	var columns []query.Symbol
+	// Extract pattern variables to determine symbols
+	var symbols []query.Symbol
 	if e := pattern.GetE(); e != nil && e.IsVariable() {
 		if v, ok := e.(*query.Variable); ok {
-			columns = append(columns, v.Name)
+			symbols = append(symbols, v.Name)
 		}
 	}
 	if a := pattern.GetA(); a != nil && a.IsVariable() {
 		if v, ok := a.(*query.Variable); ok {
-			columns = append(columns, v.Name)
+			symbols = append(symbols, v.Name)
 		}
 	}
 	if v := pattern.GetV(); v != nil && v.IsVariable() {
 		if vr, ok := v.(*query.Variable); ok {
-			columns = append(columns, vr.Name)
+			symbols = append(symbols, vr.Name)
 		}
 	}
 
@@ -61,7 +61,7 @@ func (m *MockMatcher) Match(pattern *query.DataPattern, bindings executor.Relati
 		tuples = append(tuples, tuple)
 	}
 
-	return executor.NewMaterializedRelation(columns, tuples), nil
+	return executor.NewMaterializedRelation(symbols, tuples), nil
 }
 
 func matchesDatom(d datalog.Datom, pattern *query.DataPattern) bool {
@@ -128,18 +128,18 @@ func runQuery(name string, queryStr string, datoms []datalog.Datom) {
 	}
 
 	// Display results
-	columns := result.Columns()
+	symbols := result.Symbols()
 	fmt.Printf("Results (%d):\n", result.Size())
 
 	iter := result.Iterator()
 	for iter.Next() {
 		tuple := iter.Tuple()
 		fmt.Printf("  ")
-		for j, col := range columns {
+		for j, sym := range symbols {
 			if j > 0 {
 				fmt.Printf(", ")
 			}
-			fmt.Printf("%s = %v", col, tuple[j])
+			fmt.Printf("%s = %v", sym, tuple[j])
 		}
 		fmt.Printf("\n")
 	}

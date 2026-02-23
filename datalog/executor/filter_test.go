@@ -12,7 +12,7 @@ func TestComparisonFilter(t *testing.T) {
 		name     string
 		filter   ComparisonFilter
 		tuple    Tuple
-		columns  []query.Symbol
+		symbols  []query.Symbol
 		expected bool
 	}{
 		{
@@ -23,7 +23,7 @@ func TestComparisonFilter(t *testing.T) {
 				Value:    int64(30),
 			},
 			tuple:    Tuple{int64(25)},
-			columns:  []query.Symbol{datalog.NewSymbol("?age")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?age")},
 			expected: true,
 		},
 		{
@@ -34,7 +34,7 @@ func TestComparisonFilter(t *testing.T) {
 				Value:    int64(30),
 			},
 			tuple:    Tuple{int64(35)},
-			columns:  []query.Symbol{datalog.NewSymbol("?age")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?age")},
 			expected: false,
 		},
 		{
@@ -45,7 +45,7 @@ func TestComparisonFilter(t *testing.T) {
 				Value:    "Alice",
 			},
 			tuple:    Tuple{"Alice"},
-			columns:  []query.Symbol{datalog.NewSymbol("?name")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?name")},
 			expected: true,
 		},
 		{
@@ -56,36 +56,36 @@ func TestComparisonFilter(t *testing.T) {
 				Value:    "Alice",
 			},
 			tuple:    Tuple{"Bob"},
-			columns:  []query.Symbol{datalog.NewSymbol("?name")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?name")},
 			expected: true,
 		},
 		{
-			name: "symbol not in columns",
+			name: "symbol not in symbols",
 			filter: ComparisonFilter{
 				Function: "<",
 				Symbol:   datalog.NewSymbol("?missing"),
 				Value:    int64(30),
 			},
 			tuple:    Tuple{int64(25)},
-			columns:  []query.Symbol{datalog.NewSymbol("?age")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?age")},
 			expected: false,
 		},
 		{
-			name: "multiple columns",
+			name: "multiple symbols",
 			filter: ComparisonFilter{
 				Function: ">=",
 				Symbol:   datalog.NewSymbol("?score"),
 				Value:    3.5,
 			},
 			tuple:    Tuple{"Alice", 4.0},
-			columns:  []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score")},
 			expected: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.filter.Evaluate(tt.tuple, tt.columns)
+			result := tt.filter.Evaluate(tt.tuple, tt.symbols)
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
@@ -98,7 +98,7 @@ func TestBinaryFilterEvaluate(t *testing.T) {
 		name     string
 		filter   BinaryFilter
 		tuple    Tuple
-		columns  []query.Symbol
+		symbols  []query.Symbol
 		expected bool
 	}{
 		{
@@ -109,7 +109,7 @@ func TestBinaryFilterEvaluate(t *testing.T) {
 				Right:    datalog.NewSymbol("?y"),
 			},
 			tuple:    Tuple{int64(10), int64(20)},
-			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: true,
 		},
 		{
@@ -120,7 +120,7 @@ func TestBinaryFilterEvaluate(t *testing.T) {
 				Right:    datalog.NewSymbol("?y"),
 			},
 			tuple:    Tuple{int64(10), int64(20)},
-			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: false,
 		},
 		{
@@ -131,7 +131,7 @@ func TestBinaryFilterEvaluate(t *testing.T) {
 				Right:    datalog.NewSymbol("?b"),
 			},
 			tuple:    Tuple{"test", "test"},
-			columns:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")},
 			expected: true,
 		},
 		{
@@ -142,7 +142,7 @@ func TestBinaryFilterEvaluate(t *testing.T) {
 				Right:    datalog.NewSymbol("?y"),
 			},
 			tuple:    Tuple{int64(10), 20.5},
-			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: true,
 		},
 		{
@@ -153,14 +153,14 @@ func TestBinaryFilterEvaluate(t *testing.T) {
 				Right:    datalog.NewSymbol("?y"),
 			},
 			tuple:    Tuple{int64(10)},
-			columns:  []query.Symbol{datalog.NewSymbol("?x")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x")},
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.filter.Evaluate(tt.tuple, tt.columns)
+			result := tt.filter.Evaluate(tt.tuple, tt.symbols)
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}

@@ -226,17 +226,17 @@ func (ds *DatalogStorage) ExecuteQueryWithInputs(
 }
 
 func relationToSlice(rel executor.Relation) [][]interface{} {
-    rows := make([][]interface{}, 0, rel.Size())
+    tuples := make([][]interface{}, 0, rel.Size())
     it := rel.Iterator()
     for it.Next() {
         tuple := it.Tuple()
-        row := make([]interface{}, len(tuple))
+        tuple := make([]interface{}, len(tuple))
         for i, v := range tuple {
-            row[i] = v
+            tuple[i] = v
         }
-        rows = append(rows, row)
+        tuples = append(tuples, tuple)
     }
-    return rows
+    return tuples
 }
 ```
 

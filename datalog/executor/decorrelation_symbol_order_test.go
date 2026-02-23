@@ -130,7 +130,7 @@ func TestParallelDecorrelationColumnOrder(t *testing.T) {
 		// Which should be: [date_string, 101.50 (max high), 99.50 (min low), 1000000 (sum volume)]
 
 		if len(tuple) != 4 {
-			t.Fatalf("Expected 4 columns, got %d: %v", len(tuple), tuple)
+			t.Fatalf("Expected 4 symbols, got %d: %v", len(tuple), tuple)
 		}
 
 		// Log what we actually got
@@ -202,7 +202,7 @@ func TestParallelDecorrelationColumnOrder(t *testing.T) {
 
 		// Verify tuple order matches :find clause
 		if len(tuple) != 4 {
-			t.Fatalf("Expected 4 columns, got %d: %v", len(tuple), tuple)
+			t.Fatalf("Expected 4 symbols, got %d: %v", len(tuple), tuple)
 		}
 
 		// Log what we actually got

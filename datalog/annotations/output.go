@@ -171,13 +171,13 @@ func (f *OutputFormatter) Format(event Event) string {
 	case "pattern/multi-match":
 		pattern := event.Data["pattern"].(string)
 		bindingTuples := event.Data["binding.tuples"].(int)
-		bindingColumns := event.Data["binding.columns"].([]string)
+		bindingSymbols := event.Data["binding.symbols"].([]string)
 		totalMatches := event.Data["match.total"].(int)
 		scansPerformed := event.Data["scans.performed"].(int)
 		datomsScanned := event.Data["datoms.scanned"].(int)
 
 		// Format the binding relation
-		bindingRelStr := f.renderer.RenderRelationWithAttrs(bindingColumns, bindingTuples)
+		bindingRelStr := f.renderer.RenderRelationWithAttrs(bindingSymbols, bindingTuples)
 
 		// Format like: MultiMatch([pattern]) with binding Relation → Y tuples (Z scans, W datoms)
 		var matchStr string
@@ -249,7 +249,7 @@ func (f *OutputFormatter) Format(event Event) string {
 		pattern := event.Data["pattern"].(string)
 		matchCount := event.Data["match.count"].(int)
 
-		// Extract bound symbols from the pattern to determine output columns
+		// Extract bound symbols from the pattern to determine output symbols
 		var outputSymbols []string
 
 		// Check if we have symbol order information
@@ -420,13 +420,13 @@ func (f *OutputFormatter) Format(event Event) string {
 	case "pattern/match-with-bindings":
 		// Format pattern match that has input bindings
 		pattern := event.Data["pattern"].(string)
-		bindingCols := event.Data["binding.columns"].([]string)
+		bindingSyms := event.Data["binding.symbols"].([]string)
 		bindingSize := event.Data["binding.size"].(int)
 
 		// Format the binding relation
-		bindingRelStr := f.renderer.RenderRelationWithAttrs(bindingCols, bindingSize)
+		bindingRelStr := f.renderer.RenderRelationWithAttrs(bindingSyms, bindingSize)
 
-		// Format as Pattern(...) with binding Relation([cols], N tuples)
+		// Format as Pattern(...) with binding Relation([symbols], N tuples)
 		var patternStr string
 		if f.useColor {
 			patternStr = fmt.Sprintf("%s%s%s %s %s",

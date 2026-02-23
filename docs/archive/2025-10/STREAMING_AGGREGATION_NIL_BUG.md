@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-Pure aggregations (max, min, avg, sum) return `nil` values instead of computed results when using **streaming aggregation** (>100 rows). The bug does NOT occur with **batch aggregation** (<100 rows).
+Pure aggregations (max, min, avg, sum) return `nil` values instead of computed results when using **streaming aggregation** (>100 tuples). The bug does NOT occur with **batch aggregation** (<100 tuples).
 
 **Key Finding**: This is a pre-existing bug in `StreamingAggregateRelation`, NOT a regression from today's subquery nil fixes. The subquery fixes are correct and working as intended.
 
@@ -21,8 +21,8 @@ Pure aggregations (max, min, avg, sum) return `nil` values instead of computed r
 2. **Investigation**: Created test with BadgerDB - all aggregations PASSED (used batch mode)
 3. **Confusion**: gopher-street queries returned nil, but tests passed
 4. **Root Cause**: Discovered streaming vs batch aggregation difference
-   - Test used 3 rows → batch aggregation → ✅ works
-   - gopher-street used 2456 rows → streaming aggregation → ❌ returns nil
+   - Test used 3 tuples → batch aggregation → ✅ works
+   - gopher-street used 2456 tuples → streaming aggregation → ❌ returns nil
 5. **Confirmation**: Disabled streaming in gopher-street → aggregations work perfectly
 
 ---
@@ -31,7 +31,7 @@ Pure aggregations (max, min, avg, sum) return `nil` values instead of computed r
 
 ### Test Case
 
-Created `datalog/storage/pure_aggregation_badger_test.go` with 150 rows to trigger streaming:
+Created `datalog/storage/pure_aggregation_badger_test.go` with 150 tuples to trigger streaming:
 
 ```bash
 cd /Users/wbrown/go/src/github.com/wbrown/janus-datalog
@@ -40,7 +40,7 @@ go test -v ./datalog/storage -run TestPureAggregationWithBadgerDB
 
 **Results with StreamingAggregation = true:**
 ```
-NonAggregated:        ✅ PASS (150 rows returned)
+NonAggregated:        ✅ PASS (150 tuples returned)
 PureMaxAggregation:   ❌ FAIL (returns nil, expected 249.0)
 PureMinAggregation:   ❌ FAIL (returns nil, expected 100.0)
 PureCountAggregation: ✅ PASS (returns 150)
@@ -50,7 +50,7 @@ PureCountAggregation: ✅ PASS (returns 150)
 
 ```
 TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used 'batch'.
-Either increase test data size (currently 150 rows) or decrease StreamingAggregationThreshold (currently 100).
+Either increase test data size (currently 150 tuples) or decrease StreamingAggregationThreshold (currently 100).
 ```
 
 This ensures the test continues to reproduce the streaming bug even if implementation details change.
@@ -89,7 +89,7 @@ useStreaming := EnableStreamingAggregation &&
 
 ### Affected Aggregations
 
-| Function | Batch (<100 rows) | Streaming (≥100 rows) |
+| Function | Batch (<100 tuples) | Streaming (≥100 tuples) |
 |----------|-------------------|----------------------|
 | count    | ✅ Works          | ✅ Works             |
 | sum      | ✅ Works          | ❌ Returns nil       |
@@ -97,21 +97,21 @@ useStreaming := EnableStreamingAggregation &&
 | min      | ✅ Works          | ❌ Returns nil       |
 | max      | ✅ Works          | ❌ Returns nil       |
 
-**Pattern**: `count` works because it doesn't require column matching. All value-based aggregations fail.
+**Pattern**: `count` works because it doesn't require symbol matching. All value-based aggregations fail.
 
 ### Debug Output
 
 With `debugAggregation = true` and `EnableStreamingAggregationDebug = true`:
 
 ```
-[ExecuteAggregations] Called with 1 find elements, rel columns: [?h ?s]
+[ExecuteAggregations] Called with 1 find elements, rel symbols: [?h ?s]
 [ExecuteAggregations] Element 0: FindAggregate - Function=max, Arg=?h
 [ExecuteAggregations] Extracted 1 aggregates, 0 groupByVars: []
 [ExecuteAggregations] aggregates=1, eligible=true, shouldUse=true, useStreaming=true, relType=*executor.MaterializedRelation, relSize=2456
 [ExecuteAggregations] Using STREAMING aggregation (groupByVars=[])
 ```
 
-Note: Relation has correct columns `[?h ?s]`, but streaming aggregation returns nil.
+Note: Relation has correct symbols `[?h ?s]`, but streaming aggregation returns nil.
 
 ---
 
@@ -120,18 +120,18 @@ Note: Relation has correct columns `[?h ?s]`, but streaming aggregation returns 
 ### Hypothesis
 
 `StreamingAggregateRelation` has a bug in how it:
-1. Matches aggregate argument variables (?h) to relation columns
+1. Matches aggregate argument variables (?h) to relation symbols
 2. Extracts values from tuples during iteration
 3. Computes final aggregate results
 
 The bug is likely in one of these methods:
 - `StreamingAggregateRelation.Iterator()` - Creates iterator for streaming computation
-- `StreamingAggregateRelation.Columns()` - Returns result columns
+- `StreamingAggregateRelation.Symbols()` - Returns result symbols
 - Internal aggregation accumulator logic
 
 ### Why Count Works
 
-`count` doesn't need to extract column values - it just counts tuples:
+`count` doesn't need to extract symbol values - it just counts tuples:
 
 ```go
 case "count":
@@ -139,11 +139,11 @@ case "count":
 ```
 
 But `max`, `min`, `avg`, `sum` all need to:
-1. Find the column index for the aggregate argument
-2. Extract values from that column
+1. Find the symbol index for the aggregate argument
+2. Extract values from that symbol
 3. Compute the aggregate
 
-The column matching or value extraction is failing in streaming mode.
+The symbol matching or value extraction is failing in streaming mode.
 
 ---
 
@@ -156,7 +156,7 @@ The column matching or value extraction is failing in streaming mode.
 
 ### What Still Works
 - ✅ Queries with <100 results (uses batch aggregation)
-- ✅ Count aggregations (doesn't need column matching)
+- ✅ Count aggregations (doesn't need symbol matching)
 - ✅ Grouped aggregations (may use different code path)
 - ✅ All October 10 subquery fixes (NOT related to this bug)
 
@@ -218,7 +218,7 @@ type StreamingAggregateRelation struct {
 
 func (r *StreamingAggregateRelation) Iterator() Iterator {
     // BUG IS LIKELY HERE
-    // Check column matching logic
+    // Check symbol matching logic
     // Check value extraction from tuples
     // Check aggregate computation
 }
@@ -227,8 +227,8 @@ func (r *StreamingAggregateRelation) Iterator() Iterator {
 ### 2. Add Comprehensive Tests
 
 Tests needed:
-- ✅ Pure aggregations with <100 rows (batch mode) - EXISTS
-- ✅ Pure aggregations with >100 rows (streaming mode) - EXISTS (now fails correctly)
+- ✅ Pure aggregations with <100 tuples (batch mode) - EXISTS
+- ✅ Pure aggregations with >100 tuples (streaming mode) - EXISTS (now fails correctly)
 - ⏳ Grouped aggregations with streaming
 - ⏳ Multiple aggregates in one query with streaming
 - ⏳ Conditional aggregates with streaming
@@ -240,7 +240,7 @@ Compare streaming vs batch implementations to find divergence:
 - `StreamingAggregateRelation` (streaming) - ❌ broken
 
 Look for differences in:
-- Column index lookup
+- Symbol index lookup
 - Tuple value extraction
 - Nil value handling
 
@@ -269,7 +269,7 @@ go test -v -run TestToolCalculateISOStrategy
 
 After fix, verify streaming still provides benefits:
 - Memory usage: O(groups) not O(tuples) for large datasets
-- Speed: Similar or faster than batch for >1000 rows
+- Speed: Similar or faster than batch for >1000 tuples
 - Correctness: Exact same results as batch aggregation
 
 ---
@@ -277,7 +277,7 @@ After fix, verify streaming still provides benefits:
 ## Related Files
 
 - `datalog/executor/aggregation.go` - Contains bug in StreamingAggregateRelation
-- `datalog/storage/pure_aggregation_badger_test.go` - Reproduces bug with >100 rows
+- `datalog/storage/pure_aggregation_badger_test.go` - Reproduces bug with >100 tuples
 - `datalog/executor/executor_aggregate_test.go` - Tests that use batch aggregation (pass)
 - `PURE_AGGREGATION_NIL_BUG.md` - Incorrect bug report (blamed wrong component)
 - `FIXES_2025_10_10.md` - Subquery fixes (unrelated, working correctly)
@@ -287,14 +287,14 @@ After fix, verify streaming still provides benefits:
 ## Conclusions
 
 1. **October 10 subquery fixes are correct** - No regression, working as intended
-2. **Streaming aggregation has pre-existing bug** - Affects max/min/avg/sum with >100 rows
+2. **Streaming aggregation has pre-existing bug** - Affects max/min/avg/sum with >100 tuples
 3. **Batch aggregation works perfectly** - Can be used as temporary workaround
 4. **Bug is isolated and reproducible** - Test case exists, root cause identified
 5. **Fix is straightforward** - Compare streaming vs batch implementations
 
 **Priority**: HIGH - Affects all large-dataset analytics in gopher-street
 
-**Recommended Action**: Fix `StreamingAggregateRelation` iterator logic to match batch aggregation behavior for column matching and value extraction.
+**Recommended Action**: Fix `StreamingAggregateRelation` iterator logic to match batch aggregation behavior for symbol matching and value extraction.
 
 ---
 
@@ -304,25 +304,25 @@ After fix, verify streaming still provides benefits:
 
 The bug was actually **TWO separate bugs** in `StreamingAggregateRelation.materialize()`:
 
-#### Bug 1: Column Index Initialization
+#### Bug 1: Symbol Index Initialization
 
-Lines 732-743 initialized column index arrays to 0 (default int value) instead of -1:
+Lines 732-743 initialized symbol index arrays to 0 (default int value) instead of -1:
 
 ```go
 // BEFORE (BROKEN):
 aggIndices := make([]int, len(r.aggregates))
 for i, agg := range r.aggregates {
-    for j, col := range columns {
+    for j, col := range symbols {
         if col == agg.Arg {
             aggIndices[i] = j
             break
         }
     }
 }
-// If column not found, aggIndices[i] remains 0 (WRONG - uses first column)
+// If symbol not found, aggIndices[i] remains 0 (WRONG - uses first symbol)
 ```
 
-**Impact**: When aggregate argument column was not found, index 0 was used, causing wrong column data to be aggregated.
+**Impact**: When aggregate argument symbol was not found, index 0 was used, causing wrong symbol data to be aggregated.
 
 **Fix**: Initialize indices to -1 and check for >= 0 before use:
 
@@ -333,7 +333,7 @@ for i := range aggIndices {
     aggIndices[i] = -1 // Initialize to -1 (not found)
 }
 for i, agg := range r.aggregates {
-    for j, col := range columns {
+    for j, col := range symbols {
         if col == agg.Arg {
             aggIndices[i] = j
             break
@@ -416,7 +416,7 @@ case "max":
 All tests pass after fix:
 
 ```bash
-# BadgerDB test with 150 rows (streaming mode)
+# BadgerDB test with 150 tuples (streaming mode)
 go test -v ./datalog/storage -run TestPureAggregationWithBadgerDB
 # Result: ✅ PASS - All aggregations return correct values
 
@@ -437,7 +437,7 @@ go test -v ./datalog/executor -run TestDecorrelation
 
 Added temporary debug logging to diagnose the issue:
 
-- Lines 723-727: Log source columns, group-by vars, and aggregates
+- Lines 723-727: Log source symbols, group-by vars, and aggregates
 - Lines 755-758: Log computed indices
 - Lines 787-789: Log tuples being processed
 - Lines 836-838: Log aggregate updates
@@ -456,7 +456,7 @@ None - the fixes are purely correctness fixes:
 The streaming aggregation performance characteristics remain unchanged:
 - Memory: O(groups) instead of O(tuples)
 - Time: Single pass over data
-- Threshold: 100 rows (unchanged)
+- Threshold: 100 tuples (unchanged)
 
 ### Status
 
