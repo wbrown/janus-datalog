@@ -956,6 +956,14 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		return fmt.Errorf("failed to resolve query: %w", err)
 	}
 
+	// Execute query as streaming relation
+	rel, err := d.ExecuteQueryRelation(q, inputs...)
+	if err != nil {
+		return err
+	}
+	iter := rel.Iterator()
+	defer iter.Close()
+
 	// Check if element type is a struct or scalar
 	// time.Time and Keyword are structs but treated as scalars
 	// Identity is a pointer type alias and goes through scalar path automatically
@@ -967,12 +975,16 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 			return err
 		}
 
-		results, err := d.ExecuteQueryWithInputs(q, inputs...)
-		if err != nil {
-			return err
+		newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
+		for iter.Next() {
+			elem := reflect.New(elemType).Elem()
+			if err := mapper.MapTuple(iter.Tuple(), elem); err != nil {
+				return err
+			}
+			newSlice = reflect.Append(newSlice, elem)
 		}
-
-		return mapper.MapAll(results, sliceVal)
+		sliceVal.Set(newSlice)
+		return nil
 	}
 
 	// Scalar path - single column queries only
@@ -980,13 +992,34 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		return fmt.Errorf("scalar QueryInto requires exactly 1 find element, got %d", len(q.Find))
 	}
 
-	results, err := d.ExecuteQueryWithInputs(q, inputs...)
-	if err != nil {
-		return err
-	}
+	newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
+	for iter.Next() {
+		tuple := iter.Tuple()
+		if len(tuple) == 0 {
+			continue
+		}
 
-	// Map scalar results directly
-	return mapScalarResults(results, sliceVal, elemIsPtr)
+		var elemVal reflect.Value
+		if elemIsPtr {
+			elemVal = reflect.New(elemType).Elem()
+		} else {
+			elemVal = reflect.New(elemType).Elem()
+		}
+
+		if err := setScalarValue(elemVal, tuple[0]); err != nil {
+			return err
+		}
+
+		if elemIsPtr {
+			ptr := reflect.New(elemType)
+			ptr.Elem().Set(elemVal)
+			newSlice = reflect.Append(newSlice, ptr)
+		} else {
+			newSlice = reflect.Append(newSlice, elemVal)
+		}
+	}
+	sliceVal.Set(newSlice)
+	return nil
 }
 
 // QueryOneInto executes a Datalog query expecting at most one result and populates a value.
@@ -1020,30 +1053,36 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 		return false, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
+	// Execute query as streaming relation
+	rel, err := d.ExecuteQueryRelation(q, inputs...)
+	if err != nil {
+		return false, err
+	}
+	iter := rel.Iterator()
+	defer iter.Close()
+
+	// Read first tuple
+	if !iter.Next() {
+		return false, nil
+	}
+	firstTuple := make([]interface{}, len(iter.Tuple()))
+	copy(firstTuple, iter.Tuple())
+
+	// Check for multiple results
+	if iter.Next() {
+		return false, dlreflect.ErrMultipleResults
+	}
+
 	// Check if destination is a struct (but not time.Time, Identity, Keyword which are scalars)
 	isStruct := elemType.Kind() == reflect.Struct && !isScalarStructType(elemType)
 
 	if isStruct {
-		// Struct path - use mapper
 		findColumns := extractFindColumnStrings(q.Find)
 		mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
 		if err != nil {
 			return false, err
 		}
-
-		results, err := d.ExecuteQueryWithInputs(q, inputs...)
-		if err != nil {
-			return false, err
-		}
-
-		if len(results) == 0 {
-			return false, nil
-		}
-		if len(results) > 1 {
-			return false, dlreflect.ErrMultipleResults
-		}
-
-		if err := mapper.MapTuple(results[0], elemVal); err != nil {
+		if err := mapper.MapTuple(firstTuple, elemVal); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -1054,23 +1093,10 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 		return false, fmt.Errorf("scalar QueryOneInto requires exactly 1 find element, got %d", len(q.Find))
 	}
 
-	results, err := d.ExecuteQueryWithInputs(q, inputs...)
-	if err != nil {
-		return false, err
-	}
-
-	if len(results) == 0 {
-		return false, nil
-	}
-	if len(results) > 1 {
-		return false, dlreflect.ErrMultipleResults
-	}
-
-	// Map single scalar result
-	if len(results[0]) == 0 {
+	if len(firstTuple) == 0 {
 		return false, fmt.Errorf("query returned empty tuple")
 	}
-	if err := setScalarValue(elemVal, results[0][0]); err != nil {
+	if err := setScalarValue(elemVal, firstTuple[0]); err != nil {
 		return false, err
 	}
 	return true, nil

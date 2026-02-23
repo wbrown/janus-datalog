@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -15,10 +16,12 @@ var queryGetAttr = func() *query.Query {
 	return q
 }()
 
-// Query executes a Datalog query string or pre-parsed *query.Query.
-// This is a convenience alias for ExecuteQueryWithInputs.
-func (d *Database) Query(queryInput interface{}, inputs ...interface{}) ([][]interface{}, error) {
-	return d.ExecuteQueryWithInputs(queryInput, inputs...)
+// Query executes a Datalog query and returns a streaming Relation.
+// The caller should iterate via rel.Iterator() and must call iter.Close()
+// when done. For full materialization, call rel.Materialize() or use
+// ExecuteQueryWithInputs() which returns [][]any.
+func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
+	return d.ExecuteQueryRelation(queryInput, inputs...)
 }
 
 // Assert adds datoms in a single transaction.
