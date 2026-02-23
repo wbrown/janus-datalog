@@ -93,7 +93,7 @@ result = take 100 $ filter predicate $ map transform $ largeList
 
 **Typical OLAP query execution:**
 ```
-Scan: 1M rows → Filter: 100K rows → Join: 500K rows → Aggregate: 10K rows
+Scan: 1M tuples → Filter: 100K tuples → Join: 500K tuples → Aggregate: 10K tuples
 ```
 
 **Traditional approach:**
@@ -278,11 +278,11 @@ class Relation {
 type Relation interface {
     // ALL operations return NEW relations
     Filter(predicate Predicate) Relation      // Returns new
-    Project(columns []Symbol) Relation        // Returns new
+    Project(symbols []Symbol) Relation        // Returns new
     Join(other Relation) Relation             // Returns new
 
     // Properties
-    Columns() []Symbol                        // Immutable schema
+    Symbols() []Symbol                        // Immutable schema
     Iterator() Iterator                       // Fresh iterator each call
 
     // Metadata
@@ -299,7 +299,7 @@ type Relation interface {
 **MaterializedRelation:**
 ```go
 type MaterializedRelation struct {
-    columns []Symbol
+    symbols []Symbol
     tuples  []Tuple  // Immutable slice
     options ExecutorOptions
 }
@@ -308,12 +308,12 @@ func (r *MaterializedRelation) Filter(pred Predicate) Relation {
     // Create NEW relation with filtered tuples
     filtered := make([]Tuple, 0, len(r.tuples))
     for _, tuple := range r.tuples {
-        if pred.Eval(tuple, r.columns) {
+        if pred.Eval(tuple, r.symbols) {
             filtered = append(filtered, tuple)
         }
     }
     return &MaterializedRelation{
-        columns: r.columns,
+        symbols: r.symbols,
         tuples:  filtered,  // New slice
         options: r.options,
     }
@@ -325,7 +325,7 @@ func (r *MaterializedRelation) Filter(pred Predicate) Relation {
 **StreamingRelation:**
 ```go
 type StreamingRelation struct {
-    columns  []Symbol
+    symbols  []Symbol
     iterator Iterator  // Lazy source
     options  ExecutorOptions
 }
@@ -333,11 +333,11 @@ type StreamingRelation struct {
 func (r *StreamingRelation) Filter(pred Predicate) Relation {
     // Return NEW StreamingRelation wrapping filtered iterator
     return &StreamingRelation{
-        columns: r.columns,
+        symbols: r.symbols,
         iterator: &FilterIterator{
             source:    r.iterator,
             predicate: pred,
-            columns:   r.columns,
+            symbols:   r.symbols,
         },
         options: r.options,
     }
@@ -396,7 +396,7 @@ type Iterator interface {
 type FilterIterator struct {
     source    Iterator
     predicate Predicate
-    columns   []Symbol
+    symbols   []Symbol
     current   Tuple
 }
 
@@ -404,7 +404,7 @@ func (it *FilterIterator) Next() bool {
     // Lazy filtering - only advances when requested
     for it.source.Next() {
         it.current = it.source.Tuple()
-        if it.predicate.Eval(it.current, it.columns) {
+        if it.predicate.Eval(it.current, it.symbols) {
             return true  // Found match
         }
     }
@@ -426,7 +426,7 @@ func (it *FilterIterator) Tuple() Tuple {
 ```go
 type ProjectIterator struct {
     source     Iterator
-    indices    []int  // Column indices to keep
+    indices    []int  // Symbol indices to keep
     newColumns []Symbol
     current    Tuple
 }
@@ -439,7 +439,7 @@ func (it *ProjectIterator) Next() bool {
     sourceTuple := it.source.Tuple()
     it.current = make(Tuple, len(it.indices))
     for i, idx := range it.indices {
-        it.current[i] = sourceTuple[idx]  // Extract columns
+        it.current[i] = sourceTuple[idx]  // Extract symbols
     }
     return true
 }
@@ -468,7 +468,7 @@ func (it *TransformIterator) Next() bool {
 }
 ```
 
-**Use case:** Add computed columns
+**Use case:** Add computed symbols
 ```go
 // Add (price * quantity) as total
 transform := func(t Tuple) Tuple {
@@ -744,7 +744,7 @@ func shouldMaterialize(relation Relation) bool {
 - **Janus-Streaming**: This work (functional streaming)
 - **Janus-Materialized**: Same system, forced materialization
 - **PostgreSQL**: Traditional Volcano model
-- **MonetDB**: Column-oriented (materialize columns)
+- **MonetDB**: Symbol-oriented (materialize symbols)
 
 **Workloads:**
 1. Financial time-series (OHLC queries)

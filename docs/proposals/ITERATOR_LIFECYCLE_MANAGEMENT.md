@@ -223,7 +223,7 @@ Streaming should be the primitive. Materialization should be the convenience wra
 type Tuples struct {
     rel     executor.Relation
     iter    executor.Iterator
-    columns []string
+    symbols []string
 }
 
 // Query executes a Datalog query and returns a streaming handle.
@@ -258,8 +258,8 @@ func (t *Tuples) Scan(dest ...any) error
 //   tuples.ScanInto(&p)
 func (t *Tuples) ScanInto(dest any) error
 
-// Columns returns the column names (find variable names without ?).
-func (t *Tuples) Columns() []string
+// Symbols returns the symbol names (find variable names without ?).
+func (t *Tuples) Symbols() []string
 
 // Collect materializes all remaining tuples into a slice. This is the
 // convenience method for when you want everything in memory.
@@ -337,14 +337,14 @@ func (d *DB) Query(queryInput any, inputs ...any) (*Tuples, error) {
     if err != nil {
         return nil, err
     }
-    columns := make([]string, len(rel.Columns()))
-    for i, sym := range rel.Columns() {
-        columns[i] = string(sym)
+    symbols := make([]string, len(rel.Symbols()))
+    for i, sym := range rel.Symbols() {
+        symbols[i] = string(sym)
     }
     return &Tuples{
         rel:     rel,
         iter:    rel.Iterator(),
-        columns: columns,
+        symbols: symbols,
     }, nil
 }
 

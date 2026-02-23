@@ -36,10 +36,10 @@ func TestHashJoin(t *testing.T) {
 		t.Errorf("expected 3 joined tuples, got %d", joined.Size())
 	}
 
-	// Check columns
+	// Check symbols
 	expectedCols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept"), datalog.NewSymbol("?location")}
-	if !reflect.DeepEqual(joined.Columns(), expectedCols) {
-		t.Errorf("expected columns %v, got %v", expectedCols, joined.Columns())
+	if !reflect.DeepEqual(joined.Symbols(), expectedCols) {
+		t.Errorf("expected symbols %v, got %v", expectedCols, joined.Symbols())
 	}
 
 	// Collect results
@@ -58,7 +58,7 @@ func TestHashJoin(t *testing.T) {
 }
 
 func TestJoinMultipleColumns(t *testing.T) {
-	// Test joining on multiple columns
+	// Test joining on multiple symbols
 	leftCols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
 	leftTuples := []Tuple{
 		{1, 2, "x"},
@@ -112,7 +112,7 @@ func TestEmptyJoin(t *testing.T) {
 }
 
 func TestCrossProduct(t *testing.T) {
-	// Test cross product (no common columns)
+	// Test cross product (no common symbols)
 	leftCols := []query.Symbol{datalog.NewSymbol("?a")}
 	leftTuples := []Tuple{{"x"}, {"y"}}
 	left := NewMaterializedRelation(leftCols, leftTuples)

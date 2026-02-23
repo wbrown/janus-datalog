@@ -13,7 +13,7 @@ func TestVariadicFilter(t *testing.T) {
 		name     string
 		filter   VariadicFilter
 		tuple    Tuple
-		columns  []query.Symbol
+		symbols  []query.Symbol
 		expected bool
 	}{
 		{
@@ -27,7 +27,7 @@ func TestVariadicFilter(t *testing.T) {
 				},
 			},
 			tuple:    Tuple{1, 5, 10},
-			columns:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
 			expected: true,
 		},
 		{
@@ -41,7 +41,7 @@ func TestVariadicFilter(t *testing.T) {
 				},
 			},
 			tuple:    Tuple{10, 5, 1},
-			columns:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")},
 			expected: false,
 		},
 		{
@@ -55,7 +55,7 @@ func TestVariadicFilter(t *testing.T) {
 				},
 			},
 			tuple:    Tuple{50},
-			columns:  []query.Symbol{datalog.NewSymbol("?x")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x")},
 			expected: true,
 		},
 		{
@@ -69,7 +69,7 @@ func TestVariadicFilter(t *testing.T) {
 				},
 			},
 			tuple:    Tuple{150},
-			columns:  []query.Symbol{datalog.NewSymbol("?x")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x")},
 			expected: false,
 		},
 		{
@@ -83,7 +83,7 @@ func TestVariadicFilter(t *testing.T) {
 				},
 			},
 			tuple:    Tuple{42, 42, 42},
-			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
 			expected: true,
 		},
 		{
@@ -97,7 +97,7 @@ func TestVariadicFilter(t *testing.T) {
 				},
 			},
 			tuple:    Tuple{42, 42, 43},
-			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")},
 			expected: false,
 		},
 		{
@@ -112,14 +112,14 @@ func TestVariadicFilter(t *testing.T) {
 				},
 			},
 			tuple:    Tuple{10, 20},
-			columns:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+			symbols:  []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 			expected: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.filter.Evaluate(tt.tuple, tt.columns)
+			got := tt.filter.Evaluate(tt.tuple, tt.symbols)
 			if got != tt.expected {
 				t.Errorf("Evaluate() = %v, want %v", got, tt.expected)
 			}

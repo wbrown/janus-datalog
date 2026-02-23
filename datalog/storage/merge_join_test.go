@@ -234,13 +234,13 @@ func TestMergeJoinCorrectness(t *testing.T) {
 				},
 			}
 
-			columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+			symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 			// Call merge join directly
 			result, err := matcher.matchWithMergeJoin(
 				pattern,
 				bindingRel,
-				columns,
+				symbols,
 				0, // position 0 = entity
 				EAVT,
 				nil, // no constraints
@@ -257,7 +257,7 @@ func TestMergeJoinCorrectness(t *testing.T) {
 				resultCount++
 				tuple := iter.Tuple()
 				if len(tuple) != 2 {
-					t.Errorf("expected 2 columns, got %d", len(tuple))
+					t.Errorf("expected 2 symbols, got %d", len(tuple))
 				}
 				// Verify entity is in binding set
 				entity, ok := tuple[0].(datalog.Identity)
@@ -341,13 +341,13 @@ func TestMergeJoinVsHashJoin(t *testing.T) {
 					query.Variable{Name: datalog.NewSymbol("?v")},
 				},
 			}
-			columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+			symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 			// Call hash join
 			hashResult, err := matcher.matchWithHashJoin(
 				pattern,
 				bindingRel,
-				columns,
+				symbols,
 				0, // position 0 = entity
 				EAVT,
 				nil,
@@ -360,7 +360,7 @@ func TestMergeJoinVsHashJoin(t *testing.T) {
 			mergeResult, err := matcher.matchWithMergeJoin(
 				pattern,
 				bindingRel,
-				columns,
+				symbols,
 				0, // position 0 = entity
 				EAVT,
 				nil,
@@ -454,13 +454,13 @@ func TestMergeJoinPerformance(t *testing.T) {
 			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 	start := time.Now()
 	result, err := matcher.matchWithMergeJoin(
 		pattern,
 		bindingRel,
-		columns,
+		symbols,
 		0,
 		EAVT,
 		nil,
@@ -573,12 +573,12 @@ func TestCompareJoinKeys(t *testing.T) {
 
 // Helper functions
 
-func createMockRelation(size int, columns []query.Symbol) executor.Relation {
+func createMockRelation(size int, symbols []query.Symbol) executor.Relation {
 	tuples := make([]executor.Tuple, size)
 	for i := 0; i < size; i++ {
 		tuples[i] = executor.Tuple{datalog.NewIdentity(fmt.Sprintf("entity:%d", i))}
 	}
-	return executor.NewMaterializedRelationNoDedupe(columns, tuples)
+	return executor.NewMaterializedRelationNoDedupe(symbols, tuples)
 }
 
 func resultToMap(rel executor.Relation) map[string]int64 {

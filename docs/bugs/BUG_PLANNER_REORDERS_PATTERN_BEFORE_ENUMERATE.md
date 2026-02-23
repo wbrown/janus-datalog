@@ -7,7 +7,7 @@
 
 ## Summary
 
-The greedy clause planner reorders data patterns before enumerate expressions that provide variables those patterns need. This causes incorrect query results: a cross-product join on the wrong column instead of a filtered join on the enumerate-provided variable.
+The greedy clause planner reorders data patterns before enumerate expressions that provide variables those patterns need. This causes incorrect query results: a cross-product join on the wrong symbol instead of a filtered join on the enumerate-provided variable.
 
 ## Reproduction
 
@@ -52,8 +52,8 @@ After the planner reorders, execution proceeds:
 1. `:in` params create relation `{?room, ?color}` (both in one group)
 2. Room/name/items patterns build up `{?room, ?color, ?c, ?name, ?vec}`
 3. **Color pattern runs next** (before enumerate): scans all items with color=red, gets `{?item=redItem, ?color=:color/red}`
-4. Joins with accumulated relation on `?color` -- the only shared column
-5. Cross-product: every container row gets `?item=redItem`
+4. Joins with accumulated relation on `?color` -- the only shared symbol
+5. Cross-product: every container tuple gets `?item=redItem`
 6. Enumerate finally runs, but `?item` is already bound -- damage done
 
 Annotation trace confirming the join:
@@ -73,7 +73,7 @@ The bug requires **two `:in` parameters** where:
 1. One (e.g. `?room`) is consumed by early data patterns
 2. The other (e.g. `?color`) is consumed by a data pattern that should run AFTER enumerate
 
-With a single `:in ?color` and no room-anchoring patterns, the bug still causes reordering but the final result may be accidentally correct (enumerate filters the cross-product when checking consistency of already-bound `?item`). With two `:in` params, `?color` enters the accumulated relation early via the shared input group, so the color-pattern join has a shared column (`?color`) and produces a real cross-product that enumerate can't undo.
+With a single `:in ?color` and no room-anchoring patterns, the bug still causes reordering but the final result may be accidentally correct (enumerate filters the cross-product when checking consistency of already-bound `?item`). With two `:in` params, `?color` enters the accumulated relation early via the shared input group, so the color-pattern join has a shared symbol (`?color`) and produces a real cross-product that enumerate can't undo.
 
 ### Verified non-triggers
 

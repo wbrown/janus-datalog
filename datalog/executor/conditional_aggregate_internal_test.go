@@ -12,15 +12,15 @@ import (
 // TestConditionalAggregateInternalInfrastructure tests the internal conditional aggregate
 // execution infrastructure (used by query rewriter, NOT exposed to users)
 func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
-	// Create a simple relation with hour, filter, and value columns
-	columns := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?filter"), datalog.NewSymbol("?value")}
+	// Create a simple relation with hour, filter, and value symbols
+	symbols := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?filter"), datalog.NewSymbol("?value")}
 	tuples := []Tuple{
 		{int64(10), true, 100.0},
 		{int64(10), true, 102.0},
 		{int64(10), false, 105.0},
 		{int64(10), false, 103.0},
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	// Create find elements with conditional aggregate (internal use only)
 	findElements := []query.FindElement{
@@ -28,7 +28,7 @@ func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
 		query.FindAggregate{
 			Function:  "min",
 			Arg:       datalog.NewSymbol("?value"),
-			Predicate: datalog.NewSymbol("?filter"), // Internal: filter on this column
+			Predicate: datalog.NewSymbol("?filter"), // Internal: filter on this symbol
 		},
 	}
 
@@ -43,7 +43,7 @@ func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
 
 	assert.True(t, it.Next())
 	tuple := it.Tuple()
-	assert.Equal(t, 2, len(tuple), "should have 2 columns: hour and min")
+	assert.Equal(t, 2, len(tuple), "should have 2 symbols: hour and min")
 	assert.Equal(t, int64(10), tuple[0], "hour should be 10")
 	assert.Equal(t, 100.0, tuple[1], "min should be 100.0 (only values where filter=true)")
 
@@ -54,13 +54,13 @@ func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
 // empty result set when no tuples match the filter predicate (relational theory)
 func TestConditionalAggregateEmptyResult(t *testing.T) {
 	// Create relation where all filter values are false
-	columns := []query.Symbol{datalog.NewSymbol("?filter"), datalog.NewSymbol("?value")}
+	symbols := []query.Symbol{datalog.NewSymbol("?filter"), datalog.NewSymbol("?value")}
 	tuples := []Tuple{
 		{false, 10.0},
 		{false, 20.0},
 		{false, 30.0},
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	// Conditional aggregate with filter that matches nothing
 	findElements := []query.FindElement{
@@ -74,21 +74,21 @@ func TestConditionalAggregateEmptyResult(t *testing.T) {
 	result := ExecuteAggregations(rel, findElements)
 
 	// Relational theory: empty input → empty output
-	// Should get zero rows (not one row with NULL)
+	// Should get zero tuples (not one tuple with NULL)
 	assert.Equal(t, 0, result.Size(), "expected empty result set when no tuples match filter")
 }
 
 // TestConditionalAggregateMixedTypes tests multiple aggregates with different predicates
 func TestConditionalAggregateMixedTypes(t *testing.T) {
-	// Create relation with multiple filter columns
-	columns := []query.Symbol{datalog.NewSymbol("?early"), datalog.NewSymbol("?late"), datalog.NewSymbol("?price")}
+	// Create relation with multiple filter symbols
+	symbols := []query.Symbol{datalog.NewSymbol("?early"), datalog.NewSymbol("?late"), datalog.NewSymbol("?price")}
 	tuples := []Tuple{
 		{true, false, 100.0}, // Early
 		{true, false, 102.0}, // Early
 		{false, true, 105.0}, // Late
 		{false, true, 103.0}, // Late
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	// Two conditional aggregates with different predicates
 	findElements := []query.FindElement{

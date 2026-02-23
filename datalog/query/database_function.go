@@ -213,7 +213,7 @@ func toIdentity(val interface{}) (datalog.Identity, error) {
 
 // DatabaseFunctionPredicate wraps a DatabaseFunction for use as a filter predicate.
 // This is used when database functions like missing? are used without a binding,
-// e.g., [(missing? $ ?e :attr)] filters to rows where the condition is true.
+// e.g., [(missing? $ ?e :attr)] filters to tuples where the condition is true.
 type DatabaseFunctionPredicate struct {
 	Function DatabaseFunction
 }

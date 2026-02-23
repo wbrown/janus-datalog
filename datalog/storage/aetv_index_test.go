@@ -435,10 +435,10 @@ func TestAETVCRDTResolutionSingleEntity(t *testing.T) {
 	}
 
 	// Query should return only "Charlie" (last write)
-	result, err := db.ExecuteQueryWithInputs(
+	result, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
 		entity,
-	)
+	))
 	require.NoError(t, err)
 
 	require.Len(t, result, 1, "CardinalityOne should return single result")
@@ -491,19 +491,19 @@ func TestAETVCRDTResolutionMultipleEntities(t *testing.T) {
 	}
 
 	// Query with all entities as input - should use AETV with CRDT resolution
-	result, err := db.ExecuteQueryWithInputs(
+	result, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ [?e ...] :where [?e :person/name ?v]]`,
 		entities,
-	)
+	))
 	require.NoError(t, err)
 
 	// Should have exactly 3 results (one per entity)
 	require.Len(t, result, 3, "should return one result per entity")
 
 	// Verify each entity got its LWW winner
-	for _, row := range result {
-		entity := row[0].(datalog.Identity)
-		name := row[1].(string)
+	for _, tuple := range result {
+		entity := tuple[0].(datalog.Identity)
+		name := tuple[1].(string)
 
 		hash := entity.Hash()
 		expected := expectedNames[string(hash[:])]
@@ -550,15 +550,15 @@ func TestAETVCRDTResolutionUnboundEntity(t *testing.T) {
 	}
 
 	// Query all statuses (E unbound) - should use AETV
-	result, err := db.ExecuteQuery(`[:find ?e ?v :where [?e :person/status ?v]]`)
+	result, err := executor.CollectTuples(db.Query(`[:find ?e ?v :where [?e :person/status ?v]]`))
 	require.NoError(t, err)
 
 	// Should have 5 results (one per entity, LWW resolved)
 	require.Len(t, result, 5, "should return one result per entity")
 
 	// All should have "completed" (last write)
-	for _, row := range result {
-		status := row[1].(string)
+	for _, tuple := range result {
+		status := tuple[1].(string)
 		assert.Equal(t, "completed", status, "all entities should have LWW winner")
 	}
 }
@@ -671,9 +671,9 @@ func TestAETVCrossProductInputs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query with both E and A from separate collections
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]`,
-		entities, attrs)
+		entities, attrs))
 	require.NoError(t, err)
 
 	// Expected: 4 results (2 entities × 2 attributes)

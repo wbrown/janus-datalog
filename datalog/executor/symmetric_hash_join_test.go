@@ -55,9 +55,9 @@ func TestSymmetricHashJoin(t *testing.T) {
 		// Verify results
 		assert.Len(t, results, 3) // alice, bob, charlie match
 
-		// Check output columns
+		// Check output symbols
 		expectedCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
-		assert.Equal(t, expectedCols, result.Columns())
+		assert.Equal(t, expectedCols, result.Symbols())
 
 		// Verify specific results (order may vary due to hash tables)
 		foundAlice, foundBob, foundCharlie := false, false, false
@@ -90,7 +90,7 @@ func TestSymmetricHashJoin(t *testing.T) {
 	})
 
 	t.Run("MultiColumnJoin", func(t *testing.T) {
-		// Test data with multiple join columns
+		// Test data with multiple join symbols
 		leftTuples := []Tuple{
 			{1, "alice", 100},
 			{2, "bob", 200},
@@ -276,13 +276,13 @@ func TestSymmetricHashJoin(t *testing.T) {
 		rightIter := newMockIterator(rightTuples)
 		rightRel := NewStreamingRelation(rightColumns, rightIter)
 
-		// Try to join on non-existent column
+		// Try to join on non-existent symbol
 		joinCols := []query.Symbol{datalog.NewSymbol("?nonexistent")}
 		result := SymmetricHashJoin(leftRel, rightRel, joinCols)
 
 		// Should return empty relation
 		it := result.Iterator()
-		assert.False(t, it.Next(), "Should have no results with invalid join column")
+		assert.False(t, it.Next(), "Should have no results with invalid join symbol")
 		it.Close()
 	})
 }

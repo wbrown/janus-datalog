@@ -153,7 +153,7 @@ Queries are EDN vectors. The basic form:
 [(subvec ?vec 1 3) ?slice]               ;; sub-vector [start, end)
 ```
 
-**`enumerate`** — expands a vector into one row per element with index. This is the primary way to query vector contents:
+**`enumerate`** — expands a vector into one tuple per element with index. This is the primary way to query vector contents:
 ```clojure
 ;; Given :product/tags is a vector ["electronics" "sale" "new"]
 [:find ?tag ?idx
@@ -163,7 +163,7 @@ Queries are EDN vectors. The basic form:
 ;; Returns: [0 "electronics"], [1 "sale"], [2 "new"]
 ```
 
-Important: `enumerate` produces **multiple output rows** from a single input row. The binding `[?idx ?tag]` is required — it destructures each element into an index and value. The data pattern that binds `?vec` must appear **before** the enumerate expression in the where clause, and the planner must not reorder it ahead of the pattern that provides the vector.
+Important: `enumerate` produces **multiple output tuples** from a single input tuple. The binding `[?idx ?tag]` is required — it destructures each element into an index and value. The data pattern that binds `?vec` must appear **before** the enumerate expression in the where clause, and the planner must not reorder it ahead of the pattern that provides the vector.
 
 **Database functions:**
 ```clojure
@@ -174,14 +174,14 @@ Important: `enumerate` produces **multiple output rows** from a single input row
 
 **Subqueries** — nested queries that bind results into the outer query:
 ```clojure
-;; Tuple binding — subquery returns one row, binds to variables
+;; Tuple binding — subquery returns one tuple, binds to variables
 [(q [:find (max ?h)
      :in $ ?sym
      :where [?p :price/symbol ?sym]
             [?p :price/high ?h]]
     $ ?s) [[?max-high]]]
 
-;; Relation binding — subquery returns multiple rows
+;; Relation binding — subquery returns multiple tuples
 [(q [:find ?p ?h
      :in $ ?sym
      :where [?p :price/symbol ?sym]
@@ -189,7 +189,7 @@ Important: `enumerate` produces **multiple output rows** from a single input row
     $ ?s) [[?price ?high] ...]]
 ```
 
-The subquery `(q [...] $ ?var1 ?var2)` takes a full query, then lists the inputs to pass (matching the subquery's `:in` clause). The binding after `)` determines how results are captured: `[[?x]]` for a single row, `[[?x ?y] ...]` for multiple rows.
+The subquery `(q [...] $ ?var1 ?var2)` takes a full query, then lists the inputs to pass (matching the subquery's `:in` clause). The binding after `)` determines how results are captured: `[[?x]]` for a single tuple, `[[?x ?y] ...]` for multiple tuples.
 
 **Tagged literals** — use typed constants directly in patterns and predicates:
 ```clojure
@@ -369,7 +369,7 @@ Results are printed as markdown tables:
 | Bob     |   25 |
 | Charlie |   35 |
 
-_3 rows (1.234ms)_
+_3 tuples (1.234ms)_
 ```
 
 With `-verbose`, stderr gets annotation events showing index selection, join stats, and timing.
@@ -378,7 +378,7 @@ With `-verbose`, stderr gets annotation events showing index selection, join sta
 
 Entities are identified by an **Identity** — a SHA1 hash of a seed string, displayed as a 25-character L85-encoded string (a sort-order-preserving Base85 encoding).
 
-When you query for an entity variable like `?e`, the result column shows the L85 hash. You don't normally need to use these directly — join through known attribute values instead (see debugging patterns above).
+When you query for an entity variable like `?e`, the result symbol shows the L85 hash. You don't normally need to use these directly — join through known attribute values instead (see debugging patterns above).
 
 The `#identity "L85hash"` tagged literal exists for cases where you have a hash from logs or export output and need to look it up directly. This is the exception, not the normal workflow.
 
@@ -388,5 +388,5 @@ The `#identity "L85hash"` tagged literal exists for cases where you have a hash 
 - Integer literals are int64, float literals are float64
 - String literals use double quotes: `"value"`
 - The `_` wildcard matches any value without binding
-- Empty results return a table with headers but no rows
+- Empty results return a table with headers but no tuples
 - Tagged literals: `#identity "L85..."`, `#inst "RFC3339..."`, `#bytes "L85..."`

@@ -88,7 +88,7 @@ This document catalogs critical bugs that have been fixed and the patterns that 
 
 2. **Executor Implementation**: Added sorting after query execution with type-aware comparison
 
-3. **Multi-column Sorting**: Supports multiple sort keys with independent directions
+3. **Multi-symbol Sorting**: Supports multiple sort keys with independent directions
 
 4. **Type-aware Comparison**: Properly handles all value types including time.Time
 
@@ -195,17 +195,17 @@ Adding input parameters to pure aggregations **changed their type** from single 
 
 **Three Related Bugs** revealed the importance of correctly handling input parameters from `:in` clauses.
 
-**Key Insight**: Input parameters are "environment" symbols (Available) not "data" columns (Provides). They're metadata ABOUT query execution, not data IN the result.
+**Key Insight**: Input parameters are "environment" symbols (Available) not "data" symbols (Provides). They're metadata ABOUT query execution, not data IN the result.
 
 **The Three-Level Type System**:
 1. **Input Parameters**: Environment symbols available in ALL phases for filtering/correlation
 2. **Pattern Variables**: Computation symbols that flow between phases via joins
-3. **Relation Columns**: Actual data in phase output relations
+3. **Relation Symbols**: Actual data in phase output relations
 
 **Critical Invariants**:
 ```
 Available = Environment symbols (inputs + previous outputs)
-Provides = Relation columns (what this phase produces)
+Provides = Relation symbols (what this phase produces)
 Keep ⊆ Provides ∩ Available  (can only keep what's in the relation)
 ```
 
@@ -217,7 +217,7 @@ Keep ⊆ Provides ∩ Available  (can only keep what's in the relation)
 
 3. **BUG_STRING_PREDICATES_CANT_USE_PARAMETERS** (Oct 13): Predicate assignment only made input parameters available in phase 0, not subsequent phases, causing "predicates could not be assigned" panic. Fixed by using phases[i].Available which includes inputs for all phases.
 
-**Analogy**: Input parameters are like SQL prepared statement parameters - they filter data but don't appear as result columns:
+**Analogy**: Input parameters are like SQL prepared statement parameters - they filter data but don't appear as result symbols:
 ```sql
 -- ?symbol filters but isn't in output
 SELECT time, close FROM prices WHERE symbol = ?
@@ -225,7 +225,7 @@ SELECT time, close FROM prices WHERE symbol = ?
 
 **See**: `docs/INPUT_PARAMETER_SEMANTICS.md` for comprehensive guide with examples and testing patterns.
 
-**Pattern**: Understand the type system. Input parameters, pattern variables, and relation columns are fundamentally different types with different semantics.
+**Pattern**: Understand the type system. Input parameters, pattern variables, and relation symbols are fundamentally different types with different semantics.
 
 ---
 
@@ -261,7 +261,7 @@ if len(phase.Patterns) == 0 && len(collapsed) == 0 {
 
 **Phase Execution Invariants**:
 1. **Input Invariant**: Every phase receives either `nil` (first phase, no inputs) or previous phase's `Keep` symbols
-2. **Output Invariant**: Every phase produces a Relation with columns matching `phase.Provides` (or subset in `Keep`)
+2. **Output Invariant**: Every phase produces a Relation with symbols matching `phase.Provides` (or subset in `Keep`)
 3. **Data Flow Invariant**: If Phase N produces K tuples with symbols S, and Phase N+1 needs S' ⊆ S, then Phase N+1 receives K tuples with S' available
 4. **Composition Invariant**: Patterns, expressions, predicates, subqueries can appear in any combination (including zero), and phase execution MUST handle all combinations
 

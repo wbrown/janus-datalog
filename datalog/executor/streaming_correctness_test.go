@@ -19,7 +19,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		for i := 0; i < size; i++ {
 			tuples = append(tuples, Tuple{i, i * 2, i * 3})
 		}
-		columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 		// Test with materialized (EnableTrueStreaming=false)
 		matOpts := ExecutorOptions{
@@ -28,7 +28,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		}
 
 		matSource := newMockIterator(tuples)
-		matRel := NewStreamingRelationWithOptions(columns, matSource, matOpts)
+		matRel := NewStreamingRelationWithOptions(symbols, matSource, matOpts)
 
 		// Filter to 1%
 		matFiltered := matRel.Filter(NewSimpleFilter(func(t Tuple) bool {
@@ -57,7 +57,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		}
 
 		streamSource := newMockIterator(tuples)
-		streamRel := NewStreamingRelationWithOptions(columns, streamSource, streamOpts)
+		streamRel := NewStreamingRelationWithOptions(symbols, streamSource, streamOpts)
 
 		// Filter to 1%
 		streamFiltered := streamRel.Filter(NewSimpleFilter(func(t Tuple) bool {
@@ -156,7 +156,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 
 		// Sort both for comparison (join order may vary)
 		sortTuples := func(tuples []Tuple) {
-			// Simple sort by first column (name)
+			// Simple sort by first symbol (name)
 			for i := 0; i < len(tuples); i++ {
 				for j := i + 1; j < len(tuples); j++ {
 					if tuples[i][0].(string) > tuples[j][0].(string) {

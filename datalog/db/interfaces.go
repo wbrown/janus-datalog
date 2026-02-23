@@ -1,6 +1,9 @@
 package db
 
-import "github.com/wbrown/janus-datalog/datalog"
+import (
+	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
+)
 
 // EntityReader provides typed attribute access for entities.
 type EntityReader interface {
@@ -14,7 +17,7 @@ type EntityReader interface {
 
 // Querier provides the core query and entity access operations.
 type Querier interface {
-	Query(q any, inputs ...any) ([][]any, error)
+	Query(q any, inputs ...any) (executor.Relation, error)
 	QueryInto(dest any, q any, inputs ...any) error
 	QueryOneInto(dest any, q any, inputs ...any) (bool, error)
 	PullInto(entityID datalog.Identity, v any) error

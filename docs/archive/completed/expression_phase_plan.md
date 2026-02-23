@@ -78,8 +78,8 @@ Update the planner to assign expressions to phases:
 
 2. **Expression evaluation within phase**:
    - Only evaluate expressions whose inputs are available
-   - Add new columns to the relation for expression bindings
-   - Can project out intermediate columns immediately after use
+   - Add new symbols to the relation for expression bindings
+   - Can project out intermediate symbols immediately after use
 
 ### Phase 4: Optimization Opportunities
 
@@ -92,7 +92,7 @@ Update the planner to assign expressions to phases:
    - Reduces data volume before expensive joins
 
 3. **Expression Ordering**:
-   - Within a phase, order expressions to minimize intermediate columns
+   - Within a phase, order expressions to minimize intermediate symbols
    - Evaluate expressions that enable projections first
 
 ## Implementation Steps
@@ -118,7 +118,7 @@ Update the planner to assign expressions to phases:
 ### Step 5: Implement Phase Expression Evaluation
 - [ ] Add `evaluateExpressionInPhase()` to executor
 - [ ] Modify executePhase to call expression evaluation
-- [ ] Ensure proper column tracking
+- [ ] Ensure proper symbol tracking
 
 ### Step 6: Implement Equality Filtering
 - [ ] Convert equality expressions to filters

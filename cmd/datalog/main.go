@@ -478,7 +478,7 @@ func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr 
 	start := time.Now()
 	var result executor.Relation
 	if len(goInputs) > 0 {
-		result, err = db.ExecuteQueryRelation(q, goInputs...)
+		result, err = db.Query(q, goInputs...)
 	} else {
 		opts := storage.DefaultPlannerOptions()
 		opts.EnableSubqueryDecorrelation = enableDecorrelation
@@ -499,14 +499,14 @@ func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr 
 
 	// Display results as markdown table with timing
 	table := result.Table()
-	// Replace the row count line with row count + timing
+	// Replace the tuple count line with tuple count + timing
 	lines := strings.Split(table, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(lines[i], "_") && strings.HasSuffix(lines[i], "rows_") {
-			// Extract row count
-			rowLine := lines[i]
-			rowLine = strings.TrimSuffix(rowLine, "_")
-			lines[i] = rowLine + fmt.Sprintf(" (%.3fms)_", float64(elapsed.Microseconds())/1000.0)
+		if strings.HasPrefix(lines[i], "_") && strings.HasSuffix(lines[i], "tuples_") {
+			// Extract tuple count
+			tupleLine := lines[i]
+			tupleLine = strings.TrimSuffix(tupleLine, "_")
+			lines[i] = tupleLine + fmt.Sprintf(" (%.3fms)_", float64(elapsed.Microseconds())/1000.0)
 			break
 		}
 	}

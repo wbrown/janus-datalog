@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -57,8 +58,8 @@ func TestElementIDBinding_ScalarInput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 1: Query all (entity, value, tx) to discover the ElementIDs
-	allResults, err := db.ExecuteQueryWithInputs(
-		`[:find ?e ?v ?tx :where [?e :person/name ?v ?tx]]`)
+	allResults, err := executor.CollectTuples(db.Query(
+		`[:find ?e ?v ?tx :where [?e :person/name ?v ?tx]]`))
 	require.NoError(t, err)
 	t.Logf("All results: %d", len(allResults))
 	require.Len(t, allResults, 2, "Should have 2 datoms (one per entity)")
@@ -86,9 +87,9 @@ func TestElementIDBinding_ScalarInput(t *testing.T) {
 
 	// Step 2: Use Alice's ElementID as a scalar binding to filter by tx.
 	// This should return only Alice's datom — not Bob's.
-	filteredResults, err := db.ExecuteQueryWithInputs(
+	filteredResults, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?v :in $ ?tx :where [?e :person/name ?v ?tx]]`,
-		aliceTx)
+		aliceTx))
 	require.NoError(t, err)
 
 	t.Logf("Filtered results (tx=%v): %v", aliceTx, filteredResults)
@@ -134,8 +135,8 @@ func TestElementIDBinding_CollectionInput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Discover all ElementIDs
-	allResults, err := db.ExecuteQueryWithInputs(
-		`[:find ?v ?tx :where [?e :person/name ?v ?tx]]`)
+	allResults, err := executor.CollectTuples(db.Query(
+		`[:find ?v ?tx :where [?e :person/name ?v ?tx]]`))
 	require.NoError(t, err)
 	require.Len(t, allResults, 3)
 
@@ -146,9 +147,9 @@ func TestElementIDBinding_CollectionInput(t *testing.T) {
 	}
 
 	// Pass Alice's and Bob's tx as a collection — should return 2 results
-	filteredResults, err := db.ExecuteQueryWithInputs(
+	filteredResults, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ [?tx ...] :where [?e :person/name ?v ?tx]]`,
-		[]datalog.ElementID{txByName["Alice"], txByName["Bob"]})
+		[]datalog.ElementID{txByName["Alice"], txByName["Bob"]}))
 	require.NoError(t, err)
 
 	t.Logf("Collection results: %v", filteredResults)
@@ -190,8 +191,8 @@ func TestElementIDBinding_RelationInput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Discover ElementIDs
-	allResults, err := db.ExecuteQueryWithInputs(
-		`[:find ?e ?v ?tx :where [?e :person/name ?v ?tx]]`)
+	allResults, err := executor.CollectTuples(db.Query(
+		`[:find ?e ?v ?tx :where [?e :person/name ?v ?tx]]`))
 	require.NoError(t, err)
 	require.Len(t, allResults, 2)
 
@@ -208,12 +209,12 @@ func TestElementIDBinding_RelationInput(t *testing.T) {
 	}
 
 	// Pass as relation binding [[?e ?tx] ...]
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ [[?e ?tx] ...] :where [?e :person/name ?v ?tx]]`,
 		[][]interface{}{
 			{aliceIdentity, aliceTx},
 			{bobIdentity, bobTx},
-		})
+		}))
 	require.NoError(t, err)
 
 	t.Logf("Relation results: %v", results)
@@ -225,7 +226,7 @@ func TestElementIDBinding_RelationInput(t *testing.T) {
 }
 
 // TestElementIDBinding_TxJoin verifies that two patterns joined on ?e correctly
-// return *ElementID Tx values as distinct columns. In CRDT storage, each Set()
+// return *ElementID Tx values as distinct symbols. In CRDT storage, each Set()
 // gets a unique ElementID, so ?tx1 != ?tx2 even for the same entity.
 func TestElementIDBinding_TxJoin(t *testing.T) {
 	dir := t.TempDir()
@@ -268,16 +269,16 @@ func TestElementIDBinding_TxJoin(t *testing.T) {
 	// Join on ?e: find name/age pairs for the same entity.
 	// Each attribute's datom has a unique Tx (CRDT per-operation Lamport),
 	// so we use separate ?tx1, ?tx2 variables.
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name ?age ?tx1 ?tx2
 		  :where [?e :person/name ?name ?tx1]
-		         [?e :person/age ?age ?tx2]]`)
+		         [?e :person/age ?age ?tx2]]`))
 	require.NoError(t, err)
 
 	t.Logf("TxJoin results: %v", results)
 	require.Len(t, results, 2, "Should return 2 name/age pairs joined on entity")
 
-	// Verify results contain correct name/age pairs and that Tx columns are ElementIDs
+	// Verify results contain correct name/age pairs and that Tx symbols are ElementIDs
 	for _, r := range results {
 		name := r[0].(string)
 		age := r[1].(int64)
@@ -329,8 +330,8 @@ func TestElementIDBinding_ComparisonPredicate(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get Alice's tx
-	allResults, err := db.ExecuteQueryWithInputs(
-		`[:find ?v ?tx :where [?e :person/name ?v ?tx]]`)
+	allResults, err := executor.CollectTuples(db.Query(
+		`[:find ?v ?tx :where [?e :person/name ?v ?tx]]`))
 	require.NoError(t, err)
 	require.Len(t, allResults, 2)
 
@@ -342,12 +343,12 @@ func TestElementIDBinding_ComparisonPredicate(t *testing.T) {
 	}
 
 	// Filter with equality predicate
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?v
 		  :in $ ?target-tx
 		  :where [?e :person/name ?v ?tx]
 		         [(= ?tx ?target-tx)]]`,
-		aliceTx)
+		aliceTx))
 	require.NoError(t, err)
 
 	t.Logf("Comparison predicate results: %v", results)
@@ -392,8 +393,8 @@ func TestElementIDBinding_MultipleEntitiesSameTx(t *testing.T) {
 	require.NoError(t, err)
 
 	// Discover all Tx values — each entity has its own unique Tx
-	allResults, err := db.ExecuteQueryWithInputs(
-		`[:find ?v ?tx :where [?e :person/name ?v ?tx]]`)
+	allResults, err := executor.CollectTuples(db.Query(
+		`[:find ?v ?tx :where [?e :person/name ?v ?tx]]`))
 	require.NoError(t, err)
 	require.Len(t, allResults, 3)
 
@@ -410,9 +411,9 @@ func TestElementIDBinding_MultipleEntitiesSameTx(t *testing.T) {
 		"Bob and Charlie should have different Tx values")
 
 	// Filter by Alice's Tx — should return exactly Alice, not Bob or Charlie
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name :in $ ?tx :where [?e :person/name ?name ?tx]]`,
-		txByName["Alice"])
+		txByName["Alice"]))
 	require.NoError(t, err)
 
 	t.Logf("Alice-tx results: %v", results)
@@ -420,9 +421,9 @@ func TestElementIDBinding_MultipleEntitiesSameTx(t *testing.T) {
 	assert.Equal(t, "Alice", results[0][0].(string))
 
 	// Filter by Bob's Tx — should return exactly Bob
-	results, err = db.ExecuteQueryWithInputs(
+	results, err = executor.CollectTuples(db.Query(
 		`[:find ?name :in $ ?tx :where [?e :person/name ?name ?tx]]`,
-		txByName["Bob"])
+		txByName["Bob"]))
 	require.NoError(t, err)
 
 	t.Logf("Bob-tx results: %v", results)

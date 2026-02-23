@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -74,9 +75,9 @@ func TestCacheMatrix_AConstant(t *testing.T) {
 			}
 
 			// Pattern: A as constant (baseline - should work)
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
-				personID)
+				personID))
 			require.NoError(t, err)
 			assert.Len(t, results, 1, "[%s] A as constant should return 1 result", mode.name)
 			if len(results) == 1 {
@@ -111,9 +112,9 @@ func TestCacheMatrix_AFromScalarInput(t *testing.T) {
 			}
 
 			// Pattern: A from scalar input
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, nameAttr)
+				personID, nameAttr))
 			require.NoError(t, err)
 			assert.Len(t, results, 1, "[%s] A from scalar input should return 1 result", mode.name)
 			if len(results) == 1 {
@@ -160,9 +161,9 @@ func TestCacheMatrix_AUnbound(t *testing.T) {
 			}
 
 			// Pattern: A completely unbound - should get 2 results (one per attribute)
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?a ?v :in $ ?e :where [?e ?a ?v]]`,
-				personID)
+				personID))
 			require.NoError(t, err)
 
 			// Should return 2 results: one for name (Charlie), one for age (30)
@@ -215,8 +216,8 @@ func TestCacheMatrix_EConstantAUnbound(t *testing.T) {
 			// This goes through matchUnboundAsRelation → chooseIndex with e != nil
 			// The bug was: chooseIndex used EAVT (V-before-Tx) for E-only case
 			// Fixed: now uses EATV (Tx-first) for proper CRDT resolution
-			results, err := db.ExecuteQuery(
-				`[:find ?a ?v :where ["person-1" ?a ?v]]`)
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?a ?v :where ["person-1" ?a ?v]]`))
 			require.NoError(t, err)
 
 			// Should return 2 results: one for name (Charlie), one for age (30)
@@ -280,9 +281,9 @@ func TestCacheMatrix_VOnlyBound(t *testing.T) {
 
 			// Pattern: ONLY V bound - "what entities/attributes reference leader?"
 			// This uses VAET index with per-datom cardinality resolution
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
-				leader)
+				leader))
 			require.NoError(t, err)
 
 			// Should return 2 results: emp1/:person/manager and proj1/:project/lead
@@ -344,9 +345,9 @@ func TestCacheMatrix_VOnlyBound_Supersede(t *testing.T) {
 			// Query: find all (E, A) where V = leader
 			// CRDT-resolved, emp-1/:person/manager is now "new-leader", NOT "leader"
 			// So only proj-1/:project/lead should be returned
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
-				leader)
+				leader))
 			require.NoError(t, err)
 
 			// Should return 1 result: ONLY proj1/:project/lead
@@ -457,9 +458,9 @@ func TestVOnlyBound_CardinalityMany_Retracted(t *testing.T) {
 
 			// Query: find all (E, A) where V = "go"
 			// Since "go" was retracted, should return nothing
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
-				"go")
+				"go"))
 			require.NoError(t, err)
 
 			// Should return 0 results - "go" was retracted
@@ -515,9 +516,9 @@ func TestVOnlyBound_MixedCardinality(t *testing.T) {
 			tx.Commit()
 
 			// Query: find all (E, A) where V = "Alice"
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
-				"Alice")
+				"Alice"))
 			require.NoError(t, err)
 
 			// Should return 1 result: emp-1/:person/tags
@@ -559,9 +560,9 @@ func TestVOnlyBound_Schemaless(t *testing.T) {
 
 			// Query: find all (E, A) where V = "test"
 			// Schemaless uses add-wins, so retracted value should not appear
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a :in $ ?v :where [?e ?a ?v]]`,
-				"test")
+				"test"))
 			require.NoError(t, err)
 
 			// Should return 0 results - value was retracted
@@ -610,9 +611,9 @@ func TestCacheMatrix_AVBound(t *testing.T) {
 
 			// Pattern: A and V bound - "who has manager-1 as :person/manager?"
 			// This uses AVET index
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e :in $ ?mgr :where [?e :person/manager ?mgr]]`,
-				manager)
+				manager))
 			require.NoError(t, err)
 
 			// Should return 2 results: emp1 and emp2
@@ -656,9 +657,9 @@ func TestCacheMatrix_EFromCollection_AFromScalar(t *testing.T) {
 			}
 
 			// Pattern: E from collection, A from scalar
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?v :in $ [?e ...] ?a :where [?e ?a ?v]]`,
-				entities, nameAttr)
+				entities, nameAttr))
 			require.NoError(t, err)
 
 			// Should return 3 results (one per entity, CRDT resolved)
@@ -707,9 +708,9 @@ func TestCacheMatrix_CardinalityMany(t *testing.T) {
 			expectedCount := 3 // Last set has 3 tags
 
 			// Query with A from scalar input
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				personID, tagsAttr)
+				personID, tagsAttr))
 			require.NoError(t, err)
 
 			// Should return 3 results (current set members)
@@ -806,9 +807,9 @@ func TestCacheMatrix_AFromCollection(t *testing.T) {
 				datalog.NewKeyword(":person/name"),
 				datalog.NewKeyword(":person/age"),
 			}
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?a ?v :in $ ?e [?a ...] :where [?e ?a ?v]]`,
-				personID, attrs)
+				personID, attrs))
 			require.NoError(t, err)
 
 			// Should return 2 results: one for name (Charlie), one for age (30)
@@ -846,9 +847,9 @@ func TestCacheMatrix_AFromTupleInput(t *testing.T) {
 
 			// Pattern: E and A from tuple input [[?e ?a]]
 			// Tuple input syntax requires double brackets
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ [[?e ?a]] :where [?e ?a ?v]]`,
-				[]any{personID, nameAttr})
+				[]any{personID, nameAttr}))
 			require.NoError(t, err)
 
 			assert.Len(t, results, 1, "[%s] Tuple input should return 1 result", mode.name)
@@ -907,9 +908,9 @@ func TestCacheMatrix_AFromRelationInput(t *testing.T) {
 				{person1, nameAttr},
 				{person2, ageAttr},
 			}
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
-				relationInput)
+				relationInput))
 			require.NoError(t, err)
 
 			// Should return 2 results: person1's name (Charlie), person2's age (30)
@@ -958,11 +959,11 @@ func TestCacheMatrix_ABoundViaJoin(t *testing.T) {
 			tx.Commit()
 
 			// Pattern: A bound via join - get attribute from config, then use it
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?person ?config :where
 				  [?config :config/tracked-attr ?a]
 				  [?person ?a ?v]]`,
-				personID, configID)
+				personID, configID))
 			require.NoError(t, err)
 
 			// Should return 1 result (Charlie) - CRDT resolved
@@ -1020,9 +1021,9 @@ func TestCacheMatrix_EAndABothFromCollections(t *testing.T) {
 			}
 
 			// Pattern: Both E and A from collections
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]`,
-				entities, attrs)
+				entities, attrs))
 			require.NoError(t, err)
 
 			// Should return 4 results: 2 entities × 2 attributes
@@ -1080,12 +1081,12 @@ func TestCacheMatrix_WithNotClause(t *testing.T) {
 			tx.Commit()
 
 			// Query: find names of active people (using NOT to exclude inactive)
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?name :where
 				  [?e :person/name ?name]
 				  [?e :person/active true]
 				  (not [?e :person/active false])]`,
-			)
+			))
 			require.NoError(t, err)
 
 			// Should return 1 result (Charlie) - only active person's current name
@@ -1143,12 +1144,12 @@ func TestCacheMatrix_WithOrClause(t *testing.T) {
 			}
 
 			// Query: find names where status is "active" OR "pending"
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?name :where
 				  [?e :person/name ?name]
 				  (or [?e :person/status "active"]
 				      [?e :person/status "pending"])]`,
-			)
+			))
 			require.NoError(t, err)
 
 			// Should return 2 results (Person1-Final, Person2-Final)
@@ -1186,9 +1187,9 @@ func TestCacheMatrix_WithAggregation(t *testing.T) {
 			}
 
 			// Query: sum of all scores
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find (sum ?score) :where [?e :person/score ?score]]`,
-			)
+			))
 			require.NoError(t, err)
 
 			// Should sum only the CURRENT scores: 30 + 60 + 90 = 180
@@ -1244,9 +1245,9 @@ func TestCacheMatrix_CardinalityVector(t *testing.T) {
 			}
 
 			// Query with A from scalar input
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-				docID, contentAttr)
+				docID, contentAttr))
 			require.NoError(t, err)
 
 			// Should return 1 result (the resolved vector as a single value)
@@ -1297,19 +1298,19 @@ func TestCacheMatrix_ABoundViaSubquery(t *testing.T) {
 			tx.Commit()
 
 			// First verify the subquery works alone
-			subResults, err := db.ExecuteQueryWithInputs(
+			subResults, err := executor.CollectTuples(db.Query(
 				`[:find ?a :in $ ?c :where [?c :config/attr ?a]]`,
-				configID)
+				configID))
 			require.NoError(t, err)
 			t.Logf("[%s] Subquery results: %v", mode.name, subResults)
 
 			// Pattern: A bound via subquery using scalar binding
 			// The subquery returns a single attribute value
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?person ?config :where
 				  [(q [:find ?a . :in $ ?c :where [?c :config/attr ?a]] $ ?config) ?a]
 				  [?person ?a ?v]]`,
-				personID, configID)
+				personID, configID))
 			require.NoError(t, err)
 
 			// Should return 1 result (Charlie) - CRDT resolved
@@ -1349,9 +1350,9 @@ func TestCacheMatrix_AsOfQuery(t *testing.T) {
 			}
 
 			// First, query all values with their tx times to find the Lamport values
-			allResults, err := db.ExecuteQueryWithInputs(
+			allResults, err := executor.CollectTuples(db.Query(
 				`[:find ?v ?tx :in $ ?e ?a :where [?e ?a ?v ?tx]]`,
-				personID, nameAttr)
+				personID, nameAttr))
 			require.NoError(t, err)
 			t.Logf("[%s] All values with tx: %v", mode.name, allResults)
 
@@ -1377,9 +1378,9 @@ func TestCacheMatrix_AsOfQuery(t *testing.T) {
 			}
 
 			// Query as-of the first transaction - should return "Alice"
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				fmt.Sprintf(`[:find ?v :in $ ?e :where [?e :person/name ?v ?tx] [(as-of ?tx %d)]]`, aliceLamport),
-				personID)
+				personID))
 			require.NoError(t, err)
 
 			// as-of should return only values at or before that Lamport time
@@ -1435,9 +1436,9 @@ func TestCacheMatrix_SchemaAfterWrite(t *testing.T) {
 			db.SetSchema(s)
 
 			// Pattern: E bound, A unbound - entity browser pattern
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?a ?v :in $ ?e :where [?e ?a ?v]]`,
-				personID)
+				personID))
 			require.NoError(t, err)
 
 			// Should return 2 results: one for name (Charlie), one for age (30)
@@ -1511,7 +1512,7 @@ func TestCacheMatrix_AllUnbound(t *testing.T) {
 
 			// Pattern: All unbound - scans entire database
 			// This goes through matchUnboundAsRelation
-			results, err := db.ExecuteQuery(`[:find ?e ?a ?v :where [?e ?a ?v]]`)
+			results, err := executor.CollectTuples(db.Query(`[:find ?e ?a ?v :where [?e ?a ?v]]`))
 			require.NoError(t, err)
 
 			// Count only person entities (filter out tx:* system entities)

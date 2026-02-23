@@ -37,8 +37,8 @@ type SubqueryPattern struct {
 ```
 
 ### Binding Forms
-- `TupleBinding`: `[[?var ...]]` - Expects single result row
-- `RelationBinding`: `[[?a ?b] ...]` - Multiple result rows
+- `TupleBinding`: `[[?var ...]]` - Expects single result tuple
+- `RelationBinding`: `[[?a ?b] ...]` - Multiple result tuples
 - `CollectionBinding`: `?coll` - Collect all values (not implemented)
 
 ## Data Flow
@@ -68,15 +68,15 @@ inputRelations := e.createInputRelations(subqPlan.Subquery.Query, inputValues, s
 - Maps outer variables to inner `:in` clause variables **by position**
 - Creates Relations for each `:in` specification:
   - `ScalarInput`: Single value relation
-  - `TupleInput`: Multi-column single row
-  - `RelationInput`: Multi-column multi-row (treated as single row currently)
+  - `TupleInput`: Multi-symbol single tuple
+  - `RelationInput`: Multi-symbol multi-tuple (treated as single tuple currently)
 
 **Critical Mapping**: The subquery pattern `(q [...] ?s)` passes `?s` which maps to the second `:in` element (after `$`).
 
 Example:
 - Outer: `?s = "symbol:aapl"`
 - Inner `:in $ ?sym` 
-- Creates: Relation with column `?sym` and value `"symbol:aapl"`
+- Creates: Relation with symbol `?sym` and value `"symbol:aapl"`
 
 ##### 2b. Execute Nested Query
 ```go
@@ -90,13 +90,13 @@ result, err := e.executePhasesWithInputs(ctx, subqPlan.NestedPlan, inputRelation
 boundResult, err := e.applyBindingForm(result, binding, inputValues, subqPlan.Inputs)
 ```
 - Transforms subquery results according to binding form
-- Adds input values as columns (for correlation)
-- TupleBinding: Expects exactly 1 result row
-- RelationBinding: Accepts multiple rows
+- Adds input values as symbols (for correlation)
+- TupleBinding: Expects exactly 1 result tuple
+- RelationBinding: Accepts multiple tuples
 
 #### Step 3: Combine Results
 - Union all results from different input combinations
-- Returns final relation with columns: `[input-vars... binding-vars...]`
+- Returns final relation with symbols: `[input-vars... binding-vars...]`
 
 ## Example Walkthrough
 

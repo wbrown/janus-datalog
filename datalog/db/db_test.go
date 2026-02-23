@@ -49,10 +49,13 @@ func TestQueryRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, datalog.ElementID{}, txID)
 
-	results, err := d.Query(`[:find ?name :where [?e :person/name ?name]]`)
+	rel, err := d.Query(`[:find ?name :where [?e :person/name ?name]]`)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.Equal(t, "Alice", results[0][0])
+	iter := rel.Iterator()
+	defer iter.Close()
+	require.True(t, iter.Next())
+	assert.Equal(t, "Alice", iter.Tuple()[0])
+	assert.False(t, iter.Next())
 }
 
 func TestQueryWithInputs(t *testing.T) {
@@ -68,13 +71,16 @@ func TestQueryWithInputs(t *testing.T) {
 	_, err := tx.Commit()
 	require.NoError(t, err)
 
-	results, err := d.Query(
+	rel, err := d.Query(
 		`[:find ?name :in $ ?min-age :where [?e :person/name ?name] [?e :person/age ?age] [(>= ?age ?min-age)]]`,
 		int64(25),
 	)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.Equal(t, "Alice", results[0][0])
+	iter := rel.Iterator()
+	defer iter.Close()
+	require.True(t, iter.Next())
+	assert.Equal(t, "Alice", iter.Tuple()[0])
+	assert.False(t, iter.Next())
 }
 
 func TestQueryInto(t *testing.T) {
@@ -311,14 +317,16 @@ func TestHistory(t *testing.T) {
 
 	// History should return both values
 	hist := d.History()
-	results, err := hist.Query(`[:find ?name :where [?e :person/name ?name]]`)
+	rel, err := hist.Query(`[:find ?name :where [?e :person/name ?name]]`)
 	require.NoError(t, err)
-	assert.Len(t, results, 2)
+	iter := rel.Iterator()
+	defer iter.Close()
 
-	names := make([]string, len(results))
-	for i, r := range results {
-		names[i] = r[0].(string)
+	var names []string
+	for iter.Next() {
+		names = append(names, iter.Tuple()[0].(string))
 	}
+	assert.Len(t, names, 2)
 	assert.Contains(t, names, "Alice")
 	assert.Contains(t, names, "Alicia")
 }
@@ -347,10 +355,12 @@ func TestMustParseQueryWithQuery(t *testing.T) {
 
 	// Pre-parsed query works with Query
 	q := db.MustParseQuery(`[:find ?name :where [?e :person/name ?name]]`)
-	results, err := d.Query(q)
+	rel, err := d.Query(q)
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	assert.Equal(t, "Alice", results[0][0])
+	iter := rel.Iterator()
+	defer iter.Close()
+	require.True(t, iter.Next())
+	assert.Equal(t, "Alice", iter.Tuple()[0])
 }
 
 func TestAssert(t *testing.T) {
@@ -403,9 +413,11 @@ func TestTransactionRollback(t *testing.T) {
 	require.NoError(t, tx.Rollback())
 
 	// Should not find the data
-	results, err := d.Query(`[:find ?name :where [?e :person/name ?name]]`)
+	rel, err := d.Query(`[:find ?name :where [?e :person/name ?name]]`)
 	require.NoError(t, err)
-	assert.Empty(t, results)
+	iter := rel.Iterator()
+	defer iter.Close()
+	assert.False(t, iter.Next())
 }
 
 func TestSaveStruct(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestOHLCColumnOrderBug reproduces the gopher-street column ordering bug
+// TestOHLCColumnOrderBug reproduces the gopher-street symbol ordering bug
 // with a realistic OHLC query pattern
 func TestOHLCColumnOrderBug(t *testing.T) {
 	// Create realistic OHLC data: 3 bars for one day
@@ -181,7 +181,7 @@ func TestOHLCColumnOrderBug(t *testing.T) {
 		}
 
 		if len(tuple) != 6 {
-			t.Fatalf("Expected 6 columns, got %d", len(tuple))
+			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
 		}
 
 		// Verify :find clause order: ?date ?open-price ?daily-high ?daily-low ?close-price ?total-volume
@@ -266,7 +266,7 @@ func TestOHLCColumnOrderBug(t *testing.T) {
 
 		// Just verify it returns the same values as parallel (in correct order)
 		if len(tuple) != 6 {
-			t.Fatalf("Expected 6 columns, got %d", len(tuple))
+			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
 		}
 
 		// Should match parallel results exactly

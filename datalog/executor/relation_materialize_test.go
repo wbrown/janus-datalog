@@ -14,7 +14,7 @@ import (
 // TestLazyMaterializationBasic tests basic lazy materialization behavior
 func TestLazyMaterializationBasic(t *testing.T) {
 	// Create a streaming relation with 10 tuples
-	columns := []query.Symbol{datalog.NewSymbol("?x")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := make([]Tuple, 10)
 	for i := 0; i < 10; i++ {
 		tuples[i] = Tuple{int64(i)}
@@ -23,7 +23,7 @@ func TestLazyMaterializationBasic(t *testing.T) {
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
 	opts := ExecutorOptions{EnableTrueStreaming: true}
-	rel := NewStreamingRelationWithOptions(columns, iter, opts)
+	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
 
 	// Test 1: Size() before materialization returns -1
 	if size := rel.Size(); size != -1 {
@@ -83,7 +83,7 @@ func TestLazyMaterializationBasic(t *testing.T) {
 // TestConcurrentAccess tests that multiple goroutines can safely access a materialized relation
 func TestConcurrentAccess(t *testing.T) {
 	// Create a streaming relation with 1000 tuples
-	columns := []query.Symbol{datalog.NewSymbol("?x")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := make([]Tuple, 1000)
 	for i := 0; i < 1000; i++ {
 		tuples[i] = Tuple{int64(i)}
@@ -98,7 +98,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 	opts := ExecutorOptions{EnableTrueStreaming: true}
 	rel := &StreamingRelation{
-		columns:  columns,
+		symbols:  symbols,
 		iterator: source(),
 		size:     -1,
 		options:  opts,
@@ -166,12 +166,12 @@ func TestMaterializeAfterIterationPanics(t *testing.T) {
 	}()
 
 	// Create a streaming relation
-	columns := []query.Symbol{datalog.NewSymbol("?x")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := []Tuple{{int64(1)}, {int64(2)}}
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
 	opts := ExecutorOptions{EnableTrueStreaming: true}
-	rel := NewStreamingRelationWithOptions(columns, iter, opts)
+	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
 
 	// Iterate FIRST
 	it := rel.Iterator()
@@ -191,12 +191,12 @@ func TestDoubleIterationWithoutMaterializePanics(t *testing.T) {
 	}()
 
 	// Create a streaming relation
-	columns := []query.Symbol{datalog.NewSymbol("?x")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := []Tuple{{int64(1)}, {int64(2)}}
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
 	opts := ExecutorOptions{EnableTrueStreaming: true}
-	rel := NewStreamingRelationWithOptions(columns, iter, opts)
+	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
 
 	// First Iterator() - OK
 	it1 := rel.Iterator()
@@ -210,7 +210,7 @@ func TestDoubleIterationWithoutMaterializePanics(t *testing.T) {
 // TestSizeBlocksWhileCaching tests that Size() blocks while caching is in progress
 func TestSizeBlocksWhileCaching(t *testing.T) {
 	// Create a streaming relation with 100 tuples
-	columns := []query.Symbol{datalog.NewSymbol("?x")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := make([]Tuple, 100)
 	for i := 0; i < 100; i++ {
 		tuples[i] = Tuple{int64(i)}
@@ -219,7 +219,7 @@ func TestSizeBlocksWhileCaching(t *testing.T) {
 	iter := &sliceIterator{tuples: tuples, pos: -1}
 
 	opts := ExecutorOptions{EnableTrueStreaming: true}
-	rel := NewStreamingRelationWithOptions(columns, iter, opts)
+	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
 
 	// Call Materialize() to enable caching
 	rel = rel.Materialize().(*StreamingRelation)

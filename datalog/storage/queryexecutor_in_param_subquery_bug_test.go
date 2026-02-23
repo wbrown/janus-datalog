@@ -12,7 +12,7 @@ import (
 
 // TestQueryExecutorInParamWithCorrelatedSubquery reproduces the gopher-street bug:
 // Top-level :in parameter combined with correlated subqueries fails with
-// "cannot project: column ?open-price not found in relation"
+// "cannot project: symbol ?open-price not found in relation"
 func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	// Create temporary database
 	dbPath := "/tmp/test-in-param-subquery-" + t.Name()
@@ -46,7 +46,7 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/day"), int64(1)))
 	assert.NoError(t, tx.Add(bar2, datalog.NewKeyword(":bar/open"), 105.0))
 
-	// Day 2 bars (so anchor pattern returns multiple rows)
+	// Day 2 bars (so anchor pattern returns multiple tuples)
 	assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/symbol"), aapl))
 	assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/year"), int64(2025)))
 	assert.NoError(t, tx.Add(bar3, datalog.NewKeyword(":bar/month"), int64(1)))
@@ -62,8 +62,8 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	_, err = tx.Commit()
 	assert.NoError(t, err)
 
-	// Query matching gopher-street EXACTLY - RelationBinding with MULTIPLE columns
-	// THIS IS THE KEY: [[?daily-high ?daily-low]] returns TWO columns in one binding
+	// Query matching gopher-street EXACTLY - RelationBinding with MULTIPLE symbols
+	// THIS IS THE KEY: [[?daily-high ?daily-low]] returns TWO symbols in one binding
 	queryStr := `[:find ?date ?daily-high ?daily-low ?open-price
 	              :in $ ?ticker
 	              :where [?s :symbol/ticker ?ticker]
@@ -132,8 +132,8 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	// If we get here, the bug is fixed
 	t.Logf("Bug NOT reproduced - test PASSES")
 	assert.Len(t, results, 2, "Should have 2 results (one per day)")
-	for _, row := range results {
-		assert.Len(t, row, 4, "Each result should have 4 columns")
-		t.Logf("Result: date=%v, high=%v, low=%v, open=%v", row[0], row[1], row[2], row[3])
+	for _, tuple := range results {
+		assert.Len(t, tuple, 4, "Each result should have 4 symbols")
+		t.Logf("Result: date=%v, high=%v, low=%v, open=%v", tuple[0], tuple[1], tuple[2], tuple[3])
 	}
 }

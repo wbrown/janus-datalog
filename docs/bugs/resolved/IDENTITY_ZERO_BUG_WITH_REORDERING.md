@@ -17,7 +17,7 @@ The wrong results (15, 16) are day numbers being used where max event values sho
 Debug output shows tuples with empty Identity values:
 
 ```
-Relation columns: [?e ?p ?time ?day] (size=3)
+Relation symbols: [?e ?p ?time ?day] (size=3)
 
 Tuple 0 (len=4): [  2025-01-15 05:00:00 -0500 EST 15]
   tuple[0] =  (type *datalog.Identity)   <-- EMPTY
@@ -95,8 +95,8 @@ Hash joins or other join types might not properly handle Identity values when bu
 ### 3. Materialization Bug
 When relations are materialized between phases, Identity values might be losing their internal data.
 
-### 4. Column Reordering Bug
-If phase reordering changes column order, and the code doesn't properly map Identity values to new positions.
+### 4. Symbol Reordering Bug
+If phase reordering changes symbol order, and the code doesn't properly map Identity values to new positions.
 
 ## What We Know Works
 

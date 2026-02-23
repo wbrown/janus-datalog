@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// Note: We use db.ExecuteQuery() directly instead of NewExecutor() + Execute()
+// Note: We use db.Query() directly instead of NewExecutor() + Execute()
 // because Database provides a simpler API that handles parsing internally.
 
 // buildCLI builds the CLI binary for testing
@@ -156,7 +157,7 @@ func TestCLI_ImportFlag(t *testing.T) {
 	defer db.Close()
 
 	// Query to verify data exists
-	result, err := db.ExecuteQuery(`[:find ?v :where [_ :test/value ?v]]`)
+	result, err := executor.CollectTuples(db.Query(`[:find ?v :where [_ :test/value ?v]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -198,12 +199,12 @@ func TestCLI_ExportImportRoundTrip(t *testing.T) {
 	defer db2.Close()
 
 	// Query names from both
-	result1, err := db1.ExecuteQuery(`[:find ?name :where [_ :person/name ?name]]`)
+	result1, err := executor.CollectTuples(db1.Query(`[:find ?name :where [_ :person/name ?name]]`))
 	if err != nil {
 		t.Fatalf("Query db1 failed: %v", err)
 	}
 
-	result2, err := db2.ExecuteQuery(`[:find ?name :where [_ :person/name ?name]]`)
+	result2, err := executor.CollectTuples(db2.Query(`[:find ?name :where [_ :person/name ?name]]`))
 	if err != nil {
 		t.Fatalf("Query db2 failed: %v", err)
 	}

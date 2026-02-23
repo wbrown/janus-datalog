@@ -85,7 +85,7 @@ func (m *MockPatternMatcherWithStats) matchWithoutBindings(pattern *query.DataPa
 }
 
 func (m *MockPatternMatcherWithStats) matchesWithTuple(d datalog.Datom, pattern *query.DataPattern, tuple Tuple, rel Relation) bool {
-	cols := rel.Columns()
+	cols := rel.Symbols()
 
 	// Check each pattern element
 	elements := []struct {
@@ -103,7 +103,7 @@ func (m *MockPatternMatcherWithStats) matchesWithTuple(d datalog.Datom, pattern 
 		}
 
 		if v, ok := elem.patternElem.(query.Variable); ok {
-			// Find this variable in the relation columns
+			// Find this variable in the relation symbols
 			for i, col := range cols {
 				if col == v.Name && i < len(tuple) {
 					// Check if the binding matches
@@ -170,7 +170,7 @@ func TestMultiMatchOptimization(t *testing.T) {
 		seen := make(map[string]bool)
 
 		for _, entity := range entities {
-			// Create single-row relation
+			// Create single-tuple relation
 			singleRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, []Tuple{{entity}})
 
 			results, err := matcher.MatchWithRelation(pattern, singleRel)
@@ -205,7 +205,7 @@ func TestMultiMatchOptimization(t *testing.T) {
 			tuples = append(tuples, Tuple{entity})
 		}
 
-		// Create multi-row relation with all entities
+		// Create multi-tuple relation with all entities
 		multiRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, tuples)
 
 		// Pattern: [?e :entity/value ?v]
@@ -217,7 +217,7 @@ func TestMultiMatchOptimization(t *testing.T) {
 			},
 		}
 
-		// New approach: ONE call with multi-row relation
+		// New approach: ONE call with multi-tuple relation
 		start := time.Now()
 		results, err := matcher.MatchWithRelation(pattern, multiRel)
 		if err != nil {
@@ -236,7 +236,7 @@ func TestMultiMatchOptimization(t *testing.T) {
 	})
 
 	t.Run("ProofOfCorrectness", func(t *testing.T) {
-		// Verify that multi-row relations produce the same results as individual calls
+		// Verify that multi-tuple relations produce the same results as individual calls
 		matcher := &MockPatternMatcherWithStats{datoms: datoms}
 
 		// Test entities
@@ -265,7 +265,7 @@ func TestMultiMatchOptimization(t *testing.T) {
 		// Reset matcher
 		matcher.matchCalls = 0
 
-		// Method 2: Multi-row relation
+		// Method 2: Multi-tuple relation
 		var tuples []Tuple
 		for _, e := range entities {
 			tuples = append(tuples, Tuple{e})
@@ -295,6 +295,6 @@ func TestMultiMatchOptimization(t *testing.T) {
 
 		t.Logf("✅ Correctness verified: both methods produce identical results")
 		t.Logf("   Individual calls: %d results", len(individualResults))
-		t.Logf("   Multi-row call: %d results", len(multiResults))
+		t.Logf("   Multi-tuple call: %d results", len(multiResults))
 	})
 }

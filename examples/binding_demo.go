@@ -75,7 +75,7 @@ func main() {
 
 	// Test 2: Match with sym1 binding
 	fmt.Println("\nTest 2: Match with ?s bound to symbol-1")
-	// Create a single-row relation with the binding
+	// Create a single-tuple relation with the binding
 	rel := executor.NewMaterializedRelation([]query.Symbol{"?s"}, []executor.Tuple{{sym1}})
 	results, err = matcher.Match(pattern, []executor.Relation{rel})
 	if err != nil {
@@ -90,7 +90,7 @@ func main() {
 
 	// Test 3: Match with sym2 binding
 	fmt.Println("\nTest 3: Match with ?s bound to symbol-2")
-	// Create a single-row relation with the binding
+	// Create a single-tuple relation with the binding
 	rel = executor.NewMaterializedRelation([]query.Symbol{"?s"}, []executor.Tuple{{sym2}})
 	results, err = matcher.Match(pattern, []executor.Relation{rel})
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -182,10 +183,10 @@ func TestOrderedSet_QueryIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query returns vector as single array value
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?prefs :in $ ?e :where [?e :character/prefs ?prefs]]`,
 		alice,
-	)
+	))
 	require.NoError(t, err)
 
 	t.Logf("Query result: %v", tuples)

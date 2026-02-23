@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -82,12 +83,12 @@ func (tdb *bridgeTestDB) cleanup() {
 	os.RemoveAll(tdb.Dir)
 }
 
-// collectStrings extracts the first column as strings from query results.
+// collectStrings extracts the first symbol as strings from query results.
 func collectStrings(results [][]interface{}) []string {
 	var out []string
-	for _, row := range results {
-		if len(row) > 0 {
-			if s, ok := row[0].(string); ok {
+	for _, tuple := range results {
+		if len(tuple) > 0 {
+			if s, ok := tuple[0].(string); ok {
 				out = append(out, s)
 			}
 		}
@@ -105,14 +106,14 @@ func TestScalarInput_InequalityPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?self
 		  :where
 		  [?e :person/name ?name]
 		  [(not= ?e ?self)]]`,
 		tdb.Alice,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestScalarInput_ComparisonPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?min-age
 		  :where
@@ -143,7 +144,7 @@ func TestScalarInput_ComparisonPredicate(t *testing.T) {
 		  [?e :person/age ?age]
 		  [(> ?age ?min-age)]]`,
 		int64(30),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -167,14 +168,14 @@ func TestScalarInput_EqualityPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?target-team
 		  :where
 		  [?e :person/name ?name]
 		  [?e :person/team ?target-team]]`,
 		"alpha",
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestScalarInput_MultipleBridgingPredicates(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?self ?min-age
 		  :where
@@ -206,7 +207,7 @@ func TestScalarInput_MultipleBridgingPredicates(t *testing.T) {
 		  [(not= ?e ?self)]
 		  [(> ?age ?min-age)]]`,
 		tdb.Alice, int64(28),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -230,7 +231,7 @@ func TestScalarInput_ExpressionBridge(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name ?adjusted
 		  :in $ ?bonus
 		  :where
@@ -238,7 +239,7 @@ func TestScalarInput_ExpressionBridge(t *testing.T) {
 		  [?e :person/age ?age]
 		  [(+ ?age ?bonus) ?adjusted]]`,
 		int64(10),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -249,9 +250,9 @@ func TestScalarInput_ExpressionBridge(t *testing.T) {
 
 	// Collect name -> adjusted age
 	adjusted := make(map[string]int64)
-	for _, row := range results {
-		name, _ := row[0].(string)
-		age, _ := row[1].(int64)
+	for _, tuple := range results {
+		name, _ := tuple[0].(string)
+		age, _ := tuple[1].(int64)
 		adjusted[name] = age
 	}
 
@@ -274,7 +275,7 @@ func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?other-name
 		  :in $ ?target-name
 		  :where
@@ -284,7 +285,7 @@ func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
 		  [?other :person/name ?other-name]
 		  [(not= ?other ?e)]]`,
 		"Alice",
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -304,7 +305,7 @@ func TestScalarInput_InPatternNotConstantBindable(t *testing.T) {
 
 // TestCollectionInput_BridgingPredicate tests a collection input where each
 // excluded name must be checked against all people. This is NOT constant-bindable
-// because it's a collection (multi-row), not a scalar.
+// because it's a collection (multi-tuple), not a scalar.
 //
 // IMPORTANT semantic note: The predicate [(not= ?name ?excluded-name)] performs
 // PAIRWISE comparison, not set membership testing. So:
@@ -317,14 +318,14 @@ func TestCollectionInput_BridgingPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ [?excluded-name ...]
 		  :where
 		  [?e :person/name ?name]
 		  [(not= ?name ?excluded-name)]]`,
 		[]string{"Alice", "Bob"},
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -345,12 +346,12 @@ func TestCollectionInput_BridgingPredicate(t *testing.T) {
 
 // TestCollectionInput_ComparisonBridge tests a collection of thresholds compared
 // against ages. The theta-join produces all valid (person, threshold) combinations,
-// then projection to :find columns deduplicates.
+// then projection to :find symbols deduplicates.
 func TestCollectionInput_ComparisonBridge(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name ?age
 		  :in $ [?threshold ...]
 		  :where
@@ -358,7 +359,7 @@ func TestCollectionInput_ComparisonBridge(t *testing.T) {
 		  [?e :person/age ?age]
 		  [(> ?age ?threshold)]]`,
 		[]interface{}{int64(25), int64(35)},
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -372,31 +373,31 @@ func TestCollectionInput_ComparisonBridge(t *testing.T) {
 	// Total: 5 combinations.
 	//
 	// But :find ?name ?age projects away ?threshold, and Eve(40) appears twice
-	// (once for threshold 25, once for 35). After deduplication: 4 unique rows.
+	// (once for threshold 25, once for 35). After deduplication: 4 unique tuples.
 	if len(results) != 4 {
 		t.Fatalf("Expected 4 results (Eve deduplicated), got %d: %v", len(results), results)
 	}
 
 	// Verify the specific (name, age) pairs we expect
-	type row struct {
+	type tuple struct {
 		name string
 		age  int64
 	}
-	got := make(map[row]bool)
+	got := make(map[tuple]bool)
 	for _, r := range results {
 		name, _ := r[0].(string)
 		age, _ := r[1].(int64)
-		got[row{name, age}] = true
+		got[tuple{name, age}] = true
 	}
 
-	for _, expected := range []row{
+	for _, expected := range []tuple{
 		{"Alice", 30},   // > 25
 		{"Charlie", 35}, // > 25
 		{"Diana", 28},   // > 25
 		{"Eve", 40},     // > 25 and > 35, but deduplicated
 	} {
 		if !got[expected] {
-			t.Errorf("Missing expected row: (%s, %d)", expected.name, expected.age)
+			t.Errorf("Missing expected tuple: (%s, %d)", expected.name, expected.age)
 		}
 	}
 }
@@ -408,29 +409,29 @@ func TestDisjointPatterns_BridgedByPredicate(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?n1 ?n2
 		  :where
 		  [?e1 :person/name ?n1] [?e1 :person/team "alpha"]
 		  [?e2 :person/name ?n2] [?e2 :person/team "beta"]
 		  [(not= ?e1 ?e2)]]`,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 
 	// alpha = {Alice, Bob}, beta = {Charlie, Diana}
 	// not= always true since different entities
-	// Expect 2×2 = 4 rows
+	// Expect 2×2 = 4 tuples
 	if len(results) != 4 {
 		t.Fatalf("Expected 4 results, got %d: %v", len(results), results)
 	}
 
 	type pair struct{ n1, n2 string }
 	got := make(map[pair]bool)
-	for _, row := range results {
-		n1, _ := row[0].(string)
-		n2, _ := row[1].(string)
+	for _, tuple := range results {
+		n1, _ := tuple[0].(string)
+		n2, _ := tuple[1].(string)
 		got[pair{n1, n2}] = true
 	}
 
@@ -452,13 +453,13 @@ func TestDisjointGroups_ExpressionBridge(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?n1 ?n2 ?combined
 		  :where
 		  [?e1 :person/name ?n1] [?e1 :person/team "alpha"]
 		  [?e2 :person/name ?n2] [?e2 :person/team "beta"]
 		  [(str ?n1 " & " ?n2) ?combined]]`,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -468,23 +469,23 @@ func TestDisjointGroups_ExpressionBridge(t *testing.T) {
 		t.Fatalf("Expected 4 results, got %d: %v", len(results), results)
 	}
 
-	type row struct{ n1, n2, combined string }
-	got := make(map[row]bool)
+	type tuple struct{ n1, n2, combined string }
+	got := make(map[tuple]bool)
 	for _, r := range results {
 		n1, _ := r[0].(string)
 		n2, _ := r[1].(string)
 		combined, _ := r[2].(string)
-		got[row{n1, n2, combined}] = true
+		got[tuple{n1, n2, combined}] = true
 	}
 
-	for _, expected := range []row{
+	for _, expected := range []tuple{
 		{"Alice", "Charlie", "Alice & Charlie"},
 		{"Alice", "Diana", "Alice & Diana"},
 		{"Bob", "Charlie", "Bob & Charlie"},
 		{"Bob", "Diana", "Bob & Diana"},
 	} {
 		if !got[expected] {
-			t.Errorf("Missing expected row: %v", expected)
+			t.Errorf("Missing expected tuple: %v", expected)
 		}
 	}
 }
@@ -497,7 +498,7 @@ func TestScalarInput_AllExcluded(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
 
-	results, err := tdb.DB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(tdb.DB.Query(
 		`[:find ?name
 		  :in $ ?min-age
 		  :where
@@ -505,7 +506,7 @@ func TestScalarInput_AllExcluded(t *testing.T) {
 		  [?e :person/age ?age]
 		  [(> ?age ?min-age)]]`,
 		int64(100),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -538,14 +539,14 @@ func TestScalarInput_SingleEntitySelfExclusion(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name
 		  :in $ ?self
 		  :where
 		  [?e :person/name ?name]
 		  [(not= ?e ?self)]]`,
 		alice,
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}

@@ -375,7 +375,7 @@ func (e *DefaultQueryExecutor) executeWithDecorrelation(ctx Context, q *query.Qu
 	groupsHaveSymbols := make([][]bool, len(groups))
 	for i, group := range groups {
 		groupsHaveSymbols[i] = make([]bool, len(findVars))
-		cols := group.Columns()
+		cols := group.Symbols()
 		for j, sym := range findVars {
 			for _, col := range cols {
 				if col == sym {
@@ -456,8 +456,8 @@ func (e *DefaultQueryExecutor) executeBatchedGroup(
 		results := make(map[int]Relation)
 		for _, subqIdx := range batchGroup.Indices {
 			subq := subqueries[subqIdx]
-			columns := extractBindingSymbols(subq.Binding)
-			results[subqIdx] = NewMaterializedRelation(columns, []Tuple{})
+			symbols := extractBindingSymbols(subq.Binding)
+			results[subqIdx] = NewMaterializedRelation(symbols, []Tuple{})
 		}
 		return results, nil
 	}
@@ -526,19 +526,19 @@ func combineGroups(groups []Relation) Relation {
 
 // createBatchedInputRelation creates a relation containing all input combinations
 func createBatchedInputRelation(inputSymbols []query.Symbol, combinations []map[query.Symbol]interface{}) Relation {
-	// Filter out source markers from columns
-	var columns []query.Symbol
+	// Filter out source markers from symbols
+	var symbols []query.Symbol
 	for _, sym := range inputSymbols {
 		if !sym.IsSource() {
-			columns = append(columns, sym)
+			symbols = append(symbols, sym)
 		}
 	}
 
 	// Build tuples from all combinations
 	var tuples []Tuple
 	for _, values := range combinations {
-		tuple := make(Tuple, len(columns))
-		for i, col := range columns {
+		tuple := make(Tuple, len(symbols))
+		for i, col := range symbols {
 			if val, ok := values[col]; ok {
 				tuple[i] = val
 			}
@@ -546,7 +546,7 @@ func createBatchedInputRelation(inputSymbols []query.Symbol, combinations []map[
 		tuples = append(tuples, tuple)
 	}
 
-	return NewMaterializedRelation(columns, tuples)
+	return NewMaterializedRelation(symbols, tuples)
 }
 
 // canUseBatchedInput checks if a subquery can accept batched RelationInput
@@ -596,9 +596,9 @@ func (e *DefaultQueryExecutor) executeBatchedSubquery(
 
 	// For batched execution, we expect a single result group
 	if len(nestedGroups) == 0 {
-		// Empty result - return empty relation with appropriate columns
-		columns := extractBindingSymbols(subq.Binding)
-		return NewMaterializedRelation(columns, []Tuple{}), nil
+		// Empty result - return empty relation with appropriate symbols
+		symbols := extractBindingSymbols(subq.Binding)
+		return NewMaterializedRelation(symbols, []Tuple{}), nil
 	}
 	if len(nestedGroups) > 1 {
 		return nil, fmt.Errorf("batched subquery returned %d disjoint groups - expected 1", len(nestedGroups))
@@ -607,7 +607,7 @@ func (e *DefaultQueryExecutor) executeBatchedSubquery(
 	nestedResult := nestedGroups[0]
 
 	// For batched execution, apply binding form with empty input values
-	// The result should already have all rows with correlation columns
+	// The result should already have all tuples with correlation symbols
 	boundResult, err := applyBindingFormBatched(nestedResult, subq.Binding, inputSymbols)
 	if err != nil {
 		return nil, fmt.Errorf("batched binding form application failed: %w", err)
@@ -618,8 +618,8 @@ func (e *DefaultQueryExecutor) executeBatchedSubquery(
 
 // applyBindingFormBatched applies binding form to batched subquery results
 func applyBindingFormBatched(result Relation, binding query.BindingForm, inputSymbols []query.Symbol) (Relation, error) {
-	// For batched execution, the result already contains correlation columns
-	// We just need to ensure column ordering is correct
+	// For batched execution, the result already contains correlation symbols
+	// We just need to ensure symbol ordering is correct
 	switch binding.(type) {
 	case query.TupleBinding:
 		// For batched TupleBinding, result should have [correlation_vars..., binding_vars...]

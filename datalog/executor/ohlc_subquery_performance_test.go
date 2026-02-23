@@ -120,7 +120,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 		}
 		duration := time.Since(start)
 
-		t.Logf("Single subquery returned %d rows in %v", result.Size(), duration)
+		t.Logf("Single subquery returned %d tuples in %v", result.Size(), duration)
 	})
 
 	// Test 2: Multiple subqueries (open, high, low for each day)
@@ -176,7 +176,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 		}
 		duration := time.Since(start)
 
-		t.Logf("Multiple subqueries returned %d rows in %v", result.Size(), duration)
+		t.Logf("Multiple subqueries returned %d tuples in %v", result.Size(), duration)
 		t.Logf("This demonstrates the O(n×m) pattern: %d days × 3 aggregations", result.Size())
 	})
 }

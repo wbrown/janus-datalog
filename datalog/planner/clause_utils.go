@@ -293,7 +293,7 @@ func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 	// For fallback semantics, require the "correlation" symbol from pattern branches.
 	// This is the entity variable (first element) of the first pattern in each
 	// pattern branch. It represents the connection to outer context that enables
-	// per-row fallback evaluation.
+	// per-tuple fallback evaluation.
 	//
 	// Example: (or [?scenario :task ?t] [(ground 0) ?x])
 	// Here ?scenario is the correlation symbol that should be bound from outside.

@@ -868,13 +868,13 @@ Relations → Joins → Relations → Filters → Relations
 Relations → Aggregations → Relations → Output
 ```
 
-Every step produces a `Relation` (a set of tuples with named columns). The entire execution is just relational algebra operations composed together.
+Every step produces a `Relation` (a set of tuples with named symbols). The entire execution is just relational algebra operations composed together.
 
 **Key abstraction:**
 
 ```go
 type Relation interface {
-    Schema() []Symbol                    // Column names
+    Schema() []Symbol                    // Symbol names
     Iterator(ctx Context) Iterator       // Streaming access
     Project(cols []Symbol) Relation      // π (projection)
     Filter(filter Filter) Relation       // σ (selection)

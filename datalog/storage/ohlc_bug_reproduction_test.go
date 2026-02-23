@@ -97,8 +97,8 @@ func TestOHLCQueryBug(t *testing.T) {
 		}
 		it.Close()
 
-		// Should have 1 row (grouped by year/month/day)
-		// If bug exists, might get 0 rows or hang
+		// Should have 1 tuple (grouped by year/month/day)
+		// If bug exists, might get 0 tuples or hang
 		require.Greater(t, count, 0, "Query returned 0 results - tuple copying bug in matcher_relations.go:241")
 
 	case <-time.After(30 * time.Second):

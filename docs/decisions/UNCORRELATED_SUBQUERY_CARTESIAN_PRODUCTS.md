@@ -16,9 +16,9 @@ During the implementation of QueryExecutor (Stage B), we encountered an architec
 ```
 
 This query creates a **disjoint relation scenario**:
-- Pattern `[?e :person/name ?name]` produces relation with columns `[?e, ?name]`
-- Subquery produces relation with columns `[?max-age]` (after filtering out `$`)
-- These relations **share no columns** → cannot be joined
+- Pattern `[?e :person/name ?name]` produces relation with symbols `[?e, ?name]`
+- Subquery produces relation with symbols `[?max-age]` (after filtering out `$`)
+- These relations **share no symbols** → cannot be joined
 - Projecting `[:find ?name ?max-age]` requires both relations
 
 ## The Dilemma
@@ -82,8 +82,8 @@ if len(groups) > 1 {
    - Prevents accidental explosions from malformed queries
 
 3. **Performance characteristics**:
-   - Uncorrelated subqueries usually return 1 row (aggregations like `max`, `min`)
-   - Product with 1-row relation is essentially a broadcast
+   - Uncorrelated subqueries usually return 1 tuple (aggregations like `max`, `min`)
+   - Product with 1-tuple relation is essentially a broadcast
    - Not a performance concern in typical usage
 
 ### Edge Cases to Watch

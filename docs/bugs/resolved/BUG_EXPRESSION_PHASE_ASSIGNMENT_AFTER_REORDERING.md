@@ -16,7 +16,7 @@ The planner was assigning expressions to phases BEFORE phase reordering happened
 ### TestComprehensiveExecutorValidation/all_features_combined
 
 Both tests failed with errors about missing symbols:
-- `projection failed: cannot project: column ?total not found`
+- `projection failed: cannot project: symbol ?total not found`
 - `predicate requires symbols not available: [?total]`
 
 ## Root Cause

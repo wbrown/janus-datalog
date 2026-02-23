@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // TestOrClauseWithCorrelatedSubquery_E2E reproduces the bug where
@@ -21,7 +22,7 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -60,18 +61,18 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 	                             $ ?scenario) [[?count]]]
 	                         [(ground 0) ?count])]`
 
-	rows, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
 	// Collect results
 	results := make(map[string]int64)
-	for _, row := range rows {
-		t.Logf("Result row: %v", row)
+	for _, tuple := range tuples {
+		t.Logf("Result tuple: %v", tuple)
 		// scenario is an Identity, count is int64
-		scenarioID := row[0].(datalog.Identity)
-		count := row[1].(int64)
+		scenarioID := tuple[0].(datalog.Identity)
+		count := tuple[1].(int64)
 		results[scenarioID.String()] = count
 	}
 
@@ -90,7 +91,7 @@ func TestScenarioSummaryQuery_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -124,17 +125,17 @@ func TestScenarioSummaryQuery_E2E(t *testing.T) {
 	                      $ ?scenario) [[?taskCount]]]
 	                  [(ground 0) ?taskCount])]`
 
-	rows, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
-	t.Logf("Got %d results", len(rows))
-	for _, row := range rows {
-		t.Logf("Row: %v", row)
+	t.Logf("Got %d results", len(tuples))
+	for _, tuple := range tuples {
+		t.Logf("Tuple: %v", tuple)
 	}
 
-	require.Len(t, rows, 1, "Should have 1 scenario")
+	require.Len(t, tuples, 1, "Should have 1 scenario")
 }
 
 // scenarioSummaryQueryFull is the EXACT production query from user's code
@@ -204,7 +205,7 @@ func TestNestedSubqueryInOr_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -248,16 +249,16 @@ func TestNestedSubqueryInOr_E2E(t *testing.T) {
 	                      $ ?scenario) [[?lastKey]]]
 	                  [(ground :none) ?lastKey])]`
 
-	rows, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
-	t.Logf("Got %d results", len(rows))
-	for _, row := range rows {
-		t.Logf("Row: %v", row)
+	t.Logf("Got %d results", len(tuples))
+	for _, tuple := range tuples {
+		t.Logf("Tuple: %v", tuple)
 	}
-	require.Len(t, rows, 1)
+	require.Len(t, tuples, 1)
 }
 
 // TestProductionQueryStructure_E2E incrementally builds toward the production query
@@ -266,7 +267,7 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -319,16 +320,16 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 	              ;; Comparison binding
 	              [(> ?openingCount 0) ?complete]]`
 
-	rows, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
-	t.Logf("Got %d results", len(rows))
-	for _, row := range rows {
-		t.Logf("Row: %v", row)
+	t.Logf("Got %d results", len(tuples))
+	for _, tuple := range tuples {
+		t.Logf("Tuple: %v", tuple)
 	}
-	require.Len(t, rows, 2)
+	require.Len(t, tuples, 2)
 }
 
 // TestGetElseBeforeOrClause_E2E tests get-else BEFORE the OR clause
@@ -337,7 +338,7 @@ func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -370,16 +371,16 @@ func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 	                      $ ?scenario) [[?taskCount]]]
 	                  [(ground 0) ?taskCount])]`
 
-	rows, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
-	t.Logf("Got %d results", len(rows))
-	for _, row := range rows {
-		t.Logf("Row: %v", row)
+	t.Logf("Got %d results", len(tuples))
+	for _, tuple := range tuples {
+		t.Logf("Tuple: %v", tuple)
 	}
-	require.Len(t, rows, 2)
+	require.Len(t, tuples, 2)
 }
 
 // TestMultipleSequentialOrClauses_E2E tests MULTIPLE sequential OR clauses
@@ -388,7 +389,7 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -427,16 +428,16 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 	                      $ ?scenario) [[?count2]]]
 	                  [(ground 0) ?count2])]`
 
-	rows, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
-	t.Logf("Got %d results", len(rows))
-	for _, row := range rows {
-		t.Logf("Row: %v", row)
+	t.Logf("Got %d results", len(tuples))
+	for _, tuple := range tuples {
+		t.Logf("Tuple: %v", tuple)
 	}
-	require.Len(t, rows, 2)
+	require.Len(t, tuples, 2)
 }
 
 // TestOrWithGetElseInsideSubquery_E2E tests OR with get-else inside the subquery
@@ -445,7 +446,7 @@ func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -476,16 +477,16 @@ func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 	                  (and [(ground 0) ?taskCount]
 	                       [(ground 0) ?totalTokens]))]`
 
-	rows, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
-	t.Logf("Got %d results", len(rows))
-	for _, row := range rows {
-		t.Logf("Row: %v", row)
+	t.Logf("Got %d results", len(tuples))
+	for _, tuple := range tuples {
+		t.Logf("Tuple: %v", tuple)
 	}
-	require.Len(t, rows, 2)
+	require.Len(t, tuples, 2)
 }
 
 // TestOrWithMultipleAggregations_E2E tests OR with multiple aggregations in subquery
@@ -494,7 +495,7 @@ func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -526,16 +527,16 @@ func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 	                  (and [(ground 0) ?taskCount]
 	                       [(ground 0) ?totalTokens]))]`
 
-	rows, err := db.ExecuteQuery(queryStr)
+	tuples, err := executor.CollectTuples(db.Query(queryStr))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
-	t.Logf("Got %d results", len(rows))
-	for _, row := range rows {
-		t.Logf("Row: %v", row)
+	t.Logf("Got %d results", len(tuples))
+	for _, tuple := range tuples {
+		t.Logf("Tuple: %v", tuple)
 	}
-	require.Len(t, rows, 2)
+	require.Len(t, tuples, 2)
 }
 
 // TestFullScenarioSummaryQuery_E2E tests the EXACT production query
@@ -544,7 +545,7 @@ func TestFullScenarioSummaryQuery_E2E(t *testing.T) {
 	defer os.RemoveAll(dbPath)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:      dbPath,
+		Path: dbPath,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -575,15 +576,15 @@ func TestFullScenarioSummaryQuery_E2E(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	rows, err := db.ExecuteQuery(scenarioSummaryQueryFull)
+	tuples, err := executor.CollectTuples(db.Query(scenarioSummaryQueryFull))
 	if err != nil {
 		t.Fatalf("Query execution failed: %v", err)
 	}
 
-	t.Logf("Got %d results", len(rows))
-	for _, row := range rows {
-		t.Logf("Row: %v", row)
+	t.Logf("Got %d results", len(tuples))
+	for _, tuple := range tuples {
+		t.Logf("Tuple: %v", tuple)
 	}
 
-	require.Len(t, rows, 2, "Should have 2 scenarios")
+	require.Len(t, tuples, 2, "Should have 2 scenarios")
 }

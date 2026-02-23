@@ -11,10 +11,10 @@
 **Actual Bug**: Phase reordering **alone** breaks subquery execution
 
 Test results from `TestOptimizationComposition`:
-- ✅ **Baseline (no optimizations)**: Returns 2 rows correctly
-- ❌ **Phase Reordering only**: Returns 0 rows (BROKEN!)
-- ✅ **Conditional Aggregates only**: Returns 2 rows correctly
-- ✅ **Both optimizations**: Returns 2 rows correctly (!!)
+- ✅ **Baseline (no optimizations)**: Returns 2 tuples correctly
+- ❌ **Phase Reordering only**: Returns 0 tuples (BROKEN!)
+- ✅ **Conditional Aggregates only**: Returns 2 tuples correctly
+- ✅ **Both optimizations**: Returns 2 tuples correctly (!!)
 
 **The Real Problem**: `EnableDynamicReordering: true` breaks queries with subqueries, regardless of conditional aggregate rewriting.
 
@@ -24,12 +24,12 @@ Test results from `TestOptimizationComposition`:
 
 **Configuration 1**: Rewriting ON, Phase Reordering ON (default)
 ```
-Result: FAIL - projection failed: cannot project: column ?__cond_?pd not found
+Result: FAIL - projection failed: cannot project: symbol ?__cond_?pd not found
 ```
 
 **Configuration 2**: Rewriting OFF, Phase Reordering ON (default)
 ```
-Result: Returns 0 rows (should return 30 rows)
+Result: Returns 0 tuples (should return 30 tuples)
 ```
 
 **Configuration 3**: Rewriting ON, Phase Reordering OFF
@@ -41,7 +41,7 @@ Result: UNKNOWN - Not yet tested
 
 **Configuration 1**: Rewriting OFF
 ```
-Result: FAIL - Returns 0 rows (should return 2 rows)
+Result: FAIL - Returns 0 tuples (should return 2 tuples)
 Expected: [(Alice, 15, 150), (Alice, 16, 200)]
 Actual: []
 ```
@@ -79,21 +79,21 @@ Returns: [(Alice, 15, 150), (Alice, 16, 200)]
 The bug manifests during **query execution**, not planning:
 
 1. **Planning**: Phases reordered, subqueries preserved, Keep lists correct
-2. **Execution**: Query returns 0 rows instead of expected results
+2. **Execution**: Query returns 0 tuples instead of expected results
 3. **Hypothesis**: Executor makes assumptions about phase order that break after reordering
 
 ### The Projection Error (From Benchmark)
 
 ```
-cannot project: column ?__cond_?pd not found in relation
-  (has columns: [?p ?name ?ev ?t ?v ?pd])
+cannot project: symbol ?__cond_?pd not found in relation
+  (has symbols: [?p ?name ?ev ?t ?v ?pd])
 ```
 
 This error only appears with BOTH reordering + conditional aggregates enabled.
-**But** reordering alone also breaks queries (returns 0 rows without error).
+**But** reordering alone also breaks queries (returns 0 tuples without error).
 
 **Two separate bugs**:
-1. Phase reordering breaks subquery execution (silent failure, 0 rows)
+1. Phase reordering breaks subquery execution (silent failure, 0 tuples)
 2. Phase reordering + conditional aggregates breaks projection (explicit error)
 
 ### The Missing Metadata Propagation
@@ -141,7 +141,7 @@ Phase 0 (after renaming):
   Metadata["aggregate_required_columns"] = [?v, ?__cond_?pd]  ← NOT UPDATED!
 ```
 
-**Step 4**: updatePhaseSymbols tries to keep metadata columns
+**Step 4**: updatePhaseSymbols tries to keep metadata symbols
 ```
 Check available[?v] ✓ - exists as ?v
 Check available[?__cond_?pd] ✗ - doesn't exist! (it's now ?__cond_?p or was renamed)
@@ -181,7 +181,7 @@ This is a classic **representation invariant violation**:
 If phase reordering doesn't update metadata, other features that store symbol names in metadata could break:
 
 1. **Predicate pushdown**: Stores predicate variable names in metadata
-2. **Join condition optimization**: Stores join column names
+2. **Join condition optimization**: Stores join symbol names
 3. **Any future feature**: That uses metadata to track symbols
 
 **General principle**: Variable renaming is a **global transformation** that must update **all** references to those variables, not just patterns.

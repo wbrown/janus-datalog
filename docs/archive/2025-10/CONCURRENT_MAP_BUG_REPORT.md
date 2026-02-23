@@ -67,12 +67,12 @@ type BadgerMatcher struct {
     // ...
 }
 
-func (m *BadgerMatcher) getTupleBuilder(pattern, columns) *InternedTupleBuilder {
-    key := computeKey(pattern, columns)
+func (m *BadgerMatcher) getTupleBuilder(pattern, symbols) *InternedTupleBuilder {
+    key := computeKey(pattern, symbols)
     if builder, exists := m.tupleBuilderCache[key] {  // Line 68: CONCURRENT READ
         return builder
     }
-    builder := createBuilder(pattern, columns)
+    builder := createBuilder(pattern, symbols)
     m.tupleBuilderCache[key] = builder  // CONCURRENT WRITE
     return builder
 }
@@ -118,8 +118,8 @@ type BadgerMatcher struct {
     // ...
 }
 
-func (m *BadgerMatcher) getTupleBuilder(pattern, columns) *InternedTupleBuilder {
-    key := computeKey(pattern, columns)
+func (m *BadgerMatcher) getTupleBuilder(pattern, symbols) *InternedTupleBuilder {
+    key := computeKey(pattern, symbols)
 
     // Try read lock first (fast path)
     m.tupleBuilderCacheMu.RLock()
@@ -138,7 +138,7 @@ func (m *BadgerMatcher) getTupleBuilder(pattern, columns) *InternedTupleBuilder 
         return builder
     }
 
-    builder := createBuilder(pattern, columns)
+    builder := createBuilder(pattern, symbols)
     m.tupleBuilderCache[key] = builder
     return builder
 }
@@ -155,14 +155,14 @@ type BadgerMatcher struct {
     // ...
 }
 
-func (m *BadgerMatcher) getTupleBuilder(pattern, columns) *InternedTupleBuilder {
-    key := computeKey(pattern, columns)
+func (m *BadgerMatcher) getTupleBuilder(pattern, symbols) *InternedTupleBuilder {
+    key := computeKey(pattern, symbols)
 
     if builder, ok := m.tupleBuilderCache.Load(key); ok {
         return builder.(*InternedTupleBuilder)
     }
 
-    builder := createBuilder(pattern, columns)
+    builder := createBuilder(pattern, symbols)
     actual, loaded := m.tupleBuilderCache.LoadOrStore(key, builder)
     return actual.(*InternedTupleBuilder)
 }
@@ -195,7 +195,7 @@ Move cache from `BadgerMatcher` to `Executor` with goroutine-local access.
 func TestTupleBuilderCacheConcurrency(t *testing.T) {
     matcher := NewBadgerMatcher(/* ... */)
     pattern := &Pattern{/* ... */}
-    columns := []Symbol{/* ... */}
+    symbols := []Symbol{/* ... */}
 
     // Spawn 1000 goroutines accessing cache concurrently
     var wg sync.WaitGroup
@@ -204,7 +204,7 @@ func TestTupleBuilderCacheConcurrency(t *testing.T) {
         go func() {
             defer wg.Done()
             for j := 0; j < 100; j++ {
-                builder := matcher.getTupleBuilder(pattern, columns)
+                builder := matcher.getTupleBuilder(pattern, symbols)
                 if builder == nil {
                     t.Error("getTupleBuilder returned nil")
                 }
@@ -248,7 +248,7 @@ The optimization report (`OPTIMIZATION_REPORT_2025_10_08.md`) mentions:
 
 > **Tuple Builder Caching** (commit `ff1cecb`) - **15% reduction**
 > - Problem: Creating new `InternedTupleBuilder` for every pattern match
-> - Solution: Cache builders per `(pattern, columns)` combination
+> - Solution: Cache builders per `(pattern, symbols)` combination
 
 The solution is correct, but the implementation missed thread-safety requirements for parallel execution.
 

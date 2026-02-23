@@ -171,14 +171,14 @@ The streaming optimizations (commits 4a394cb, 4f3b742, 15d196d, 78c930a) enabled
 ```go
 // TestStreamingTupleCopying verifies tuple copying works with streaming
 func TestStreamingTupleCopying(t *testing.T) {
-    columns := []query.Symbol{"x", "y", "z"}
+    symbols := []query.Symbol{"x", "y", "z"}
     tuples := []Tuple{
         {int64(1), int64(10), int64(100)},
         {int64(2), int64(20), int64(200)},
         {int64(3), int64(30), int64(300)},
     }
 
-    rel := NewMaterializedRelationWithOptions(columns, tuples, ExecutorOptions{
+    rel := NewMaterializedRelationWithOptions(symbols, tuples, ExecutorOptions{
         EnableTrueStreaming: true,
     })
 

@@ -58,9 +58,9 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 }
 
 // filterWithPredicateAndLookup filters a relation using a predicate with optional database lookup.
-// constantBindings are pre-resolved scalar values that are not present as relation columns.
+// constantBindings are pre-resolved scalar values that are not present as relation symbols.
 func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) Relation {
-	columns := rel.Columns()
+	symbols := rel.Symbols()
 	needsCopy := rel.RequiresCopy()
 
 	// Pre-allocate filtered only for materialized relations to avoid forcing materialization
@@ -72,7 +72,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	}
 
 	// Reuse single bindings map to avoid repeated allocations
-	bindings := make(map[query.Symbol]interface{}, len(columns)+len(constantBindings))
+	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(constantBindings))
 
 	// Check if this is a DatabaseFunctionPredicate that needs lookup
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
@@ -90,7 +90,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		for sym, val := range constantBindings {
 			bindings[sym] = val
 		}
-		for i, col := range columns {
+		for i, col := range symbols {
 			bindings[col] = tuple[i]
 		}
 
@@ -117,15 +117,15 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	return NewMaterializedRelationWithOptions(columns, filtered, opts)
+	return NewMaterializedRelationWithOptions(symbols, filtered, opts)
 }
 
 // evaluateExpressionWithLookup evaluates an expression with optional database lookup support.
 // If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
 // Otherwise, it falls back to the standard Eval method.
-// constantBindings are pre-resolved scalar values that are not present as relation columns.
+// constantBindings are pre-resolved scalar values that are not present as relation symbols.
 func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) Relation {
-	columns := rel.Columns()
+	symbols := rel.Symbols()
 
 	// Determine binding symbols and whether they already exist
 	var bindingSymbols []query.Symbol
@@ -138,12 +138,12 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		bindingSymbols = b.Variables
 	}
 
-	// Check which binding columns already exist
+	// Check which binding symbols already exist
 	hasAllBindings := len(bindingSymbols) > 0
 	existingBindingIndices := make(map[query.Symbol]int)
 	for _, bindSym := range bindingSymbols {
 		found := false
-		for i, col := range columns {
+		for i, col := range symbols {
 			if col == bindSym {
 				existingBindingIndices[bindSym] = i
 				found = true
@@ -155,9 +155,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		}
 	}
 
-	newColumns := columns
+	newColumns := symbols
 	if !hasAllBindings && len(bindingSymbols) > 0 {
-		newColumns = append([]query.Symbol{}, columns...)
+		newColumns = append([]query.Symbol{}, symbols...)
 		for _, bindSym := range bindingSymbols {
 			if _, exists := existingBindingIndices[bindSym]; !exists {
 				newColumns = append(newColumns, bindSym)
@@ -166,7 +166,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	}
 
 	// Reuse single bindings map to avoid repeated allocations
-	bindings := make(map[query.Symbol]interface{}, len(columns)+len(constantBindings))
+	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(constantBindings))
 
 	// Pre-allocate newTuples only for materialized relations to avoid forcing materialization
 	var newTuples []Tuple
@@ -189,7 +189,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		for sym, val := range constantBindings {
 			bindings[sym] = val
 		}
-		for i, col := range columns {
+		for i, col := range symbols {
 			bindings[col] = tuple[i]
 		}
 
@@ -213,7 +213,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			result = gsr.Value
 		}
 
-		// Handle multi-row expansion (e.g., enumerate returns [][]interface{})
+		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
 		if multiRows, ok := result.([][]interface{}); ok {
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
 				for _, subTuple := range multiRows {
@@ -233,7 +233,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 						newTuple := make(Tuple, len(newColumns))
 						copy(newTuple, tuple)
 						for i, bindSym := range tb.Variables {
-							for j := len(columns); j < len(newColumns); j++ {
+							for j := len(symbols); j < len(newColumns); j++ {
 								if newColumns[j] == bindSym {
 									newTuple[j] = subTuple[i]
 									break
@@ -252,7 +252,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			// No binding, just keep original tuple
 			newTuples = append(newTuples, tuple)
 		} else if hasAllBindings {
-			// Update existing columns
+			// Update existing symbols
 			newTuple := make(Tuple, len(tuple))
 			copy(newTuple, tuple)
 			// Handle tuple binding - result should be []interface{}
@@ -267,7 +267,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 				}
 			} else {
 				// Scalar binding
-				for i, col := range columns {
+				for i, col := range symbols {
 					if bindSym, ok := expr.Binding.(query.Symbol); ok && col == bindSym {
 						newTuple[i] = result
 						break
@@ -276,7 +276,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			}
 			newTuples = append(newTuples, newTuple)
 		} else {
-			// Add new columns
+			// Add new symbols
 			newTuple := make(Tuple, len(newColumns))
 			copy(newTuple, tuple)
 			// Handle tuple binding - result should be []interface{}
@@ -285,7 +285,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 				if ok && len(values) == len(tb.Variables) {
 					for i, bindSym := range tb.Variables {
 						// Find position of this symbol in newColumns
-						for j := len(columns); j < len(newColumns); j++ {
+						for j := len(symbols); j < len(newColumns); j++ {
 							if newColumns[j] == bindSym {
 								newTuple[j] = values[i]
 								break
@@ -306,11 +306,11 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	return NewMaterializedRelationWithOptions(newColumns, newTuples, opts)
 }
 
-// projectToColumns projects a relation to the specified columns
+// projectToColumns projects a relation to the specified symbols
 func projectToColumns(rel Relation, cols []query.Symbol, opts ExecutorOptions) Relation {
-	relCols := rel.Columns()
+	relCols := rel.Symbols()
 
-	// Build column index mapping
+	// Build symbol index mapping
 	colIndices := make([]int, len(cols))
 	for i, col := range cols {
 		found := false
@@ -322,7 +322,7 @@ func projectToColumns(rel Relation, cols []query.Symbol, opts ExecutorOptions) R
 			}
 		}
 		if !found {
-			// Column not found - return empty relation
+			// Symbol not found - return empty relation
 			return NewMaterializedRelationWithOptions(cols, nil, opts)
 		}
 	}
@@ -378,13 +378,13 @@ func collectInnerVars(clauses []query.Clause) []query.Symbol {
 	return vars
 }
 
-// getUniqueCombinations extracts unique value combinations for the given columns
+// getUniqueCombinations extracts unique value combinations for the given symbols
 func getUniqueCombinations(rel Relation, cols []query.Symbol) []Tuple {
 	if rel == nil || len(cols) == 0 {
 		return nil
 	}
 
-	relCols := rel.Columns()
+	relCols := rel.Symbols()
 	colIndices := make([]int, len(cols))
 	for i, col := range cols {
 		found := false
@@ -448,7 +448,7 @@ func countOverlap(cols, syms []query.Symbol) int {
 	return count
 }
 
-// unionRelations creates a union of multiple relations, projecting to common columns
+// unionRelations creates a union of multiple relations, projecting to common symbols
 func unionRelations(relations []Relation, cols []query.Symbol, opts ExecutorOptions) Relation {
 	if len(relations) == 0 {
 		return NewMaterializedRelationWithOptions(cols, nil, opts)
@@ -458,8 +458,8 @@ func unionRelations(relations []Relation, cols []query.Symbol, opts ExecutorOpti
 	var allTuples []Tuple
 
 	for _, rel := range relations {
-		// Build column index mapping
-		relCols := rel.Columns()
+		// Build symbol index mapping
+		relCols := rel.Symbols()
 		colIndices := make([]int, len(cols))
 		valid := true
 		for i, col := range cols {

@@ -28,7 +28,7 @@ This breaks executor validation because both executors must behave identically f
 **Error:**
 ```
 Legacy error: phase 1 failed: projection failed: cannot project:
-             column ?total not found in relation (has columns: [?person ?name ?score])
+             symbol ?total not found in relation (has symbols: [?person ?name ?score])
 New error: <nil>
 ```
 

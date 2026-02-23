@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Multi-Row Relations with Annotations Demo ===\n")
+	fmt.Println("=== Multi-Tuple Relations with Annotations Demo ===\n")
 
 	// Create a database
 	db, err := storage.NewDatabase("/tmp/annotations_demo")
@@ -70,10 +70,10 @@ func main() {
 	baseMatcher := storage.NewBadgerMatcher(db.Store())
 	matcher := executor.WrapMatcher(baseMatcher, handler).(executor.PatternMatcher)
 
-	// Demo 1: Single-row binding (baseline)
-	fmt.Println("1. Single-row binding (traditional approach):")
+	// Demo 1: Single-tuple binding (baseline)
+	fmt.Println("1. Single-tuple binding (traditional approach):")
 	{
-		// Create a single-row relation
+		// Create a single-tuple relation
 		singleRel := executor.NewMaterializedRelation(
 			[]query.Symbol{"?stock"},
 			[]executor.Tuple{{stocks[0].id}}, // Just AAPL
@@ -95,10 +95,10 @@ func main() {
 		fmt.Printf("   Found %d result\n", results.Size())
 	}
 
-	// Demo 2: Multi-row single-column binding
-	fmt.Println("\n2. Multi-row single-column binding:")
+	// Demo 2: Multi-tuple single-symbol binding
+	fmt.Println("\n2. Multi-tuple single-symbol binding:")
 	{
-		// Create a multi-row relation with 5 stocks
+		// Create a multi-tuple relation with 5 stocks
 		var tuples []executor.Tuple
 		for i := 0; i < 5; i++ {
 			tuples = append(tuples, executor.Tuple{stocks[i].id})
@@ -121,11 +121,11 @@ func main() {
 		fmt.Printf("   Found %d results with one call\n", results.Size())
 	}
 
-	// Demo 3: Multi-row multi-column binding
-	fmt.Println("\n3. Multi-row multi-column binding:")
+	// Demo 3: Multi-tuple multi-symbol binding
+	fmt.Println("\n3. Multi-tuple multi-symbol binding:")
 	{
 		// Create a relation with stock-attribute pairs
-		multiColRel := executor.NewMaterializedRelation(
+		multiSymRel := executor.NewMaterializedRelation(
 			[]query.Symbol{"?s", "?attr"},
 			[]executor.Tuple{
 				{stocks[0].id, priceAttr},  // AAPL price
@@ -143,7 +143,7 @@ func main() {
 			},
 		}
 
-		results, err := matcher.Match(pattern, executor.Relations{multiColRel})
+		results, err := matcher.Match(pattern, executor.Relations{multiSymRel})
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -151,8 +151,8 @@ func main() {
 		fmt.Printf("   Found %d results for specific stock-attribute pairs\n", results.Size())
 	}
 
-	// Demo 4: Large multi-row binding
-	fmt.Println("\n4. Large multi-row binding (all stocks):")
+	// Demo 4: Large multi-tuple binding
+	fmt.Println("\n4. Large multi-tuple binding (all stocks):")
 	{
 		// Create a relation with all stocks
 		var allTuples []executor.Tuple
@@ -217,7 +217,7 @@ func main() {
 
 	fmt.Printf("Total operations: %d\n", totalEvents)
 	fmt.Printf("Multi-match operations: %d\n", multiMatchCount)
-	fmt.Printf("Efficiency gain: Using multi-row relations reduced API calls significantly\n")
+	fmt.Printf("Efficiency gain: Using multi-tuple relations reduced API calls significantly\n")
 
 	// Show the efficiency of multi-match
 	for _, event := range eventTypes["pattern/multi-match"] {
@@ -229,7 +229,7 @@ func main() {
 		fmt.Printf("  - %d bindings processed in ONE call\n", bindingCount)
 		fmt.Printf("  - %d total matches found\n", totalMatched)
 		fmt.Printf("  - %d unique results after deduplication\n", uniqueResults)
-		fmt.Printf("  - Without multi-row relations: %d separate API calls needed\n", bindingCount)
+		fmt.Printf("  - Without multi-tuple relations: %d separate API calls needed\n", bindingCount)
 	}
 
 	// Track events before empty relation test

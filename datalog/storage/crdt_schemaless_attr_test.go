@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -49,10 +50,10 @@ func TestSchemalessAttrBoundQuery_BugRepro(t *testing.T) {
 			require.NoError(t, err)
 
 			// Bound query — should find the data
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 				entityID, datalog.NewKeyword(":module/input"),
-			)
+			))
 			require.NoError(t, err)
 
 			assert.Len(t, results, 1,
@@ -90,19 +91,19 @@ func TestSchemalessAttrUnboundQuery_BugRepro(t *testing.T) {
 			require.NoError(t, err)
 
 			// Unbound query — should find the data
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :where [?e ?a ?v]]`,
-			)
+			))
 			require.NoError(t, err)
 
 			// Should find at least the schemaless attribute
 			found := false
-			for _, row := range results {
-				if len(row) >= 3 {
-					if kw, ok := row[1].(datalog.Keyword); ok {
+			for _, tuple := range results {
+				if len(tuple) >= 3 {
+					if kw, ok := tuple[1].(datalog.Keyword); ok {
 						if kw.String() == ":test/data" {
 							found = true
-							assert.Equal(t, "hello", row[2],
+							assert.Equal(t, "hello", tuple[2],
 								"[%s] Should find correct value for schemaless attr", mode.name)
 						}
 					}
@@ -142,10 +143,10 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 			}
 
 			// Bound query — schemaless = CardinalityOne (LWW), only latest value
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 				entityID, datalog.NewKeyword(":test/counter"),
-			)
+			))
 			require.NoError(t, err)
 
 			require.Len(t, results, 1,
@@ -154,17 +155,17 @@ func TestSchemalessAttrMultipleWrites(t *testing.T) {
 				"[%s] Latest value should be 2 (third write)", mode.name)
 
 			// Unbound query should also return only latest
-			unboundResults, err := db.ExecuteQueryWithInputs(
+			unboundResults, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :where [?e ?a ?v]]`,
-			)
+			))
 			require.NoError(t, err)
 
 			var counterValues []any
-			for _, row := range unboundResults {
-				if len(row) >= 3 {
-					if kw, ok := row[1].(datalog.Keyword); ok {
+			for _, tuple := range unboundResults {
+				if len(tuple) >= 3 {
+					if kw, ok := tuple[1].(datalog.Keyword); ok {
 						if kw.String() == ":test/counter" {
-							counterValues = append(counterValues, row[2])
+							counterValues = append(counterValues, tuple[2])
 						}
 					}
 				}
@@ -210,10 +211,10 @@ func TestSchemalessRemove_RoundTrip(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify exists
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 				entityID, attr,
-			)
+			))
 			require.NoError(t, err)
 			require.Len(t, results, 1, "[%s] value should exist after Add", mode.name)
 
@@ -224,22 +225,22 @@ func TestSchemalessRemove_RoundTrip(t *testing.T) {
 			require.NoError(t, err)
 
 			// Bound query → attribute doesn't exist
-			results, err = db.ExecuteQueryWithInputs(
+			results, err = executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 				entityID, attr,
-			)
+			))
 			require.NoError(t, err)
 			assert.Len(t, results, 0,
 				"[%s] bound query: schemaless attribute should not exist after Remove", mode.name)
 
 			// Unbound query → also doesn't exist
-			unboundResults, err := db.ExecuteQueryWithInputs(
+			unboundResults, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?a ?v :where [?e ?a ?v]]`,
-			)
+			))
 			require.NoError(t, err)
-			for _, row := range unboundResults {
-				if len(row) >= 3 {
-					if kw, ok := row[1].(datalog.Keyword); ok {
+			for _, tuple := range unboundResults {
+				if len(tuple) >= 3 {
+					if kw, ok := tuple[1].(datalog.Keyword); ok {
 						assert.NotEqual(t, ":test/data", kw.String(),
 							"[%s] unbound query should not find removed schemaless attribute", mode.name)
 					}
@@ -279,10 +280,10 @@ func TestSchemalessRemove_ThenReAdd(t *testing.T) {
 			require.NoError(t, err)
 
 			// Latest Add wins
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 				entityID, attr,
-			)
+			))
 			require.NoError(t, err)
 			require.Len(t, results, 1, "[%s] attribute should exist after re-Add", mode.name)
 			assert.Equal(t, "second", results[0][0],
@@ -327,10 +328,10 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 			require.NoError(t, err)
 
 			// Only latest value returned (LWW)
-			results, err := db.ExecuteQueryWithInputs(
+			results, err := executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 				entityID, attr,
-			)
+			))
 			require.NoError(t, err)
 			require.Len(t, results, 1,
 				"[%s] unregistered attr defaults to CardinalityOne: only latest", mode.name)
@@ -343,10 +344,10 @@ func TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne(t *testing.T) {
 			_, err = tx4.Commit()
 			require.NoError(t, err)
 
-			results, err = db.ExecuteQueryWithInputs(
+			results, err = executor.CollectTuples(db.Query(
 				`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`,
 				entityID, attr,
-			)
+			))
 			require.NoError(t, err)
 			assert.Len(t, results, 0,
 				"[%s] unregistered attr Remove should work", mode.name)

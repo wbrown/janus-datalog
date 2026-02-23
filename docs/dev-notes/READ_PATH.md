@@ -94,7 +94,7 @@
            if m.cache != nil && m.txID == 0 {
                if a := m.extractValue(pattern.GetA()); a != nil {
                    if aKw, ok := a.(datalog.Keyword); ok {
-                       cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw)
+                       cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw)
                        if handled {
                            return cacheResult, nil  // CACHE HIT: Return immediately
                        }

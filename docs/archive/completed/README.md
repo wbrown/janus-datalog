@@ -6,7 +6,7 @@ Documentation for features that have been fully implemented and are now part of 
 
 ### Query Features
 - **subquery-implementation-plan.md** - Datomic-style subqueries with proper scoping (June 2025)
-- **order-by-implementation-plan.md** - Multi-column sorting with direction control (June 2025)
+- **order-by-implementation-plan.md** - Multi-symbol sorting with direction control (June 2025)
 - **expunge_bindings_plan.md** - Migration from Bindings to Relations (June 2025)
 - **expression_phase_plan.md** - Expression evaluation within query phases (June 2025)
 

@@ -96,8 +96,8 @@ The branch transformed the executor from a fragile, materializing-by-default sys
 - Removed both from executePhasesWithInputs
 - Empty results now handled naturally
 
-**Commit 12** (`3ea82c9`): Add Keep column projection
-- **Critical Bug**: Legacy executor wasn't projecting to Keep columns
+**Commit 12** (`3ea82c9`): Add Keep symbol projection
+- **Critical Bug**: Legacy executor wasn't projecting to Keep symbols
 - Breaking phase-to-phase data flow
 - Added Keep projection after each non-final phase
 

@@ -124,7 +124,7 @@ func (it *hashJoinIterator) Close() error {
 	return nil
 }
 
-// HashJoin performs a hash join on specified columns
+// HashJoin performs a hash join on specified symbols
 // It attempts to get options from the input relations
 func HashJoin(left, right Relation, joinCols []query.Symbol) Relation {
 	// Try to get options from either relation
@@ -164,8 +164,8 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 		if opts.EnableDebugLogging {
 			fmt.Printf("[HashJoin] Called with left (type=%T, size=%d), right (type=%T, size=%d), joinCols=%v, EnableStreamingJoins=%v\n",
 				left, leftSize, right, rightSize, joinCols, opts.EnableStreamingJoins)
-			fmt.Printf("[HashJoin] Left columns: %v\n", left.Columns())
-			fmt.Printf("[HashJoin] Right columns: %v\n", right.Columns())
+			fmt.Printf("[HashJoin] Left symbols: %v\n", left.Symbols())
+			fmt.Printf("[HashJoin] Right symbols: %v\n", right.Symbols())
 
 			// Debug: check left relation's shouldCache flag if it's a StreamingRelation
 			if sr, ok := left.(*StreamingRelation); ok {
@@ -175,14 +175,14 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 		}
 	}
 
-	// Build column mappings
+	// Build symbol mappings
 	leftIndices := make([]int, len(joinCols))
 	rightIndices := make([]int, len(joinCols))
 	for i, col := range joinCols {
-		leftIndices[i] = ColumnIndex(left, col)
-		rightIndices[i] = ColumnIndex(right, col)
+		leftIndices[i] = SymbolIndex(left, col)
+		rightIndices[i] = SymbolIndex(right, col)
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
-			// Join column not found - return empty relation with options
+			// Join symbol not found - return empty relation with options
 			opts := left.Options()
 			if opts == (ExecutorOptions{}) {
 				opts = right.Options()
@@ -191,15 +191,15 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 		}
 	}
 
-	// Determine output columns (union without duplicates)
-	outputCols := append([]query.Symbol{}, left.Columns()...)
+	// Determine output symbols (union without duplicates)
+	outputCols := append([]query.Symbol{}, left.Symbols()...)
 	rightColSet := make(map[query.Symbol]bool)
 	for _, col := range joinCols {
 		rightColSet[col] = true
 	}
 
-	// Add right columns that aren't in join columns
-	for _, col := range right.Columns() {
+	// Add right symbols that aren't in join symbols
+	for _, col := range right.Symbols() {
 		if !rightColSet[col] {
 			outputCols = append(outputCols, col)
 		}
@@ -279,15 +279,15 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 		fmt.Printf("[HashJoin] Building hash table from relation with Size()=%d\n", buildRel.Size())
 	}
 
-	// Check if any column name matches transaction ID patterns
+	// Check if any symbol name matches transaction ID patterns
 	// We'll verify the actual type on the first tuple during iteration
 	txIndex := -1
-	for i, col := range buildRel.Columns() {
+	for i, col := range buildRel.Symbols() {
 		if col == datalog.NewSymbol("?tx") || col == datalog.NewSymbol("?t") ||
 			col == datalog.NewSymbol("?txid") || col == datalog.NewSymbol("?transaction") {
 			txIndex = i
 			if opts.EnableDebugLogging {
-				fmt.Printf("[HashJoin] Found potential tx column %s at index %d\n", col, i)
+				fmt.Printf("[HashJoin] Found potential tx symbol %s at index %d\n", col, i)
 			}
 			break
 		}
@@ -324,9 +324,9 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 		return t
 	}
 
-	// Check first tuple to determine if we have a valid tx column
+	// Check first tuple to determine if we have a valid tx symbol
 	if txIndex >= 0 {
-		// Potential tx column found - check first tuple's type
+		// Potential tx symbol found - check first tuple's type
 		if !buildIt.Next() {
 			// Empty relation - hash table stays empty
 			if opts.EnableDebugLogging {
@@ -340,11 +340,11 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				case uint64, int64, int, datalog.ElementID, *datalog.ElementID:
 					hasTxColumn = true
 					if opts.EnableDebugLogging {
-						fmt.Printf("[HashJoin] Confirmed tx column at index %d with type %T\n", txIndex, firstTuple[txIndex])
+						fmt.Printf("[HashJoin] Confirmed tx symbol at index %d with type %T\n", txIndex, firstTuple[txIndex])
 					}
 				default:
 					if opts.EnableDebugLogging {
-						fmt.Printf("[HashJoin] Column at index %d is not a tx ID (type %T), using normal path\n", txIndex, firstTuple[txIndex])
+						fmt.Printf("[HashJoin] Symbol at index %d is not a tx ID (type %T), using normal path\n", txIndex, firstTuple[txIndex])
 					}
 				}
 			}
@@ -425,7 +425,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				for _, entries := range latestTuples.m {
 					for _, entry := range entries {
 						// BUG FIX: Use the join key, not full tuple key!
-						// We need to hash by buildIndices, not all columns
+						// We need to hash by buildIndices, not all symbols
 						tuple := entry.value.(Tuple)
 						key := NewTupleKey(tuple, buildIndices)
 						hashTable.Put(key, []Tuple{tuple})
@@ -436,7 +436,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 					fmt.Printf("[HashJoin] Built hash table with %d tuples after tx deduplication\n", txDedupCount)
 				}
 			} else {
-				// No transaction column or not a valid tx type, use normal path
+				// No transaction symbol or not a valid tx type, use normal path
 				// Process first tuple
 				tuple := firstTuple
 				key := NewTupleKey(tuple, buildIndices)
@@ -476,7 +476,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 			}
 		}
 	} else {
-		// No potential tx column - use normal path for all tuples
+		// No potential tx symbol - use normal path for all tuples
 		buildCount := 0
 		var firstBuildKey *TupleKey
 		var firstBuildTuple Tuple
@@ -551,8 +551,8 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 			seen:         NewTupleKeyMapWithCapacity(expectedResults),
 			buildIsLeft:  buildIsLeft,
 			joinCols:     joinCols,
-			leftCols:     left.Columns(),
-			rightCols:    right.Columns(),
+			leftCols:     left.Symbols(),
+			rightCols:    right.Symbols(),
 			probeIndices: probeIndices,
 			options:      opts,
 			matchIdx:     0,
@@ -562,7 +562,7 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 		// StreamingRelation enforces single-use semantics via panic if Iterator() called twice
 		// Caller can explicitly call Materialize() if multiple iterations needed
 		return &StreamingRelation{
-			columns:  outputCols,
+			symbols:  outputCols,
 			iterator: iter,
 			size:     -1, // unknown size until consumed
 			options:  opts,
@@ -623,9 +623,9 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				// Combine tuples
 				var joined Tuple
 				if buildIsLeft {
-					joined = combineTuples(buildTuple, probeTuple, joinCols, left.Columns(), right.Columns())
+					joined = combineTuples(buildTuple, probeTuple, joinCols, left.Symbols(), right.Symbols())
 				} else {
-					joined = combineTuples(probeTuple, buildTuple, joinCols, left.Columns(), right.Columns())
+					joined = combineTuples(probeTuple, buildTuple, joinCols, left.Symbols(), right.Symbols())
 				}
 
 				// Create a key for deduplication based on all tuple values
@@ -653,8 +653,8 @@ func SemiJoin(left, right Relation, joinCols []query.Symbol) Relation {
 	leftIndices := make([]int, len(joinCols))
 	rightIndices := make([]int, len(joinCols))
 	for i, col := range joinCols {
-		leftIndices[i] = ColumnIndex(left, col)
-		rightIndices[i] = ColumnIndex(right, col)
+		leftIndices[i] = SymbolIndex(left, col)
+		rightIndices[i] = SymbolIndex(right, col)
 	}
 
 	// Extract options from left relation
@@ -688,7 +688,7 @@ func SemiJoin(left, right Relation, joinCols []query.Symbol) Relation {
 		}
 	}
 
-	return NewMaterializedRelationWithOptions(left.Columns(), results, opts)
+	return NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
 }
 
 // AntiJoin returns tuples from left that have no matches in right
@@ -697,8 +697,8 @@ func AntiJoin(left, right Relation, joinCols []query.Symbol) Relation {
 	leftIndices := make([]int, len(joinCols))
 	rightIndices := make([]int, len(joinCols))
 	for i, col := range joinCols {
-		leftIndices[i] = ColumnIndex(left, col)
-		rightIndices[i] = ColumnIndex(right, col)
+		leftIndices[i] = SymbolIndex(left, col)
+		rightIndices[i] = SymbolIndex(right, col)
 	}
 
 	// Extract options from left relation
@@ -732,7 +732,7 @@ func AntiJoin(left, right Relation, joinCols []query.Symbol) Relation {
 		}
 	}
 
-	return NewMaterializedRelationWithOptions(left.Columns(), results, opts)
+	return NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
 }
 
 // Helper functions
@@ -743,7 +743,7 @@ func isStreaming(rel Relation) bool {
 }
 
 func combineTuples(left, right Tuple, joinCols []query.Symbol, leftCols, rightCols []query.Symbol) Tuple {
-	// Create set of join columns for quick lookup
+	// Create set of join symbols for quick lookup
 	joinSet := make(map[query.Symbol]bool, len(joinCols))
 	for _, col := range joinCols {
 		joinSet[col] = true
@@ -763,7 +763,7 @@ func combineTuples(left, right Tuple, joinCols []query.Symbol, leftCols, rightCo
 	// Copy left tuple
 	copy(result, left)
 
-	// Add values from right that aren't join columns
+	// Add values from right that aren't join symbols
 	offset := len(left)
 	for i, col := range rightCols {
 		if !joinSet[col] {
@@ -783,7 +783,7 @@ func crossProduct(left, right Relation) Relation {
 		opts = right.Options()
 	}
 
-	outputCols := append(left.Columns(), right.Columns()...)
+	outputCols := append(left.Symbols(), right.Symbols()...)
 	var results []Tuple
 
 	leftIt := left.Iterator()

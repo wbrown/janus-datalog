@@ -103,7 +103,7 @@ func executePhase(phase *Phase) Relation {
         rel = executeSubquery(subq, rel)
     }
 
-    // 6. Project to Keep columns
+    // 6. Project to Keep symbols
     return rel.Project(phase.Keep)
 }
 ```
@@ -128,11 +128,11 @@ func executePhase(phase *Phase) Relation {
 
 4. **Fixed execution order limits optimization**:
    ```datalog
-   [?e :event/value ?value]      ; 1M rows
-   [(* ?value 2) ?doubled]       ; Expression computes on 1M rows
-   [(> ?value 100)]              ; Predicate filters to 1K rows
+   [?e :event/value ?value]      ; 1M tuples
+   [(* ?value 2) ?doubled]       ; Expression computes on 1M tuples
+   [(> ?value 100)]              ; Predicate filters to 1K tuples
    ```
-   We compute on 1M rows, then filter. Optimal: filter first, compute on 1K.
+   We compute on 1M tuples, then filter. Optimal: filter first, compute on 1K.
 
 ## Clojure Reference Architecture
 
@@ -418,7 +418,7 @@ func (e *Executor) executePhase(ctx Context, phase *Phase, input Relation) (Rela
         return nil, err
     }
 
-    // Project to Keep columns
+    // Project to Keep symbols
     if len(phase.Keep) > 0 {
         return result.Project(phase.Keep)
     }
@@ -562,7 +562,7 @@ func (e *Executor) executePhase(ctx Context, phase *Phase, input Relation) (Rela
         return nil, err
     }
 
-    // Project to Keep columns (if specified)
+    // Project to Keep symbols (if specified)
     if len(phase.Keep) > 0 {
         return result.Project(phase.Keep)
     }
@@ -632,7 +632,7 @@ func (p *Planner) generateQueryForGroup(group PatternGroup) *query.Query {
     // Generate :in clause if needed (for non-first phases)
     var in []query.Input
     if len(group.Available) > 0 {
-        // Input is a relation with Available columns
+        // Input is a relation with Available symbols
         in = append(in, query.DatabaseInput{})
         in = append(in, query.RelationInput{Symbols: group.Available})
     }
@@ -731,14 +731,14 @@ Same pattern, different scores based on context!
 
 **Current**: Fixed order (patterns → expressions → predicates → subqueries)
 ```datalog
-[?e :event/value ?value]      ; 1M rows
+[?e :event/value ?value]      ; 1M tuples
 [(* ?value 2) ?doubled]       ; Compute on 1M
 [(> ?value 100)]              ; Filter to 1K
 ```
 
 **Proposed**: Optimizer can reorder based on selectivity
 ```datalog
-[?e :event/value ?value]      ; 1M rows
+[?e :event/value ?value]      ; 1M tuples
 [(> ?value 100)]              ; Filter to 1K first!
 [(* ?value 2) ?doubled]       ; Compute on 1K
 ```
@@ -950,7 +950,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan) (Rel
             return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
         }
 
-        // Project each group to Keep columns (what passes to next phase)
+        // Project each group to Keep symbols (what passes to next phase)
         if len(phase.Keep) > 0 {
             for i, group := range groups {
                 projected, err := group.Project(phase.Keep)
@@ -986,7 +986,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan) (Rel
 
 1. **Multi-Relation Semantics**: QueryExecutor returns `[]Relation` to handle disjoint relation groups
 2. **Progressive Collapse**: After each clause, append new relation and collapse (joins sharing symbols, preserves disjoint)
-3. **Phase Boundaries**: Multiple groups can flow between phases, projected to Keep columns
+3. **Phase Boundaries**: Multiple groups can flow between phases, projected to Keep symbols
 4. **Final Phase Validation**: Error if final phase has multiple disjoint groups (prevents Cartesian products)
 5. **Clause Execution**: Stubbed for future implementation (pattern, expression, predicate, subquery handlers)
 

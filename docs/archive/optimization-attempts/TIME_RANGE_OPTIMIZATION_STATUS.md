@@ -31,7 +31,7 @@ Implemented semi-join pushdown via time range constraints to optimize hourly OHL
 func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) ([]TimeRange, error)
 ```
 
-- Detects `?year`, `?month`, `?day`, `?hour` columns in input relation
+- Detects `?year`, `?month`, `?day`, `?hour` symbols in input relation
 - Converts tuples to `time.Time` ranges: `[start, end)`
 - Granularity detection:
   - Has `?hour` → hourly ranges (1 hour duration)

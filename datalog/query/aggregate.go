@@ -43,7 +43,7 @@ func (c CountAggregate) Aggregate(values []interface{}) (interface{}, error) {
 }
 
 func (c CountAggregate) RequiresValues() bool {
-	return false // Count just needs the number of rows
+	return false // Count just needs the number of tuples
 }
 
 func (c CountAggregate) String() string {

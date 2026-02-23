@@ -36,27 +36,27 @@ func SymmetricHashJoin(left, right Relation, joinCols []query.Symbol) Relation {
 
 // SymmetricHashJoinWithOptions performs a streaming symmetric hash join with explicit options
 func SymmetricHashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts ExecutorOptions) Relation {
-	// Build column mappings
+	// Build symbol mappings
 	leftIndices := make([]int, len(joinCols))
 	rightIndices := make([]int, len(joinCols))
 	for i, col := range joinCols {
-		leftIndices[i] = ColumnIndex(left, col)
-		rightIndices[i] = ColumnIndex(right, col)
+		leftIndices[i] = SymbolIndex(left, col)
+		rightIndices[i] = SymbolIndex(right, col)
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
-			// Join column not found
+			// Join symbol not found
 			return NewMaterializedRelation(nil, nil)
 		}
 	}
 
-	// Determine output columns (union without duplicates)
-	outputCols := append([]query.Symbol{}, left.Columns()...)
+	// Determine output symbols (union without duplicates)
+	outputCols := append([]query.Symbol{}, left.Symbols()...)
 	rightColSet := make(map[query.Symbol]bool)
 	for _, col := range joinCols {
 		rightColSet[col] = true
 	}
 
-	// Add right columns that aren't in join columns
-	for _, col := range right.Columns() {
+	// Add right symbols that aren't in join symbols
+	for _, col := range right.Symbols() {
 		if !rightColSet[col] {
 			outputCols = append(outputCols, col)
 		}
@@ -80,8 +80,8 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinCols []query.Symbol,
 		leftIndices:  leftIndices,
 		rightIndices: rightIndices,
 		joinCols:     joinCols,
-		leftCols:     left.Columns(),
-		rightCols:    right.Columns(),
+		leftCols:     left.Symbols(),
+		rightCols:    right.Symbols(),
 		outputCols:   outputCols,
 		resultQueue:  make([]Tuple, 0),
 		seen:         NewTupleKeyMapWithCapacity(tableSize),
@@ -230,17 +230,17 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 	}
 }
 
-// combineTuples combines left and right tuples, avoiding duplication of join columns
+// combineTuples combines left and right tuples, avoiding duplication of join symbols
 func (it *symmetricHashJoinIterator) combineTuples(leftTuple, rightTuple Tuple, leftFirst bool) Tuple {
-	// Start with all columns from left
+	// Start with all symbols from left
 	result := make(Tuple, len(it.outputCols))
 	copy(result, leftTuple)
 
-	// Add non-join columns from right
+	// Add non-join symbols from right
 	rightOffset := len(leftTuple)
 	rightColIndex := 0
 	for i, col := range it.rightCols {
-		// Skip join columns
+		// Skip join symbols
 		isJoinCol := false
 		for _, joinCol := range it.joinCols {
 			if col == joinCol {

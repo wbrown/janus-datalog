@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -40,7 +41,7 @@ func TestExecuteQuery(t *testing.T) {
 	}
 
 	// Execute simple query
-	results, err := db.ExecuteQuery(`[:find ?name :where [?e :person/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :person/name ?name]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -51,12 +52,12 @@ func TestExecuteQuery(t *testing.T) {
 
 	// Verify we got both names
 	names := make(map[string]bool)
-	for _, row := range results {
-		if len(row) != 1 {
-			t.Errorf("Expected 1 column, got %d", len(row))
+	for _, tuple := range results {
+		if len(tuple) != 1 {
+			t.Errorf("Expected 1 symbol, got %d", len(tuple))
 			continue
 		}
-		if name, ok := row[0].(string); ok {
+		if name, ok := tuple[0].(string); ok {
 			names[name] = true
 		}
 	}
@@ -96,12 +97,12 @@ func TestExecuteQueryWithScalarInput(t *testing.T) {
 	}
 
 	// Execute query with scalar input
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e
 		  :in $ ?name
 		  :where [?e :person/name ?name]]`,
 		"Alice",
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestExecuteQueryWithScalarInput(t *testing.T) {
 		// The actual entity ID value doesn't matter as long as we found one match
 		t.Logf("Found entity: %v (type: %T)", results[0][0], results[0][0])
 	} else {
-		t.Error("Expected 1 result with 1 column")
+		t.Error("Expected 1 result with 1 symbol")
 	}
 }
 
@@ -152,14 +153,14 @@ func TestExecuteQueryWithMultipleScalarInputs(t *testing.T) {
 	}
 
 	// Execute query with name filter (simpler test - the age range query hits disjoint groups)
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name ?age
 		  :in $ ?target-name
 		  :where [?e :person/name ?target-name]
 		         [?e :person/name ?name]
 		         [?e :person/age ?age]]`,
 		"Alice",
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -224,13 +225,13 @@ func TestExecuteQueryWithCollectionInput(t *testing.T) {
 	}
 
 	// Query with collection input
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name ?food
 		  :in $ [?food ...]
 		  :where [?e :person/name ?name]
 		         [?e :person/likes ?food]]`,
 		[]string{"pizza", "pasta"},
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -271,14 +272,14 @@ func TestExecuteQueryWithTupleInput(t *testing.T) {
 	}
 
 	// Query with tuple input - simplified
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e
 		  :in $ ?name ?target-age
 		  :where [?e :person/name ?name]
 		         [?e :person/age ?target-age]]`,
 		"Alice",
 		int64(30),
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -321,7 +322,7 @@ func TestExecuteQueryWithRelationInput(t *testing.T) {
 	}
 
 	// Query with relation input - find entities matching name/age pairs
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e
 		  :in $ [[?name ?target-age] ...]
 		  :where [?e :person/name ?name]
@@ -330,7 +331,7 @@ func TestExecuteQueryWithRelationInput(t *testing.T) {
 			{"Alice", int64(30)},
 			{"Bob", int64(25)},
 		},
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -384,7 +385,7 @@ func TestExecuteQueryWithTimeInput(t *testing.T) {
 	}
 
 	// Query with just symbol input (time range comparisons hit unassigned predicate issue)
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?time ?close
 		  :in $ ?symbol
 		  :where [?s :symbol/ticker ?symbol]
@@ -392,7 +393,7 @@ func TestExecuteQueryWithTimeInput(t *testing.T) {
 		         [?p :price/time ?time]
 		         [?p :price/close ?close]]`,
 		"CRWV",
-	)
+	))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -404,8 +405,8 @@ func TestExecuteQueryWithTimeInput(t *testing.T) {
 
 	// Verify we have prices for all dates
 	prices := make(map[float64]bool)
-	for _, row := range results {
-		if close, ok := row[1].(float64); ok {
+	for _, tuple := range results {
+		if close, ok := tuple[1].(float64); ok {
 			prices[close] = true
 		}
 	}
@@ -461,7 +462,7 @@ func TestExecuteQueryInputErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := db.ExecuteQueryWithInputs(tt.query, tt.inputs...)
+			_, err := executor.CollectTuples(db.Query(tt.query, tt.inputs...))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Expected error=%v, got err=%v", tt.wantErr, err)
 			}

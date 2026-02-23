@@ -63,7 +63,7 @@ Implemented streaming aggregation that computes aggregates incrementally in a si
 - `TestStreamingAggregationThreshold`: Verifies heuristic behavior
 
 **gopher-street OHLC tests**:
-- ✅ Pass with correct results (147 rows)
+- ✅ Pass with correct results (147 tuples)
 - ⏱️ Time: 17.5s (unchanged from 17.4s baseline)
 - 💾 Memory: 19.5 GB (minimal change from 19.6 GB)
 

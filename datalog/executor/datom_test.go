@@ -32,12 +32,12 @@ func TestDatomIterator(t *testing.T) {
 
 	it := NewDatomIterator(datoms, binding)
 
-	// Check columns
-	if len(it.columns) != 2 {
-		t.Errorf("expected 2 columns, got %d", len(it.columns))
+	// Check symbols
+	if len(it.symbols) != 2 {
+		t.Errorf("expected 2 symbols, got %d", len(it.symbols))
 	}
-	if it.columns[0] != userSym || it.columns[1] != valueSym {
-		t.Errorf("unexpected columns: %v", it.columns)
+	if it.symbols[0] != userSym || it.symbols[1] != valueSym {
+		t.Errorf("unexpected symbols: %v", it.symbols)
 	}
 
 	// Iterate and check tuples
@@ -97,10 +97,10 @@ func TestDatomRelation(t *testing.T) {
 
 	rel := NewDatomRelation(datoms, binding)
 
-	// Check columns
-	cols := rel.Columns()
+	// Check symbols
+	cols := rel.Symbols()
 	if len(cols) != 4 {
-		t.Errorf("expected 4 columns, got %d", len(cols))
+		t.Errorf("expected 4 symbols, got %d", len(cols))
 	}
 
 	// Check data
@@ -185,11 +185,11 @@ func TestDatomJoinScenario(t *testing.T) {
 		it.Close()
 	}
 
-	// Verify columns
-	cols := joined.Columns()
+	// Verify symbols
+	cols := joined.Symbols()
 	expectedCols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
 	if len(cols) != len(expectedCols) {
-		t.Errorf("expected %d columns, got %d", len(expectedCols), len(cols))
+		t.Errorf("expected %d symbols, got %d", len(expectedCols), len(cols))
 	}
 
 	// Check actual data

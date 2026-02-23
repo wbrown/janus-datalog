@@ -31,7 +31,7 @@ type DefaultQueryExecutor struct {
 	matcher          PatternMatcher
 	entityResolver   EntityResolver
 	options          ExecutorOptions
-	constantBindings map[query.Symbol]interface{} // Scalar inputs resolved as constants (not relation columns)
+	constantBindings map[query.Symbol]interface{} // Scalar inputs resolved as constants (not relation symbols)
 }
 
 // newQueryExecutor creates a new DefaultQueryExecutor.
@@ -208,7 +208,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			groupsHaveSymbols := make([][]bool, len(groups))
 			for i, group := range groups {
 				groupsHaveSymbols[i] = make([]bool, len(findSymbols))
-				cols := group.Columns()
+				cols := group.Symbols()
 				for j, sym := range findSymbols {
 					for _, col := range cols {
 						if col == sym {
@@ -374,18 +374,18 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				return nil, fmt.Errorf("tuple mismatch: %d values, %d variables",
 					len(values), len(binding.Variables))
 			}
-			columns := binding.Variables
+			symbols := binding.Variables
 			tuple := make(Tuple, len(values))
 			copy(tuple, values)
-			return []Relation{NewMaterializedRelationWithOptions(columns, []Tuple{tuple}, e.options)}, nil
+			return []Relation{NewMaterializedRelationWithOptions(symbols, []Tuple{tuple}, e.options)}, nil
 
 		case query.Symbol:
 			if binding == nil {
 				return groups, nil
 			}
-			columns := []query.Symbol{binding}
+			symbols := []query.Symbol{binding}
 			tuples := []Tuple{{result}}
-			return []Relation{NewMaterializedRelationWithOptions(columns, tuples, e.options)}, nil
+			return []Relation{NewMaterializedRelationWithOptions(symbols, tuples, e.options)}, nil
 
 		default:
 			return nil, fmt.Errorf("unsupported binding type: %T", expr.Binding)
@@ -402,7 +402,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 
 	for _, rel := range groups {
 		hasAny := false
-		relCols := rel.Columns()
+		relCols := rel.Symbols()
 		for _, sym := range unresolvedExprSyms {
 			for _, col := range relCols {
 				if col == sym {
@@ -424,7 +424,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	if len(relevantRels) == 0 {
 		// No relation has required symbols
 		if len(unresolvedExprSyms) == 0 && len(groups) > 0 {
-			// Ground expression (or all-constants) with existing groups - evaluate once and add column(s)
+			// Ground expression (or all-constants) with existing groups - evaluate once and add symbol(s)
 			// This handles OR fallback: (or [subquery] [(ground 0) ?count])
 			// and constant-bindable scalar expressions: [(+ ?age ?bonus) ?adjusted] where ?bonus is constant
 			evalBindings := make(map[query.Symbol]interface{})
@@ -447,7 +447,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				return nil, err
 			}
 
-			// Determine binding columns and values
+			// Determine binding symbols and values
 			var bindingCols []query.Symbol
 			var bindingValues []interface{}
 			switch binding := expr.Binding.(type) {
@@ -469,10 +469,10 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				}
 			}
 
-			// Add the new columns to each relation in groups
+			// Add the new symbols to each relation in groups
 			var resultRels []Relation
 			for _, rel := range groups {
-				newCols := append(rel.Columns(), bindingCols...)
+				newCols := append(rel.Symbols(), bindingCols...)
 				var newTuples []Tuple
 				iter := rel.Iterator()
 				for iter.Next() {
@@ -594,7 +594,7 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 	for _, rel := range groups {
 		hasAny := false
-		relCols := rel.Columns()
+		relCols := rel.Symbols()
 		for _, sym := range unresolvedSyms {
 			for _, col := range relCols {
 				if col == sym {
@@ -703,7 +703,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			return nil, fmt.Errorf("nested query execution failed: %w", err)
 		}
 		if len(nestedGroups) == 0 {
-			// Empty result - return empty relation with binding columns
+			// Empty result - return empty relation with binding symbols
 			return NewMaterializedRelationWithOptions(extractBindingSymbols(subq.Binding), nil, e.options), nil
 		}
 		if len(nestedGroups) > 1 {
@@ -742,7 +742,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 					Name: "subquery/input-relation",
 					Data: map[string]interface{}{
 						"index":   i,
-						"columns": rel.Columns(),
+						"symbols": rel.Symbols(),
 						"size":    rel.Size(),
 					},
 				})
@@ -777,7 +777,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 
 	// Combine all results
 	if len(allResults) == 0 {
-		// No results - return empty relation with appropriate columns
+		// No results - return empty relation with appropriate symbols
 		return NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{}), nil
 	}
 
@@ -804,14 +804,14 @@ func combineSubqueryResultsSimple(results []Relation) Relation {
 	}
 
 	// Collect all tuples
-	columns := results[0].Columns()
+	symbols := results[0].Symbols()
 	var allTuples []Tuple
 
 	for _, result := range results {
 		collectTuplesInto(&allTuples, result)
 	}
 
-	return NewMaterializedRelation(columns, allTuples)
+	return NewMaterializedRelation(symbols, allTuples)
 }
 
 // extractBindingSymbols extracts symbols from a binding form
@@ -1026,24 +1026,6 @@ func (e *DefaultQueryExecutor) executeSubquerySequential(
 	return unionBuilder.Union(allResults), nil
 }
 
-// extractFindSymbols extracts symbols from FindElements for projection
-func extractFindSymbols(find []query.FindElement) []query.Symbol {
-	var symbols []query.Symbol
-	for _, elem := range find {
-		switch e := elem.(type) {
-		case query.FindVariable:
-			symbols = append(symbols, e.Symbol)
-		case query.FindAggregate:
-			// For aggregates, include the argument variable
-			symbols = append(symbols, e.Arg)
-		case query.FindPull:
-			// For pulls, include the pulled variable
-			symbols = append(symbols, e.Variable)
-		}
-	}
-	return symbols
-}
-
 // hasPulls checks if any find element is a pull expression
 func hasPulls(find []query.FindElement) bool {
 	for _, elem := range find {
@@ -1058,14 +1040,14 @@ func hasPulls(find []query.FindElement) bool {
 // For each tuple in the relation, it replaces entity values with pulled maps
 // based on the FindPull patterns in the find clause.
 func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindElement) (Relation, error) {
-	// Build mapping: column index -> pull pattern
-	columns := rel.Columns()
+	// Build mapping: symbol index -> pull pattern
+	symbols := rel.Symbols()
 	pullSpecs := make(map[int]query.FindPull)
 
 	for _, elem := range find {
 		if pull, ok := elem.(query.FindPull); ok {
-			// Find the column index for this pull variable
-			for i, col := range columns {
+			// Find the symbol index for this pull variable
+			for i, col := range symbols {
 				if col == pull.Variable {
 					pullSpecs[i] = pull
 					break
@@ -1092,7 +1074,7 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 		newTuple := make(Tuple, len(tuple))
 		copy(newTuple, tuple)
 
-		// Execute pulls for each pull column
+		// Execute pulls for each pull symbol
 		for colIdx, pull := range pullSpecs {
 			if colIdx >= len(tuple) {
 				continue
@@ -1127,7 +1109,7 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 	// Return relation without deduplication - pulled maps (map[string]interface{})
 	// are not comparable and would panic during deduplication
 	return &MaterializedRelation{
-		columns: columns,
+		symbols: symbols,
 		tuples:  resultTuples,
 		options: rel.Options(),
 	}, nil
@@ -1215,7 +1197,7 @@ func (e *DefaultQueryExecutor) executeOrClauseFallback(ctx Context, clause *quer
 
 	// Always have an outer context - use unit relation if none available.
 	// This eliminates the "global fallback" path and unifies execution:
-	// per-row fallback on unit relation (one empty tuple) = try branches until one works.
+	// per-tuple fallback on unit relation (one empty tuple) = try branches until one works.
 	var outerRel Relation
 	if len(groups) == 0 {
 		// No input groups - use unit relation as base case
@@ -1230,7 +1212,7 @@ func (e *DefaultQueryExecutor) executeOrClauseFallback(ctx Context, clause *quer
 		// symbols ARE available from outer context.
 		var outerBindingIdx int = -1
 		for i, rel := range groups {
-			if containsAny(rel.Columns(), neededSymbols) {
+			if containsAny(rel.Symbols(), neededSymbols) {
 				outerBindingIdx = i
 				break
 			}
@@ -1247,29 +1229,29 @@ func (e *DefaultQueryExecutor) executeOrClauseFallback(ctx Context, clause *quer
 		}
 	}
 
-	// Always use OrFallbackRelation for per-row evaluation
+	// Always use OrFallbackRelation for per-tuple evaluation
 	return NewOrFallbackRelation(e, ctx, clause, outerRel, e.options), nil
 }
 
-// findCommonColumns returns columns that exist in all relations
-func findCommonColumns(relations []Relation) []query.Symbol {
+// findCommonColumns returns symbols that exist in all relations
+func findCommonSymbols(relations []Relation) []query.Symbol {
 	if len(relations) == 0 {
 		return nil
 	}
 
-	// Start with first relation's columns
+	// Start with first relation's symbols
 	colSet := make(map[query.Symbol]bool)
-	for _, col := range relations[0].Columns() {
+	for _, col := range relations[0].Symbols() {
 		colSet[col] = true
 	}
 
 	// Intersect with each subsequent relation
 	for i := 1; i < len(relations); i++ {
 		relCols := make(map[query.Symbol]bool)
-		for _, col := range relations[i].Columns() {
+		for _, col := range relations[i].Symbols() {
 			relCols[col] = true
 		}
-		// Keep only columns that exist in both
+		// Keep only symbols that exist in both
 		for col := range colSet {
 			if !relCols[col] {
 				delete(colSet, col)
@@ -1279,7 +1261,7 @@ func findCommonColumns(relations []Relation) []query.Symbol {
 
 	// Preserve order from first relation
 	var result []query.Symbol
-	for _, col := range relations[0].Columns() {
+	for _, col := range relations[0].Symbols() {
 		if colSet[col] {
 			result = append(result, col)
 		}
@@ -1296,7 +1278,7 @@ func antiJoinOnSymbols(left, right Relation, symbols []query.Symbol) Relation {
 	// Build set of key values from right
 	rightKeys := make(map[string]bool)
 	rightIter := right.Iterator()
-	rightCols := right.Columns()
+	rightCols := right.Symbols()
 	for rightIter.Next() {
 		tuple := rightIter.Tuple()
 		key := extractKeyFromTuple(tuple, rightCols, symbols)
@@ -1307,7 +1289,7 @@ func antiJoinOnSymbols(left, right Relation, symbols []query.Symbol) Relation {
 	// Filter left to only tuples not in right
 	var remaining []Tuple
 	leftIter := left.Iterator()
-	leftCols := left.Columns()
+	leftCols := left.Symbols()
 	for leftIter.Next() {
 		tuple := leftIter.Tuple()
 		key := extractKeyFromTuple(tuple, leftCols, symbols)
@@ -1343,10 +1325,10 @@ func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
 		return branch
 	}
 
-	outerCols := outer.Columns()
-	branchCols := branch.Columns()
+	outerCols := outer.Symbols()
+	branchCols := branch.Symbols()
 
-	// Combined columns: outer columns + branch columns
+	// Combined symbols: outer symbols + branch symbols
 	combinedCols := make([]query.Symbol, 0, len(outerCols)+len(branchCols))
 	combinedCols = append(combinedCols, outerCols...)
 	combinedCols = append(combinedCols, branchCols...)
@@ -1423,13 +1405,13 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 			continue
 		}
 
-		// Track columns for intersection
+		// Track symbols for intersection
 		if len(branchResults) == 0 {
-			commonCols = branchResult.Columns()
+			commonCols = branchResult.Symbols()
 		} else {
-			// Intersect columns
+			// Intersect symbols
 			branchColSet := make(map[query.Symbol]bool)
-			for _, col := range branchResult.Columns() {
+			for _, col := range branchResult.Symbols() {
 				branchColSet[col] = true
 			}
 			var newCommon []query.Symbol
@@ -1448,7 +1430,7 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 	}
 
-	// Union all branch results, projecting to common columns
+	// Union all branch results, projecting to common symbols
 	return unionRelations(branchResults, commonCols, e.options), nil
 }
 
@@ -1661,7 +1643,7 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	input = input.Materialize()
 
 	// Filter to only variables present in input relation
-	inputCols := input.Columns()
+	inputCols := input.Symbols()
 	inputColSet := make(map[query.Symbol]bool)
 	for _, col := range inputCols {
 		inputColSet[col] = true
@@ -1702,7 +1684,7 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 		}
 	}
 
-	// Build join key column indices for input
+	// Build join key symbol indices for input
 	keyIndices := make([]int, len(actualJoinVars))
 	for i, v := range actualJoinVars {
 		for j, col := range inputCols {
@@ -1742,7 +1724,7 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 
 	// Materialize input
 	input = input.Materialize()
-	inputCols := input.Columns()
+	inputCols := input.Symbols()
 
 	// Verify join vars exist in input
 	inputColSet := make(map[query.Symbol]bool)

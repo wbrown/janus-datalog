@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Multi-Row Relation Demo ===\n")
+	fmt.Println("=== Multi-Tuple Relation Demo ===\n")
 
 	// Create test data
 	alice := datalog.NewIdentity("emp:alice")
@@ -52,7 +52,7 @@ func main() {
 
 	matcher := executor.NewMemoryPatternMatcher(datoms)
 
-	// Demo 1: Simple multi-row binding - find salaries for specific employees
+	// Demo 1: Simple multi-tuple binding - find salaries for specific employees
 	fmt.Println("1. Find salaries for Alice and Bob only:")
 	{
 		// Create a relation with multiple employee IDs
@@ -89,7 +89,7 @@ func main() {
 		}
 	}
 
-	// Demo 2: Multi-column binding - find specific attribute values
+	// Demo 2: Multi-symbol binding - find specific attribute values
 	fmt.Println("\n2. Find specific attributes for specific employees:")
 	{
 		// Create a relation with employee-attribute pairs
@@ -128,7 +128,7 @@ func main() {
 		}
 	}
 
-	// Demo 3: Department filtering using multi-row relations
+	// Demo 3: Department filtering using multi-tuple relations
 	fmt.Println("\n3. Find all employees in Engineering department:")
 	{
 		// First, find all engineering employees
@@ -215,7 +215,7 @@ func main() {
 			},
 		}
 
-		// Project just the ?emp column from highEarnerRel
+		// Project just the ?emp symbol from highEarnerRel
 		empOnlyTuples := []executor.Tuple{}
 		it = highEarnerRel.Iterator()
 		for it.Next() {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -231,11 +232,11 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 
 	// Test that we can query for all attributes of alice via standard query
 	t.Run("QueryAllAttributes", func(t *testing.T) {
-		results, err := db.ExecuteQueryWithInputs(`
+		results, err := executor.CollectTuples(db.Query(`
 			[:find ?a ?v
 			 :in $ ?e
 			 :where [?e ?a ?v]]
-		`, alice)
+		`, alice))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -281,7 +282,7 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 		}
 	})
 
-	// Test the same pattern matching but with column extraction as pull does
+	// Test the same pattern matching but with symbol extraction as pull does
 	t.Run("PatternMatchWithColumnExtraction", func(t *testing.T) {
 		matcher := db.Matcher()
 
@@ -302,11 +303,11 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 			t.Fatal("expected non-nil relation")
 		}
 
-		// Check columns
-		cols := rel.Columns()
-		t.Logf("Columns: %v", cols)
+		// Check symbols
+		cols := rel.Symbols()
+		t.Logf("Symbols: %v", cols)
 
-		// Find column indices like pull.go does
+		// Find symbol indices like pull.go does
 		aIdx := -1
 		vIdx := -1
 		for i, col := range cols {
@@ -319,7 +320,7 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 		t.Logf("aIdx=%d, vIdx=%d", aIdx, vIdx)
 
 		if aIdx < 0 || vIdx < 0 {
-			t.Fatalf("missing expected columns: aIdx=%d, vIdx=%d", aIdx, vIdx)
+			t.Fatalf("missing expected symbols: aIdx=%d, vIdx=%d", aIdx, vIdx)
 		}
 
 		// Iterate and build datoms like pull.go does
@@ -395,10 +396,10 @@ func TestPullIntegration_InQuery(t *testing.T) {
 
 	// Test pull in query
 	t.Run("PullInFindClause", func(t *testing.T) {
-		results, err := db.ExecuteQuery(`
+		results, err := executor.CollectTuples(db.Query(`
 			[:find (pull ?e [:person/name :person/age])
 			 :where [?e :entity/type :type/person]]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -410,14 +411,14 @@ func TestPullIntegration_InQuery(t *testing.T) {
 		// Results should be pulled maps
 		foundAlice := false
 		foundBob := false
-		for _, row := range results {
-			if len(row) != 1 {
-				t.Errorf("expected 1 column per row, got %d", len(row))
+		for _, tuple := range results {
+			if len(tuple) != 1 {
+				t.Errorf("expected 1 symbol per tuple, got %d", len(tuple))
 				continue
 			}
-			pulled, ok := row[0].(map[string]interface{})
+			pulled, ok := tuple[0].(map[string]interface{})
 			if !ok {
-				t.Errorf("expected map[string]interface{}, got %T", row[0])
+				t.Errorf("expected map[string]interface{}, got %T", tuple[0])
 				continue
 			}
 			name := pulled["person/name"]
@@ -443,10 +444,10 @@ func TestPullIntegration_InQuery(t *testing.T) {
 
 	// Test mixed find clause (pull + regular variable)
 	t.Run("MixedFindClause", func(t *testing.T) {
-		results, err := db.ExecuteQuery(`
+		results, err := executor.CollectTuples(db.Query(`
 			[:find ?type (pull ?e [:person/name])
 			 :where [?e :entity/type ?type]]
-		`)
+		`))
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -455,25 +456,25 @@ func TestPullIntegration_InQuery(t *testing.T) {
 			t.Fatalf("expected 2 results, got %d", len(results))
 		}
 
-		// Each row should have [type, pulled_map]
-		for _, row := range results {
-			if len(row) != 2 {
-				t.Errorf("expected 2 columns, got %d", len(row))
+		// Each tuple should have [type, pulled_map]
+		for _, tuple := range results {
+			if len(tuple) != 2 {
+				t.Errorf("expected 2 symbols, got %d", len(tuple))
 				continue
 			}
 
-			// First column should be the type keyword
-			typeKw, ok := row[0].(datalog.Keyword)
+			// First symbol should be the type keyword
+			typeKw, ok := tuple[0].(datalog.Keyword)
 			if !ok {
-				t.Errorf("expected Keyword for type, got %T", row[0])
+				t.Errorf("expected Keyword for type, got %T", tuple[0])
 			} else if typeKw.String() != ":type/person" {
 				t.Errorf("expected type=:type/person, got %s", typeKw.String())
 			}
 
-			// Second column should be pulled map
-			pulled, ok := row[1].(map[string]interface{})
+			// Second symbol should be pulled map
+			pulled, ok := tuple[1].(map[string]interface{})
 			if !ok {
-				t.Errorf("expected map for pull, got %T", row[1])
+				t.Errorf("expected map for pull, got %T", tuple[1])
 			} else {
 				name := pulled["person/name"]
 				if name != "Alice" && name != "Bob" {

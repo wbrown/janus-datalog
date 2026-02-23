@@ -10,14 +10,14 @@ The QueryInto API eliminates manual tuple iteration by populating typed Go value
 - **`QueryOneInto()`** - Query into a single struct or scalar (expects at most one result)
 
 Both APIs support:
-- **Structs** for multi-column queries (map columns to fields via tags)
-- **Scalars** for single-column queries (`string`, `int64`, `float64`, `bool`, `time.Time`, `Identity`, `Keyword`, `[]byte`)
+- **Structs** for multi-symbol queries (map symbols to fields via tags)
+- **Scalars** for single-symbol queries (`string`, `int64`, `float64`, `bool`, `time.Time`, `Identity`, `Keyword`, `[]byte`)
 
 ## Basic Usage
 
 ### Define Result Struct
 
-Use the `datalog` tag to map struct fields to query columns:
+Use the `datalog` tag to map struct fields to query symbols:
 
 ```go
 type PersonResult struct {
@@ -59,9 +59,9 @@ if !found {
 }
 ```
 
-### Scalar Queries (Single Column)
+### Scalar Queries (Single Symbol)
 
-For single-column queries, use scalar slices or values directly without structs:
+For single-symbol queries, use scalar slices or values directly without structs:
 
 ```go
 // Get all names as []string
@@ -89,7 +89,7 @@ found, err := d.QueryOneInto(&age, `
 
 Supported scalar types: `string`, `int64`, `int`, `float64`, `bool`, `time.Time`, `datalog.Identity`, `datalog.Keyword`, `[]byte`
 
-**Note:** Scalar queries require exactly one column in the `:find` clause. Multi-column queries require a struct.
+**Note:** Scalar queries require exactly one symbol in the `:find` clause. Multi-symbol queries require a struct.
 
 ## Tag Mapping
 
@@ -131,12 +131,12 @@ If no fields have `datalog` tags, positional mapping is used:
 
 ```go
 type PositionalResult struct {
-    Name string  // maps to column 0
-    Age  int64   // maps to column 1
+    Name string  // maps to symbol 0
+    Age  int64   // maps to symbol 1
 }
 
 // Query: [:find ?name ?age :where ...]
-// Column 0 (?name) -> Name, Column 1 (?age) -> Age
+// Symbol 0 (?name) -> Name, Symbol 1 (?age) -> Age
 ```
 
 **Note:** Mixing tagged and untagged fields in the same struct is an error.
@@ -206,7 +206,7 @@ if errors.Is(err, dlreflect.ErrSymbolNotFound) {
 
 ## Aggregates on Empty Result Sets
 
-**Important:** Following Datomic semantics, aggregate functions over empty result sets return an empty result, not a row with default values.
+**Important:** Following Datomic semantics, aggregate functions over empty result sets return an empty result, not a tuple with default values.
 
 ```go
 // If no entities match the where clause, found=false (not an error)
@@ -390,7 +390,7 @@ err := d.QueryInto(&people, `[:find ?name ?age :where ...]`)
 | API | Purpose | Use Case |
 |-----|---------|----------|
 | `QueryInto` | Query results → struct slice | Typed query results |
-| `QueryOneInto` | Query results → single struct | Single-row queries |
+| `QueryOneInto` | Query results → single struct | Single-tuple queries |
 | `PullInto` | Entity → struct | Load entity by ID |
 | `Query` | Query → `[][]interface{}` | Dynamic/untyped results |
 

@@ -2,13 +2,13 @@
 
 ## Core Insight
 
-Bindings are a flawed abstraction. They're just Relations with a single row, but by converting them to maps, we lose critical capabilities:
+Bindings are a flawed abstraction. They're just Relations with a single tuple, but by converting them to maps, we lose critical capabilities:
 - Tuple relationships are destroyed
 - Ordering information is lost  
 - We need constant conversion between data structures
 - The code is more complex than necessary
 
-**The Solution: Use Relations everywhere. A Binding is just a single-row Relation.**
+**The Solution: Use Relations everywhere. A Binding is just a single-tuple Relation.**
 
 ## Why Bindings Must Go
 
@@ -97,7 +97,7 @@ for _, entity := range entities {
 
 #### After (with Relations)
 ```go
-// Creating a single-row relation for a constant
+// Creating a single-tuple relation for a constant
 rel := NewRelation([]Symbol{"?x"}, [][]interface{}{{42}})
 results := matcher.MatchWithRelation(pattern, rel)
 
@@ -177,7 +177,7 @@ joined := leftRel.NaturalJoin(rightResults)
 
 ### Step 3: Migrate Existing Code
 - Update executor to use Relations
-- Convert binding creation to single-row Relations
+- Convert binding creation to single-tuple Relations
 - Replace binding extraction with projection
 
 ### Step 4: Remove Binding Code
@@ -227,4 +227,4 @@ By expunging Bindings and using Relations everywhere, we:
 - Create a more elegant and performant system
 - Align better with relational/Datalog semantics
 
-The key insight: **A Binding is just a single-row Relation. Use Relations everywhere.**
+The key insight: **A Binding is just a single-tuple Relation. Use Relations everywhere.**

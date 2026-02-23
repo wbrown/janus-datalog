@@ -84,8 +84,8 @@ func runQuery(exec *executor.Executor, queryStr string) {
 	}
 
 	// Print results
-	fmt.Printf("Columns: %v\n", result.Columns)
-	fmt.Printf("Results (%d rows):\n", result.Size())
+	fmt.Printf("Symbols: %v\n", result.Symbols)
+	fmt.Printf("Results (%d tuples):\n", result.Size())
 	for i := 0; i < result.Size(); i++ {
 		fmt.Printf("  %v\n", result.Get(i))
 	}

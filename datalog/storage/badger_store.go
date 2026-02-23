@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"runtime"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/wbrown/janus-datalog/datalog"
@@ -152,14 +153,16 @@ func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error)
 
 	it := txn.NewIterator(opts)
 
-	return &BadgerIterator{
+	iter := &BadgerIterator{
 		txn:     txn,
 		it:      it,
 		start:   start,
 		end:     end,
 		index:   index,
 		encoder: s.encoder, // For decoding Op from key
-	}, nil
+	}
+	runtime.SetFinalizer(iter, (*BadgerIterator).Close)
+	return iter, nil
 }
 
 // Get retrieves a single datom by key
@@ -467,10 +470,16 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 	return &datom, nil
 }
 
-// Close closes the iterator
+// Close closes the iterator and releases the underlying BadgerDB transaction.
+// Safe to call multiple times.
 func (i *BadgerIterator) Close() error {
+	if i.txn == nil {
+		return nil
+	}
+	runtime.SetFinalizer(i, nil)
 	i.it.Close()
 	i.txn.Discard()
+	i.txn = nil
 	return nil
 }
 

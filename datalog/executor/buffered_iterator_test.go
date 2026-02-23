@@ -270,10 +270,10 @@ func TestStreamingRelationWithBuffering(t *testing.T) {
 			{1, "alice", 100},
 			{2, "bob", 200},
 		}
-		columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
+		symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
 		source := newMockIterator(tuples)
-		rel := NewStreamingRelationWithOptions(columns, source, opts)
+		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 		// Call Materialize() to enable multiple iterations
 		_ = rel.Materialize()
@@ -308,13 +308,13 @@ func TestStreamingRelationWithBuffering(t *testing.T) {
 
 	t.Run("EfficientIsEmpty", func(t *testing.T) {
 		tuples := []Tuple{{1, "alice"}}
-		columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
+		symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
 
 		source := newMockIterator(tuples)
 		// Use EnableTrueStreaming=true for this test since we're testing that IsEmpty() is efficient
 		// With true streaming, IsEmpty() returns false without consuming the iterator
 		streamingOpts := ExecutorOptions{EnableTrueStreaming: true}
-		rel := NewStreamingRelationWithOptions(columns, source, streamingOpts)
+		rel := NewStreamingRelationWithOptions(symbols, source, streamingOpts)
 
 		// IsEmpty should not trigger full materialization
 		assert.False(t, rel.IsEmpty())

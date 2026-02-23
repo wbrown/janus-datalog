@@ -4,7 +4,7 @@
 
 ## Summary
 
-The phase symbol update logic was incorrectly adding input parameters to the `Keep` list even when those parameters weren't present in the relation produced by the phase patterns. This caused projection errors like "cannot project: column ?symbol not found in relation".
+The phase symbol update logic was incorrectly adding input parameters to the `Keep` list even when those parameters weren't present in the relation produced by the phase patterns. This caused projection errors like "cannot project: symbol ?symbol not found in relation".
 
 ## Symptom
 
@@ -13,7 +13,7 @@ The phase symbol update logic was incorrectly adding input parameters to the `Ke
 **Error:**
 ```
 Query failed: query execution failed: phase 2 failed: projection failed:
-cannot project: column ?symbol not found in relation (has columns: [?s ?p ?time ?close])
+cannot project: symbol ?symbol not found in relation (has symbols: [?s ?p ?time ?close])
 ```
 
 **Query:**
@@ -32,7 +32,7 @@ cannot project: column ?symbol not found in relation (has columns: [?s ?p ?time 
   - Available: `[?symbol ?s]` (inputs from phase 0)
   - Provides: `[?close ?p ?s ?time]` (outputs from patterns)
   - Keep: `[?time ?close ?symbol]` ✗ WRONG! `?symbol` isn't in the relation!
-- Projection tries to keep `?symbol` but it's not in the relation columns, causing the error
+- Projection tries to keep `?symbol` but it's not in the relation symbols, causing the error
 
 ## Root Cause Analysis
 
@@ -94,7 +94,7 @@ But `Keep` should ONLY contain symbols that are actually IN THE RELATION produce
 
 ### The Key Insight
 
-**Input parameters are in `Available` but NOT in the relation.** They're used to filter or correlate data during pattern matching, but they don't appear as columns in the output relation.
+**Input parameters are in `Available` but NOT in the relation.** They're used to filter or correlate data during pattern matching, but they don't appear as symbols in the output relation.
 
 **Example:**
 ```datalog
@@ -103,7 +103,7 @@ But `Keep` should ONLY contain symbols that are actually IN THE RELATION produce
        [?p :price/symbol ?s]        ← Produces ?p, ?s
 ```
 
-The relation produced has columns `[?s ?p ...]`, NOT `[?symbol ?s ?p ...]`.
+The relation produced has symbols `[?s ?p ...]`, NOT `[?symbol ?s ?p ...]`.
 
 ## The Actual Fix
 
@@ -142,7 +142,7 @@ if i > 0 && len(phases[i].Available) > 0 {
 }
 ```
 
-**Why this works:** We now check that the join symbol actually exists in the relation (`Provides`) before adding it to `Keep`. This ensures we never try to project a column that doesn't exist.
+**Why this works:** We now check that the join symbol actually exists in the relation (`Provides`) before adding it to `Keep`. This ensures we never try to project a symbol that doesn't exist.
 
 ### Verification: Before vs After
 
@@ -153,7 +153,7 @@ Phase 1:
   Provides: [?close ?p ?s ?time]
   Keep: [?time ?close ?symbol]  ✗ ?symbol not in Provides!
 
-Error: cannot project: column ?symbol not found
+Error: cannot project: symbol ?symbol not found
 ```
 
 **After fix:**
@@ -206,7 +206,7 @@ In Datalog query execution:
 **Correct mental model:**
 ```
 Available = Environment symbols (inputs + previous phase outputs)
-Provides = Relation columns (what THIS phase's patterns produce)
+Provides = Relation symbols (what THIS phase's patterns produce)
 Keep ⊆ Provides (you can only keep what's actually in the relation!)
 ```
 
@@ -215,7 +215,7 @@ Keep ⊆ Provides (you can only keep what's actually in the relation!)
 Keep ⊆ Provides ∩ Available
 ```
 
-This is analogous to SQL's `SELECT` clause - you can only select columns that exist in the result set, even if you used parameters in the `WHERE` clause.
+This is analogous to SQL's `SELECT` clause - you can only select symbols that exist in the result set, even if you used parameters in the `WHERE` clause.
 
 ## Related Issues
 

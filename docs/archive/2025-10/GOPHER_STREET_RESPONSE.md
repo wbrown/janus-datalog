@@ -90,7 +90,7 @@ Your report mentioned parallel execution being disabled, but investigation showe
 
 2. **Input Parameter in Keep Bug** (phase_reordering.go:358-383)
    - Problem: Join symbol logic added input parameters to projection
-   - Symptom: "cannot project: column ?symbol not found"
+   - Symptom: "cannot project: symbol ?symbol not found"
    - Fix: Only keep symbols in `Keep ⊆ Provides ∩ Available`
    - Test: `TestExecuteQueryWithTimeInput`
 
@@ -129,7 +129,7 @@ Your report mentioned parallel execution being disabled, but investigation showe
 
 **Previous fixes** (already completed in October):
 - Concurrent map access (commit `ce789af`) - Fixed with sync.Map
-- Tuple order violation (commits `d2c74cd`, `1dc21a7`) - Fixed with column mapping
+- Tuple order violation (commits `d2c74cd`, `1dc21a7`) - Fixed with symbol mapping
 
 ### 3. Comprehensive Documentation
 

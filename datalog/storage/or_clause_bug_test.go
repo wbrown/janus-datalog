@@ -16,10 +16,10 @@ import (
 // results as expected.
 //
 // Expected behavior: (or [?t :task/type :type/a] [?t :task/type :type/b])
-// should only return rows where ?t has type :type/a OR :type/b.
+// should only return tuples where ?t has type :type/a OR :type/b.
 //
 // Actual behavior: The `or` clause appears to be ignored entirely, returning
-// all rows regardless of whether they match either branch.
+// all tuples regardless of whether they match either branch.
 func TestOrClauseBug(t *testing.T) {
 	dbPath := "/tmp/test-or-clause-bug-" + t.Name()
 	defer os.RemoveAll(dbPath)
@@ -59,7 +59,7 @@ func TestOrClauseBug(t *testing.T) {
 	 [?t :task/type ?type]
 	 [?t :task/type :type/a]]`
 
-	results, err := db.ExecuteQuery(queryWithoutOr)
+	results, err := executor.CollectTuples(db.Query(queryWithoutOr))
 	assert.NoError(t, err)
 	t.Logf("Without or (expect 1 result with :type/a): %d results", len(results))
 	for _, r := range results {
@@ -77,7 +77,7 @@ func TestOrClauseBug(t *testing.T) {
 	 (or [?t :task/type :type/a]
 	     [?t :task/type :type/b])]`
 
-	results, err = db.ExecuteQuery(queryWithOr)
+	results, err = executor.CollectTuples(db.Query(queryWithOr))
 	assert.NoError(t, err)
 	t.Logf("With or (expect 2 results with :type/a or :type/b): %d results", len(results))
 	for _, r := range results {

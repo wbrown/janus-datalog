@@ -77,7 +77,7 @@ func BenchmarkHashJoinIteration(b *testing.B) {
 	_, _ = tx.Commit()
 
 	// Warm up
-	_, _ = db.ExecuteQuery(`[:find ?e :where [?e :task/scenario ?s]]`)
+	_, _ = executor.CollectTuples(db.Query(`[:find ?e :where [?e :task/scenario ?s]]`))
 
 	matcher := db.Matcher().(*BadgerMatcher)
 	pattern := &query.DataPattern{
@@ -188,8 +188,8 @@ func BenchmarkDatomFromKeyToTuple(b *testing.B) {
 			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
-	tupleBuilder := query.NewInternedTupleBuilder(pattern, columns)
+	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+	tupleBuilder := query.NewInternedTupleBuilder(pattern, symbols)
 
 	b.ResetTimer()
 	b.ReportAllocs()

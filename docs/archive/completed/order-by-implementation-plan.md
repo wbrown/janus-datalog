@@ -109,7 +109,7 @@ func sortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
     // Materialize if streaming
     mat := materializeIfNeeded(rel)
     
-    // Get column indices for sort variables
+    // Get symbol indices for sort variables
     sortIndices := make([]int, len(orderBy))
     for i, clause := range orderBy {
         idx := mat.ColumnIndex(clause.Variable)
@@ -143,7 +143,7 @@ func sortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
         return false
     })
     
-    return NewMaterializedRelation(mat.Columns(), tuples)
+    return NewMaterializedRelation(mat.Symbols(), tuples)
 }
 ```
 
@@ -234,8 +234,8 @@ if len(q.OrderBy) > 0 {
 ## Testing
 
 Test cases should include:
-1. Single column ascending/descending
-2. Multiple columns with mixed directions
+1. Single symbol ascending/descending
+2. Multiple symbols with mixed directions
 3. Sorting different data types (strings, numbers, dates, identities)
 4. Handling nil/missing values
 5. Variables not in find clause (should be ignored)

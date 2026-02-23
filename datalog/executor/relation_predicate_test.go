@@ -9,14 +9,14 @@ import (
 
 func TestFilterWithPredicate(t *testing.T) {
 	// Create a test relation
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	tuples := []Tuple{
 		{1, 2, 3},
 		{4, 5, 6},
 		{7, 8, 9},
 		{10, 11, 12},
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	// Test with a comparison predicate
 	pred := &query.Comparison{
@@ -46,13 +46,13 @@ func TestFilterWithPredicate(t *testing.T) {
 
 func TestEvaluateFunction(t *testing.T) {
 	// Create a test relation
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{int64(10), int64(20)},
 		{int64(5), int64(15)},
 		{int64(3), int64(7)},
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	// Test with an arithmetic function
 	fn := &query.ArithmeticFunction{
@@ -63,9 +63,9 @@ func TestEvaluateFunction(t *testing.T) {
 
 	result := rel.EvaluateFunction(fn, datalog.NewSymbol("?sum"))
 
-	// Should have 3 columns now
-	if len(result.Columns()) != 3 {
-		t.Errorf("Expected 3 columns after evaluation, got %d", len(result.Columns()))
+	// Should have 3 symbols now
+	if len(result.Symbols()) != 3 {
+		t.Errorf("Expected 3 symbols after evaluation, got %d", len(result.Symbols()))
 	}
 
 	// Check the computed values
@@ -87,14 +87,14 @@ func TestEvaluateFunction(t *testing.T) {
 
 func TestChainedComparison(t *testing.T) {
 	// Test the variadic comparison with FilterWithPredicate
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	tuples := []Tuple{
 		{1, 5, 10},
 		{2, 3, 4}, // This one satisfies 2 < 3 < 4 < 5
 		{6, 7, 8},
 		{3, 4, 2}, // Not in order
 	}
-	rel := NewMaterializedRelation(columns, tuples)
+	rel := NewMaterializedRelation(symbols, tuples)
 
 	// Test: [(< ?x ?y ?z 5)]
 	pred := &query.ChainedComparison{

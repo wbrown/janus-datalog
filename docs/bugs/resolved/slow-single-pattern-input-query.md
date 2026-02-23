@@ -65,7 +65,7 @@ Phase 1:
 
 Execution:
   Total time: 14.962209ms
-  Result rows: 63
+  Result tuples: 63
 
 Event Summary:
   Joins: hash=1, nested=0, merge=0

@@ -91,7 +91,7 @@ Write tests for critical uncovered functionality:
 func TestSortingQueries(t *testing.T) {
     // MISSING: sortRelation has 0% coverage
     // Test ORDER BY with different types
-    // Test multi-column sorting
+    // Test multi-symbol sorting
 }
 
 func TestExpressionQueries(t *testing.T) {

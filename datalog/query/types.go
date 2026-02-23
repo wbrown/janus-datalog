@@ -7,7 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// Tuple represents a row of values in a relation
+// Tuple represents a tuple of values in a relation
 // It's used throughout the executor and storage layers for query results
 type Tuple []interface{}
 
@@ -96,7 +96,7 @@ type BindingForm interface {
 	String() string
 }
 
-// TupleBinding binds a single row: [[?a ?b]]
+// TupleBinding binds a single tuple: [[?a ?b]]
 type TupleBinding struct {
 	Variables []Symbol
 }
@@ -114,8 +114,8 @@ func (t TupleBinding) String() string {
 	return result
 }
 
-// CollectionBinding binds a single column from all rows: [?coll ...]
-// This collects all values from a single-column result into a collection.
+// CollectionBinding binds a single symbol from all tuples: [?coll ...]
+// This collects all values from a single-symbol result into a collection.
 type CollectionBinding struct {
 	Variable Symbol
 }
@@ -126,7 +126,7 @@ func (c CollectionBinding) String() string {
 }
 
 // ScalarBinding binds a single value to a single variable: ?var
-// Expects exactly one row with one column. Used with scalar find spec (.:find ... .)
+// Expects exactly one tuple with one symbol. Used with scalar find spec (.:find ... .)
 type ScalarBinding struct {
 	Variable Symbol
 }
@@ -476,19 +476,19 @@ type Result []interface{}
 
 // ResultSet represents a set of query results
 type ResultSet struct {
-	Columns []Symbol // Column names (from Find clause)
-	Rows    []Result // Result tuples
+	Symbols []Symbol // Symbol names (from Find clause)
+	Tuples  []Result // Result tuples
 }
 
-// ToMap converts a result row to a map using column names
-func (rs ResultSet) ToMap(row int) map[Symbol]interface{} {
-	if row < 0 || row >= len(rs.Rows) {
+// ToMap converts a result tuple to a map using symbol names
+func (rs ResultSet) ToMap(tupleIdx int) map[Symbol]interface{} {
+	if tupleIdx < 0 || tupleIdx >= len(rs.Tuples) {
 		return nil
 	}
 	result := make(map[Symbol]interface{})
-	for i, col := range rs.Columns {
-		if i < len(rs.Rows[row]) {
-			result[col] = rs.Rows[row][i]
+	for i, sym := range rs.Symbols {
+		if i < len(rs.Tuples[tupleIdx]) {
+			result[sym] = rs.Tuples[tupleIdx][i]
 		}
 	}
 	return result
@@ -496,7 +496,7 @@ func (rs ResultSet) ToMap(row int) map[Symbol]interface{} {
 
 // Relation represents an intermediate relation during query execution
 type Relation struct {
-	Columns []Symbol
+	Symbols []Symbol
 	Tuples  [][]interface{}
 }
 
@@ -510,22 +510,22 @@ func (r Relation) Size() int {
 	return len(r.Tuples)
 }
 
-// ColumnIndex returns the index of a column, or -1 if not found
-func (r Relation) ColumnIndex(col Symbol) int {
-	for i, c := range r.Columns {
-		if c == col {
+// SymbolIndex returns the index of a symbol, or -1 if not found
+func (r Relation) SymbolIndex(sym Symbol) int {
+	for i, s := range r.Symbols {
+		if s == sym {
 			return i
 		}
 	}
 	return -1
 }
 
-// CommonColumns returns the columns that appear in both relations
-func (r Relation) CommonColumns(other Relation) []Symbol {
+// CommonSymbols returns the symbols that appear in both relations
+func (r Relation) CommonSymbols(other Relation) []Symbol {
 	common := []Symbol{}
-	for _, col := range r.Columns {
-		if other.ColumnIndex(col) >= 0 {
-			common = append(common, col)
+	for _, sym := range r.Symbols {
+		if other.SymbolIndex(sym) >= 0 {
+			common = append(common, sym)
 		}
 	}
 	return common
@@ -565,15 +565,15 @@ func (o OrderByClause) String() string {
 	return fmt.Sprintf("[%s :%s]", o.Variable, o.Direction)
 }
 
-// DatomToTuple converts a datom to a tuple based on the pattern and requested columns.
+// DatomToTuple converts a datom to a tuple based on the pattern and requested symbols.
 // This is used by both executor and storage packages to extract values from datoms
-// in the order specified by the columns.
-func DatomToTuple(datom datalog.Datom, pattern *DataPattern, columns []Symbol) Tuple {
-	if len(columns) == 0 {
+// in the order specified by the symbols.
+func DatomToTuple(datom datalog.Datom, pattern *DataPattern, symbols []Symbol) Tuple {
+	if len(symbols) == 0 {
 		return nil
 	}
 
-	// Build column to value mapping
+	// Build symbol to value mapping
 	values := make(map[Symbol]interface{})
 
 	// Map E position
@@ -598,10 +598,10 @@ func DatomToTuple(datom datalog.Datom, pattern *DataPattern, columns []Symbol) T
 		}
 	}
 
-	// Build tuple in column order
-	tuple := make(Tuple, len(columns))
-	for i, col := range columns {
-		if val, found := values[col]; found {
+	// Build tuple in symbol order
+	tuple := make(Tuple, len(symbols))
+	for i, sym := range symbols {
+		if val, found := values[sym]; found {
 			tuple[i] = val
 		}
 	}

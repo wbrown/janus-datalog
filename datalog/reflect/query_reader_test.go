@@ -84,12 +84,12 @@ func TestNewQueryResultMapper_TaggedFields(t *testing.T) {
 	}
 
 	// Verify name mapping
-	if mapper.mappings[0].Tag != "?name" || mapper.mappings[0].ColIndex != 0 {
+	if mapper.mappings[0].Tag != "?name" || mapper.mappings[0].TupleIndex != 0 {
 		t.Errorf("name mapping incorrect: %+v", mapper.mappings[0])
 	}
 
 	// Verify age mapping
-	if mapper.mappings[1].Tag != "?age" || mapper.mappings[1].ColIndex != 1 {
+	if mapper.mappings[1].Tag != "?age" || mapper.mappings[1].TupleIndex != 1 {
 		t.Errorf("age mapping incorrect: %+v", mapper.mappings[1])
 	}
 }
@@ -105,12 +105,12 @@ func TestNewQueryResultMapper_PositionalMapping(t *testing.T) {
 		t.Errorf("expected 2 mappings, got %d", len(mapper.mappings))
 	}
 
-	// Positional: first field -> column 0, second field -> column 1
-	if mapper.mappings[0].ColIndex != 0 {
-		t.Errorf("first field should map to column 0, got %d", mapper.mappings[0].ColIndex)
+	// Positional: first field -> symbol 0, second field -> symbol 1
+	if mapper.mappings[0].TupleIndex != 0 {
+		t.Errorf("first field should map to symbol 0, got %d", mapper.mappings[0].TupleIndex)
 	}
-	if mapper.mappings[1].ColIndex != 1 {
-		t.Errorf("second field should map to column 1, got %d", mapper.mappings[1].ColIndex)
+	if mapper.mappings[1].TupleIndex != 1 {
+		t.Errorf("second field should map to symbol 1, got %d", mapper.mappings[1].TupleIndex)
 	}
 }
 
@@ -129,16 +129,16 @@ func TestNewQueryResultMapper_Aggregates(t *testing.T) {
 	for _, m := range mapper.mappings {
 		switch m.Tag {
 		case "?dept":
-			if m.ColIndex != 0 {
-				t.Errorf("?dept should map to column 0, got %d", m.ColIndex)
+			if m.TupleIndex != 0 {
+				t.Errorf("?dept should map to symbol 0, got %d", m.TupleIndex)
 			}
 		case "(sum ?salary)":
-			if m.ColIndex != 1 {
-				t.Errorf("(sum ?salary) should map to column 1, got %d", m.ColIndex)
+			if m.TupleIndex != 1 {
+				t.Errorf("(sum ?salary) should map to symbol 1, got %d", m.TupleIndex)
 			}
 		case "(count ?emp)":
-			if m.ColIndex != 2 {
-				t.Errorf("(count ?emp) should map to column 2, got %d", m.ColIndex)
+			if m.TupleIndex != 2 {
+				t.Errorf("(count ?emp) should map to symbol 2, got %d", m.TupleIndex)
 			}
 		}
 	}
@@ -867,7 +867,7 @@ func TestMapTuple_PullResult_MissingFields(t *testing.T) {
 
 // MixedModeStruct has both query variable tags and attribute tags
 type MixedModeStruct struct {
-	// Query variable - comes from tuple column
+	// Query variable - comes from tuple symbol
 	Name string `datalog:"?name"`
 	// Attribute tags - come from pull result map in tuple
 	ID  datalog.Identity `datalog:"db/id"`
@@ -951,7 +951,7 @@ func TestMapTuple_MixedMode_NoPullMap(t *testing.T) {
 }
 
 func TestMapTuple_MixedMode_PullMapFirst(t *testing.T) {
-	// Test with pull map as first column: [:find (pull ?e [*]) ?name ...]
+	// Test with pull map as first symbol: [:find (pull ?e [*]) ?name ...]
 	findColumns := []string{"(pull ?e [*])", "?name"}
 	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
 	if err != nil {

@@ -70,13 +70,13 @@ func TestProductRelation(t *testing.T) {
 			t.Errorf("Expected 6 tuples, got %d", product.Size())
 		}
 
-		// Check columns
-		cols := product.Columns()
+		// Check symbols
+		cols := product.Symbols()
 		if len(cols) != 2 {
-			t.Errorf("Expected 2 columns, got %d", len(cols))
+			t.Errorf("Expected 2 symbols, got %d", len(cols))
 		}
 		if cols[0] != datalog.NewSymbol("?x") || cols[1] != datalog.NewSymbol("?y") {
-			t.Errorf("Expected columns [?x ?y], got %v", cols)
+			t.Errorf("Expected symbols [?x ?y], got %v", cols)
 		}
 
 		// Verify all combinations exist
@@ -115,10 +115,10 @@ func TestProductRelation(t *testing.T) {
 			t.Errorf("Expected 4 tuples, got %d", product.Size())
 		}
 
-		// Check columns
-		cols := product.Columns()
+		// Check symbols
+		cols := product.Symbols()
 		if len(cols) != 3 {
-			t.Errorf("Expected 3 columns, got %d", len(cols))
+			t.Errorf("Expected 3 symbols, got %d", len(cols))
 		}
 	})
 }
@@ -196,10 +196,10 @@ func TestExecuteExpression(t *testing.T) {
 			t.Errorf("Expected 2 tuples, got %d", result.Size())
 		}
 
-		// Check columns
-		cols := result.Columns()
+		// Check symbols
+		cols := result.Symbols()
 		if len(cols) != 2 {
-			t.Errorf("Expected 2 columns, got %d", len(cols))
+			t.Errorf("Expected 2 symbols, got %d", len(cols))
 		}
 	})
 
@@ -236,10 +236,10 @@ func TestExecuteExpression(t *testing.T) {
 			t.Errorf("Expected 4 tuples from Cartesian product, got %d", result.Size())
 		}
 
-		// Check columns: should have ?x, ?y, ?z
-		cols := result.Columns()
+		// Check symbols: should have ?x, ?y, ?z
+		cols := result.Symbols()
 		if len(cols) != 3 {
-			t.Errorf("Expected 3 columns (?x, ?y, ?z), got %d: %v", len(cols), cols)
+			t.Errorf("Expected 3 symbols (?x, ?y, ?z), got %d: %v", len(cols), cols)
 		}
 	})
 }
@@ -458,15 +458,15 @@ func TestExecuteTupleGround(t *testing.T) {
 			t.Errorf("Expected 1 tuple, got %d", result.Size())
 		}
 
-		// Check columns
-		cols := result.Columns()
+		// Check symbols
+		cols := result.Symbols()
 		if len(cols) != 3 {
-			t.Errorf("Expected 3 columns, got %d", len(cols))
+			t.Errorf("Expected 3 symbols, got %d", len(cols))
 		}
 		expected := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
 		for i, exp := range expected {
 			if cols[i] != exp {
-				t.Errorf("Column %d = %v, want %v", i, cols[i], exp)
+				t.Errorf("Symbol %d = %v, want %v", i, cols[i], exp)
 			}
 		}
 
@@ -513,15 +513,15 @@ func TestExecuteTupleGround(t *testing.T) {
 		}
 
 		result := groups[0]
-		// Should have 2 rows (one for each ?x value) with ?a, ?b added
+		// Should have 2 tuples (one for each ?x value) with ?a, ?b added
 		if result.Size() != 2 {
 			t.Errorf("Expected 2 tuples, got %d", result.Size())
 		}
 
-		// Check columns: should have ?x, ?a, ?b
-		cols := result.Columns()
+		// Check symbols: should have ?x, ?a, ?b
+		cols := result.Symbols()
 		if len(cols) != 3 {
-			t.Errorf("Expected 3 columns, got %d", len(cols))
+			t.Errorf("Expected 3 symbols, got %d", len(cols))
 		}
 	})
 

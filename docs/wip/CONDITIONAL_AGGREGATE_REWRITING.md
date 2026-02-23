@@ -122,7 +122,7 @@ Automatic query rewriting to transform correlated aggregate subqueries into cond
 
 **Symptoms**:
 - Query with `EnableConditionalAggregateRewriting: false` → Returns correct results
-- Same query with `EnableConditionalAggregateRewriting: true` → Returns 0 rows (empty result)
+- Same query with `EnableConditionalAggregateRewriting: true` → Returns 0 tuples (empty result)
 - No error thrown - query executes but produces empty results
 
 **Evidence**:

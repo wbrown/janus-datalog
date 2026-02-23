@@ -45,7 +45,7 @@ func (m *MockPatternMatcher) Match(pattern *query.DataPattern, bindings Relation
 
 		// Create a map of bound values
 		boundValues := make(map[query.Symbol]interface{})
-		cols := bindingRel.Columns()
+		cols := bindingRel.Symbols()
 		for i, col := range cols {
 			if i < len(tuple) {
 				boundValues[col] = tuple[i]

@@ -87,7 +87,7 @@ func (e *Executor) executeSubqueryWithHashTable(
         inputKey := NewTupleKey(inputValues, ...)
         inputCombinations.Put(inputKey, inputValues)
 
-        // Build hash table for join (keyed by join columns)
+        // Build hash table for join (keyed by join symbols)
         joinKey := NewTupleKey(tuple, joinIndices)
         hashTable.Put(joinKey, tuple)  // Store full tuple
     }

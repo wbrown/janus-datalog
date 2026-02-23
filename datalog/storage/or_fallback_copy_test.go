@@ -71,8 +71,8 @@ func TestOrClauseTupleStability(t *testing.T) {
                         (or [?e :entity/status "active"]
                             [?e :entity/status "pending"])]`
 
-	// Use ExecuteQueryRelation to get streaming results WITHOUT materialization
-	rel, err := db.ExecuteQueryRelation(queryStr)
+	// Use Query to get streaming results WITHOUT materialization
+	rel, err := db.Query(queryStr)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -137,8 +137,8 @@ func TestOrClauseMultipleBranches(t *testing.T) {
                             [?e :product/category "books"]
                             [?e :product/category "clothing"])]`
 
-	// Use ExecuteQueryRelation for streaming WITHOUT materialization
-	rel, err := db.ExecuteQueryRelation(queryStr)
+	// Use Query for streaming WITHOUT materialization
+	rel, err := db.Query(queryStr)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

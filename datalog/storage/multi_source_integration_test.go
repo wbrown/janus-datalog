@@ -36,7 +36,7 @@ func TestMultiSource_MemorySourceWithDatabase(t *testing.T) {
 	cache := executor.NewMemoryPatternMatcher(cacheDatoms)
 
 	// Query joining database and memory source
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name ?score
 		  :in $ $cache
 		  :where [?e :user/name ?name]
@@ -46,7 +46,7 @@ func TestMultiSource_MemorySourceWithDatabase(t *testing.T) {
 		WithSources(map[query.Symbol]executor.PatternMatcher{
 			datalog.NewSymbol("$cache"): cache,
 		}),
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -79,14 +79,14 @@ func TestMultiSource_MemorySourceOnly(t *testing.T) {
 	}
 	items := executor.NewMemoryPatternMatcher(facts)
 
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name
 		  :in $items
 		  :where [$items ?e :item/name ?name]]`,
 		WithSources(map[query.Symbol]executor.PatternMatcher{
 			datalog.NewSymbol("$items"): items,
 		}),
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -96,8 +96,8 @@ func TestMultiSource_MemorySourceOnly(t *testing.T) {
 	}
 
 	names := make(map[string]bool)
-	for _, row := range results {
-		names[row[0].(string)] = true
+	for _, tuple := range results {
+		names[tuple[0].(string)] = true
 	}
 	for _, expected := range []string{"Sword", "Shield", "Potion"} {
 		if !names[expected] {
@@ -135,11 +135,11 @@ func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
 		Where(qb.PatFrom(rs, r, qb.Kw(":rule/key"), key)).
 		MustBuild()
 
-	results, err := db.ExecuteQueryWithInputs(q,
+	results, err := executor.CollectTuples(db.Query(q,
 		WithSources(map[query.Symbol]executor.PatternMatcher{
 			datalog.NewSymbol("$rules"): ruleSource,
 		}),
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -149,8 +149,8 @@ func TestMultiSource_SliceSourceWithQueryBuilder(t *testing.T) {
 	}
 
 	keys := make(map[string]bool)
-	for _, row := range results {
-		keys[row[0].(string)] = true
+	for _, tuple := range results {
+		keys[tuple[0].(string)] = true
 	}
 	if !keys["region-lore"] {
 		t.Error("expected region-lore in results")
@@ -179,7 +179,7 @@ func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 	})
 
 	// Query dependencies for a specific rule
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?dep
 		  :in $rules ?key
 		  :where [$rules ?r :rule/key ?key]
@@ -188,7 +188,7 @@ func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 			datalog.NewSymbol("$rules"): ruleSource,
 		}),
 		"region-lore",
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -198,8 +198,8 @@ func TestMultiSource_SliceSourceDependencyQuery(t *testing.T) {
 	}
 
 	deps := make(map[string]bool)
-	for _, row := range results {
-		deps[row[0].(string)] = true
+	for _, tuple := range results {
+		deps[tuple[0].(string)] = true
 	}
 	if !deps["world-lore"] {
 		t.Error("expected world-lore dependency")
@@ -213,9 +213,9 @@ func TestMultiSource_SourceValidation(t *testing.T) {
 	db := createTestDB(t)
 
 	// Query declares $users in :in but doesn't provide it
-	_, err := db.ExecuteQueryWithInputs(
+	_, err := executor.CollectTuples(db.Query(
 		`[:find ?e :in $users :where [$users ?e :attr ?v]]`,
-	)
+	))
 	if err == nil {
 		t.Fatal("expected error for missing source, got nil")
 	}
@@ -233,7 +233,7 @@ func TestMultiSource_DefaultSourceAlwaysAvailable(t *testing.T) {
 	}
 
 	// Standard query without any :in clause - default $ source
-	results, err := db.ExecuteQuery(`[:find ?name :where [?e :thing/name ?name]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :thing/name ?name]]`))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestMultiSource_CrossDatabaseJoin(t *testing.T) {
 	}
 
 	// Cross-database join: find user names and their roles
-	results, err := usersDB.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(usersDB.Query(
 		`[:find ?name ?role
 		  :in $users $perms
 		  :where [$users ?u :user/name ?name]
@@ -279,7 +279,7 @@ func TestMultiSource_CrossDatabaseJoin(t *testing.T) {
 			datalog.NewSymbol("$users"): usersDB,
 			datalog.NewSymbol("$perms"): permsDB,
 		}),
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

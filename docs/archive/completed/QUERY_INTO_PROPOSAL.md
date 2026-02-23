@@ -24,12 +24,12 @@ if err != nil {
 
 // Every. Single. Consumer. Writes. This.
 trades := make([]Trade, 0, len(results))
-for _, row := range results {
+for _, tuple := range results {
     trade := Trade{
-        Symbol: row[0].(string),
-        Price:  row[1].(float64),
-        Volume: row[2].(int64),
-        Date:   row[3].(time.Time),
+        Symbol: tuple[0].(string),
+        Price:  tuple[1].(float64),
+        Volume: tuple[2].(int64),
+        Date:   tuple[3].(time.Time),
     }
     trades = append(trades, trade)
 }
@@ -38,7 +38,7 @@ for _, row := range results {
 Problems with this approach:
 - **Duplicated code** - Same iteration logic at every call site
 - **Runtime panics** - Type assertions fail at runtime, not compile time
-- **Index errors** - Easy to get column order wrong (`row[2]` vs `row[3]`)
+- **Index errors** - Easy to get symbol order wrong (`tuple[2]` vs `tuple[3]`)
 - **Type mismatches** - Was it `int` or `int64`? `float32` or `float64`?
 - **No IDE support** - Magic indices, no autocomplete
 
@@ -225,10 +225,10 @@ func (db *Database) QueryInto(ctx context.Context, dest interface{}, query strin
 
     // 5. Populate slice
     newSlice := reflect.MakeSlice(sliceVal.Type(), 0, len(results))
-    for _, row := range results {
+    for _, tuple := range results {
         elem := reflect.New(elemType).Elem()
-        if err := populateStruct(elem, row, fieldMap); err != nil {
-            return fmt.Errorf("row %d: %w", i, err)
+        if err := populateStruct(elem, tuple, fieldMap); err != nil {
+            return fmt.Errorf("tuple %d: %w", i, err)
         }
         newSlice = reflect.Append(newSlice, elem)
     }
@@ -246,7 +246,7 @@ var (
     ErrMultipleResults = errors.New("query returned multiple results")
     ErrTypeMismatch    = errors.New("cannot convert query result to field type")
     ErrMissingField    = errors.New("required field has no value")
-    ErrUnmappedColumn  = errors.New("query column has no matching struct field")
+    ErrUnmappedColumn  = errors.New("query symbol has no matching struct field")
 )
 ```
 
@@ -347,7 +347,7 @@ err := db.QueryInto(ctx, &results, query)
 
 ## Open Questions
 
-1. Should unmapped query columns be an error or silently ignored?
+1. Should unmapped query symbols be an error or silently ignored?
    - Recommendation: Warning log, not error (allows SELECT * style flexibility)
 
 2. Should we support maps as dest (`[]map[string]interface{}`)?

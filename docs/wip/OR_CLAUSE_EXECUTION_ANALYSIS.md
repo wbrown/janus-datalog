@@ -71,7 +71,7 @@ In `applyExpressionsAndPredicates`, OR clauses execute first:
 
 ```go
 // lines 32-40
-groups := relations  // Pattern results: 3 tuples with columns [?t, ?type]
+groups := relations  // Pattern results: 3 tuples with symbols [?t, ?type]
 
 for _, orClause := range phase.OrClauses {
     orResult, err := e.executeOrClause(ctx, orClause, groups)
@@ -92,16 +92,16 @@ func (e *Executor) executeOrClause(ctx Context, clause *query.OrClause, availabl
         // CRITICAL: Branches execute with nil binding (not constrained by available)
         branchResult, err := e.executeInnerClauses(ctx, branch, nil)
 
-        // Track common columns across branches
+        // Track common symbols across branches
         if i == 0 {
-            commonCols = branchResult.Columns()
+            commonCols = branchResult.Symbols()
         } else {
-            commonCols = intersect(commonCols, branchResult.Columns())
+            commonCols = intersect(commonCols, branchResult.Symbols())
         }
         branchResults = append(branchResults, branchResult)
     }
 
-    // Union all branch results, projecting to common columns
+    // Union all branch results, projecting to common symbols
     return unionRelations(branchResults, commonCols, e.options), nil
 }
 ```
@@ -136,14 +136,14 @@ When `bindings` is nil or empty:
 ```go
 // Match (lines 55-58)
 if bindings == nil || len(bindings) == 0 {
-    return m.matchUnboundAsRelation(pattern, columns, constraints)
+    return m.matchUnboundAsRelation(pattern, symbols, constraints)
 }
 ```
 
 This scans the database directly:
 - Chooses index based on bound pattern elements (AVET for A+V bound)
 - Returns all matching datoms as a streaming relation
-- Columns come from `pattern.ExtractColumns()` (only variables)
+- Symbols come from `pattern.ExtractColumns()` (only variables)
 
 ### 8. Relation Collapse/Join (`datalog/executor/relations.go`)
 
@@ -169,7 +169,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
 
 The join is implemented as a hash join:
 
-1. **Determine common columns** (line 1181-1195 in relation.go)
+1. **Determine common symbols** (line 1181-1195 in relation.go)
 2. **Choose build vs probe relation** (lines 205-258):
    - If left is streaming and right is materialized, right becomes build
    - OR result (MaterializedRelation) becomes build side
@@ -183,10 +183,10 @@ The join is implemented as a hash join:
 
 ### Expected for Query with OR:
 
-1. Patterns produce: `[(task1, :type/a), (task2, :type/b), (task3, :type/c)]` with columns `[?t, ?type]`
-2. OR branch 1 `[?t :task/type :type/a]` produces: `[(task1)]` with columns `[?t]`
-3. OR branch 2 `[?t :task/type :type/b]` produces: `[(task2)]` with columns `[?t]`
-4. OR union: `[(task1), (task2)]` with columns `[?t]`
+1. Patterns produce: `[(task1, :type/a), (task2, :type/b), (task3, :type/c)]` with symbols `[?t, ?type]`
+2. OR branch 1 `[?t :task/type :type/a]` produces: `[(task1)]` with symbols `[?t]`
+3. OR branch 2 `[?t :task/type :type/b]` produces: `[(task2)]` with symbols `[?t]`
+4. OR union: `[(task1), (task2)]` with symbols `[?t]`
 5. Join on `?t`: `[(task1, :type/a), (task2, :type/b)]` - **2 tuples**
 
 ### Actual Result:

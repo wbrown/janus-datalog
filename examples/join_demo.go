@@ -124,7 +124,7 @@ func runQuery(exec *executor.Executor, queryStr string) {
 		log.Fatalf("Failed to execute query: %v", err)
 	}
 
-	fmt.Printf("Results (%d rows):\n", result.Size())
+	fmt.Printf("Results (%d tuples):\n", result.Size())
 	for i := 0; i < result.Size(); i++ {
 		fmt.Printf("  %v\n", result.Get(i))
 	}

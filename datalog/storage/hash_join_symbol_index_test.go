@@ -11,12 +11,12 @@ import (
 )
 
 // TestHashJoinColumnIndexBug tests the bug where HashJoinScan confused
-// datom position with column index in the binding relation.
+// datom position with symbol index in the binding relation.
 //
 // Bug scenario:
 // - Pattern: [?e :attr ?ref] where ?ref comes from a binding relation
 // - ?ref is at datom position 2 (V position)
-// - But ?ref is at column index 0 in the binding relation (first/only column)
+// - But ?ref is at symbol index 0 in the binding relation (first/only symbol)
 // - buildHashSet was using position=2 instead of columnIndex=0
 // - Tried to access tuple[2] when tuple only had length 1
 // - Result: Empty hash set → no matches
@@ -24,7 +24,7 @@ import (
 // This bug was hidden because:
 // - With threshold ≤2, IndexNestedLoop was used for small binding sets
 // - Only appeared when we changed threshold to 0, making HashJoinScan the default
-// - Most benchmarks had patterns where datom position == column index
+// - Most benchmarks had patterns where datom position == symbol index
 func TestHashJoinColumnIndexBug(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
@@ -56,10 +56,10 @@ func TestHashJoinColumnIndexBug(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Query that triggers the bug:
-	// 1. [?s :symbol/ticker "AAPL"] returns binding with columns=[?s]
+	// 1. [?s :symbol/ticker "AAPL"] returns binding with symbols=[?s]
 	// 2. [?e :price/symbol ?s] joins on ?s
 	//    - ?s is at datom position 2 (V position in the pattern)
-	//    - But ?s is at column index 0 in the binding relation
+	//    - But ?s is at symbol index 0 in the binding relation
 	//    - Bug: used position=2 to access tuple[2], but tuple only has length 1
 	queryStr := `[:find ?e ?value
 	              :where [?s :symbol/ticker "AAPL"]
@@ -77,7 +77,7 @@ func TestHashJoinColumnIndexBug(t *testing.T) {
 
 	result, err := exec.Execute(q)
 	assert.NoError(t, err)
-	assert.False(t, result.IsEmpty(), "Should have results when HashJoinScan correctly uses column index")
+	assert.False(t, result.IsEmpty(), "Should have results when HashJoinScan correctly uses symbol index")
 
 	// Should find all 5 price entities
 	assert.Equal(t, 5, result.Size(), "Should find 5 price entities")
@@ -88,17 +88,17 @@ func TestHashJoinColumnIndexBug(t *testing.T) {
 	count := 0
 	for it.Next() {
 		tuple := it.Tuple()
-		assert.Len(t, tuple, 2, "Should have 2 columns: ?e and ?value")
+		assert.Len(t, tuple, 2, "Should have 2 symbols: ?e and ?value")
 		// Verify entity is an Identity
 		switch v := tuple[0].(type) {
 		case datalog.Identity:
 			// Valid Identity type
 		default:
-			t.Errorf("First column should be Identity, got %T: %v", v, v)
+			t.Errorf("First symbol should be Identity, got %T: %v", v, v)
 		}
 		// Verify value is a float64
 		value, ok := tuple[1].(float64)
-		assert.True(t, ok, "Second column should be float64, got %T", tuple[1])
+		assert.True(t, ok, "Second symbol should be float64, got %T", tuple[1])
 		assert.GreaterOrEqual(t, value, 100.0)
 		assert.LessOrEqual(t, value, 104.0)
 		count++
@@ -106,8 +106,8 @@ func TestHashJoinColumnIndexBug(t *testing.T) {
 	assert.Equal(t, 5, count, "Iterator should return 5 tuples")
 }
 
-// TestHashJoinColumnIndexMultiColumn tests the fix works with multiple columns
-// where the join variable is not the first column.
+// TestHashJoinColumnIndexMultiColumn tests the fix works with multiple symbols
+// where the join variable is not the first symbol.
 func TestHashJoinColumnIndexMultiColumn(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
@@ -133,12 +133,12 @@ func TestHashJoinColumnIndexMultiColumn(t *testing.T) {
 	_, err = tx.Commit()
 	assert.NoError(t, err)
 
-	// Query where join variable is the second column:
-	// 1. [?e1 :attr1 ?x] [?e1 :attr2 ?y] returns columns=[?e1, ?x, ?y]
-	//    (assuming phases separate these, second might be columns=[?y])
+	// Query where join variable is the second symbol:
+	// 1. [?e1 :attr1 ?x] [?e1 :attr2 ?y] returns symbols=[?e1, ?x, ?y]
+	//    (assuming phases separate these, second might be symbols=[?y])
 	// 2. [?e2 :attr3 ?y] joins on ?y
 	//    - ?y is at datom position 2 (V)
-	//    - ?y's column index depends on result of first patterns
+	//    - ?y's symbol index depends on result of first patterns
 	queryStr := `[:find ?e1 ?e2
 	              :where [?e1 :attr1 "X"]
 	                     [?e1 :attr2 ?y]
@@ -167,13 +167,13 @@ func TestHashJoinColumnIndexMultiColumn(t *testing.T) {
 	case datalog.Identity:
 		// Valid Identity type
 	default:
-		t.Fatalf("Expected Identity for first column, got %T", v)
+		t.Fatalf("Expected Identity for first symbol, got %T", v)
 	}
 	switch v := tuple[1].(type) {
 	case datalog.Identity:
 		// Valid Identity type
 	default:
-		t.Fatalf("Expected Identity for second column, got %T", v)
+		t.Fatalf("Expected Identity for second symbol, got %T", v)
 	}
 
 	// Both entities should be present and different

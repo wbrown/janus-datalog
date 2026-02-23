@@ -269,9 +269,9 @@ func TestWrapMatcher_WithBindings(t *testing.T) {
 
 	event := capturedEvents[0]
 
-	bindingCols, ok := event.Data["binding.columns"].([]string)
+	bindingCols, ok := event.Data["binding.symbols"].([]string)
 	if !ok || len(bindingCols) != 1 || bindingCols[0] != "?x" {
-		t.Errorf("Expected binding.columns=[?x], got %v", event.Data["binding.columns"])
+		t.Errorf("Expected binding.symbols=[?x], got %v", event.Data["binding.symbols"])
 	}
 
 	if event.Data["binding.size"] != 3 {

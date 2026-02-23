@@ -10,7 +10,7 @@ import (
 )
 
 // TestQueryExecutorMultipleCorrelatedSubqueries tests the pattern from gopher-street
-// where multiple correlated subqueries are used in sequence to build up result columns
+// where multiple correlated subqueries are used in sequence to build up result symbols
 func TestQueryExecutorMultipleCorrelatedSubqueries(t *testing.T) {
 	// Create test data similar to gopher-street OHLC pattern
 	day1 := datalog.NewIdentity("day1")
@@ -143,7 +143,7 @@ func TestQueryExecutorMultipleCorrelatedSubqueries(t *testing.T) {
 
 		if err != nil {
 			t.Logf("Error: %v", err)
-			t.Logf("Result columns (if any): %v", result.Columns())
+			t.Logf("Result symbols (if any): %v", result.Symbols())
 		}
 
 		assert.NoError(t, err, "QueryExecutor should handle multiple correlated subqueries")

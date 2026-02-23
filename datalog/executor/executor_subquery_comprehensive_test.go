@@ -51,7 +51,7 @@ func TestSubqueryWithNoResults(t *testing.T) {
 	}
 }
 
-// TestSubqueryWithRelationBinding tests subquery that returns multiple rows
+// TestSubqueryWithRelationBinding tests subquery that returns multiple tuples
 func TestSubqueryWithRelationBinding(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
@@ -116,7 +116,7 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 	}
 }
 
-// TestSubqueryWithMultipleOuterRows tests subquery executed for multiple outer rows
+// TestSubqueryWithMultipleOuterRows tests subquery executed for multiple outer tuples
 func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
@@ -420,8 +420,8 @@ func TestSubqueryErrorHandling(t *testing.T) {
 			           [(q [:find ?salary
 			                :in $ ?emp
 			                :where [?emp :employee/salary ?salary]]
-			               $ ?e) [[?a ?b ?c] ...]]]`, // Expects 3 columns but query returns 1
-			wantErr: "relation binding expects 3 columns, got 1",
+			               $ ?e) [[?a ?b ?c] ...]]]`, // Expects 3 symbols but query returns 1
+			wantErr: "relation binding expects 3 symbols, got 1",
 		},
 	}
 

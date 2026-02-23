@@ -63,7 +63,7 @@ Each pattern successfully retrieves data from storage.
 Join result size: 0
 ```
 
-The join of two 1-tuple relations with a shared column `?e` produces **0 results** instead of 1.
+The join of two 1-tuple relations with a shared symbol `?e` produces **0 results** instead of 1.
 
 ## Root Cause Hypothesis
 
@@ -82,7 +82,7 @@ The bug is in the **join/collapse logic**, likely related to the lazy materializ
 
 3. **Collapse/Join Logic**
    - `executor_sequential.go:123-131` - Pattern results are added to `independentGroups` and collapsed
-   - `relations.go:135-187` - `Collapse()` method joins relations with shared columns
+   - `relations.go:135-187` - `Collapse()` method joins relations with shared symbols
    - `join.go:136-536` - `HashJoin` builds a hash table and probes
 
 4. **materializeRelationsForPattern()**
@@ -112,7 +112,7 @@ The bug is in the **join/collapse logic**, likely related to the lazy materializ
 ### Join Execution Path
 1. `executor_sequential.go:12` - `executePhaseSequential()`
 2. `executor_sequential.go:123-131` - Add pattern results to independentGroups, collapse
-3. `relations.go:135` - `Collapse()` joins relations with shared columns
+3. `relations.go:135` - `Collapse()` joins relations with shared symbols
 4. `relations.go:166` - `ctx.JoinRelations()` wrapper for annotation
 5. `relation.go:570` - `MaterializedRelation.Join()` delegates to `HashJoin()`
 6. `join.go:136` - `HashJoinWithOptions()` builds hash table and probes
@@ -181,7 +181,7 @@ All of these may share the same underlying join/iterator issue.
 
 **Added debug logging to HashJoin**:
 ```
-[HashJoin] Called with left/right types, sizes, columns
+[HashJoin] Called with left/right types, sizes, symbols
 [HashJoin] Build phase: X tuples, first key/tuple
 [HashJoin] Probe phase: probed X tuples, found X matches, produced X results
 ```
@@ -289,7 +289,7 @@ func (it *ProjectIterator) Next() bool {
 
 **2. Updated `StreamingRelation.Project()` to pass relation** (`relation.go:1087-1093`):
 ```go
-projIter := NewProjectIterator(r, r.columns, columns)  // Pass r, not r.iterator
+projIter := NewProjectIterator(r, r.symbols, symbols)  // Pass r, not r.iterator
 ```
 
 **3. Fixed `CachingIterator.signalComplete()` race condition** (`relation.go:218-236`):
@@ -397,7 +397,7 @@ for it.Next() {
     tuples = append(tuples, it.Tuple())
 }
 it.Close()
-currentResult = NewMaterializedRelationWithOptions(phaseResult.Columns(), tuples, opts)
+currentResult = NewMaterializedRelationWithOptions(phaseResult.Symbols(), tuples, opts)
 ```
 
 **This materialization is unnecessary** given the ProjectIterator fix and lazy materialization architecture.

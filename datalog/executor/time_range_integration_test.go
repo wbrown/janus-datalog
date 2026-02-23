@@ -111,7 +111,7 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 		t.Errorf("Expected 2 hours (9, 10), got %d", baselineResult.Size())
 	}
 
-	// Sort both results by first column (hour) for deterministic comparison
+	// Sort both results by first symbol (hour) for deterministic comparison
 	baselineSorted := baselineResult.Sorted()
 	optimizedSorted := optimizedResult.Sorted()
 
@@ -128,7 +128,7 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 
 		for j := 0; j < len(baselineTuple); j++ {
 			if baselineTuple[j] != optimizedTuple[j] {
-				t.Errorf("Tuple %d column %d mismatch: baseline=%v, optimized=%v",
+				t.Errorf("Tuple %d symbol %d mismatch: baseline=%v, optimized=%v",
 					i, j, baselineTuple[j], optimizedTuple[j])
 			}
 		}

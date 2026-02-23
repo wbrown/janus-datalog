@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
@@ -58,10 +59,10 @@ func TestCardinalityOneBehavior(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify: empty string was saved
-		loreValues1, err := db.ExecuteQueryWithInputs(
+		loreValues1, err := executor.CollectTuples(db.Query(
 			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
 			id,
-		)
+		))
 		require.NoError(t, err)
 		require.Len(t, loreValues1, 1, "Empty string should be saved")
 		assert.Equal(t, "", loreValues1[0][0], "Value should be empty string")
@@ -75,10 +76,10 @@ func TestCardinalityOneBehavior(t *testing.T) {
 		require.NoError(t, err)
 
 		// Step 3: Query for lore values - with LWW, only latest value is returned
-		loreValues2, err := db.ExecuteQueryWithInputs(
+		loreValues2, err := executor.CollectTuples(db.Query(
 			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
 			id,
-		)
+		))
 		require.NoError(t, err)
 
 		// With CRDT LWW semantics, tx.Add updates the value (highest ElementID wins)
@@ -120,10 +121,10 @@ func TestCardinalityOneBehavior(t *testing.T) {
 		require.NoError(t, err)
 
 		// Step 3: Query - should have exactly ONE value
-		loreValues, err := db.ExecuteQueryWithInputs(
+		loreValues, err := executor.CollectTuples(db.Query(
 			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
 			entity.ID,
-		)
+		))
 		require.NoError(t, err)
 
 		t.Logf("After SaveStruct update: %d lore value(s): %v", len(loreValues), loreValues)
@@ -172,10 +173,10 @@ func TestCardinalityOneBehavior(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify: only one value, and it's the updated one
-		loreValues, err := db.ExecuteQueryWithInputs(
+		loreValues, err := executor.CollectTuples(db.Query(
 			`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
 			id,
-		)
+		))
 		require.NoError(t, err)
 		require.Len(t, loreValues, 1)
 		assert.Equal(t, "Updated lore", loreValues[0][0])
@@ -209,10 +210,10 @@ func TestEmptyStringsAreSaved(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query for lore - empty string IS saved
-	loreValues, err := db.ExecuteQueryWithInputs(
+	loreValues, err := executor.CollectTuples(db.Query(
 		`[:find ?lore :in $ ?e :where [?e :entity/lore ?lore]]`,
 		id,
-	)
+	))
 	require.NoError(t, err)
 
 	// Document: empty strings are persisted

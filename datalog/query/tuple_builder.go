@@ -11,7 +11,7 @@ import (
 // TupleBuilder is an optimized builder for converting datoms to tuples
 // It pre-computes the mapping from pattern variables to tuple positions
 type TupleBuilder struct {
-	columns []Symbol
+	symbols []Symbol
 
 	// Pre-computed indexes for each position (-1 means not captured)
 	eIndex int
@@ -26,13 +26,13 @@ type TupleBuilder struct {
 	tIsVar bool
 }
 
-// NewTupleBuilder creates an optimized tuple builder for a pattern and columns
-func NewTupleBuilder(pattern *DataPattern, columns []Symbol) *TupleBuilder {
+// NewTupleBuilder creates an optimized tuple builder for a pattern and symbols
+func NewTupleBuilder(pattern *DataPattern, symbols []Symbol) *TupleBuilder {
 	// Use shared indexer to compute indices
-	indexer := NewTupleIndexer(pattern, columns)
+	indexer := NewTupleIndexer(pattern, symbols)
 
 	return &TupleBuilder{
-		columns: columns,
+		symbols: symbols,
 		eIndex:  indexer.EIndex,
 		aIndex:  indexer.AIndex,
 		vIndex:  indexer.VIndex,
@@ -47,7 +47,7 @@ func NewTupleBuilder(pattern *DataPattern, columns []Symbol) *TupleBuilder {
 // BuildTuple efficiently converts a datom to a tuple using pre-computed indexes
 func (tb *TupleBuilder) BuildTuple(datom *datalog.Datom) Tuple {
 	// Allocate tuple once
-	tuple := make(Tuple, len(tb.columns))
+	tuple := make(Tuple, len(tb.symbols))
 
 	// Direct assignment using pre-computed indexes
 	if tb.eIndex >= 0 {
@@ -68,19 +68,19 @@ func (tb *TupleBuilder) BuildTuple(datom *datalog.Datom) Tuple {
 
 // DatomToTupleOptimized is a drop-in replacement for DatomToTuple
 // For one-off conversions where creating a TupleBuilder isn't worth it
-func DatomToTupleOptimized(datom datalog.Datom, pattern *DataPattern, columns []Symbol) Tuple {
-	if len(columns) == 0 {
+func DatomToTupleOptimized(datom datalog.Datom, pattern *DataPattern, symbols []Symbol) Tuple {
+	if len(symbols) == 0 {
 		return nil
 	}
 
-	// For small column counts, use direct approach
-	if len(columns) <= 4 {
-		tuple := make(Tuple, len(columns))
+	// For small symbol counts, use direct approach
+	if len(symbols) <= 4 {
+		tuple := make(Tuple, len(symbols))
 
-		// Check each pattern element and find its column index
+		// Check each pattern element and find its symbol index
 		if v, ok := pattern.GetE().(Variable); ok {
-			for i, col := range columns {
-				if col == v.Name {
+			for i, sym := range symbols {
+				if sym == v.Name {
 					tuple[i] = datom.E
 					break
 				}
@@ -88,8 +88,8 @@ func DatomToTupleOptimized(datom datalog.Datom, pattern *DataPattern, columns []
 		}
 
 		if v, ok := pattern.GetA().(Variable); ok {
-			for i, col := range columns {
-				if col == v.Name {
+			for i, sym := range symbols {
+				if sym == v.Name {
 					tuple[i] = datom.A
 					break
 				}
@@ -97,8 +97,8 @@ func DatomToTupleOptimized(datom datalog.Datom, pattern *DataPattern, columns []
 		}
 
 		if v, ok := pattern.GetV().(Variable); ok {
-			for i, col := range columns {
-				if col == v.Name {
+			for i, sym := range symbols {
+				if sym == v.Name {
 					tuple[i] = datom.V
 					break
 				}
@@ -107,8 +107,8 @@ func DatomToTupleOptimized(datom datalog.Datom, pattern *DataPattern, columns []
 
 		if len(pattern.Elements) > 3 {
 			if v, ok := pattern.GetT().(Variable); ok {
-				for i, col := range columns {
-					if col == v.Name {
+				for i, sym := range symbols {
+					if sym == v.Name {
 						tuple[i] = datom.Tx
 						break
 					}
@@ -119,7 +119,7 @@ func DatomToTupleOptimized(datom datalog.Datom, pattern *DataPattern, columns []
 		return tuple
 	}
 
-	// For larger column counts, fall back to map approach
+	// For larger symbol counts, fall back to map approach
 	// (though this shouldn't happen in practice with EAVT patterns)
 	values := make(map[Symbol]interface{}, 4)
 
@@ -138,9 +138,9 @@ func DatomToTupleOptimized(datom datalog.Datom, pattern *DataPattern, columns []
 		}
 	}
 
-	tuple := make(Tuple, len(columns))
-	for i, col := range columns {
-		if val, found := values[col]; found {
+	tuple := make(Tuple, len(symbols))
+	for i, sym := range symbols {
+		if val, found := values[sym]; found {
 			tuple[i] = val
 		}
 	}

@@ -17,7 +17,7 @@ import (
 // Solution: First Iterator() call consumes channel and caches results, subsequent calls replay from cache.
 type UnionRelation struct {
 	source     <-chan relationItem
-	columns    []query.Symbol
+	symbols    []query.Symbol
 	opts       ExecutorOptions
 	cached     []Tuple    // Cache for reuse after first iteration
 	cacheBuilt bool       // Has cache been built?
@@ -31,22 +31,17 @@ type relationItem struct {
 }
 
 // NewUnionRelation creates a union relation that consumes from a channel
-func NewUnionRelation(source <-chan relationItem, columns []query.Symbol, opts ExecutorOptions) *UnionRelation {
+func NewUnionRelation(source <-chan relationItem, symbols []query.Symbol, opts ExecutorOptions) *UnionRelation {
 	return &UnionRelation{
 		source:  source,
-		columns: columns,
+		symbols: symbols,
 		opts:    opts,
 	}
 }
 
-// Columns returns the column names
-func (ur *UnionRelation) Columns() []query.Symbol {
-	return ur.columns
-}
-
-// Symbols returns the symbols (same as Columns)
+// Symbols returns the symbol names of this relation
 func (ur *UnionRelation) Symbols() []query.Symbol {
-	return ur.columns
+	return ur.symbols
 }
 
 // Iterator returns an iterator that consumes from the channel (first call) or cache (subsequent calls)
@@ -96,7 +91,7 @@ func (ur *UnionRelation) Table() string {
 	return ur.Materialize().Table()
 }
 
-// ProjectFromPattern projects columns based on pattern
+// ProjectFromPattern projects symbols based on pattern
 func (ur *UnionRelation) ProjectFromPattern(pattern *query.DataPattern) Relation {
 	return ur.Materialize().ProjectFromPattern(pattern)
 }
@@ -107,8 +102,8 @@ func (ur *UnionRelation) Sorted() []Tuple {
 }
 
 // Project returns a projection of this relation
-func (ur *UnionRelation) Project(columns []query.Symbol) (Relation, error) {
-	return ur.Materialize().Project(columns)
+func (ur *UnionRelation) Project(symbols []query.Symbol) (Relation, error) {
+	return ur.Materialize().Project(symbols)
 }
 
 // Materialize forces consumption of all relations and returns a materialized result
@@ -117,7 +112,7 @@ func (ur *UnionRelation) Project(columns []query.Symbol) (Relation, error) {
 func (ur *UnionRelation) Materialize() Relation {
 	var allTuples []Tuple
 	collectTuplesInto(&allTuples, ur)
-	return NewMaterializedRelation(ur.columns, allTuples)
+	return NewMaterializedRelation(ur.symbols, allTuples)
 }
 
 // Sort returns a sorted relation (forces materialization)

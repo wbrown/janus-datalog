@@ -49,17 +49,17 @@ func (m *AnnotatedMatcher) Match(pattern *query.DataPattern, bindings Relations)
 	start := time.Now()
 
 	// Collect binding information if present
-	var bindingColumns []string
+	var bindingSymbols []string
 	var bindingSize int
 
 	if bindings != nil && len(bindings) > 0 {
 		// Find best binding relation for context
 		bindingRel := bindings.FindBestForPattern(pattern)
 		if bindingRel != nil {
-			bindingCols := bindingRel.Columns()
-			bindingColumns = make([]string, len(bindingCols))
-			for i, col := range bindingCols {
-				bindingColumns[i] = col.String()
+			bindingSyms := bindingRel.Symbols()
+			bindingSymbols = make([]string, len(bindingSyms))
+			for i, col := range bindingSyms {
+				bindingSymbols[i] = col.String()
 			}
 			bindingSize = bindingRel.Size()
 		}
@@ -75,8 +75,8 @@ func (m *AnnotatedMatcher) Match(pattern *query.DataPattern, bindings Relations)
 	data["success"] = err == nil
 
 	// Add binding information if it was present
-	if len(bindingColumns) > 0 {
-		data["binding.columns"] = bindingColumns
+	if len(bindingSymbols) > 0 {
+		data["binding.symbols"] = bindingSymbols
 		data["binding.size"] = bindingSize
 	}
 
@@ -84,8 +84,8 @@ func (m *AnnotatedMatcher) Match(pattern *query.DataPattern, bindings Relations)
 		data["match.count"] = result.Size()
 
 		// Add symbol order information for rendering
-		symbolOrder := make([]string, len(result.Columns()))
-		for i, col := range result.Columns() {
+		symbolOrder := make([]string, len(result.Symbols()))
+		for i, col := range result.Symbols() {
 			symbolOrder[i] = col.String()
 		}
 		data["symbol.order"] = symbolOrder
@@ -112,16 +112,16 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 		start := time.Now()
 
 		// Collect binding information if present
-		var bindingColumns []string
+		var bindingSymbols []string
 		var bindingSize int
 
 		if bindings != nil && len(bindings) > 0 {
 			bindingRel := bindings.FindBestForPattern(pattern)
 			if bindingRel != nil {
-				bindingCols := bindingRel.Columns()
-				bindingColumns = make([]string, len(bindingCols))
-				for i, col := range bindingCols {
-					bindingColumns[i] = col.String()
+				bindingSyms := bindingRel.Symbols()
+				bindingSymbols = make([]string, len(bindingSyms))
+				for i, col := range bindingSyms {
+					bindingSymbols[i] = col.String()
 				}
 				bindingSize = bindingRel.Size()
 			}
@@ -138,16 +138,16 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 		data["success"] = err == nil
 
 		// Add binding information if it was present
-		if len(bindingColumns) > 0 {
-			data["binding.columns"] = bindingColumns
+		if len(bindingSymbols) > 0 {
+			data["binding.symbols"] = bindingSymbols
 			data["binding.size"] = bindingSize
 		}
 
 		if result != nil {
 			data["match.count"] = result.Size()
 
-			symbolOrder := make([]string, len(result.Columns()))
-			for i, col := range result.Columns() {
+			symbolOrder := make([]string, len(result.Symbols()))
+			for i, col := range result.Symbols() {
 				symbolOrder[i] = col.String()
 			}
 			data["symbol.order"] = symbolOrder

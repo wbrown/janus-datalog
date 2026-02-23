@@ -96,7 +96,7 @@ CSE would provide measurable benefits in scenarios with:
    - Measured: 1-3% improvement in sequential mode
 
 2. **Expensive filter predicates**
-   - Complex computations applied to each row
+   - Complex computations applied to each tuple
    - CSE would compute once instead of N times
    - Our test: simple pattern scans (cheap)
 

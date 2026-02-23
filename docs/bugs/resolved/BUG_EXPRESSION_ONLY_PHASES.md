@@ -166,7 +166,7 @@ These should ALWAYS be true:
    - Previous phase's `Keep` symbols (projected result)
 
 2. **Output Invariant**: Every phase produces:
-   - A Relation with columns matching `phase.Provides` (or subset in `Keep`)
+   - A Relation with symbols matching `phase.Provides` (or subset in `Keep`)
    - Never returns `nil` for successful execution
 
 3. **Data Flow Invariant**:

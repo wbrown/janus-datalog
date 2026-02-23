@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 // =============================================================================
@@ -57,9 +58,9 @@ func TestGetElseBasic(t *testing.T) {
 			wantCount: 3,
 			checkResult: func(t *testing.T, results [][]interface{}) {
 				nameToNick := make(map[string]string)
-				for _, row := range results {
-					name := row[0].(string)
-					nick := row[1].(string)
+				for _, tuple := range results {
+					name := tuple[0].(string)
+					nick := tuple[1].(string)
 					nameToNick[name] = nick
 				}
 				if nameToNick["Alice Smith"] != "Ali" {
@@ -79,9 +80,9 @@ func TestGetElseBasic(t *testing.T) {
 			wantCount: 3,
 			checkResult: func(t *testing.T, results [][]interface{}) {
 				nameToNick := make(map[string]string)
-				for _, row := range results {
-					name := row[0].(string)
-					nick := row[1].(string)
+				for _, tuple := range results {
+					name := tuple[0].(string)
+					nick := tuple[1].(string)
 					nameToNick[name] = nick
 				}
 				if nameToNick["Alice Smith"] != "Ali" {
@@ -96,14 +97,14 @@ func TestGetElseBasic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results, err := db.ExecuteQuery(tt.query)
+			results, err := executor.CollectTuples(db.Query(tt.query))
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
 			if len(results) != tt.wantCount {
 				t.Errorf("Expected %d results, got %d", tt.wantCount, len(results))
-				for i, row := range results {
-					t.Logf("  Row %d: %v", i, row)
+				for i, tuple := range results {
+					t.Logf("  Tuple %d: %v", i, tuple)
 				}
 			}
 			if tt.checkResult != nil {
@@ -142,7 +143,7 @@ func TestGetElseNumericDefault(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	results, err := db.ExecuteQuery(`[:find ?name ?discount :where [?e :product/name ?name] [(get-else $ ?e :product/discount 0) ?discount]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?discount :where [?e :product/name ?name] [(get-else $ ?e :product/discount 0) ?discount]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -152,11 +153,11 @@ func TestGetElseNumericDefault(t *testing.T) {
 	}
 
 	nameToDiscount := make(map[string]int64)
-	for _, row := range results {
-		name := row[0].(string)
-		discount, ok := row[1].(int64)
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		discount, ok := tuple[1].(int64)
 		if !ok {
-			t.Errorf("Expected int64 for discount, got %T: %v", row[1], row[1])
+			t.Errorf("Expected int64 for discount, got %T: %v", tuple[1], tuple[1])
 			continue
 		}
 		nameToDiscount[name] = discount
@@ -209,15 +210,15 @@ func TestMissingAsPredicate(t *testing.T) {
 	}
 
 	// Find users WITHOUT email - should only return Bob
-	results, err := db.ExecuteQuery(`[:find ?name :where [?e :user/name ?name] [(missing? $ ?e :user/email)]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :user/name ?name] [(missing? $ ?e :user/email)]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 
 	if len(results) != 1 {
 		t.Errorf("Expected 1 result (Bob), got %d", len(results))
-		for i, row := range results {
-			t.Logf("  Row %d: %v", i, row)
+		for i, tuple := range results {
+			t.Logf("  Tuple %d: %v", i, tuple)
 		}
 		return
 	}
@@ -255,26 +256,26 @@ func TestMissingAsExpression(t *testing.T) {
 		t.Fatalf("Failed to commit: %v", err)
 	}
 
-	// Get missing status as a boolean column
-	results, err := db.ExecuteQuery(`[:find ?name ?needs_verification :where [?e :user/name ?name] [(missing? $ ?e :user/verified) ?needs_verification]]`)
+	// Get missing status as a boolean symbol
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?needs_verification :where [?e :user/name ?name] [(missing? $ ?e :user/verified) ?needs_verification]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 
 	if len(results) != 2 {
 		t.Errorf("Expected 2 results, got %d", len(results))
-		for i, row := range results {
-			t.Logf("  Row %d: %v", i, row)
+		for i, tuple := range results {
+			t.Logf("  Tuple %d: %v", i, tuple)
 		}
 		return
 	}
 
 	nameToMissing := make(map[string]bool)
-	for _, row := range results {
-		name := row[0].(string)
-		missing, ok := row[1].(bool)
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		missing, ok := tuple[1].(bool)
 		if !ok {
-			t.Errorf("Expected bool for missing status, got %T: %v", row[1], row[1])
+			t.Errorf("Expected bool for missing status, got %T: %v", tuple[1], tuple[1])
 			continue
 		}
 		nameToMissing[name] = missing
@@ -329,15 +330,15 @@ func TestMissingMultipleAttributes(t *testing.T) {
 	}
 
 	// Find contacts missing BOTH phone AND email
-	results, err := db.ExecuteQuery(`[:find ?name :where [?e :contact/name ?name] [(missing? $ ?e :contact/phone)] [(missing? $ ?e :contact/email)]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :contact/name ?name] [(missing? $ ?e :contact/phone)] [(missing? $ ?e :contact/email)]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 
 	if len(results) != 1 {
 		t.Errorf("Expected 1 result (Person4), got %d", len(results))
-		for i, row := range results {
-			t.Logf("  Row %d: %v", i, row)
+		for i, tuple := range results {
+			t.Logf("  Tuple %d: %v", i, tuple)
 		}
 		return
 	}
@@ -390,27 +391,27 @@ func TestGetSomeBasic(t *testing.T) {
 	}
 
 	// get-some with three fallback options: nickname -> fullname -> email
-	results, err := db.ExecuteQuery(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/email) ?display]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/email) ?display]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 
 	if len(results) != 3 {
 		t.Errorf("Expected 3 results, got %d", len(results))
-		for i, row := range results {
-			t.Logf("  Row %d: %v", i, row)
+		for i, tuple := range results {
+			t.Logf("  Tuple %d: %v", i, tuple)
 		}
 		return
 	}
 
 	idToDisplay := make(map[string]string)
-	for _, row := range results {
-		id := row[0].(string)
+	for _, tuple := range results {
+		id := tuple[0].(string)
 		// get-some returns a GetSomeResult struct, which contains the value
 		// The executor should extract just the value for the binding
-		display, ok := row[1].(string)
+		display, ok := tuple[1].(string)
 		if !ok {
-			t.Logf("Row for id %s has display type %T: %v", id, row[1], row[1])
+			t.Logf("Tuple for id %s has display type %T: %v", id, tuple[1], tuple[1])
 			continue
 		}
 		idToDisplay[id] = display
@@ -458,7 +459,7 @@ func TestGetSomeNoMatch(t *testing.T) {
 	}
 
 	// get-some should filter out User2 since none of the attrs exist
-	results, err := db.ExecuteQuery(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/displayname) ?display]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?id ?display :where [?e :user/id ?id] [(get-some $ ?e :user/nickname :user/fullname :user/displayname) ?display]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -466,8 +467,8 @@ func TestGetSomeNoMatch(t *testing.T) {
 	// Should only return User1
 	if len(results) != 1 {
 		t.Errorf("Expected 1 result (only User1), got %d", len(results))
-		for i, row := range results {
-			t.Logf("  Row %d: %v", i, row)
+		for i, tuple := range results {
+			t.Logf("  Tuple %d: %v", i, tuple)
 		}
 		return
 	}
@@ -514,23 +515,23 @@ func TestCombinedDatabaseFunctions(t *testing.T) {
 
 	// Use get-else to get phone with default "N/A"
 	// AND check if email is missing
-	results, err := db.ExecuteQuery(`[:find ?name ?phone ?email_missing :where [?e :person/name ?name] [(get-else $ ?e :person/phone "N/A") ?phone] [(missing? $ ?e :person/email) ?email_missing]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?phone ?email_missing :where [?e :person/name ?name] [(get-else $ ?e :person/phone "N/A") ?phone] [(missing? $ ?e :person/email) ?email_missing]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
 
 	if len(results) != 2 {
 		t.Errorf("Expected 2 results, got %d", len(results))
-		for i, row := range results {
-			t.Logf("  Row %d: %v", i, row)
+		for i, tuple := range results {
+			t.Logf("  Tuple %d: %v", i, tuple)
 		}
 		return
 	}
 
-	for _, row := range results {
-		name := row[0].(string)
-		phone := row[1].(string)
-		emailMissing := row[2].(bool)
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		phone := tuple[1].(string)
+		emailMissing := tuple[2].(bool)
 
 		switch name {
 		case "Alice":
@@ -582,7 +583,7 @@ func TestDatabaseFunctionWithAggregation(t *testing.T) {
 	}
 
 	// Sum of discounts, with 0 as default for items without discount
-	results, err := db.ExecuteQuery(`[:find (sum ?discount) :where [?e :item/name ?name] [(get-else $ ?e :item/discount 0) ?discount]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find (sum ?discount) :where [?e :item/name ?name] [(get-else $ ?e :item/discount 0) ?discount]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -642,7 +643,7 @@ func TestDatabaseFunctionWithOrderBy(t *testing.T) {
 	}
 
 	// Order by score descending (Bob gets 0 as default)
-	results, err := db.ExecuteQuery(`[:find ?name ?score :where [?e :person/name ?name] [(get-else $ ?e :person/score 0) ?score] :order-by [[?score :desc]]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?score :where [?e :person/name ?name] [(get-else $ ?e :person/score 0) ?score] :order-by [[?score :desc]]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -653,8 +654,8 @@ func TestDatabaseFunctionWithOrderBy(t *testing.T) {
 
 	// Order should be: Charlie (95), Alice (85), Bob (0)
 	expected := []string{"Charlie", "Alice", "Bob"}
-	for i, row := range results {
-		name := row[0].(string)
+	for i, tuple := range results {
+		name := tuple[0].(string)
 		if name != expected[i] {
 			t.Errorf("Position %d: expected %s, got %s", i, expected[i], name)
 		}
@@ -695,7 +696,7 @@ func TestGetElseWithNullishValues(t *testing.T) {
 	}
 
 	// The empty string should be returned (not the default)
-	results, err := db.ExecuteQuery(`[:find ?name ?desc :where [?e :entity/name ?name] [(get-else $ ?e :entity/description "DEFAULT") ?desc]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?desc :where [?e :entity/name ?name] [(get-else $ ?e :entity/description "DEFAULT") ?desc]]`))
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -704,9 +705,9 @@ func TestGetElseWithNullishValues(t *testing.T) {
 		t.Fatalf("Expected 2 results, got %d", len(results))
 	}
 
-	for _, row := range results {
-		name := row[0].(string)
-		desc := row[1].(string)
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		desc := tuple[1].(string)
 		switch name {
 		case "Entity1":
 			if desc != "" {
@@ -749,10 +750,10 @@ func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 	}
 
 	// Use input parameter for default value
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name ?status :in $ ?default-status :where [?e :user/name ?name] [(get-else $ ?e :user/status ?default-status) ?status]]`,
 		"pending",
-	)
+	))
 	if err != nil {
 		// This might fail because get-else expects a constant default, not a variable
 		// Let's verify this is the expected behavior
@@ -762,8 +763,8 @@ func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 
 	// If it succeeds, check results
 	t.Logf("Query with variable default succeeded (results: %d)", len(results))
-	for _, row := range results {
-		t.Logf("  %v", row)
+	for _, tuple := range results {
+		t.Logf("  %v", tuple)
 	}
 }
 

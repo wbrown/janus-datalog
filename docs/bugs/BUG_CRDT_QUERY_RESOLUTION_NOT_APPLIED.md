@@ -225,13 +225,13 @@ If A is unbound (`a == nil`), **no CRDT resolution is applied**. This is wrong -
 
 ### Single-Value Bindings Are Just One Case
 
-The system already detects single-row bindings for scan optimization (`hash_join_matcher.go:177-188`), but this is just an optimization opportunity, not the core fix. The core fix must handle ALL cases:
+The system already detects single-tuple bindings for scan optimization (`hash_join_matcher.go:177-188`), but this is just an optimization opportunity, not the core fix. The core fix must handle ALL cases:
 
 | Scenario | What A Is | Resolution Strategy |
 |----------|-----------|---------------------|
 | Constant in pattern | Known at compile time | Look up cardinality, resolve |
-| Single-row binding | Known at runtime | Look up cardinality, resolve |
-| Multi-row binding | Multiple known values | Resolve per (E, A) group |
+| Single-tuple binding | Known at runtime | Look up cardinality, resolve |
+| Multi-tuple binding | Multiple known values | Resolve per (E, A) group |
 | Completely unbound | Unknown until scan | Resolve per (E, A) group |
 
 **All scenarios reduce to the same solution**: group by (E, A) and resolve each group based on that attribute's schema-defined cardinality.
@@ -699,8 +699,8 @@ if iter.Next() {
 
 ### Why Not "Extract A from Bindings"?
 
-Extracting A from bindings only works for the single-row binding case. It fails for:
-- Multi-row bindings: `[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`
+Extracting A from bindings only works for the single-tuple binding case. It fails for:
+- Multi-tuple bindings: `[:find ?v :in $ [?a ...] :where [?e ?a ?v]]`
 - Unbound A: `[:find ?e ?a ?v :where [?e ?a ?v]]`
 - A bound via join from another pattern
 

@@ -190,7 +190,7 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 //
 // Key semantics:
 // - Each phase executes as independent Query returning []Relation (disjoint groups)
-// - Groups are projected to Keep columns and passed to next phase
+// - Groups are projected to Keep symbols and passed to next phase
 // - Final phase must collapse to single relation or error on Cartesian product
 func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
 	// Check if we need to iterate over a RelationInput
@@ -232,9 +232,9 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		if len(allConstBindable) > 0 {
 			// Extract constant values from the bound input relation
 			boundRel := currentGroups[0]
-			cols := boundRel.Columns()
+			cols := boundRel.Symbols()
 
-			// Find column indices for constant-bindable symbols
+			// Find symbol indices for constant-bindable symbols
 			constValues := make(map[query.Symbol]interface{})
 			constColIndices := make(map[int]bool)
 			for i, col := range cols {
@@ -243,7 +243,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 				}
 			}
 
-			// Read first tuple to get the constant values (scalar inputs have exactly 1 row)
+			// Read first tuple to get the constant values (scalar inputs have exactly 1 tuple)
 			if len(constColIndices) > 0 {
 				it := boundRel.Iterator()
 				if it.Next() {
@@ -259,7 +259,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 				if len(constValues) > 0 {
 					queryExecutor.constantBindings = constValues
 
-					// Project out constant columns from the bound relation
+					// Project out constant symbols from the bound relation
 					var keepCols []query.Symbol
 					for i, col := range cols {
 						if !constColIndices[i] {
@@ -268,16 +268,16 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 					}
 
 					if len(keepCols) == 0 {
-						// All columns were constants — no input relation needed
+						// All symbols were constants — no input relation needed
 						currentGroups = nil
 					} else if len(keepCols) < len(cols) {
-						// Re-materialize without constant columns
+						// Re-materialize without constant symbols
 						projected, err := boundRel.Materialize().Project(keepCols)
 						if err == nil {
 							currentGroups = []Relation{projected}
 						}
 					}
-					// else: no constant columns to remove (shouldn't happen but safe)
+					// else: no constant symbols to remove (shouldn't happen but safe)
 				}
 			}
 		}
@@ -343,7 +343,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			})
 		}
 
-		// Project each group to Keep columns (what passes to next phase)
+		// Project each group to Keep symbols (what passes to next phase)
 		// Skip for last phase - QueryExecutor already projected to :find symbols
 		if !isLastPhase && len(phase.Keep) > 0 {
 			for i, group := range groups {
@@ -353,7 +353,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 				collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
-				materialized := NewMaterializedRelationWithOptions(group.Columns(), tuples, opts)
+				materialized := NewMaterializedRelationWithOptions(group.Symbols(), tuples, opts)
 
 				projected, err := materialized.Project(phase.Keep)
 				if err != nil {
@@ -429,7 +429,7 @@ func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *
 
 	if iterationRelation == nil || iterationRelation.Size() == 0 {
 		// No iteration needed or empty input
-		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
+		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
 	}
 
 	// Dispatch to parallel or sequential implementation
@@ -482,18 +482,18 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 
 	// Combine all results
 	if len(allResults) == 0 {
-		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
+		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
 	}
 
 	// Union all results
 	var allTuples []Tuple
-	columns := allResults[0].Columns()
+	symbols := allResults[0].Symbols()
 
 	for _, rel := range allResults {
 		collectTuplesInto(&allTuples, rel)
 	}
 
-	return NewMaterializedRelation(columns, allTuples), nil
+	return NewMaterializedRelation(symbols, allTuples), nil
 }
 
 // executeRealizedWithRelationInputIterationParallel executes QueryExecutor path in parallel for RelationInput
@@ -515,7 +515,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	collectTuplesInto(&tuples, iterationRelation)
 
 	if len(tuples) == 0 {
-		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
+		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
 	}
 
 	// Result collection with mutex for thread safety
@@ -575,18 +575,18 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 
 	// Combine all results
 	if len(allResults) == 0 {
-		return NewMaterializedRelation(extractFindColumns(plan.Query.Find), []Tuple{}), nil
+		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
 	}
 
 	// Union all results
 	var allTuples []Tuple
-	columns := allResults[0].Columns()
+	symbols := allResults[0].Symbols()
 
 	for _, rel := range allResults {
 		collectTuplesInto(&allTuples, rel)
 	}
 
-	return NewMaterializedRelation(columns, allTuples), nil
+	return NewMaterializedRelation(symbols, allTuples), nil
 }
 
 // executeRealizedNonIterating executes a RealizedPlan without RelationInput iteration
@@ -636,7 +636,7 @@ func (e *Executor) executeRealizedNonIterating(
 			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
 		}
 
-		// Project each group to Keep columns (what passes to next phase)
+		// Project each group to Keep symbols (what passes to next phase)
 		// Skip for last phase - QueryExecutor already projected to :find symbols
 		if !isLastPhase && len(phase.Keep) > 0 {
 			for i, group := range groups {
@@ -645,7 +645,7 @@ func (e *Executor) executeRealizedNonIterating(
 				collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
-				materialized := NewMaterializedRelationWithOptions(group.Columns(), tuples, opts)
+				materialized := NewMaterializedRelationWithOptions(group.Symbols(), tuples, opts)
 
 				projected, err := materialized.Project(phase.Keep)
 				if err != nil {

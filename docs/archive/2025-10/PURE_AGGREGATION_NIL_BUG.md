@@ -30,7 +30,7 @@ All pure aggregation queries return `nil` instead of computed values, even when 
 | ...    |
 ```
 
-8256 rows exist in database.
+8256 tuples exist in database.
 
 ### Query 2: Pure aggregation (BROKEN)
 ```clojure
@@ -89,7 +89,7 @@ cd /Users/wbrown/go/src/github.com/wbrown/gopher-street
 
 # Verify data exists
 ./datalog-cli -db datalog-db -query '[:find (count ?p) :where [?s :symbol/ticker "CRWV"] [?p :price/symbol ?s]]'
-# Returns: 8256 rows
+# Returns: 8256 tuples
 
 # Try simple aggregation - FAILS
 ./datalog-cli -db datalog-db -query '[:find (max ?h) :where [?s :symbol/ticker "CRWV"] [?p :price/symbol ?s] [?p :price/high ?h]]'
@@ -120,10 +120,10 @@ case query.TupleBinding:
     // EMPTY RESULT = PATTERN FAILS TO MATCH
     // Return empty relation instead of error (datalog semantics)
     if result.Size() == 0 {
-        columns := make([]query.Symbol, len(inputSymbols)+len(b.Variables))
-        copy(columns, inputSymbols)
-        copy(columns[len(inputSymbols):], b.Variables)
-        return NewMaterializedRelation(columns, []Tuple{}), nil
+        symbols := make([]query.Symbol, len(inputSymbols)+len(b.Variables))
+        copy(symbols, inputSymbols)
+        copy(symbols[len(inputSymbols):], b.Variables)
+        return NewMaterializedRelation(symbols, []Tuple{}), nil
     }
 
     // ... proceed with binding
@@ -230,22 +230,22 @@ case query.TupleBinding:
 [:find (max ?h) :where [?p :price/high ?h]]
 ```
 
-**Expected**: `| (max ?h) |` → `| 119.59 |` (single row with computed value)
+**Expected**: `| (max ?h) |` → `| 119.59 |` (single tuple with computed value)
 
 ### Pure Aggregation Without Data
 ```clojure
 [:find (max ?h) :where [?p :price/high ?h] [?p :price/symbol ?no-such-symbol]]
 ```
 
-**Expected**: 0 rows (pattern fails to match, per Datalog semantics)
-**NOT**: 1 row with nil value
+**Expected**: 0 tuples (pattern fails to match, per Datalog semantics)
+**NOT**: 1 tuple with nil value
 
 ### Grouped Aggregation With Data
 ```clojure
 [:find ?s (max ?h) :where [?p :price/symbol ?s] [?p :price/high ?h]]
 ```
 
-**Expected**: Multiple rows, one per symbol, with computed max values
+**Expected**: Multiple tuples, one per symbol, with computed max values
 
 ### Grouped Aggregation With Some Empty Groups
 ```clojure
@@ -254,7 +254,7 @@ case query.TupleBinding:
         [(q [:find (max ?p) :in $ ?person :where [?o :order/person ?person] [?o :price ?p]] $ ?person) [[?max-price]]]]
 ```
 
-**Expected**: Only rows for people with orders (people without orders excluded)
+**Expected**: Only tuples for people with orders (people without orders excluded)
 
 ## Proposed Fix Strategy
 
@@ -280,7 +280,7 @@ The fix for empty subqueries should NOT affect aggregations that have data:
 // CORRECT LOGIC:
 if result.Size() == 0 {
     // No results from subquery - pattern fails to match
-    return NewMaterializedRelation(columns, []Tuple{}), nil
+    return NewMaterializedRelation(symbols, []Tuple{}), nil
 }
 
 if result.Size() == 1 {
@@ -335,7 +335,7 @@ func TestPureAggregationWithData(t *testing.T) {
     results := db.ExecuteQuery(query)
 
     // Assertions
-    assert.Equal(t, 1, len(results), "Pure aggregation should return 1 row")
+    assert.Equal(t, 1, len(results), "Pure aggregation should return 1 tuple")
     assert.NotNil(t, results[0][0], "Aggregation value must not be nil")
     assert.Equal(t, 200.0, results[0][0].(float64), "Max should be 200.0")
 }
@@ -350,7 +350,7 @@ func TestPureAggregationWithoutData(t *testing.T) {
     results := db.ExecuteQuery(query)
 
     // Assertions
-    assert.Equal(t, 0, len(results), "Empty aggregation should return 0 rows")
+    assert.Equal(t, 0, len(results), "Empty aggregation should return 0 tuples")
 }
 ```
 
@@ -359,13 +359,13 @@ func TestPureAggregationWithoutData(t *testing.T) {
 ```bash
 # After fix, all these should work:
 ./datalog-cli -db datalog-db -query '[:find (max ?h) :where [?s :symbol/ticker "CRWV"] [?p :price/symbol ?s] [?p :price/high ?h]]'
-# Expected: Single row with numeric value
+# Expected: Single tuple with numeric value
 
 ./datalog-cli -db datalog-db -query '[:find (min ?t) (max ?t) :where [?s :symbol/ticker "CRWV"] [?p :price/symbol ?s] [?p :price/time ?t]]'
-# Expected: Single row with two timestamp values
+# Expected: Single tuple with two timestamp values
 
 ./datalog-cli -db datalog-db -query '[:find (max ?h) :where [?s :symbol/ticker "NOSUCHSYMBOL"] [?p :price/symbol ?s] [?p :price/high ?h]]'
-# Expected: Zero rows (not one row with nil)
+# Expected: Zero tuples (not one tuple with nil)
 ```
 
 ## Urgency
@@ -376,7 +376,7 @@ func TestPureAggregationWithoutData(t *testing.T) {
 1. Revert October 10 subquery nil fixes temporarily
 2. Investigate and fix properly with comprehensive test coverage
 3. Ensure fix handles BOTH cases:
-   - Empty aggregations → 0 rows (not nil)
+   - Empty aggregations → 0 tuples (not nil)
    - Non-empty aggregations → computed values (not nil)
 
 ## Related Files

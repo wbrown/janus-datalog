@@ -47,7 +47,7 @@ func combineSubqueryResults(allResults []Relation, ...) {
         it.Close()
     }
 
-    return NewMaterializedRelation(columns, allTuples)  // ← Giant materialized relation
+    return NewMaterializedRelation(symbols, allTuples)  // ← Giant materialized relation
 }
 ```
 
@@ -171,7 +171,7 @@ type SubqueryUnion struct {
     executor          *Executor
     subqPlan          planner.SubqueryPlan
     inputCombinations []map[query.Symbol]interface{}
-    columns           []query.Symbol
+    symbols           []query.Symbol
 }
 
 func NewSubqueryUnion(
@@ -179,19 +179,19 @@ func NewSubqueryUnion(
     subqPlan planner.SubqueryPlan,
     inputCombinations []map[query.Symbol]interface{},
 ) *SubqueryUnion {
-    // Get columns from binding
-    columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+    // Get symbols from binding
+    symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
 
     return &SubqueryUnion{
         executor:          executor,
         subqPlan:          subqPlan,
         inputCombinations: inputCombinations,
-        columns:           columns,
+        symbols:           symbols,
     }
 }
 
-func (s *SubqueryUnion) Columns() []query.Symbol {
-    return s.columns
+func (s *SubqueryUnion) Symbols() []query.Symbol {
+    return s.symbols
 }
 
 func (s *SubqueryUnion) Iterator() Iterator {
@@ -326,8 +326,8 @@ func executeSubquerySequential(...) (Relation, error) {
 
     if accumulator == nil {
         // Return empty relation
-        columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-        return NewMaterializedRelation(columns, []Tuple{}), nil
+        symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+        return NewMaterializedRelation(symbols, []Tuple{}), nil
     }
 
     return accumulator, nil
@@ -374,8 +374,8 @@ func executeSubquerySequential(...) (Relation, error) {
     }
 
     if len(batches) == 0 {
-        columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-        return NewMaterializedRelation(columns, []Tuple{}), nil
+        symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+        return NewMaterializedRelation(symbols, []Tuple{}), nil
     }
 
     if len(batches) == 1 {
@@ -394,12 +394,12 @@ Create a dedicated streaming combiner that never holds all relations:
 ```go
 // StreamingUnionRelation builds union progressively without holding all input relations
 type StreamingUnionRelation struct {
-    columns []query.Symbol
+    symbols []query.Symbol
     tuples  []Tuple  // Accumulated so far
 }
 
 func executeSubquerySequential(...) (Relation, error) {
-    var columns []query.Symbol
+    var symbols []query.Symbol
     var tuples []Tuple
 
     for _, inputValues := range inputCombinations {
@@ -413,9 +413,9 @@ func executeSubquerySequential(...) (Relation, error) {
             return nil, err
         }
 
-        // Extract columns from first non-empty result
-        if columns == nil && !boundResult.IsEmpty() {
-            columns = boundResult.Columns()
+        // Extract symbols from first non-empty result
+        if symbols == nil && !boundResult.IsEmpty() {
+            symbols = boundResult.Symbols()
         }
 
         // Stream tuples out and accumulate
@@ -428,11 +428,11 @@ func executeSubquerySequential(...) (Relation, error) {
         // ← boundResult can now be GC'd, we don't hold it
     }
 
-    if columns == nil {
-        columns = getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+    if symbols == nil {
+        symbols = getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
     }
 
-    return NewMaterializedRelation(columns, tuples), nil
+    return NewMaterializedRelation(symbols, tuples), nil
 }
 ```
 
@@ -451,8 +451,8 @@ func combineSubqueryResults(allResults []Relation, subqPlan planner.SubqueryPlan
     }
 
     if len(validResults) == 0 {
-        columns := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
-        return NewMaterializedRelation(columns, []Tuple{}), nil
+        symbols := getBindingColumns(subqPlan.Subquery.Binding, subqPlan.Inputs)
+        return NewMaterializedRelation(symbols, []Tuple{}), nil
     }
 
     if len(validResults) == 1 {

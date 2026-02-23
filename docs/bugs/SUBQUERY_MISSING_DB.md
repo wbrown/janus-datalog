@@ -30,7 +30,7 @@ The query builder generates:
 ;; ^ missing $ - only variable passed
 ```
 
-This causes the subquery to misinterpret `?scenario` as the database, breaking correlation entirely. The subquery runs uncorrelated, returning global aggregates instead of per-row values.
+This causes the subquery to misinterpret `?scenario` as the database, breaking correlation entirely. The subquery runs uncorrelated, returning global aggregates instead of per-tuple values.
 
 ## Reproduction
 

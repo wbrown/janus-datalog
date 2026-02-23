@@ -384,14 +384,14 @@ func TestResultMethods(t *testing.T) {
 	}
 
 	// Test ColumnIndex
-	if idx := result.ColumnIndex(datalog.NewSymbol("?name")); idx != 0 {
+	if idx := result.SymbolIndex(datalog.NewSymbol("?name")); idx != 0 {
 		t.Errorf("expected index 0 for ?name, got %d", idx)
 	}
-	if idx := result.ColumnIndex(datalog.NewSymbol("?age")); idx != 1 {
+	if idx := result.SymbolIndex(datalog.NewSymbol("?age")); idx != 1 {
 		t.Errorf("expected index 1 for ?age, got %d", idx)
 	}
-	if idx := result.ColumnIndex(datalog.NewSymbol("?missing")); idx != -1 {
-		t.Errorf("expected index -1 for missing column, got %d", idx)
+	if idx := result.SymbolIndex(datalog.NewSymbol("?missing")); idx != -1 {
+		t.Errorf("expected index -1 for missing symbol, got %d", idx)
 	}
 
 	// Test GetValue
@@ -402,9 +402,9 @@ func TestResultMethods(t *testing.T) {
 		t.Errorf("expected 25, got %v", val)
 	}
 	if _, ok := result.GetValue(0, datalog.NewSymbol("?missing")); ok {
-		t.Error("expected false for missing column")
+		t.Error("expected false for missing symbol")
 	}
 	if _, ok := result.GetValue(2, datalog.NewSymbol("?name")); ok {
-		t.Error("expected false for out of bounds row")
+		t.Error("expected false for out of bounds tuple")
 	}
 }

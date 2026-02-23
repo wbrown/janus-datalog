@@ -122,7 +122,7 @@ Hypothesis: The planner may be treating input parameters in expression contexts 
 
 **Root Cause**: The predicate assignment logic in `planner_expressions.go` only added input parameters to the `available` map for phase 0. For phases > 0, it only looked at previous phases' `Provides`, missing input parameters that should be available throughout query execution.
 
-**Key Insight**: Input parameters are "environment" symbols that should be available in ALL phases for filtering/correlation (see INPUT_PARAMETER_KEEP_BUG.md). While they're not columns in output relations (Provides), they must be accessible for predicate evaluation (Available).
+**Key Insight**: Input parameters are "environment" symbols that should be available in ALL phases for filtering/correlation (see INPUT_PARAMETER_KEEP_BUG.md). While they're not symbols in output relations (Provides), they must be accessible for predicate evaluation (Available).
 
 **The Fix**: Modified `assignExpressionsToPhases()` to use `phases[i].Available` for each phase, which correctly includes:
 - Input parameters (from `:in` clause)

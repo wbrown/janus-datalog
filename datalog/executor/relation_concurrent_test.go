@@ -13,7 +13,7 @@ import (
 // TestConcurrentIteratorAccess verifies that multiple goroutines can safely
 // call Iterator() on the same Relation and iterate independently
 func TestConcurrentIteratorAccess(t *testing.T) {
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{1, "a"},
 		{2, "b"},
@@ -28,11 +28,11 @@ func TestConcurrentIteratorAccess(t *testing.T) {
 	}{
 		{
 			name:     "MaterializedRelation",
-			relation: NewMaterializedRelation(columns, tuples),
+			relation: NewMaterializedRelation(symbols, tuples),
 		},
 		{
 			name: "StreamingRelation (materialized)",
-			relation: NewStreamingRelation(columns, &sliceIterator{
+			relation: NewStreamingRelation(symbols, &sliceIterator{
 				tuples: append([]Tuple{}, tuples...), // Copy to avoid sharing
 				pos:    -1,
 			}).Materialize(), // CRITICAL: Must materialize before concurrent access
@@ -113,11 +113,11 @@ func TestConcurrentIteratorAccess(t *testing.T) {
 // TestConcurrentStreamingMaterialization verifies that concurrent calls to
 // Iterator() on a StreamingRelation all see the same materialized data
 func TestConcurrentStreamingMaterialization(t *testing.T) {
-	columns := []query.Symbol{datalog.NewSymbol("?n")}
+	symbols := []query.Symbol{datalog.NewSymbol("?n")}
 	tuples := []Tuple{{1}, {2}, {3}, {4}, {5}}
 
 	// Create streaming relation and materialize it for concurrent access
-	sr := NewStreamingRelation(columns, &sliceIterator{
+	sr := NewStreamingRelation(symbols, &sliceIterator{
 		tuples: append([]Tuple{}, tuples...),
 		pos:    -1,
 	}).Materialize() // CRITICAL: Must materialize before concurrent Iterator() calls

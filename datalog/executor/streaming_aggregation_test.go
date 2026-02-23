@@ -13,7 +13,7 @@ import (
 func TestStreamingAggregation(t *testing.T) {
 	// Create a large relation to aggregate
 	// Include an ID to make each tuple unique (avoid deduplication)
-	columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?category"), datalog.NewSymbol("?price")}
+	symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?category"), datalog.NewSymbol("?price")}
 	tuples := make([]Tuple, 0, 10000)
 
 	// Generate 10,000 tuples across 10 categories
@@ -23,12 +23,12 @@ func TestStreamingAggregation(t *testing.T) {
 		tuples = append(tuples, Tuple{i, category, price})
 	}
 
-	baseRel := NewMaterializedRelation(columns, tuples)
+	baseRel := NewMaterializedRelation(symbols, tuples)
 
 	t.Run("grouped aggregation with streaming", func(t *testing.T) {
 		// Create a StreamingRelation with streaming aggregation enabled
 		opts := ExecutorOptions{EnableStreamingAggregation: true}
-		rel := NewStreamingRelationWithOptions(columns, baseRel.Iterator(), opts)
+		rel := NewStreamingRelationWithOptions(symbols, baseRel.Iterator(), opts)
 
 		findElements := []query.FindElement{
 			query.FindVariable{Symbol: datalog.NewSymbol("?category")},
@@ -78,7 +78,7 @@ func TestStreamingAggregation(t *testing.T) {
 	t.Run("single aggregation with streaming", func(t *testing.T) {
 		// Create a StreamingRelation with streaming aggregation enabled
 		opts := ExecutorOptions{EnableStreamingAggregation: true}
-		rel := NewStreamingRelationWithOptions(columns, baseRel.Iterator(), opts)
+		rel := NewStreamingRelationWithOptions(symbols, baseRel.Iterator(), opts)
 
 		findElements := []query.FindElement{
 			query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?price")},
@@ -107,7 +107,7 @@ func TestStreamingAggregation(t *testing.T) {
 // produces identical results to batch aggregation
 func TestStreamingAggregationCorrectness(t *testing.T) {
 	// Create test data
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{"A", 10.0},
 		{"A", 20.0},
@@ -116,7 +116,7 @@ func TestStreamingAggregationCorrectness(t *testing.T) {
 		{"B", 25.0},
 		{"C", 5.0},
 	}
-	baseRel := NewMaterializedRelation(columns, tuples)
+	baseRel := NewMaterializedRelation(symbols, tuples)
 
 	findElements := []query.FindElement{
 		query.FindVariable{Symbol: datalog.NewSymbol("?x")},
@@ -129,12 +129,12 @@ func TestStreamingAggregationCorrectness(t *testing.T) {
 
 	// Run with streaming
 	streamingOpts := ExecutorOptions{EnableStreamingAggregation: true}
-	streamingRel := NewStreamingRelationWithOptions(columns, baseRel.Iterator(), streamingOpts)
+	streamingRel := NewStreamingRelationWithOptions(symbols, baseRel.Iterator(), streamingOpts)
 	streamingResult := ExecuteAggregations(streamingRel, findElements)
 
 	// Run with batch (old implementation)
 	batchOpts := ExecutorOptions{EnableStreamingAggregation: false}
-	batchRel := NewStreamingRelationWithOptions(columns, baseRel.Iterator(), batchOpts)
+	batchRel := NewStreamingRelationWithOptions(symbols, baseRel.Iterator(), batchOpts)
 	batchResult := ExecuteAggregations(batchRel, findElements)
 
 	// Compare results
@@ -188,7 +188,7 @@ func TestStreamingAggregationCorrectness(t *testing.T) {
 
 // TestStreamingAggregationThreshold verifies that small relations use batch aggregation
 func TestStreamingAggregationThreshold(t *testing.T) {
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 	// Small relation (below threshold)
 	smallTuples := []Tuple{
@@ -203,7 +203,7 @@ func TestStreamingAggregationThreshold(t *testing.T) {
 	}
 
 	opts := ExecutorOptions{EnableStreamingAggregation: true}
-	smallRel := NewMaterializedRelationWithOptions(columns, smallTuples, opts)
+	smallRel := NewMaterializedRelationWithOptions(symbols, smallTuples, opts)
 	result := ExecuteAggregations(smallRel, findElements)
 
 	// Should use batch aggregation (below threshold)
@@ -216,7 +216,7 @@ func TestStreamingAggregationThreshold(t *testing.T) {
 	for i := 0; i < len(largeTuples); i++ {
 		largeTuples[i] = Tuple{"A", float64(i)}
 	}
-	largeRel := NewMaterializedRelationWithOptions(columns, largeTuples, opts)
+	largeRel := NewMaterializedRelationWithOptions(symbols, largeTuples, opts)
 
 	result = ExecuteAggregations(largeRel, findElements)
 

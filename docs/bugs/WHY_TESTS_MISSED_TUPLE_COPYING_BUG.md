@@ -64,8 +64,8 @@ But if the test only checks `len(tuples) == 3`, it passes! The test might not in
 ### 3. Tests Don't Verify All Tuple Values
 
 Many tests check:
-- Row count (`assert.Equal(t, 3, result.Size())`)
-- First row only (`if it.Next() { ... }`)
+- Tuple count (`assert.Equal(t, 3, result.Size())`)
+- First tuple only (`if it.Next() { ... }`)
 - Specific values extracted immediately
 
 They **don't** collect all tuples into a slice and verify each one is different.
@@ -111,7 +111,7 @@ The gopher-street tests succeeded where our tests failed because:
 ### 2. CLI Tool (Not Test Framework)
 - CLI calls `result.Table()` which collects ALL tuples
 - Verifies displayed output contains actual data
-- Human can visually see "0 rows" vs expected output
+- Human can visually see "0 tuples" vs expected output
 
 ### 3. Complex Multi-Pattern Queries
 ```sql
@@ -142,7 +142,7 @@ The verbose output made it obvious: data goes in, nothing comes out.
 ### Missing Test Pattern #1: Tuple Collection Verification
 ```go
 func TestTupleCollectionWithStreaming(t *testing.T) {
-    rel := NewMaterializedRelationWithOptions(columns, tuples, ExecutorOptions{
+    rel := NewMaterializedRelationWithOptions(symbols, tuples, ExecutorOptions{
         EnableTrueStreaming: true,  // CRITICAL!
     })
 
@@ -176,7 +176,7 @@ func TestLargeDatasetStreaming(t *testing.T) {
     }
 
     // Test with streaming enabled
-    rel := NewMaterializedRelationWithOptions(columns, largeTuples, ExecutorOptions{
+    rel := NewMaterializedRelationWithOptions(symbols, largeTuples, ExecutorOptions{
         EnableTrueStreaming: true,
     })
 

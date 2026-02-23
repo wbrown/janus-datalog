@@ -96,10 +96,10 @@ func TestSemanticRewritingTimePredicates(t *testing.T) {
 
 	// Verify all results are from 2024
 	for i := 0; i < resultWith.Size(); i++ {
-		row := resultWith.Get(i)
-		timeVal := row[0].(time.Time)
+		tuple := resultWith.Get(i)
+		timeVal := tuple[0].(time.Time)
 		if timeVal.Year() != 2024 {
-			t.Errorf("Row %d: expected year 2024, got %d", i, timeVal.Year())
+			t.Errorf("Tuple %d: expected year 2024, got %d", i, timeVal.Year())
 		}
 	}
 
@@ -183,20 +183,20 @@ func TestSemanticRewritingMultipleTimeComponents(t *testing.T) {
 
 	// Verify all results match the constraints
 	for i := 0; i < result.Size(); i++ {
-		row := result.Get(i)
-		timeVal := row[0].(time.Time)
+		tuple := result.Get(i)
+		timeVal := tuple[0].(time.Time)
 
 		if timeVal.Year() != 2025 {
-			t.Errorf("Row %d: expected year 2025, got %d", i, timeVal.Year())
+			t.Errorf("Tuple %d: expected year 2025, got %d", i, timeVal.Year())
 		}
 		if timeVal.Month() != 6 {
-			t.Errorf("Row %d: expected month 6, got %d", i, int(timeVal.Month()))
+			t.Errorf("Tuple %d: expected month 6, got %d", i, int(timeVal.Month()))
 		}
 		if timeVal.Day() != 20 {
-			t.Errorf("Row %d: expected day 20, got %d", i, timeVal.Day())
+			t.Errorf("Tuple %d: expected day 20, got %d", i, timeVal.Day())
 		}
 		if timeVal.Hour() != 10 {
-			t.Errorf("Row %d: expected hour 10, got %d", i, timeVal.Hour())
+			t.Errorf("Tuple %d: expected hour 10, got %d", i, timeVal.Hour())
 		}
 	}
 

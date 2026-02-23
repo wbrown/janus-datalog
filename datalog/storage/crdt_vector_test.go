@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -504,14 +505,14 @@ func TestVectorQueryIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query for entities with skills (should return both)
-	results, err := db.ExecuteQuery(`[:find ?name :where [?e :character/name ?name] [?e :character/skills ?skills]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :character/name ?name] [?e :character/skills ?skills]]`))
 	require.NoError(t, err)
 	require.Len(t, results, 2, "should find both characters with skills")
 
 	// Verify both names are present (order not guaranteed)
 	names := make(map[string]bool)
-	for _, row := range results {
-		names[row[0].(string)] = true
+	for _, tuple := range results {
+		names[tuple[0].(string)] = true
 	}
 	assert.True(t, names["Alice"])
 	assert.True(t, names["Bob"])
@@ -545,11 +546,11 @@ func TestVectorQueryWithBoundEntity(t *testing.T) {
 	require.NoError(t, err)
 
 	// First verify basic query works
-	basicResults, err := db.ExecuteQuery(`[:find ?name :where [?e :character/name ?name]]`)
+	basicResults, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :character/name ?name]]`))
 	require.NoError(t, err)
-	t.Logf("Basic query results: %d rows", len(basicResults))
-	for i, row := range basicResults {
-		t.Logf("  Basic row %d: %v", i, row)
+	t.Logf("Basic query results: %d tuples", len(basicResults))
+	for i, tuple := range basicResults {
+		t.Logf("  Basic tuple %d: %v", i, tuple)
 	}
 
 	// Check if LookupAttribute still works
@@ -560,16 +561,16 @@ func TestVectorQueryWithBoundEntity(t *testing.T) {
 
 	// Query with E bound via join - this binds ?e first, then queries skills
 	// Pattern: [?e :name "Alice"] binds ?e, then [?e :skills ?skills] has E bound
-	results, err := db.ExecuteQuery(`[:find ?skills :where [?e :character/name "Alice"] [?e :character/skills ?skills]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?skills :where [?e :character/name "Alice"] [?e :character/skills ?skills]]`))
 	require.NoError(t, err, "query with bound E should not error")
 
 	t.Logf("Vector query results count: %d", len(results))
-	for i, row := range results {
-		t.Logf("  Row %d: %v (type: %T)", i, row[0], row[0])
+	for i, tuple := range results {
+		t.Logf("  Tuple %d: %v (type: %T)", i, tuple[0], tuple[0])
 	}
 
-	// With E bound via join, should return 1 row with the vector
-	require.Len(t, results, 1, "should return 1 row with vector")
+	// With E bound via join, should return 1 tuple with the vector
+	require.Len(t, results, 1, "should return 1 tuple with vector")
 
 	// The value should be a slice, not raw bytes
 	vec, ok := results[0][0].([]interface{})
@@ -608,18 +609,18 @@ func TestVectorQueryProjectSkills(t *testing.T) {
 
 	// Query that projects the skills variable directly
 	// This tests whether vector values can be returned from queries
-	results, err := db.ExecuteQuery(`[:find ?skills :where [?e :character/skills ?skills]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?skills :where [?e :character/skills ?skills]]`))
 	require.NoError(t, err, "query for vector values should not error")
 
 	// Log what we actually get for debugging
 	t.Logf("Results count: %d", len(results))
-	for i, row := range results {
-		t.Logf("  Row %d: %v (type: %T)", i, row[0], row[0])
+	for i, tuple := range results {
+		t.Logf("  Tuple %d: %v (type: %T)", i, tuple[0], tuple[0])
 	}
 
 	// The behavior here depends on implementation:
 	// Option A: Returns the whole vector as one result
-	// Option B: Returns each element as separate rows
+	// Option B: Returns each element as separate tuples
 	// Either is valid, but we need to verify SOMETHING works
 	require.NotEmpty(t, results, "should return some results for vector query")
 }
@@ -652,20 +653,20 @@ func TestVectorQueryNameAndSkills(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query that joins name with skills and projects both
-	results, err := db.ExecuteQuery(`[:find ?name ?skills :where [?e :character/name ?name] [?e :character/skills ?skills]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find ?name ?skills :where [?e :character/name ?name] [?e :character/skills ?skills]]`))
 	require.NoError(t, err, "join query should not error")
 
 	t.Logf("Results count: %d", len(results))
-	for i, row := range results {
-		t.Logf("  Row %d: name=%v, skills=%v (type: %T)", i, row[0], row[1], row[1])
+	for i, tuple := range results {
+		t.Logf("  Tuple %d: name=%v, skills=%v (type: %T)", i, tuple[0], tuple[1], tuple[1])
 	}
 
 	require.NotEmpty(t, results, "should return some results for join query")
 
 	// Verify Alice is in the results
 	foundAlice := false
-	for _, row := range results {
-		if row[0] == "Alice" {
+	for _, tuple := range results {
+		if tuple[0] == "Alice" {
 			foundAlice = true
 		}
 	}
@@ -702,7 +703,7 @@ func TestVectorPullIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use Pull API to get skills
-	results, err := db.ExecuteQuery(`[:find (pull ?e [:character/name :character/skills]) :where [?e :character/name "Alice"]]`)
+	results, err := executor.CollectTuples(db.Query(`[:find (pull ?e [:character/name :character/skills]) :where [?e :character/name "Alice"]]`))
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
@@ -1257,7 +1258,7 @@ func TestVectorSetFromEmpty(t *testing.T) {
 }
 
 // TestVectorEnumerateQuery verifies that [(enumerate ?vec) [?idx ?val]] expands
-// a vector into multiple result rows in a Datalog query.
+// a vector into multiple result tuples in a Datalog query.
 func TestVectorEnumerateQuery(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vector-enumerate-query-test")
 	require.NoError(t, err)
@@ -1283,15 +1284,15 @@ func TestVectorEnumerateQuery(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	// enumerate should expand the vector into 3 rows, one per element
-	results, err := db.ExecuteQuery(
+	// enumerate should expand the vector into 3 tuples, one per element
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?idx ?tag
 		  :where
 		  [?e :product/label "Widget"]
 		  [?e :product/tags ?vec]
-		  [(enumerate ?vec) [?idx ?tag]]]`)
+		  [(enumerate ?vec) [?idx ?tag]]]`))
 	require.NoError(t, err)
-	require.Len(t, results, 3, "enumerate should produce one row per vector element")
+	require.Len(t, results, 3, "enumerate should produce one tuple per vector element")
 
 	// Verify index-value pairs
 	type pair struct {
@@ -1299,10 +1300,10 @@ func TestVectorEnumerateQuery(t *testing.T) {
 		tag string
 	}
 	var pairs []pair
-	for _, row := range results {
+	for _, tuple := range results {
 		pairs = append(pairs, pair{
-			idx: row[0].(int64),
-			tag: row[1].(string),
+			idx: tuple[0].(int64),
+			tag: tuple[1].(string),
 		})
 	}
 
@@ -1341,21 +1342,21 @@ func TestVectorEnumerateMultipleEntities(t *testing.T) {
 	require.NoError(t, err)
 
 	// Each entity's vector should expand independently:
-	// Widget: 2 tags, Gadget: 1 tag → 3 total rows
-	results, err := db.ExecuteQuery(
+	// Widget: 2 tags, Gadget: 1 tag → 3 total tuples
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?label ?tag
 		  :where
 		  [?e :product/label ?label]
 		  [?e :product/tags ?vec]
-		  [(enumerate ?vec) [?idx ?tag]]]`)
+		  [(enumerate ?vec) [?idx ?tag]]]`))
 	require.NoError(t, err)
-	require.Len(t, results, 3, "should get Widget's 2 tags + Gadget's 1 tag = 3 rows")
+	require.Len(t, results, 3, "should get Widget's 2 tags + Gadget's 1 tag = 3 tuples")
 
 	// Count per product
 	productTags := make(map[string][]string)
-	for _, row := range results {
-		label := row[0].(string)
-		tag := row[1].(string)
+	for _, tuple := range results {
+		label := tuple[0].(string)
+		tag := tuple[1].(string)
 		productTags[label] = append(productTags[label], tag)
 	}
 
@@ -1423,7 +1424,7 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 
 	// Query: enumerate folder items, filter to red only
 	// Should return only Folder-A's red item, NOT Folder-B
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?folderName ?itemLabel
 		  :in $ ?color
 		  :where
@@ -1432,7 +1433,7 @@ func TestVectorEnumerateRefWithFilter(t *testing.T) {
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?itemLabel]]`,
-		red)
+		red))
 	require.NoError(t, err)
 	require.Len(t, results, 1, "only Folder-A has a red item")
 	assert.Equal(t, "Folder-A", results[0][0].(string))
@@ -1499,7 +1500,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 1: Without instance joins (should work — proven by TestVectorEnumerateRefWithFilter)
-	r1, err := db.ExecuteQueryWithInputs(
+	r1, err := executor.CollectTuples(db.Query(
 		`[:find ?folderName ?itemLabel
 		  :in $ ?color
 		  :where
@@ -1508,13 +1509,13 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?itemLabel]]`,
-		red)
+		red))
 	require.NoError(t, err)
-	t.Logf("step1 (no instance joins): %d rows: %v", len(r1), r1)
+	t.Logf("step1 (no instance joins): %d tuples: %v", len(r1), r1)
 	require.Len(t, r1, 1, "step1: only Folder-A has a red item")
 
 	// Step 2: Add instance→template join but no :in room filter
-	r2, err := db.ExecuteQuery(
+	r2, err := executor.CollectTuples(db.Query(
 		`[:find ?folderName ?itemLabel
 		  :where
 		  [?inst :instance/template ?folder]
@@ -1522,13 +1523,13 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?folder :folder/items ?vec]
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/color :color/red]
-		  [?item :item/label ?itemLabel]]`)
+		  [?item :item/label ?itemLabel]]`))
 	require.NoError(t, err)
-	t.Logf("step2 (instance join, inline color): %d rows: %v", len(r2), r2)
+	t.Logf("step2 (instance join, inline color): %d tuples: %v", len(r2), r2)
 	require.Len(t, r2, 1, "step2: only Folder-A has a red item")
 
 	// Step 2b: Instance join + :in color (no :in room)
-	r2b, err := db.ExecuteQueryWithInputs(
+	r2b, err := executor.CollectTuples(db.Query(
 		`[:find ?folderName ?itemLabel
 		  :in $ ?color
 		  :where
@@ -1538,13 +1539,13 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?itemLabel]]`,
-		red)
+		red))
 	require.NoError(t, err)
-	t.Logf("step2b (instance join, :in color): %d rows: %v", len(r2b), r2b)
+	t.Logf("step2b (instance join, :in color): %d tuples: %v", len(r2b), r2b)
 	require.Len(t, r2b, 1, "step2b: only Folder-A has a red item")
 
 	// Step 2c: Instance join + :in room + inline color
-	r2c, err := db.ExecuteQueryWithInputs(
+	r2c, err := executor.CollectTuples(db.Query(
 		`[:find ?folderName ?itemLabel
 		  :in $ ?room
 		  :where
@@ -1555,13 +1556,13 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/color :color/red]
 		  [?item :item/label ?itemLabel]]`,
-		room)
+		room))
 	require.NoError(t, err)
-	t.Logf("step2c (instance join, :in room, inline color): %d rows: %v", len(r2c), r2c)
+	t.Logf("step2c (instance join, :in room, inline color): %d tuples: %v", len(r2c), r2c)
 	require.Len(t, r2c, 1, "step2c: only Folder-A has a red item")
 
 	// Step 2d: Enumerate only (no color filter) with both :in params
-	r2d, err := db.ExecuteQueryWithInputs(
+	r2d, err := executor.CollectTuples(db.Query(
 		`[:find ?folderName ?itemLabel ?idx
 		  :in $ ?room ?color
 		  :where
@@ -1572,9 +1573,9 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?folder :folder/items ?vec]
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/label ?itemLabel]]`,
-		room, red)
+		room, red))
 	require.NoError(t, err)
-	t.Logf("step2d (enumerate only, both :in params, no color filter): %d rows: %v", len(r2d), r2d)
+	t.Logf("step2d (enumerate only, both :in params, no color filter): %d tuples: %v", len(r2d), r2d)
 
 	// Step 2e: Without label join — just enumerate + color filter, find ?item entity
 	// Enable annotation tracing for this query
@@ -1586,7 +1587,7 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 				event.Data["left.size"], event.Data["right.size"], event.Data["result.size"])
 		}
 	})
-	r2e, err := db.ExecuteQueryWithInputs(
+	r2e, err := executor.CollectTuples(db.Query(
 		`[:find ?folderName ?item ?color
 		  :in $ ?room ?color
 		  :where
@@ -1597,16 +1598,16 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [?folder :folder/items ?vec]
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/color ?color]]`,
-		room, red)
+		room, red))
 	require.NoError(t, err)
-	for i, row := range r2e {
-		t.Logf("step2e row[%d]: folderName=%v item=%v color=%v", i, row[0], row[1], row[2])
+	for i, tuple := range r2e {
+		t.Logf("step2e tuple[%d]: folderName=%v item=%v color=%v", i, tuple[0], tuple[1], tuple[2])
 	}
-	t.Logf("step2e (enumerate + color filter, find ?item): %d rows", len(r2e))
+	t.Logf("step2e (enumerate + color filter, find ?item): %d tuples", len(r2e))
 	db.SetAnnotationHandler(nil) // disable after step2e
 
 	// Step 3: Full query with :in room and color
-	r3, err := db.ExecuteQueryWithInputs(
+	r3, err := executor.CollectTuples(db.Query(
 		`[:find ?folderName ?itemLabel
 		  :in $ ?room ?color
 		  :where
@@ -1618,9 +1619,9 @@ func TestVectorEnumerateRefWithJoinsAndFilter(t *testing.T) {
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?itemLabel]]`,
-		room, red)
+		room, red))
 	require.NoError(t, err)
-	t.Logf("step3 (full query): %d rows: %v", len(r3), r3)
+	t.Logf("step3 (full query): %d tuples: %v", len(r3), r3)
 	require.Len(t, r3, 1, "step3: only Folder-A has a red item")
 	assert.Equal(t, "Folder-A", r3[0][0].(string))
 	assert.Equal(t, "Apple", r3[0][1].(string))
@@ -1732,7 +1733,7 @@ func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
 	// so it scans ALL items with color=red. The join with the accumulated relation
 	// is on ?color only (not ?item), creating a cross-product: every container gets
 	// ?item=redItem regardless of what's actually in its vector.
-	rows, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?name ?label
 		  :in $ ?room ?color
 		  :where
@@ -1742,10 +1743,10 @@ func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
 		  [(enumerate ?vec) [?idx ?item]]
 		  [?item :item/color ?color]
 		  [?item :item/label ?label]]`,
-		room, red)
+		room, red))
 	require.NoError(t, err)
-	t.Logf("rows: %v", rows)
-	require.Len(t, rows, 1, "only container A has a red item; container B has blue")
-	assert.Equal(t, "A", rows[0][0])
-	assert.Equal(t, "Apple", rows[0][1])
+	t.Logf("tuples: %v", tuples)
+	require.Len(t, tuples, 1, "only container A has a red item; container B has blue")
+	assert.Equal(t, "A", tuples[0][0])
+	assert.Equal(t, "Apple", tuples[0][1])
 }

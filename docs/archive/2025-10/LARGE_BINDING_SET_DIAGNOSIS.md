@@ -31,7 +31,7 @@ Queries with large binding sets (>1000 entities) were extremely slow, timing out
 **Performance Results**:
 ```
 Test 2 (aggregation):  timeout → 523ms
-Test 3 (79 rows):      61+ sec → 69ms (880x speedup!)
+Test 3 (79 tuples):      61+ sec → 69ms (880x speedup!)
 Test 5 (complex OHLC): 27 sec  → 210ms (128x speedup!)
 ```
 
@@ -118,7 +118,7 @@ The implementation validates classic database join algorithm theory:
 All gopher-street queries now perform well:
 - Test 1 (count datoms): 181ms ✅
 - Test 2 (aggregation with filters): 523ms ✅ (was timeout)
-- Test 3 (79 rows with filters): 69ms ✅ (was 61+ seconds)
+- Test 3 (79 tuples with filters): 69ms ✅ (was 61+ seconds)
 - Test 4 (simple subquery): 35ms ✅ (already fast)
 - Test 5 (complex OHLC): 210ms ✅ (was 27 seconds)
 

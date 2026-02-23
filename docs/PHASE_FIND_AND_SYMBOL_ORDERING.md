@@ -1,14 +1,14 @@
-# Phase Find and Column Ordering
+# Phase Find and Symbol Ordering
 
 ## Discovery
 
-While implementing phase reordering, we discovered a subtle but important architectural consideration regarding how phases handle column ordering.
+While implementing phase reordering, we discovered a subtle but important architectural consideration regarding how phases handle symbol ordering.
 
 ## Order-Preserving Phases: An Alternative Approach
 
 In some distributed Datalog planners, each phase has a `:find` field that specifies:
-1. **Which columns** the phase should output
-2. **In what order** those columns should appear
+1. **Which symbols** the phase should output
+2. **In what order** those symbols should appear
 
 ```clojure
 find (if-let [find? (not-empty (intersection keep referred))]
@@ -23,14 +23,14 @@ The `:find` is calculated as:
 
 ### Why Order Matters
 
-Some implementations maintain **consistent column ordering** throughout query execution:
-- All phases output columns in an order aligned with the final query's find clause
-- Additional columns (needed for joins but not in final result) appear after the find columns
+Some implementations maintain **consistent symbol ordering** throughout query execution:
+- All phases output symbols in an order aligned with the final query's find clause
+- Additional symbols (needed for joins but not in final result) appear after the find symbols
 - This means **no reordering is needed at the end** - the final result is already in the correct order
 
 ## Go's Current Approach: Project Without Order
 
-In our Go implementation, phases use `Keep` to specify which columns to retain, but don't specify order:
+In our Go implementation, phases use `Keep` to specify which symbols to retain, but don't specify order:
 
 ```go
 phases[i].Find = findVars  // Same for all phases (global find clause)
@@ -42,38 +42,38 @@ We project to `phase.Keep` at phase boundaries (line 236-244 in `expressions_and
 projected, err := result.Project(phase.Keep)
 ```
 
-But `Project()` doesn't guarantee any particular column order - columns end up in whatever order the relation operations naturally produce.
+But `Project()` doesn't guarantee any particular symbol order - symbols end up in whatever order the relation operations naturally produce.
 
 ## The Positional Nature of Tuples
 
-While we use **named columns** (`[]query.Symbol`), the underlying data is **positional**:
+While we use **named symbols** (`[]query.Symbol`), the underlying data is **positional**:
 
 ```go
 type MaterializedRelation struct {
-    columns []query.Symbol    // Named columns
+    symbols []query.Symbol    // Named symbols
     tuples  []Tuple           // [][]interface{} - positional arrays!
 }
 ```
 
 This means:
-- Looking up a column by name finds its **index position**
+- Looking up a symbol by name finds its **index position**
 - Accessing values requires `tuple[columnIndex]`
-- **Reordering columns means creating new tuple arrays** with values copied to new positions
+- **Reordering symbols means creating new tuple arrays** with values copied to new positions
 
 ## Performance Implications
 
-### With Arbitrary Column Order (Current Go):
-1. Join two relations → create new tuples with merged column order
-2. Project to `Keep` → create new tuples with subset of columns (arbitrary order)
+### With Arbitrary Symbol Order (Current Go):
+1. Join two relations → create new tuples with merged symbol order
+2. Project to `Keep` → create new tuples with subset of symbols (arbitrary order)
 3. Pass to next phase → repeat
 4. Final projection to `query.Find` → **reorder tuples again** to match find clause
 
 **Cost**: Multiple tuple array allocations and memory copies per phase.
 
-### With Consistent Column Order (Clojure):
-1. All phases maintain same column order (find clause order + extras)
-2. Joins naturally align (same columns in same positions)
-3. Projecting to `Keep` = dropping trailing columns (cheap)
+### With Consistent Symbol Order (Clojure):
+1. All phases maintain same symbol order (find clause order + extras)
+2. Joins naturally align (same symbols in same positions)
+3. Projecting to `Keep` = dropping trailing symbols (cheap)
 4. Final projection to `query.Find` = **free** (already in right order)
 
 **Cost**: Minimal - mostly just slice operations, no tuple copying.
@@ -89,9 +89,9 @@ This means:
 - `phase.Find` is **never read** by the executor
 
 **Impact**:
-- Code works correctly (named columns ensure we get right values)
+- Code works correctly (named symbols ensure we get right values)
 - But potentially less efficient due to tuple reordering overhead
-- May not matter much with named column lookups and modern allocators
+- May not matter much with named symbol lookups and modern allocators
 
 ## Decision: Do We Need Phase-Specific Find?
 
@@ -103,7 +103,7 @@ This means:
 
 ### Arguments AGAINST:
 - Current approach works and is simpler
-- Named columns already incur lookup overhead
+- Named symbols already incur lookup overhead
 - Modern allocators are fast
 - Optimization may be premature
 - Would require changes throughout projection/join code
@@ -120,8 +120,8 @@ This means:
 
 **If we implement it later**:
 - Calculate `phase.Find` as ordered subset of `phase.Keep` matching query find clause order
-- Modify `Project()` to accept target column order
-- Modify join operations to maintain consistent column ordering
+- Modify `Project()` to accept target symbol order
+- Modify join operations to maintain consistent symbol ordering
 - Benchmark to verify the optimization actually helps
 
 ## Key Insight for Phase Reordering

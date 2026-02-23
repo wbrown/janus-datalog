@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	dlreflect "github.com/wbrown/janus-datalog/datalog/reflect"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 	"github.com/wbrown/janus-datalog/datalog/storage"
@@ -299,10 +300,10 @@ func TestSaveStruct_OrderedSet_SchemaVerify(t *testing.T) {
 	// Query to verify values stored
 	// Note: Vectors return the entire ordered list as a single value (array)
 	// This is different from sets where each element is a separate tuple
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e :where [?e :character-with-preferences/prefs ?v]]`,
 		entityID,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -372,10 +373,10 @@ func TestSaveStruct_OrderedSet(t *testing.T) {
 
 	// Query to verify values are stored
 	// Note: Vectors return entire ordered list as single array value
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e :where [?e :character-with-preferences/prefs ?v]]`,
 		charID,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -445,10 +446,10 @@ func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
 	}
 
 	// Query to verify - vectors return as single array value
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?v :in $ ?e :where [?e :character-with-preferences/prefs ?v]]`,
 		charID,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -769,10 +770,10 @@ func TestSaveStruct_OrderedSetRefs(t *testing.T) {
 
 	// Query to verify refs are stored
 	// Note: Vectors return entire ordered list as single array value
-	tuples, err := db.ExecuteQueryWithInputs(
+	tuples, err := executor.CollectTuples(db.Query(
 		`[:find ?f :in $ ?e :where [?e :entity-with-ordered-refs/follows ?f]]`,
 		entityID,
-	)
+	))
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

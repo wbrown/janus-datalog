@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
 func TestCountRepro_WithVector(t *testing.T) {
@@ -31,12 +32,12 @@ func TestCountRepro_WithVector(t *testing.T) {
 		events = append(events, e)
 	})
 
-	results, err := db.ExecuteQueryWithInputs(
+	results, err := executor.CollectTuples(db.Query(
 		`[:find ?e ?a ?v :in $ [[?e ?a] ...] :where [?e ?a ?v]]`,
 		[][]any{
 			{person1, nameAttr},
 			{person1, contentAttr},
-		})
+		}))
 	require.NoError(t, err)
 
 	db.SetAnnotationHandler(nil)

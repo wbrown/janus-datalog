@@ -118,7 +118,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 		queryStr := `[:find ?e :in $ ?scenario :where [?e :task/scenario ?scenario]]`
 
 		// Query for scenario1 - should return 10 results
-		result, err := db.ExecuteQueryWithInputs(queryStr, scenario1)
+		result, err := executor.CollectTuples(db.Query(queryStr, scenario1))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -127,7 +127,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 		}
 
 		// Query for scenario2 - should return 5 results
-		result, err = db.ExecuteQueryWithInputs(queryStr, scenario2)
+		result, err = executor.CollectTuples(db.Query(queryStr, scenario2))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -136,7 +136,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 		}
 
 		// Query for scenario3 - should return 3 results
-		result, err = db.ExecuteQueryWithInputs(queryStr, scenario3)
+		result, err = executor.CollectTuples(db.Query(queryStr, scenario3))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -254,7 +254,7 @@ func TestChooseIndexForValuesVAET(t *testing.T) {
 		// Find all entities that reference parent1
 		queryStr := `[:find ?child :in $ ?parent :where [?child :child/parent ?parent]]`
 
-		result, err := db.ExecuteQueryWithInputs(queryStr, parent1)
+		result, err := executor.CollectTuples(db.Query(queryStr, parent1))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -262,7 +262,7 @@ func TestChooseIndexForValuesVAET(t *testing.T) {
 			t.Errorf("Expected 8 children for parent1, got %d", len(result))
 		}
 
-		result, err = db.ExecuteQueryWithInputs(queryStr, parent2)
+		result, err = executor.CollectTuples(db.Query(queryStr, parent2))
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}

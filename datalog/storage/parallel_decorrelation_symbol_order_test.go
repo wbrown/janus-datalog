@@ -11,12 +11,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestParallelDecorrelationColumnOrderBadger tests parallel decorrelation column ordering with BadgerDB
+// TestParallelDecorrelationColumnOrderBadger tests parallel decorrelation symbol ordering with BadgerDB
 // This reproduces the gopher-street bug where BadgerMatcher + parallel decorrelation
-// scrambles column order due to inconsistent transaction snapshots across goroutines
+// scrambles symbol order due to inconsistent transaction snapshots across goroutines
 func TestParallelDecorrelationColumnOrderBadger(t *testing.T) {
 	// Create temporary BadgerDB
-	tmpDir, err := os.MkdirTemp("", "badger-column-order-test-*")
+	tmpDir, err := os.MkdirTemp("", "badger-symbol-order-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -166,34 +166,34 @@ func TestParallelDecorrelationColumnOrderBadger(t *testing.T) {
 			t.Logf("  [%d] = %v (%T)", i, val, val)
 		}
 
-		// Verify correct column ordering: [?date, ?open-price, ?daily-high, ?daily-low, ?close-price, ?total-volume]
+		// Verify correct symbol ordering: [?date, ?open-price, ?daily-high, ?daily-low, ?close-price, ?total-volume]
 		if len(tuple) != 6 {
-			t.Fatalf("Expected 6 columns, got %d", len(tuple))
+			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
 		}
 
-		// Column 1: ?open-price should be 100.00
+		// Symbol 1: ?open-price should be 100.00
 		if val, ok := tuple[1].(float64); !ok || val != 100.0 {
-			t.Errorf("Column 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
+			t.Errorf("Symbol 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
 		}
 
-		// Column 2: ?daily-high should be 103.00
+		// Symbol 2: ?daily-high should be 103.00
 		if val, ok := tuple[2].(float64); !ok || val != 103.0 {
-			t.Errorf("Column 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
+			t.Errorf("Symbol 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
 		}
 
-		// Column 3: ?daily-low should be 99.50
+		// Symbol 3: ?daily-low should be 99.50
 		if val, ok := tuple[3].(float64); !ok || val != 99.5 {
-			t.Errorf("Column 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
+			t.Errorf("Symbol 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
 		}
 
-		// Column 4: ?close-price should be 102.50
+		// Symbol 4: ?close-price should be 102.50
 		if val, ok := tuple[4].(float64); !ok || val != 102.5 {
-			t.Errorf("Column 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
+			t.Errorf("Symbol 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
 		}
 
-		// Column 5: ?total-volume should be 3050000
+		// Symbol 5: ?total-volume should be 3050000
 		if val, ok := tuple[5].(float64); !ok || val != 3050000 {
-			t.Errorf("Column 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
+			t.Errorf("Symbol 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
 		}
 	})
 
@@ -227,23 +227,23 @@ func TestParallelDecorrelationColumnOrderBadger(t *testing.T) {
 
 		// Same verification as parallel
 		if len(tuple) != 6 {
-			t.Fatalf("Expected 6 columns, got %d", len(tuple))
+			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
 		}
 
 		if val, ok := tuple[1].(float64); !ok || val != 100.0 {
-			t.Errorf("Column 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
+			t.Errorf("Symbol 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
 		}
 		if val, ok := tuple[2].(float64); !ok || val != 103.0 {
-			t.Errorf("Column 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
+			t.Errorf("Symbol 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
 		}
 		if val, ok := tuple[3].(float64); !ok || val != 99.5 {
-			t.Errorf("Column 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
+			t.Errorf("Symbol 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
 		}
 		if val, ok := tuple[4].(float64); !ok || val != 102.5 {
-			t.Errorf("Column 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
+			t.Errorf("Symbol 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
 		}
 		if val, ok := tuple[5].(float64); !ok || val != 3050000 {
-			t.Errorf("Column 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
+			t.Errorf("Symbol 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
 		}
 	})
 }

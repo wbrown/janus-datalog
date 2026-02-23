@@ -138,12 +138,12 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 			}
 			if aggregationMode != "streaming" {
 				t.Fatalf("TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used '%s'. "+
-					"Either increase test data size (currently 500 rows) or decrease StreamingAggregationThreshold (currently 100).",
+					"Either increase test data size (currently 500 tuples) or decrease StreamingAggregationThreshold (currently 100).",
 					aggregationMode)
 			}
 		}
 
-		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 row")
+		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 tuple")
 
 		// Check the max value
 		tuple := result.Get(0)
@@ -183,12 +183,12 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 			}
 			if aggregationMode != "streaming" {
 				t.Fatalf("TEST CONFIGURATION ERROR: This test must use streaming aggregation to reproduce the bug, but used '%s'. "+
-					"Either increase test data size (currently 500 rows) or decrease StreamingAggregationThreshold (currently 100).",
+					"Either increase test data size (currently 500 tuples) or decrease StreamingAggregationThreshold (currently 100).",
 					aggregationMode)
 			}
 		}
 
-		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 row")
+		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 tuple")
 
 		// Check the min value
 		tuple := result.Get(0)
@@ -208,7 +208,7 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 		result, err := exec.Execute(q)
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
-		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 row")
+		assert.Equal(t, 1, result.Size(), "Pure aggregation should return 1 tuple")
 
 		// Check the count
 		tuple := result.Get(0)

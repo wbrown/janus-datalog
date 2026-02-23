@@ -25,7 +25,7 @@ tx.Commit() // succeeds
 // Unbound query — FINDS the data
 db.ExecuteQueryWithInputs(
     `[:find ?e ?a ?v :where [?e ?a ?v]]`,
-) // returns row with :module/input ✓
+) // returns tuple with :module/input ✓
 
 // Bound query — FAILS to find the data
 db.ExecuteQueryWithInputs(

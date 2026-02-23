@@ -8,7 +8,7 @@ Janus Datalog is a Datalog query engine in Go that makes three bets most Datalog
 
 **CRDT conflict resolution instead of MVCC.** Where Datomic uses a single transactor with monotonic transaction IDs, Janus uses CRDTs — last-writer-wins for scalar attributes, add-wins sets for multi-valued attributes, and RGA for ordered vectors. Transaction IDs are ElementIDs (Lamport clock + ReplicaID), not sequential integers. This means the storage layer is designed from the ground up for a world where multiple writers exist and conflicts are resolved by data structure semantics, not coordination. The choice of cardinality *is* the choice of conflict resolution strategy.
 
-**Go structs as first-class participants in the data model.** Most Datalog engines treat the host language as a string-passing client — you construct an EDN query string, ship it to the engine, and get untyped rows back. Janus provides that path, but also: a type-safe query builder that produces query ASTs directly (no parsing), struct reflection that bridges Go types to datoms and back (struct tags define the schema, `SaveStruct` writes, `PullInto` reads), and `QueryInto` that maps query results into typed structs. The impedance mismatch between Go and Datalog is treated as an engineering problem to solve, not an inherent cost to accept.
+**Go structs as first-class participants in the data model.** Most Datalog engines treat the host language as a string-passing client — you construct an EDN query string, ship it to the engine, and get untyped tuples back. Janus provides that path, but also: a type-safe query builder that produces query ASTs directly (no parsing), struct reflection that bridges Go types to datoms and back (struct tags define the schema, `SaveStruct` writes, `PullInto` reads), and `QueryInto` that maps query results into typed structs. The impedance mismatch between Go and Datalog is treated as an engineering problem to solve, not an inherent cost to accept.
 
 These two bets reinforce each other. In traditional Datomic-style Datalog, "updating" an entity means manually retracting the old value and asserting the new one — an awkward fit for struct-level operations. CRDT semantics absorb that complexity: `SaveStruct` writes new datoms, and the storage layer resolves what's current. Cardinality-one attributes use LWW (latest Tx wins, no retraction needed). Cardinality-many attributes use add-wins sets (the reflect layer diffs and emits Add/Remove ops). Cardinality-vector attributes use RGA (positional inserts with AfterRef chains). The result is that struct-level "updates" are append-only immutable writes underneath, with conflict resolution handled by data structure semantics rather than application logic. The choice of Go type — scalar, slice, or `OrderedSet` — maps directly to the CRDT strategy.
 
@@ -57,7 +57,7 @@ The most direct path. An EDN string is parsed, planned, and executed:
 results, err := d.Query(`[:find ?name ?age :where [?e :person/name ?name] [?e :person/age ?age]]`)
 ```
 
-**Call chain**: `Query` → `resolveQuery` (detects string → calls `parser.ParseQuery`) → `ExecuteQueryWithInputs` → planner → executor → `[][]interface{}`
+**Call chain**: `Query` → `resolveQuery` (detects string → calls `parser.ParseQuery`) → planner → executor → `executor.Relation` (streaming)
 
 ### Entry Point 2: Query Builder (`qb/`)
 
@@ -87,7 +87,7 @@ err := d.QueryInto(&people, query, inputs...)
 
 **Call chain**: Normal query execution → `[][]interface{}` → `reflect.QueryResultMapper.MapAll()` → populates struct slice via field tags.
 
-For scalar types (single-column queries), extracts the first column directly without struct mapping.
+For scalar types (single-symbol queries), extracts the first symbol directly without struct mapping.
 
 ### Entry Point 4: Pull API (Separate Path)
 
@@ -176,7 +176,7 @@ This ensures cheap filtering happens early, and expensive subqueries only execut
 - **Provides**: What this phase's clauses produce
 - **Keep**: What the next phase needs (computed by scanning all remaining clauses + `:find`)
 
-The invariant `Keep ⊆ Provides` ensures the executor never tries to pass forward a symbol that doesn't exist in the relation. Columns not in `Keep` are projected away between phases, keeping intermediate results narrow.
+The invariant `Keep ⊆ Provides` ensures the executor never tries to pass forward a symbol that doesn't exist in the relation. Symbols not in `Keep` are projected away between phases, keeping intermediate results narrow.
 
 ### Streaming Execution: Relation-Centric Volcano
 
@@ -214,17 +214,17 @@ Within the executor, each phase is a mini-query. The planner decided the orderin
 
 ```
 For each phase in plan:
-  Input relations from previous phase's Keep columns
+  Input relations from previous phase's Keep symbols
   For each clause in phase.Query.Where (planner-ordered):
     ├── DataPattern  → matcher.Match(pattern, bindings) → new StreamingRelation
-    ├── Expression   → evaluate over existing relations → add column (lazy)
+    ├── Expression   → evaluate over existing relations → add symbol (lazy)
     ├── Predicate    → filter existing relations (lazy)
-    ├── Subquery     → recursive ExecuteQuery
+    ├── Subquery     → recursive Query
     ├── NOT clause   → anti-join (filter where inner query matches)
     └── OR clause    → union branches or per-tuple fallback
   After each clause: collapse relation groups (join on shared symbols)
   Early terminate if any group is empty
-  Project to Keep columns for next phase (lazy)
+  Project to Keep symbols for next phase (lazy)
 ```
 
 ## How Writes Work
@@ -322,18 +322,18 @@ type PatternMatcher interface {
 
 ```go
 type Relation interface {
-    Columns() []query.Symbol
+    Symbols() []query.Symbol
     Iterator() Iterator
     Size() int
     IsEmpty() bool
-    Project(columns []query.Symbol) (Relation, error)
+    Project(symbols []query.Symbol) (Relation, error)
     Join(other Relation) Relation
     HashJoin(other Relation, joinCols []query.Symbol) Relation
     // ... filtering, aggregation, materialization
 }
 ```
 
-Everything in the executor works with Relations. Pattern matches produce them, joins combine them, expressions add columns to them, predicates filter them.
+Everything in the executor works with Relations. Pattern matches produce them, joins combine them, expressions add symbols to them, predicates filter them.
 
 **Key implementations**:
 - `MaterializedRelation` — tuples in memory, supports random access and re-iteration
@@ -455,7 +455,7 @@ Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` (uno
 
 ### Query Execution (`datalog/executor/`)
 
-`DefaultQueryExecutor` processes clauses sequentially within each phase. After each clause, relation groups are collapsed — groups sharing columns are joined, disjoint groups are kept separate. If disjoint groups remain after all clauses, it's an error (Cartesian product prevention).
+`DefaultQueryExecutor` processes clauses sequentially within each phase. After each clause, relation groups are collapsed — groups sharing symbols are joined, disjoint groups are kept separate. If disjoint groups remain after all clauses, it's an error (Cartesian product prevention).
 
 **Streaming**: Iterator composition is the default. `FilterIterator`, `ProjectIterator`, `TransformIterator` etc. chain without materialization. `BufferedIterator` wraps any iterator for re-iteration.
 
@@ -565,7 +565,7 @@ Multi-phase: T(query) = Σ T(phase_i), executed sequentially.
 **Relational query algebra with Datalog syntax:**
 - Patterns, joins, predicates, expressions, aggregations
 - Subqueries (TupleBinding, RelationBinding)
-- Order-by (multi-column, directional)
+- Order-by (multi-symbol, directional)
 - NOT/OR clauses (`not`, `not-join`, `or`, `or-join`)
 
 **Storage and data model:**

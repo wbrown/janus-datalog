@@ -29,7 +29,7 @@
 //	    ).
 //	    MustBuild()
 //
-//	results, err := db.ExecuteQuery(q)
+//	results, err := db.Query(q)
 //
 // # Variables
 //

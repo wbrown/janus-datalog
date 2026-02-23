@@ -16,7 +16,7 @@ We implemented a complete streaming preservation pipeline:
 
 ### 1. Iterator Composition
 - `FilterIterator`: Lazy filtering without materialization
-- `ProjectIterator`: Lazy projection to subset of columns
+- `ProjectIterator`: Lazy projection to subset of symbols
 - `TransformIterator`: Lazy tuple transformation
 - `PredicateFilterIterator`: Lazy predicate evaluation
 - `FunctionEvaluatorIterator`: Lazy function evaluation

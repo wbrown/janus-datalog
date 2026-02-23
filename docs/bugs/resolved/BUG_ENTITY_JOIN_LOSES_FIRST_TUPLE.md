@@ -39,8 +39,8 @@ StreamingRelation has a materialization bug when its iterator is partially consu
 
 Debug output from `relation.go:853-865`:
 ```
-[StreamingRelation.materializeOnce] Starting materialization, columns=[?bar], counter=&{0x1400027d5e0 1 false}
-[StreamingRelation.materializeOnce] Materialized 4 tuples, columns=[?bar]
+[StreamingRelation.materializeOnce] Starting materialization, symbols=[?bar], counter=&{0x1400027d5e0 1 false}
+[StreamingRelation.materializeOnce] Materialized 4 tuples, symbols=[?bar]
 ```
 
 The counter exists with `count=1` (one tuple already read), then materialization only captures 4 remaining tuples.
@@ -136,7 +136,7 @@ query := `[:find ?bar :where [?bar :price/high ?h] [?bar :price/low ?l]]`
 ### Verification
 
 - ✅ `TestEntityJoinBug` - Returns 5/5 results (was 4/5)
-- ✅ `TestMultipleAggregateSubqueriesNilBug` - Returns correct aggregates (was 0 rows)
+- ✅ `TestMultipleAggregateSubqueriesNilBug` - Returns correct aggregates (was 0 tuples)
 
 ## Impact (When Bug Was Active)
 

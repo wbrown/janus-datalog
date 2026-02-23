@@ -188,13 +188,13 @@ func distributeBatchResults(
     inputCombinations []map[query.Symbol]interface{},
 ) map[int]Relation {
 
-    // The batch result contains columns:
+    // The batch result contains symbols:
     // [correlation_vars..., agg_result_1, agg_result_2, ..., agg_result_N]
 
     // For each subquery:
     results := make(map[int]Relation)
     for i, subqIdx := range subqueryIndices {
-        // Extract just the columns for this subquery
+        // Extract just the symbols for this subquery
         // Join back with correlation variables for binding
         results[subqIdx] = extractSubqueryResults(batchResult, i)
     }
@@ -240,11 +240,11 @@ Execute pattern clauses → groups = [tuples with ?s, ?year, ?hour]
   │
   ├─ Execute ONCE with all 870 combinations as RelationInput
   │    │
-  │    └─ Batch query returns: [?s ?year ?hour ?high ?low] with 870 rows
+  │    └─ Batch query returns: [?s ?year ?hour ?high ?low] with 870 tuples
   │
   └─ Distribute results:
-       ├─ SubQ1 gets ?high column
-       └─ SubQ2 gets ?low column
+       ├─ SubQ1 gets ?high symbol
+       └─ SubQ2 gets ?low symbol
 
 Total subquery executions: 1 (batch with 2 aggregations)
 ```

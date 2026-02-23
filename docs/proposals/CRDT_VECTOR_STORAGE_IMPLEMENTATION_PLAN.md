@@ -4088,7 +4088,7 @@ func init() {
 
 // enumerate decomposes vector into (index, value) pairs
 // Usage: [(enumerate ?vec) ?idx ?val]
-// Returns: Relation with columns [?idx, ?val]
+// Returns: Relation with symbols [?idx, ?val]
 func builtinEnumerate(args []any) (Relation, error) {
     vec, ok := args[0].([]any)
     if !ok {

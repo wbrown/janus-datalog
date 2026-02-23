@@ -23,37 +23,37 @@ var (
 	ErrSymbolNotFound     = errors.New("tagged symbol not found in query results")
 )
 
-// QueryFieldMapping maps a struct field to a query result column
+// QueryFieldMapping maps a struct field to a query result symbol
 type QueryFieldMapping struct {
 	FieldIndex int          // Index in struct
 	FieldName  string       // Go field name
 	FieldType  reflect.Type // Go type
 	Tag        string       // The datalog tag value (e.g., "?name" or "(sum ?x)")
-	ColIndex   int          // Column index in result tuple (-1 if unmapped)
+	TupleIndex int          // Index in result tuple (-1 if unmapped)
 }
 
 // QueryResultMapper handles query result -> struct conversion
 type QueryResultMapper struct {
 	elemType      reflect.Type
-	mappings      []QueryFieldMapping // Query variable mappings (with ColIndex set)
+	mappings      []QueryFieldMapping // Query variable mappings (with TupleIndex set)
 	pullMappings  []QueryFieldMapping // Attribute tag mappings (for pull result maps)
 	isPullMapping bool                // true if struct uses ONLY attribute-style tags
 }
 
-// NewQueryResultMapper creates a mapper from struct type and :find column names.
+// NewQueryResultMapper creates a mapper from struct type and :find symbol names.
 // The findColumns should be the string representations of FindElements
 // (e.g., "?name", "(sum ?salary)").
 //
 // The mapper supports three modes:
-// 1. Query-style tags only (`datalog:"?name"`) - maps query result columns to struct fields
+// 1. Query-style tags only (`datalog:"?name"`) - maps query result symbols to struct fields
 // 2. Attribute-style tags only (`datalog:"person/name"`) - maps pull result maps to struct fields
 // 3. Mixed mode - both query-style AND attribute-style tags in the same struct
 //
-// For pure attribute-style structs, the query should return a pull expression column
+// For pure attribute-style structs, the query should return a pull expression symbol
 // like `[:find (pull ?e [*]) :where ...]`.
 //
 // For mixed mode, use queries like `[:find ?name (pull ?e [:person/age]) :where ...]`
-// where query variables map to their columns and attribute tags map from the pull result.
+// where query variables map to their symbols and attribute tags map from the pull result.
 func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryResultMapper, error) {
 	// Handle pointer to struct
 	if elemType.Kind() == reflect.Ptr {
@@ -64,7 +64,7 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 		return nil, fmt.Errorf("expected struct type, got %s", elemType.Kind())
 	}
 
-	// Build column index map
+	// Build symbol index map
 	colIndex := make(map[string]int)
 	for i, col := range findColumns {
 		colIndex[col] = i
@@ -94,20 +94,20 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 			FieldIndex: i,
 			FieldName:  field.Name,
 			FieldType:  field.Type,
-			ColIndex:   -1,
+			TupleIndex: -1,
 		}
 
 		// Check if this is a query symbol tag (starts with ? or ()
 		if isQueryTag(tag) {
 			mapping.Tag = tag
 
-			// Look up column index
+			// Look up symbol index
 			idx, found := colIndex[tag]
 			if !found {
 				return nil, fmt.Errorf("%w: field %s tagged with %q not found in query results %v",
 					ErrSymbolNotFound, field.Name, tag, findColumns)
 			}
-			mapping.ColIndex = idx
+			mapping.TupleIndex = idx
 			queryMappings = append(queryMappings, mapping)
 		} else if tag == "" {
 			// No tag - will use positional mapping
@@ -147,7 +147,7 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 	}
 
 	// Mixed mode: query tags AND attribute tags
-	// Query variables map from tuple columns, attribute tags map from pull result in tuple
+	// Query variables map from tuple positions, attribute tags map from pull result in tuple
 	if hasQueryTags && hasAttributeTags {
 		return &QueryResultMapper{
 			elemType:      elemType,
@@ -171,7 +171,7 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 	if hasUntagged {
 		for i := range untaggedMappings {
 			if i < len(findColumns) {
-				untaggedMappings[i].ColIndex = i
+				untaggedMappings[i].TupleIndex = i
 				untaggedMappings[i].Tag = findColumns[i] // For error messages
 			}
 		}
@@ -225,7 +225,7 @@ func (m *QueryResultMapper) MapTuple(tuple []interface{}, dest reflect.Value) er
 	// Pure pull mapping mode: expect a map value in the tuple
 	if m.isPullMapping {
 		if len(tuple) == 0 {
-			return fmt.Errorf("pull mapping expects at least one column, got empty tuple")
+			return fmt.Errorf("pull mapping expects at least one symbol, got empty tuple")
 		}
 		pullMap := m.findPullMap(tuple)
 		if pullMap == nil {
@@ -234,13 +234,13 @@ func (m *QueryResultMapper) MapTuple(tuple []interface{}, dest reflect.Value) er
 		return m.mapPullResult(pullMap, dest)
 	}
 
-	// Map query variable fields from tuple columns
+	// Map query variable fields from tuple positions
 	for _, mapping := range m.mappings {
-		if mapping.ColIndex < 0 || mapping.ColIndex >= len(tuple) {
-			continue // Skip unmapped or out-of-range columns
+		if mapping.TupleIndex < 0 || mapping.TupleIndex >= len(tuple) {
+			continue // Skip unmapped or out-of-range positions
 		}
 
-		value := tuple[mapping.ColIndex]
+		value := tuple[mapping.TupleIndex]
 		fieldVal := dest.Field(mapping.FieldIndex)
 
 		if err := setQueryValue(fieldVal, mapping.FieldType, value); err != nil {
@@ -310,7 +310,7 @@ func (m *QueryResultMapper) MapAll(tuples [][]interface{}, destSlice reflect.Val
 	for i, tuple := range tuples {
 		elem := reflect.New(m.elemType).Elem()
 		if err := m.MapTuple(tuple, elem); err != nil {
-			return fmt.Errorf("row %d: %w", i, err)
+			return fmt.Errorf("tuple %d: %w", i, err)
 		}
 		newSlice = reflect.Append(newSlice, elem)
 	}

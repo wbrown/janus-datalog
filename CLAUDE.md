@@ -245,7 +245,7 @@ The storage layer connects the query engine to BadgerDB:
 ### Multi-Source Query Architecture
 - **One interface**: `PatternMatcher` is the sole interface for all data sources. No separate `DataSource` type.
 - **SourceRouter**: Routes by `pattern.Source` field via `map[Symbol]PatternMatcher`. Also implements `PredicateAwareMatcher` (delegates predicate pushdown to underlying source) and `EntityLookupMatcher` (delegates to default `$` source for `get-else`, `missing?`, `get-some`).
-- **Source threading**: Sources are an execution context built once at the top level. `ExecuteQueryWithInputs` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
+- **Source threading**: Sources are an execution context built once at the top level. `Query()` accepts `WithSources(...)` as a functional option. The `SourceRouter` becomes the executor's `PatternMatcher`, so subqueries inherit access to all sources automatically.
 - **IsSourceSymbol**: Helper `strings.HasPrefix(string(sym), "$")` replacing all hardcoded `sym == "$"` checks.
 - **Adding new source types**: Implement `PatternMatcher`. Optionally implement `PredicateAwareMatcher` for predicate pushdown. Pass via `WithSources`.
 - **Key files**: `executor/source_router.go`, `executor/slice_source.go`, `storage/database.go` (`WithSources`, `buildSourceMap`, `validateQuerySources`), `qb/source.go`
@@ -301,7 +301,7 @@ The storage layer connects the query engine to BadgerDB:
 15. **Subqueries** - Full implementation with TupleBinding and RelationBinding support
 16. **Result/Relation unification** - Eliminated redundant Result type, unified API
 17. **Table formatter** - Markdown table formatting using tablewriter library
-18. **Order-by clause** - Full implementation with multi-column sorting and direction control
+18. **Order-by clause** - Full implementation with multi-symbol sorting and direction control
 19. **Time comparison fix** - Proper time.Time comparison in aggregations and predicates
 20. **Datomic compatibility** - ~80% feature parity (see DATOMIC_COMPATIBILITY.md)
 21. **Relations migration** - Multi-value variable support throughout codebase
@@ -431,9 +431,9 @@ The query planner organizes patterns into phases based on symbol dependencies:
 
 #### 1. Progressive Join Execution
 Within each phase, multiple relations are combined using a greedy algorithm:
-- Joins relations that share columns, keeps disjoint relations separate
+- Joins relations that share symbols, keeps disjoint relations separate
 - Early termination on empty joins to avoid wasted work
-- Uses hash joins for shared columns, prevents cross products otherwise
+- Uses hash joins for shared symbols, prevents cross products otherwise
 - Note: This is a simple greedy approach without cost-based optimization
 
 #### 2. Predicate Pushdown
@@ -500,7 +500,7 @@ The implementation follows a pragmatic approach:
 The query executor has sophisticated handling for disjoint relation groups that may arise during phase execution:
 
 1. **What are Disjoint Relations?**
-   - Relations that share no common columns (symbols)
+   - Relations that share no common symbols (symbols)
    - Cannot be joined without creating a Cartesian product
    - Example: `[?person :person/name ?name]` and `[?product :product/price ?price]` share no variables
 

@@ -162,7 +162,7 @@ type FilterIterator struct {
 
 type ProjectIterator struct {
     source Iterator
-    indices []int  // Column indices to keep
+    indices []int  // Symbol indices to keep
 }
 
 type TransformIterator struct {
@@ -213,7 +213,7 @@ Now truly streams with composition support:
 ```go
 func (r *StreamingRelation) Filter(filter Filter) Relation {
     if r.options.EnableIteratorComposition {
-        return NewStreamingRelation(r.columns,
+        return NewStreamingRelation(r.symbols,
             NewFilterIterator(r.iterator, filter))
     }
     // Fallback to materialized

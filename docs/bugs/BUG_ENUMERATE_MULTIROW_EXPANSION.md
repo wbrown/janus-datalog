@@ -1,4 +1,4 @@
-# Bug: Enumerate Multi-Row Expansion Not Handled by Expression Evaluator
+# Bug: Enumerate Multi-Tuple Expansion Not Handled by Expression Evaluator
 
 **Status:** Fixed
 **Fix:** `datalog/executor/helpers.go` — added `[][]interface{}` handler before existing `[]interface{}` path
@@ -32,30 +32,30 @@ if tb, ok := expr.Binding.(query.TupleBinding); ok {
 newTuples = append(newTuples, newTuple)  // Tuple appended with nil binding values
 ```
 
-In Go, `[][]interface{}` does not satisfy a `[]interface{}` type assertion. The assertion returns `ok=false`, the binding block is skipped, and the tuple is appended with zero values in the `?idx` and `?item` columns.
+In Go, `[][]interface{}` does not satisfy a `[]interface{}` type assertion. The assertion returns `ok=false`, the binding block is skipped, and the tuple is appended with zero values in the `?idx` and `?item` symbols.
 
 ## Consequence
 
 For a vector `["a", "b", "c"]` with binding `[(enumerate ?vec) [?idx ?item]]`:
 
 **Expected:** 3 output tuples: `[0, "a"]`, `[1, "b"]`, `[2, "c"]`
-**Actual:** 1 output tuple with nil values in ?idx and ?item columns
+**Actual:** 1 output tuple with nil values in ?idx and ?item symbols
 
-The query would either return wrong results (nil values passing through) or return zero rows (if subsequent patterns tried to join on the nil values).
+The query would either return wrong results (nil values passing through) or return zero tuples (if subsequent patterns tried to join on the nil values).
 
 ## Fix
 
-Added a `[][]interface{}` type check before the existing `[]interface{}` path (helpers.go:214-246). For each sub-tuple in the multi-row result:
+Added a `[][]interface{}` type check before the existing `[]interface{}` path (helpers.go:214-246). For each sub-tuple in the multi-tuple result:
 
 1. Creates a new output tuple (copy of the input tuple)
 2. Populates binding variables from the sub-tuple
 3. Appends to result — one output tuple per vector element
 
 Handles both cases:
-- **`hasAllBindings`** (binding variables already exist as columns): overwrites existing column positions
-- **new columns** (binding variables are new): fills positions in the extended column list
+- **`hasAllBindings`** (binding variables already exist as symbols): overwrites existing symbol positions
+- **new symbols** (binding variables are new): fills positions in the extended symbol list
 
-This is the one-input-row-to-many-output-rows expansion that enumerate requires. All other expressions remain 1:1 (one input row produces one output row).
+This is the one-input-tuple-to-many-output-tuples expansion that enumerate requires. All other expressions remain 1:1 (one input tuple produces one output tuple).
 
 ## Related
 

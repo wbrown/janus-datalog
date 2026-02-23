@@ -36,7 +36,7 @@ The cache is checked in two places in `MatchWithConstraints` (`matcher_relations
 if m.cache != nil && m.txID == 0 {
     if a := m.extractValue(pattern.GetA()); a != nil {   // ← nil for Variables
         if aKw, ok := a.(datalog.Keyword); ok {
-            cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw)
+            cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw)
             if handled {
                 return cacheResult, nil
             }
@@ -52,7 +52,7 @@ if m.cache != nil && m.txID == 0 {
 if m.cache != nil && m.txID == 0 && e != nil && a != nil {
     if eIdent, ok := e.(datalog.Identity); ok {
         if aKw, ok := a.(datalog.Keyword); ok {
-            cacheResult, handled := m.matchFromCache(pattern, columns, eIdent, aKw, v, card)
+            cacheResult, handled := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card)
             if handled {
                 return cacheResult, nil
             }
@@ -178,7 +178,7 @@ if aValue == nil && bindingRel != nil {
 }
 if aValue != nil {
     if aKw, ok := aValue.(datalog.Keyword); ok {
-        cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, columns, aKw)
+        cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw)
         if handled {
             return cacheResult, nil
         }
@@ -186,7 +186,7 @@ if aValue != nil {
 }
 ```
 
-For scalar inputs (single-row binding), `extractSingleValueFromBindings` returns the value directly. For collection/relation inputs (multi-row bindings), this gets more complex — each row may have a different A value. The simplest initial fix handles the single-value case (which covers the `HasAttribute` pattern) and falls through to storage scans for multi-value A bindings.
+For scalar inputs (single-tuple binding), `extractSingleValueFromBindings` returns the value directly. For collection/relation inputs (multi-tuple bindings), this gets more complex — each tuple may have a different A value. The simplest initial fix handles the single-value case (which covers the `HasAttribute` pattern) and falls through to storage scans for multi-value A bindings.
 
 ### What NOT to do
 
@@ -196,9 +196,9 @@ For scalar inputs (single-row binding), `extractSingleValueFromBindings` returns
 
 ### Optimization phases
 
-**Phase 1** (high impact, simple): Handle single-value A from bindings. This covers `HasAttribute` (`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`) which is the dominant pattern in downstream applications. Extract A from a single-row binding, use the existing `matchWithBindingsFromCache`.
+**Phase 1** (high impact, simple): Handle single-value A from bindings. This covers `HasAttribute` (`[:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]`) which is the dominant pattern in downstream applications. Extract A from a single-tuple binding, use the existing `matchWithBindingsFromCache`.
 
-**Phase 2** (medium impact): Handle collection/relation A inputs. For each row in the binding relation, extract the (E, A) pair and do a cache lookup. This is a loop over `cache.GetOrResolve` calls with tuple building per hit.
+**Phase 2** (medium impact): Handle collection/relation A inputs. For each tuple in the binding relation, extract the (E, A) pair and do a cache lookup. This is a loop over `cache.GetOrResolve` calls with tuple building per hit.
 
 **Phase 3** (low impact, complex): Handle join-bound A. When A gets its value from a prior join (not from `:in`), the binding relation passed to the matcher already contains A's value. The same Phase 1/2 logic applies — the binding relation is the binding relation regardless of where it came from.
 

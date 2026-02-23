@@ -159,7 +159,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 		// Debug output
 		t.Logf("Result IsEmpty: %v", result.IsEmpty())
 		t.Logf("Result Size: %d", result.Size())
-		t.Logf("Result Columns: %v", result.Columns())
+		t.Logf("Result Symbols: %v", result.Symbols())
 
 		assert.False(t, result.IsEmpty(), "Should have aggregation results")
 

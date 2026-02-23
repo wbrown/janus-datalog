@@ -313,7 +313,7 @@ func (d *Database) AnnotationHandler() annotations.Handler {
 }
 
 // SetAnnotationHandler sets a handler for query tracing and performance observability.
-// When set, all queries executed via ExecuteQueryWithInputs will emit annotation events.
+// When set, all queries executed via Query will emit annotation events.
 // Pass nil to disable annotations.
 //
 // Example:
@@ -590,129 +590,6 @@ func extractQueryOptions(inputs []interface{}) (queryOptions, []interface{}) {
 	return opts, regularInputs
 }
 
-// ExecuteQuery executes a Datalog query and returns results as a slice of tuples.
-// The query can be either an EDN string or a *query.Query from the query builder.
-//
-// Example with string:
-//
-//	results, err := db.ExecuteQuery(`[:find ?name :where [?e :person/name ?name]]`)
-//
-// Example with query builder:
-//
-//	e, name := qb.NewVar("e"), qb.NewVar("name")
-//	q := qb.Query().Find(name).Where(qb.Pat(e, PersonName, name)).MustBuild()
-//	results, err := db.ExecuteQuery(q)
-func (d *Database) ExecuteQuery(q interface{}) ([][]interface{}, error) {
-	return d.ExecuteQueryWithInputs(q)
-}
-
-// ExecuteQueryWithInputs executes a parameterized Datalog query with input parameters.
-// The query can be either an EDN string or a *query.Query from the query builder.
-// This provides type-safe query execution without string formatting.
-//
-// Input parameters are matched with the :in clause in order (after the $ database parameter):
-//   - Scalar inputs: ?name
-//   - Collection inputs: [?foods ...]
-//   - Tuple inputs: [[?name ?age]]
-//   - Relation inputs: [[?name ?age] ...]
-//
-// Examples:
-//
-//	// Scalar input with string query
-//	results, err := db.ExecuteQueryWithInputs(
-//	    `[:find ?e :in $ ?name :where [?e :person/name ?name]]`,
-//	    "Alice",
-//	)
-//
-//	// Scalar input with query builder
-//	e, name, minAge := qb.NewVar("e"), qb.NewVar("name"), qb.NewVar("minAge")
-//	q := qb.Query().Find(e).In(qb.DB, qb.Scalar(minAge)).Where(...).MustBuild()
-//	results, err := db.ExecuteQueryWithInputs(q, 25)
-//
-//	// Collection input
-//	results, err := db.ExecuteQueryWithInputs(
-//	    `[:find ?e ?food :in $ [?food ...] :where [?e :person/likes ?food]]`,
-//	    []string{"pizza", "pasta"},
-//	)
-func (d *Database) ExecuteQueryWithInputs(queryInput interface{}, inputs ...interface{}) ([][]interface{}, error) {
-	// Separate QueryOptions from regular inputs
-	opts, regularInputs := extractQueryOptions(inputs)
-
-	// Resolve the query (string or *query.Query)
-	q, err := resolveQuery(queryInput)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Build source map — database is always $
-	sources := buildSourceMap(opts.sources, d.Matcher())
-
-	// Validate declared sources exist
-	if err := validateQuerySources(q, sources); err != nil {
-		return nil, err
-	}
-
-	// Create SourceRouter with full source map
-	router := executor.NewSourceRouter(sources)
-
-	// Convert inputs to Relations based on :in clause
-	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Execute with the SourceRouter as the PatternMatcher
-	planOpts := DefaultPlannerOptions()
-	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, d, planOpts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
-	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
-	}
-
-	// Convert result to [][]interface{}
-	return relationToSlice(result), nil
-}
-
-// ExecuteQueryRelation executes a query and returns the Relation directly.
-// This preserves column names (via Symbols()) which are lost in ExecuteQuery.
-func (d *Database) ExecuteQueryRelation(queryInput interface{}, inputs ...interface{}) (executor.Relation, error) {
-	// Separate QueryOptions from regular inputs
-	opts, regularInputs := extractQueryOptions(inputs)
-
-	q, err := resolveQuery(queryInput)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve query: %w", err)
-	}
-
-	// Build source map — database is always $
-	sources := buildSourceMap(opts.sources, d.Matcher())
-
-	// Validate declared sources exist
-	if err := validateQuerySources(q, sources); err != nil {
-		return nil, err
-	}
-
-	// Create SourceRouter with full source map
-	router := executor.NewSourceRouter(sources)
-
-	inputRelations, err := d.convertInputsToRelations(q, regularInputs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Execute with the SourceRouter as the PatternMatcher
-	planOpts := DefaultPlannerOptions()
-	planOpts.Cache = d.planCache
-	exec := executor.NewExecutorWithOptions(router, d, planOpts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
-	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
-	}
-
-	return result, nil
-}
-
 // Explain returns the query plan for a query without executing it.
 // The query can be either an EDN string or a *query.Query from the query builder.
 // This is useful for understanding index selection, phase structure, and
@@ -736,7 +613,7 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
-	// Validate inputs match :in clause (same validation as ExecuteQueryWithInputs)
+	// Validate inputs match :in clause (same validation as Query)
 	_, err = d.convertInputsToRelations(q, inputs)
 	if err != nil {
 		return nil, err
@@ -772,9 +649,9 @@ func (ar *AnalyzeResult) String() string {
 	sb.WriteString(fmt.Sprintf("  Total time: %v\n", ar.TotalTime))
 	size := ar.Result.Size()
 	if size >= 0 {
-		sb.WriteString(fmt.Sprintf("  Result rows: %d\n", size))
+		sb.WriteString(fmt.Sprintf("  Result tuples: %d\n", size))
 	} else {
-		sb.WriteString("  Result rows: (streaming - call Result.Size() to materialize)\n")
+		sb.WriteString("  Result tuples: (streaming - call Result.Size() to materialize)\n")
 	}
 
 	// Group events by type for summary
@@ -956,42 +833,75 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		return fmt.Errorf("failed to resolve query: %w", err)
 	}
 
+	// Execute query as streaming relation
+	rel, err := d.Query(q, inputs...)
+	if err != nil {
+		return err
+	}
+	iter := rel.Iterator()
+	defer iter.Close()
+
 	// Check if element type is a struct or scalar
 	// time.Time and Keyword are structs but treated as scalars
 	// Identity is a pointer type alias and goes through scalar path automatically
 	if elemType.Kind() == reflect.Struct && !isScalarStructType(elemType) {
 		// Struct path - use mapper
-		findColumns := extractFindColumnStrings(q.Find)
-		mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
+		findSymbols := extractFindSymbolStrings(q.Find)
+		mapper, err := dlreflect.NewQueryResultMapper(elemType, findSymbols)
 		if err != nil {
 			return err
 		}
 
-		results, err := d.ExecuteQueryWithInputs(q, inputs...)
-		if err != nil {
-			return err
+		newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
+		for iter.Next() {
+			elem := reflect.New(elemType).Elem()
+			if err := mapper.MapTuple(iter.Tuple(), elem); err != nil {
+				return err
+			}
+			newSlice = reflect.Append(newSlice, elem)
 		}
-
-		return mapper.MapAll(results, sliceVal)
+		sliceVal.Set(newSlice)
+		return nil
 	}
 
-	// Scalar path - single column queries only
+	// Scalar path - single symbol queries only
 	if len(q.Find) != 1 {
 		return fmt.Errorf("scalar QueryInto requires exactly 1 find element, got %d", len(q.Find))
 	}
 
-	results, err := d.ExecuteQueryWithInputs(q, inputs...)
-	if err != nil {
-		return err
-	}
+	newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
+	for iter.Next() {
+		tuple := iter.Tuple()
+		if len(tuple) == 0 {
+			continue
+		}
 
-	// Map scalar results directly
-	return mapScalarResults(results, sliceVal, elemIsPtr)
+		var elemVal reflect.Value
+		if elemIsPtr {
+			elemVal = reflect.New(elemType).Elem()
+		} else {
+			elemVal = reflect.New(elemType).Elem()
+		}
+
+		if err := setScalarValue(elemVal, tuple[0]); err != nil {
+			return err
+		}
+
+		if elemIsPtr {
+			ptr := reflect.New(elemType)
+			ptr.Elem().Set(elemVal)
+			newSlice = reflect.Append(newSlice, ptr)
+		} else {
+			newSlice = reflect.Append(newSlice, elemVal)
+		}
+	}
+	sliceVal.Set(newSlice)
+	return nil
 }
 
 // QueryOneInto executes a Datalog query expecting at most one result and populates a value.
 // The query can be either an EDN string or a *query.Query from the query builder.
-// Supports both struct destinations (multi-column) and scalar destinations (single-column).
+// Supports both struct destinations (multi-symbol) and scalar destinations (single-symbol).
 // Returns (true, nil) if a result was found and mapped successfully.
 // Returns (false, nil) if the query returns no results (empty result is valid, not an error).
 // Returns (false, ErrMultipleResults) if more than one result exists.
@@ -1020,70 +930,63 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 		return false, fmt.Errorf("failed to resolve query: %w", err)
 	}
 
+	// Execute query as streaming relation
+	rel, err := d.Query(q, inputs...)
+	if err != nil {
+		return false, err
+	}
+	iter := rel.Iterator()
+	defer iter.Close()
+
+	// Read first tuple
+	if !iter.Next() {
+		return false, nil
+	}
+	firstTuple := make([]interface{}, len(iter.Tuple()))
+	copy(firstTuple, iter.Tuple())
+
+	// Check for multiple results
+	if iter.Next() {
+		return false, dlreflect.ErrMultipleResults
+	}
+
 	// Check if destination is a struct (but not time.Time, Identity, Keyword which are scalars)
 	isStruct := elemType.Kind() == reflect.Struct && !isScalarStructType(elemType)
 
 	if isStruct {
-		// Struct path - use mapper
-		findColumns := extractFindColumnStrings(q.Find)
-		mapper, err := dlreflect.NewQueryResultMapper(elemType, findColumns)
+		findSymbols := extractFindSymbolStrings(q.Find)
+		mapper, err := dlreflect.NewQueryResultMapper(elemType, findSymbols)
 		if err != nil {
 			return false, err
 		}
-
-		results, err := d.ExecuteQueryWithInputs(q, inputs...)
-		if err != nil {
-			return false, err
-		}
-
-		if len(results) == 0 {
-			return false, nil
-		}
-		if len(results) > 1 {
-			return false, dlreflect.ErrMultipleResults
-		}
-
-		if err := mapper.MapTuple(results[0], elemVal); err != nil {
+		if err := mapper.MapTuple(firstTuple, elemVal); err != nil {
 			return false, err
 		}
 		return true, nil
 	}
 
-	// Scalar path - single column queries only
+	// Scalar path - single symbol queries only
 	if len(q.Find) != 1 {
 		return false, fmt.Errorf("scalar QueryOneInto requires exactly 1 find element, got %d", len(q.Find))
 	}
 
-	results, err := d.ExecuteQueryWithInputs(q, inputs...)
-	if err != nil {
-		return false, err
-	}
-
-	if len(results) == 0 {
-		return false, nil
-	}
-	if len(results) > 1 {
-		return false, dlreflect.ErrMultipleResults
-	}
-
-	// Map single scalar result
-	if len(results[0]) == 0 {
+	if len(firstTuple) == 0 {
 		return false, fmt.Errorf("query returned empty tuple")
 	}
-	if err := setScalarValue(elemVal, results[0][0]); err != nil {
+	if err := setScalarValue(elemVal, firstTuple[0]); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-// extractFindColumnStrings extracts column names from :find clause as strings.
+// extractFindSymbolStrings extracts symbol names from :find clause as strings.
 // For variables, returns "?name". For aggregates, returns "(sum ?x)".
-func extractFindColumnStrings(find []query.FindElement) []string {
-	columns := make([]string, len(find))
+func extractFindSymbolStrings(find []query.FindElement) []string {
+	symbols := make([]string, len(find))
 	for i, elem := range find {
-		columns[i] = elem.String()
+		symbols[i] = elem.String()
 	}
-	return columns
+	return symbols
 }
 
 // Scalar struct types - these are structs but treated as scalar values
@@ -1098,7 +1001,7 @@ func isScalarStructType(t reflect.Type) bool {
 	return t == timeType || t == identityType || t == keywordType
 }
 
-// mapScalarResults maps single-column query results to a scalar slice.
+// mapScalarResults maps single-symbol query results to a scalar slice.
 func mapScalarResults(results [][]interface{}, sliceVal reflect.Value, elemIsPtr bool) error {
 	elemType := sliceVal.Type().Elem()
 	if elemIsPtr {
@@ -1121,7 +1024,7 @@ func mapScalarResults(results [][]interface{}, sliceVal reflect.Value, elemIsPtr
 		}
 
 		if err := setScalarValue(elemVal, val); err != nil {
-			return fmt.Errorf("row %d: %w", i, err)
+			return fmt.Errorf("tuple %d: %w", i, err)
 		}
 
 		if elemIsPtr {
@@ -2104,17 +2007,17 @@ func (t *Transaction) validateUniqueness() error {
 			return fmt.Errorf("failed to check uniqueness for %s: %w", d.A.String(), err)
 		}
 
-		// Find the index of ?e in the result columns
-		columns := results.Columns()
+		// Find the index of ?e in the result symbols
+		symbols := results.Symbols()
 		eIndex := -1
-		for i, col := range columns {
-			if col == datalog.NewSymbol("?e") {
+		for i, sym := range symbols {
+			if sym == datalog.NewSymbol("?e") {
 				eIndex = i
 				break
 			}
 		}
 		if eIndex < 0 {
-			continue // No entity column in results (shouldn't happen)
+			continue // No entity symbol in results (shouldn't happen)
 		}
 
 		// Check if any existing datoms have a different entity
@@ -2283,36 +2186,6 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 	}
 
 	return inputRelations, nil
-}
-
-// relationToSlice converts an executor.Relation to [][]interface{}
-func relationToSlice(rel executor.Relation) [][]interface{} {
-	// Handle nil relation (e.g., query returned no results)
-	if rel == nil {
-		return [][]interface{}{}
-	}
-	// Don't preallocate if size is unknown (-1)
-	size := rel.Size()
-	var rows [][]interface{}
-	if size >= 0 {
-		rows = make([][]interface{}, 0, size)
-	} else {
-		rows = make([][]interface{}, 0)
-	}
-
-	it := rel.Iterator()
-	defer it.Close()
-
-	for it.Next() {
-		tuple := it.Tuple()
-		row := make([]interface{}, len(tuple))
-		for i, v := range tuple {
-			row[i] = v
-		}
-		rows = append(rows, row)
-	}
-
-	return rows
 }
 
 // Pull retrieves entity data according to a pull pattern

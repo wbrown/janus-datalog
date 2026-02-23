@@ -33,7 +33,7 @@ func BenchmarkSymmetricVsAsymmetricHashJoin(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					columns:  leftCols,
+					symbols:  leftCols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -43,7 +43,7 @@ func BenchmarkSymmetricVsAsymmetricHashJoin(b *testing.B) {
 					},
 				}
 				right := &StreamingRelation{
-					columns:  rightCols,
+					symbols:  rightCols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -69,7 +69,7 @@ func BenchmarkSymmetricVsAsymmetricHashJoin(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					columns:  leftCols,
+					symbols:  leftCols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -79,7 +79,7 @@ func BenchmarkSymmetricVsAsymmetricHashJoin(b *testing.B) {
 					},
 				}
 				right := &StreamingRelation{
-					columns:  rightCols,
+					symbols:  rightCols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -125,7 +125,7 @@ func BenchmarkSymmetricHashJoinTableSize(b *testing.B) {
 
 				for i := 0; i < b.N; i++ {
 					left := &StreamingRelation{
-						columns:  leftCols,
+						symbols:  leftCols,
 						iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
@@ -135,7 +135,7 @@ func BenchmarkSymmetricHashJoinTableSize(b *testing.B) {
 						},
 					}
 					right := &StreamingRelation{
-						columns:  rightCols,
+						symbols:  rightCols,
 						iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{

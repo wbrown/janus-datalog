@@ -69,7 +69,7 @@ func TestBatchScanDebug(t *testing.T) {
 		// First get entities (this simulates having bindings)
 		rel1, _ := matcher.Match(pattern, nil)
 
-		// Create binding relation with just the entity column
+		// Create binding relation with just the entity symbol
 		var tuples []executor.Tuple
 		it := rel1.Iterator()
 		for it.Next() {

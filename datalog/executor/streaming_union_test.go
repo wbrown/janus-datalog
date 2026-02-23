@@ -46,10 +46,10 @@ func TestUnionBuilder_Streaming(t *testing.T) {
 		t.Errorf("Expected UnionRelation (streaming), got %T", result)
 	}
 
-	// Verify columns
+	// Verify symbols
 	expectedColumns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-	if !symbolsEqual(result.Columns(), expectedColumns) {
-		t.Errorf("Expected columns %v, got %v", expectedColumns, result.Columns())
+	if !symbolsEqual(result.Symbols(), expectedColumns) {
+		t.Errorf("Expected symbols %v, got %v", expectedColumns, result.Symbols())
 	}
 
 	// Collect all tuples
@@ -74,7 +74,7 @@ func TestUnionBuilder_Streaming(t *testing.T) {
 
 	for _, expected := range expectedValues {
 		if !foundValues[expected] {
-			t.Errorf("Missing value %d in first column", expected)
+			t.Errorf("Missing value %d in first symbol", expected)
 		}
 	}
 }
@@ -158,7 +158,7 @@ func TestUnionBuilder_WithColumns_Matching(t *testing.T) {
 	}
 	builder := NewStreamingUnionBuilder(opts)
 
-	// Relations with matching columns
+	// Relations with matching symbols
 	rel1 := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{{1, 2}},
@@ -169,7 +169,7 @@ func TestUnionBuilder_WithColumns_Matching(t *testing.T) {
 		[]Tuple{{3, 4}},
 	)
 
-	// Union with matching columns
+	// Union with matching symbols
 	result, err := builder.UnionWithColumns(
 		[]Relation{rel1, rel2},
 		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
@@ -182,9 +182,9 @@ func TestUnionBuilder_WithColumns_Matching(t *testing.T) {
 		t.Errorf("Expected 2 tuples, got %d", result.Size())
 	}
 
-	// Verify columns
-	if !symbolsEqual(result.Columns(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
-		t.Errorf("Columns mismatch: %v", result.Columns())
+	// Verify symbols
+	if !symbolsEqual(result.Symbols(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
+		t.Errorf("Symbols mismatch: %v", result.Symbols())
 	}
 }
 
@@ -194,7 +194,7 @@ func TestUnionBuilder_WithColumns_NeedProjection(t *testing.T) {
 	}
 	builder := NewStreamingUnionBuilder(opts)
 
-	// Relations with different column order
+	// Relations with different symbol order
 	rel1 := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
 		[]Tuple{{1, 2}},
@@ -205,7 +205,7 @@ func TestUnionBuilder_WithColumns_NeedProjection(t *testing.T) {
 		[]Tuple{{4, 3}},
 	)
 
-	// Union with specific column order
+	// Union with specific symbol order
 	result, err := builder.UnionWithColumns(
 		[]Relation{rel1, rel2},
 		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
@@ -218,9 +218,9 @@ func TestUnionBuilder_WithColumns_NeedProjection(t *testing.T) {
 		t.Errorf("Expected 2 tuples, got %d", result.Size())
 	}
 
-	// Verify columns are in requested order
-	if !symbolsEqual(result.Columns(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
-		t.Errorf("Columns mismatch: %v", result.Columns())
+	// Verify symbols are in requested order
+	if !symbolsEqual(result.Symbols(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
+		t.Errorf("Symbols mismatch: %v", result.Symbols())
 	}
 
 	// Verify values are correctly ordered
@@ -241,7 +241,7 @@ func TestUnionBuilder_WithColumns_Empty(t *testing.T) {
 	}
 	builder := NewStreamingUnionBuilder(opts)
 
-	// Empty relations with column spec
+	// Empty relations with symbol spec
 	result, err := builder.UnionWithColumns(
 		[]Relation{},
 		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
@@ -254,9 +254,9 @@ func TestUnionBuilder_WithColumns_Empty(t *testing.T) {
 		t.Errorf("Expected 0 tuples, got %d", result.Size())
 	}
 
-	// Should have correct columns
-	if !symbolsEqual(result.Columns(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
-		t.Errorf("Columns mismatch: %v", result.Columns())
+	// Should have correct symbols
+	if !symbolsEqual(result.Symbols(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
+		t.Errorf("Symbols mismatch: %v", result.Symbols())
 	}
 }
 
@@ -271,7 +271,7 @@ func TestUnionBuilder_WithColumns_SingleRelation(t *testing.T) {
 		[]Tuple{{2, 1}},
 	)
 
-	// Should project single relation to match columns
+	// Should project single relation to match symbols
 	result, err := builder.UnionWithColumns(
 		[]Relation{rel},
 		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
@@ -280,8 +280,8 @@ func TestUnionBuilder_WithColumns_SingleRelation(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if !symbolsEqual(result.Columns(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
-		t.Errorf("Columns mismatch: %v", result.Columns())
+	if !symbolsEqual(result.Symbols(), []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}) {
+		t.Errorf("Symbols mismatch: %v", result.Symbols())
 	}
 
 	tuple := result.Get(0)

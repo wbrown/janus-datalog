@@ -120,35 +120,35 @@ func TestCSEOpportunity(t *testing.T) {
 		t.Errorf("Expected 0 merged queries (pure aggregations not decorrelated), got %d", mergedQueryCount)
 	}
 
-	// Log columns for debugging
-	t.Logf("Result columns: %v", result.Columns())
+	// Log symbols for debugging
+	t.Logf("Result symbols: %v", result.Symbols())
 
 	// Verify actual result values
 	for i := 0; i < result.Size(); i++ {
-		row := result.Get(i)
+		tuple := result.Get(i)
 		if i == 0 {
-			t.Logf("First row: %v", row)
+			t.Logf("First tuple: %v", tuple)
 		}
 
-		name := row[0].(string)
+		name := tuple[0].(string)
 
 		// Aggregates return float64 for sum/count/avg
 		var val1, val2 float64
-		switch v := row[1].(type) {
+		switch v := tuple[1].(type) {
 		case int64:
 			val1 = float64(v)
 		case float64:
 			val1 = v
 		default:
-			t.Fatalf("Unexpected type for row[1]: %T", v)
+			t.Fatalf("Unexpected type for tuple[1]: %T", v)
 		}
-		switch v := row[2].(type) {
+		switch v := tuple[2].(type) {
 		case int64:
 			val2 = float64(v)
 		case float64:
 			val2 = v
 		default:
-			t.Fatalf("Unexpected type for row[2]: %T", v)
+			t.Fatalf("Unexpected type for tuple[2]: %T", v)
 		}
 
 		// Category A (0): products 0-9, prices 100-109, stock 0,5,10,15,20,25,30,35,40,45
@@ -161,7 +161,7 @@ func TestCSEOpportunity(t *testing.T) {
 
 		// Check which order they're in
 		if val1 == expectedTotalStock && val2 == expectedMaxPrice {
-			t.Logf("NOTE: Columns appear to be swapped (got stock, price instead of price, stock)")
+			t.Logf("NOTE: Symbols appear to be swapped (got stock, price instead of price, stock)")
 		}
 	}
 }

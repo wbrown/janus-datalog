@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -354,7 +355,7 @@ func TestQueryExecutionUsesCache(t *testing.T) {
 	db.Cache().Clear()
 
 	// Execute a Datalog query - this should use the cache path
-	result, err := db.ExecuteQuery(`[:find ?name :where [?e :person/name ?name]]`)
+	result, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :person/name ?name]]`))
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, "Alice", result[0][0])
@@ -405,14 +406,14 @@ func TestJoinQueryUsesCache(t *testing.T) {
 
 	// Execute a join query - the second pattern should use cache after ?e is bound
 	// from the first pattern
-	result, err := db.ExecuteQuery(`[:find ?name ?city :where [?e :person/name ?name] [?e :person/city ?city]]`)
+	result, err := executor.CollectTuples(db.Query(`[:find ?name ?city :where [?e :person/name ?name] [?e :person/city ?city]]`))
 	require.NoError(t, err)
 	require.Len(t, result, 2, "should return 2 person results")
 
 	// Verify results contain expected data
 	names := make(map[string]string)
-	for _, row := range result {
-		names[row[0].(string)] = row[1].(string)
+	for _, tuple := range result {
+		names[tuple[0].(string)] = tuple[1].(string)
 	}
 	assert.Equal(t, "NYC", names["Alice"])
 	assert.Equal(t, "LA", names["Bob"])
@@ -458,14 +459,14 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 	db.Cache().Clear()
 
 	// Execute query for cardinality-many attribute
-	result, err := db.ExecuteQuery(`[:find ?tag :where [?e :person/name "Alice"] [?e :person/tags ?tag]]`)
+	result, err := executor.CollectTuples(db.Query(`[:find ?tag :where [?e :person/name "Alice"] [?e :person/tags ?tag]]`))
 	require.NoError(t, err)
 	require.Len(t, result, 2, "should return 2 tags")
 
 	// Verify results
 	tags := make(map[interface{}]bool)
-	for _, row := range result {
-		tags[row[0]] = true
+	for _, tuple := range result {
+		tags[tuple[0]] = true
 	}
 	assert.True(t, tags["developer"])
 	assert.True(t, tags["golang"])

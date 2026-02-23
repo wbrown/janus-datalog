@@ -22,7 +22,7 @@ If executed left-to-right with 1M follows relationships, the first join produces
 
 **Dynamic join ordering with early termination**:
 
-1. Group relations by shared columns (connectivity)
+1. Group relations by shared symbols (connectivity)
 2. Join progressively as relations become available
 3. Terminate immediately on empty results
 4. Keep disjoint relation groups separate

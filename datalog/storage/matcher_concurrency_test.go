@@ -18,7 +18,7 @@ func TestTupleBuilderCacheConcurrency(t *testing.T) {
 
 	matcher := NewBadgerMatcher(db.Store())
 
-	// Create test pattern and columns
+	// Create test pattern and symbols
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Variable{Name: datalog.NewSymbol("?e")},
@@ -26,7 +26,7 @@ func TestTupleBuilderCacheConcurrency(t *testing.T) {
 			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 	// Spawn 1000 goroutines accessing cache concurrently
 	// This should trigger the concurrent map access bug if not fixed
@@ -38,7 +38,7 @@ func TestTupleBuilderCacheConcurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				builder := matcher.getTupleBuilder(pattern, columns)
+				builder := matcher.getTupleBuilder(pattern, symbols)
 				if builder == nil {
 					select {
 					case errorChan <- nil:
@@ -74,13 +74,13 @@ func TestTupleBuilderCacheSharing(t *testing.T) {
 			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
 
 	// Get builder from base matcher
-	builder1 := baseMatcher.getTupleBuilder(pattern, columns)
+	builder1 := baseMatcher.getTupleBuilder(pattern, symbols)
 
 	// Get builder from AsOf matcher - should be the same instance (shared cache)
-	builder2 := asOfMatcher.getTupleBuilder(pattern, columns)
+	builder2 := asOfMatcher.getTupleBuilder(pattern, symbols)
 
 	if builder1 != builder2 {
 		t.Error("AsOf matcher should share cache with base matcher")

@@ -12,7 +12,7 @@ type nonReusingIterator struct {
 	pattern       *query.DataPattern
 	bindingRel    executor.Relation
 	bindingTuples []executor.Tuple
-	columns       []query.Symbol
+	symbols       []query.Symbol
 	constraints   []executor.StorageConstraint
 
 	// Iterator state

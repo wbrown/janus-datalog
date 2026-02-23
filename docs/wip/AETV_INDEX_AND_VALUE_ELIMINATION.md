@@ -280,7 +280,7 @@ func TestAETVSortOrder(t *testing.T) {
 
 ```go
 func TestIndexSelectionMatrix(t *testing.T) {
-    // Test all rows of the selection matrix
+    // Test all tuples of the selection matrix
     // Verify correct index is chosen for each scenario
 }
 

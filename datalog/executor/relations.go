@@ -16,13 +16,13 @@ func (rs Relations) Project(symbols ...query.Symbol) Relation {
 	}
 
 	var bestRel Relation
-	minExtraColumns := int(^uint(0) >> 1) // Max int
+	minExtraSymbols := int(^uint(0) >> 1) // Max int
 
 	for _, rel := range rs {
-		if containsAll(rel.Columns(), symbols) {
-			extraColumns := len(rel.Columns()) - len(symbols)
-			if extraColumns < minExtraColumns {
-				minExtraColumns = extraColumns
+		if containsAll(rel.Symbols(), symbols) {
+			extraSymbols := len(rel.Symbols()) - len(symbols)
+			if extraSymbols < minExtraSymbols {
+				minExtraSymbols = extraSymbols
 				bestRel = rel
 			}
 		}
@@ -47,28 +47,28 @@ func (rs Relations) FindBestForPattern(pattern *query.DataPattern) Relation {
 
 	for _, rel := range rs {
 		score := 0
-		cols := rel.Columns()
-		colSet := make(map[query.Symbol]bool)
-		for _, col := range cols {
-			colSet[col] = true
+		syms := rel.Symbols()
+		symSet := make(map[query.Symbol]bool)
+		for _, sym := range syms {
+			symSet[sym] = true
 		}
 
 		// Score based on which positions are bound
 		// E position is most selective (uses EAVT index efficiently)
-		if v, ok := pattern.GetE().(query.Variable); ok && colSet[v.Name] {
+		if v, ok := pattern.GetE().(query.Variable); ok && symSet[v.Name] {
 			score += 1000
 		}
 		// A position is moderately selective (uses AEVT index)
-		if v, ok := pattern.GetA().(query.Variable); ok && colSet[v.Name] {
+		if v, ok := pattern.GetA().(query.Variable); ok && symSet[v.Name] {
 			score += 100
 		}
 		// V position is least selective (uses VAET index)
-		if v, ok := pattern.GetV().(query.Variable); ok && colSet[v.Name] {
+		if v, ok := pattern.GetV().(query.Variable); ok && symSet[v.Name] {
 			score += 10
 		}
 		// T position is rarely used
 		if len(pattern.Elements) > 3 {
-			if v, ok := pattern.GetT().(query.Variable); ok && colSet[v.Name] {
+			if v, ok := pattern.GetT().(query.Variable); ok && symSet[v.Name] {
 				score += 1
 			}
 		}
@@ -104,8 +104,8 @@ func (rs Relations) FindRelationsForSymbols(symbols ...query.Symbol) Relations {
 
 	var result Relations
 	for _, rel := range rs {
-		for _, col := range rel.Columns() {
-			if symbolSet[col] {
+		for _, sym := range rel.Symbols() {
+			if symbolSet[sym] {
 				result = append(result, rel)
 				break
 			}
@@ -129,9 +129,9 @@ func (rs Relations) Product() Relation {
 	return NewProductRelation(rs)
 }
 
-// Collapse joins relations that share columns and returns all relation groups.
+// Collapse joins relations that share symbols and returns all relation groups.
 // Relations that can be joined are combined into single relations.
-// Relations that share no columns remain separate.
+// Relations that share no symbols remain separate.
 func (rs Relations) Collapse(ctx Context) Relations {
 	if len(rs) == 0 {
 		return Relations{}
@@ -160,8 +160,8 @@ func (rs Relations) Collapse(ctx Context) Relations {
 			changed = false
 
 			for i := 0; i < len(remaining); i++ {
-				// Check if this relation shares columns with current group
-				if hasSharedColumns(currentGroup, remaining[i]) {
+				// Check if this relation shares symbols with current group
+				if hasSharedSymbols(currentGroup, remaining[i]) {
 					// Join them
 					currentGroup = ctx.JoinRelations(currentGroup, remaining[i], func() Relation {
 						return currentGroup.Join(remaining[i])
@@ -186,13 +186,13 @@ func (rs Relations) Collapse(ctx Context) Relations {
 	return groups
 }
 
-// hasSharedColumns checks if two relations share any columns
-func hasSharedColumns(r1, r2 Relation) bool {
-	cols1 := r1.Columns()
-	cols2 := r2.Columns()
+// hasSharedSymbols checks if two relations share any symbols
+func hasSharedSymbols(r1, r2 Relation) bool {
+	syms1 := r1.Symbols()
+	syms2 := r2.Symbols()
 
-	for _, c1 := range cols1 {
-		for _, c2 := range cols2 {
+	for _, c1 := range syms1 {
+		for _, c2 := range syms2 {
 			if c1 == c2 {
 				return true
 			}
@@ -202,30 +202,30 @@ func hasSharedColumns(r1, r2 Relation) bool {
 	return false
 }
 
-// containsAll checks if cols contains all symbols
-func containsAll(cols []query.Symbol, symbols []query.Symbol) bool {
-	colSet := make(map[query.Symbol]bool)
-	for _, col := range cols {
-		colSet[col] = true
+// containsAll checks if syms contains all symbols
+func containsAll(syms []query.Symbol, symbols []query.Symbol) bool {
+	symSet := make(map[query.Symbol]bool)
+	for _, sym := range syms {
+		symSet[sym] = true
 	}
 
 	for _, sym := range symbols {
-		if !colSet[sym] {
+		if !symSet[sym] {
 			return false
 		}
 	}
 	return true
 }
 
-// containsAny checks if cols contains any of the symbols
-func containsAny(cols []query.Symbol, symbols []query.Symbol) bool {
-	colSet := make(map[query.Symbol]bool)
-	for _, col := range cols {
-		colSet[col] = true
+// containsAny checks if syms contains any of the symbols
+func containsAny(syms []query.Symbol, symbols []query.Symbol) bool {
+	symSet := make(map[query.Symbol]bool)
+	for _, sym := range syms {
+		symSet[sym] = true
 	}
 
 	for _, sym := range symbols {
-		if colSet[sym] {
+		if symSet[sym] {
 			return true
 		}
 	}

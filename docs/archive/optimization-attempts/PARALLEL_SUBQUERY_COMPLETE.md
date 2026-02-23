@@ -73,7 +73,7 @@ type SubqueryExecutionOptions struct {
 | Execution Time | 18.23s | 3.49s | **5.22× faster** |
 | Time per Hour | 124.03 ms | 23.69 ms | **5.24× faster** |
 | Memory | ~19.6 GB | ~19.3 GB | Comparable |
-| Correctness | 147 rows | 147 rows | ✅ Identical |
+| Correctness | 147 tuples | 147 tuples | ✅ Identical |
 
 **Why 5.2× on 10-core CPU?**
 - Workload is CPU-bound (joins, aggregations)

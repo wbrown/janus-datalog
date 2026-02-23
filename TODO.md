@@ -9,7 +9,7 @@
 - Expression clauses with arithmetic and string operations
 - Aggregations (sum, count, avg, min, max)
 - Subqueries with proper scoping (semantically correct)
-- Order-by clause with multi-column sorting
+- Order-by clause with multi-symbol sorting
 - Time extraction functions
 - **Pull API with nested references and cycle detection (9× faster than queries)**
 - **Schema support: type validation, cardinality, uniqueness (<1% write overhead)**

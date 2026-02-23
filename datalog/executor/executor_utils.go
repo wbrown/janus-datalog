@@ -54,22 +54,24 @@ func injectConditionalAggregates(findClause []query.FindElement, condAggs []plan
 	return result
 }
 
-func extractFindColumns(findElements []query.FindElement) []query.Symbol {
-	var columns []query.Symbol
+func extractFindSymbols(findElements []query.FindElement) []query.Symbol {
+	var symbols []query.Symbol
 	for _, elem := range findElements {
 		switch e := elem.(type) {
 		case query.FindVariable:
-			columns = append(columns, e.Symbol)
+			symbols = append(symbols, e.Symbol)
 		case query.FindAggregate:
-			columns = append(columns, datalog.NewSymbol(e.String()))
+			symbols = append(symbols, datalog.NewSymbol(e.String()))
+		case query.FindPull:
+			symbols = append(symbols, e.Variable)
 		}
 	}
-	return columns
+	return symbols
 }
 
-// MaterializeResult converts a streaming relation to a materialized result with the specified columns.
+// MaterializeResult converts a streaming relation to a materialized result with the specified symbols.
 // This is a pure function that collects all tuples from the iterator into memory.
-func MaterializeResult(rel Relation, columns []query.Symbol) Relation {
+func MaterializeResult(rel Relation, symbols []query.Symbol) Relation {
 	var tuples []Tuple
 	collectTuplesInto(&tuples, rel)
 
@@ -91,7 +93,7 @@ func MaterializeResult(rel Relation, columns []query.Symbol) Relation {
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	return NewMaterializedRelationWithOptions(columns, tuples, opts)
+	return NewMaterializedRelationWithOptions(symbols, tuples, opts)
 }
 
 // Result is deprecated - use Relation instead.
@@ -99,20 +101,20 @@ func MaterializeResult(rel Relation, columns []query.Symbol) Relation {
 type Result = MaterializedRelation
 
 // SortRelation sorts a relation according to the order-by clauses.
-// This is a pure function that performs multi-column sorting with configurable direction.
+// This is a pure function that performs multi-symbol sorting with configurable direction.
 // It materializes the relation if not already materialized.
 func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	// Materialize if not already materialized
 	var tuples []Tuple
 	collectTuplesInto(&tuples, rel)
 
-	// Get column indices for sort variables
-	columns := rel.Columns()
+	// Get symbol indices for sort variables
+	symbols := rel.Symbols()
 	sortIndices := make([]int, len(orderBy))
 	for i, clause := range orderBy {
 		idx := -1
-		for j, col := range columns {
-			if col == clause.Variable {
+		for j, sym := range symbols {
+			if sym == clause.Variable {
 				idx = j
 				break
 			}
@@ -144,10 +146,10 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	})
 
 	opts := rel.Options()
-	return NewMaterializedRelationWithOptions(columns, tuples, opts)
+	return NewMaterializedRelationWithOptions(symbols, tuples, opts)
 }
 
-// computeAggregate computes an aggregate over all values in a column
+// computeAggregate computes an aggregate over all values in a symbol
 func computeAggregate(rel Relation, colIdx int, function string) interface{} {
 	var values []interface{}
 
@@ -273,12 +275,12 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 			continue
 
 		case query.ScalarInput:
-			// Single value input - expect a relation with one column and one row
+			// Single value input - expect a relation with one symbol and one tuple
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
 				if rel.Size() > 0 {
-					// Create a new relation with the input symbol as column name
-					columns := []query.Symbol{inp.Symbol}
+					// Create a new relation with the input symbol as symbol name
+					symbols := []query.Symbol{inp.Symbol}
 					tuples := make([]Tuple, 0, rel.Size())
 
 					it := rel.Iterator()
@@ -292,17 +294,17 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 					it.Close()
 
 					opts := rel.Options()
-					boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(columns, tuples, opts))
+					boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(symbols, tuples, opts))
 				}
 				relationIndex++
 			}
 
 		case query.RelationInput:
-			// Multiple tuples input - use the relation directly with renamed columns
+			// Multiple tuples input - use the relation directly with renamed symbols
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
-				if rel.Size() > 0 && len(inp.Symbols) == len(rel.Columns()) {
-					// Create a new relation with the input variables as column names
+				if rel.Size() > 0 && len(inp.Symbols) == len(rel.Symbols()) {
+					// Create a new relation with the input variables as symbol names
 					tuples := make([]Tuple, 0, rel.Size())
 					collectTuplesInto(&tuples, rel)
 
@@ -313,10 +315,10 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 			}
 
 		case query.TupleInput:
-			// Single tuple input - expect a relation with one row
+			// Single tuple input - expect a relation with one tuple
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
-				if rel.Size() > 0 && len(inp.Symbols) == len(rel.Columns()) {
+				if rel.Size() > 0 && len(inp.Symbols) == len(rel.Symbols()) {
 					// Take the first tuple and bind to variables
 					it := rel.Iterator()
 					if it.Next() {
@@ -331,12 +333,12 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 			}
 
 		case query.CollectionInput:
-			// Collection input - all values in one column
+			// Collection input - all values in one symbol
 			// IMPORTANT: Always add the collection relation, even if empty.
 			// An empty collection should produce 0 results when joined.
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
-				columns := []query.Symbol{inp.Symbol}
+				symbols := []query.Symbol{inp.Symbol}
 				tuples := make([]Tuple, 0, rel.Size())
 
 				it := rel.Iterator()
@@ -350,7 +352,7 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 				it.Close()
 
 				opts := rel.Options()
-				boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(columns, tuples, opts))
+				boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(symbols, tuples, opts))
 				relationIndex++
 			}
 		}

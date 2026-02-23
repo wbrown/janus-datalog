@@ -98,11 +98,11 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 	for i := 0; i < size; i++ {
 		tuples = append(tuples, Tuple{i, fmt.Sprintf("name%d", i), i * 10, i * 100})
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?value")}
+	symbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?value")}
 
 	// Create initial relation with options
 	source := newMockIterator(tuples)
-	rel := NewStreamingRelationWithOptions(columns, source, opts)
+	rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 	// Apply operations
 	var current Relation = rel
@@ -124,7 +124,7 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 			current = current.Filter(filter)
 
 		case "project":
-			// Project to subset of columns
+			// Project to subset of symbols
 			projected, err := current.Project([]query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?score")})
 			assert.NoError(t, err)
 			current = projected
@@ -204,10 +204,10 @@ func benchmarkScenarioWithOpts(b *testing.B, size int, filterRatio float64, opts
 	for i := 0; i < size; i++ {
 		tuples = append(tuples, Tuple{i, i * 10, i * 100})
 	}
-	columns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 	source := newMockIterator(tuples)
-	rel := NewStreamingRelationWithOptions(columns, source, opts)
+	rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
 	// Apply aggressive filter
 	threshold := int(float64(size) * filterRatio)

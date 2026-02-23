@@ -50,7 +50,7 @@ func (m *MemoryPatternMatcher) MatchWithConstraints(
 	bindings Relations,
 	constraints []StorageConstraint,
 ) (Relation, error) {
-	columns := pattern.ExtractColumns()
+	symbols := pattern.ExtractColumns()
 
 	// Extract options from bindings if available
 	var opts ExecutorOptions
@@ -64,7 +64,7 @@ func (m *MemoryPatternMatcher) MatchWithConstraints(
 		if err != nil {
 			return nil, err
 		}
-		return datomsToRelationWithOptions(datoms, pattern, columns, opts), nil
+		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}
 
 	// Find best binding relation
@@ -75,7 +75,7 @@ func (m *MemoryPatternMatcher) MatchWithConstraints(
 		if err != nil {
 			return nil, err
 		}
-		return datomsToRelationWithOptions(datoms, pattern, columns, opts), nil
+		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}
 
 	// Match with bindings
@@ -91,13 +91,13 @@ func (m *MemoryPatternMatcher) MatchWithConstraints(
 
 		// Convert datoms to tuples
 		for _, datom := range datoms {
-			if tuple := query.DatomToTuple(datom, pattern, columns); tuple != nil {
+			if tuple := query.DatomToTuple(datom, pattern, symbols); tuple != nil {
 				allTuples = append(allTuples, tuple)
 			}
 		}
 	}
 
-	return NewMaterializedRelationWithOptions(columns, allTuples, bindingRel.Options()), nil
+	return NewMaterializedRelationWithOptions(symbols, allTuples, bindingRel.Options()), nil
 }
 
 // matchWithoutBindings returns datoms matching the pattern without bindings
@@ -149,7 +149,7 @@ func evaluateConstraints(datom *datalog.Datom, constraints []StorageConstraint) 
 // bindPatternFromTuple creates a new pattern with variables replaced by tuple values
 func bindPatternFromTuple(pattern *query.DataPattern, tuple Tuple, rel Relation) *query.DataPattern {
 	// Get symbol positions in the relation
-	symbols := rel.Columns()
+	symbols := rel.Symbols()
 	symbolIndex := make(map[query.Symbol]int)
 	for i, sym := range symbols {
 		symbolIndex[sym] = i
@@ -286,7 +286,7 @@ func matchesConstant(value, constant interface{}) bool {
 type datomIterator struct {
 	datoms  []datalog.Datom
 	pattern *query.DataPattern
-	columns []query.Symbol
+	symbols []query.Symbol
 	pos     int
 	current Tuple
 }
@@ -294,7 +294,7 @@ type datomIterator struct {
 func (it *datomIterator) Next() bool {
 	for it.pos+1 < len(it.datoms) {
 		it.pos++
-		if tuple := query.DatomToTuple(it.datoms[it.pos], it.pattern, it.columns); tuple != nil {
+		if tuple := query.DatomToTuple(it.datoms[it.pos], it.pattern, it.symbols); tuple != nil {
 			it.current = tuple
 			return true
 		}
@@ -311,28 +311,28 @@ func (it *datomIterator) Close() error {
 }
 
 // datomsToRelation converts datoms to a streaming relation (zero-copy lazy evaluation)
-func datomsToRelation(datoms []datalog.Datom, pattern *query.DataPattern, columns []query.Symbol) Relation {
-	return datomsToRelationWithOptions(datoms, pattern, columns, ExecutorOptions{})
+func datomsToRelation(datoms []datalog.Datom, pattern *query.DataPattern, symbols []query.Symbol) Relation {
+	return datomsToRelationWithOptions(datoms, pattern, symbols, ExecutorOptions{})
 }
 
 // datomsToRelationWithOptions converts datoms to a streaming relation with options
-func datomsToRelationWithOptions(datoms []datalog.Datom, pattern *query.DataPattern, columns []query.Symbol, opts ExecutorOptions) Relation {
-	if len(columns) == 0 || len(datoms) == 0 {
-		return NewMaterializedRelationWithOptions(columns, nil, opts)
+func datomsToRelationWithOptions(datoms []datalog.Datom, pattern *query.DataPattern, symbols []query.Symbol, opts ExecutorOptions) Relation {
+	if len(symbols) == 0 || len(datoms) == 0 {
+		return NewMaterializedRelationWithOptions(symbols, nil, opts)
 	}
 
 	iterator := &datomIterator{
 		datoms:  datoms,
 		pattern: pattern,
-		columns: columns,
+		symbols: symbols,
 		pos:     -1,
 	}
 
-	return NewStreamingRelationWithOptions(columns, iterator, opts)
+	return NewStreamingRelationWithOptions(symbols, iterator, opts)
 }
 
 // PatternToRelation converts pattern match results to a relation
 func PatternToRelation(datoms []datalog.Datom, pattern *query.DataPattern) Relation {
-	columns := pattern.ExtractColumns()
-	return datomsToRelation(datoms, pattern, columns)
+	symbols := pattern.ExtractColumns()
+	return datomsToRelation(datoms, pattern, symbols)
 }

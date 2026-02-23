@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/wbrown/janus-datalog/datalog"
@@ -71,15 +72,17 @@ func NewKeyOnlyIterator(store *BadgerStore, index IndexType, start, end []byte) 
 
 	it := txn.NewIterator(opts)
 
+	bi := &BadgerIterator{
+		txn:   txn,
+		it:    it,
+		start: start,
+		end:   end,
+		index: index,
+	}
+	runtime.SetFinalizer(bi, (*BadgerIterator).Close)
 	return &KeyOnlyIterator{
-		BadgerIterator: &BadgerIterator{
-			txn:   txn,
-			it:    it,
-			start: start,
-			end:   end,
-			index: index,
-		},
-		encoder: store.encoder,
+		BadgerIterator: bi,
+		encoder:        store.encoder,
 	}, nil
 }
 

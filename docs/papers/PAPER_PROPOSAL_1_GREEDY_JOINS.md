@@ -61,7 +61,7 @@ SELECT * FROM customers WHERE country = 'Micronesia';
 ```datalog
 [?s :symbol/ticker "NVDA"]  ; Obviously very selective (1 symbol)
 [?p :price/symbol ?s]        ; Natural join path via ?s
-[?p :price/time ?t]          ; Same entity, more columns
+[?p :price/time ?t]          ; Same entity, more symbols
 [(year ?t) ?y]               ; Derived attribute
 [(= ?y 2025)]                ; Filter
 ```
@@ -100,9 +100,9 @@ SELECT * FROM customers WHERE country = 'Micronesia';
 For query: R1 ⋈ R2 ⋈ R3
 
 1. Gather statistics:
-   - |R1| = 1,000,000 rows
-   - |R2| = 100,000 rows
-   - |R3| = 10,000 rows
+   - |R1| = 1,000,000 tuples
+   - |R2| = 100,000 tuples
+   - |R3| = 10,000 tuples
    - Selectivity factors for join predicates
 
 2. Estimate costs for all orderings:
@@ -200,9 +200,9 @@ func CollapseRelations(relations []Relation) []Relation {
 
 **Key features:**
 1. **No statistics** required
-2. **Natural join detection** via shared columns
+2. **Natural join detection** via shared symbols
 3. **Early termination** on empty intermediate results
-4. **Disjoint handling** returns multiple groups if no shared columns
+4. **Disjoint handling** returns multiple groups if no shared symbols
 
 ### 3.2 Integration with Query Planner
 
@@ -211,7 +211,7 @@ The greedy algorithm operates on relations produced by the planner:
 ```
 Planner Output: Ordered list of patterns by selectivity heuristics
                 ↓
-Greedy Collapser: Progressive joining based on shared columns
+Greedy Collapser: Progressive joining based on shared symbols
                 ↓
 Result: Single relation (or error on Cartesian product)
 ```
@@ -225,7 +225,7 @@ Result: Single relation (or error on Cartesian product)
 
 **Theorem 3.1** (Correctness): The greedy algorithm produces a valid join order for all queries without Cartesian products.
 
-**Proof sketch:** By construction, only relations with shared columns are joined. Relations without shared columns remain in separate groups. Cartesian products are explicitly rejected.
+**Proof sketch:** By construction, only relations with shared symbols are joined. Relations without shared symbols remain in separate groups. Cartesian products are explicitly rejected.
 
 **Theorem 3.2** (Early Termination): If any intermediate join produces zero tuples, the algorithm terminates immediately with empty result.
 

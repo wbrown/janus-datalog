@@ -17,7 +17,7 @@ type simpleBatchScanner struct {
 	bindingRel  executor.Relation
 	position    int // Which position has bindings (0=E, 1=A, 2=V, 3=T)
 	index       IndexType
-	columns     []query.Symbol
+	symbols     []query.Symbol
 	constraints []executor.StorageConstraint
 
 	// Results
@@ -35,7 +35,7 @@ func newSimpleBatchScanner(
 	bindingRel executor.Relation,
 	position int,
 	index IndexType,
-	columns []query.Symbol,
+	symbols []query.Symbol,
 	constraints []executor.StorageConstraint,
 ) *simpleBatchScanner {
 	return &simpleBatchScanner{
@@ -44,10 +44,10 @@ func newSimpleBatchScanner(
 		bindingRel:   bindingRel,
 		position:     position,
 		index:        index,
-		columns:      columns,
+		symbols:      symbols,
 		constraints:  constraints,
 		resultIndex:  -1,
-		tupleBuilder: matcher.getTupleBuilder(pattern, columns),
+		tupleBuilder: matcher.getTupleBuilder(pattern, symbols),
 	}
 }
 

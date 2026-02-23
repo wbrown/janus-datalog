@@ -85,8 +85,8 @@ iter := &hashJoinIterator{
     seen:         NewTupleKeyMapWithCapacity(expectedResults),
     buildIsLeft:  buildIsLeft,
     joinCols:     joinCols,
-    leftCols:     left.Columns(),
-    rightCols:    right.Columns(),
+    leftCols:     left.Symbols(),
+    rightCols:    right.Symbols(),
     probeIndices: probeIndices,
     options:      opts,
     matchIdx:     0,
@@ -94,7 +94,7 @@ iter := &hashJoinIterator{
 
 // Return streaming result
 return &StreamingRelation{
-    columns:  outputCols,
+    symbols:  outputCols,
     iterator: iter,
     size:     -1, // unknown size until consumed
     options:  opts,
@@ -317,7 +317,7 @@ return NewMaterializedRelationWithOptions(outputCols, results, opts)
 // StreamingRelation enforces single-use semantics via panic if Iterator() called twice
 // Caller can explicitly call Materialize() if multiple iterations needed
 return &StreamingRelation{
-    columns:  outputCols,
+    symbols:  outputCols,
     iterator: iter,
     size:     -1, // unknown size until consumed
     options:  opts,
