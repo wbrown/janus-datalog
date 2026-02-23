@@ -92,6 +92,7 @@ func (s *simpleBatchScanner) buildBindingSet() map[string]executor.Tuple {
 
 	// Get all tuples from the binding relation
 	it := s.bindingRel.Iterator()
+	defer it.Close()
 	for it.Next() {
 		tuple := it.Tuple()
 		if s.position < len(tuple) {

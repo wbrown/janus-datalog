@@ -66,6 +66,7 @@ go test -v ./package -run TestName
 
 ## Test Timeouts
 
+- **Do NOT add `-timeout` to `go test` commands, or use `-timeout 0`.** Use the default timeout. No exceptions.
 - Timeouts mean WAIT or TEST DIFFERENTLY, not COMMIT ANYWAY
 - Use longer timeout values on tool calls (e.g., 600000ms for slow tests)
 - Run smaller test subsets if full suite times out

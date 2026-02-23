@@ -78,6 +78,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
 
 	iter := rel.Iterator()
+	defer iter.Close()
 	for iter.Next() {
 		tuple := iter.Tuple()
 
@@ -176,6 +177,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	}
 
 	iter := rel.Iterator()
+	defer iter.Close()
 	for iter.Next() {
 		tuple := iter.Tuple()
 

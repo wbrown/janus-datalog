@@ -14,6 +14,17 @@ These files contain critical implementation patterns, common pitfalls, and testi
 
 ---
 
+## Test Commands
+
+```bash
+go test -count=1 ./...          # Full suite
+go test -v ./package -run Test  # Single test
+```
+
+**Do NOT add `-timeout` to `go test` commands, or use `-timeout 0`.** Use the default timeout. No exceptions.
+
+---
+
 ## Architectural Authority
 
 **The user owns all architectural decisions. Claude implements them.**
