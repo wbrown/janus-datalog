@@ -25,7 +25,7 @@ func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executo
 	// Separate QueryOptions from regular inputs
 	opts, regularInputs := extractQueryOptions(inputs)
 
-	q, err := resolveQuery(queryInput)
+	q, err := d.resolveQuery(queryInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}

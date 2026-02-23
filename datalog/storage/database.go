@@ -20,11 +20,19 @@ import (
 )
 
 // resolveQuery converts a query input (string or *query.Query) to *query.Query.
-// This enables the query builder to work seamlessly with database methods.
-func resolveQuery(q interface{}) (*query.Query, error) {
+// String inputs are cached in d.parseCache to avoid re-parsing identical queries.
+func (d *Database) resolveQuery(q interface{}) (*query.Query, error) {
 	switch v := q.(type) {
 	case string:
-		return parser.ParseQuery(v)
+		if cached, ok := d.parseCache.Get(v); ok {
+			return cached, nil
+		}
+		parsed, err := parser.ParseQuery(v)
+		if err != nil {
+			return nil, err
+		}
+		d.parseCache.Set(v, parsed)
+		return parsed, nil
 	case *query.Query:
 		return v, nil
 	default:
@@ -39,6 +47,7 @@ type Database struct {
 	mu                sync.RWMutex
 	activeTx          map[*Transaction]bool
 	planCache         *planner.PlanCache    // Shared query plan cache
+	parseCache        *ParseCache           // Shared query parse cache
 	schema            schema.SchemaProvider // Optional schema for validation
 	annotationHandler annotations.Handler   // Optional handler for query tracing
 	clock             *LamportClock         // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
@@ -143,6 +152,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		store:             store,
 		activeTx:          make(map[*Transaction]bool),
 		planCache:         planner.NewPlanCache(1000, 0),
+		parseCache:        NewParseCache(1000),
 		schema:            opts.Schema,
 		annotationHandler: opts.AnnotationHandler,
 		clock:             clock,
@@ -526,6 +536,16 @@ func (d *Database) ClearPlanCache() {
 	}
 }
 
+// ParseCache returns the database's query parse cache
+func (d *Database) ParseCache() *ParseCache {
+	return d.parseCache
+}
+
+// SetParseCache sets a custom parse cache or disables caching (if nil)
+func (d *Database) SetParseCache(cache *ParseCache) {
+	d.parseCache = cache
+}
+
 // QueryOption configures query execution.
 type QueryOption func(*queryOptions)
 
@@ -608,7 +628,7 @@ func extractQueryOptions(inputs []interface{}) (queryOptions, []interface{}) {
 //   - Predicate and expression assignment
 func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*planner.RealizedPlan, error) {
 	// Resolve the query (string or *query.Query)
-	q, err := resolveQuery(queryInput)
+	q, err := d.resolveQuery(queryInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
@@ -735,7 +755,7 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 	startTime := time.Now()
 
 	// Resolve the query (string or *query.Query)
-	q, err := resolveQuery(queryInput)
+	q, err := d.resolveQuery(queryInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve query: %w", err)
 	}
@@ -828,7 +848,7 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	}
 
 	// Resolve the query (string or *query.Query)
-	q, err := resolveQuery(queryInput)
+	q, err := d.resolveQuery(queryInput)
 	if err != nil {
 		return fmt.Errorf("failed to resolve query: %w", err)
 	}
@@ -925,7 +945,7 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 	elemType := elemVal.Type()
 
 	// Resolve the query (string or *query.Query)
-	q, err := resolveQuery(queryInput)
+	q, err := d.resolveQuery(queryInput)
 	if err != nil {
 		return false, fmt.Errorf("failed to resolve query: %w", err)
 	}
