@@ -377,7 +377,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 
 		// Early termination on empty
 		if len(groups) == 0 {
-			return nil, nil
+			return emptyRelationForQuery(plan.Query), nil
 		}
 
 		// For last phase, must collapse to single relation (error on Cartesian product)
@@ -390,7 +390,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 
 	// Return the final single relation
 	if len(currentGroups) == 0 {
-		return nil, nil
+		return emptyRelationForQuery(plan.Query), nil
 	}
 
 	finalResult := currentGroups[0]
@@ -657,7 +657,7 @@ func (e *Executor) executeRealizedNonIterating(
 
 		// Early termination on empty
 		if len(groups) == 0 {
-			return nil, nil
+			return emptyRelationForQuery(plan.Query), nil
 		}
 
 		// For last phase, must collapse to single relation (error on Cartesian product)
@@ -670,7 +670,7 @@ func (e *Executor) executeRealizedNonIterating(
 
 	// Return the final single relation
 	if len(currentGroups) == 0 {
-		return nil, nil
+		return emptyRelationForQuery(plan.Query), nil
 	}
 
 	finalResult := currentGroups[0]

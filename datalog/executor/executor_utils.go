@@ -54,6 +54,14 @@ func injectConditionalAggregates(findClause []query.FindElement, condAggs []plan
 	return result
 }
 
+// emptyRelationForQuery returns an empty MaterializedRelation with the correct
+// symbols for the given query's :find clause. This ensures Query never returns
+// nil — callers always get a valid (possibly empty) Relation.
+func emptyRelationForQuery(q *query.Query) Relation {
+	symbols := extractFindSymbols(q.Find)
+	return NewMaterializedRelation(symbols, nil)
+}
+
 func extractFindSymbols(findElements []query.FindElement) []query.Symbol {
 	var symbols []query.Symbol
 	for _, elem := range findElements {
