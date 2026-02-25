@@ -377,6 +377,151 @@ func TestElementIDPointerValueCrossComparison(t *testing.T) {
 	}
 }
 
+// TestValuesEqualSlices tests ValuesEqual with slice types.
+// These are critical for vector literal matching in data patterns:
+// stored vectors are typed ([]string, []int64) while pattern values
+// from the parser are []interface{}.
+func TestValuesEqualSlices(t *testing.T) {
+	t.Run("empty []interface{} equal", func(t *testing.T) {
+		a := []interface{}{}
+		b := []interface{}{}
+		if !ValuesEqual(a, b) {
+			t.Error("two empty []interface{} should be equal")
+		}
+	})
+
+	t.Run("populated []interface{} equal", func(t *testing.T) {
+		a := []interface{}{"x", "y"}
+		b := []interface{}{"x", "y"}
+		if !ValuesEqual(a, b) {
+			t.Error("identical []interface{} should be equal")
+		}
+	})
+
+	t.Run("populated []interface{} not equal", func(t *testing.T) {
+		a := []interface{}{"x", "y"}
+		b := []interface{}{"x", "z"}
+		if ValuesEqual(a, b) {
+			t.Error("different []interface{} should not be equal")
+		}
+	})
+
+	t.Run("different length []interface{}", func(t *testing.T) {
+		a := []interface{}{"x"}
+		b := []interface{}{"x", "y"}
+		if ValuesEqual(a, b) {
+			t.Error("different length slices should not be equal")
+		}
+	})
+
+	t.Run("[]string equal", func(t *testing.T) {
+		a := []string{"a", "b"}
+		b := []string{"a", "b"}
+		if !ValuesEqual(a, b) {
+			t.Error("identical []string should be equal")
+		}
+	})
+
+	t.Run("[]string not equal", func(t *testing.T) {
+		a := []string{"a", "b"}
+		b := []string{"a", "c"}
+		if ValuesEqual(a, b) {
+			t.Error("different []string should not be equal")
+		}
+	})
+
+	t.Run("[]int64 equal", func(t *testing.T) {
+		a := []int64{1, 2, 3}
+		b := []int64{1, 2, 3}
+		if !ValuesEqual(a, b) {
+			t.Error("identical []int64 should be equal")
+		}
+	})
+
+	t.Run("[]int64 not equal", func(t *testing.T) {
+		a := []int64{1, 2}
+		b := []int64{1, 3}
+		if ValuesEqual(a, b) {
+			t.Error("different []int64 should not be equal")
+		}
+	})
+
+	t.Run("empty []string equal", func(t *testing.T) {
+		a := []string{}
+		b := []string{}
+		if !ValuesEqual(a, b) {
+			t.Error("two empty []string should be equal")
+		}
+	})
+
+	// Cross-type: typed slice vs []interface{} — this is the critical case
+	// for vector literal matching. The parser produces []interface{} from
+	// the query, but storage returns []string, []int64, etc.
+	t.Run("[]string vs []interface{} with same values", func(t *testing.T) {
+		a := []string{"a", "b"}
+		b := []interface{}{"a", "b"}
+		if !ValuesEqual(a, b) {
+			t.Error("[]string and []interface{} with same string elements should be equal")
+		}
+	})
+
+	t.Run("[]interface{} vs []string with same values", func(t *testing.T) {
+		a := []interface{}{"a", "b"}
+		b := []string{"a", "b"}
+		if !ValuesEqual(a, b) {
+			t.Error("[]interface{} and []string with same string elements should be equal")
+		}
+	})
+
+	t.Run("[]int64 vs []interface{} with same values", func(t *testing.T) {
+		a := []int64{1, 2, 3}
+		b := []interface{}{int64(1), int64(2), int64(3)}
+		if !ValuesEqual(a, b) {
+			t.Error("[]int64 and []interface{} with same int64 elements should be equal")
+		}
+	})
+
+	t.Run("empty []string vs empty []interface{}", func(t *testing.T) {
+		a := []string{}
+		b := []interface{}{}
+		if !ValuesEqual(a, b) {
+			t.Error("empty []string and empty []interface{} should be equal")
+		}
+	})
+
+	t.Run("[]any with Keywords equal", func(t *testing.T) {
+		a := []interface{}{NewKeyword(":flag/active"), NewKeyword(":flag/visible")}
+		b := []interface{}{NewKeyword(":flag/active"), NewKeyword(":flag/visible")}
+		if !ValuesEqual(a, b) {
+			t.Error("[]any with same Keywords should be equal")
+		}
+	})
+
+	t.Run("[]any with Keywords not equal", func(t *testing.T) {
+		a := []interface{}{NewKeyword(":flag/active")}
+		b := []interface{}{NewKeyword(":flag/other")}
+		if ValuesEqual(a, b) {
+			t.Error("[]any with different Keywords should not be equal")
+		}
+	})
+
+	t.Run("slice vs non-slice", func(t *testing.T) {
+		a := []interface{}{"x"}
+		b := "x"
+		if ValuesEqual(a, b) {
+			t.Error("slice vs non-slice should not be equal")
+		}
+	})
+
+	t.Run("non-slice vs slice", func(t *testing.T) {
+		a := "x"
+		b := []interface{}{"x"}
+		if ValuesEqual(a, b) {
+			t.Error("non-slice vs slice should not be equal")
+		}
+	})
+}
+
 // TestElementIDZeroValues tests comparison with zero/HEAD ElementID
 func TestElementIDZeroValues(t *testing.T) {
 	zero := ElementIDZero

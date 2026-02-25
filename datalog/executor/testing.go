@@ -251,29 +251,9 @@ func compareTuplesEqual(a, b Tuple) bool {
 		return false
 	}
 	for i := range a {
-		if !compareValuesEqual(a[i], b[i]) {
+		if !datalog.ValuesEqual(a[i], b[i]) {
 			return false
 		}
 	}
 	return true
-}
-
-func compareValuesEqual(a, b interface{}) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-
-	// Handle Identity
-	if aId, ok := a.(datalog.Identity); ok {
-		if bId, ok := b.(datalog.Identity); ok {
-			return aId.L85() == bId.L85()
-		}
-		return false
-	}
-
-	// Simple comparison
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
