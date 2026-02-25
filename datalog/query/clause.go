@@ -130,6 +130,14 @@ func BranchHasExpressions(branch []Clause) bool {
 			return true
 		case *GroundPredicate:
 			return true
+		case Predicate:
+			// Predicates that require input symbols (e.g., DatabaseFunctionPredicate
+			// for missing?, Comparison for [(< ?x 5)]) need outer bindings to
+			// evaluate — union mode passes nil. Predicates with no required symbols
+			// (e.g., HistoryPredicate) can work in union mode.
+			if pred, ok := c.(Predicate); ok && len(pred.RequiredSymbols()) > 0 {
+				return true
+			}
 		}
 	}
 	return false

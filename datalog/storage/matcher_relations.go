@@ -95,7 +95,8 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			if kw, ok := aResolved.(datalog.Keyword); ok {
 				if attr := m.schema.GetAttribute(kw); attr != nil {
 					if attr.Cardinality == schema.CardinalityVector {
-						return m.matchVectorWithBindings(pattern, bindingRel, symbols, kw, attr.ValueType)
+						vBound := m.extractValue(pattern.GetV())
+						return m.matchVectorWithBindings(pattern, bindingRel, symbols, kw, vBound, attr.ValueType)
 					}
 				}
 			}
@@ -297,9 +298,13 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 				useAddWinsResolution = true
 			}
 		} else {
-			// V is bound - for cardinality-many, this is a membership check
-			if card == schema.CardinalityMany {
+			// V is bound
+			switch card {
+			case schema.CardinalityMany:
 				useMembershipCheck = true
+			case schema.CardinalityVector:
+				// Vector literal: resolve RGA then compare against bound V
+				useVectorResolution = true
 			}
 		}
 	} else if e == nil && a != nil && v != nil && card == schema.CardinalityOne {
@@ -321,6 +326,11 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 			BoundV:          v,
 		}
 		return m.matchWithVValidation(pattern, bindingRel, symbols, strategy, nil)
+	} else if e == nil && a != nil && card == schema.CardinalityVector {
+		// E unbound, A bound, cardinality-vector
+		// Scan all entities with this attribute, resolve each vector, compare against V.
+		// Pass v (nil for unbound, []interface{} for bound literal).
+		return m.matchVectorScanAllEntities(pattern, symbols, a, v, valueType)
 	} else if e == nil && a != nil && card == schema.CardinalityMany {
 		// E is unbound, A is bound, cardinality-many
 		// Need to scan all entities with this attribute and apply add-wins resolution
@@ -345,7 +355,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 
 	// For cardinality-vector with E+A bound: use vector resolution
 	if useVectorResolution {
-		return m.matchCardinalityVectorAsRelation(pattern, symbols, e, a, valueType)
+		return m.matchCardinalityVectorAsRelation(pattern, symbols, e, a, v, valueType)
 	}
 
 	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
@@ -1076,7 +1086,7 @@ func (m *BadgerMatcher) matchFromCache(
 		}
 		if v != nil {
 			// V is bound - check if it matches
-			if !valuesEqual(val, v) {
+			if !datalog.ValuesEqual(val, v) {
 				return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
 			}
 		}
@@ -1107,16 +1117,19 @@ func (m *BadgerMatcher) matchFromCache(
 
 	case schema.CardinalityVector:
 		list := entry.VectorList()
-		if len(list) == 0 {
+		resolved := typedVector(list, valueType)
+		if v != nil {
+			// V is bound - compare resolved vector against bound value
+			if !datalog.ValuesEqual(resolved, v) {
+				return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
+			}
+			// Matched — fall through to build tuple
+		}
+		if len(list) == 0 && v == nil {
+			// Empty vector with unbound V — no tuples
 			return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), true
 		}
-		if v != nil {
-			// V is bound - check if vector equals (for vector, V is the whole list)
-			// This is an edge case - usually V is unbound for vectors
-			return nil, false // Fallback to storage for this case
-		}
-		// V is unbound - return the vector as a single typed value
-		tuple := buildTuple(typedVector(list, valueType), entry.Version())
+		tuple := buildTuple(resolved, entry.Version())
 		return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
 	}
 
@@ -1297,7 +1310,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 			if val == nil {
 				continue // No value for this E
 			}
-			if v != nil && !valuesEqual(val, v) {
+			if v != nil && !datalog.ValuesEqual(val, v) {
 				continue // Value doesn't match bound V
 			}
 			resultTuples = append(resultTuples, buildTuple(eIdent, val, entry.Version()))
@@ -1333,39 +1346,6 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 	}
 
 	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true
-}
-
-// valuesEqual compares two values for equality
-func valuesEqual(a, b interface{}) bool {
-	// Handle common types directly for performance
-	switch av := a.(type) {
-	case string:
-		if bv, ok := b.(string); ok {
-			return av == bv
-		}
-	case int64:
-		if bv, ok := b.(int64); ok {
-			return av == bv
-		}
-	case float64:
-		if bv, ok := b.(float64); ok {
-			return av == bv
-		}
-	case bool:
-		if bv, ok := b.(bool); ok {
-			return av == bv
-		}
-	case datalog.Identity:
-		if bv, ok := b.(datalog.Identity); ok {
-			return av.Hash() == bv.Hash()
-		}
-	case datalog.Keyword:
-		if bv, ok := b.(datalog.Keyword); ok {
-			return av == bv
-		}
-	}
-	// Fallback to reflect-based comparison
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
 
 // matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution
@@ -1427,7 +1407,7 @@ func (m *BadgerMatcher) matchCardinalityManyAsRelation(
 func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
-	e, a interface{},
+	e, a, v interface{},
 	valueType schema.ValueType,
 ) (executor.Relation, error) {
 	// Get entity and attribute bytes
@@ -1447,8 +1427,25 @@ func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 		return nil, fmt.Errorf("vector resolution failed: %w", err)
 	}
 
-	// If empty vector, return empty relation
-	if len(result.Elements) == 0 {
+	// No datoms at all → attribute was never set
+	if result.Stats.TotalElements == 0 {
+		return executor.NewMaterializedRelation(symbols, nil), nil
+	}
+
+	// Convert resolved elements to a typed vector
+	resolved := typedVector(result.Elements, valueType)
+
+	// If V is bound, compare the resolved vector against the bound value
+	if v != nil {
+		if !datalog.ValuesEqual(resolved, v) {
+			return executor.NewMaterializedRelation(symbols, nil), nil
+		}
+		// Matched — fall through to build the tuple
+	}
+
+	// If empty vector (and V was nil/matched), return empty relation
+	// Empty vectors produce no tuples for unbound V queries.
+	if len(result.Elements) == 0 && v == nil {
 		return executor.NewMaterializedRelation(symbols, nil), nil
 	}
 
@@ -1464,8 +1461,7 @@ func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 			tuple[i] = a
 		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 			pattern.GetV().(query.Variable).Name == sym:
-			// Return the entire vector as a typed slice
-			tuple[i] = typedVector(result.Elements, valueType)
+			tuple[i] = resolved
 		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
 			pattern.GetT().(query.Variable).Name == sym:
 			// Use the max ElementID as the "current" transaction
@@ -1485,6 +1481,7 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
 	attr datalog.Keyword,
+	v interface{},
 	valueType schema.ValueType,
 ) (executor.Relation, error) {
 	// Find which symbol in bindings provides the entity
@@ -1535,8 +1532,22 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 			return nil, fmt.Errorf("vector resolution failed for entity: %w", err)
 		}
 
-		// Skip entities with empty vectors
-		if len(result.Elements) == 0 {
+		resolved := typedVector(result.Elements, valueType)
+
+		neverSet := result.Stats.TotalElements == 0
+
+		// Entity has no datoms at all for this attribute — skip always
+		if neverSet {
+			continue
+		}
+
+		// If V is bound, compare the resolved vector against bound value
+		if v != nil {
+			if !datalog.ValuesEqual(resolved, v) {
+				continue
+			}
+		} else if len(result.Elements) == 0 {
+			// Unbound V: skip entities with empty vectors
 			continue
 		}
 
@@ -1552,8 +1563,7 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 				tuple[i] = attr
 			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 				pattern.GetV().(query.Variable).Name == sym:
-				// Return the entire vector as a typed slice
-				tuple[i] = typedVector(result.Elements, valueType)
+				tuple[i] = resolved
 			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
 				pattern.GetT().(query.Variable).Name == sym:
 				tuple[i] = result.MaxElementID
@@ -1724,6 +1734,132 @@ func (it *cardinalityManyScanAllEntitiesIterator) Tuple() executor.Tuple {
 }
 
 func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
+	if it.storageIter != nil {
+		return it.storageIter.Close()
+	}
+	return nil
+}
+
+// matchVectorScanAllEntities handles [?e :attr <vector-literal>] where E is unbound.
+// Scans all entities with the attribute and resolves each vector using RGA.
+// If v is non-nil, only entities whose resolved vector equals v are returned.
+// If v is nil, all entities with non-empty vectors are returned.
+func (m *BadgerMatcher) matchVectorScanAllEntities(
+	pattern *query.DataPattern,
+	symbols []query.Symbol,
+	a, v interface{},
+	valueType schema.ValueType,
+) (executor.Relation, error) {
+	var aBytes [32]byte
+	if kw, ok := a.(datalog.Keyword); ok {
+		copy(aBytes[:], kw.String())
+	}
+
+	// Scan AEVT to find all entities with this attribute
+	prefix := make([]byte, 1+32)
+	prefix[0] = byte(AEVT)
+	copy(prefix[1:33], aBytes[:])
+
+	storageIter, err := m.store.Scan(AEVT, prefix, prefixEnd(prefix))
+	if err != nil {
+		return nil, fmt.Errorf("AEVT scan failed: %w", err)
+	}
+
+	iter := &vectorScanAllEntitiesIterator{
+		matcher:      m,
+		pattern:      pattern,
+		symbols:      symbols,
+		a:            a,
+		v:            v,
+		aBytes:       aBytes,
+		valueType:    valueType,
+		storageIter:  storageIter,
+		seenEntities: make(map[[20]byte]bool),
+	}
+
+	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+}
+
+// vectorScanAllEntitiesIterator streams results for vector patterns with E unbound.
+// For each unique entity, resolves the RGA vector and yields a tuple if it matches.
+type vectorScanAllEntitiesIterator struct {
+	matcher      *BadgerMatcher
+	pattern      *query.DataPattern
+	symbols      []query.Symbol
+	a, v         interface{}
+	aBytes       [32]byte
+	valueType    schema.ValueType
+	storageIter  Iterator
+	seenEntities map[[20]byte]bool
+
+	currentTuple executor.Tuple
+}
+
+func (it *vectorScanAllEntitiesIterator) Next() bool {
+	for it.storageIter.Next() {
+		datom, err := it.storageIter.Datom()
+		if err != nil {
+			continue
+		}
+
+		eBytes := datom.E.Hash()
+		if it.seenEntities[eBytes] {
+			continue
+		}
+		it.seenEntities[eBytes] = true
+
+		// Resolve vector for this entity
+		result, err := it.matcher.resolveVector(eBytes[:], it.aBytes[:])
+		if err != nil {
+			continue
+		}
+
+		// Never set — skip
+		if result.Stats.TotalElements == 0 {
+			continue
+		}
+
+		resolved := typedVector(result.Elements, it.valueType)
+
+		if it.v != nil {
+			// V is bound — compare
+			if !datalog.ValuesEqual(resolved, it.v) {
+				continue
+			}
+		} else if len(result.Elements) == 0 {
+			// Unbound V: skip empty vectors
+			continue
+		}
+
+		// Build tuple
+		tuple := make(executor.Tuple, len(it.symbols))
+		for i, sym := range it.symbols {
+			switch {
+			case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
+				it.pattern.GetE().(query.Variable).Name == sym:
+				tuple[i] = datom.E
+			case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
+				it.pattern.GetA().(query.Variable).Name == sym:
+				tuple[i] = it.a
+			case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
+				it.pattern.GetV().(query.Variable).Name == sym:
+				tuple[i] = resolved
+			case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
+				it.pattern.GetT().(query.Variable).Name == sym:
+				tuple[i] = result.MaxElementID
+			}
+		}
+		it.currentTuple = tuple
+		return true
+	}
+	return false
+}
+
+func (it *vectorScanAllEntitiesIterator) Tuple() executor.Tuple {
+	return it.currentTuple
+}
+
+func (it *vectorScanAllEntitiesIterator) Close() error {
 	if it.storageIter != nil {
 		return it.storageIter.Close()
 	}

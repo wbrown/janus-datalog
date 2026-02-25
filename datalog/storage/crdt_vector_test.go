@@ -2191,3 +2191,334 @@ func TestVectorClearedVsNeverSet(t *testing.T) {
 	assert.False(t, bobFound, "never-set vector should not be found")
 	assert.Nil(t, bobResult, "never-set vector should return nil")
 }
+
+// =============================================================================
+// Vector Literal Matching in Data Patterns
+// =============================================================================
+//
+// Bug: [?e :attr []] treated as wildcard instead of "match empty vector".
+// See docs/bugs/BUG_EMPTY_VECTOR_LITERAL_MATCHES_NONEMPTY.md
+
+// TestVectorLiteralMatch verifies that vector literals in data patterns match
+// by exact equality, not as wildcards.
+func TestVectorLiteralMatch(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-literal-match-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":entity/name").Type(schema.TypeString).Add().
+		Attribute(":entity/lore").Type(schema.TypeString).Vector().Add().
+		Attribute(":entity/scores").Type(schema.TypeLong).Vector().Add().
+		Attribute(":entity/flags").Type(schema.TypeKeyword).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	name := datalog.NewKeyword(":entity/name")
+	lore := datalog.NewKeyword(":entity/lore")
+	scores := datalog.NewKeyword(":entity/scores")
+	flags := datalog.NewKeyword(":entity/flags")
+
+	hasLore := datalog.NewIdentity("has-lore")
+	emptyLore := datalog.NewIdentity("empty-lore")
+	noLore := datalog.NewIdentity("no-lore")
+	twoLore := datalog.NewIdentity("two-lore")
+	hasScores := datalog.NewIdentity("has-scores")
+	twoScores := datalog.NewIdentity("two-scores")
+	emptyScores := datalog.NewIdentity("empty-scores")
+	hasFlags := datalog.NewIdentity("has-flags")
+	twoFlags := datalog.NewIdentity("two-flags")
+	emptyFlags := datalog.NewIdentity("empty-flags")
+
+	// Populate data
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(hasLore, name, "HasLore"))
+	require.NoError(t, tx.Add(hasLore, lore, "Deep in the mountains..."))
+
+	require.NoError(t, tx.Add(emptyLore, name, "EmptyLore"))
+	// emptyLore gets lore added then cleared below
+
+	require.NoError(t, tx.Add(noLore, name, "NoLore"))
+	// noLore: no lore attribute at all
+
+	require.NoError(t, tx.Add(twoLore, name, "TwoLore"))
+	require.NoError(t, tx.Add(twoLore, lore, "alpha"))
+	require.NoError(t, tx.Add(twoLore, lore, "beta"))
+
+	require.NoError(t, tx.Add(hasScores, name, "HasScores"))
+	require.NoError(t, tx.Add(hasScores, scores, int64(100)))
+	require.NoError(t, tx.Add(hasScores, scores, int64(250)))
+	require.NoError(t, tx.Add(hasScores, scores, int64(175)))
+
+	require.NoError(t, tx.Add(twoScores, name, "TwoScores"))
+	require.NoError(t, tx.Add(twoScores, scores, int64(50)))
+	require.NoError(t, tx.Add(twoScores, scores, int64(75)))
+
+	require.NoError(t, tx.Add(emptyScores, name, "EmptyScores"))
+	// emptyScores gets scores added then cleared below
+
+	require.NoError(t, tx.Add(hasFlags, name, "HasFlags"))
+	require.NoError(t, tx.Add(hasFlags, flags, datalog.NewKeyword(":flag/active")))
+	require.NoError(t, tx.Add(hasFlags, flags, datalog.NewKeyword(":flag/visible")))
+
+	require.NoError(t, tx.Add(twoFlags, name, "TwoFlags"))
+	require.NoError(t, tx.Add(twoFlags, flags, datalog.NewKeyword(":flag/hidden")))
+	require.NoError(t, tx.Add(twoFlags, flags, datalog.NewKeyword(":flag/locked")))
+
+	require.NoError(t, tx.Add(emptyFlags, name, "EmptyFlags"))
+	// emptyFlags gets flags added then cleared below
+
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Create then clear vectors to get "empty but set" state (tombstones)
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Add(emptyLore, lore, "placeholder"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+	tx3 := db.NewTransaction()
+	require.NoError(t, tx3.Set(emptyLore, lore, []interface{}{}))
+	_, err = tx3.Commit()
+	require.NoError(t, err)
+
+	tx4 := db.NewTransaction()
+	require.NoError(t, tx4.Add(emptyScores, scores, int64(999)))
+	_, err = tx4.Commit()
+	require.NoError(t, err)
+	tx5 := db.NewTransaction()
+	require.NoError(t, tx5.Set(emptyScores, scores, []interface{}{}))
+	_, err = tx5.Commit()
+	require.NoError(t, err)
+
+	tx6 := db.NewTransaction()
+	require.NoError(t, tx6.Add(emptyFlags, flags, datalog.NewKeyword(":flag/placeholder")))
+	_, err = tx6.Commit()
+	require.NoError(t, err)
+	tx7 := db.NewTransaction()
+	require.NoError(t, tx7.Set(emptyFlags, flags, []interface{}{}))
+	_, err = tx7.Commit()
+	require.NoError(t, err)
+
+	// Helper to collect names from query results
+	collectNames := func(t *testing.T, q string) []string {
+		t.Helper()
+		results, err := executor.CollectTuples(db.Query(q))
+		require.NoError(t, err)
+		names := make([]string, len(results))
+		for i, tuple := range results {
+			names[i] = tuple[0].(string)
+		}
+		return names
+	}
+
+	// --- String vector tests ---
+
+	t.Run("string/empty literal matches only empty vector", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/lore []]]`)
+		assert.Equal(t, []string{"EmptyLore"}, names)
+	})
+
+	t.Run("string/empty literal excludes non-empty", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/lore []]]`)
+		assert.NotContains(t, names, "HasLore")
+		assert.NotContains(t, names, "TwoLore")
+	})
+
+	t.Run("string/empty literal excludes missing", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/lore []]]`)
+		assert.NotContains(t, names, "NoLore")
+	})
+
+	t.Run("string/populated literal matches exact", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/lore ["Deep in the mountains..."]]]`)
+		assert.Equal(t, []string{"HasLore"}, names)
+	})
+
+	t.Run("string/populated literal no partial match", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/lore ["alpha"]]]`)
+		assert.Empty(t, names, "subset should not match")
+	})
+
+	t.Run("string/multi-element literal matches exact", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/lore ["alpha" "beta"]]]`)
+		assert.Equal(t, []string{"TwoLore"}, names)
+	})
+
+	t.Run("string/unbound V returns all vectors", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/lore ?lore]]`)
+		// Empty vectors produce zero tuples (treated as "not found"),
+		// so unbound V only returns entities with non-empty vectors.
+		assert.Len(t, names, 2, "should find HasLore, TwoLore (empty vectors produce no tuples)")
+		assert.Contains(t, names, "HasLore")
+		assert.Contains(t, names, "TwoLore")
+	})
+
+	// --- Int64 vector tests ---
+
+	t.Run("int64/empty literal", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/scores []]]`)
+		assert.Equal(t, []string{"EmptyScores"}, names)
+	})
+
+	t.Run("int64/populated literal matches exact", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/scores [100 250 175]]]`)
+		assert.Equal(t, []string{"HasScores"}, names)
+	})
+
+	t.Run("int64/populated literal excludes other non-empty", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/scores [100 250 175]]]`)
+		assert.NotContains(t, names, "TwoScores")
+	})
+
+	t.Run("int64/multi-element literal matches exact", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/scores [50 75]]]`)
+		assert.Equal(t, []string{"TwoScores"}, names)
+	})
+
+	t.Run("int64/wrong values no match", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/scores [100 250]]]`)
+		assert.Empty(t, names)
+	})
+
+	t.Run("int64/unbound V returns all non-empty", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/scores ?s]]`)
+		assert.Len(t, names, 2, "should find HasScores, TwoScores")
+		assert.Contains(t, names, "HasScores")
+		assert.Contains(t, names, "TwoScores")
+	})
+
+	// --- Keyword vector tests ---
+
+	t.Run("keyword/empty literal", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/flags []]]`)
+		assert.Equal(t, []string{"EmptyFlags"}, names)
+	})
+
+	t.Run("keyword/populated literal matches exact", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/flags [:flag/active :flag/visible]]]`)
+		assert.Equal(t, []string{"HasFlags"}, names)
+	})
+
+	t.Run("keyword/populated literal excludes other non-empty", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/flags [:flag/active :flag/visible]]]`)
+		assert.NotContains(t, names, "TwoFlags")
+	})
+
+	t.Run("keyword/multi-element literal matches exact", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/flags [:flag/hidden :flag/locked]]]`)
+		assert.Equal(t, []string{"TwoFlags"}, names)
+	})
+
+	t.Run("keyword/wrong values no match", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/flags [:flag/active]]]`)
+		assert.Empty(t, names)
+	})
+
+	t.Run("keyword/unbound V returns all non-empty", func(t *testing.T) {
+		names := collectNames(t,
+			`[:find ?name :where [?e :entity/name ?name] [?e :entity/flags ?f]]`)
+		assert.Len(t, names, 2, "should find HasFlags, TwoFlags")
+		assert.Contains(t, names, "HasFlags")
+		assert.Contains(t, names, "TwoFlags")
+	})
+}
+
+// TestVectorLiteralWithOr verifies the (or ...) scenario from the bug report:
+// (or [(missing? $ ?e :attr)] [?e :attr []]) should return entities where the
+// attribute is missing OR empty, but NOT entities with non-empty vectors.
+func TestVectorLiteralWithOr(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-literal-or-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":entity/name").Type(schema.TypeString).Add().
+		Attribute(":entity/lore").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	name := datalog.NewKeyword(":entity/name")
+	lore := datalog.NewKeyword(":entity/lore")
+
+	hasLore := datalog.NewIdentity("has-lore")
+	emptyLore := datalog.NewIdentity("empty-lore")
+	noLore := datalog.NewIdentity("no-lore")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(hasLore, name, "HasLore"))
+	require.NoError(t, tx.Add(hasLore, lore, "Deep in the mountains..."))
+	require.NoError(t, tx.Add(emptyLore, name, "EmptyLore"))
+	require.NoError(t, tx.Add(noLore, name, "NoLore"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Create then clear emptyLore's vector
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Add(emptyLore, lore, "placeholder"))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+	tx3 := db.NewTransaction()
+	require.NoError(t, tx3.Set(emptyLore, lore, []interface{}{}))
+	_, err = tx3.Commit()
+	require.NoError(t, err)
+
+	// Sanity check: missing? alone should find NoLore
+	missingResults, err := executor.CollectTuples(db.Query(
+		`[:find ?name :where
+		  [?e :entity/name ?name]
+		  [(missing? $ ?e :entity/lore)]]`))
+	require.NoError(t, err)
+	t.Logf("missing? alone: %v", missingResults)
+
+	// Sanity check: [] alone should find EmptyLore
+	emptyResults, err := executor.CollectTuples(db.Query(
+		`[:find ?name :where
+		  [?e :entity/name ?name]
+		  [?e :entity/lore []]]`))
+	require.NoError(t, err)
+	t.Logf("[] alone: %v", emptyResults)
+
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name :where
+		  [?e :entity/name ?name]
+		  (or [(missing? $ ?e :entity/lore)]
+		      [?e :entity/lore []])]`))
+	require.NoError(t, err)
+	t.Logf("or combined: %v", results)
+
+	names := make([]string, len(results))
+	for i, tuple := range results {
+		names[i] = tuple[0].(string)
+	}
+
+	assert.Contains(t, names, "NoLore", "missing attribute should match")
+	assert.Contains(t, names, "EmptyLore", "empty vector should match")
+	assert.NotContains(t, names, "HasLore", "non-empty vector should NOT match")
+	assert.Len(t, names, 2)
+}

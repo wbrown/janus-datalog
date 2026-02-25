@@ -508,6 +508,10 @@ func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
 	case query.Constant:
 		// Constants must match exactly
 		return e.Value
+	case query.VectorConstant:
+		// Vector literals: return the Values slice for comparison
+		// after RGA resolution. Empty slice means "match empty vector".
+		return e.Values
 	default:
 		return nil
 	}

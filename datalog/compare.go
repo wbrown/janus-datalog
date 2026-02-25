@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -252,6 +253,26 @@ func ValuesEqual(a, b interface{}) bool {
 		return false
 	}
 
+	// Slice comparison — must come before a == b which panics on slices.
+	// Handles typed slices ([]string, []int64) and []interface{} with
+	// element-wise recursive comparison via ValuesEqual.
+	ra := reflect.ValueOf(a)
+	rb := reflect.ValueOf(b)
+	if ra.Kind() == reflect.Slice || rb.Kind() == reflect.Slice {
+		if ra.Kind() != reflect.Slice || rb.Kind() != reflect.Slice {
+			return false // one is a slice, the other isn't
+		}
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		for i := 0; i < ra.Len(); i++ {
+			if !ValuesEqual(ra.Index(i).Interface(), rb.Index(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	}
+
 	// Quick pointer equality check for interned values
 	// This handles Identity (always interned pointers) directly
 	if a == b {
@@ -315,8 +336,8 @@ func ValuesEqual(a, b interface{}) bool {
 		}
 	}
 
-	// Fall back to string comparison for unknown types
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+	// Unknown types: not equal. All comparable types are handled above.
+	return false
 }
 
 // stringValue converts any value to a string for comparison
