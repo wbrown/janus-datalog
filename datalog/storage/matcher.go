@@ -832,11 +832,13 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 
 	encoder := m.store.encoder
 
-	// Determine cardinality for correct resolution
+	// Determine cardinality and value type for correct resolution
 	card := schema.CardinalityOne // default
+	var valueType schema.ValueType
 	if m.schema != nil {
 		if def := m.schema.GetAttribute(attr); def != nil {
 			card = def.Cardinality
+			valueType = def.ValueType
 		}
 	}
 
@@ -868,10 +870,7 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 				return nil, false
 			case schema.CardinalityVector:
 				list := entry.VectorList()
-				if len(list) > 0 {
-					return list, true
-				}
-				return nil, false
+				return typedVector(list, valueType), true
 			}
 		}
 	}
@@ -906,15 +905,12 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	}
 
 	if card == schema.CardinalityVector {
-		// For cardinality-vector, resolve the entire RGA and return as []any
+		// For cardinality-vector, resolve the entire RGA and return as typed slice
 		result, err := m.resolveVector(eBytes[:], aStorage[:])
 		if err != nil {
 			return nil, false
 		}
-		if len(result.Elements) == 0 {
-			return nil, false
-		}
-		return result.Elements, true
+		return typedVector(result.Elements, valueType), true
 	}
 
 	// For cardinality-many, use AEVT and apply add-wins resolution
@@ -968,6 +964,56 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		return result, true
 	}
 	return nil, false
+}
+
+// typedVector converts []any to a typed slice when the schema value type is known.
+// For TypeString returns []string, for TypeLong returns []int64, etc.
+// Falls back to returning the original []any if the type is unknown or mixed.
+func typedVector(elements []any, vt schema.ValueType) any {
+	switch vt {
+	case schema.TypeString:
+		result := make([]string, 0, len(elements))
+		for _, e := range elements {
+			if s, ok := e.(string); ok {
+				result = append(result, s)
+			} else {
+				return elements // mixed types, return as-is
+			}
+		}
+		return result
+	case schema.TypeLong:
+		result := make([]int64, 0, len(elements))
+		for _, e := range elements {
+			if n, ok := e.(int64); ok {
+				result = append(result, n)
+			} else {
+				return elements
+			}
+		}
+		return result
+	case schema.TypeDouble:
+		result := make([]float64, 0, len(elements))
+		for _, e := range elements {
+			if f, ok := e.(float64); ok {
+				result = append(result, f)
+			} else {
+				return elements
+			}
+		}
+		return result
+	case schema.TypeBoolean:
+		result := make([]bool, 0, len(elements))
+		for _, e := range elements {
+			if b, ok := e.(bool); ok {
+				result = append(result, b)
+			} else {
+				return elements
+			}
+		}
+		return result
+	default:
+		return elements
+	}
 }
 
 // LookupAllAttributes retrieves all values of a cardinality-many attribute for an entity.

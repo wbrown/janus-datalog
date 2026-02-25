@@ -488,7 +488,7 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 	result, found := matcher2.LookupAttribute(e, a)
 	require.True(t, found)
 
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 2, "should have 2 elements after tombstone")
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "lockpicking", vec[1])

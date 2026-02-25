@@ -47,8 +47,8 @@ func TestOrderedSet_UniqueElementsEnforcement(t *testing.T) {
 	result, found := matcher.LookupAttribute(alice, prefs)
 	require.True(t, found)
 
-	vec, ok := result.([]any)
-	require.True(t, ok, "result should be []any")
+	vec, ok := result.([]string)
+	require.True(t, ok, "result should be []string")
 
 	t.Logf("OrderedSet contains: %v", vec)
 	assert.Len(t, vec, 3, "should have 3 unique values")
@@ -97,7 +97,7 @@ func TestOrderedSet_UniqueAcrossTransactions(t *testing.T) {
 	result, found := matcher.LookupAttribute(alice, prefs)
 	require.True(t, found)
 
-	vec, ok := result.([]any)
+	vec, ok := result.([]string)
 	require.True(t, ok)
 
 	t.Logf("OrderedSet after two transactions: %v", vec)
@@ -144,7 +144,7 @@ func TestOrderedSet_SetReplacement(t *testing.T) {
 	result, found := matcher.LookupAttribute(alice, prefs)
 	require.True(t, found)
 
-	vec, ok := result.([]any)
+	vec, ok := result.([]string)
 	require.True(t, ok)
 
 	t.Logf("OrderedSet after Set(): %v", vec)
@@ -192,8 +192,8 @@ func TestOrderedSet_QueryIntegration(t *testing.T) {
 	t.Logf("Query result: %v", tuples)
 	require.Len(t, tuples, 1, "should return 1 tuple (vector as single value)")
 
-	vec, ok := tuples[0][0].([]any)
-	require.True(t, ok, "should be []any")
+	vec, ok := tuples[0][0].([]string)
+	require.True(t, ok, "should be []string")
 	assert.Len(t, vec, 2, "should have 2 unique values")
 }
 
@@ -272,7 +272,7 @@ func TestOrderedSet_VsRegularVector(t *testing.T) {
 	// OrderedSet should have 3 unique values
 	osResult, found := matcher.LookupAttribute(entity, orderedSetAttr)
 	require.True(t, found)
-	osVec, ok := osResult.([]any)
+	osVec, ok := osResult.([]string)
 	require.True(t, ok)
 	t.Logf("OrderedSet: %v (len=%d)", osVec, len(osVec))
 	assert.Len(t, osVec, 3, "OrderedSet should have 3 unique values")
@@ -280,7 +280,7 @@ func TestOrderedSet_VsRegularVector(t *testing.T) {
 	// Regular Vector should have all 5 values (duplicates allowed)
 	vecResult, found := matcher.LookupAttribute(entity, vectorAttr)
 	require.True(t, found)
-	vecVec, ok := vecResult.([]any)
+	vecVec, ok := vecResult.([]string)
 	require.True(t, ok)
 	t.Logf("Regular Vector: %v (len=%d)", vecVec, len(vecVec))
 	assert.Len(t, vecVec, 5, "Regular Vector should have all 5 values including duplicates")

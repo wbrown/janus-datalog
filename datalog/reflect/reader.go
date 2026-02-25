@@ -177,8 +177,17 @@ func (sr *StructReader) setOrderedSetValue(fieldVal reflect.Value, field *FieldI
 	// Value should be a slice from the pull result
 	valueSlice, ok := value.([]interface{})
 	if !ok {
-		// Single value - wrap in slice
-		valueSlice = []interface{}{value}
+		// Check if value is already a typed slice (e.g., []string from typed vector returns)
+		rv := reflect.ValueOf(value)
+		if rv.Kind() == reflect.Slice {
+			valueSlice = make([]interface{}, rv.Len())
+			for i := range valueSlice {
+				valueSlice[i] = rv.Index(i).Interface()
+			}
+		} else {
+			// Single value - wrap in slice
+			valueSlice = []interface{}{value}
+		}
 	}
 
 	elemType := getOrderedSetElementType(field.GoType)
@@ -239,8 +248,22 @@ func (sr *StructReader) setSliceValue(fieldVal reflect.Value, field *FieldInfo, 
 	// Value should be a slice
 	valueSlice, ok := value.([]interface{})
 	if !ok {
-		// Single value - wrap in slice
-		valueSlice = []interface{}{value}
+		// Check if value is already a typed slice (e.g., []string from typed vector returns)
+		rv := reflect.ValueOf(value)
+		if rv.Kind() == reflect.Slice && rv.Type().AssignableTo(field.GoType) {
+			fieldVal.Set(rv)
+			return nil
+		}
+		if rv.Kind() == reflect.Slice {
+			// Convert typed slice to []interface{} for element-by-element processing
+			valueSlice = make([]interface{}, rv.Len())
+			for i := range valueSlice {
+				valueSlice[i] = rv.Index(i).Interface()
+			}
+		} else {
+			// Single value - wrap in slice
+			valueSlice = []interface{}{value}
+		}
 	}
 
 	elemType := field.GoType.Elem()

@@ -313,15 +313,10 @@ func TestSaveStruct_OrderedSet_SchemaVerify(t *testing.T) {
 		t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
 	}
 
-	// The value should be a slice containing all 3 elements
-	vectorVal, ok := tuples[0][0].([]interface{})
+	// The value should be a typed []string containing all 3 elements
+	vectorVal, ok := tuples[0][0].([]string)
 	if !ok {
-		// Try []any
-		if anySlice, ok2 := tuples[0][0].([]any); ok2 {
-			vectorVal = anySlice
-		} else {
-			t.Fatalf("expected []interface{} or []any, got %T: %v", tuples[0][0], tuples[0][0])
-		}
+		t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
 	}
 	t.Logf("Vector value contains %d elements: %v", len(vectorVal), vectorVal)
 	if len(vectorVal) != 3 {
@@ -387,9 +382,9 @@ func TestSaveStruct_OrderedSet(t *testing.T) {
 	}
 
 	// Verify the vector contains 3 elements
-	vectorVal, ok := tuples[0][0].([]any)
+	vectorVal, ok := tuples[0][0].([]string)
 	if !ok {
-		t.Fatalf("expected []any, got %T: %v", tuples[0][0], tuples[0][0])
+		t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
 	}
 	if len(vectorVal) != 3 {
 		t.Errorf("expected 3 elements in vector, got %d: %v", len(vectorVal), vectorVal)
@@ -460,9 +455,9 @@ func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
 	}
 
 	// Verify the vector still has only 2 unique values
-	vectorVal, ok := tuples[0][0].([]any)
+	vectorVal, ok := tuples[0][0].([]string)
 	if !ok {
-		t.Fatalf("expected []any, got %T: %v", tuples[0][0], tuples[0][0])
+		t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
 	}
 	t.Logf("Vector contains %d elements: %v (expecting 2, no duplicates)", len(vectorVal), vectorVal)
 	if len(vectorVal) != 2 {

@@ -155,9 +155,9 @@ func TestResolveEntityAttributes_CardinalityVector(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should return a slice
-	skills, ok := result[datalog.NewKeyword(":person/skills")].([]any)
-	require.True(t, ok, "expected []any for cardinality-vector")
-	assert.Equal(t, []any{"Go", "Python"}, skills)
+	skills, ok := result[datalog.NewKeyword(":person/skills")].([]string)
+	require.True(t, ok, "expected []string for cardinality-vector")
+	assert.Equal(t, []string{"Go", "Python"}, skills)
 }
 
 func TestResolveEntityAttributes_LWWResolution(t *testing.T) {

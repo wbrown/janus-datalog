@@ -270,8 +270,8 @@ func TestVectorCacheIntegration(t *testing.T) {
 	skills, found := matcher.LookupAttribute(e, datalog.NewKeyword(":character/skills"))
 	require.True(t, found)
 
-	skillSlice, ok := skills.([]interface{})
-	require.True(t, ok, "vector should be returned as []interface{}")
+	skillSlice, ok := skills.([]string)
+	require.True(t, ok, "vector should be returned as []string")
 	assert.Len(t, skillSlice, 2)
 	assert.Equal(t, "stealth", skillSlice[0])
 	assert.Equal(t, "archery", skillSlice[1])

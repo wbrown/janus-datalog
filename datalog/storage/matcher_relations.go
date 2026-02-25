@@ -95,7 +95,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			if kw, ok := aResolved.(datalog.Keyword); ok {
 				if attr := m.schema.GetAttribute(kw); attr != nil {
 					if attr.Cardinality == schema.CardinalityVector {
-						return m.matchVectorWithBindings(pattern, bindingRel, symbols, kw)
+						return m.matchVectorWithBindings(pattern, bindingRel, symbols, kw, attr.ValueType)
 					}
 				}
 			}
@@ -253,13 +253,15 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 	useAddWinsScanAllEntitiesWithValue := false
 	useVectorResolution := false
 	var card schema.Cardinality = schema.CardinalityOne // Default for schemaless
+	var valueType schema.ValueType
 
-	// Determine cardinality when A is bound (regardless of E)
+	// Determine cardinality and value type when A is bound (regardless of E)
 	if a != nil {
 		if m.schema != nil {
 			if aKw, ok := a.(datalog.Keyword); ok {
 				if def := m.schema.GetAttribute(aKw); def != nil {
 					card = def.Cardinality
+					valueType = def.ValueType
 				}
 			}
 		}
@@ -270,7 +272,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 	if m.cache != nil && m.txID == nil && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
-				cacheResult, handled := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card)
+				cacheResult, handled := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card, valueType)
 				if handled {
 					return cacheResult, nil
 				}
@@ -343,7 +345,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 
 	// For cardinality-vector with E+A bound: use vector resolution
 	if useVectorResolution {
-		return m.matchCardinalityVectorAsRelation(pattern, symbols, e, a)
+		return m.matchCardinalityVectorAsRelation(pattern, symbols, e, a, valueType)
 	}
 
 	// For cardinality-many with E+A bound, V unbound: use add-wins resolution
@@ -1035,6 +1037,7 @@ func (m *BadgerMatcher) matchFromCache(
 	a datalog.Keyword,
 	v interface{}, // nil if V is unbound
 	card schema.Cardinality,
+	valueType schema.ValueType,
 ) (executor.Relation, bool) {
 	// Build cache key
 	eBytes := Entity(e.Hash())
@@ -1112,8 +1115,8 @@ func (m *BadgerMatcher) matchFromCache(
 			// This is an edge case - usually V is unbound for vectors
 			return nil, false // Fallback to storage for this case
 		}
-		// V is unbound - return the vector as a single value
-		tuple := buildTuple(list, entry.Version())
+		// V is unbound - return the vector as a single typed value
+		tuple := buildTuple(typedVector(list, valueType), entry.Version())
 		return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
 	}
 
@@ -1188,12 +1191,14 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 
 	// Pre-compute fixed-A values when A is constant across all tuples
 	var fixedCard schema.Cardinality
+	var fixedValueType schema.ValueType
 	var fixedAAttr Attribute
 	if aSymIdx < 0 {
 		fixedCard = schema.CardinalityOne
 		if m.schema != nil {
 			if def := m.schema.GetAttribute(a); def != nil {
 				fixedCard = def.Cardinality
+				fixedValueType = def.ValueType
 			}
 		}
 		aStorage := ToStorageDatom(datalog.Datom{A: a}).A
@@ -1247,6 +1252,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 
 		// Determine A and cardinality for this tuple
 		var rowCard schema.Cardinality
+		var rowValueType schema.ValueType
 		var rowAAttr Attribute
 		if aSymIdx >= 0 {
 			// Per-tuple A: extract from binding tuple
@@ -1261,6 +1267,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 			if m.schema != nil {
 				if def := m.schema.GetAttribute(aKw); def != nil {
 					rowCard = def.Cardinality
+					rowValueType = def.ValueType
 				}
 			}
 			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
@@ -1268,6 +1275,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 			datomBuf.A = aKw
 		} else {
 			rowCard = fixedCard
+			rowValueType = fixedValueType
 			rowAAttr = fixedAAttr
 		}
 
@@ -1320,7 +1328,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 				// Can't efficiently check vector membership
 				return nil, false
 			}
-			resultTuples = append(resultTuples, buildTuple(eIdent, list, entry.Version()))
+			resultTuples = append(resultTuples, buildTuple(eIdent, typedVector(list, rowValueType), entry.Version()))
 		}
 	}
 
@@ -1420,6 +1428,7 @@ func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 	pattern *query.DataPattern,
 	symbols []query.Symbol,
 	e, a interface{},
+	valueType schema.ValueType,
 ) (executor.Relation, error) {
 	// Get entity and attribute bytes
 	var eBytes [20]byte
@@ -1455,8 +1464,8 @@ func (m *BadgerMatcher) matchCardinalityVectorAsRelation(
 			tuple[i] = a
 		case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 			pattern.GetV().(query.Variable).Name == sym:
-			// Return the entire vector as a []any
-			tuple[i] = result.Elements
+			// Return the entire vector as a typed slice
+			tuple[i] = typedVector(result.Elements, valueType)
 		case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
 			pattern.GetT().(query.Variable).Name == sym:
 			// Use the max ElementID as the "current" transaction
@@ -1476,6 +1485,7 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 	bindingRel executor.Relation,
 	symbols []query.Symbol,
 	attr datalog.Keyword,
+	valueType schema.ValueType,
 ) (executor.Relation, error) {
 	// Find which symbol in bindings provides the entity
 	var eSymIdx int = -1
@@ -1542,8 +1552,8 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 				tuple[i] = attr
 			case pattern.GetV() != nil && pattern.GetV().IsVariable() &&
 				pattern.GetV().(query.Variable).Name == sym:
-				// Return the entire vector as []any
-				tuple[i] = result.Elements
+				// Return the entire vector as a typed slice
+				tuple[i] = typedVector(result.Elements, valueType)
 			case pattern.GetT() != nil && pattern.GetT().IsVariable() &&
 				pattern.GetT().(query.Variable).Name == sym:
 				tuple[i] = result.MaxElementID

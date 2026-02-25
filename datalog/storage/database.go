@@ -2295,6 +2295,18 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	// Get what's already cached for this entity
 	cachedAttrs := d.cache.GetCachedAttrs(eBytes)
 
+	// Helper to get value type from schema
+	getValueType := func(kw datalog.Keyword) schema.ValueType {
+		if d.schema != nil {
+			if s, ok := d.schema.(*schema.Schema); ok {
+				if def := s.GetAttribute(kw); def != nil {
+					return def.ValueType
+				}
+			}
+		}
+		return ""
+	}
+
 	// Partition needed attrs into cached vs missing
 	var missing []datalog.Keyword
 	for _, kw := range attrs {
@@ -2305,7 +2317,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 			// Already cached - GetOrResolve will do freshness check
 			key := CacheKey{E: eBytes, A: aBytes}
 			if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
-				if val := entryToValue(entry); val != nil {
+				if val := entryToValue(entry, getValueType(kw)); val != nil {
 					result[kw] = val
 				}
 			}
@@ -2325,7 +2337,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		copy(aBytes[:], kw.String())
 		key := CacheKey{E: eBytes, A: aBytes}
 		if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
-			if val := entryToValue(entry); val != nil {
+			if val := entryToValue(entry, getValueType(kw)); val != nil {
 				result[kw] = val
 			}
 		}
@@ -2334,8 +2346,9 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	return result, nil
 }
 
-// entryToValue converts a CacheEntry to its appropriate value representation
-func entryToValue(entry *CacheEntry) interface{} {
+// entryToValue converts a CacheEntry to its appropriate value representation.
+// For vector entries, valueType is used to return typed slices (e.g. []string).
+func entryToValue(entry *CacheEntry, valueType schema.ValueType) interface{} {
 	switch entry.Cardinality() {
 	case schema.CardinalityOne:
 		return entry.OneValue()
@@ -2351,7 +2364,7 @@ func entryToValue(entry *CacheEntry) interface{} {
 		}
 		return values
 	case schema.CardinalityVector:
-		return entry.VectorList()
+		return typedVector(entry.VectorList(), valueType)
 	default:
 		return entry.OneValue()
 	}

@@ -221,7 +221,7 @@ func TestVectorAVETAfterTombstone(t *testing.T) {
 
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 
 	assert.NotContains(t, vec, "stealth", "stealth should be tombstoned")
 	assert.Contains(t, vec, "archery", "archery should remain")

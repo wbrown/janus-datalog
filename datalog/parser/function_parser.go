@@ -351,6 +351,8 @@ func extractConstantValue(arg query.PatternElement) (interface{}, error) {
 	switch a := arg.(type) {
 	case query.Constant:
 		return a.Value, nil
+	case query.VectorConstant:
+		return a.Values, nil
 	case query.Variable:
 		// Variables are not allowed as default values
 		return nil, fmt.Errorf("expected constant, got variable %s", a.Name)

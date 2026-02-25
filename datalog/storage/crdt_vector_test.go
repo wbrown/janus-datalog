@@ -46,8 +46,8 @@ func TestVectorBasicAdd(t *testing.T) {
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found, "should find skills")
 
-	vec, ok := result.([]any)
-	require.True(t, ok, "result should be []any")
+	vec, ok := result.([]string)
+	require.True(t, ok, "result should be []string for TypeString vector, got %T", result)
 	require.Len(t, vec, 3, "should have 3 skills")
 
 	// Order should match insertion order within same transaction
@@ -95,7 +95,7 @@ func TestVectorMultipleTransactions(t *testing.T) {
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
 
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 4)
 
 	// All elements from tx1 should come before tx2
@@ -124,13 +124,13 @@ func TestVectorEmpty(t *testing.T) {
 	alice := datalog.NewIdentity("alice")
 	skills := datalog.NewKeyword(":character/skills")
 
-	// No data added - should return not found
+	// No data added — empty vector is still a value, not "not found"
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := matcher.LookupAttribute(alice, skills)
-	assert.False(t, found, "empty vector should return not found")
-	assert.Nil(t, result)
+	assert.True(t, found, "vector attribute always exists (empty is a value)")
+	assert.Equal(t, []string{}, result, "empty vector should return typed empty slice")
 }
 
 // TestVectorWithDifferentTypes verifies vectors can hold different value types
@@ -164,7 +164,7 @@ func TestVectorWithDifferentTypes(t *testing.T) {
 	result, found := matcher.LookupAttribute(game, scores)
 	require.True(t, found)
 
-	vec := result.([]any)
+	vec := result.([]int64)
 	require.Len(t, vec, 3)
 
 	assert.Equal(t, int64(100), vec[0])
@@ -363,7 +363,7 @@ func TestVectorSetReplacesEntireVector(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3)
 
 	// Now use Set() to replace entire vector
@@ -377,7 +377,7 @@ func TestVectorSetReplacesEntireVector(t *testing.T) {
 	matcher2.SetSchema(s)
 	result2, found2 := matcher2.LookupAttribute(alice, skills)
 	require.True(t, found2)
-	vec2 := result2.([]any)
+	vec2 := result2.([]string)
 	require.Len(t, vec2, 2, "vector should have 2 elements after Set()")
 	assert.Equal(t, "magic", vec2[0])
 	assert.Equal(t, "alchemy", vec2[1])
@@ -414,12 +414,12 @@ func TestVectorSetToEmpty(t *testing.T) {
 	_, err = tx2.Commit()
 	require.NoError(t, err)
 
-	// Verify vector is empty (not found)
+	// Verify vector is empty (but still "found" — empty is a value)
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
-	assert.False(t, found, "empty vector should return not found")
-	assert.Nil(t, result)
+	assert.True(t, found, "vector attribute always exists (empty is a value)")
+	assert.Equal(t, []string{}, result, "cleared vector should return typed empty slice")
 }
 
 // TestVectorAddNoReadDatabase verifies Add() does NOT read from database
@@ -462,7 +462,7 @@ func TestVectorAddNoReadDatabase(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3, "should have all 3 skills")
 
 	// The order depends on ElementID sorting at HEAD level
@@ -573,8 +573,8 @@ func TestVectorQueryWithBoundEntity(t *testing.T) {
 	require.Len(t, results, 1, "should return 1 tuple with vector")
 
 	// The value should be a slice, not raw bytes
-	vec, ok := results[0][0].([]interface{})
-	require.True(t, ok, "skills should be []interface{}, got %T", results[0][0])
+	vec, ok := results[0][0].([]string)
+	require.True(t, ok, "skills should be []string, got %T", results[0][0])
 	require.Len(t, vec, 2)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -715,7 +715,7 @@ func TestVectorPullIntegration(t *testing.T) {
 	assert.Equal(t, "Alice", pullResult["character/name"])
 
 	// Check skills is a slice in correct order
-	skillsResult, ok := pullResult["character/skills"].([]interface{})
+	skillsResult, ok := pullResult["character/skills"].([]string)
 	require.True(t, ok, "skills should be a slice")
 	require.Len(t, skillsResult, 3, "should have 3 skills")
 	assert.Equal(t, "stealth", skillsResult[0])
@@ -766,7 +766,7 @@ func TestVectorRemoveMostRecent(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -784,7 +784,7 @@ func TestVectorRemoveMostRecent(t *testing.T) {
 	matcher2.SetSchema(s)
 	result2, found2 := matcher2.LookupAttribute(alice, skills)
 	require.True(t, found2)
-	vec2 := result2.([]any)
+	vec2 := result2.([]string)
 	require.Len(t, vec2, 2, "should have 2 elements after Remove()")
 	assert.Equal(t, "stealth", vec2[0], "first stealth should remain")
 	assert.Equal(t, "archery", vec2[1], "archery should remain")
@@ -826,7 +826,7 @@ func TestVectorRemoveNonExistent(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 2, "vector should be unchanged")
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -870,7 +870,7 @@ func TestVectorRemoveAllOccurrences(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 1, "should have 1 element after removing both stealths")
 	assert.Equal(t, "archery", vec[0])
 }
@@ -933,7 +933,7 @@ func TestAddSchemaAwareVector(t *testing.T) {
 	// Cardinality-vector: returns ordered slice
 	skillsVal, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := skillsVal.([]any)
+	vec := skillsVal.([]string)
 	require.Len(t, vec, 2)
 	assert.Equal(t, "go", vec[0])
 	assert.Equal(t, "python", vec[1])
@@ -994,7 +994,7 @@ func TestVectorSetAppend(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 4)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -1037,7 +1037,7 @@ func TestVectorSetAppendMultiple(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -1081,7 +1081,7 @@ func TestVectorSetChangeEnd(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -1125,7 +1125,7 @@ func TestVectorSetChangeMiddle(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "MAGIC", vec[1])
@@ -1168,7 +1168,7 @@ func TestVectorSetPrepend(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -1212,7 +1212,7 @@ func TestVectorSetNoChange(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -1250,7 +1250,7 @@ func TestVectorSetFromEmpty(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 3)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -1665,7 +1665,7 @@ func TestVectorSetTruncate(t *testing.T) {
 	matcher.SetSchema(s)
 	result, found := matcher.LookupAttribute(alice, skills)
 	require.True(t, found)
-	vec := result.([]any)
+	vec := result.([]string)
 	require.Len(t, vec, 2)
 	assert.Equal(t, "stealth", vec[0])
 	assert.Equal(t, "archery", vec[1])
@@ -1749,4 +1749,238 @@ func TestPlannerReordersDataPatternBeforeEnumerate(t *testing.T) {
 	require.Len(t, tuples, 1, "only container A has a red item; container B has blue")
 	assert.Equal(t, "A", tuples[0][0])
 	assert.Equal(t, "Apple", tuples[0][1])
+}
+
+// TestTypedVector_AllBranches exercises every branch of typedVector.
+func TestTypedVector_AllBranches(t *testing.T) {
+	t.Run("TypeString", func(t *testing.T) {
+		input := []any{"a", "b", "c"}
+		result := typedVector(input, schema.TypeString)
+		vec, ok := result.([]string)
+		require.True(t, ok, "expected []string, got %T", result)
+		assert.Equal(t, []string{"a", "b", "c"}, vec)
+	})
+
+	t.Run("TypeString/empty", func(t *testing.T) {
+		result := typedVector([]any{}, schema.TypeString)
+		vec, ok := result.([]string)
+		require.True(t, ok, "expected []string, got %T", result)
+		assert.Empty(t, vec)
+	})
+
+	t.Run("TypeLong", func(t *testing.T) {
+		input := []any{int64(10), int64(20), int64(30)}
+		result := typedVector(input, schema.TypeLong)
+		vec, ok := result.([]int64)
+		require.True(t, ok, "expected []int64, got %T", result)
+		assert.Equal(t, []int64{10, 20, 30}, vec)
+	})
+
+	t.Run("TypeLong/empty", func(t *testing.T) {
+		result := typedVector([]any{}, schema.TypeLong)
+		vec, ok := result.([]int64)
+		require.True(t, ok, "expected []int64, got %T", result)
+		assert.Empty(t, vec)
+	})
+
+	t.Run("TypeDouble", func(t *testing.T) {
+		input := []any{1.5, 2.7, 3.14}
+		result := typedVector(input, schema.TypeDouble)
+		vec, ok := result.([]float64)
+		require.True(t, ok, "expected []float64, got %T", result)
+		assert.Equal(t, []float64{1.5, 2.7, 3.14}, vec)
+	})
+
+	t.Run("TypeDouble/empty", func(t *testing.T) {
+		result := typedVector([]any{}, schema.TypeDouble)
+		vec, ok := result.([]float64)
+		require.True(t, ok, "expected []float64, got %T", result)
+		assert.Empty(t, vec)
+	})
+
+	t.Run("TypeBoolean", func(t *testing.T) {
+		input := []any{true, false, true}
+		result := typedVector(input, schema.TypeBoolean)
+		vec, ok := result.([]bool)
+		require.True(t, ok, "expected []bool, got %T", result)
+		assert.Equal(t, []bool{true, false, true}, vec)
+	})
+
+	t.Run("TypeBoolean/empty", func(t *testing.T) {
+		result := typedVector([]any{}, schema.TypeBoolean)
+		vec, ok := result.([]bool)
+		require.True(t, ok, "expected []bool, got %T", result)
+		assert.Empty(t, vec)
+	})
+
+	t.Run("TypeRef/fallback", func(t *testing.T) {
+		id1 := datalog.NewIdentity("a")
+		id2 := datalog.NewIdentity("b")
+		input := []any{id1, id2}
+		result := typedVector(input, schema.TypeRef)
+		vec, ok := result.([]any)
+		require.True(t, ok, "TypeRef should fall through to []any, got %T", result)
+		assert.Len(t, vec, 2)
+	})
+
+	t.Run("unknown/fallback", func(t *testing.T) {
+		input := []any{"x", "y"}
+		result := typedVector(input, "")
+		vec, ok := result.([]any)
+		require.True(t, ok, "empty ValueType should fall through to []any, got %T", result)
+		assert.Len(t, vec, 2)
+	})
+
+	t.Run("TypeString/mixed", func(t *testing.T) {
+		input := []any{"a", int64(42)}
+		result := typedVector(input, schema.TypeString)
+		// Mixed types: should return original []any
+		vec, ok := result.([]any)
+		require.True(t, ok, "mixed elements should return []any, got %T", result)
+		assert.Len(t, vec, 2)
+	})
+
+	t.Run("TypeLong/mixed", func(t *testing.T) {
+		input := []any{int64(1), "not a number"}
+		result := typedVector(input, schema.TypeLong)
+		vec, ok := result.([]any)
+		require.True(t, ok, "mixed elements should return []any, got %T", result)
+		assert.Len(t, vec, 2)
+	})
+}
+
+// TestVectorTypeDouble verifies TypeDouble vectors through LookupAttribute and query.
+func TestVectorTypeDouble(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-double-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":sensor/readings").Type(schema.TypeDouble).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	sensor := datalog.NewIdentity("sensor1")
+	readings := datalog.NewKeyword(":sensor/readings")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(sensor, readings, 23.5))
+	require.NoError(t, tx.Add(sensor, readings, 24.1))
+	require.NoError(t, tx.Add(sensor, readings, 22.8))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// LookupAttribute path
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+
+	result, found := matcher.LookupAttribute(sensor, readings)
+	require.True(t, found)
+	vec, ok := result.([]float64)
+	require.True(t, ok, "expected []float64, got %T", result)
+	require.Len(t, vec, 3)
+	assert.Equal(t, 23.5, vec[0])
+	assert.Equal(t, 24.1, vec[1])
+	assert.Equal(t, 22.8, vec[2])
+
+	// Query path
+	tuples, err := executor.CollectTuples(db.Query(
+		`[:find ?v :in $ ?e :where [?e :sensor/readings ?v]]`,
+		sensor,
+	))
+	require.NoError(t, err)
+	require.Len(t, tuples, 1)
+	qvec, ok := tuples[0][0].([]float64)
+	require.True(t, ok, "query should return []float64, got %T", tuples[0][0])
+	assert.Equal(t, []float64{23.5, 24.1, 22.8}, qvec)
+}
+
+// TestVectorTypeBoolean verifies TypeBoolean vectors through LookupAttribute and query.
+func TestVectorTypeBoolean(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-bool-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":config/flags").Type(schema.TypeBoolean).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := datalog.NewIdentity("cfg1")
+	flags := datalog.NewKeyword(":config/flags")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(cfg, flags, true))
+	require.NoError(t, tx.Add(cfg, flags, false))
+	require.NoError(t, tx.Add(cfg, flags, true))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// LookupAttribute path
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+
+	result, found := matcher.LookupAttribute(cfg, flags)
+	require.True(t, found)
+	vec, ok := result.([]bool)
+	require.True(t, ok, "expected []bool, got %T", result)
+	require.Len(t, vec, 3)
+	assert.Equal(t, true, vec[0])
+	assert.Equal(t, false, vec[1])
+	assert.Equal(t, true, vec[2])
+
+	// Query path
+	tuples, err := executor.CollectTuples(db.Query(
+		`[:find ?v :in $ ?e :where [?e :config/flags ?v]]`,
+		cfg,
+	))
+	require.NoError(t, err)
+	require.Len(t, tuples, 1)
+	qvec, ok := tuples[0][0].([]bool)
+	require.True(t, ok, "query should return []bool, got %T", tuples[0][0])
+	assert.Equal(t, []bool{true, false, true}, qvec)
+}
+
+// TestVectorTypeLong_QueryPath verifies TypeLong vectors through the query executor.
+func TestVectorTypeLong_QueryPath(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-long-query-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":event/scores").Type(schema.TypeLong).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	game := datalog.NewIdentity("game1")
+	scores := datalog.NewKeyword(":event/scores")
+
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(game, scores, int64(100)))
+	require.NoError(t, tx.Add(game, scores, int64(250)))
+	require.NoError(t, tx.Add(game, scores, int64(175)))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	tuples, err := executor.CollectTuples(db.Query(
+		`[:find ?v :in $ ?e :where [?e :event/scores ?v]]`,
+		game,
+	))
+	require.NoError(t, err)
+	require.Len(t, tuples, 1)
+	vec, ok := tuples[0][0].([]int64)
+	require.True(t, ok, "query should return []int64, got %T", tuples[0][0])
+	assert.Equal(t, []int64{100, 250, 175}, vec)
 }

@@ -269,8 +269,8 @@ func TestPull_Wildcard_CardinalityVector(t *testing.T) {
 
 	assert.Equal(t, "Alice", result["person/name"])
 
-	skills, ok := result["person/skills"].([]interface{})
-	require.True(t, ok, "skills should be []interface{}")
+	skills, ok := result["person/skills"].([]string)
+	require.True(t, ok, "skills should be []string")
 	require.Len(t, skills, 3)
 	assert.Equal(t, "Go", skills[0])
 	assert.Equal(t, "Python", skills[1])

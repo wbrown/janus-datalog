@@ -6,6 +6,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 // =============================================================================
@@ -660,6 +661,109 @@ func TestDatabaseFunctionWithOrderBy(t *testing.T) {
 			t.Errorf("Position %d: expected %s, got %s", i, expected[i], name)
 		}
 	}
+}
+
+// =============================================================================
+// get-else with Vector Default
+// =============================================================================
+
+func TestGetElseWithVectorDefault(t *testing.T) {
+	dir, err := os.MkdirTemp("", "get-else-vector-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	// Schema with a vector attribute
+	s, err := schema.NewBuilder().
+		Attribute(":entity/name").Type(schema.TypeString).Add().
+		Attribute(":entity/lore").Type(schema.TypeString).Vector().Add().
+		Build()
+	if err != nil {
+		t.Fatalf("Failed to build schema: %v", err)
+	}
+
+	db, err := NewDatabaseWithSchema(dir, s)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	tx := db.NewTransaction()
+	room1 := datalog.NewIdentity("room1")
+	room2 := datalog.NewIdentity("room2")
+
+	// room1 has lore (vector with 2 paragraphs)
+	tx.Add(room1, datalog.NewKeyword(":entity/name"), "Stone Chamber")
+	tx.Add(room1, datalog.NewKeyword(":entity/lore"), "A rectangular chamber hewn from dark stone.")
+	tx.Add(room1, datalog.NewKeyword(":entity/lore"), "Scorch marks darken the floor near the entrance.")
+
+	// room2 has no lore
+	tx.Add(room2, datalog.NewKeyword(":entity/name"), "Empty Corridor")
+
+	_, err = tx.Commit()
+	if err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	t.Run("vector attribute returns vector when present", func(t *testing.T) {
+		results, err := executor.CollectTuples(db.Query(
+			`[:find ?name ?lore :where
+			  [?e :entity/name ?name]
+			  [(get-else $ ?e :entity/lore []) ?lore]]`,
+		))
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+
+		if len(results) != 2 {
+			t.Fatalf("Expected 2 results, got %d", len(results))
+		}
+
+		for _, tuple := range results {
+			name := tuple[0].(string)
+			switch name {
+			case "Stone Chamber":
+				lore, ok := tuple[1].([]string)
+				if !ok {
+					t.Fatalf("Expected []string for Stone Chamber lore, got %T: %v", tuple[1], tuple[1])
+				}
+				if len(lore) != 2 {
+					t.Errorf("Expected 2 lore paragraphs, got %d", len(lore))
+				}
+			case "Empty Corridor":
+				lore, ok := tuple[1].([]string)
+				if !ok {
+					t.Fatalf("Expected []string for Empty Corridor lore, got %T: %v", tuple[1], tuple[1])
+				}
+				if len(lore) != 0 {
+					t.Errorf("Expected empty lore vector, got %d elements", len(lore))
+				}
+			}
+		}
+	})
+
+	t.Run("vector default with input parameter entity", func(t *testing.T) {
+		// Query a specific entity with no lore — should get empty vector
+		results, err := executor.CollectTuples(db.Query(
+			`[:find ?lore :in $ ?room :where
+			  [(get-else $ ?room :entity/lore []) ?lore]]`,
+			room2,
+		))
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("Expected 1 result, got %d", len(results))
+		}
+		lore, ok := results[0][0].([]string)
+		if !ok {
+			t.Fatalf("Expected []string, got %T: %v", results[0][0], results[0][0])
+		}
+		if len(lore) != 0 {
+			t.Errorf("Expected empty vector default, got %d elements", len(lore))
+		}
+	})
 }
 
 // =============================================================================
