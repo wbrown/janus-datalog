@@ -79,6 +79,19 @@ func (sr *SourceRouter) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	return nil, false
 }
 
+// TypeDefault implements query.TypedDefaulter. Delegates to the default
+// source ($) for type-converting default values in get-else.
+func (sr *SourceRouter) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
+	source, ok := sr.sources[datalog.SymDollar]
+	if !ok {
+		return defaultVal
+	}
+	if td, ok := source.(query.TypedDefaulter); ok {
+		return td.TypeDefault(attr, defaultVal)
+	}
+	return defaultVal
+}
+
 // SetHandler propagates the annotation handler to all underlying matchers that support it.
 // This is called by WrapMatcher when annotations are enabled.
 func (sr *SourceRouter) SetHandler(handler annotations.Handler) {

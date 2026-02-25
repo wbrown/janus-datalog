@@ -124,13 +124,13 @@ func TestVectorEmpty(t *testing.T) {
 	alice := datalog.NewIdentity("alice")
 	skills := datalog.NewKeyword(":character/skills")
 
-	// No data added — empty vector is still a value, not "not found"
+	// No data added — never-set vector is not found, consistent with other cardinalities
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
 	result, found := matcher.LookupAttribute(alice, skills)
-	assert.True(t, found, "vector attribute always exists (empty is a value)")
-	assert.Equal(t, []string{}, result, "empty vector should return typed empty slice")
+	assert.False(t, found, "never-set vector attribute should not be found")
+	assert.Nil(t, result, "never-set vector should return nil")
 }
 
 // TestVectorWithDifferentTypes verifies vectors can hold different value types
@@ -1983,4 +1983,211 @@ func TestVectorTypeLong_QueryPath(t *testing.T) {
 	vec, ok := tuples[0][0].([]int64)
 	require.True(t, ok, "query should return []int64, got %T", tuples[0][0])
 	assert.Equal(t, []int64{100, 250, 175}, vec)
+}
+
+// TestSetWithTypedSlices verifies that tx.Set() accepts typed slices ([]string,
+// []int64, etc.) directly, not just []interface{}. The toAnySlice helper uses
+// reflection to convert them.
+func TestSetWithTypedSlices(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "set-typed-slices-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Attribute(":event/scores").Type(schema.TypeLong).Vector().Add().
+		Attribute(":sensor/readings").Type(schema.TypeDouble).Vector().Add().
+		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	e := datalog.NewIdentity("entity1")
+
+	t.Run("vector []string", func(t *testing.T) {
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(e, datalog.NewKeyword(":character/skills"), []string{"stealth", "archery"}))
+		_, err := tx.Commit()
+		require.NoError(t, err)
+
+		matcher := NewBadgerMatcher(db.store)
+		matcher.SetSchema(s)
+		result, found := matcher.LookupAttribute(e, datalog.NewKeyword(":character/skills"))
+		require.True(t, found)
+		vec, ok := result.([]string)
+		require.True(t, ok, "expected []string, got %T", result)
+		assert.Equal(t, []string{"stealth", "archery"}, vec)
+	})
+
+	t.Run("vector []int64", func(t *testing.T) {
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(e, datalog.NewKeyword(":event/scores"), []int64{100, 250, 175}))
+		_, err := tx.Commit()
+		require.NoError(t, err)
+
+		matcher := NewBadgerMatcher(db.store)
+		matcher.SetSchema(s)
+		result, found := matcher.LookupAttribute(e, datalog.NewKeyword(":event/scores"))
+		require.True(t, found)
+		vec, ok := result.([]int64)
+		require.True(t, ok, "expected []int64, got %T", result)
+		assert.Equal(t, []int64{100, 250, 175}, vec)
+	})
+
+	t.Run("vector []float64", func(t *testing.T) {
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(e, datalog.NewKeyword(":sensor/readings"), []float64{23.5, 24.1}))
+		_, err := tx.Commit()
+		require.NoError(t, err)
+
+		matcher := NewBadgerMatcher(db.store)
+		matcher.SetSchema(s)
+		result, found := matcher.LookupAttribute(e, datalog.NewKeyword(":sensor/readings"))
+		require.True(t, found)
+		vec, ok := result.([]float64)
+		require.True(t, ok, "expected []float64, got %T", result)
+		assert.Equal(t, []float64{23.5, 24.1}, vec)
+	})
+
+	t.Run("many []string", func(t *testing.T) {
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(e, datalog.NewKeyword(":person/tags"), []string{"developer", "lead"}))
+		_, err := tx.Commit()
+		require.NoError(t, err)
+
+		matcher := NewBadgerMatcher(db.store)
+		matcher.SetSchema(s)
+		result, found := matcher.LookupAttribute(e, datalog.NewKeyword(":person/tags"))
+		require.True(t, found)
+		// Cardinality-many returns []interface{} (unordered set)
+		vals, ok := result.([]interface{})
+		require.True(t, ok, "expected []interface{}, got %T", result)
+		tagSet := make(map[string]bool)
+		for _, v := range vals {
+			tagSet[v.(string)] = true
+		}
+		assert.True(t, tagSet["developer"])
+		assert.True(t, tagSet["lead"])
+	})
+}
+
+// TestTypeDefault verifies BadgerMatcher.TypeDefault converts default values
+// to match schema types for vector and many attributes.
+func TestTypeDefault(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "type-default-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":entity/skills").Type(schema.TypeString).Vector().Add().
+		Attribute(":entity/scores").Type(schema.TypeLong).Vector().Add().
+		Attribute(":entity/tags").Type(schema.TypeString).Many().Add().
+		Attribute(":entity/name").Type(schema.TypeString).Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+
+	t.Run("vector string empty", func(t *testing.T) {
+		result := matcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{})
+		_, ok := result.([]string)
+		assert.True(t, ok, "empty []interface{} for TypeString vector should become []string, got %T", result)
+	})
+
+	t.Run("vector string populated", func(t *testing.T) {
+		result := matcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{"a", "b"})
+		vec, ok := result.([]string)
+		require.True(t, ok, "expected []string, got %T", result)
+		assert.Equal(t, []string{"a", "b"}, vec)
+	})
+
+	t.Run("vector long populated", func(t *testing.T) {
+		result := matcher.TypeDefault(datalog.NewKeyword(":entity/scores"), []interface{}{int64(1), int64(2)})
+		vec, ok := result.([]int64)
+		require.True(t, ok, "expected []int64, got %T", result)
+		assert.Equal(t, []int64{1, 2}, vec)
+	})
+
+	t.Run("many string", func(t *testing.T) {
+		result := matcher.TypeDefault(datalog.NewKeyword(":entity/tags"), []interface{}{"x"})
+		// Many also gets typed via typedVector
+		_, ok := result.([]string)
+		assert.True(t, ok, "expected []string for many, got %T", result)
+	})
+
+	t.Run("cardinality-one passthrough", func(t *testing.T) {
+		result := matcher.TypeDefault(datalog.NewKeyword(":entity/name"), "default")
+		assert.Equal(t, "default", result, "cardinality-one should pass through unchanged")
+	})
+
+	t.Run("unknown attribute passthrough", func(t *testing.T) {
+		result := matcher.TypeDefault(datalog.NewKeyword(":unknown/attr"), []interface{}{"x"})
+		_, ok := result.([]interface{})
+		assert.True(t, ok, "unknown attribute should pass through as []interface{}, got %T", result)
+	})
+
+	t.Run("no schema passthrough", func(t *testing.T) {
+		noSchemaMatcher := NewBadgerMatcher(db.store)
+		// No SetSchema call
+		result := noSchemaMatcher.TypeDefault(datalog.NewKeyword(":entity/skills"), []interface{}{"x"})
+		_, ok := result.([]interface{})
+		assert.True(t, ok, "no schema should pass through, got %T", result)
+	})
+}
+
+// TestVectorClearedVsNeverSet verifies the distinction between a vector that
+// was explicitly cleared (Set to []) and one that was never written at all.
+// Cleared vectors return ([]string{}, true); never-set return (nil, false).
+func TestVectorClearedVsNeverSet(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vector-cleared-vs-never-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":character/skills").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+
+	db, err := NewDatabaseWithSchema(tmpDir, s)
+	require.NoError(t, err)
+	defer db.Close()
+
+	alice := datalog.NewIdentity("alice")
+	bob := datalog.NewIdentity("bob")
+	skills := datalog.NewKeyword(":character/skills")
+
+	// Alice: add skills then clear them
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(alice, skills, "stealth"))
+	require.NoError(t, tx.Add(alice, skills, "archery"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	tx2 := db.NewTransaction()
+	require.NoError(t, tx2.Set(alice, skills, []interface{}{}))
+	_, err = tx2.Commit()
+	require.NoError(t, err)
+
+	// Bob: never had skills written at all
+
+	matcher := NewBadgerMatcher(db.store)
+	matcher.SetSchema(s)
+
+	// Alice: explicitly cleared — tombstones exist, returns empty typed slice
+	aliceResult, aliceFound := matcher.LookupAttribute(alice, skills)
+	assert.True(t, aliceFound, "cleared vector should be found (tombstones exist)")
+	assert.Equal(t, []string{}, aliceResult, "cleared vector should return typed empty slice")
+
+	// Bob: never set — no datoms at all
+	bobResult, bobFound := matcher.LookupAttribute(bob, skills)
+	assert.False(t, bobFound, "never-set vector should not be found")
+	assert.Nil(t, bobResult, "never-set vector should return nil")
 }

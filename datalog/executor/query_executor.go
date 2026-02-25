@@ -574,6 +574,13 @@ func (a entityLookupAdapter) LookupAttribute(entity datalog.Identity, attr datal
 	return a.matcher.LookupAttribute(entity, attr)
 }
 
+func (a entityLookupAdapter) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
+	if td, ok := a.matcher.(query.TypedDefaulter); ok {
+		return td.TypeDefault(attr, defaultVal)
+	}
+	return defaultVal
+}
+
 // executePredicate filters relations using a predicate
 // Predicates TRANSFORM groups - may use Product() for multi-relation predicates
 func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicate, groups []Relation) ([]Relation, error) {

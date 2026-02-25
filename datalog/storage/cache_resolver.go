@@ -82,6 +82,9 @@ func (m *BadgerMatcher) ResolveRGA(e Entity, a Attribute) ([]any, []datalog.Elem
 	}
 
 	if len(elements) == 0 {
+		// nil values (not empty slice) signals "never set" to callers.
+		// matcher.go relies on this to distinguish never-set (nil → not found)
+		// from explicitly-cleared (empty slice → found, empty).
 		return nil, nil, datalog.ElementID{}, nil
 	}
 

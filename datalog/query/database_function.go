@@ -15,6 +15,14 @@ type EntityLookup interface {
 	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool)
 }
 
+// TypedDefaulter is an optional interface that EntityLookup implementations
+// can provide to type-convert default values based on attribute schema.
+// This is used by get-else to ensure the default value has the same type
+// as the attribute's stored values (e.g., []string instead of []interface{}).
+type TypedDefaulter interface {
+	TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{}
+}
+
 // DatabaseFunction is a function that requires database access to evaluate.
 // Unlike pure Functions, these need read-only access to the database snapshot.
 // The database is passed explicitly via the `$` parameter in the syntax.
@@ -72,7 +80,10 @@ func (g *GetElseFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup
 		return value, nil
 	}
 
-	// Return default value
+	// Return default value, typed if possible
+	if td, ok := lookup.(TypedDefaulter); ok {
+		return td.TypeDefault(g.Attr, g.Default), nil
+	}
 	return g.Default, nil
 }
 

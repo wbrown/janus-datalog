@@ -1479,6 +1479,21 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 	return nil
 }
 
+// toAnySlice converts a typed slice (e.g. []string, []int64) to []interface{}
+// using reflection. Returns the converted slice and true, or nil and false if
+// the value is not a slice.
+func toAnySlice(v interface{}) ([]interface{}, bool) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice {
+		return nil, false
+	}
+	result := make([]interface{}, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		result[i] = rv.Index(i).Interface()
+	}
+	return result, true
+}
+
 // Set sets a value for a cardinality-one attribute using CRDT LWW semantics.
 // For cardinality-one: just appends the new value. The storage layer handles
 // Last-Writer-Wins resolution - no read-before-write or retraction needed.
@@ -1533,8 +1548,10 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			// Try []any (same thing, different spelling)
 			if anySlice, ok2 := v.([]any); ok2 {
 				newSlice = anySlice
+			} else if converted, ok2 := toAnySlice(v); ok2 {
+				newSlice = converted
 			} else {
-				return fmt.Errorf("Set for cardinality-many requires []interface{}, got %T", v)
+				return fmt.Errorf("Set for cardinality-many requires a slice, got %T", v)
 			}
 		}
 
@@ -1655,8 +1672,10 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			// Try []any (same thing, different spelling)
 			if anySlice, ok2 := v.([]any); ok2 {
 				newSlice = anySlice
+			} else if converted, ok2 := toAnySlice(v); ok2 {
+				newSlice = converted
 			} else {
-				return fmt.Errorf("Set for cardinality-vector requires []interface{}, got %T", v)
+				return fmt.Errorf("Set for cardinality-vector requires a slice, got %T", v)
 			}
 		}
 

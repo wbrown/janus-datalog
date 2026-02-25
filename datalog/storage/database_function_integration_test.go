@@ -872,6 +872,84 @@ func TestDatabaseFunctionWithInputParameters(t *testing.T) {
 	}
 }
 
+// TestGetElseWithPopulatedVectorDefault verifies that get-else returns a typed
+// default when the attribute is a vector. The default value [] is parsed as
+// []interface{}, but TypedDefaulter should convert it to []string (or the
+// appropriate typed slice) to match the attribute's schema type.
+func TestGetElseWithPopulatedVectorDefault(t *testing.T) {
+	dir, err := os.MkdirTemp("", "get-else-populated-vector-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	s, err := schema.NewBuilder().
+		Attribute(":entity/name").Type(schema.TypeString).Add().
+		Attribute(":entity/tags").Type(schema.TypeString).Vector().Add().
+		Build()
+	if err != nil {
+		t.Fatalf("Failed to build schema: %v", err)
+	}
+
+	db, err := NewDatabaseWithSchema(dir, s)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	tx := db.NewTransaction()
+	hasData := datalog.NewIdentity("has-data")
+	noData := datalog.NewIdentity("no-data")
+
+	tx.Add(hasData, datalog.NewKeyword(":entity/name"), "HasData")
+	tx.Add(hasData, datalog.NewKeyword(":entity/tags"), "alpha")
+	tx.Add(hasData, datalog.NewKeyword(":entity/tags"), "beta")
+
+	tx.Add(noData, datalog.NewKeyword(":entity/name"), "NoData")
+	// No tags for noData
+
+	_, err = tx.Commit()
+	if err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// get-else with empty vector default — both should return []string
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?name ?tags :where
+		  [?e :entity/name ?name]
+		  [(get-else $ ?e :entity/tags []) ?tags]]`,
+	))
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(results))
+	}
+
+	for _, tuple := range results {
+		name := tuple[0].(string)
+		switch name {
+		case "HasData":
+			tags, ok := tuple[1].([]string)
+			if !ok {
+				t.Fatalf("HasData: expected []string, got %T: %v", tuple[1], tuple[1])
+			}
+			if len(tags) != 2 {
+				t.Errorf("HasData: expected 2 tags, got %d", len(tags))
+			}
+		case "NoData":
+			tags, ok := tuple[1].([]string)
+			if !ok {
+				t.Fatalf("NoData: expected []string (typed default), got %T: %v", tuple[1], tuple[1])
+			}
+			if len(tags) != 0 {
+				t.Errorf("NoData: expected empty tags, got %d", len(tags))
+			}
+		}
+	}
+}
+
 func TestLookupAttributeDirectly(t *testing.T) {
 	// Test the LookupAttribute method directly on BadgerMatcher
 	dir, err := os.MkdirTemp("", "lookup-attr-test-*")

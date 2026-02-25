@@ -870,6 +870,9 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 				return nil, false
 			case schema.CardinalityVector:
 				list := entry.VectorList()
+				if list == nil {
+					return nil, false // Never set
+				}
 				return typedVector(list, valueType), true
 			}
 		}
@@ -910,6 +913,11 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		if err != nil {
 			return nil, false
 		}
+		if len(result.Elements) == 0 && result.Stats.TotalElements == 0 {
+			// Never-set: no datoms ever written for this (E, A)
+			return nil, false
+		}
+		// Either has live elements, or was explicitly cleared (tombstones exist)
 		return typedVector(result.Elements, valueType), true
 	}
 
@@ -1014,6 +1022,25 @@ func typedVector(elements []any, vt schema.ValueType) any {
 	default:
 		return elements
 	}
+}
+
+// TypeDefault converts a default value to match the attribute's schema type.
+// For vector attributes with TypeString, converts []interface{} to []string, etc.
+// This implements query.TypedDefaulter.
+func (m *BadgerMatcher) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {
+	if m.schema == nil {
+		return defaultVal
+	}
+	def := m.schema.GetAttribute(attr)
+	if def == nil {
+		return defaultVal
+	}
+	if def.Cardinality == schema.CardinalityVector || def.Cardinality == schema.CardinalityMany {
+		if anySlice, ok := defaultVal.([]interface{}); ok {
+			return typedVector(anySlice, def.ValueType)
+		}
+	}
+	return defaultVal
 }
 
 // LookupAllAttributes retrieves all values of a cardinality-many attribute for an entity.
