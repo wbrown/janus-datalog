@@ -1587,11 +1587,17 @@ func TestCRDTTombstoneReAdd(t *testing.T) {
 
 	// Diagnose: show what LookupAllAttributes returns with and without cache
 	matcherNoCache := storage.NewBadgerMatcher(db.Store())
-	uncachedVals := matcherNoCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
+	uncachedVals, err := matcherNoCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
+	if err != nil {
+		t.Fatalf("LookupAllAttributes (no cache): %v", err)
+	}
 	t.Logf("DIAGNOSTIC: LookupAllAttributes WITHOUT cache: %v (%d values)", uncachedVals, len(uncachedVals))
 
 	matcherWithCache := db.Matcher().(*storage.BadgerMatcher)
-	cachedVals := matcherWithCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
+	cachedVals, err := matcherWithCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
+	if err != nil {
+		t.Fatalf("LookupAllAttributes (with cache): %v", err)
+	}
 	t.Logf("DIAGNOSTIC: LookupAllAttributes WITH cache:    %v (%d values)", cachedVals, len(cachedVals))
 
 	if len(uncachedVals) != len(cachedVals) {

@@ -31,7 +31,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_LWW_LatestValue(t *testing.T) {
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	// LWW: should return only the latest value
 	if len(vals) != 1 {
@@ -56,7 +59,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_LWW_SingleValue(t *testing.T) {
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	if len(vals) != 1 {
 		t.Errorf("expected 1 value, got %d: %v", len(vals), vals)
@@ -84,7 +90,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_Basic(t *testing.T) {
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	got := toStringSlice(t, vals)
 	sort.Strings(got)
@@ -111,7 +120,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_AfterRemoval(t *testing.T) 
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	got := toStringSlice(t, vals)
 	sort.Strings(got)
@@ -141,7 +153,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_ReAdd(t *testing.T) {
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	got := toStringSlice(t, vals)
 	sort.Strings(got)
@@ -166,7 +181,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_ConcurrentAddWins(t *testin
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	got := toStringSlice(t, vals)
 	expected := []string{"adventure"}
@@ -188,7 +206,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_AddWins_OnlyRemoves(t *testing.T) {
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	if len(vals) != 0 {
 		t.Errorf("expected 0 values for remove-only, got %d: %v", len(vals), vals)
@@ -219,7 +240,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_Basic(t *testing.T) {
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	// RGA should preserve insertion order
 	expected := []interface{}{"line one", "line two", "line three"}
@@ -250,7 +274,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_WithTombstone(t *testing.T) {
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	// elem2 is tombstoned, but elem3 (its child) should still appear
 	expected := []interface{}{"line one", "line three"}
@@ -277,7 +304,10 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_ConcurrentInserts(t *testing.T)
 	}
 
 	matcher := NewBadgerMatcher(db.Store())
-	vals := matcher.LookupAllAttributes(entity, attr)
+	vals, err := matcher.LookupAllAttributes(entity, attr)
+	if err != nil {
+		t.Fatalf("LookupAllAttributes: %v", err)
+	}
 
 	// Both preserved, ordered by ElementID (lower ReplicaID first)
 	expected := []interface{}{"from replica 1", "from replica 2"}

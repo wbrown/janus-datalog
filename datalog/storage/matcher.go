@@ -1045,9 +1045,9 @@ func (m *BadgerMatcher) TypeDefault(attr datalog.Keyword, defaultVal interface{}
 
 // LookupAllAttributes retrieves all values of a cardinality-many attribute for an entity.
 // Returns all matching values, or empty slice if none found.
-func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) []interface{} {
+func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
 	if entity == nil {
-		return nil
+		return nil, nil
 	}
 
 	// Convert to storage format
@@ -1078,15 +1078,15 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 				for v := range set {
 					result = append(result, v)
 				}
-				return result
+				return result, nil
 			case schema.CardinalityVector:
-				return entry.VectorList()
+				return entry.VectorList(), nil
 			case schema.CardinalityOne:
 				// For cardinality-one, return single value as slice
 				if entry.OneValue() != nil {
-					return []interface{}{entry.OneValue()}
+					return []interface{}{entry.OneValue()}, nil
 				}
-				return nil
+				return nil, nil
 			}
 		}
 	}
@@ -1102,24 +1102,24 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 //   - OpNone → LWW (cardinality-one): return latest value by ElementID
 //   - OpCRDTAdd/OpCRDTRemove → add-wins set (cardinality-many): resolve membership
 //   - OpRGAInsert/OpRGATombstone → RGA vector (cardinality-vector): reconstruct ordered list
-func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) []interface{} {
+func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]interface{}, error) {
 	encoder := m.store.encoder
 
 	// Peek at first datom to determine op type
 	start, end := encoder.EncodePrefixRange(AEVT, aBytes, eBytes)
 	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("scanning AEVT for LookupAllAttributes: %w", err)
 	}
 
 	if !iter.Next() {
 		iter.Close()
-		return nil
+		return nil, nil
 	}
 	firstDatom, err := iter.Datom()
 	if err != nil {
 		iter.Close()
-		return nil
+		return nil, fmt.Errorf("decoding first datom for LookupAllAttributes: %w", err)
 	}
 	firstOp := firstDatom.Op
 	iter.Close()
@@ -1129,32 +1129,32 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) []int
 		// Add-wins set resolution
 		result, err := m.resolveAddWinsSet(eBytes, aBytes)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("resolving add-wins set: %w", err)
 		}
 		values := make([]interface{}, 0, len(result.Members))
 		for v := range result.Members {
 			values = append(values, v)
 		}
-		return values
+		return values, nil
 
 	case firstOp == datalog.OpRGAInsert || firstOp == datalog.OpRGATombstone:
 		// RGA vector resolution
 		result, err := m.resolveVector(eBytes, aBytes)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("resolving RGA vector: %w", err)
 		}
 		values := make([]interface{}, len(result.Elements))
 		for i, v := range result.Elements {
 			values[i] = v
 		}
-		return values
+		return values, nil
 
 	default:
 		// LWW: return the value with the highest ElementID
 		// Re-scan since we closed the iterator
 		iter2, err := m.store.ScanKeysOnly(AEVT, start, end)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("re-scanning AEVT for LWW resolution: %w", err)
 		}
 		defer iter2.Close()
 
@@ -1178,8 +1178,8 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) []int
 		}
 
 		if !found {
-			return nil
+			return nil, nil
 		}
-		return []interface{}{latestVal}
+		return []interface{}{latestVal}, nil
 	}
 }

@@ -56,7 +56,7 @@ type EntityLookup interface {
 
 	// LookupAllAttributes returns all values for a cardinality-many attribute
 	// Returns empty slice if attribute not found
-	LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) []interface{}
+	LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error)
 }
 
 // UpdateMode controls how cardinality-many fields are updated
@@ -363,7 +363,10 @@ func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLoo
 	// For cardinality-many: use element-by-element diff
 	if mode == UpdateModeReplace {
 		// Diff-based set assignment: slice IS the new complete state
-		existingVals := lookup.LookupAllAttributes(entity, kw)
+		existingVals, err := lookup.LookupAllAttributes(entity, kw)
+		if err != nil {
+			return fmt.Errorf("lookup existing values for %s: %w", kw, err)
+		}
 
 		// Remove values in existing but not in new (CRDT tombstone)
 		for _, existing := range existingVals {
@@ -385,7 +388,10 @@ func (sw *StructWriter) updateSliceField(tx TransactionUpdater, lookup EntityLoo
 	} else {
 		// UpdateModeAdd - union semantics: add new values to existing set
 		// Only add values that don't already exist
-		existingVals := lookup.LookupAllAttributes(entity, kw)
+		existingVals, err := lookup.LookupAllAttributes(entity, kw)
+		if err != nil {
+			return fmt.Errorf("lookup existing values for %s: %w", kw, err)
+		}
 		for _, newVal := range newVals {
 			if !containsValue(existingVals, newVal) {
 				if err := tx.Add(entity, kw, newVal); err != nil {

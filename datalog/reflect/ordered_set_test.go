@@ -161,8 +161,8 @@ func (m *mockTransaction) LookupAttribute(entity datalog.Identity, attr datalog.
 	return nil, false
 }
 
-func (m *mockTransaction) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) []interface{} {
-	return nil
+func (m *mockTransaction) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {
+	return nil, nil
 }
 
 // CharacterWithPreferences tests OrderedSet[string] fields
