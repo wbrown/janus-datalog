@@ -1882,7 +1882,7 @@ func (t *Transaction) AddMap(attrs map[string]interface{}) (datalog.Identity, er
 //	person.Name = "Alice Smith"
 //	id, err = tx.SaveStruct(&person)  // Updates name, age unchanged
 func (t *Transaction) SaveStruct(v interface{}) (datalog.Identity, error) {
-	matcher := NewBadgerMatcher(t.db.Store())
+	matcher := t.db.Matcher().(*BadgerMatcher)
 	return dlreflect.SaveStruct(t, matcher, v, t.db.Schema())
 }
 

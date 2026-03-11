@@ -2,6 +2,7 @@ package reflect_test
 
 import (
 	"os"
+	"sort"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -1490,5 +1491,209 @@ func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
 		t.Errorf("PullInto: expected 3 hooks, got %d (BUG: only first value returned)", len(loaded.Hooks))
 		t.Errorf("Expected: %v", dungeon.Hooks)
 		t.Errorf("Got: %v", loaded.Hooks)
+	}
+}
+
+// TestCRDTTombstoneReAdd demonstrates a bug where SaveStruct cannot re-add a
+// value to a cardinality-many field after that value was previously removed.
+//
+// ROOT CAUSE: Transaction.SaveStruct creates a BadgerMatcher via
+// NewBadgerMatcher(t.db.Store()) which does NOT set the cache field. This
+// causes LookupAllAttributes to use a fallback code path (raw AEVT scan) that
+// returns ALL datoms — both Add and Remove ops — without performing add-wins
+// CRDT resolution. The diff logic in updateSliceField then sees tombstoned
+// values as still present and skips the re-add.
+//
+// See docs/bugs/BUG-CRDT-READD-SAVESTRUCT.md for full analysis.
+func TestCRDTTombstoneReAdd(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "crdt-tombstone-readd")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(PersonWithTags{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Step 1: Create entity with initial tags
+	alice := PersonWithTags{
+		Name: "Alice",
+		Tags: []string{"fantasy", "adventure", "epic"},
+	}
+	tx := db.NewTransaction()
+	aliceID, err := tx.SaveStruct(&alice)
+	if err != nil {
+		t.Fatalf("SaveStruct (initial): %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Commit (initial): %v", err)
+	}
+
+	// Verify initial state
+	var loaded PersonWithTags
+	if err := db.PullInto(aliceID, &loaded); err != nil {
+		t.Fatalf("PullInto (initial): %v", err)
+	}
+	sort.Strings(loaded.Tags)
+	if len(loaded.Tags) != 3 {
+		t.Fatalf("initial: expected 3 tags, got %d: %v", len(loaded.Tags), loaded.Tags)
+	}
+	t.Logf("Step 1 - Initial tags: %v", loaded.Tags)
+
+	// Step 2: Remove "adventure" by saving with a subset (creates CRDT tombstone)
+	alice.ID = aliceID
+	alice.Tags = []string{"fantasy", "epic"}
+	tx = db.NewTransaction()
+	if _, err := tx.SaveStruct(&alice); err != nil {
+		t.Fatalf("SaveStruct (remove): %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Commit (remove): %v", err)
+	}
+
+	if err := db.PullInto(aliceID, &loaded); err != nil {
+		t.Fatalf("PullInto (after remove): %v", err)
+	}
+	sort.Strings(loaded.Tags)
+	t.Logf("Step 2 - After removal: %v", loaded.Tags)
+	if len(loaded.Tags) != 2 {
+		t.Fatalf("after removal: expected 2 tags %v, got %d: %v",
+			[]string{"epic", "fantasy"}, len(loaded.Tags), loaded.Tags)
+	}
+
+	// Step 3: Re-add "adventure" via SaveStruct — THIS IS THE BUG
+	alice.Tags = []string{"fantasy", "epic", "adventure"}
+	tx = db.NewTransaction()
+	if _, err := tx.SaveStruct(&alice); err != nil {
+		t.Fatalf("SaveStruct (re-add): %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Commit (re-add): %v", err)
+	}
+
+	if err := db.PullInto(aliceID, &loaded); err != nil {
+		t.Fatalf("PullInto (after re-add): %v", err)
+	}
+	sort.Strings(loaded.Tags)
+	t.Logf("Step 3 - After re-add via SaveStruct: %v", loaded.Tags)
+
+	// Diagnose: show what LookupAllAttributes returns with and without cache
+	matcherNoCache := storage.NewBadgerMatcher(db.Store())
+	uncachedVals := matcherNoCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
+	t.Logf("DIAGNOSTIC: LookupAllAttributes WITHOUT cache: %v (%d values)", uncachedVals, len(uncachedVals))
+
+	matcherWithCache := db.Matcher().(*storage.BadgerMatcher)
+	cachedVals := matcherWithCache.LookupAllAttributes(aliceID, datalog.NewKeyword(":person-with-tags/tags"))
+	t.Logf("DIAGNOSTIC: LookupAllAttributes WITH cache:    %v (%d values)", cachedVals, len(cachedVals))
+
+	if len(uncachedVals) != len(cachedVals) {
+		t.Logf("BUG CONFIRMED: uncached path returns %d values, cached path returns %d",
+			len(uncachedVals), len(cachedVals))
+	}
+
+	// Assert correct behavior: "adventure" must be re-added
+	expected := []string{"adventure", "epic", "fantasy"}
+	if len(loaded.Tags) != len(expected) {
+		t.Errorf("after re-add: expected %d tags %v, got %d tags %v",
+			len(expected), expected, len(loaded.Tags), loaded.Tags)
+	} else {
+		for i := range expected {
+			if loaded.Tags[i] != expected[i] {
+				t.Errorf("after re-add: tag[%d] expected %q, got %q", i, expected[i], loaded.Tags[i])
+			}
+		}
+	}
+}
+
+// TestCRDTTombstoneReAdd_TxSetWorkaround verifies that tx.Set() correctly
+// handles tombstone re-adds, serving as the workaround for the SaveStruct bug.
+func TestCRDTTombstoneReAdd_TxSetWorkaround(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "crdt-tombstone-txset")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	schema, err := dlreflect.SchemaFromStruct(PersonWithTags{})
+	if err != nil {
+		t.Fatalf("failed to create schema: %v", err)
+	}
+
+	db, err := storage.NewDatabaseWithSchema(tmpDir, schema)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Step 1: Create entity with initial tags
+	alice := PersonWithTags{
+		Name: "Alice",
+		Tags: []string{"fantasy", "adventure", "epic"},
+	}
+	tx := db.NewTransaction()
+	aliceID, err := tx.SaveStruct(&alice)
+	if err != nil {
+		t.Fatalf("SaveStruct (initial): %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Commit (initial): %v", err)
+	}
+
+	// Step 2: Remove "adventure" via SaveStruct (creates tombstone)
+	alice.ID = aliceID
+	alice.Tags = []string{"fantasy", "epic"}
+	tx = db.NewTransaction()
+	if _, err := tx.SaveStruct(&alice); err != nil {
+		t.Fatalf("SaveStruct (remove): %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Commit (remove): %v", err)
+	}
+
+	var loaded PersonWithTags
+	if err := db.PullInto(aliceID, &loaded); err != nil {
+		t.Fatalf("PullInto (after remove): %v", err)
+	}
+	sort.Strings(loaded.Tags)
+	if len(loaded.Tags) != 2 {
+		t.Fatalf("after removal: expected 2 tags, got %d: %v", len(loaded.Tags), loaded.Tags)
+	}
+
+	// Step 3: Re-add "adventure" via tx.Set() — workaround that performs
+	// proper add-wins CRDT resolution
+	tagKw := datalog.NewKeyword(":person-with-tags/tags")
+	tagVals := []interface{}{"fantasy", "epic", "adventure"}
+	tx = db.NewTransaction()
+	if err := tx.Set(aliceID, tagKw, tagVals); err != nil {
+		t.Fatalf("tx.Set (re-add): %v", err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Commit (re-add): %v", err)
+	}
+
+	if err := db.PullInto(aliceID, &loaded); err != nil {
+		t.Fatalf("PullInto (after re-add): %v", err)
+	}
+	sort.Strings(loaded.Tags)
+	t.Logf("After re-add via tx.Set(): %v", loaded.Tags)
+
+	expected := []string{"adventure", "epic", "fantasy"}
+	if len(loaded.Tags) != len(expected) {
+		t.Errorf("after re-add via tx.Set: expected %d tags %v, got %d tags %v",
+			len(expected), expected, len(loaded.Tags), loaded.Tags)
+	} else {
+		for i := range expected {
+			if loaded.Tags[i] != expected[i] {
+				t.Errorf("after re-add via tx.Set: tag[%d] expected %q, got %q", i, expected[i], loaded.Tags[i])
+			}
+		}
 	}
 }
