@@ -106,7 +106,8 @@ func TestPullAPIUsesCache(t *testing.T) {
 	assert.Equal(t, "Alice", name)
 
 	// Lookup all tags (cardinality-many via LookupAllAttributes)
-	tags := bm.LookupAllAttributes(e, datalog.NewKeyword(":person/tags"))
+	tags, err := bm.LookupAllAttributes(e, datalog.NewKeyword(":person/tags"))
+	require.NoError(t, err)
 	assert.Len(t, tags, 2)
 	// Convert to set for order-independent comparison
 	tagSet := make(map[interface{}]bool)
