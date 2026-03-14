@@ -259,8 +259,14 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 	}
 
 	// Check if this is a function/expression pattern [(fn ...) ...]
-	if len(node.Nodes) >= 1 && node.Nodes[0].Type == edn.NodeList {
-		list := &node.Nodes[0]
+	// Also handle [[(fn ...)] binding] where a vector wraps the function call
+	// (produced by the query builder for comparison bindings like Gt().As())
+	firstNode := &node.Nodes[0]
+	if firstNode.Type == edn.NodeVector && len(firstNode.Nodes) == 1 && firstNode.Nodes[0].Type == edn.NodeList {
+		firstNode = &firstNode.Nodes[0]
+	}
+	if len(node.Nodes) >= 1 && firstNode.Type == edn.NodeList {
+		list := firstNode
 
 		// Check if it's a subquery pattern [(q ...) binding]
 		if len(list.Nodes) >= 2 && list.Nodes[0].Type == edn.NodeSymbol && list.Nodes[0].Value == "q" {
@@ -276,16 +282,23 @@ func parsePattern(node *edn.Node) (query.Clause, error) {
 			if node.Nodes[1].Type == edn.NodeSymbol {
 				sym := datalog.NewSymbol(node.Nodes[1].Value)
 				if sym.IsVariable() {
-					return parseExpression(&node.Nodes[0], sym)
+					return parseExpression(list, sym)
 				}
 			}
-			// Tuple binding: [(fn ...) [?a ?b ?c]]
+			// Tuple binding: [(fn ...) [?a ?b ?c]] or [(fn ...) [[?a ?b ?c]]]
+			// The double-bracket form [[...]] is the Datomic-style tuple binding
+			// produced by the query builder's TupleGround().As() method.
 			if node.Nodes[1].Type == edn.NodeVector {
-				tupleBinding, err := parseTupleBinding(&node.Nodes[1])
+				bindingNode := &node.Nodes[1]
+				// Unwrap [[?a ?b ?c]] → [?a ?b ?c]
+				if len(bindingNode.Nodes) == 1 && bindingNode.Nodes[0].Type == edn.NodeVector {
+					bindingNode = &bindingNode.Nodes[0]
+				}
+				tupleBinding, err := parseTupleBinding(bindingNode)
 				if err != nil {
 					return nil, fmt.Errorf("error parsing tuple binding: %w", err)
 				}
-				return parseExpressionWithTupleBinding(&node.Nodes[0], tupleBinding)
+				return parseExpressionWithTupleBinding(list, tupleBinding)
 			}
 		}
 		// Otherwise it's a predicate function pattern [(fn ...)]

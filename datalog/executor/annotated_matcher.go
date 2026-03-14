@@ -3,6 +3,7 @@ package executor
 import (
 	"time"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -187,6 +188,15 @@ func (m *AnnotatedMatcher) WithCollector(collector *annotations.Collector) Colle
 	// Already wrapped, just update the collector
 	m.collector = collector
 	return m
+}
+
+// LookupAttribute implements EntityLookupMatcher if the underlying matcher supports it.
+// This ensures get-else, missing?, and get-some work through the annotation wrapper.
+func (m *AnnotatedMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+	if elm, ok := m.underlying.(EntityLookupMatcher); ok {
+		return elm.LookupAttribute(entity, attr)
+	}
+	return nil, false
 }
 
 // WithTimeRanges implements TimeRangeAware if the underlying matcher supports it.

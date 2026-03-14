@@ -8,6 +8,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/olekukonko/tablewriter v1.0.7
 	github.com/stretchr/testify v1.8.1
+	github.com/wbrown/ebnf v0.0.0-20260314195405-9a2d824c0538
 )
 
 require (

@@ -39,6 +39,18 @@ func NewOutputFormatter(w io.Writer) *OutputFormatter {
 	}
 }
 
+// NewPlainTextFormatter creates a formatter with color disabled.
+func NewPlainTextFormatter(w io.Writer) *OutputFormatter {
+	if w == nil {
+		w = os.Stdout
+	}
+	return &OutputFormatter{
+		useColor: false,
+		writer:   w,
+		renderer: NewRelationRenderer(false),
+	}
+}
+
 // Handle implements the Handler interface - prints events as they occur
 func (f *OutputFormatter) Handle(event Event) {
 	output := f.Format(event)
