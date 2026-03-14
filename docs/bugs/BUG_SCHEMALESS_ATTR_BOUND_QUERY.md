@@ -60,7 +60,7 @@ Two problems:
 
 ## Discovery Context
 
-Found in narrative-generators scribe import workflow. The `:module/input` attribute (raw markdown text, ~36KB) was defined as a keyword constant but not registered in the schema builder. After the janus-datalog CRDT fix (v0.6.1-0.20260206164518-20348db45516), the import broke — `SetInput()` succeeded but the subsequent `HasAttribute` query returned false.
+Found in the application scribe import workflow. The `:module/input` attribute (raw markdown text, ~36KB) was defined as a keyword constant but not registered in the schema builder. After the janus-datalog CRDT fix (v0.6.1-0.20260206164518-20348db45516), the import broke — `SetInput()` succeeded but the subsequent `HasAttribute` query returned false.
 
 Adding the attribute to the schema immediately fixed the issue.
 

@@ -45,7 +45,7 @@ PullInto returns raw storage data (all historical values as `[]interface{}`) wit
 
 ## Test Case
 
-From `narrative-generators/pkg/db`:
+From `the application/pkg/db`:
 
 ```
 === RUN   TestIsTaskComplete_AfterInvalidation

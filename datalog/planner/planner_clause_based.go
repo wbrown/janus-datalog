@@ -111,8 +111,10 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	rewriter := NewSemanticRewriter(p.options)
 	clauses = rewriter.Rewrite(clauses)
 
-	// TODO: Implement decorrelation as pure clause transformation
-	// (Conditional aggregate rewriting is buggy and moved to experimental/)
+	// Algebraic optimization: clauses → algebra IR → transform passes → clauses
+	if p.options.EnableAlgebraOptimizer {
+		clauses = optimizeViaAlgebra(clauses, p.options)
+	}
 
 	// Step 2b: Detect constant-bindable scalar inputs
 	// Scalars that only appear in predicates/expressions (not data patterns)

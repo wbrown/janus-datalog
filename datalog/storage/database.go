@@ -442,6 +442,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		// Planner options (for old planner - kept for compatibility when UseClauseBasedPlanner: false)
 		EnableDynamicReordering:     true, // Phase reordering by symbol connectivity
 		EnablePredicatePushdown:     true, // Early predicate filtering (not storage-level)
+		EnableAlgebraOptimizer:      false, // Relational algebra IR optimization (decorrelation) — not yet ready
 		EnableSubqueryDecorrelation: true, // Selinger's decorrelation optimization
 		EnableParallelDecorrelation: true, // Execute decorrelated merged queries in parallel
 		MaxPhases:                   10,

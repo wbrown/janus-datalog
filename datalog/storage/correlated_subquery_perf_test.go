@@ -10,6 +10,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/algebra"
+	"github.com/wbrown/janus-datalog/datalog/planner"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // TestCorrelatedSubqueryPerformance reproduces a production bottleneck from
@@ -26,7 +29,7 @@ import (
 //   - 75 scenarios with :entity/type, :scenario/title, :scenario/created-at
 //   - ~100 completed tasks per scenario with :task/root, :task/status,
 //     :task/key, :task/completed-at, :task/token-count, :task/duration
-//   - 1 task per scenario has :task/key = :scenario/opening
+//   - 1 task per scenario has :task/key = :task/opening
 func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	dir, err := os.MkdirTemp("", "correlated-subquery-perf-*")
 	require.NoError(t, err)
@@ -45,7 +48,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	baseTime := time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC)
 
 	statusComplete := datalog.NewKeyword(":status/complete")
-	kwOpening := datalog.NewKeyword(":scenario/opening")
+	kwOpening := datalog.NewKeyword(":task/opening")
 	kwEntityType := datalog.NewKeyword(":entity/type")
 	kwScenarioType := datalog.NewKeyword(":entity.type/scenario")
 	kwTitle := datalog.NewKeyword(":scenario/title")
@@ -106,7 +109,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	  (or [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
-	                  [?t :task/key :scenario/opening]
+	                  [?t :task/key :task/opening]
 	                  [?t :task/status :status/complete]]
 	          $ ?scenario) [[?openingCount]]]
 	      [(ground 0) ?openingCount])
@@ -201,7 +204,7 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 					tx.Add(task, datalog.NewKeyword(":task/token-count"), int64(500+j*10))
 					tx.Add(task, datalog.NewKeyword(":task/duration"), int64(time.Duration(30+j)*time.Second))
 					if j == 0 {
-						tx.Add(task, datalog.NewKeyword(":task/key"), datalog.NewKeyword(":scenario/opening"))
+						tx.Add(task, datalog.NewKeyword(":task/key"), datalog.NewKeyword(":task/opening"))
 					} else {
 						tx.Add(task, datalog.NewKeyword(":task/key"), datalog.NewKeyword(fmt.Sprintf(":scenario/task-%d", j)))
 					}
@@ -225,7 +228,7 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 			  (or [(q [:find (count ?t)
 			           :in $ ?s
 			           :where [?t :task/root ?s]
-			                  [?t :task/key :scenario/opening]
+			                  [?t :task/key :task/opening]
 			                  [?t :task/status :status/complete]]
 			          $ ?scenario) [[?openingCount]]]
 			      [(ground 0) ?openingCount])
@@ -260,4 +263,167 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 			}
 		})
 	}
+}
+
+// queryWithPlannerOptions runs a query with custom planner options.
+// Used to test with/without the algebra optimizer.
+func queryWithPlannerOptions(db *Database, queryStr string, opts planner.PlannerOptions) (executor.Relation, error) {
+	q, err := db.resolveQuery(queryStr)
+	if err != nil {
+		return nil, err
+	}
+	router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
+	inputs, err := db.convertInputsToRelations(q, nil)
+	if err != nil {
+		return nil, err
+	}
+	opts.Cache = db.planCache
+	exec := executor.NewExecutorWithOptions(router, db, opts)
+	return exec.ExecuteWithRelations(executor.NewContext(nil), q, inputs)
+}
+
+// TestCorrelatedSubqueryAlgebraOptimizer compares baseline (no algebra optimizer)
+// against optimized (algebra optimizer with decorrelation) on the same data
+// and query as TestCorrelatedSubqueryPerformance.
+func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
+	dir, err := os.MkdirTemp("", "correlated-subquery-algebra-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	const (
+		numScenarios     = 75
+		tasksPerScenario = 100
+	)
+
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Reuse same data setup as TestCorrelatedSubqueryPerformance
+	baseTime := time.Date(2026, 3, 14, 0, 0, 0, 0, time.UTC)
+	statusComplete := datalog.NewKeyword(":status/complete")
+	kwOpening := datalog.NewKeyword(":task/opening")
+
+	for s := 0; s < numScenarios; s++ {
+		tx := db.NewTransaction()
+		scenario := datalog.NewIdentity(fmt.Sprintf("scenario:%d", s))
+		require.NoError(t, tx.Add(scenario, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario")))
+		require.NoError(t, tx.Add(scenario, datalog.NewKeyword(":scenario/title"), fmt.Sprintf("Scenario %d", s)))
+		require.NoError(t, tx.Add(scenario, datalog.NewKeyword(":scenario/created-at"), baseTime.Add(time.Duration(s)*time.Hour)))
+
+		for j := 0; j < tasksPerScenario; j++ {
+			task := datalog.NewIdentity(fmt.Sprintf("task:%d:%d", s, j))
+			require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/root"), scenario))
+			require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/status"), statusComplete))
+			require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/completed-at"), baseTime.Add(time.Duration(s)*time.Hour+time.Duration(j)*time.Minute)))
+			require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/token-count"), int64(500+j*10)))
+			require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/duration"), int64(time.Duration(30+j)*time.Second)))
+			if j == 0 {
+				require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/key"), kwOpening))
+			} else {
+				require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/key"), datalog.NewKeyword(fmt.Sprintf(":scenario/task-%d", j))))
+			}
+		}
+		_, err = tx.Commit()
+		require.NoError(t, err)
+	}
+	t.Logf("Populated %d scenarios with %d tasks each", numScenarios, tasksPerScenario)
+
+	queryStr := `[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration ?complete ?lastKey ?lastUpdatedAt
+	  :where
+	  [?scenario :entity/type :entity.type/scenario]
+	  [?scenario :scenario/title ?title]
+	  [?scenario :scenario/created-at ?createdAt]
+	  (or [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+	           :in $ ?s
+	           :where [?t :task/root ?s]
+	                  [?t :task/status :status/complete]
+	                  [(get-else $ ?t :task/token-count 0) ?tok]
+	                  [(get-else $ ?t :task/duration 0) ?dur]]
+	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
+	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+	  (or [(q [:find (count ?t)
+	           :in $ ?s
+	           :where [?t :task/root ?s]
+	                  [?t :task/key :task/opening]
+	                  [?t :task/status :status/complete]]
+	          $ ?scenario) [[?openingCount]]]
+	      [(ground 0) ?openingCount])
+	  [[(> ?openingCount 0)] ?complete]
+	  (or [(q [:find ?key ?ca
+	           :in $ ?s
+	           :where [?t :task/root ?s]
+	                  [?t :task/status :status/complete]
+	                  [?t :task/completed-at ?ca]
+	                  [?t :task/key ?key]
+	                  [(q [:find (max ?ca)
+	                       :in $ ?s
+	                       :where [?t :task/root ?s]
+	                              [?t :task/status :status/complete]
+	                              [?t :task/completed-at ?ca]]
+	                      $ ?s) [[?maxCa]]]
+	                  [(= ?ca ?maxCa)]]
+	          $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
+	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	  :order-by [[?lastUpdatedAt :desc]]]`
+
+	t.Run("baseline", func(t *testing.T) {
+		opts := DefaultPlannerOptions()
+		opts.EnableAlgebraOptimizer = false
+		db.ClearPlanCache()
+
+		start := time.Now()
+		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		require.NoError(t, err)
+		results, err := executor.CollectTuples(rel, nil)
+		elapsed := time.Since(start)
+		require.NoError(t, err)
+		require.Len(t, results, numScenarios)
+		t.Logf("Baseline: %d results in %s", len(results), elapsed)
+
+		for i, row := range results {
+			if tc, ok := row[3].(int); ok {
+				require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
+			}
+			require.Equal(t, true, row[6], "scenario %d complete", i)
+		}
+	})
+
+	t.Run("algebra_optimizer", func(t *testing.T) {
+		opts := DefaultPlannerOptions()
+		opts.EnableAlgebraOptimizer = true
+		db.ClearPlanCache()
+
+		// Log the rewritten clauses
+		q, _ := db.resolveQuery(queryStr)
+		root, _ := algebra.Compile(&query.Query{Where: q.Where})
+		optimizer := algebra.NewOptimizer(algebra.DefaultPasses()...)
+		optimized, _ := optimizer.Optimize(root)
+		rewritten, _ := algebra.Decompile(optimized)
+		t.Logf("Rewritten %d clauses:", len(rewritten))
+		for i, c := range rewritten {
+			t.Logf("  [%d] %T: %s", i, c, c.String())
+		}
+
+		db.ClearPlanCache()
+		start := time.Now()
+		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		if err != nil {
+			t.Fatalf("query error: %v", err)
+		}
+		t.Logf("Relation: %v, symbols: %v, size: %d", rel != nil, rel.Symbols(), rel.Size())
+		results, err := executor.CollectTuples(rel, nil)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("collect error: %v", err)
+		}
+		t.Logf("Optimized: %d results in %s", len(results), elapsed)
+
+		for i, row := range results {
+			if tc, ok := row[3].(int); ok {
+				require.Equal(t, tasksPerScenario, tc, "scenario %d task count", i)
+			}
+			require.Equal(t, true, row[6], "scenario %d complete", i)
+		}
+	})
 }

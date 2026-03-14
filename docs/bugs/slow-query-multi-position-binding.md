@@ -150,7 +150,7 @@ Manually order patterns so more selective ones come first.
 
 The failing test is in:
 ```
-/Users/wbrown/go/src/github.com/NovelAI/narrative-generators/pkg/worldmap/data/query_perf_test.go
+/Users/wbrown/go/src/github.com/NovelAI/the application/pkg/worldmap/data/query_perf_test.go
 ```
 
 Run with:
@@ -174,7 +174,7 @@ The investigation has identified that:
 ## Reproduction Script
 
 ```go
-// In narrative-generators repo
+// In the application repo
 db.ExecuteQueryWithInputs(
     `[:find ?e :in $ ?map ?code
      :where [?e :entity/map ?map]

@@ -1147,12 +1147,15 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	var err error
 	var semantics string
 
-	// Check if any branch has expressions - use fallback semantics if so
-	if query.OrHasExpressions(clause.Branches) {
+	// Choose semantics based on branch content:
+	// - Branches with correlated subqueries (inputs referencing outer vars)
+	//   need fallback (per-tuple evaluation)
+	// - Branches with only independent expressions (ground, NOT, uncorrelated
+	//   subqueries) can use union (run independently, merge results)
+	if needsPerTupleEvaluation(clause.Branches) {
 		semantics = "fallback"
 		result, err = e.executeOrClauseFallback(ctx, clause, groups)
 	} else {
-		// Standard union semantics for pattern-only OR
 		semantics = "union"
 		result, err = e.executeOrClauseUnion(ctx, clause, groups)
 	}
@@ -1179,6 +1182,31 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	}
 
 	return result, err
+}
+
+// needsPerTupleEvaluation returns true if OR branches contain correlated
+// subqueries that must execute per outer tuple. Branches with only patterns,
+// uncorrelated subqueries, NOT, and ground expressions can use union semantics.
+func needsPerTupleEvaluation(branches [][]query.Clause) bool {
+	for _, branch := range branches {
+		for _, c := range branch {
+			if sp, ok := c.(*query.SubqueryPattern); ok {
+				// Check if subquery has correlation inputs (variables beyond $)
+				for _, input := range sp.Inputs {
+					if v, ok := input.(query.Variable); ok {
+						if v.Name != datalog.SymDollar {
+							return true // Correlated — needs per-tuple
+						}
+					}
+				}
+			}
+			// Inline subquery (Subquery type) is always correlated
+			if _, ok := c.(*query.Subquery); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // executeOrClauseFallback implements Clojure-style fallback semantics:
@@ -1376,14 +1404,28 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 		})
 	}
 
+	// Find outer binding to pass to branches.
+	// Pattern-only branches don't need this (they scan storage directly),
+	// but expression branches may reference outer variables.
+	var outerBinding Relation
+	if len(groups) > 0 {
+		neededSymbols := collectOrBranchRequiredSymbols(&query.OrClause{Branches: clause.Branches})
+		for _, rel := range groups {
+			if containsAny(rel.Symbols(), neededSymbols) {
+				outerBinding = rel.Materialize()
+				break
+			}
+		}
+	}
+
 	// Execute each branch and collect results
 	var branchResults []Relation
 	var commonCols []query.Symbol
 
 	for i, branch := range clause.Branches {
 		branchStart := time.Now()
-		// Execute this branch's clauses against storage (no prior bindings)
-		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
+		// Execute branch with outer bindings if available
+		branchResult, err := e.executeInnerClauses(ctx, branch, outerBinding)
 		if err != nil {
 			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
 		}
@@ -1452,17 +1494,27 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 		return nil, fmt.Errorf("OR-JOIN clause has no join variables")
 	}
 
-	// Check if any branch has expressions - use fallback semantics if so
-	if query.OrHasExpressions(clause.Branches) {
-		return e.executeOrJoinClauseFallback(ctx, clause, groups)
+	// Find outer binding for branches that need outer variables.
+	// For or-join, the join vars explicitly declare what the branches need,
+	// so use them to find the outer binding.
+	var outerBinding Relation
+	if len(groups) > 0 {
+		for _, rel := range groups {
+			if containsAny(rel.Symbols(), joinVars) {
+				outerBinding = rel.Materialize()
+				break
+			}
+		}
 	}
 
 	var branchResults []Relation
 
 	for i, branch := range clause.Branches {
-		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
+		branchResult, err := e.executeInnerClauses(ctx, branch, outerBinding)
 		if err != nil {
 			return nil, fmt.Errorf("OR-JOIN branch %d execution failed: %w", i+1, err)
+		}
+			if branchResult != nil {
 		}
 
 		if branchResult != nil {
@@ -1839,6 +1891,40 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 
 		case *query.SubqueryPattern:
 			newRel, err := e.executeSubquery(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = groups.Collapse(ctx)
+
+		case *query.NotClause:
+			var err error
+			groups, err = e.executeNotClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+
+		case *query.NotJoinClause:
+			var err error
+			groups, err = e.executeNotJoinClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+
+		case *query.OrClause:
+			newRel, err := e.executeOrClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = groups.Collapse(ctx)
+
+		case *query.OrJoinClause:
+			newRel, err := e.executeOrJoinClause(ctx, c, groups)
 			if err != nil {
 				return nil, err
 			}

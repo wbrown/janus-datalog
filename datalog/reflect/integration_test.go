@@ -778,7 +778,7 @@ func TestPullInto_CardinalityManyRefs(t *testing.T) {
 
 // TestPullInto_CardinalityManyRefs_ManualSchema tests the same scenario
 // but with a manually-defined schema (like real-world usage) instead of SchemaFromStruct.
-// This reproduces a bug seen in narrative-generators where PullInto only returns the first ref.
+// This reproduces a bug seen in the application where PullInto only returns the first ref.
 func TestPullInto_CardinalityManyRefs_ManualSchema(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "reflect-test-manual-schema")
 	if err != nil {
@@ -1104,7 +1104,7 @@ func TestStructWriter_AnnotationsEmitted(t *testing.T) {
 
 // WorldEntity is a reproduction test struct for a downstream bug where
 // SaveStruct/PullInto failed with structs containing Keyword and Identity fields.
-// Mimics the structure from narrative-generators/pkg/schema/entities.go:353
+// Mimics the structure from the application/pkg/schema/entities.go:353
 type WorldEntity struct {
 	ID            datalog.Identity   `datalog:"-,id"`
 	Type          datalog.Keyword    `datalog:"entity/type"`
@@ -1410,7 +1410,7 @@ type DungeonEntity struct {
 
 // TestPullInto_CardinalityManyStrings_MultipleValues is a regression test for the
 // downstream bug where PullInto only returns the first value for []string fields.
-// This reproduces the scenario from narrative-generators where:
+// This reproduces the scenario from the application where:
 // - Raw datoms show all values: [[tag1] [tag2] [tag3]]
 // - But PullInto only returns: ["tag1"]
 func TestPullInto_CardinalityManyStrings_MultipleValues(t *testing.T) {
