@@ -1,6 +1,8 @@
 package algebra
 
 import (
+	"fmt"
+
 	"github.com/wbrown/ebnf/parse"
 )
 
@@ -37,14 +39,25 @@ func (o *Optimizer) Optimize(root *Node) (*Node, error) {
 			return nil, err
 		}
 
+		fmt.Printf("[OPTIMIZE] result type: %T\n", result)
 		switch v := result.(type) {
 		case *parse.Node:
+			fmt.Printf("[OPTIMIZE] root: rule=%s, children=%d\n", v.Rule, len(v.Children))
+			for i, child := range v.Children {
+				fmt.Printf("[OPTIMIZE]   child[%d]: rule=%s, TV=%T, nChildren=%d\n", i, child.Rule, child.TransformedValue, len(child.Children))
+			if child.Rule == "_transformed" && child.TransformedValue != nil {
+				if pn, ok := child.TransformedValue.(*parse.Node); ok {
+					fmt.Printf("[OPTIMIZE]     _transformed wraps: rule=%s, TV=%T\n", pn.Rule, pn.TransformedValue)
+				}
+			}
+			}
 			tree = &parse.ParseTree{Root: v}
 		case *parse.ParseTree:
 			tree = v
 		case *Node:
 			tree = ToParseTree(v)
 		default:
+			fmt.Printf("[OPTIMIZE] unhandled result type: %T, value: %v\n", result, result)
 			if tree.Root == nil {
 				return root, nil
 			}

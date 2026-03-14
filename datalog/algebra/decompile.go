@@ -80,32 +80,50 @@ func decompileDecorrelatedScan(ds *decorrelatedScan) ([]query.Clause, error) {
 	subqueryBranch := []query.Clause{ds.SubqueryPattern}
 
 	// Branch 2: NOT (find keys missing from subquery result) + ground defaults
-	// The NOT pattern mirrors the subquery's inner WHERE to identify which
-	// correlation keys have no matching data.
+	// Build NOT pattern using outer variable names (from binding), not inner names.
 	//
-	// For a subquery like [:find ?s (count ?t) :where [?t :task/root ?s] ...]
-	// the NOT pattern is (not [_ :task/root ?correlationVar])
-	// This finds outer tuples where no inner data exists.
-	var notPatternElements []query.PatternElement
-	if len(ds.SubqueryPattern.Query.Where) > 0 {
-		// Use the first data pattern from the inner query to build the NOT
-		for _, clause := range ds.SubqueryPattern.Query.Where {
-			if dp, ok := clause.(*query.DataPattern); ok {
-				notPatternElements = dp.Elements
-				break
+	// The inner query has patterns like [?t :task/root ?s] where ?s is the inner
+	// correlation key. The binding maps ?s → ?scenario (outer). The NOT pattern
+	// should be (not [_ :task/root ?scenario]) using the outer variable name.
+	bindingVars := bindingFormSymbols(ds.SubqueryPattern.Binding)
+	innerCorrelationKey := ds.SubqueryPattern.Query.Find[0].(query.FindVariable).Symbol
+	outerCorrelationVar := bindingVars[0] // First binding var is the correlation key
+
+	var defaultBranch []query.Clause
+
+	// Find the inner pattern that references the correlation key
+	for _, clause := range ds.SubqueryPattern.Query.Where {
+		dp, ok := clause.(*query.DataPattern)
+		if !ok {
+			continue
+		}
+		// Check if this pattern contains the inner correlation key
+		for _, elem := range dp.Elements {
+			if v, ok := elem.(query.Variable); ok && v.Name == innerCorrelationKey {
+				// Build NOT pattern: replace inner correlation var with outer,
+				// replace all other variables with blanks
+				notElements := make([]query.PatternElement, len(dp.Elements))
+				for j, e := range dp.Elements {
+					if v, ok := e.(query.Variable); ok {
+						if v.Name == innerCorrelationKey {
+							notElements[j] = query.Variable{Name: outerCorrelationVar}
+						} else {
+							notElements[j] = query.Blank{}
+						}
+					} else {
+						notElements[j] = e // Keep constants
+					}
+				}
+				defaultBranch = append(defaultBranch, &query.NotClause{
+					Clauses: []query.Clause{
+						&query.DataPattern{Elements: notElements},
+					},
+				})
+				goto foundNotPattern
 			}
 		}
 	}
-
-	var defaultBranch []query.Clause
-	if notPatternElements != nil {
-		notClause := &query.NotClause{
-			Clauses: []query.Clause{
-				&query.DataPattern{Elements: notPatternElements},
-			},
-		}
-		defaultBranch = append(defaultBranch, notClause)
-	}
+foundNotPattern:
 
 	// Add ground defaults for the original binding symbols
 	for i, sym := range ds.OriginalBinding {
