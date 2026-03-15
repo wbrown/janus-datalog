@@ -1498,24 +1498,38 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 	return unionRelations(branchResults, joinVars, e.options), nil
 }
 
-// executeOrJoinClauseFallback implements fallback semantics for or-join with expressions
+// executeOrJoinClauseFallback implements per-tuple fallback semantics for or-join
+// with expressions. Uses the join variables to identify the outer relation,
+// then evaluates branches per outer tuple with OrFallbackRelation.
 func (e *DefaultQueryExecutor) executeOrJoinClauseFallback(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
-	joinVars := clause.JoinVars
+	// Find the outer group that provides any of the join variables
+	joinVarSet := make(map[query.Symbol]bool, len(clause.JoinVars))
+	for _, v := range clause.JoinVars {
+		joinVarSet[v] = true
+	}
 
-	for i, branch := range clause.Branches {
-		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
-		if err != nil {
-			return nil, fmt.Errorf("OR-JOIN branch %d execution failed: %w", i+1, err)
+	var outerRel Relation
+	for i, rel := range groups {
+		for _, sym := range rel.Symbols() {
+			if joinVarSet[sym] {
+				groups[i] = groups[i].Materialize()
+				outerRel = groups[i]
+				break
+			}
 		}
-
-		// Return first non-empty result, projected to join vars
-		if branchResult != nil && branchResult.Size() > 0 {
-			return projectToColumns(branchResult, joinVars, e.options), nil
+		if outerRel != nil {
+			break
 		}
 	}
 
-	// All branches empty
-	return NewMaterializedRelationWithOptions(joinVars, nil, e.options), nil
+	if outerRel == nil {
+		outerRel = NewUnitRelation(e.options)
+	}
+
+	orClause := &query.OrClause{
+		Branches: clause.Branches,
+	}
+	return NewOrFallbackRelation(e, ctx, orClause, outerRel, e.options), nil
 }
 
 // collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context

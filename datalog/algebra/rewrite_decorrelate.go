@@ -85,7 +85,7 @@ func decorrelateTransform(node *parse.Node, children ...interface{}) interface{}
 	// handles single-row results.
 	sp := &query.SubqueryPattern{
 		Query:   decorrelated,
-		Inputs:  []query.PatternElement{query.Variable{Name: datalog.SymDollar}},
+		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
 		Binding: query.RelationBinding{Variables: newBindingVars},
 	}
 

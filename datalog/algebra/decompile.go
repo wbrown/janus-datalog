@@ -62,44 +62,24 @@ func decompileScan(n *Node) ([]query.Clause, error) {
 	return []query.Clause{scan.Pattern}, nil
 }
 
-// decompileDecorrelatedScan emits a decorrelated SubqueryPattern wrapped in
-// an OR-fallback clause with ground defaults.
+// decompileDecorrelatedScan emits a bare decorrelated SubqueryPattern.
 //
-// The decorrelated subquery has no correlation inputs (only $), so it runs
-// once and produces all matching groups via RelationBinding. The OR-fallback
-// preserves "try subquery, else use default" per outer tuple — for tuples
-// where the subquery produced no matching group, the default fires.
+// The decorrelated subquery has no correlation inputs (only $) and uses
+// RelationBinding to include the correlation variable in its output.
+// The executor's Collapse joins the result with the outer relation on
+// the shared correlation variable — no per-tuple evaluation needed.
 //
-// This is semantically identical to the original correlated OR-fallback,
-// but the subquery execution is O(1) (runs once, result cached) instead of
-// O(N) (runs per outer tuple).
+// Example: original correlated subquery
+//   (or [(q [:find (count ?t) :in $ ?s :where ...] $ ?scenario) [[?count]]]
+//       [(ground 0) ?count])
+//
+// Becomes decorrelated:
+//   [(q [:find ?s (count ?t) :in $ :where ...] $) [[?scenario ?count] ...]]
+//
+// The ?scenario column enables the Collapse to join correctly.
+// Defaults are not yet supported in this path.
 func decompileDecorrelatedScan(ds *decorrelatedScan) ([]query.Clause, error) {
-	if len(ds.DefaultValues) == 0 {
-		// No defaults — bare decorrelated subquery
-		return []query.Clause{ds.SubqueryPattern}, nil
-	}
-
-	// Branch 1: the decorrelated subquery
-	subqueryBranch := []query.Clause{ds.SubqueryPattern}
-
-	// Branch 2: ground defaults for original binding symbols
-	var defaultBranch []query.Clause
-	for i, sym := range ds.OriginalBinding {
-		var val interface{}
-		if i < len(ds.DefaultValues) {
-			val = ds.DefaultValues[i]
-		}
-		defaultBranch = append(defaultBranch, &query.Expression{
-			Function: query.GroundFunction{Value: val},
-			Binding:  sym,
-		})
-	}
-
-	return []query.Clause{
-		&query.OrClause{
-			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
-		},
-	}, nil
+	return []query.Clause{ds.SubqueryPattern}, nil
 }
 
 // decompileSelect emits child clauses followed by the predicate.

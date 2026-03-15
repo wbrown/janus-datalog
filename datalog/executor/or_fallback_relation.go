@@ -400,6 +400,11 @@ func (it *OrFallbackIterator) Next() bool {
 			}
 
 			if branchResult != nil {
+				// Filter branch result to rows matching the outer tuple on shared symbols.
+				// This is needed when the branch contains an uncorrelated subquery that
+				// returns results for ALL outer tuples (e.g., decorrelated subquery).
+				branchResult = filterBranchToOuterTuple(branchResult, outerTuple, it.outerSyms)
+
 				branchIter := branchResult.Iterator()
 				if branchIter.Next() {
 					// This branch has results - use it
@@ -526,6 +531,57 @@ func (it *projectedIterator) Tuple() Tuple {
 		return copyTuple(tuple)
 	}
 	return tuple
+}
+
+// filterBranchToOuterTuple filters a branch result to rows matching the
+// current outer tuple on shared symbols. This is critical for uncorrelated
+// subqueries that return results for ALL outer tuples — without filtering,
+// every outer tuple would get every result row.
+func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms []query.Symbol) Relation {
+	branchSyms := branchResult.Symbols()
+
+	// Find shared symbols between outer and branch
+	type symPair struct {
+		outerIdx, branchIdx int
+	}
+	var shared []symPair
+	for oi, osym := range outerSyms {
+		for bi, bsym := range branchSyms {
+			if osym == bsym {
+				shared = append(shared, symPair{oi, bi})
+			}
+		}
+	}
+
+	if len(shared) == 0 {
+		return branchResult // No shared symbols — nothing to filter
+	}
+
+	// Filter to matching rows
+	var tuples []Tuple
+	iter := branchResult.Iterator()
+	for iter.Next() {
+		t := iter.Tuple()
+		match := true
+		for _, sp := range shared {
+			if sp.outerIdx >= len(outerTuple) || sp.branchIdx >= len(t) {
+				match = false
+				break
+			}
+			if !valuesEqual(outerTuple[sp.outerIdx], t[sp.branchIdx]) {
+				match = false
+				break
+			}
+		}
+		if match {
+			cp := make(Tuple, len(t))
+			copy(cp, t)
+			tuples = append(tuples, cp)
+		}
+	}
+	iter.Close()
+
+	return NewMaterializedRelation(branchSyms, tuples)
 }
 
 func (it *projectedIterator) Close() error {
