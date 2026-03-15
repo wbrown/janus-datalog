@@ -640,7 +640,14 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 		itemsPerProject  = 5
 	)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path: dir,
+		AnnotationHandler: func(e annotations.Event) {
+			if e.Name == "or-fallback/cache-build" || e.Name == "or-fallback/branch.success" {
+				t.Logf("[%s] %v", e.Name, e.Data)
+			}
+		},
+	})
 	require.NoError(t, err)
 	defer db.Close()
 

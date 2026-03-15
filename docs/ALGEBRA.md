@@ -297,6 +297,67 @@ The rewritten tree `LeftOuterJoin(defaults) [R, Aggregate(S)]` decompiles to:
 This is valid Datalog. The SubqueryPattern runs once (uncorrelated). The OR-fallback
 provides defaults for non-matching outer tuples.
 
+### OR-Fallback Branch Caching
+
+The decorrelated SubqueryPattern inside an or-join runs once and returns ALL
+groups. The or-join evaluates per outer tuple: for each outer tuple, it
+executes branch 1 (SubqueryPattern), filters to matching rows, and uses
+the result (or defaults from branch 2 if no match).
+
+Without caching, `filterBranchToOuterTuple` evaluates the SubqueryPattern
+AND scans the full result O(M) for EVERY outer tuple — total O(N*M).
+This is worse than the correlated path which uses storage indices O(N*log M).
+
+**The cache contract:**
+
+An uncorrelated branch produces the same result for every outer tuple.
+Therefore:
+1. On first evaluation of a branch, execute it and build a hash index
+   keyed on the shared symbols between the branch result and the outer
+   relation.
+2. On subsequent evaluations of the SAME branch, skip execution entirely
+   and probe the cached hash index.
+
+**Correctness conditions:**
+- The branch must be uncorrelated (its result is independent of the outer
+  tuple). A branch is uncorrelated when its SubqueryPattern has `:in $`
+  only (no correlation parameters from the outer context).
+- Correlated branches MUST NOT be cached — each outer tuple produces
+  different results.
+
+**Detection:**
+A branch is uncorrelated if and only if ALL of these hold:
+1. The branch contains exactly one SubqueryPattern clause
+2. The SubqueryPattern's Inputs contains only `$` (no variables)
+3. The SubqueryPattern's `:in` clause contains only DatabaseInput
+
+If any condition fails, the branch is correlated and must be re-evaluated
+per outer tuple without caching.
+
+**Complexity:**
+- Without cache: O(N * M) where N = outer tuples, M = branch result size
+- With cache: O(M) build + O(N) probe = O(N + M)
+
+**Implementation:**
+The `OrFallbackIterator` holds a `branchCache map[int]cachedBranch` where:
+```go
+type cachedBranch struct {
+    index      *TupleKeyMap  // hash index keyed on shared symbols
+    branchSyms []query.Symbol
+    outerIdx   []int         // shared symbol positions in outer tuple
+    branchIdx  []int         // shared symbol positions in branch tuple
+}
+```
+
+On first evaluation of branch `i`:
+1. Check `isUncorrelatedBranch(branch)` — inspect the clause structure
+2. If uncorrelated: execute, build index, store in `branchCache[i]`
+3. If correlated: execute, filter with `filterBranchToOuterTuple`, no cache
+
+On subsequent evaluations of branch `i`:
+1. If `branchCache[i]` exists: probe the index, return matching tuples
+2. If not cached: re-execute (correlated branch)
+
 ### Rule 2: Predicate Pushdown (future)
 
 ```
@@ -372,20 +433,32 @@ After round-trip tests pass:
    ground defaults, using `filterBranchToOuterTuple` for per-tuple matching
 5. **Verify**: all existing tests pass, round-trip tests pass
 
-### Phase 2: Decorrelation Transform
+### Phase 2: Decorrelation Transform ✅
 
 With proven round-trip mappings:
 
-1. **Implement the transform** using only standard operators:
-   - Input: `LateralJoin(correlationVars, innerQuery, binding, defaults)`
-   - Output: `Join(LeftOuter, correlationVars, defaults) [outer, Aggregate(groupBy, fns)(inner)]`
-2. **Verify**: `TestCorrelatedSubqueryAlgebraOptimizer` passes (194x speedup)
-3. **Verify**: `TestCorrelatedSubqueryAlgebraOptimizerWithDefaults` passes (75/75 results)
-4. **Verify**: production profiler returns 75 scenarios
+1. ✅ **Implement the transform** using only standard operators
+2. ✅ **Verify**: `TestCorrelatedSubqueryAlgebraOptimizer` passes (194x speedup)
+3. ✅ **Verify**: production profiler returns 75 scenarios (correct)
+4. ✅ **Fix propagation**: `rebuildWithChildren` for non-decorrelatable parents
+5. ✅ **Fix phaser**: `OrJoinClause.Provides` includes branch output symbols
 
-### Phase 3: Production Validation
+**Status**: Decorrelation is algebraically correct. Production query returns
+75 scenarios. Performance is worse (29.9s) because `filterBranchToOuterTuple`
+scans O(M) per tuple without caching.
 
-1. Run profiler against `concurrent2.db` with `--optimize`
-2. Verify 75 scenarios returned (correctness)
-3. Measure wall time improvement (target: 29s → <5s)
-4. Full regression: `go test ./datalog/...` passes
+### Phase 3: OR-Fallback Branch Cache
+
+Implement the cache specified in "OR-Fallback Branch Caching" above.
+
+1. Add `isUncorrelatedBranch(branch []query.Clause) bool` — structural
+   detection by inspecting SubqueryPattern inputs
+2. Add `cachedBranch` struct with `TupleKeyMap` index
+3. Add `branchCache map[int]*cachedBranch` to `OrFallbackIterator`
+4. On first uncorrelated branch evaluation: execute, build index, cache
+5. On subsequent evaluations: probe cached index in O(1)
+6. Correlated branches: unchanged (re-execute per tuple)
+7. **Verify**: `TestCorrelatedSubqueryAlgebraOptimizer` still passes
+8. **Verify**: all OR-fallback tests pass (correlated branches unaffected)
+9. **Verify**: production profiler shows speedup (target: 29s → <5s)
+10. **Verify**: `go test ./datalog/...` passes

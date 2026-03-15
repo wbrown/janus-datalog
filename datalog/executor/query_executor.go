@@ -1510,7 +1510,9 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseFallback(ctx Context, clause *
 	orClause := &query.OrClause{
 		Branches: clause.Branches,
 	}
-	return NewOrFallbackRelation(e, ctx, orClause, outerRel, e.options), nil
+	rel := NewOrFallbackRelation(e, ctx, orClause, outerRel, e.options)
+	rel.joinSyms = clause.JoinVars
+	return rel, nil
 }
 
 // collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context

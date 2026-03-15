@@ -21,7 +21,8 @@ type OrFallbackRelation struct {
 	outerRel      Relation
 	symbols       []query.Symbol // Determined lazily from first result
 	options       ExecutorOptions
-	iteratorCount int // Track how many iterators have been created (for debugging)
+	iteratorCount int            // Track how many iterators have been created (for debugging)
+	joinSyms      []query.Symbol // From or-join: explicit join variables for cache keying
 }
 
 // NewOrFallbackRelation creates a streaming OR fallback relation.
@@ -196,6 +197,7 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		outerSyms:  r.outerRel.Symbols(),
 		outputSyms: r.symbols, // Use pre-computed symbols
 		options:    r.options,
+		joinSyms:   r.joinSyms,
 	}
 }
 
@@ -315,6 +317,7 @@ type OrFallbackIterator struct {
 	outerIter Iterator
 	outerSyms []query.Symbol
 	options   ExecutorOptions
+	joinSyms  []query.Symbol // From or-join: used as cache key (not all shared symbols)
 
 	// Current state
 	currentBranchIter     Iterator
@@ -324,6 +327,112 @@ type OrFallbackIterator struct {
 	done                  bool
 	err                   error
 
+	// Cache for uncorrelated branch results. Key: branch index.
+	// See ALGEBRA.md "OR-Fallback Branch Caching" for specification.
+	branchCache map[int]*cachedBranch
+}
+
+// cachedBranch holds a hash index over an uncorrelated branch result.
+// Uses TupleKeyMap from tuple_key.go (same infrastructure as HashJoin).
+type cachedBranch struct {
+	index      *TupleKeyMap
+	branchSyms []query.Symbol
+	outerIdx   []int
+	branchIdx  []int
+}
+
+func (cb *cachedBranch) probe(outerTuple Tuple) []Tuple {
+	key := NewTupleKey(outerTuple, cb.outerIdx)
+	if matches, ok := cb.index.Get(key); ok {
+		return matches.([]Tuple)
+	}
+	return nil
+}
+
+// isUncorrelatedBranch returns true if the branch produces the same result
+// regardless of the outer tuple. Per ALGEBRA.md: a branch is uncorrelated
+// if it contains a SubqueryPattern whose Inputs are only $ (database source).
+func isUncorrelatedBranch(branch []query.Clause) bool {
+	for _, c := range branch {
+		if sp, ok := c.(*query.SubqueryPattern); ok {
+			for _, input := range sp.Inputs {
+				switch inp := input.(type) {
+				case query.Constant:
+					if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
+						continue
+					}
+					return false
+				case query.Variable:
+					if inp.Name.IsSource() {
+						continue
+					}
+					return false
+				default:
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// buildCachedBranch builds a hash index over a branch result keyed on
+// the specified join symbols. Only join variables are used as keys —
+// not all shared symbols — because branch results may contain symbols
+// with the same name but different values than the outer relation.
+func buildCachedBranch(branchResult Relation, outerSyms []query.Symbol, joinSyms []query.Symbol) *cachedBranch {
+	branchSyms := branchResult.Symbols()
+
+	// Use only join symbols as cache keys
+	keySyms := joinSyms
+	if len(keySyms) == 0 {
+		// Fallback: use all shared symbols (non-or-join path)
+		keySyms = nil
+		for _, osym := range outerSyms {
+			for _, bsym := range branchSyms {
+				if osym == bsym {
+					keySyms = append(keySyms, osym)
+				}
+			}
+		}
+	}
+
+	var bIdx, oIdx []int
+	for _, ksym := range keySyms {
+		for oi, osym := range outerSyms {
+			if osym == ksym {
+				for bi, bsym := range branchSyms {
+					if bsym == ksym {
+						oIdx = append(oIdx, oi)
+						bIdx = append(bIdx, bi)
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+	if len(bIdx) == 0 {
+		return nil
+	}
+
+	idx := NewTupleKeyMap()
+	iter := branchResult.Iterator()
+	for iter.Next() {
+		t := iter.Tuple()
+		cp := make(Tuple, len(t))
+		copy(cp, t)
+		key := NewTupleKey(cp, bIdx)
+		if existing, ok := idx.Get(key); ok {
+			idx.Put(key, append(existing.([]Tuple), cp))
+		} else {
+			idx.Put(key, []Tuple{cp})
+		}
+	}
+	iter.Close()
+
+	return &cachedBranch{index: idx, branchSyms: branchSyms, outerIdx: oIdx, branchIdx: bIdx}
 }
 
 func (it *OrFallbackIterator) Next() bool {
@@ -386,26 +495,65 @@ func (it *OrFallbackIterator) Next() bool {
 
 		// Try each branch until one returns results
 		for branchIdx, branch := range it.clause.Branches {
-			_ = branchIdx // used in annotation
-			branchResult, err := it.executor.executeInnerClauses(it.ctx, branch, inputRel)
-			if err != nil {
-				it.err = err
-				it.done = true
-				return false
+			var branchResult Relation
+
+			// Check cache for uncorrelated branches (O(1) probe)
+			if cb, cached := it.branchCache[branchIdx]; cached {
+				matches := cb.probe(outerTuple)
+				branchResult = NewMaterializedRelation(cb.branchSyms, matches)
+			} else {
+				// Execute the branch.
+				// For uncorrelated branches, execute WITHOUT inputRel so the
+				// SubqueryPattern returns ALL groups (not joined with the
+				// current outer tuple). The cache indexes the full result.
+				execInput := inputRel
+				if isUncorrelatedBranch(branch) {
+					execInput = nil
+				}
+				var err error
+				branchResult, err = it.executor.executeInnerClauses(it.ctx, branch, execInput)
+				if err != nil {
+					it.err = err
+					it.done = true
+					return false
+				}
+
+				if branchResult != nil {
+					// First evaluation: cache uncorrelated branches
+					if execInput == nil {
+						if collector := it.ctx.Collector(); collector != nil {
+							collector.Add(annotations.Event{
+								Name: "or-fallback/cache-build",
+								Data: map[string]interface{}{
+									"branch":      branchIdx,
+									"branch_syms": fmt.Sprintf("%v", branchResult.Symbols()),
+									"outer_syms":  fmt.Sprintf("%v", it.outerSyms),
+									"branch_size": branchResult.Size(),
+								},
+							})
+						}
+						cb := buildCachedBranch(branchResult, it.outerSyms, it.joinSyms)
+						if cb != nil {
+							if it.branchCache == nil {
+								it.branchCache = make(map[int]*cachedBranch)
+							}
+							it.branchCache[branchIdx] = cb
+							// Probe the freshly-built cache instead of scanning
+							matches := cb.probe(outerTuple)
+							branchResult = NewMaterializedRelation(cb.branchSyms, matches)
+						} else {
+							// No shared symbols — pass through unfiltered
+						}
+					} else {
+						// Correlated branch — filter per tuple
+						branchResult = filterBranchToOuterTuple(branchResult, outerTuple, it.outerSyms)
+					}
+				}
 			}
 
 			if branchResult != nil {
-				// Filter branch result to rows matching the current outer tuple
-				// on shared symbols. Needed for uncorrelated subqueries that
-				// return results for ALL outer tuples.
-				branchResult = filterBranchToOuterTuple(branchResult, outerTuple, it.outerSyms)
-
 				branchIter := branchResult.Iterator()
 				if branchIter.Next() {
-					// This branch has results - use it
-					// (outputSyms is pre-computed at iterator construction)
-
-					// Emit annotation for branch success
 					if collector := it.ctx.Collector(); collector != nil {
 						collector.Add(annotations.Event{
 							Name:  "or-fallback/branch.success",
@@ -418,16 +566,12 @@ func (it *OrFallbackIterator) Next() bool {
 						})
 					}
 
-					// Project tuple to match output symbols if needed
-					// Different branches may produce different schemas (e.g., subquery vs ground)
 					branchSyms := branchResult.Symbols()
 					firstTuple := branchIter.Tuple()
 
 					if len(branchSyms) != len(it.outputSyms) || !symbolsMatch(branchSyms, it.outputSyms) {
-						// Projection with fallback to outer tuple for missing symbols
 						it.currentTuple = projectTupleWithFallback(firstTuple, branchSyms, it.outputSyms, outerTuple, it.outerSyms)
 					} else if branchResult.RequiresCopy() {
-						// No projection but unsafe source - copy once
 						it.currentTuple = copyTuple(firstTuple)
 					} else {
 						it.currentTuple = firstTuple
