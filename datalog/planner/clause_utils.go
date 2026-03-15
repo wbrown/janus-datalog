@@ -359,6 +359,10 @@ func extractOrJoinClauseSymbols(o *query.OrJoinClause) ClauseSymbols {
 
 	var requires []query.Symbol
 	for sym := range allRequires {
+		// Source symbols ($) are always available — never a dependency
+		if sym.IsSource() {
+			continue
+		}
 		requires = append(requires, sym)
 	}
 

@@ -358,6 +358,115 @@ On subsequent evaluations of branch `i`:
 1. If `branchCache[i]` exists: probe the index, return matching tuples
 2. If not cached: re-execute (correlated branch)
 
+### Rule 4: General Correlated Subquery Decorrelation
+
+```
+R ⋈_L(x, defaults) [S(x)]
+  →
+R ⋈_LeftOuter(x, defaults) S'
+```
+
+Where S' is S with:
+- Correlation variable `x` removed from `:in`
+- Correlation variable `x` added to `:find`
+- Binding changed from TupleBinding to RelationBinding (includes `x`)
+- WHERE clauses unchanged
+
+**Preconditions:**
+- Correlation variable `x` maps to an inner parameter
+- Inner query satisfies at least one of:
+  1. Has aggregate functions in `:find` (Rule 1 — already handled)
+  2. Contains a nested correlated subquery sharing the same correlation variable
+  3. Contains filtering clauses (predicates, expressions, NOT) beyond bare data patterns
+
+Condition 2 is the argmax pattern. Condition 3 covers most real queries.
+
+**Condition that PREVENTS decorrelation:**
+- Inner query consists of only bare DataPatterns with no predicates, expressions,
+  or nested subqueries. In this case, the correlated path uses indexed storage
+  lookups O(log M) per tuple, which is faster than scanning all data O(M).
+
+**Proof of equivalence:**
+
+The left side executes S(x) once per tuple in R, binding x to the current tuple's
+value, producing results filtered to that x value.
+
+The right side executes S once for ALL values of x. Since x was a parameter that
+filtered the WHERE clauses (e.g., `[?t :task/root ?s]` with ?s bound), removing
+it from `:in` makes ?s a free variable. The WHERE clauses still reference ?s, so
+the results include ALL ?s values. Adding ?s to `:find` makes it an output column.
+The LeftOuterJoin matches each R tuple to its S' rows by x. Non-matching R tuples
+get defaults.
+
+Both produce the same output: for each tuple in R, the S rows where x matches, or
+defaults if none match.
+
+**Key insight for nested correlation (argmax pattern):**
+
+When the inner query contains a nested subquery `(q [...(max ?ca)...] $ ?s)` that
+shares the same correlation variable, decorrelating the outer makes `?s` a free
+variable in the inner WHERE. The nested subquery's LateralJoin also has `?s` as
+a correlation variable. The decorrelation transform processes bottom-up: the
+nested LateralJoin is decorrelated first (Rule 1, since it has aggregates), then
+the outer LateralJoin is decorrelated (Rule 4). Both levels of correlation are
+eliminated in a single optimization pass.
+
+Before:
+```
+R ⋈_L(?scenario) [
+    Scan(tasks for ?s)
+    ⋈_L(?s) [max(?ca)]         ← runs 75 times per scenario = 75² = 5625 times
+    ⋈ Select(?ca = ?maxCa)
+]
+```
+
+After:
+```
+R ⋈ [
+    Scan(ALL tasks)
+    ⋈ Aggregate(groupBy=[?s], max(?ca))   ← runs ONCE
+    ⋈ Select(?ca = ?maxCa)
+]
+```
+
+From O(N²) nested correlated executions to O(1) single pass.
+
+**Decompilation of the result:**
+
+Same as Rule 1: the decorrelated subquery becomes an uncorrelated SubqueryPattern
+with RelationBinding inside an or-join (if defaults exist) or bare (if no defaults).
+
+```
+<R clauses>
+(or-join [?scenario]
+    [(q [:find ?s ?key ?ca
+         :in $
+         :where [?t :task/root ?s]
+                ...
+                [(q [:find ?s (max ?ca) :in $ :where ...] $) [[?s ?maxCa] ...]]
+                [(= ?ca ?maxCa)]]
+        $) [[?scenario ?lastKey ?lastUpdatedAt] ...]]
+    [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+```
+
+Note: the nested subquery inside the WHERE is ALSO decorrelated — its `:in` changes
+from `$ ?s` to `$`, and `?s` moves to its `:find`. This happens automatically
+because the algebra compiler compiles it to a LateralJoin, and Rule 1 decorrelates
+it in the same bottom-up pass.
+
+**Decision function:**
+
+```go
+func shouldDecorrelate(lj *LateralJoin) bool {
+    if hasAggregates(lj.InnerQuery)                { return true }  // Rule 1
+    if hasNestedCorrelatedSubquery(lj.InnerQuery)  { return true }  // Argmax
+    if hasFilteringClauses(lj.InnerQuery)           { return true }  // Selective
+    return false  // Pure DataPatterns only — indexed lookup is faster
+}
+```
+
+All conditions are structural — no cardinality estimates needed.
+
 ### Rule 2: Predicate Pushdown (future)
 
 ```
@@ -461,4 +570,31 @@ Implement the cache specified in "OR-Fallback Branch Caching" above.
 7. **Verify**: `TestCorrelatedSubqueryAlgebraOptimizer` still passes
 8. **Verify**: all OR-fallback tests pass (correlated branches unaffected)
 9. **Verify**: production profiler shows speedup (target: 29s → <5s)
+10. **Verify**: `go test ./datalog/...` passes
+
+**Status**: Cache implemented and working. Production events reduced 5.4x
+(450K → 84K). Aggregate subqueries (1 and 2) decorrelated and cached.
+Non-aggregate subquery (3, argmax) still correlated — dominates at 19s.
+
+### Phase 4: General Correlated Subquery Decorrelation (Rule 4)
+
+Extend decorrelation to non-aggregate correlated subqueries per Rule 4.
+
+1. Replace `hasAggregates(lj.InnerQuery)` gate with `shouldDecorrelate(lj)`
+2. Implement `shouldDecorrelate`: true for aggregates, nested correlation,
+   or filtering clauses; false for pure DataPattern-only queries
+3. Implement `hasNestedCorrelatedSubquery(q)`: walk WHERE clauses for
+   SubqueryPatterns with variable (non-$) inputs
+4. Implement `hasFilteringClauses(q)`: check for predicates, expressions,
+   NOT clauses, or nested subqueries in WHERE
+5. For non-aggregate decorrelation: same rewrite as Rule 1 but without
+   the Aggregate node — just move correlation var to :find, change binding
+   to RelationBinding, emit as bare SubqueryPattern or or-join
+6. **Test**: `TestDecorrelation_ArgmaxPattern` — nested correlated subquery
+   with max aggregate inside non-aggregate outer
+7. **Test**: `TestDecorrelation_WithFilteringPredicates` — non-aggregate
+   inner query with predicates
+8. **Test**: `TestDecorrelation_PureDataPatternSkipped` — bare DataPattern
+   inner query should NOT be decorrelated
+9. **Verify**: production profiler shows full speedup (target: 29s → <2s)
 10. **Verify**: `go test ./datalog/...` passes

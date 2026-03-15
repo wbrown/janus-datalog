@@ -63,21 +63,17 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
 		"has_aggregates":   hasAggregates(lj.InnerQuery),
 		"has_defaults":     len(lj.DefaultValues) > 0,
+		"should":           shouldDecorrelate(lj),
 		"inner_query":      lj.InnerQuery.String(),
 	})
 
-	// Only decorrelate if the inner query has aggregates in :find
-	if !hasAggregates(lj.InnerQuery) {
+	if !shouldDecorrelate(lj) {
 		emit("algebra/decorrelate-skip", map[string]interface{}{
-			"reason": "no aggregates in :find",
+			"reason": "pure DataPattern query — indexed lookup is faster",
 		})
-		// Rebuild node with potentially-rewritten children so child
-		// decorrelations propagate through non-decorrelatable parents.
 		return rebuildWithChildren(node, children)
 	}
 
-	// Only decorrelate scalar correlation (single variable)
-	// Multi-variable correlation is possible but more complex
 	if len(lj.CorrelationVars) == 0 {
 		emit("algebra/decorrelate-skip", map[string]interface{}{
 			"reason": "no correlation variables",
@@ -85,7 +81,6 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 		return rebuildWithChildren(node, children)
 	}
 
-	// Map outer correlation vars to inner parameter names.
 	innerParams := mapCorrelationToInnerParams(lj.InnerQuery, lj.CorrelationVars)
 	if len(innerParams) == 0 {
 		emit("algebra/decorrelate-skip", map[string]interface{}{
@@ -97,55 +92,20 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 	emit("algebra/decorrelate-apply", map[string]interface{}{
 		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
 		"inner_params":     fmt.Sprintf("%v", innerParams),
+		"has_aggregates":   hasAggregates(lj.InnerQuery),
 	})
 
-	// Build the decorrelated inner query: remove correlation params from :in,
-	// add them to :find as GROUP BY keys.
+	// Decorrelate: remove correlation params from :in, add to :find.
 	decorrelated := decorrelateQuery(lj.InnerQuery, innerParams)
 	if decorrelated == nil {
 		return node
 	}
 
-	// Extract GROUP BY keys and aggregate functions from the decorrelated :find.
-	// The :find is [?s (count ?t) ...] where ?s is the GROUP BY key.
-	var groupBy []query.Symbol
-	var aggFns []query.FindAggregate
-	for _, elem := range decorrelated.Find {
-		switch e := elem.(type) {
-		case query.FindVariable:
-			groupBy = append(groupBy, e.Symbol)
-		case query.FindAggregate:
-			aggFns = append(aggFns, e)
-		}
-	}
-
 	// Output symbols: correlation vars (OUTER names) + original binding vars.
-	// The Aggregate's output uses outer names because the decompiler maps them
-	// to the SubqueryPattern's RelationBinding. The inner :find clause has the
-	// inner names; the binding maps inner→outer positionally.
 	originalBindingSyms := bindingFormSymbols(lj.Binding.(query.BindingForm))
 	output := make([]query.Symbol, 0, len(lj.CorrelationVars)+len(originalBindingSyms))
 	output = append(output, lj.CorrelationVars...)
 	output = append(output, originalBindingSyms...)
-
-	// Compile the decorrelated WHERE clauses to algebra nodes.
-	innerNode, compileErr := compileClauses(decorrelated.Where)
-	if compileErr != nil || innerNode == nil {
-		return node
-	}
-
-	// Build Aggregate(groupBy, fns) over the inner scans.
-	// This runs ONCE, producing one row per distinct GROUP BY value.
-	// Output uses outer names so the decompiler can build correct bindings.
-	aggregateNode := &Node{
-		Op: RuleAggregate,
-		Data: &Aggregate{
-			GroupBy:   groupBy,
-			Functions: aggFns,
-			Output:    output,
-		},
-		Children: []*Node{innerNode},
-	}
 
 	// Recover the outer relation from children.
 	var outerNode *Node
@@ -153,14 +113,55 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 		outerNode = recoverChild(children[0])
 	}
 
-	if outerNode == nil {
-		// No outer relation — return just the Aggregate.
-		return wrapAsParseNode(aggregateNode)
+	var innerResultNode *Node
+
+	if hasAggregates(lj.InnerQuery) {
+		// Rule 1: aggregate decorrelation — compile inner, wrap in Aggregate
+		var groupBy []query.Symbol
+		var aggFns []query.FindAggregate
+		for _, elem := range decorrelated.Find {
+			switch e := elem.(type) {
+			case query.FindVariable:
+				groupBy = append(groupBy, e.Symbol)
+			case query.FindAggregate:
+				aggFns = append(aggFns, e)
+			}
+		}
+
+		innerNode, compileErr := compileClauses(decorrelated.Where)
+		if compileErr != nil || innerNode == nil {
+			return node
+		}
+
+		innerResultNode = &Node{
+			Op: RuleAggregate,
+			Data: &Aggregate{
+				GroupBy:   groupBy,
+				Functions: aggFns,
+				Output:    output,
+			},
+			Children: []*Node{innerNode},
+		}
+	} else {
+		// Rule 4: non-aggregate decorrelation — rewrite the LateralJoin itself.
+		// The decorrelated inner query runs once for all values. No Aggregate
+		// needed — just a SubqueryPattern with correlation var in :find.
+		innerResultNode = &Node{
+			Op: RuleLateralJoin,
+			Data: &LateralJoin{
+				CorrelationVars: nil, // No longer correlated
+				InnerQuery:      decorrelated,
+				Binding:         query.RelationBinding{Variables: output},
+				Output:          output,
+				DefaultValues:   nil, // Defaults handled by outer LeftOuterJoin
+			},
+		}
 	}
 
-	// Rule 1: LateralJoin(x, defaults) → LeftOuterJoin(x, defaults) [R, Aggregate]
-	// LeftOuterJoin preserves all outer tuples; non-matching get defaults.
-	// InnerJoin would drop outer tuples without matches.
+	if outerNode == nil {
+		return wrapAsParseNode(innerResultNode)
+	}
+
 	joinKind := InnerJoin
 	if len(lj.DefaultValues) > 0 {
 		joinKind = LeftOuterJoin
@@ -174,7 +175,7 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 			Output:        mergeSymbols(outerNode.Symbols(), output),
 			DefaultValues: lj.DefaultValues,
 		},
-		Children: []*Node{outerNode, aggregateNode},
+		Children: []*Node{outerNode, innerResultNode},
 	}
 
 	return wrapAsParseNode(joinNode)
@@ -195,6 +196,51 @@ func rebuildWithChildren(node *parse.Node, children []interface{}) *parse.Node {
 		}
 	}
 	return rebuilt
+}
+
+// shouldDecorrelate determines whether a LateralJoin should be decorrelated
+// based on structural analysis of the inner query. Per ALGEBRA.md Rule 4.
+func shouldDecorrelate(lj *LateralJoin) bool {
+	if hasAggregates(lj.InnerQuery) {
+		return true // Rule 1: aggregate decorrelation
+	}
+	if hasNestedCorrelatedSubquery(lj.InnerQuery) {
+		return true // Rule 4: argmax pattern
+	}
+	if hasFilteringClauses(lj.InnerQuery) {
+		return true // Rule 4: selective inner query
+	}
+	return false // Pure DataPatterns — indexed lookup is faster
+}
+
+// hasNestedCorrelatedSubquery returns true if the query's WHERE contains
+// a SubqueryPattern with variable (non-$) inputs — a correlated subquery.
+func hasNestedCorrelatedSubquery(q *query.Query) bool {
+	for _, c := range q.Where {
+		if sp, ok := c.(*query.SubqueryPattern); ok {
+			for _, input := range sp.Inputs {
+				if v, ok := input.(query.Variable); ok && !v.Name.IsSource() {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// hasFilteringClauses returns true if the query's WHERE contains predicates,
+// expressions, NOT clauses, or nested subqueries — anything beyond bare
+// DataPatterns that reduces the result set.
+func hasFilteringClauses(q *query.Query) bool {
+	for _, c := range q.Where {
+		switch c.(type) {
+		case *query.DataPattern:
+			continue // Bare pattern — not filtering
+		default:
+			return true // Predicate, expression, NOT, subquery, etc.
+		}
+	}
+	return false
 }
 
 // decorrelateQuery rewrites a correlated query into a decorrelated one.

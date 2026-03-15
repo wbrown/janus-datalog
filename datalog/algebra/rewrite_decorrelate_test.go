@@ -417,6 +417,100 @@ func TestDecorrelation_NestedLateralJoins(t *testing.T) {
 		"both aggregate LateralJoins should be eliminated by decorrelation")
 }
 
+// TestDecorrelation_ArgmaxPattern tests decorrelation of the argmax pattern:
+// a non-aggregate outer subquery containing a nested aggregate subquery.
+// The outer subquery should be decorrelated even though it has no aggregates
+// in :find, because it contains a nested correlated subquery.
+func TestDecorrelation_ArgmaxPattern(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?lastKey ?lastUpdatedAt
+	  :where
+	  [?e :entity/type :entity.type/project]
+	  (or [(q [:find ?key ?ca
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/completed-at ?ca]
+	                  [?t :item/key ?key]
+	                  [(q [:find (max ?ca)
+	                       :in $ ?s
+	                       :where [?t :item/project ?s]
+	                              [?t :item/completed-at ?ca]]
+	                      $ ?s) [[?maxCa]]]
+	                  [(= ?ca ?maxCa)]]
+	          $ ?e) [[?lastKey ?lastUpdatedAt]]]
+	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	t.Logf("Before:\n%s", root.String())
+
+	ljBefore := countNodes(root, RuleLateralJoin)
+	t.Logf("LateralJoin count before: %d", ljBefore)
+	require.Greater(t, ljBefore, 0)
+
+	optimizer := NewOptimizer(DecorrelationPass(nil))
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	t.Logf("After:\n%s", optimized.String())
+
+	ljAfter := countNodes(optimized, RuleLateralJoin)
+	t.Logf("LateralJoin count after: %d", ljAfter)
+
+	// The outer LateralJoin should be decorrelated into a LeftOuterJoin.
+	// The inner result is an uncorrelated LateralJoin (CorrelationVars=nil),
+	// so countNodes still finds 1 LateralJoin. Check for correlated ones.
+	correlatedAfter := countCorrelatedLateralJoins(optimized)
+	assert.Equal(t, 0, correlatedAfter,
+		"no CORRELATED LateralJoins should remain after argmax decorrelation")
+}
+
+// TestDecorrelation_PureDataPatternSkipped tests that a correlated subquery
+// with only bare DataPatterns (no predicates, expressions, or nested subqueries)
+// is NOT decorrelated — the correlated indexed lookup is faster than full scan.
+func TestDecorrelation_PureDataPatternSkipped(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?val
+	  :where
+	  [?e :entity/type :entity.type/project]
+	  (or [(q [:find ?v
+	           :in $ ?s
+	           :where [?s :project/value ?v]]
+	          $ ?e) [[?val]]]
+	      [(ground 0) ?val])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+
+	ljBefore := countNodes(root, RuleLateralJoin)
+
+	optimizer := NewOptimizer(DecorrelationPass(nil))
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+
+	ljAfter := countNodes(optimized, RuleLateralJoin)
+
+	// Pure DataPattern subquery should NOT be decorrelated
+	assert.Equal(t, ljBefore, ljAfter,
+		"pure DataPattern subquery should stay correlated — indexed lookup is faster")
+}
+
+// countCorrelatedLateralJoins counts LateralJoin nodes with non-empty CorrelationVars.
+func countCorrelatedLateralJoins(n *Node) int {
+	if n == nil {
+		return 0
+	}
+	count := 0
+	if n.Op == RuleLateralJoin {
+		if lj, ok := n.Data.(*LateralJoin); ok && len(lj.CorrelationVars) > 0 {
+			count++
+		}
+	}
+	for _, child := range n.Children {
+		count += countCorrelatedLateralJoins(child)
+	}
+	return count
+}
+
 // countNodes counts nodes with a given Op in the tree.
 func countNodes(n *Node, op string) int {
 	if n == nil {

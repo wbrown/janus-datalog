@@ -264,7 +264,7 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 
 	// Build the SubqueryPattern
 	inputs := make([]query.PatternElement, 0, len(lj.CorrelationVars)+1)
-	inputs = append(inputs, query.Variable{Name: datalog.SymDollar})
+	inputs = append(inputs, query.Constant{Value: datalog.SymDollar})
 	for _, cv := range lj.CorrelationVars {
 		inputs = append(inputs, query.Variable{Name: cv})
 	}
