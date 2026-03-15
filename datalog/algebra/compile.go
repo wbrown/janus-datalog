@@ -164,17 +164,20 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 		return lj
 	}
 
-	// Uncorrelated subquery → preserve as-is for the executor.
-	// Use a decorrelatedScan to carry the SubqueryPattern through
-	// the algebra pipeline without modification.
-	inner := &Node{
-		Op: RuleScan,
-		Data: &decorrelatedScan{
-			SubqueryPattern: sp,
-			Output:          bindingSyms,
+	// Uncorrelated subquery → LateralJoin with no correlation vars.
+	// The decompiler handles LateralJoin → SubqueryPattern correctly.
+	lj := &Node{
+		Op: RuleLateralJoin,
+		Data: &LateralJoin{
+			InnerQuery: sp.Query,
+			Binding:    sp.Binding,
+			Output:     bindingSyms,
 		},
 	}
-	return joinWith(current, inner)
+	if current != nil {
+		lj.Children = []*Node{current}
+	}
+	return lj
 }
 
 // compileNot produces an AntiJoin.
@@ -513,7 +516,13 @@ func extractGroundDefaults(branch []query.Clause) ([]interface{}, []query.Symbol
 		switch g := c.(type) {
 		case *query.Expression:
 			if gf, ok := g.Function.(*query.GroundFunction); ok {
-				values = append(values, gf.Value)
+				// Flatten tuple ground values: (ground [0 0]) has Value=[0,0]
+				// which should produce individual defaults [0, 0], not [[0, 0]].
+				if slice, ok := gf.Value.([]interface{}); ok {
+					values = append(values, slice...)
+				} else {
+					values = append(values, gf.Value)
+				}
 				symbols = append(symbols, bindingSymbols(g.Binding)...)
 			} else {
 				return nil, nil // Non-ground expression

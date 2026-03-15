@@ -302,6 +302,18 @@ func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
 	t.Logf("Baseline: %d results: %v", len(baseline), baseline)
 
 	db.ClearPlanCache()
+	// Log rewritten clauses for debugging
+	{
+		parsed, _ := db.resolveQuery(q)
+		root, _ := algebra.Compile(&query.Query{Where: parsed.Where})
+		opt := algebra.NewOptimizer(algebra.DefaultPasses()...)
+		optimized, _ := opt.Optimize(root)
+		rewritten, _ := algebra.Decompile(optimized)
+		t.Logf("Rewritten %d clauses:", len(rewritten))
+		for i, c := range rewritten {
+			t.Logf("  [%d] %T: %s", i, c, c.String())
+		}
+	}
 	optimizedRel, err := queryWithAlgebra(db, q)
 	require.NoError(t, err, "algebra optimizer should handle multiple OR-fallbacks")
 	optimized, err := executor.CollectTuples(optimizedRel, nil)

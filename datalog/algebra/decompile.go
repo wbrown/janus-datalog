@@ -48,38 +48,13 @@ func decompileNode(n *Node) ([]query.Clause, error) {
 	}
 }
 
-// decompileScan emits the original DataPattern, or a decorrelated SubqueryPattern.
+// decompileScan emits the original DataPattern.
 func decompileScan(n *Node) ([]query.Clause, error) {
-	// Check for decorrelated scan (produced by decorrelation pass)
-	if ds, ok := n.Data.(*decorrelatedScan); ok {
-		return decompileDecorrelatedScan(ds)
-	}
-
 	scan := n.Data.(*Scan)
 	if scan.Pattern == nil {
 		return nil, nil // placeholder node, no clause
 	}
 	return []query.Clause{scan.Pattern}, nil
-}
-
-// decompileDecorrelatedScan emits a bare decorrelated SubqueryPattern.
-//
-// The decorrelated subquery has no correlation inputs (only $) and uses
-// RelationBinding to include the correlation variable in its output.
-// The executor's Collapse joins the result with the outer relation on
-// the shared correlation variable — no per-tuple evaluation needed.
-//
-// Example: original correlated subquery
-//   (or [(q [:find (count ?t) :in $ ?s :where ...] $ ?scenario) [[?count]]]
-//       [(ground 0) ?count])
-//
-// Becomes decorrelated:
-//   [(q [:find ?s (count ?t) :in $ :where ...] $) [[?scenario ?count] ...]]
-//
-// The ?scenario column enables the Collapse to join correctly.
-// Defaults are not yet supported in this path.
-func decompileDecorrelatedScan(ds *decorrelatedScan) ([]query.Clause, error) {
-	return []query.Clause{ds.SubqueryPattern}, nil
 }
 
 // decompileSelect emits child clauses followed by the predicate.
@@ -134,22 +109,96 @@ func decompileJoin(n *Node) ([]query.Clause, error) {
 	return clauses, nil
 }
 
-// decompileLeftOuterJoin emits an OR clause with fallback semantics.
+// decompileLeftOuterJoin emits left clauses followed by an OR-fallback.
+//
+// Per ALGEBRA.md Rule 1, a LeftOuterJoin is produced by decorrelation:
+//   LeftOuterJoin(on=x, defaults=D) [R, Aggregate(x, F)(S)]
+//
+// Decompiles to:
+//   <R clauses>
+//   (or <Aggregate → SubqueryPattern>
+//       <ground D>)
+//
+// The SubqueryPattern runs once (uncorrelated). The OR-fallback evaluates
+// per outer tuple: filterBranchToOuterTuple matches on shared symbols,
+// non-matching tuples get defaults.
+//
+// LeftOuterJoin ALWAYS has defaults (the decorrelation transform produces
+// InnerJoin when there are no defaults). If defaults are missing, fall
+// back to emitting both sides as an OR clause.
 func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
+	join := n.Data.(*Join)
 	if len(n.Children) < 2 {
 		return nil, fmt.Errorf("LeftOuterJoin requires 2 children")
 	}
 
-	var branches [][]query.Clause
-	for _, child := range n.Children {
-		branch, err := decompileNode(child)
-		if err != nil {
-			return nil, err
-		}
-		branches = append(branches, branch)
+	// Left child = outer relation (emitted as prefix clauses)
+	leftClauses, err := decompileNode(n.Children[0])
+	if err != nil {
+		return nil, err
 	}
 
-	return []query.Clause{&query.OrClause{Branches: branches}}, nil
+	// Right child = inner relation (becomes branch 1 of OR-fallback)
+	rightClauses, err := decompileNode(n.Children[1])
+	if err != nil {
+		return nil, err
+	}
+
+	if len(join.DefaultValues) == 0 {
+		// No defaults — shouldn't happen for decorrelation output, but handle
+		// gracefully by emitting left clauses + OR wrapping both sides.
+		return append(leftClauses, &query.OrClause{
+			Branches: [][]query.Clause{rightClauses},
+		}), nil
+	}
+
+	// Build ground default branch from Join.DefaultValues.
+	// The defaults correspond to the original LateralJoin's binding symbols —
+	// the aggregate output symbols minus the GROUP BY keys. These are the
+	// symbols that the OR-fallback's ground branch must provide.
+	//
+	// The right child (Aggregate) decompiles to a SubqueryPattern with
+	// RelationBinding [[?joinKey ?agg1 ?agg2 ...]]. The default branch must
+	// provide the non-join-key symbols: [?agg1, ?agg2, ...].
+	rightSyms := n.Children[1].Symbols()
+	joinSet := make(map[query.Symbol]bool, len(join.JoinSymbols))
+	for _, s := range join.JoinSymbols {
+		joinSet[s] = true
+	}
+	var defaultSyms []query.Symbol
+	for _, s := range rightSyms {
+		if !joinSet[s] {
+			defaultSyms = append(defaultSyms, s)
+		}
+	}
+
+	var defaultBranch []query.Clause
+	if len(join.DefaultValues) == 1 && len(defaultSyms) == 1 {
+		defaultBranch = []query.Clause{
+			&query.Expression{
+				Function: &query.GroundFunction{Value: join.DefaultValues[0]},
+				Binding:  defaultSyms[0],
+			},
+		}
+	} else {
+		defaultBranch = []query.Clause{
+			&query.Expression{
+				Function: &query.GroundFunction{Value: join.DefaultValues},
+				Binding:  query.TupleBinding{Variables: defaultSyms},
+			},
+		}
+	}
+
+	// Use or-join with explicit join variables so the phaser knows this OR
+	// depends on the join symbols from the outer relation. Without explicit
+	// join vars, the phaser may reorder the OR before the DataPattern that
+	// provides the join symbols.
+	orJoinClause := &query.OrJoinClause{
+		JoinVars: join.JoinSymbols,
+		Branches: [][]query.Clause{rightClauses, defaultBranch},
+	}
+
+	return append(leftClauses, orJoinClause), nil
 }
 
 // decompileAntiJoin emits child clauses from left, then a NOT clause wrapping right.
@@ -290,17 +339,21 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 		findElems = append(findElems, fn)
 	}
 
-	// Build the decorrelated query
+	// Build the decorrelated query — must include :in $ for the database source
 	innerQuery := &query.Query{
 		Find:  findElems,
+		In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
 		Where: innerClauses,
 	}
 
-	// Build binding: tuple binding with GroupBy keys + aggregate output symbols
+	// Build binding: RelationBinding with outer names (agg.Output).
+	// Uses Constant($) for the database source marker (not Variable).
+	// RelationBinding (not TupleBinding) because the decorrelated query
+	// returns multiple rows (one per GROUP BY value).
 	sp := &query.SubqueryPattern{
 		Query:   innerQuery,
-		Inputs:  []query.PatternElement{query.Variable{Name: datalog.SymDollar}},
-		Binding: query.TupleBinding{Variables: agg.Output},
+		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
+		Binding: query.RelationBinding{Variables: agg.Output},
 	}
 
 	return []query.Clause{sp}, nil

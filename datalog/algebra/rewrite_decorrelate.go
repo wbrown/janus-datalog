@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/wbrown/ebnf/parse"
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -31,7 +30,6 @@ func DecorrelationPass(handler annotations.Handler) Pass {
 		Name: "decorrelation",
 		Transforms: parse.TransformMap{
 			RuleLateralJoin: makeDecorrelateTransform(emit),
-			RuleJoin:        collapseLeftOuterJoinTransform,
 		},
 	}
 }
@@ -99,200 +97,85 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 		"inner_params":     fmt.Sprintf("%v", innerParams),
 	})
 
-	// Build the decorrelated inner query using inner parameter names
+	// Build the decorrelated inner query: remove correlation params from :in,
+	// add them to :find as GROUP BY keys.
 	decorrelated := decorrelateQuery(lj.InnerQuery, innerParams)
 	if decorrelated == nil {
-		return node // Decorrelation failed
+		return node
 	}
 
-	// Build the new binding: outer correlation vars (join keys) + original binding vars.
-	// The decorrelated :find outputs [?s (count ?t)] but the binding maps positionally
-	// to [?e ?count], so ?s in the output becomes ?e in the binding — enabling the
-	// join with the outer relation on ?e.
-	originalBindingSyms := bindingFormSymbols(lj.Binding.(query.BindingForm))
-	newBindingVars := make([]query.Symbol, 0, len(lj.CorrelationVars)+len(originalBindingSyms))
-	newBindingVars = append(newBindingVars, lj.CorrelationVars...)
-	newBindingVars = append(newBindingVars, originalBindingSyms...)
-
-	// Build the decorrelated SubqueryPattern.
-	// Uses RelationBinding [[?e ?count] ...] because the decorrelated query
-	// returns multiple rows (one per group). TupleBinding [[?e ?count]] only
-	// handles single-row results.
-	sp := &query.SubqueryPattern{
-		Query:   decorrelated,
-		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
-		Binding: query.RelationBinding{Variables: newBindingVars},
-	}
-
-	// Output symbols: correlation vars + original binding vars
-	output := make([]query.Symbol, len(newBindingVars))
-	copy(output, newBindingVars)
-
-	// If there's a left child (outer relation), produce a Join
-	var resultChildren []*Node
-	if len(children) > 0 {
-		if childNode := recoverChild(children[0]); childNode != nil {
-			resultChildren = []*Node{childNode}
+	// Extract GROUP BY keys and aggregate functions from the decorrelated :find.
+	// The :find is [?s (count ?t) ...] where ?s is the GROUP BY key.
+	var groupBy []query.Symbol
+	var aggFns []query.FindAggregate
+	for _, elem := range decorrelated.Find {
+		switch e := elem.(type) {
+		case query.FindVariable:
+			groupBy = append(groupBy, e.Symbol)
+		case query.FindAggregate:
+			aggFns = append(aggFns, e)
 		}
 	}
 
-	// The decorrelated subquery is now a Scan-like leaf that produces
-	// all groups in one pass.
-	bindForm, _ := lj.Binding.(query.BindingForm)
-	scanNode := &Node{
-		Op: RuleScan,
-		Data: &decorrelatedScan{
-			SubqueryPattern:  sp,
-			Output:           output,
-			DefaultValues:    lj.DefaultValues,
-			OriginalBinding:  originalBindingSyms,
-			CorrelationVars:  lj.CorrelationVars,
-			OriginalBindForm: bindForm,
+	// Output symbols: correlation vars (OUTER names) + original binding vars.
+	// The Aggregate's output uses outer names because the decompiler maps them
+	// to the SubqueryPattern's RelationBinding. The inner :find clause has the
+	// inner names; the binding maps inner→outer positionally.
+	originalBindingSyms := bindingFormSymbols(lj.Binding.(query.BindingForm))
+	output := make([]query.Symbol, 0, len(lj.CorrelationVars)+len(originalBindingSyms))
+	output = append(output, lj.CorrelationVars...)
+	output = append(output, originalBindingSyms...)
+
+	// Compile the decorrelated WHERE clauses to algebra nodes.
+	innerNode, compileErr := compileClauses(decorrelated.Where)
+	if compileErr != nil || innerNode == nil {
+		return node
+	}
+
+	// Build Aggregate(groupBy, fns) over the inner scans.
+	// This runs ONCE, producing one row per distinct GROUP BY value.
+	// Output uses outer names so the decompiler can build correct bindings.
+	aggregateNode := &Node{
+		Op: RuleAggregate,
+		Data: &Aggregate{
+			GroupBy:   groupBy,
+			Functions: aggFns,
+			Output:    output,
 		},
+		Children: []*Node{innerNode},
 	}
 
-	if len(resultChildren) == 0 {
-		result := wrapAsParseNode(scanNode)
-		return result
+	// Recover the outer relation from children.
+	var outerNode *Node
+	if len(children) > 0 {
+		outerNode = recoverChild(children[0])
 	}
 
-	// Join the outer relation with the decorrelated subquery on correlation vars.
-	// Always InnerJoin — defaults are handled by the decorrelatedScan's decompiler,
-	// not by a LeftOuterJoin wrapper. (The EBNF framework doesn't re-traverse
-	// newly created nodes, so a LeftOuterJoin wrapper here would never be collapsed.)
+	if outerNode == nil {
+		// No outer relation — return just the Aggregate.
+		return wrapAsParseNode(aggregateNode)
+	}
+
+	// Rule 1: LateralJoin(x, defaults) → LeftOuterJoin(x, defaults) [R, Aggregate]
+	// LeftOuterJoin preserves all outer tuples; non-matching get defaults.
+	// InnerJoin would drop outer tuples without matches.
+	joinKind := InnerJoin
+	if len(lj.DefaultValues) > 0 {
+		joinKind = LeftOuterJoin
+	}
+
 	joinNode := &Node{
 		Op: RuleJoin,
 		Data: &Join{
-			Kind:        InnerJoin,
-			JoinSymbols: lj.CorrelationVars,
-			Output:      mergeSymbols(resultChildren[0].Symbols(), output),
+			Kind:          joinKind,
+			JoinSymbols:   lj.CorrelationVars,
+			Output:        mergeSymbols(outerNode.Symbols(), output),
+			DefaultValues: lj.DefaultValues,
 		},
-		Children: []*Node{resultChildren[0], scanNode},
+		Children: []*Node{outerNode, aggregateNode},
 	}
 
 	return wrapAsParseNode(joinNode)
-}
-
-// collapseLeftOuterJoinTransform handles Join(LeftOuter) nodes after
-// decorrelation. When a LeftOuterJoin has a decorrelatedScan child (from
-// a successfully decorrelated LateralJoin) and a ground/Map child (the
-// default values), it absorbs the defaults into the decorrelatedScan
-// and replaces the entire LeftOuterJoin with just the decorrelatedScan.
-//
-// Before: Join(LeftOuter) → [decorrelatedScan, Map(ground defaults)]
-// After:  decorrelatedScan (with DefaultValues set)
-func collapseLeftOuterJoinTransform(node *parse.Node, children ...interface{}) interface{} {
-	algNode, ok := node.TransformedValue.(*Node)
-	if !ok || algNode == nil {
-		return node
-	}
-	join, ok := algNode.Data.(*Join)
-	if !ok {
-		return node
-	}
-	if join.Kind != LeftOuterJoin {
-		// Not a LeftOuterJoin — but children may have been transformed.
-		// Rebuild the node with updated children.
-		rebuilt := &parse.Node{
-			Rule:             node.Rule,
-			Value:            node.Value,
-			TransformedValue: node.TransformedValue,
-		}
-		for _, child := range children {
-			if pn, ok := child.(*parse.Node); ok {
-				rebuilt.Children = append(rebuilt.Children, pn)
-			}
-		}
-		return rebuilt
-	}
-
-	// Need exactly 2 children
-	if len(children) != 2 {
-		return node
-	}
-
-	// Find the decorrelatedScan child and the defaults child
-	var dsChild *Node
-	var defaultValues []interface{}
-	var defaultSymbols []query.Symbol
-
-	for _, child := range children {
-		childNode := recoverChild(child)
-		if childNode == nil {
-			continue
-		}
-
-		if _, ok := childNode.Data.(*decorrelatedScan); ok {
-			dsChild = childNode
-		} else {
-			// Walk the node tree to collect all ground/constant defaults.
-			// Multiple ground expressions compile to a chain of Map nodes:
-			//   Map(ground 0, ?b) → Map(ground 0, ?a) → ...
-			collectDefaults(childNode, &defaultValues, &defaultSymbols)
-		}
-	}
-
-	if dsChild == nil {
-		return node // No decorrelatedScan child — leave unchanged
-	}
-
-	// Absorb defaults into the decorrelatedScan
-	if len(defaultValues) > 0 {
-		ds := dsChild.Data.(*decorrelatedScan)
-		ds.DefaultValues = defaultValues
-		ds.OriginalBinding = defaultSymbols
-	}
-
-	result := wrapAsParseNode(dsChild)
-	return result
-}
-
-// collectDefaults walks an algebra node tree to gather all ground/constant
-// default values. Multiple ground expressions compile to chained Map nodes.
-func collectDefaults(n *Node, values *[]interface{}, symbols *[]query.Symbol) {
-	if n == nil {
-		return
-	}
-	switch d := n.Data.(type) {
-	case *Map:
-		if gf, ok := d.Expression.Function.(*query.GroundFunction); ok {
-			*values = append(*values, extractDefaultValues(gf.Value)...)
-			*symbols = append(*symbols, bindingSymbols(d.Expression.Binding)...)
-		}
-	case *Constant:
-		*values = append(*values, d.Values...)
-		*symbols = append(*symbols, d.Symbols...)
-	}
-	// Recurse into children to find nested defaults
-	for _, child := range n.Children {
-		collectDefaults(child, values, symbols)
-	}
-}
-
-// extractDefaultValues normalizes a ground value into a slice.
-func extractDefaultValues(v interface{}) []interface{} {
-	if slice, ok := v.([]interface{}); ok {
-		return slice
-	}
-	return []interface{}{v}
-}
-
-// decorrelatedScan is a special Scan variant that holds a decorrelated
-// SubqueryPattern. The decompiler emits this as a SubqueryPattern clause
-// that LOOKS correlated (same Inputs/Binding as original) but has a
-// rewritten inner query that can run uncorrelated.
-type decorrelatedScan struct {
-	SubqueryPattern  *query.SubqueryPattern  // Decorrelated subquery (Inputs: [$], RelationBinding)
-	Output           []query.Symbol
-	DefaultValues    []interface{}
-	OriginalBinding  []query.Symbol          // Original binding symbols (for defaults)
-	CorrelationVars  []query.Symbol          // Outer variable names (e.g., ?scenario)
-	OriginalBindForm query.BindingForm       // Original binding form (e.g., TupleBinding [[?count]])
-}
-
-func (d *decorrelatedScan) OutputSymbols() []query.Symbol { return d.Output }
-func (d *decorrelatedScan) String() string {
-	return "decorrelated(" + d.SubqueryPattern.Query.String() + ")"
 }
 
 // decorrelateQuery rewrites a correlated query into a decorrelated one.

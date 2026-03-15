@@ -84,6 +84,8 @@ The agent creates new types, wrapper classes, adapter layers, or intermediate re
 ### 4. WORKING AROUND INSTEAD OF FIXING
 The agent identifies a problem but patches around it instead of fixing the root cause. Look for:
 - "The issue is X, so I'"'"'ll add Y to work around it"
+- "For now ... just ... "
+- "Actually ... "
 - Adding nil checks, special cases, or fallback paths instead of fixing why the value is wrong
 - Creating V2 versions of functions instead of fixing the original
 
@@ -125,21 +127,35 @@ $REASONING
 PROPOSED ACTION: $CHANGE_DESC"
 
 START_TIME=$(date +%s)
-REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE claude -p --model sonnet --system-prompt "$SYSTEM_PROMPT" --no-session-persistence --tools "" "Review the reasoning chain that led to this proposed code change. Is the reasoning sound, or does it exhibit known failure modes?" 2>/dev/null) || {
+REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE claude --effort low -p --model sonnet --system-prompt "$SYSTEM_PROMPT" --no-session-persistence --tools "" "Review the reasoning chain that led to this proposed code change. Is the reasoning sound, or does it exhibit known failure modes?" 2>/dev/null) || {
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - START_TIME))
+    echo "[${ELAPSED}.0s] HOOK FAILED (timeout or API error)" >> /tmp/reasoning_audit_log.txt
+    echo "REASONING AUDIT [${ELAPSED}s]: HOOK FAILED (timeout or API error)" >&2
     exit 0
 }
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 
 echo "[${ELAPSED}.0s] $REVIEW_RESULT" >> /tmp/reasoning_audit_log.txt
-echo "REASONING AUDIT [${ELAPSED}s]: $REVIEW_RESULT" >&2
 
 # Check the LAST line for the verdict — Sonnet sometimes produces multi-line
 # reasoning before the final verdict, and intermediate text may contain "BLOCK"
 # as part of the analysis even when the final verdict is ALLOWED.
 LAST_LINE=$(echo "$REVIEW_RESULT" | tail -1)
 if echo "$LAST_LINE" | grep -q "\[BLOCKED\]"; then
+    echo "REASONING AUDIT [${ELAPSED}s]: $REVIEW_RESULT" >&2
     exit 2
 fi
+
+CONTEXT_MSG="REASONING AUDIT [${ELAPSED}s]: $REVIEW_RESULT"
+jq -n --arg ctx "$CONTEXT_MSG" '{
+  hookSpecificOutput: {
+    hookEventName: "PreToolUse",
+    permissionDecision: "allow",
+    permissionDecisionReason: "Reasoning audit passed",
+    additionalContext: $ctx
+  }
+}'
 
 exit 0

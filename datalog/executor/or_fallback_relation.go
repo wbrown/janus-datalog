@@ -323,6 +323,7 @@ type OrFallbackIterator struct {
 	outputSyms            []query.Symbol
 	done                  bool
 	err                   error
+
 }
 
 func (it *OrFallbackIterator) Next() bool {
@@ -394,9 +395,9 @@ func (it *OrFallbackIterator) Next() bool {
 			}
 
 			if branchResult != nil {
-				// Filter branch result to rows matching the outer tuple on shared symbols.
-				// This is needed when the branch contains an uncorrelated subquery that
-				// returns results for ALL outer tuples (e.g., decorrelated subquery).
+				// Filter branch result to rows matching the current outer tuple
+				// on shared symbols. Needed for uncorrelated subqueries that
+				// return results for ALL outer tuples.
 				branchResult = filterBranchToOuterTuple(branchResult, outerTuple, it.outerSyms)
 
 				branchIter := branchResult.Iterator()
@@ -423,8 +424,8 @@ func (it *OrFallbackIterator) Next() bool {
 					firstTuple := branchIter.Tuple()
 
 					if len(branchSyms) != len(it.outputSyms) || !symbolsMatch(branchSyms, it.outputSyms) {
-						// Projection allocates new slice - no additional copy needed
-						it.currentTuple = projectTupleToSymbols(firstTuple, branchSyms, it.outputSyms)
+						// Projection with fallback to outer tuple for missing symbols
+						it.currentTuple = projectTupleWithFallback(firstTuple, branchSyms, it.outputSyms, outerTuple, it.outerSyms)
 					} else if branchResult.RequiresCopy() {
 						// No projection but unsafe source - copy once
 						it.currentTuple = copyTuple(firstTuple)
@@ -437,6 +438,8 @@ func (it *OrFallbackIterator) Next() bool {
 						branchRelation: branchResult,
 						branchSyms:     branchSyms,
 						outputSyms:     it.outputSyms,
+						outerTuple:     outerTuple,
+						outerSyms:      it.outerSyms,
 					}
 					return true
 				}
@@ -481,12 +484,21 @@ func symbolsMatch(a, b []query.Symbol) bool {
 	return true
 }
 
-// projectTupleToSymbols projects a tuple from source symbols to target symbols
-func projectTupleToSymbols(tuple Tuple, srcSyms, dstSyms []query.Symbol) Tuple {
+// projectTupleWithFallback projects a tuple from source symbols to target symbols.
+// For symbols not in the source, falls back to the outer tuple if provided.
+// This is needed when a branch (e.g., ground default) doesn't produce all
+// output symbols — the outer tuple's values fill the gaps.
+func projectTupleWithFallback(tuple Tuple, srcSyms, dstSyms []query.Symbol, outerTuple Tuple, outerSyms []query.Symbol) Tuple {
 	// Build index for source symbols
 	srcIdx := make(map[query.Symbol]int)
 	for i, sym := range srcSyms {
 		srcIdx[sym] = i
+	}
+
+	// Build index for outer symbols (fallback)
+	outerIdx := make(map[query.Symbol]int)
+	for i, sym := range outerSyms {
+		outerIdx[sym] = i
 	}
 
 	// Create projected tuple
@@ -494,8 +506,10 @@ func projectTupleToSymbols(tuple Tuple, srcSyms, dstSyms []query.Symbol) Tuple {
 	for i, sym := range dstSyms {
 		if idx, ok := srcIdx[sym]; ok {
 			result[i] = tuple[idx]
+		} else if idx, ok := outerIdx[sym]; ok && idx < len(outerTuple) {
+			// Symbol not in branch result — use outer tuple's value
+			result[i] = outerTuple[idx]
 		}
-		// If symbol not found, leave as nil (shouldn't happen with proper schema)
 	}
 	return result
 }
@@ -506,6 +520,8 @@ type projectedIterator struct {
 	branchRelation Relation // For RequiresCopy check
 	branchSyms     []query.Symbol
 	outputSyms     []query.Symbol
+	outerTuple     Tuple          // Fallback values for symbols not in branch
+	outerSyms      []query.Symbol // Symbols from the outer tuple
 }
 
 func (it *projectedIterator) Next() bool {
@@ -516,8 +532,7 @@ func (it *projectedIterator) Tuple() Tuple {
 	tuple := it.inner.Tuple()
 
 	if len(it.branchSyms) != len(it.outputSyms) || !symbolsMatch(it.branchSyms, it.outputSyms) {
-		// Projection allocates new slice - no additional copy needed
-		return projectTupleToSymbols(tuple, it.branchSyms, it.outputSyms)
+		return projectTupleWithFallback(tuple, it.branchSyms, it.outputSyms, it.outerTuple, it.outerSyms)
 	}
 
 	// No projection - copy if source is unsafe
@@ -528,16 +543,14 @@ func (it *projectedIterator) Tuple() Tuple {
 }
 
 // filterBranchToOuterTuple filters a branch result to rows matching the
-// current outer tuple on shared symbols. This is critical for uncorrelated
-// subqueries that return results for ALL outer tuples — without filtering,
-// every outer tuple would get every result row.
+// current outer tuple on shared symbols. Needed for uncorrelated subqueries
+// that return results for ALL outer tuples — without filtering, every outer
+// tuple would get every result row.
 func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms []query.Symbol) Relation {
 	branchSyms := branchResult.Symbols()
 
-	// Find shared symbols between outer and branch
-	type symPair struct {
-		outerIdx, branchIdx int
-	}
+	// Find shared symbol positions
+	type symPair struct{ outerIdx, branchIdx int }
 	var shared []symPair
 	for oi, osym := range outerSyms {
 		for bi, bsym := range branchSyms {
@@ -546,9 +559,8 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 			}
 		}
 	}
-
 	if len(shared) == 0 {
-		return branchResult // No shared symbols — nothing to filter
+		return branchResult
 	}
 
 	// Filter to matching rows
