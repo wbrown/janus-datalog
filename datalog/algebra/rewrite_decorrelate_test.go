@@ -155,6 +155,98 @@ func TestDecorrelation_MultipleSubqueries(t *testing.T) {
 	assert.Less(t, ljCountAfter, ljCount, "decorrelation should reduce LateralJoin count")
 }
 
+// TestDecorrelation_ProductionStructure verifies that decorrelation fires
+// on a query structurally identical to the production query: NOT clause,
+// multiple get-else expressions, and multiple OR-fallback subqueries with
+// correlation, aggregation, and get-else inside them.
+//
+// This test catches the EBNF transform propagation issue where the optimizer
+// applies the decorrelation transform (decorrelate-apply fires) but the
+// rewritten nodes are lost during tree reconstruction (changed:false).
+func TestDecorrelation_ProductionStructure(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?project ?label ?createdAt ?priority ?category ?region ?owner ?notes ?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits ?ready ?lastKey ?lastUpdatedAt
+	  :where
+	  [?project :entity/type :entity.type/project]
+	  (not [?project :entity/deleted true])
+	  [(get-else $ ?project :project/label "") ?label]
+	  [?project :project/created-at ?createdAt]
+	  [(get-else $ ?project :project/priority 0) ?priority]
+	  [(get-else $ ?project :project/category "") ?category]
+	  [(get-else $ ?project :project/region "") ?region]
+	  [(get-else $ ?project :project/owner "") ?owner]
+	  [(get-else $ ?project :project/notes "") ?notes]
+	  (or [(q [:find (count ?i) (sum ?c) (sum ?w) (sum ?iu) (sum ?ou)
+	           :in $ ?p
+	           :where [?i :item/project ?p]
+	                  [?i :item/status :status/done]
+	                  (not [?i :entity/deleted true])
+	                  [(get-else $ ?i :item/cost 0) ?c]
+	                  [(get-else $ ?i :item/weight 0) ?w]
+	                  [(get-else $ ?i :item/input-units 0) ?iu]
+	                  [(get-else $ ?i :item/output-units 0) ?ou]]
+	          $ ?project) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]]
+	      [(ground [0 0 0 0 0]) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]])
+	  (or [(q [:find (count ?i)
+	           :in $ ?p
+	           :where [?i :item/project ?p]
+	                  [?i :item/key :step/init]
+	                  [?i :item/status :status/done]
+	                  (not [?i :entity/deleted true])]
+	          $ ?project) [[?initCount]]]
+	      [(ground 0) ?initCount])
+	  [[(> ?initCount 0)] ?ready]
+	  (or [(q [:find ?key ?ca
+	           :in $ ?p
+	           :where [?i :item/project ?p]
+	                  [?i :item/status :status/done]
+	                  [?i :item/completed-at ?ca]
+	                  [?i :item/key ?key]
+	                  (not [?i :entity/deleted true])
+	                  [(q [:find (max ?ca)
+	                       :in $ ?p
+	                       :where [?i :item/project ?p]
+	                              [?i :item/status :status/done]
+	                              [?i :item/completed-at ?ca]
+	                              (not [?i :entity/deleted true])]
+	                      $ ?p) [[?maxCa]]]
+	                  [(= ?ca ?maxCa)]]
+	          $ ?project) [[?lastKey ?lastUpdatedAt]]]
+	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	  :order-by [[?lastUpdatedAt :desc]]]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	t.Logf("Before:\n%s", root.String())
+
+	ljBefore := countNodes(root, RuleLateralJoin)
+	t.Logf("LateralJoin count before: %d", ljBefore)
+	require.Greater(t, ljBefore, 0, "should have LateralJoin nodes before optimization")
+
+	optimizer := NewOptimizer(DecorrelationPass(nil))
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	t.Logf("After:\n%s", optimized.String())
+
+	ljAfter := countNodes(optimized, RuleLateralJoin)
+	t.Logf("LateralJoin count after: %d", ljAfter)
+
+	// THE KEY ASSERTION: decorrelation must actually eliminate aggregate LateralJoins.
+	// If this fails, the EBNF transform is not propagating rewrites in deep trees.
+	assert.Less(t, ljAfter, ljBefore,
+		"decorrelation must eliminate aggregate LateralJoins — if equal, transform propagation is broken")
+
+	// Verify decompilation produces different clauses
+	originalClauses, err := Decompile(root)
+	require.NoError(t, err)
+	optimizedClauses, err := Decompile(optimized)
+	require.NoError(t, err)
+
+	t.Logf("Original: %d clauses, Optimized: %d clauses", len(originalClauses), len(optimizedClauses))
+	assert.NotEqual(t, len(originalClauses), len(optimizedClauses),
+		"optimized clause count should differ (decorrelation changes structure)")
+}
+
 // countNodes counts nodes with a given Op in the tree.
 func countNodes(n *Node, op string) int {
 	if n == nil {

@@ -113,7 +113,7 @@ func Ground(value interface{}) *GroundBuilder {
 // As binds the ground value to a variable.
 func (g *GroundBuilder) As(result *Var) *Expression {
 	return &Expression{
-		fn:      query.GroundFunction{Value: g.value},
+		fn:      &query.GroundFunction{Value: g.value},
 		binding: result,
 	}
 }
@@ -137,7 +137,7 @@ func TupleGround(values ...interface{}) *TupleGroundBuilder {
 // As binds the tuple values to multiple variables.
 func (g *TupleGroundBuilder) As(vars ...*Var) *TupleExpression {
 	return &TupleExpression{
-		fn:       query.GroundFunction{Value: g.values},
+		fn:       &query.GroundFunction{Value: g.values},
 		bindings: vars,
 	}
 }

@@ -618,3 +618,171 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 		assert.Equal(t, totalScenarios-scenariosWithTasks, withoutTasks, "scenarios without tasks")
 	})
 }
+
+// TestCorrelatedSubqueryAlgebraOptimizerProductionStructure tests the algebra
+// optimizer with a query structurally identical to the production query.
+// The production query has:
+// - Multiple get-else expressions on the outer entity (6 optional attributes)
+// - A NOT clause filtering deleted entities
+// - 3 OR-fallback subqueries with correlation, aggregation, and get-else
+// - The third subquery has a NESTED subquery (argmax pattern)
+// - Order-by on the result
+//
+// Previous tests used simplified queries that missed phasing issues triggered
+// by the combination of get-else + NOT + OR-fallback in the same clause set.
+func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
+	dir, err := os.MkdirTemp("", "correlated-subquery-production-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	const (
+		numProjects      = 10
+		itemsPerProject  = 5
+	)
+
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	require.NoError(t, err)
+	defer db.Close()
+
+	baseTime := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+	statusDone := datalog.NewKeyword(":status/done")
+	kwInit := datalog.NewKeyword(":step/init")
+
+	for p := 0; p < numProjects; p++ {
+		tx := db.NewTransaction()
+		project := datalog.NewIdentity(fmt.Sprintf("project:%d", p))
+		require.NoError(t, tx.Add(project, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/project")))
+		require.NoError(t, tx.Add(project, datalog.NewKeyword(":project/created-at"), baseTime.Add(time.Duration(p)*time.Hour)))
+
+		// Optional attributes (like production's title, intensity, pov, genre, element, setting)
+		require.NoError(t, tx.Add(project, datalog.NewKeyword(":project/label"), fmt.Sprintf("Project %d", p)))
+		require.NoError(t, tx.Add(project, datalog.NewKeyword(":project/priority"), int64(p%3)))
+		require.NoError(t, tx.Add(project, datalog.NewKeyword(":project/category"), fmt.Sprintf("cat-%d", p%4)))
+		require.NoError(t, tx.Add(project, datalog.NewKeyword(":project/region"), fmt.Sprintf("region-%d", p%2)))
+		require.NoError(t, tx.Add(project, datalog.NewKeyword(":project/owner"), fmt.Sprintf("owner-%d", p%3)))
+		require.NoError(t, tx.Add(project, datalog.NewKeyword(":project/notes"), fmt.Sprintf("notes for project %d", p)))
+
+		for j := 0; j < itemsPerProject; j++ {
+			item := datalog.NewIdentity(fmt.Sprintf("item:%d:%d", p, j))
+			require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/project"), project))
+			require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/status"), statusDone))
+			require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/completed-at"), baseTime.Add(time.Duration(p)*time.Hour+time.Duration(j)*time.Minute)))
+			require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/cost"), int64(100+j*10)))
+			require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/weight"), int64(time.Duration(10+j)*time.Second)))
+			require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/input-units"), int64(j*5)))
+			require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/output-units"), int64(j*3)))
+			if j == 0 {
+				require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/key"), kwInit))
+			} else {
+				require.NoError(t, tx.Add(item, datalog.NewKeyword(":item/key"), datalog.NewKeyword(fmt.Sprintf(":step/work-%d", j))))
+			}
+		}
+		_, err = tx.Commit()
+		require.NoError(t, err)
+	}
+
+	// Production-structure query: get-else on outer entity, NOT, 3 OR-fallback subqueries
+	queryStr := `[:find ?project ?label ?createdAt ?priority ?category ?region ?owner ?notes ?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits ?ready ?lastKey ?lastUpdatedAt
+	  :where
+	  [?project :entity/type :entity.type/project]
+	  (not [?project :entity/deleted true])
+	  [(get-else $ ?project :project/label "") ?label]
+	  [?project :project/created-at ?createdAt]
+	  [(get-else $ ?project :project/priority 0) ?priority]
+	  [(get-else $ ?project :project/category "") ?category]
+	  [(get-else $ ?project :project/region "") ?region]
+	  [(get-else $ ?project :project/owner "") ?owner]
+	  [(get-else $ ?project :project/notes "") ?notes]
+	  (or [(q [:find (count ?i) (sum ?c) (sum ?w) (sum ?iu) (sum ?ou)
+	           :in $ ?p
+	           :where [?i :item/project ?p]
+	                  [?i :item/status :status/done]
+	                  (not [?i :entity/deleted true])
+	                  [(get-else $ ?i :item/cost 0) ?c]
+	                  [(get-else $ ?i :item/weight 0) ?w]
+	                  [(get-else $ ?i :item/input-units 0) ?iu]
+	                  [(get-else $ ?i :item/output-units 0) ?ou]]
+	          $ ?project) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]]
+	      [(ground [0 0 0 0 0]) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]])
+	  (or [(q [:find (count ?i)
+	           :in $ ?p
+	           :where [?i :item/project ?p]
+	                  [?i :item/key :step/init]
+	                  [?i :item/status :status/done]
+	                  (not [?i :entity/deleted true])]
+	          $ ?project) [[?initCount]]]
+	      [(ground 0) ?initCount])
+	  [[(> ?initCount 0)] ?ready]
+	  (or [(q [:find ?key ?ca
+	           :in $ ?p
+	           :where [?i :item/project ?p]
+	                  [?i :item/status :status/done]
+	                  [?i :item/completed-at ?ca]
+	                  [?i :item/key ?key]
+	                  (not [?i :entity/deleted true])
+	                  [(q [:find (max ?ca)
+	                       :in $ ?p
+	                       :where [?i :item/project ?p]
+	                              [?i :item/status :status/done]
+	                              [?i :item/completed-at ?ca]
+	                              (not [?i :entity/deleted true])]
+	                      $ ?p) [[?maxCa]]]
+	                  [(= ?ca ?maxCa)]]
+	          $ ?project) [[?lastKey ?lastUpdatedAt]]]
+	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	  :order-by [[?lastUpdatedAt :desc]]]`
+
+	t.Run("baseline", func(t *testing.T) {
+		opts := DefaultPlannerOptions()
+		opts.EnableAlgebraOptimizer = false
+		db.ClearPlanCache()
+
+		start := time.Now()
+		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		require.NoError(t, err)
+		results, err := executor.CollectTuples(rel, nil)
+		elapsed := time.Since(start)
+		require.NoError(t, err)
+		require.Len(t, results, numProjects, "baseline must return ALL projects")
+		t.Logf("Baseline: %d results in %s", len(results), elapsed)
+
+		for _, row := range results {
+			ic := int64(0)
+			switch v := row[8].(type) {
+			case int64:
+				ic = v
+			case int:
+				ic = int64(v)
+			}
+			assert.Equal(t, int64(itemsPerProject), ic, "each project has %d items", itemsPerProject)
+		}
+	})
+
+	t.Run("algebra_optimizer", func(t *testing.T) {
+		opts := DefaultPlannerOptions()
+		opts.EnableAlgebraOptimizer = true
+		opts.EnableSubqueryDecorrelation = false
+		db.ClearPlanCache()
+
+		start := time.Now()
+		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		require.NoError(t, err, "algebra optimizer must not crash on production-structure query")
+		results, err := executor.CollectTuples(rel, nil)
+		elapsed := time.Since(start)
+		require.NoError(t, err)
+		require.Len(t, results, numProjects,
+			"algebra optimizer must return ALL projects with production-structure query")
+		t.Logf("Optimized: %d results in %s", len(results), elapsed)
+
+		for _, row := range results {
+			ic := int64(0)
+			switch v := row[8].(type) {
+			case int64:
+				ic = v
+			case int:
+				ic = int64(v)
+			}
+			assert.Equal(t, int64(itemsPerProject), ic, "each project has %d items", itemsPerProject)
+		}
+	})
+}

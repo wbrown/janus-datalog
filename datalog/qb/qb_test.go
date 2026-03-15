@@ -310,7 +310,7 @@ func TestGround(t *testing.T) {
 
 	clause := expr.toClause()
 	e := clause.(*query.Expression)
-	gf, ok := e.Function.(query.GroundFunction)
+	gf, ok := e.Function.(*query.GroundFunction)
 	if !ok {
 		t.Fatalf("Expected GroundFunction, got %T", e.Function)
 	}
@@ -329,7 +329,7 @@ func TestTupleGround(t *testing.T) {
 	e := clause.(*query.Expression)
 
 	// Verify GroundFunction with []interface{}
-	gf, ok := e.Function.(query.GroundFunction)
+	gf, ok := e.Function.(*query.GroundFunction)
 	if !ok {
 		t.Fatalf("Expected GroundFunction, got %T", e.Function)
 	}
@@ -360,7 +360,7 @@ func TestTupleGroundMixedTypes(t *testing.T) {
 
 	clause := expr.toClause()
 	e := clause.(*query.Expression)
-	gf := e.Function.(query.GroundFunction)
+	gf := e.Function.(*query.GroundFunction)
 
 	values := gf.Value.([]interface{})
 	if values[0] != "hello" {
@@ -407,7 +407,7 @@ func TestTupleGroundInOr(t *testing.T) {
 	}
 
 	// Verify it's a ground function with tuple binding
-	_, ok = expr.Function.(query.GroundFunction)
+	_, ok = expr.Function.(*query.GroundFunction)
 	if !ok {
 		t.Errorf("Expected GroundFunction, got %T", expr.Function)
 	}
