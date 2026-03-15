@@ -155,6 +155,134 @@ func TestDecorrelation_MultipleSubqueries(t *testing.T) {
 	assert.Less(t, ljCountAfter, ljCount, "decorrelation should reduce LateralJoin count")
 }
 
+// TestDecorrelation_NestedWithIntermediateMap tests that decorrelation
+// propagates through intermediate Map nodes between LateralJoins.
+// Tree: LateralJoin → Map(comparison) → LateralJoin → Scan
+func TestDecorrelation_NestedWithIntermediateMap(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?count ?ready
+	  :where
+	  [?e :entity/type :entity.type/project]
+	  (or [(q [:find (count ?t)
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/status :status/done]]
+	          $ ?e) [[?count]]]
+	      [(ground 0) ?count])
+	  [[(> ?count 0)] ?ready]
+	  (or [(q [:find (sum ?c)
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/cost ?c]]
+	          $ ?e) [[?total]]]
+	      [(ground 0) ?total])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	t.Logf("Before:\n%s", root.String())
+
+	ljBefore := countNodes(root, RuleLateralJoin)
+	t.Logf("LateralJoin count before: %d", ljBefore)
+	require.Equal(t, 2, ljBefore)
+
+	optimizer := NewOptimizer(DecorrelationPass(nil))
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	t.Logf("After:\n%s", optimized.String())
+
+	ljAfter := countNodes(optimized, RuleLateralJoin)
+	t.Logf("LateralJoin count after: %d", ljAfter)
+
+	assert.Equal(t, 0, ljAfter,
+		"LateralJoins separated by Map should still be decorrelated")
+}
+
+// TestDecorrelation_NestedWithNotAndGetElse adds NOT and get-else to the
+// nested LateralJoin test to narrow down what breaks propagation.
+func TestDecorrelation_NestedWithNotAndGetElse(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?label ?count ?ready ?total
+	  :where
+	  [?e :entity/type :entity.type/project]
+	  (not [?e :entity/deleted true])
+	  [(get-else $ ?e :project/label "") ?label]
+	  (or [(q [:find (count ?t)
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/status :status/done]]
+	          $ ?e) [[?count]]]
+	      [(ground 0) ?count])
+	  [[(> ?count 0)] ?ready]
+	  (or [(q [:find (sum ?c)
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/cost ?c]]
+	          $ ?e) [[?total]]]
+	      [(ground 0) ?total])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	t.Logf("Before:\n%s", root.String())
+
+	ljBefore := countNodes(root, RuleLateralJoin)
+	t.Logf("LateralJoin count before: %d", ljBefore)
+	require.Equal(t, 2, ljBefore)
+
+	optimizer := NewOptimizer(DecorrelationPass(nil))
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	t.Logf("After:\n%s", optimized.String())
+
+	ljAfter := countNodes(optimized, RuleLateralJoin)
+	t.Logf("LateralJoin count after: %d", ljAfter)
+
+	assert.Equal(t, 0, ljAfter,
+		"LateralJoins with NOT and get-else should still be decorrelated")
+}
+
+// TestDecorrelation_MixedAggreateAndNonAggregate tests decorrelation when
+// some LateralJoins have aggregates (decorrelatable) and one doesn't
+// (skipped). The non-aggregate LateralJoin at the top should survive,
+// and the aggregate ones below should still be decorrelated.
+func TestDecorrelation_MixedAggregateAndNonAggregate(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?count ?lastKey
+	  :where
+	  [?e :entity/type :entity.type/project]
+	  (or [(q [:find (count ?t)
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/status :status/done]]
+	          $ ?e) [[?count]]]
+	      [(ground 0) ?count])
+	  (or [(q [:find ?key
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/key ?key]]
+	          $ ?e) [[?lastKey]]]
+	      [(ground :none) ?lastKey])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	t.Logf("Before:\n%s", root.String())
+
+	ljBefore := countNodes(root, RuleLateralJoin)
+	t.Logf("LateralJoin count before: %d", ljBefore)
+
+	optimizer := NewOptimizer(DecorrelationPass(nil))
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	t.Logf("After:\n%s", optimized.String())
+
+	ljAfter := countNodes(optimized, RuleLateralJoin)
+	t.Logf("LateralJoin count after: %d", ljAfter)
+
+	// The aggregate LateralJoin (count) should be decorrelated.
+	// The non-aggregate LateralJoin (find ?key) should remain.
+	assert.Less(t, ljAfter, ljBefore,
+		"aggregate LateralJoins should be decorrelated even with non-aggregate siblings")
+}
+
 // TestDecorrelation_ProductionStructure verifies that decorrelation fires
 // on a query structurally identical to the production query: NOT clause,
 // multiple get-else expressions, and multiple OR-fallback subqueries with
@@ -236,15 +364,57 @@ func TestDecorrelation_ProductionStructure(t *testing.T) {
 	assert.Less(t, ljAfter, ljBefore,
 		"decorrelation must eliminate aggregate LateralJoins — if equal, transform propagation is broken")
 
-	// Verify decompilation produces different clauses
-	originalClauses, err := Decompile(root)
-	require.NoError(t, err)
+	// The 3rd LateralJoin (non-aggregate argmax pattern) should survive.
+	// The 2 aggregate LateralJoins should be eliminated.
+	assert.Equal(t, 1, ljAfter,
+		"exactly 1 LateralJoin should remain (the non-aggregate argmax pattern)")
+
+	// Verify decompilation succeeds
 	optimizedClauses, err := Decompile(optimized)
 	require.NoError(t, err)
+	t.Logf("Decompiled %d clauses", len(optimizedClauses))
+}
 
-	t.Logf("Original: %d clauses, Optimized: %d clauses", len(originalClauses), len(optimizedClauses))
-	assert.NotEqual(t, len(originalClauses), len(optimizedClauses),
-		"optimized clause count should differ (decorrelation changes structure)")
+// TestDecorrelation_NestedLateralJoins tests that decorrelation works when
+// LateralJoins are nested (each OR-fallback subquery creates a LateralJoin
+// that is a child of the next). This is the minimal reproduction of the
+// production query propagation bug.
+func TestDecorrelation_NestedLateralJoins(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?count ?total
+	  :where
+	  [?e :entity/type :entity.type/project]
+	  (or [(q [:find (count ?t)
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/status :status/done]]
+	          $ ?e) [[?count]]]
+	      [(ground 0) ?count])
+	  (or [(q [:find (sum ?c)
+	           :in $ ?s
+	           :where [?t :item/project ?s]
+	                  [?t :item/cost ?c]]
+	          $ ?e) [[?total]]]
+	      [(ground 0) ?total])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	t.Logf("Before:\n%s", root.String())
+
+	ljBefore := countNodes(root, RuleLateralJoin)
+	t.Logf("LateralJoin count before: %d", ljBefore)
+	require.Equal(t, 2, ljBefore, "should have 2 nested LateralJoins")
+
+	optimizer := NewOptimizer(DecorrelationPass(nil))
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	t.Logf("After:\n%s", optimized.String())
+
+	ljAfter := countNodes(optimized, RuleLateralJoin)
+	t.Logf("LateralJoin count after: %d", ljAfter)
+
+	assert.Equal(t, 0, ljAfter,
+		"both aggregate LateralJoins should be eliminated by decorrelation")
 }
 
 // countNodes counts nodes with a given Op in the tree.

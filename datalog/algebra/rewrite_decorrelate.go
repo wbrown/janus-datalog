@@ -71,7 +71,9 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 		emit("algebra/decorrelate-skip", map[string]interface{}{
 			"reason": "no aggregates in :find",
 		})
-		return node // Keep as correlated LateralJoin
+		// Rebuild node with potentially-rewritten children so child
+		// decorrelations propagate through non-decorrelatable parents.
+		return rebuildWithChildren(node, children)
 	}
 
 	// Only decorrelate scalar correlation (single variable)
@@ -80,7 +82,7 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 		emit("algebra/decorrelate-skip", map[string]interface{}{
 			"reason": "no correlation variables",
 		})
-		return node
+		return rebuildWithChildren(node, children)
 	}
 
 	// Map outer correlation vars to inner parameter names.
@@ -176,6 +178,23 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 	}
 
 	return wrapAsParseNode(joinNode)
+}
+
+// rebuildWithChildren returns a parse node with the same rule and data as the
+// original but with potentially-rewritten children. This ensures that child
+// transforms propagate through parents that skip their own transformation.
+func rebuildWithChildren(node *parse.Node, children []interface{}) *parse.Node {
+	rebuilt := &parse.Node{
+		Rule:             node.Rule,
+		Value:            node.Value,
+		TransformedValue: node.TransformedValue,
+	}
+	for _, child := range children {
+		if pn, ok := child.(*parse.Node); ok {
+			rebuilt.Children = append(rebuilt.Children, pn)
+		}
+	}
+	return rebuilt
 }
 
 // decorrelateQuery rewrites a correlated query into a decorrelated one.

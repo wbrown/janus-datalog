@@ -362,9 +362,39 @@ func extractOrJoinClauseSymbols(o *query.OrJoinClause) ClauseSymbols {
 		requires = append(requires, sym)
 	}
 
+	// Provides: join vars + symbols provided by ALL branches (intersection).
+	// The join vars are the explicit shared symbols. Additionally, symbols
+	// produced by every branch are available to subsequent clauses.
+	providesSet := make(map[query.Symbol]bool)
+	for _, jv := range o.JoinVars {
+		providesSet[jv] = true
+	}
+	if len(branchProvides) > 0 {
+		// Start with first branch's provides, intersect with others
+		common := make(map[query.Symbol]bool)
+		for sym := range branchProvides[0] {
+			common[sym] = true
+		}
+		for i := 1; i < len(branchProvides); i++ {
+			for sym := range common {
+				if !branchProvides[i][sym] {
+					delete(common, sym)
+				}
+			}
+		}
+		for sym := range common {
+			providesSet[sym] = true
+		}
+	}
+
+	var provides []query.Symbol
+	for sym := range providesSet {
+		provides = append(provides, sym)
+	}
+
 	return ClauseSymbols{
 		Requires: requires,
-		Provides: o.JoinVars,
+		Provides: provides,
 	}
 }
 
