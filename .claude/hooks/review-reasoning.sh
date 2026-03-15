@@ -34,7 +34,7 @@ REASONING=$(tail -300 "$TRANSCRIPT_PATH" | \
         .type as $type |
         .message.content[]? |
         select(.type == "thinking" or .type == "text") |
-        "\($type): \(.thinking // .text)"' 2>/dev/null | tail -75) || true
+        "\($type)/\(.type): \(.thinking // .text)"' 2>/dev/null | tail -75) || true
 
 if [ -z "$REASONING" ]; then
     exit 0
@@ -106,6 +106,13 @@ The agent receives a correction from the user but the thinking shows resistance,
 
 ### 8. CIRCULAR REASONING
 The agent tries an approach, it fails, tries a variant, that fails, and cycles back to a variant of the first approach. Look for repeated attempts at the same class of solution.
+
+### 9. SIMPLIFYING AWAY THE BUG
+The agent reduces a failing production case to a "minimal reproduction" that passes. The simplification removed the conditions that trigger the failure. Look for:
+* Test query is described as "the same structure" but has fewer clauses
+* "Simplified version of the production query"
+* Test passes but production fails on the same code path
+* Removing clauses that "shouldn'"'"'t matter" without proving they don'"'"'t
 
 ## Your response format:
 

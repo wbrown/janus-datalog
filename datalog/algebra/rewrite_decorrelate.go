@@ -143,17 +143,43 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 			Children: []*Node{innerNode},
 		}
 	} else {
-		// Rule 4: non-aggregate decorrelation — rewrite the LateralJoin itself.
-		// The decorrelated inner query runs once for all values. No Aggregate
-		// needed — just a SubqueryPattern with correlation var in :find.
+		// Rule 4: non-aggregate decorrelation.
+		// Compile the inner WHERE, recursively optimize to decorrelate nested
+		// subqueries (e.g., the max subquery in the argmax pattern), then
+		// decompile back to produce optimized WHERE clauses.
+		innerNode, compileErr := compileClauses(decorrelated.Where)
+		if compileErr != nil || innerNode == nil {
+			return rebuildWithChildren(node, children)
+		}
+
+		// Recursively optimize the inner tree — decorrelates nested LateralJoins
+		innerOptimizer := NewOptimizer(DecorrelationPass(nil))
+		optimizedInner, optErr := innerOptimizer.Optimize(innerNode)
+		if optErr == nil && optimizedInner != nil {
+			innerNode = optimizedInner
+		}
+
+		// Decompile the optimized inner tree back to WHERE clauses
+		optimizedWhere, decompErr := Decompile(innerNode)
+		if decompErr != nil {
+			return rebuildWithChildren(node, children)
+		}
+
+		// Build the decorrelated query with optimized WHERE
+		optimizedDecorrelated := &query.Query{
+			Find:  decorrelated.Find,
+			In:    decorrelated.In,
+			Where: optimizedWhere,
+		}
+
 		innerResultNode = &Node{
 			Op: RuleLateralJoin,
 			Data: &LateralJoin{
-				CorrelationVars: nil, // No longer correlated
-				InnerQuery:      decorrelated,
+				CorrelationVars: nil,
+				InnerQuery:      optimizedDecorrelated,
 				Binding:         query.RelationBinding{Variables: output},
 				Output:          output,
-				DefaultValues:   nil, // Defaults handled by outer LeftOuterJoin
+				DefaultValues:   nil,
 			},
 		}
 	}
