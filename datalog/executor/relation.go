@@ -934,13 +934,16 @@ func (r *StreamingRelation) IsEmpty() bool {
 		return r.counter.Count() == 0
 	}
 
-	// With EnableTrueStreaming, we can't peek without consuming
-	// Return false (assume not empty) to avoid consuming the iterator
-	// Callers should handle empty results gracefully
-	if r.options.EnableTrueStreaming {
-		// Don't consume the iterator - assume not empty
-		// If it IS empty, subsequent operations will discover that naturally
+	// With EnableTrueStreaming or Materialize()'d relations, don't peek —
+	// consuming the first tuple via CountingIterator would cause the
+	// CachingIterator (created later by Iterator()) to miss it.
+	if r.options.EnableTrueStreaming || r.shouldCache {
 		return false
+	}
+
+	// If cache is ready (already iterated), check cache
+	if r.cacheReady {
+		return len(r.cache) == 0
 	}
 
 	// Non-streaming mode: safe to peek

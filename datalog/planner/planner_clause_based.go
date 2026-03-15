@@ -113,7 +113,11 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 
 	// Algebraic optimization: clauses → algebra IR → transform passes → clauses
 	if p.options.EnableAlgebraOptimizer {
-		clauses = optimizeViaAlgebra(clauses, p.options)
+		optimized, err := optimizeViaAlgebra(clauses, p.options)
+		if err != nil {
+			return nil, fmt.Errorf("algebra optimization failed: %w", err)
+		}
+		clauses = optimized
 	}
 
 	// Step 2b: Detect constant-bindable scalar inputs

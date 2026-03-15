@@ -92,6 +92,9 @@ type Scan struct {
 
 func (s *Scan) OutputSymbols() []query.Symbol { return s.Output }
 func (s *Scan) String() string {
+	if s.Pattern == nil {
+		return "subquery-scan"
+	}
 	return s.Pattern.String()
 }
 
@@ -157,8 +160,9 @@ func (j *Join) String() string {
 // AntiJoin returns tuples from left with no match in right. R ▷ S
 // Compiled from query.NotClause / query.NotJoinClause.
 type AntiJoin struct {
-	JoinSymbols []query.Symbol // Variables to anti-join on
-	Output      []query.Symbol // Same as left child's output
+	JoinSymbols    []query.Symbol // Variables to anti-join on
+	Output         []query.Symbol // Same as left child's output
+	ExplicitJoin   bool           // True if compiled from NotJoinClause (user specified join vars)
 }
 
 func (a *AntiJoin) OutputSymbols() []query.Symbol { return a.Output }

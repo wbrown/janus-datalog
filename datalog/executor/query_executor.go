@@ -32,6 +32,7 @@ type DefaultQueryExecutor struct {
 	entityResolver   EntityResolver
 	options          ExecutorOptions
 	constantBindings map[query.Symbol]interface{} // Scalar inputs resolved as constants (not relation symbols)
+	decorrelatedCache map[*query.Query]Relation   // Cache for decorrelated aggregation subqueries
 }
 
 // newQueryExecutor creates a new DefaultQueryExecutor.
@@ -191,6 +192,25 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		}
 
 		// Apply aggregations using existing function
+		if collector := ctx.Collector(); collector != nil {
+			// Materialize to inspect without consuming the stream
+			mat := groups[0].Materialize()
+			var preTuples []string
+			preIt := mat.Iterator()
+			for preIt.Next() {
+				preTuples = append(preTuples, fmt.Sprintf("%v", preIt.Tuple()))
+			}
+			preIt.Close()
+			collector.Add(annotations.Event{
+				Name: "aggregation/pre-data",
+				Data: map[string]interface{}{
+					"symbols": fmt.Sprintf("%v", groups[0].Symbols()),
+					"tuples":  preTuples,
+					"find":    fmt.Sprintf("%v", q.Find),
+				},
+			})
+			groups[0] = mat
+		}
 		result := ExecuteAggregationsWithContext(ctx, groups[0], q.Find)
 		return []Relation{result}, nil
 
@@ -689,6 +709,149 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		materializedGroups[i] = g.Materialize()
 	}
 
+	// Decorrelated aggregation cache: for correlated subqueries with aggregates
+	// in :find, run the inner query ONCE as decorrelated (with correlation
+	// variable as GROUP BY key), cache the result, filter per value on reuse.
+	// Groups are already materialized at this point so safe to read.
+	if hasAggregatesInFind(subq.Query) {
+		// Check cache first
+		if e.decorrelatedCache != nil {
+			if cached, ok := e.decorrelatedCache[subq.Query]; ok {
+				if collector := ctx.Collector(); collector != nil {
+					collector.Add(annotations.Event{
+						Name: "subquery/decorrelation-cache-hit",
+						Data: map[string]interface{}{
+							"query":        subq.Query.String(),
+							"cached_syms":  cached.Symbols(),
+							"query_ptr":    fmt.Sprintf("%p", subq.Query),
+						},
+					})
+				}
+				result, err := e.filterCachedDecorrelatedResult(cached, subq, materializedGroups)
+				if err == nil && result != nil {
+					return result, nil
+				}
+			}
+		}
+		// Cache miss — try to decorrelate and cache
+		if collector := ctx.Collector(); collector != nil {
+			collector.Add(annotations.Event{
+				Name: "subquery/decorrelation-cache-miss",
+				Data: map[string]interface{}{
+					"query":     subq.Query.String(),
+					"query_ptr": fmt.Sprintf("%p", subq.Query),
+				},
+			})
+		}
+		var corrVars []query.Symbol
+		var innerParams []query.Symbol
+		paramIdx := 0
+		for _, input := range subq.Inputs {
+			if v, ok := input.(query.Variable); ok && !v.Name.IsSource() {
+				corrVars = append(corrVars, v.Name)
+				for j := paramIdx; j < len(subq.Query.In); j++ {
+					if si, ok := subq.Query.In[j].(query.ScalarInput); ok {
+						innerParams = append(innerParams, si.Symbol)
+						paramIdx = j + 1
+						break
+					}
+				}
+			}
+		}
+		// Count total non-source inputs — only use cache when the correlation variable
+		// is the ONLY non-$ input. If there are additional constant inputs (e.g., ?threshold),
+		// the decorrelated query needs those bound too, which the cache doesn't handle yet.
+		nonSourceInputCount := 0
+		for _, input := range subq.Inputs {
+			switch inp := input.(type) {
+			case query.Variable:
+				if !inp.Name.IsSource() {
+					nonSourceInputCount++
+				}
+			case query.Constant:
+				if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
+					continue
+				}
+				nonSourceInputCount++
+			}
+		}
+		if len(corrVars) == 1 && len(innerParams) == 1 && nonSourceInputCount == 1 {
+			paramSet := make(map[query.Symbol]bool)
+			for _, p := range innerParams {
+				paramSet[p] = true
+			}
+			var newIn []query.InputSpec
+			for _, in := range subq.Query.In {
+				if si, ok := in.(query.ScalarInput); ok && paramSet[si.Symbol] {
+					continue
+				}
+				newIn = append(newIn, in)
+			}
+			newFind := make([]query.FindElement, 0, len(innerParams)+len(subq.Query.Find))
+			for _, p := range innerParams {
+				newFind = append(newFind, query.FindVariable{Symbol: p})
+			}
+			newFind = append(newFind, subq.Query.Find...)
+
+			decorQuery := &query.Query{
+				Find:  newFind,
+				In:    newIn,
+				Where: subq.Query.Where,
+			}
+			inputRels := createInputRelationsForSubqueryWithOptions(
+				&query.SubqueryPattern{
+					Query:  decorQuery,
+					Inputs: []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
+				},
+				make(map[query.Symbol]interface{}),
+				e.options,
+			)
+			decorGroups, err := e.Execute(ctx, decorQuery, inputRels)
+			if err == nil && len(decorGroups) > 0 {
+				source := decorGroups[0]
+				if len(decorGroups) > 1 {
+					source = Relations(decorGroups).Product()
+				}
+				// Collect tuples for materialization
+				syms := source.Symbols()
+				var tuples []Tuple
+				iter := source.Iterator()
+				for iter.Next() {
+					t := iter.Tuple()
+					cp := make(Tuple, len(t))
+					copy(cp, t)
+					tuples = append(tuples, cp)
+				}
+				iter.Close()
+				fullResult := NewMaterializedRelationWithOptions(syms, tuples, e.options)
+
+				if e.decorrelatedCache == nil {
+					e.decorrelatedCache = make(map[*query.Query]Relation)
+				}
+				e.decorrelatedCache[subq.Query] = fullResult
+
+				if collector := ctx.Collector(); collector != nil {
+					collector.Add(annotations.Event{
+						Name: "subquery/decorrelation-cache-store",
+						Data: map[string]interface{}{
+							"query":     subq.Query.String(),
+							"query_ptr": fmt.Sprintf("%p", subq.Query),
+							"size":      len(tuples),
+							"symbols":   fmt.Sprintf("%v", syms),
+							"tuples":    fmt.Sprintf("%v", tuples),
+						},
+					})
+				}
+
+				result, err := e.filterCachedDecorrelatedResult(fullResult, subq, materializedGroups)
+				if err == nil && result != nil {
+					return result, nil
+				}
+			}
+			// If decorrelation fails, fall through to standard correlated path
+		}
+	}
+
 	// Combine all groups into a single relation for extracting input combinations
 	var combinedRel Relation
 	if len(materializedGroups) == 0 {
@@ -837,6 +1000,169 @@ func extractBindingSymbols(binding query.BindingForm) []query.Symbol {
 
 // executeSubqueryComponentized executes subquery using component-based optimization
 // This uses: SubqueryStrategySelector, SubqueryBatcher, WorkerPool, StreamingUnionBuilder
+// hasAggregatesInFind returns true if the query's :find clause has aggregates.
+func hasAggregatesInFind(q *query.Query) bool {
+	for _, elem := range q.Find {
+		if elem.IsAggregate() {
+			return true
+		}
+	}
+	return false
+}
+
+// filterCachedDecorrelatedResult filters a cached decorrelated result to
+// the specific correlation value from the current outer context.
+func (e *DefaultQueryExecutor) filterCachedDecorrelatedResult(
+	cached Relation,
+	subq *query.SubqueryPattern,
+	materializedGroups []Relation,
+) (Relation, error) {
+	bindingSyms := extractBindingSymbols(subq.Binding)
+
+	// Identify correlation variables and inner parameter names
+	var corrVars []query.Symbol
+	var innerParams []query.Symbol
+	paramIdx := 0
+	for _, input := range subq.Inputs {
+		if v, ok := input.(query.Variable); ok && !v.Name.IsSource() {
+			corrVars = append(corrVars, v.Name)
+			for j := paramIdx; j < len(subq.Query.In); j++ {
+				if si, ok := subq.Query.In[j].(query.ScalarInput); ok {
+					innerParams = append(innerParams, si.Symbol)
+					paramIdx = j + 1
+					break
+				}
+			}
+		}
+	}
+
+	if len(corrVars) == 0 || len(materializedGroups) == 0 {
+		return nil, nil // Can't filter
+	}
+
+	// Combine groups to access correlation values
+	var combinedGroups Relation
+	if len(materializedGroups) == 1 {
+		combinedGroups = materializedGroups[0]
+	} else {
+		combinedGroups = Relations(materializedGroups).Product()
+	}
+
+	// Find correlation variable column index in outer groups
+	corrSymIdx := -1
+	for i, sym := range combinedGroups.Symbols() {
+		if sym == corrVars[0] {
+			corrSymIdx = i
+			break
+		}
+	}
+	if corrSymIdx < 0 {
+		return nil, nil
+	}
+
+	// Collect all unique correlation values using Iterator()
+	// CRITICAL: Must use Iterator() instead of Get()/Size() because the
+	// StreamingRelation may have Materialize() set but not yet iterated.
+	// Using Iterator() properly triggers the CachingIterator which populates
+	// the cache, making the relation reusable for subsequent subquery calls.
+	var corrValues []interface{}
+	corrSeen := make(map[string]bool)
+	iter := combinedGroups.Iterator()
+	for iter.Next() {
+		t := iter.Tuple()
+		if corrSymIdx < len(t) {
+			val := t[corrSymIdx]
+			key := fmt.Sprintf("%v", val)
+			if !corrSeen[key] {
+				corrSeen[key] = true
+				corrValues = append(corrValues, val)
+			}
+		}
+	}
+	iter.Close()
+
+	if len(corrValues) == 0 {
+		return NewMaterializedRelationWithOptions(bindingSyms, nil, e.options), nil
+	}
+
+	// Find the correlation column in the cached result
+	cachedSyms := cached.Symbols()
+	corrColIdx := -1
+	for i, sym := range cachedSyms {
+		for _, ip := range innerParams {
+			if sym == ip {
+				corrColIdx = i
+				break
+			}
+		}
+		if corrColIdx >= 0 {
+			break
+		}
+	}
+	if corrColIdx < 0 {
+		return nil, nil
+	}
+
+	// Filter cached result for matching correlation values and extract aggregate columns
+	var resultTuples []Tuple
+	cachedIter := cached.Iterator()
+	for cachedIter.Next() {
+		tuple := cachedIter.Tuple()
+		if corrColIdx >= len(tuple) {
+			continue
+		}
+		cachedVal := tuple[corrColIdx]
+		for _, targetVal := range corrValues {
+			match := cachedVal == targetVal
+			if !match {
+				if ai, ok := cachedVal.(datalog.Identity); ok {
+					if bi, ok := targetVal.(datalog.Identity); ok {
+						match = ai.Equal(bi)
+					}
+				}
+			}
+			if match {
+				aggTuple := make(Tuple, 0, len(tuple)-len(innerParams))
+				for j := range tuple {
+					isCorrCol := false
+					for _, ip := range innerParams {
+						if cachedSyms[j] == ip {
+							isCorrCol = true
+							break
+						}
+					}
+					if !isCorrCol {
+						aggTuple = append(aggTuple, tuple[j])
+					}
+				}
+
+				// Build output: corrVar value + aggregate values
+				out := make(Tuple, len(corrVars)+len(aggTuple))
+				out[0] = targetVal
+				copy(out[len(corrVars):], aggTuple)
+				resultTuples = append(resultTuples, out)
+				break // Each cached row matches at most one correlation value
+			}
+		}
+	}
+	cachedIter.Close()
+
+	if len(resultTuples) == 0 {
+		return NewMaterializedRelationWithOptions(bindingSyms, nil, e.options), nil
+	}
+	if _, ok := subq.Binding.(query.TupleBinding); ok && len(corrValues) == 1 {
+		// TupleBinding with single correlation value: keep one result
+		resultTuples = resultTuples[:1]
+	}
+
+	// Output symbols: corrVars + bindingSyms
+	outSyms := make([]query.Symbol, len(corrVars)+len(bindingSyms))
+	copy(outSyms, corrVars)
+	copy(outSyms[len(corrVars):], bindingSyms)
+
+	return NewMaterializedRelationWithOptions(outSyms, resultTuples, e.options), nil
+}
+
 func (e *DefaultQueryExecutor) executeSubqueryComponentized(ctx Context, subq *query.SubqueryPattern, groups []Relation) (Relation, error) {
 	// Initialize components (could be cached on executor for reuse)
 	selector := NewSubqueryStrategySelector(100) // Default threshold
@@ -1147,15 +1473,12 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	var err error
 	var semantics string
 
-	// Choose semantics based on branch content:
-	// - Branches with correlated subqueries (inputs referencing outer vars)
-	//   need fallback (per-tuple evaluation)
-	// - Branches with only independent expressions (ground, NOT, uncorrelated
-	//   subqueries) can use union (run independently, merge results)
-	if needsPerTupleEvaluation(clause.Branches) {
+	// Check if any branch has expressions - use fallback semantics if so
+	if query.OrHasExpressions(clause.Branches) {
 		semantics = "fallback"
 		result, err = e.executeOrClauseFallback(ctx, clause, groups)
 	} else {
+		// Standard union semantics for pattern-only OR
 		semantics = "union"
 		result, err = e.executeOrClauseUnion(ctx, clause, groups)
 	}
@@ -1182,31 +1505,6 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	}
 
 	return result, err
-}
-
-// needsPerTupleEvaluation returns true if OR branches contain correlated
-// subqueries that must execute per outer tuple. Branches with only patterns,
-// uncorrelated subqueries, NOT, and ground expressions can use union semantics.
-func needsPerTupleEvaluation(branches [][]query.Clause) bool {
-	for _, branch := range branches {
-		for _, c := range branch {
-			if sp, ok := c.(*query.SubqueryPattern); ok {
-				// Check if subquery has correlation inputs (variables beyond $)
-				for _, input := range sp.Inputs {
-					if v, ok := input.(query.Variable); ok {
-						if v.Name != datalog.SymDollar {
-							return true // Correlated — needs per-tuple
-						}
-					}
-				}
-			}
-			// Inline subquery (Subquery type) is always correlated
-			if _, ok := c.(*query.Subquery); ok {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // executeOrClauseFallback implements Clojure-style fallback semantics:
@@ -1404,28 +1702,14 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 		})
 	}
 
-	// Find outer binding to pass to branches.
-	// Pattern-only branches don't need this (they scan storage directly),
-	// but expression branches may reference outer variables.
-	var outerBinding Relation
-	if len(groups) > 0 {
-		neededSymbols := collectOrBranchRequiredSymbols(&query.OrClause{Branches: clause.Branches})
-		for _, rel := range groups {
-			if containsAny(rel.Symbols(), neededSymbols) {
-				outerBinding = rel.Materialize()
-				break
-			}
-		}
-	}
-
 	// Execute each branch and collect results
 	var branchResults []Relation
 	var commonCols []query.Symbol
 
 	for i, branch := range clause.Branches {
 		branchStart := time.Now()
-		// Execute branch with outer bindings if available
-		branchResult, err := e.executeInnerClauses(ctx, branch, outerBinding)
+		// Execute this branch's clauses against storage (no prior bindings)
+		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
 		if err != nil {
 			return nil, fmt.Errorf("OR branch %d execution failed: %w", i+1, err)
 		}
@@ -1494,27 +1778,17 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 		return nil, fmt.Errorf("OR-JOIN clause has no join variables")
 	}
 
-	// Find outer binding for branches that need outer variables.
-	// For or-join, the join vars explicitly declare what the branches need,
-	// so use them to find the outer binding.
-	var outerBinding Relation
-	if len(groups) > 0 {
-		for _, rel := range groups {
-			if containsAny(rel.Symbols(), joinVars) {
-				outerBinding = rel.Materialize()
-				break
-			}
-		}
+	// Check if any branch has expressions - use fallback semantics if so
+	if query.OrHasExpressions(clause.Branches) {
+		return e.executeOrJoinClauseFallback(ctx, clause, groups)
 	}
 
 	var branchResults []Relation
 
 	for i, branch := range clause.Branches {
-		branchResult, err := e.executeInnerClauses(ctx, branch, outerBinding)
+		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
 		if err != nil {
 			return nil, fmt.Errorf("OR-JOIN branch %d execution failed: %w", i+1, err)
-		}
-			if branchResult != nil {
 		}
 
 		if branchResult != nil {
@@ -1912,26 +2186,6 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 			if err != nil {
 				return nil, err
 			}
-
-		case *query.OrClause:
-			newRel, err := e.executeOrClause(ctx, c, groups)
-			if err != nil {
-				return nil, err
-			}
-			if newRel != nil {
-				groups = append(groups, newRel)
-			}
-			groups = groups.Collapse(ctx)
-
-		case *query.OrJoinClause:
-			newRel, err := e.executeOrJoinClause(ctx, c, groups)
-			if err != nil {
-				return nil, err
-			}
-			if newRel != nil {
-				groups = append(groups, newRel)
-			}
-			groups = groups.Collapse(ctx)
 
 		default:
 			return nil, fmt.Errorf("unsupported inner clause type: %T", clause)

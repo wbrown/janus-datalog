@@ -2,6 +2,7 @@ package algebra
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -125,10 +126,13 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 	bindingSyms := bindingFormSymbols(sp.Binding)
 
 	// Determine correlation variables: inputs that are variable symbols
+	// (excluding source symbols like $ which are always available)
 	var correlationVars []query.Symbol
 	for _, input := range sp.Inputs {
 		if v, ok := input.(query.Variable); ok {
-			correlationVars = append(correlationVars, v.Name)
+			if !strings.HasPrefix(v.Name.String(), "$") {
+				correlationVars = append(correlationVars, v.Name)
+			}
 		}
 	}
 
@@ -160,13 +164,14 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 		return lj
 	}
 
-	// Uncorrelated subquery → regular Join
-	// The inner query result is independent, joined on shared symbols
+	// Uncorrelated subquery → preserve as-is for the executor.
+	// Use a decorrelatedScan to carry the SubqueryPattern through
+	// the algebra pipeline without modification.
 	inner := &Node{
-		Op: RuleScan, // placeholder — executor handles SubqueryPattern directly
-		Data: &Scan{
-			Pattern: nil, // signals subquery, not storage scan
-			Output:  bindingSyms,
+		Op: RuleScan,
+		Data: &decorrelatedScan{
+			SubqueryPattern: sp,
+			Output:          bindingSyms,
 		},
 	}
 	return joinWith(current, inner)
@@ -189,8 +194,9 @@ func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
 	return &Node{
 		Op: RuleAntiJoin,
 		Data: &AntiJoin{
-			JoinSymbols: joinSyms,
-			Output:      current.Symbols(),
+			JoinSymbols:  joinSyms,
+			Output:       current.Symbols(),
+			ExplicitJoin: false, // NotClause — executor infers join vars
 		},
 		Children: []*Node{current, inner},
 	}, nil
@@ -210,8 +216,9 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 	return &Node{
 		Op: RuleAntiJoin,
 		Data: &AntiJoin{
-			JoinSymbols: nj.JoinVars,
-			Output:      current.Symbols(),
+			JoinSymbols:  nj.JoinVars,
+			Output:       current.Symbols(),
+			ExplicitJoin: true, // NotJoinClause — user specified join vars
 		},
 		Children: []*Node{current, inner},
 	}, nil

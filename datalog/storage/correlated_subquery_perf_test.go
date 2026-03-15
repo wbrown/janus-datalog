@@ -40,7 +40,14 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 		tasksPerScenario = 100
 	)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path: dir,
+		AnnotationHandler: func(e annotations.Event) {
+			if e.Name == "subquery/decorrelation-cached" || e.Name == "subquery/decorrelation-cache-hit" {
+				t.Logf("[%s] %v", e.Name, e.Data)
+			}
+		},
+	})
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -279,7 +286,7 @@ func queryWithPlannerOptions(db *Database, queryStr string, opts planner.Planner
 	}
 	opts.Cache = db.planCache
 	exec := executor.NewExecutorWithOptions(router, db, opts)
-	return exec.ExecuteWithRelations(executor.NewContext(nil), q, inputs)
+	return exec.ExecuteWithRelations(executor.NewContext(db.AnnotationHandler()), q, inputs)
 }
 
 // TestCorrelatedSubqueryAlgebraOptimizer compares baseline (no algebra optimizer)
@@ -295,7 +302,14 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		tasksPerScenario = 100
 	)
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path: dir,
+		AnnotationHandler: func(e annotations.Event) {
+			if e.Name == "subquery/correlation-check" || e.Name == "subquery/uncorrelated-cached" || e.Name == "subquery/uncorrelated-cache-hit" || e.Name == "subquery/inner-clause-dispatch" {
+				t.Logf("[%s] %v", e.Name, e.Data)
+			}
+		},
+	})
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -390,6 +404,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 	})
 
 	t.Run("algebra_optimizer", func(t *testing.T) {
+		t.Logf("annotation handler nil: %v", db.AnnotationHandler() == nil)
 		opts := DefaultPlannerOptions()
 		opts.EnableAlgebraOptimizer = true
 		db.ClearPlanCache()

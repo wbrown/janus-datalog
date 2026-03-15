@@ -308,8 +308,10 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 	}
 
 	// Create build iterator - single iteration only
+	// Close explicitly after build loop, not deferred. The build relation may share
+	// underlying iterators with the probe relation (e.g., OrFallbackRelation wraps the
+	// same StreamingRelation that is the probe side). Deferring Close() causes deadlock.
 	buildIt := buildRel.Iterator()
-	defer buildIt.Close()
 
 	// Check if we need to copy tuples from the build relation
 	// This avoids unnecessary copies when the source guarantees stable tuples
@@ -487,6 +489,17 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				firstBuildKey = &key
 				firstBuildTuple = tuple
 			}
+			// Emit build tuple to collector for debugging
+			if opts.Collector != nil {
+				opts.Collector.Add(annotations.Event{
+					Name: "join/build-tuple",
+					Data: map[string]interface{}{
+						"index": buildCount,
+						"tuple": fmt.Sprintf("%v", tuple),
+						"key":   fmt.Sprintf("%v", key),
+					},
+				})
+			}
 			if existing, ok := hashTable.Get(key); ok {
 				hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
 			} else {
@@ -503,6 +516,12 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 			}
 		}
 	}
+
+	// Close build iterator BEFORE probe phase begins.
+	// The build relation may share underlying iterators with the probe relation
+	// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
+	// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
+	buildIt.Close()
 
 	// Emit annotation for copy statistics if collector is available
 	if opts.Collector != nil && (copyCount > 0 || passthruCount > 0) {

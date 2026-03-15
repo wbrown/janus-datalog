@@ -62,14 +62,17 @@ func decompileScan(n *Node) ([]query.Clause, error) {
 	return []query.Clause{scan.Pattern}, nil
 }
 
-// decompileDecorrelatedScan emits a decorrelated SubqueryPattern,
-// optionally wrapped in an or-join with NOT + ground for default values.
+// decompileDecorrelatedScan emits a decorrelated SubqueryPattern wrapped in
+// an OR-fallback clause with ground defaults.
 //
-// The or-join uses union semantics (not fallback) so both branches run
-// independently:
-//   - Branch 1: decorrelated subquery (runs once, produces rows for matching keys)
-//   - Branch 2: NOT + ground (produces default rows for non-matching keys)
-//   - Union merges both → all keys have values
+// The decorrelated subquery has no correlation inputs (only $), so it runs
+// once and produces all matching groups via RelationBinding. The OR-fallback
+// preserves "try subquery, else use default" per outer tuple — for tuples
+// where the subquery produced no matching group, the default fires.
+//
+// This is semantically identical to the original correlated OR-fallback,
+// but the subquery execution is O(1) (runs once, result cached) instead of
+// O(N) (runs per outer tuple).
 func decompileDecorrelatedScan(ds *decorrelatedScan) ([]query.Clause, error) {
 	if len(ds.DefaultValues) == 0 {
 		// No defaults — bare decorrelated subquery
@@ -79,53 +82,8 @@ func decompileDecorrelatedScan(ds *decorrelatedScan) ([]query.Clause, error) {
 	// Branch 1: the decorrelated subquery
 	subqueryBranch := []query.Clause{ds.SubqueryPattern}
 
-	// Branch 2: NOT (find keys missing from subquery result) + ground defaults
-	// Build NOT pattern using outer variable names (from binding), not inner names.
-	//
-	// The inner query has patterns like [?t :task/root ?s] where ?s is the inner
-	// correlation key. The binding maps ?s → ?scenario (outer). The NOT pattern
-	// should be (not [_ :task/root ?scenario]) using the outer variable name.
-	bindingVars := bindingFormSymbols(ds.SubqueryPattern.Binding)
-	innerCorrelationKey := ds.SubqueryPattern.Query.Find[0].(query.FindVariable).Symbol
-	outerCorrelationVar := bindingVars[0] // First binding var is the correlation key
-
+	// Branch 2: ground defaults for original binding symbols
 	var defaultBranch []query.Clause
-
-	// Find the inner pattern that references the correlation key
-	for _, clause := range ds.SubqueryPattern.Query.Where {
-		dp, ok := clause.(*query.DataPattern)
-		if !ok {
-			continue
-		}
-		// Check if this pattern contains the inner correlation key
-		for _, elem := range dp.Elements {
-			if v, ok := elem.(query.Variable); ok && v.Name == innerCorrelationKey {
-				// Build NOT pattern: replace inner correlation var with outer,
-				// replace all other variables with blanks
-				notElements := make([]query.PatternElement, len(dp.Elements))
-				for j, e := range dp.Elements {
-					if v, ok := e.(query.Variable); ok {
-						if v.Name == innerCorrelationKey {
-							notElements[j] = query.Variable{Name: outerCorrelationVar}
-						} else {
-							notElements[j] = query.Blank{}
-						}
-					} else {
-						notElements[j] = e // Keep constants
-					}
-				}
-				defaultBranch = append(defaultBranch, &query.NotClause{
-					Clauses: []query.Clause{
-						&query.DataPattern{Elements: notElements},
-					},
-				})
-				goto foundNotPattern
-			}
-		}
-	}
-foundNotPattern:
-
-	// Add ground defaults for the original binding symbols
 	for i, sym := range ds.OriginalBinding {
 		var val interface{}
 		if i < len(ds.DefaultValues) {
@@ -137,13 +95,8 @@ foundNotPattern:
 		})
 	}
 
-	// Join vars: the correlation key (first binding var) + original binding vars
-	// The correlation key comes from the SubqueryPattern's binding
-	joinVars := bindingFormSymbols(ds.SubqueryPattern.Binding)
-
 	return []query.Clause{
-		&query.OrJoinClause{
-			JoinVars: joinVars,
+		&query.OrClause{
 			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
 		},
 	}, nil
@@ -237,7 +190,7 @@ func decompileAntiJoin(n *Node) ([]query.Clause, error) {
 	}
 
 	var notClause query.Clause
-	if len(aj.JoinSymbols) > 0 {
+	if aj.ExplicitJoin {
 		notClause = &query.NotJoinClause{
 			JoinVars: aj.JoinSymbols,
 			Clauses:  rightClauses,

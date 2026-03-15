@@ -1,8 +1,6 @@
 package algebra
 
 import (
-	"fmt"
-
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -34,28 +32,22 @@ func DecorrelationPass() Pass {
 // If decorrelation is possible, it returns a rewritten algebra Node.
 // Otherwise it returns the original node unchanged.
 func decorrelateTransform(node *parse.Node, children ...interface{}) interface{} {
-	fmt.Printf("[DECORRELATE] called for %s, TransformedValue=%T, children=%d\n", node.Rule, node.TransformedValue, len(children))
 	if node.TransformedValue == nil {
-		fmt.Printf("[DECORRELATE] TransformedValue is nil, returning unchanged\n")
 		return node
 	}
 	algNode, ok := node.TransformedValue.(*Node)
 	if !ok {
-		fmt.Printf("[DECORRELATE] TransformedValue is %T not *Node, returning unchanged\n", node.TransformedValue)
 		return node
 	}
 	lj, ok := algNode.Data.(*LateralJoin)
 	if !ok {
-		fmt.Printf("[DECORRELATE] Data is %T not *LateralJoin, returning unchanged\n", algNode.Data)
 		return node
 	}
 
 	// Only decorrelate if the inner query has aggregates in :find
 	if !hasAggregates(lj.InnerQuery) {
-		fmt.Printf("[DECORRELATE] no aggregates in inner query, skipping\n")
 		return node // Keep as correlated LateralJoin
 	}
-	fmt.Printf("[DECORRELATE] has aggregates, correlationVars=%v\n", lj.CorrelationVars)
 
 	// Only decorrelate scalar correlation (single variable)
 	// Multi-variable correlation is possible but more complex
@@ -120,15 +112,16 @@ func decorrelateTransform(node *parse.Node, children ...interface{}) interface{}
 	}
 	// Attach the SubqueryPattern as metadata for the decompiler
 	scanNode.Data = &decorrelatedScan{
-		SubqueryPattern: sp,
-		Output:          output,
-		DefaultValues:   lj.DefaultValues,
-		OriginalBinding: originalBindingSyms,
+		SubqueryPattern:  sp,
+		Output:           output,
+		DefaultValues:    lj.DefaultValues,
+		OriginalBinding:  originalBindingSyms,
+		CorrelationVars:  lj.CorrelationVars,
+		OriginalBindForm: lj.Binding.(query.BindingForm),
 	}
 
 	if len(resultChildren) == 0 {
 		result := wrapAsParseNode(scanNode)
-		fmt.Printf("[DECORRELATE] returning decorrelatedScan: rule=%s, TV=%T\n", result.Rule, result.TransformedValue)
 		return result
 	}
 
@@ -160,22 +153,11 @@ func decorrelateTransform(node *parse.Node, children ...interface{}) interface{}
 // Before: Join(LeftOuter) → [decorrelatedScan, Map(ground defaults)]
 // After:  decorrelatedScan (with DefaultValues set)
 func collapseLeftOuterJoinTransform(node *parse.Node, children ...interface{}) interface{} {
-	fmt.Printf("[COLLAPSE] called for %s with %d children:", node.Rule, len(children))
-	for i, c := range children {
-		if pn, ok := c.(*parse.Node); ok {
-			fmt.Printf(" [%d]=%s(TV=%T)", i, pn.Rule, pn.TransformedValue)
-		} else {
-			fmt.Printf(" [%d]=%T", i, c)
-		}
-	}
-	fmt.Println()
 	algNode := node.TransformedValue.(*Node)
 	join, ok := algNode.Data.(*Join)
 	if !ok {
-		fmt.Printf("[COLLAPSE] Data is %T, not *Join\n", algNode.Data)
 		return node
 	}
-	fmt.Printf("[COLLAPSE] Join kind=%s\n", join.Kind)
 	if join.Kind != LeftOuterJoin {
 		// Not a LeftOuterJoin — but children may have been transformed.
 		// Rebuild the node with updated children.
@@ -202,35 +184,20 @@ func collapseLeftOuterJoinTransform(node *parse.Node, children ...interface{}) i
 	var defaultValues []interface{}
 	var defaultSymbols []query.Symbol
 
-	for i, child := range children {
+	for _, child := range children {
 		childNode := recoverChild(child)
-		fmt.Printf("[COLLAPSE] child %d: recovered=%v", i, childNode != nil)
-		if childNode != nil {
-			fmt.Printf(", Op=%s, Data=%T", childNode.Op, childNode.Data)
-		}
-		fmt.Println()
 		if childNode == nil {
 			continue
 		}
 
 		if ds, ok := childNode.Data.(*decorrelatedScan); ok {
-			fmt.Printf("[COLLAPSE] found decorrelatedScan!\n")
 			dsChild = childNode
 			_ = ds
-		} else if m, ok := childNode.Data.(*Map); ok {
-			fmt.Printf("[COLLAPSE] Map function type: %T\n", m.Expression.Function)
-			// Map with GroundFunction = default values
-			switch gf := m.Expression.Function.(type) {
-			case query.GroundFunction:
-				defaultValues = extractDefaultValues(gf.Value)
-				defaultSymbols = bindingSymbols(m.Expression.Binding)
-			case *query.GroundFunction:
-				defaultValues = extractDefaultValues(gf.Value)
-				defaultSymbols = bindingSymbols(m.Expression.Binding)
-			}
-		} else if c, ok := childNode.Data.(*Constant); ok {
-			defaultValues = c.Values
-			defaultSymbols = c.Symbols
+		} else {
+			// Walk the node tree to collect all ground/constant defaults.
+			// Multiple ground expressions compile to a chain of Map nodes:
+			//   Map(ground 0, ?b) → Map(ground 0, ?a) → ...
+			collectDefaults(childNode, &defaultValues, &defaultSymbols)
 		}
 	}
 
@@ -246,8 +213,33 @@ func collapseLeftOuterJoinTransform(node *parse.Node, children ...interface{}) i
 	}
 
 	result := wrapAsParseNode(dsChild)
-	fmt.Printf("[COLLAPSE] returning collapsed node: rule=%s, defaults=%v\n", result.Rule, defaultValues)
 	return result
+}
+
+// collectDefaults walks an algebra node tree to gather all ground/constant
+// default values. Multiple ground expressions compile to chained Map nodes.
+func collectDefaults(n *Node, values *[]interface{}, symbols *[]query.Symbol) {
+	if n == nil {
+		return
+	}
+	switch d := n.Data.(type) {
+	case *Map:
+		switch gf := d.Expression.Function.(type) {
+		case query.GroundFunction:
+			*values = append(*values, extractDefaultValues(gf.Value)...)
+			*symbols = append(*symbols, bindingSymbols(d.Expression.Binding)...)
+		case *query.GroundFunction:
+			*values = append(*values, extractDefaultValues(gf.Value)...)
+			*symbols = append(*symbols, bindingSymbols(d.Expression.Binding)...)
+		}
+	case *Constant:
+		*values = append(*values, d.Values...)
+		*symbols = append(*symbols, d.Symbols...)
+	}
+	// Recurse into children to find nested defaults
+	for _, child := range n.Children {
+		collectDefaults(child, values, symbols)
+	}
 }
 
 // extractDefaultValues normalizes a ground value into a slice.
@@ -259,12 +251,16 @@ func extractDefaultValues(v interface{}) []interface{} {
 }
 
 // decorrelatedScan is a special Scan variant that holds a decorrelated
-// SubqueryPattern. The decompiler emits this as a SubqueryPattern clause.
+// SubqueryPattern. The decompiler emits this as a SubqueryPattern clause
+// that LOOKS correlated (same Inputs/Binding as original) but has a
+// rewritten inner query that can run uncorrelated.
 type decorrelatedScan struct {
-	SubqueryPattern *query.SubqueryPattern
-	Output          []query.Symbol
-	DefaultValues   []interface{}
-	OriginalBinding []query.Symbol
+	SubqueryPattern  *query.SubqueryPattern  // Decorrelated subquery (Inputs: [$], RelationBinding)
+	Output           []query.Symbol
+	DefaultValues    []interface{}
+	OriginalBinding  []query.Symbol          // Original binding symbols (for defaults)
+	CorrelationVars  []query.Symbol          // Outer variable names (e.g., ?scenario)
+	OriginalBindForm query.BindingForm       // Original binding form (e.g., TupleBinding [[?count]])
 }
 
 func (d *decorrelatedScan) OutputSymbols() []query.Symbol { return d.Output }
