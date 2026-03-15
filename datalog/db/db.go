@@ -46,6 +46,7 @@ func Open(path string, opts ...Option) (*DB, error) {
 		ReplicaID:         cfg.replicaID,
 		AnnotationHandler: cfg.annotationHandler,
 		DisableCache:      cfg.disableCache,
+		PlannerOptions:    cfg.plannerOptions,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)

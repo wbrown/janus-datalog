@@ -128,6 +128,12 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 
 	ctx.QueryBegin(q.String())
 
+	// Pass annotation handler to planner for algebra bridge observability
+	if collector := ctx.Collector(); collector != nil {
+		executor.planner.SetHandler(collector.Handler())
+		defer executor.planner.SetHandler(nil)
+	}
+
 	// Build initial bindings from input relations
 	initialBindings := make(map[query.Symbol]bool)
 

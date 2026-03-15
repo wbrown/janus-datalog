@@ -35,7 +35,7 @@ func TestDecorrelation_SimpleAggregate(t *testing.T) {
 	t.Logf("LateralJoin correlation vars: %v", ljData.CorrelationVars)
 
 	// Apply decorrelation
-	optimizer := NewOptimizer(DecorrelationPass())
+	optimizer := NewOptimizer(DecorrelationPass(nil))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("After decorrelation:\n%s", optimized.String())
@@ -107,7 +107,7 @@ func TestDecorrelation_NonAggregateUnchanged(t *testing.T) {
 	require.NotNil(t, lj, "should have LateralJoin")
 
 	// Apply decorrelation — should leave it unchanged
-	optimizer := NewOptimizer(DecorrelationPass())
+	optimizer := NewOptimizer(DecorrelationPass(nil))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 
@@ -144,7 +144,7 @@ func TestDecorrelation_MultipleSubqueries(t *testing.T) {
 	ljCount := countNodes(root, RuleLateralJoin)
 	t.Logf("LateralJoins before: %d", ljCount)
 
-	optimizer := NewOptimizer(DecorrelationPass())
+	optimizer := NewOptimizer(DecorrelationPass(nil))
 	optimized, err := optimizer.Optimize(root)
 	require.NoError(t, err)
 	t.Logf("After:\n%s", optimized.String())

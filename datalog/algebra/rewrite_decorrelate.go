@@ -1,8 +1,11 @@
 package algebra
 
 import (
+	"fmt"
+
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -17,11 +20,17 @@ import (
 //   - Binding updated to include the correlation variable
 //   - The subquery runs once for all values, producing groups
 //   - Results joined back on the correlation variable
-func DecorrelationPass() Pass {
+func DecorrelationPass(handler annotations.Handler) Pass {
+	emit := func(name string, data map[string]interface{}) {
+		if handler != nil {
+			handler(annotations.Event{Name: name, Data: data})
+		}
+	}
+
 	return Pass{
 		Name: "decorrelation",
 		Transforms: parse.TransformMap{
-			RuleLateralJoin: decorrelateTransform,
+			RuleLateralJoin: makeDecorrelateTransform(emit),
 			RuleJoin:        collapseLeftOuterJoinTransform,
 		},
 	}
@@ -31,7 +40,15 @@ func DecorrelationPass() Pass {
 // It receives the node's children as already-transformed values.
 // If decorrelation is possible, it returns a rewritten algebra Node.
 // Otherwise it returns the original node unchanged.
-func decorrelateTransform(node *parse.Node, children ...interface{}) interface{} {
+type emitFn func(name string, data map[string]interface{})
+
+func makeDecorrelateTransform(emit emitFn) parse.TransformFunc {
+	return func(node *parse.Node, children ...interface{}) interface{} {
+		return decorrelateTransform(node, emit, children...)
+	}
+}
+
+func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}) interface{} {
 	if node.TransformedValue == nil {
 		return node
 	}
@@ -44,25 +61,43 @@ func decorrelateTransform(node *parse.Node, children ...interface{}) interface{}
 		return node
 	}
 
+	emit("algebra/decorrelate-check", map[string]interface{}{
+		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
+		"has_aggregates":   hasAggregates(lj.InnerQuery),
+		"has_defaults":     len(lj.DefaultValues) > 0,
+		"inner_query":      lj.InnerQuery.String(),
+	})
+
 	// Only decorrelate if the inner query has aggregates in :find
 	if !hasAggregates(lj.InnerQuery) {
+		emit("algebra/decorrelate-skip", map[string]interface{}{
+			"reason": "no aggregates in :find",
+		})
 		return node // Keep as correlated LateralJoin
 	}
 
 	// Only decorrelate scalar correlation (single variable)
 	// Multi-variable correlation is possible but more complex
 	if len(lj.CorrelationVars) == 0 {
+		emit("algebra/decorrelate-skip", map[string]interface{}{
+			"reason": "no correlation variables",
+		})
 		return node
 	}
 
 	// Map outer correlation vars to inner parameter names.
-	// SubqueryPattern.Inputs maps positionally to Query.In:
-	//   Inputs: [$ ?e]  →  In: [$ ?s]
-	// So ?e (outer) corresponds to ?s (inner).
 	innerParams := mapCorrelationToInnerParams(lj.InnerQuery, lj.CorrelationVars)
 	if len(innerParams) == 0 {
-		return node // Can't determine inner parameter names
+		emit("algebra/decorrelate-skip", map[string]interface{}{
+			"reason": "cannot map correlation to inner params",
+		})
+		return node
 	}
+
+	emit("algebra/decorrelate-apply", map[string]interface{}{
+		"correlation_vars": fmt.Sprintf("%v", lj.CorrelationVars),
+		"inner_params":     fmt.Sprintf("%v", innerParams),
+	})
 
 	// Build the decorrelated inner query using inner parameter names
 	decorrelated := decorrelateQuery(lj.InnerQuery, innerParams)
@@ -121,7 +156,10 @@ func decorrelateTransform(node *parse.Node, children ...interface{}) interface{}
 		return result
 	}
 
-	// Join the outer relation with the decorrelated subquery on correlation vars
+	// Join the outer relation with the decorrelated subquery on correlation vars.
+	// Always InnerJoin — defaults are handled by the decorrelatedScan's decompiler,
+	// not by a LeftOuterJoin wrapper. (The EBNF framework doesn't re-traverse
+	// newly created nodes, so a LeftOuterJoin wrapper here would never be collapsed.)
 	joinNode := &Node{
 		Op: RuleJoin,
 		Data: &Join{
@@ -130,11 +168,6 @@ func decorrelateTransform(node *parse.Node, children ...interface{}) interface{}
 			Output:      mergeSymbols(resultChildren[0].Symbols(), output),
 		},
 		Children: []*Node{resultChildren[0], scanNode},
-	}
-
-	// If there are default values, wrap in LeftOuterJoin instead
-	if len(lj.DefaultValues) > 0 {
-		joinNode.Data.(*Join).Kind = LeftOuterJoin
 	}
 
 	return wrapAsParseNode(joinNode)
