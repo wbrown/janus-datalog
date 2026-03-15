@@ -93,8 +93,8 @@ github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
 github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
-github.com/wbrown/ebnf v0.0.0-20260314195405-9a2d824c0538 h1:gP9NvxTDJLMMUUemfcR3+xDDq8XVtxJCYcBaYO5JDXw=
-github.com/wbrown/ebnf v0.0.0-20260314195405-9a2d824c0538/go.mod h1:m9Gy50CSj/y9Pc2x6UPIPhaA/dV2FcX1OCxeBts4GV4=
+github.com/wbrown/ebnf v0.0.0-20260314232227-9658a1a18033 h1:2d26g96DwINL5BLdV2EfcCX+glpidgGco/lcmiXlmFM=
+github.com/wbrown/ebnf v0.0.0-20260314232227-9658a1a18033/go.mod h1:m9Gy50CSj/y9Pc2x6UPIPhaA/dV2FcX1OCxeBts4GV4=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 go.opencensus.io v0.24.0 h1:y73uSU6J157QMP2kn2r30vwW1A2W2WFwSCGnAVxeaD0=

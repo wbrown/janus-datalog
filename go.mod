@@ -8,7 +8,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/olekukonko/tablewriter v1.0.7
 	github.com/stretchr/testify v1.8.1
-	github.com/wbrown/ebnf v0.0.0-20260314195405-9a2d824c0538
+	github.com/wbrown/ebnf v0.0.0-20260314232227-9658a1a18033
 )
 
 require (
@@ -37,5 +37,3 @@ require (
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/wbrown/ebnf => ../ebnf

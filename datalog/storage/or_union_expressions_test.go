@@ -35,7 +35,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 		Path: dir,
 		AnnotationHandler: func(e annotations.Event) {
 			if e.Name == "or/union" || e.Name == "or/branch.complete" || e.Name == "or/complete" {
-				fmt.Printf("  [ANNOTATION] %s: %v\n", e.Name, e.Data)
+				t.Logf("[%s] %v", e.Name, e.Data)
 			}
 		},
 	})

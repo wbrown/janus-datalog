@@ -191,25 +191,6 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		}
 
 		// Apply aggregations using existing function
-		if collector := ctx.Collector(); collector != nil {
-			// Materialize to inspect without consuming the stream
-			mat := groups[0].Materialize()
-			var preTuples []string
-			preIt := mat.Iterator()
-			for preIt.Next() {
-				preTuples = append(preTuples, fmt.Sprintf("%v", preIt.Tuple()))
-			}
-			preIt.Close()
-			collector.Add(annotations.Event{
-				Name: "aggregation/pre-data",
-				Data: map[string]interface{}{
-					"symbols": fmt.Sprintf("%v", groups[0].Symbols()),
-					"tuples":  preTuples,
-					"find":    fmt.Sprintf("%v", q.Find),
-				},
-			})
-			groups[0] = mat
-		}
 		result := ExecuteAggregationsWithContext(ctx, groups[0], q.Find)
 		return []Relation{result}, nil
 

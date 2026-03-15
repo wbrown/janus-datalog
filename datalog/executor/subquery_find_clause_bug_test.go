@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -112,10 +111,8 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 		if event.Name == annotations.AggregationExecuted {
 			aggregationEvents = append(aggregationEvents, event)
 		}
-		if strings.HasPrefix(event.Name, "subquery/decorrelation") || event.Name == "aggregation/pre-data" ||
-			event.Name == "matches->relations" || strings.HasPrefix(event.Name, "join/") ||
-			strings.HasPrefix(event.Name, "collapse/") {
-			fmt.Printf("  [%s] %v\n", event.Name, event.Data)
+		if strings.HasPrefix(event.Name, "subquery/decorrelation") {
+			t.Logf("[%s] %v", event.Name, event.Data)
 		}
 	}
 

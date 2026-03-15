@@ -489,17 +489,6 @@ func HashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts Exe
 				firstBuildKey = &key
 				firstBuildTuple = tuple
 			}
-			// Emit build tuple to collector for debugging
-			if opts.Collector != nil {
-				opts.Collector.Add(annotations.Event{
-					Name: "join/build-tuple",
-					Data: map[string]interface{}{
-						"index": buildCount,
-						"tuple": fmt.Sprintf("%v", tuple),
-						"key":   fmt.Sprintf("%v", key),
-					},
-				})
-			}
 			if existing, ok := hashTable.Get(key); ok {
 				hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
 			} else {

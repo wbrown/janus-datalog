@@ -407,6 +407,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		t.Logf("annotation handler nil: %v", db.AnnotationHandler() == nil)
 		opts := DefaultPlannerOptions()
 		opts.EnableAlgebraOptimizer = true
+		opts.EnableSubqueryDecorrelation = false // Algebra optimizer handles decorrelation
 		db.ClearPlanCache()
 
 		// Log the rewritten clauses

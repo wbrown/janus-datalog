@@ -223,7 +223,7 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 	sp := &query.SubqueryPattern{
 		Query:   lj.InnerQuery,
 		Inputs:  inputs,
-		Binding: lj.Binding.(query.BindingForm),
+		Binding: bindingAsForm(lj.Binding),
 	}
 
 	if len(lj.DefaultValues) == 0 {
@@ -325,4 +325,12 @@ func decompileConstant(n *Node) ([]query.Clause, error) {
 			Binding:  query.TupleBinding{Variables: c.Symbols},
 		},
 	}, nil
+}
+
+// bindingAsForm safely converts a Binding interface{} to BindingForm.
+func bindingAsForm(b interface{}) query.BindingForm {
+	if bf, ok := b.(query.BindingForm); ok {
+		return bf
+	}
+	return nil
 }

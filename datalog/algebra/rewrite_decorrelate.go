@@ -102,22 +102,18 @@ func decorrelateTransform(node *parse.Node, children ...interface{}) interface{}
 	}
 
 	// The decorrelated subquery is now a Scan-like leaf that produces
-	// all groups in one pass. We represent it as a new LateralJoin-free node.
+	// all groups in one pass.
+	bindForm, _ := lj.Binding.(query.BindingForm)
 	scanNode := &Node{
 		Op: RuleScan,
-		Data: &Scan{
-			Pattern: nil, // Signals this is a subquery, not a storage scan
-			Output:  output,
+		Data: &decorrelatedScan{
+			SubqueryPattern:  sp,
+			Output:           output,
+			DefaultValues:    lj.DefaultValues,
+			OriginalBinding:  originalBindingSyms,
+			CorrelationVars:  lj.CorrelationVars,
+			OriginalBindForm: bindForm,
 		},
-	}
-	// Attach the SubqueryPattern as metadata for the decompiler
-	scanNode.Data = &decorrelatedScan{
-		SubqueryPattern:  sp,
-		Output:           output,
-		DefaultValues:    lj.DefaultValues,
-		OriginalBinding:  originalBindingSyms,
-		CorrelationVars:  lj.CorrelationVars,
-		OriginalBindForm: lj.Binding.(query.BindingForm),
 	}
 
 	if len(resultChildren) == 0 {
@@ -153,7 +149,10 @@ func decorrelateTransform(node *parse.Node, children ...interface{}) interface{}
 // Before: Join(LeftOuter) → [decorrelatedScan, Map(ground defaults)]
 // After:  decorrelatedScan (with DefaultValues set)
 func collapseLeftOuterJoinTransform(node *parse.Node, children ...interface{}) interface{} {
-	algNode := node.TransformedValue.(*Node)
+	algNode, ok := node.TransformedValue.(*Node)
+	if !ok || algNode == nil {
+		return node
+	}
 	join, ok := algNode.Data.(*Join)
 	if !ok {
 		return node
@@ -190,9 +189,8 @@ func collapseLeftOuterJoinTransform(node *parse.Node, children ...interface{}) i
 			continue
 		}
 
-		if ds, ok := childNode.Data.(*decorrelatedScan); ok {
+		if _, ok := childNode.Data.(*decorrelatedScan); ok {
 			dsChild = childNode
-			_ = ds
 		} else {
 			// Walk the node tree to collect all ground/constant defaults.
 			// Multiple ground expressions compile to a chain of Map nodes:
@@ -318,23 +316,17 @@ func decorrelateQuery(q *query.Query, innerParamNames []query.Symbol) *query.Que
 //   SubqueryPattern.Inputs: [$ ?e]  maps to  Query.In: [$ ?s]
 // So outer ?e corresponds to inner ?s.
 func mapCorrelationToInnerParams(innerQuery *query.Query, outerVars []query.Symbol) []query.Symbol {
-	// Build a set of outer correlation vars for quick lookup
-	outerSet := make(map[query.Symbol]bool, len(outerVars))
-	for _, v := range outerVars {
-		outerSet[v] = true
-	}
-
-	// The inner query's :in clause has the parameter names.
-	// Non-database scalar inputs that aren't in outerVars are unrelated params.
-	// We need to identify which :in entries ARE the correlation params.
-	// Since we only know the outer var names, we match by position:
-	// the correlation vars appear as ScalarInput entries in :in (after $).
+	// Match outer correlation vars to inner parameter names by position.
+	// Both appear as ScalarInput entries in :in (after $), in the same order.
+	// Only return as many inner params as there are outer vars — additional
+	// scalar inputs (e.g., constant thresholds) are NOT correlation params.
 	var innerParams []query.Symbol
 	for _, in := range innerQuery.In {
 		if si, ok := in.(query.ScalarInput); ok {
-			// Every scalar input in a correlated subquery IS a correlation param
-			// (the subquery was identified as correlated because it had variable inputs)
 			innerParams = append(innerParams, si.Symbol)
+			if len(innerParams) == len(outerVars) {
+				break
+			}
 		}
 	}
 	return innerParams

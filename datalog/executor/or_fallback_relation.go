@@ -323,12 +323,6 @@ type OrFallbackIterator struct {
 	outputSyms            []query.Symbol
 	done                  bool
 	err                   error
-
-	// Cache for uncorrelated branch results.
-	// Key: branch index. Value: materialized result relation.
-	// An uncorrelated SubqueryPattern (Inputs = only $) produces the
-	// same result for every outer tuple, so we execute it once and cache.
-	branchCache map[int]Relation
 }
 
 func (it *OrFallbackIterator) Next() bool {
