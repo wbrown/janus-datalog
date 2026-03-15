@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
@@ -441,5 +442,179 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 			}
 			require.Equal(t, true, row[6], "scenario %d complete", i)
 		}
+	})
+}
+
+// TestCorrelatedSubqueryAlgebraOptimizerWithDefaults tests the algebra optimizer
+// with mixed data: some scenarios have tasks, some don't. This matches production
+// reality where the OR-fallback default branch must fire for entities without data.
+//
+// The first test (TestCorrelatedSubqueryAlgebraOptimizer) has tasks for ALL scenarios,
+// so InnerJoin never drops anything — it validates the decorrelation speedup.
+// This test validates correctness when defaults are needed.
+func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
+	dir, err := os.MkdirTemp("", "correlated-subquery-defaults-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	const (
+		totalScenarios       = 75
+		scenariosWithTasks   = 37 // Matches production: roughly half have completed tasks
+		tasksPerScenario     = 20 // Fewer tasks than the perf test — this is about correctness
+		scenariosWithOpening = 30 // Subset that have an opening task (determines ?complete)
+	)
+
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	require.NoError(t, err)
+	defer db.Close()
+
+	baseTime := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+	statusComplete := datalog.NewKeyword(":status/complete")
+	kwOpening := datalog.NewKeyword(":task/opening")
+
+	// Create ALL scenarios with basic metadata
+	for s := 0; s < totalScenarios; s++ {
+		tx := db.NewTransaction()
+		scenario := datalog.NewIdentity(fmt.Sprintf("scenario:%d", s))
+		require.NoError(t, tx.Add(scenario, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario")))
+		require.NoError(t, tx.Add(scenario, datalog.NewKeyword(":scenario/title"), fmt.Sprintf("Scenario %d", s)))
+		require.NoError(t, tx.Add(scenario, datalog.NewKeyword(":scenario/created-at"), baseTime.Add(time.Duration(s)*time.Hour)))
+
+		// Only some scenarios have tasks
+		if s < scenariosWithTasks {
+			for j := 0; j < tasksPerScenario; j++ {
+				task := datalog.NewIdentity(fmt.Sprintf("task:%d:%d", s, j))
+				require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/root"), scenario))
+				require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/status"), statusComplete))
+				require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/completed-at"), baseTime.Add(time.Duration(s)*time.Hour+time.Duration(j)*time.Minute)))
+				require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/token-count"), int64(100+j)))
+				require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/duration"), int64(time.Duration(10+j)*time.Second)))
+				if j == 0 && s < scenariosWithOpening {
+					require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/key"), kwOpening))
+				} else {
+					require.NoError(t, tx.Add(task, datalog.NewKeyword(":task/key"), datalog.NewKeyword(fmt.Sprintf(":scenario/task-%d", j))))
+				}
+			}
+		}
+		_, err = tx.Commit()
+		require.NoError(t, err)
+	}
+
+	t.Logf("Populated %d scenarios: %d with tasks (%d tasks each), %d without tasks",
+		totalScenarios, scenariosWithTasks, tasksPerScenario, totalScenarios-scenariosWithTasks)
+
+	queryStr := `[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration ?complete ?lastKey ?lastUpdatedAt
+	  :where
+	  [?scenario :entity/type :entity.type/scenario]
+	  [?scenario :scenario/title ?title]
+	  [?scenario :scenario/created-at ?createdAt]
+	  (or [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+	           :in $ ?s
+	           :where [?t :task/root ?s]
+	                  [?t :task/status :status/complete]
+	                  [(get-else $ ?t :task/token-count 0) ?tok]
+	                  [(get-else $ ?t :task/duration 0) ?dur]]
+	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
+	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+	  (or [(q [:find (count ?t)
+	           :in $ ?s
+	           :where [?t :task/root ?s]
+	                  [?t :task/key :task/opening]
+	                  [?t :task/status :status/complete]]
+	          $ ?scenario) [[?openingCount]]]
+	      [(ground 0) ?openingCount])
+	  [[(> ?openingCount 0)] ?complete]
+	  (or [(q [:find ?key ?ca
+	           :in $ ?s
+	           :where [?t :task/root ?s]
+	                  [?t :task/status :status/complete]
+	                  [?t :task/completed-at ?ca]
+	                  [?t :task/key ?key]
+	                  [(q [:find (max ?ca)
+	                       :in $ ?s
+	                       :where [?t :task/root ?s]
+	                              [?t :task/status :status/complete]
+	                              [?t :task/completed-at ?ca]]
+	                      $ ?s) [[?maxCa]]]
+	                  [(= ?ca ?maxCa)]]
+	          $ ?scenario) [[?lastKey ?lastUpdatedAt]]]
+	      [(ground [:none :none]) [[?lastKey ?lastUpdatedAt]]])
+	  :order-by [[?lastUpdatedAt :desc]]]`
+
+	t.Run("baseline", func(t *testing.T) {
+		opts := DefaultPlannerOptions()
+		opts.EnableAlgebraOptimizer = false
+		db.ClearPlanCache()
+
+		start := time.Now()
+		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		require.NoError(t, err)
+		results, err := executor.CollectTuples(rel, nil)
+		elapsed := time.Since(start)
+		require.NoError(t, err)
+		require.Len(t, results, totalScenarios, "baseline must return ALL scenarios")
+		t.Logf("Baseline: %d results in %s", len(results), elapsed)
+
+		// Verify: scenarios with tasks have counts > 0, those without have 0
+		withTasks := 0
+		withoutTasks := 0
+		for _, row := range results {
+			tc := int64(0)
+			switch v := row[3].(type) {
+			case int64:
+				tc = v
+			case int:
+				tc = int64(v)
+			}
+			if tc > 0 {
+				withTasks++
+			} else {
+				withoutTasks++
+			}
+		}
+		t.Logf("  With tasks: %d, Without tasks: %d", withTasks, withoutTasks)
+		assert.Equal(t, scenariosWithTasks, withTasks, "scenarios with tasks")
+		assert.Equal(t, totalScenarios-scenariosWithTasks, withoutTasks, "scenarios without tasks")
+	})
+
+	t.Run("algebra_optimizer", func(t *testing.T) {
+		opts := DefaultPlannerOptions()
+		opts.EnableAlgebraOptimizer = true
+		opts.EnableSubqueryDecorrelation = false
+		db.ClearPlanCache()
+
+		start := time.Now()
+		rel, err := queryWithPlannerOptions(db, queryStr, opts)
+		require.NoError(t, err)
+		results, err := executor.CollectTuples(rel, nil)
+		elapsed := time.Since(start)
+		require.NoError(t, err)
+
+		// THIS IS THE KEY ASSERTION: the optimizer must return ALL scenarios,
+		// including those without tasks (which get default values from OR-fallback).
+		require.Len(t, results, totalScenarios,
+			"algebra optimizer must return ALL scenarios — entities without task data need OR-fallback defaults")
+		t.Logf("Optimized: %d results in %s", len(results), elapsed)
+
+		// Same verification as baseline
+		withTasks := 0
+		withoutTasks := 0
+		for _, row := range results {
+			tc := int64(0)
+			switch v := row[3].(type) {
+			case int64:
+				tc = v
+			case int:
+				tc = int64(v)
+			}
+			if tc > 0 {
+				withTasks++
+			} else {
+				withoutTasks++
+			}
+		}
+		t.Logf("  With tasks: %d, Without tasks: %d", withTasks, withoutTasks)
+		assert.Equal(t, scenariosWithTasks, withTasks, "scenarios with tasks")
+		assert.Equal(t, totalScenarios-scenariosWithTasks, withoutTasks, "scenarios without tasks")
 	})
 }
