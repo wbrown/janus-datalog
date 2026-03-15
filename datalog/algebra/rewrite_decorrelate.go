@@ -255,11 +255,7 @@ func collectDefaults(n *Node, values *[]interface{}, symbols *[]query.Symbol) {
 	}
 	switch d := n.Data.(type) {
 	case *Map:
-		switch gf := d.Expression.Function.(type) {
-		case query.GroundFunction:
-			*values = append(*values, extractDefaultValues(gf.Value)...)
-			*symbols = append(*symbols, bindingSymbols(d.Expression.Binding)...)
-		case *query.GroundFunction:
+		if gf, ok := d.Expression.Function.(*query.GroundFunction); ok {
 			*values = append(*values, extractDefaultValues(gf.Value)...)
 			*symbols = append(*symbols, bindingSymbols(d.Expression.Binding)...)
 		}

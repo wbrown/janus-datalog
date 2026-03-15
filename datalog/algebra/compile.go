@@ -512,7 +512,7 @@ func extractGroundDefaults(branch []query.Clause) ([]interface{}, []query.Symbol
 	for _, c := range branch {
 		switch g := c.(type) {
 		case *query.Expression:
-			if gf, ok := g.Function.(query.GroundFunction); ok {
+			if gf, ok := g.Function.(*query.GroundFunction); ok {
 				values = append(values, gf.Value)
 				symbols = append(symbols, bindingSymbols(g.Binding)...)
 			} else {

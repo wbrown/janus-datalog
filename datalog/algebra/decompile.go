@@ -243,7 +243,7 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 		// Scalar ground: [(ground val) ?sym]
 		defaultBranch = []query.Clause{
 			&query.Expression{
-				Function: query.GroundFunction{Value: lj.DefaultValues[0]},
+				Function: &query.GroundFunction{Value: lj.DefaultValues[0]},
 				Binding:  bindingSyms[0],
 			},
 		}
@@ -251,7 +251,7 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 		// Tuple ground: [(ground [v1 v2 ...]) [[?a ?b ...]]]
 		defaultBranch = []query.Clause{
 			&query.Expression{
-				Function: query.GroundFunction{Value: lj.DefaultValues},
+				Function: &query.GroundFunction{Value: lj.DefaultValues},
 				Binding:  query.TupleBinding{Variables: bindingSyms},
 			},
 		}
@@ -313,7 +313,7 @@ func decompileConstant(n *Node) ([]query.Clause, error) {
 	if len(c.Values) == 1 && len(c.Symbols) == 1 {
 		return []query.Clause{
 			&query.Expression{
-				Function: query.GroundFunction{Value: c.Values[0]},
+				Function: &query.GroundFunction{Value: c.Values[0]},
 				Binding:  c.Symbols[0],
 			},
 		}, nil
@@ -321,7 +321,7 @@ func decompileConstant(n *Node) ([]query.Clause, error) {
 
 	return []query.Clause{
 		&query.Expression{
-			Function: query.GroundFunction{Value: c.Values},
+			Function: &query.GroundFunction{Value: c.Values},
 			Binding:  query.TupleBinding{Variables: c.Symbols},
 		},
 	}, nil

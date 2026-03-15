@@ -140,9 +140,10 @@ func (m *Map) String() string {
 
 // Join combines two relations. R ⋈ S
 type Join struct {
-	Kind        JoinKind       // Inner or LeftOuter
-	JoinSymbols []query.Symbol // Symbols to join on (empty = natural join on shared symbols)
-	Output      []query.Symbol // Combined output symbols
+	Kind          JoinKind       // Inner or LeftOuter
+	JoinSymbols   []query.Symbol // Symbols to join on (empty = natural join on shared symbols)
+	Output        []query.Symbol // Combined output symbols
+	DefaultValues []interface{}  // For LeftOuterJoin: fill these when right side has no match
 }
 
 func (j *Join) OutputSymbols() []query.Symbol { return j.Output }
