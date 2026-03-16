@@ -1507,12 +1507,56 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseFallback(ctx Context, clause *
 		outerRel = NewUnitRelation(e.options)
 	}
 
+	// Entity prefetch disabled pending investigation of 25s→13s regression.
+	// The infrastructure (PrefetchEntities, buildBranchFromEACache, prefetched flag)
+	// is in place but not triggered until the inner subquery overhead is resolved.
+	prefetched := false
+
 	orClause := &query.OrClause{
 		Branches: clause.Branches,
 	}
 	rel := NewOrFallbackRelation(e, ctx, orClause, outerRel, e.options)
 	rel.joinSyms = clause.JoinVars
+	rel.prefetched = prefetched
 	return rel, nil
+}
+
+// extractEntityIDs extracts datalog.Identity values from the specified symbol
+// columns of a materialized relation. Used to collect entity IDs for prefetch.
+func extractEntityIDs(rel Relation, syms []query.Symbol) []datalog.Identity {
+	symIdx := make(map[query.Symbol]int)
+	for i, s := range rel.Symbols() {
+		symIdx[s] = i
+	}
+
+	var indices []int
+	for _, s := range syms {
+		if idx, ok := symIdx[s]; ok {
+			indices = append(indices, idx)
+		}
+	}
+	if len(indices) == 0 {
+		return nil
+	}
+
+	seen := make(map[datalog.Identity]bool)
+	var entities []datalog.Identity
+
+	it := rel.Iterator()
+	for it.Next() {
+		t := it.Tuple()
+		for _, idx := range indices {
+			if idx < len(t) {
+				if eid, ok := t[idx].(datalog.Identity); ok && !seen[eid] {
+					seen[eid] = true
+					entities = append(entities, eid)
+				}
+			}
+		}
+	}
+	it.Close()
+
+	return entities
 }
 
 // collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context

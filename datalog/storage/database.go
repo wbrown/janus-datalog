@@ -381,6 +381,8 @@ func (d *Database) Matcher() executor.PatternMatcher {
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
+	// Set annotation handler for storage-level events (index selection, scan details)
+	matcher.SetHandler(d.annotationHandler)
 	// Set schema for CRDT cardinality-aware resolution
 	if d.schema != nil {
 		matcher.SetSchema(d.schema)

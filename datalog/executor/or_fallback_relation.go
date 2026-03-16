@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -23,6 +24,7 @@ type OrFallbackRelation struct {
 	options       ExecutorOptions
 	iteratorCount int            // Track how many iterators have been created (for debugging)
 	joinSyms      []query.Symbol // From or-join: explicit join variables for cache keying
+	prefetched    bool           // True when PrefetchEntities has warmed the EA cache
 }
 
 // NewOrFallbackRelation creates a streaming OR fallback relation.
@@ -194,10 +196,12 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		ctx:        r.ctx,
 		clause:     r.clause,
 		outerIter:  outerIter,
+		outerRel:   r.outerRel, // Materialized relation for EA cache branch building
 		outerSyms:  r.outerRel.Symbols(),
 		outputSyms: r.symbols, // Use pre-computed symbols
 		options:    r.options,
 		joinSyms:   r.joinSyms,
+		prefetched: r.prefetched,
 	}
 }
 
@@ -315,6 +319,7 @@ type OrFallbackIterator struct {
 	ctx       Context
 	clause    *query.OrClause
 	outerIter Iterator
+	outerRel  Relation       // Materialized outer relation (for EA cache branch building)
 	outerSyms []query.Symbol
 	options   ExecutorOptions
 	joinSyms  []query.Symbol // From or-join: used as cache key (not all shared symbols)
@@ -330,6 +335,7 @@ type OrFallbackIterator struct {
 	// Cache for uncorrelated branch results. Key: branch index.
 	// See ALGEBRA.md "OR-Fallback Branch Caching" for specification.
 	branchCache map[int]*cachedBranch
+	prefetched  bool // True when PrefetchEntities has warmed the EA cache for outer entities
 }
 
 // cachedBranch holds a hash index over an uncorrelated branch result.
@@ -339,6 +345,100 @@ type cachedBranch struct {
 	branchSyms []query.Symbol
 	outerIdx   []int
 	branchIdx  []int
+}
+
+// buildBranchFromEACache builds a cached branch for a DataPattern-only or-join
+// branch using LookupAttribute (EA cache) instead of a full storage scan.
+// Iterates the materialized outerRel to collect entity IDs, looks up each
+// entity's attribute value from the EA cache, and builds a TupleKeyMap index.
+// Returns nil if prerequisites aren't met (wrong branch shape, no LookupAttribute).
+func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cachedBranch {
+	if len(branch) != 1 || it.outerRel == nil {
+		return nil
+	}
+	// outerRel must be re-iterable (materialized). StreamingRelation panics
+	// on second Iterator() call.
+	if _, isStreaming := it.outerRel.(*StreamingRelation); isStreaming {
+		return nil
+	}
+	dp, ok := branch[0].(*query.DataPattern)
+	if !ok {
+		return nil
+	}
+
+	// Need E as variable (join key) and A as constant keyword
+	eVar, eIsVar := dp.GetE().(query.Variable)
+	if !eIsVar {
+		return nil
+	}
+	var aKw datalog.Keyword
+	if aConst, ok := dp.GetA().(query.Constant); ok {
+		aKw, _ = aConst.Value.(datalog.Keyword)
+	}
+	if aKw == nil {
+		return nil
+	}
+
+	// Need V as variable
+	vVar, vIsVar := dp.GetV().(query.Variable)
+	if !vIsVar {
+		return nil
+	}
+
+	// Need matcher to support LookupAttribute
+	lookupMatcher, ok := it.executor.matcher.(EntityLookupMatcher)
+	if !ok {
+		return nil
+	}
+
+	// Find E position in outer relation symbols
+	eIdx := -1
+	for i, sym := range it.outerSyms {
+		if sym == eVar.Name {
+			eIdx = i
+			break
+		}
+	}
+	if eIdx < 0 {
+		return nil
+	}
+
+	// Build branch result from EA cache lookups.
+	// Iterate the materialized outer relation (safe to create second iterator).
+	branchSyms := []query.Symbol{eVar.Name, vVar.Name}
+	idx := NewTupleKeyMap()
+	bIdx := []int{0} // E is at position 0 in branch tuples
+
+	outerIt := it.outerRel.Iterator()
+	for outerIt.Next() {
+		t := outerIt.Tuple()
+		if eIdx >= len(t) {
+			continue
+		}
+		entity, ok := t[eIdx].(datalog.Identity)
+		if !ok {
+			continue
+		}
+		value, found := lookupMatcher.LookupAttribute(entity, aKw)
+		if !found {
+			continue
+		}
+		tuple := Tuple{entity, value}
+		key := NewTupleKey(tuple, bIdx)
+		if existing, ok := idx.Get(key); ok {
+			idx.Put(key, append(existing.([]Tuple), tuple))
+		} else {
+			idx.Put(key, []Tuple{tuple})
+		}
+	}
+	outerIt.Close()
+
+	return &cachedBranch{
+		index:      idx,
+		branchSyms: branchSyms,
+		outerIdx:   []int{eIdx},
+		branchIdx:  bIdx,
+	}
 }
 
 func (cb *cachedBranch) probe(outerTuple Tuple) []Tuple {
@@ -518,14 +618,41 @@ func (it *OrFallbackIterator) Next() bool {
 				branchResult = NewMaterializedRelation(cb.branchSyms, matches)
 			} else {
 				// Execute the branch.
-				// For uncorrelated branches, execute WITHOUT inputRel so the
-				// SubqueryPattern returns ALL groups (not joined with the
-				// current outer tuple). The cache indexes the full result.
+				// For cacheable branches (uncorrelated SubqueryPatterns, or
+				// DataPattern-only branches in or-join), execute WITHOUT
+				// inputRel so the result covers ALL values. The branch cache
+				// indexes the full result for O(1) per-tuple probes.
+				//
+				// Fast path: for DataPattern branches in or-join, try building
+				// the branch cache from EA cache (LookupAttribute) instead of
+				// a full storage scan. Falls back to storage scan if the EA
+				// cache isn't available.
 				execInput := inputRel
 				isOrJoin := len(it.joinSyms) > 0
-				if isCacheableBranch(branch, isOrJoin) {
+				isCacheable := isCacheableBranch(branch, isOrJoin)
+				if isCacheable {
 					execInput = nil
 				}
+
+				// Try EA-cache-based branch build for DataPattern-only or-join branches.
+				// Only use when the EA cache is warm (prefetch has run for these entities).
+				// The prefetch triggers at executeOrJoinClauseFallback for entities
+				// in the outer relation. For inner subquery or-joins, the prefetch
+				// hasn't run yet, so fall back to the storage scan path.
+				eaCacheUsed := false
+				if isCacheable && isOrJoin && !isCacheableBranch(branch, false) && it.prefetched {
+					if cb := it.buildBranchFromEACache(branch); cb != nil {
+						if it.branchCache == nil {
+							it.branchCache = make(map[int]*cachedBranch)
+						}
+						it.branchCache[branchIdx] = cb
+						matches := cb.probe(outerTuple)
+						branchResult = NewMaterializedRelation(cb.branchSyms, matches)
+						eaCacheUsed = true
+					}
+				}
+
+				if !eaCacheUsed {
 				var err error
 				branchResult, err = it.executor.executeInnerClauses(it.ctx, branch, execInput)
 				if err != nil {
@@ -565,6 +692,7 @@ func (it *OrFallbackIterator) Next() bool {
 						branchResult = filterBranchToOuterTuple(branchResult, outerTuple, it.outerSyms)
 					}
 				}
+				} // end if !eaCacheUsed
 			}
 
 			if branchResult != nil {

@@ -199,6 +199,13 @@ func (m *AnnotatedMatcher) LookupAttribute(entity datalog.Identity, attr datalog
 	return nil, false
 }
 
+// PrefetchEntities implements EntityPrefetcher if the underlying matcher supports it.
+func (m *AnnotatedMatcher) PrefetchEntities(entities []datalog.Identity) {
+	if ep, ok := m.underlying.(EntityPrefetcher); ok {
+		ep.PrefetchEntities(entities)
+	}
+}
+
 // WithTimeRanges implements TimeRangeAware if the underlying matcher supports it.
 // This ensures decorators are transparent for all interface extensions.
 func (m *AnnotatedMatcher) WithTimeRanges(ranges []TimeRange) TimeRangeAware {

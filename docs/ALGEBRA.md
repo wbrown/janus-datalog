@@ -716,3 +716,126 @@ Enable algebra optimizer by default and fix all regressions.
 When branch 2 (ground default) doesn't produce the join var, it must be
 required from the outer relation. Otherwise the phaser reorders clauses,
 breaking NOT clause dependencies.
+
+---
+
+## Performance Analysis
+
+### Profiling Results (concurrent2.db, ListScenarioSummaries, 75 scenarios, 8K tasks)
+
+| Configuration | Wall time | Events | Speedup |
+|---|---|---|---|
+| Baseline (no optimizer) | 28.4s | 450K | 1.0× |
+| Decorrelation only (no Rule 5) | 28.4s | 49K | 1.0× |
+| Decorrelation + Rule 5 | 13.7s | 113K | 2.1× |
+
+### Key Finding: Decorrelation Alone Does NOT Improve Wall Time
+
+Decorrelation reduces subqueries from 599 → 4 and events from 450K → 49K,
+but wall time is unchanged (28.4s). The correlated path's per-tuple indexed
+lookups are fast (~0.6ms each). The decorrelated path replaces them with
+full-table scans that cost ~3.5s each — the savings from fewer subquery
+executions are offset by more expensive scans.
+
+### Key Finding: Rule 5 Provides All The Speedup
+
+Rule 5 (get-else → or-join with cached DataPattern scans) cuts wall time
+from 28.4s → 13.7s. It reduces the intermediate relation sizes feeding
+into hash joins, causing the dominant 20.5s join to drop to 6.9s.
+
+**Disproven hypothesis**: "Rule 5 inside decorrelated subqueries is
+harmful because LookupAttribute with EA cache is faster than full scans."
+Testing showed disabling Rule 5 returns wall time to baseline (28.4s).
+Rule 5 helps everywhere, including inside decorrelated subqueries, because
+the or-join DataPattern branch cache amortizes the scan cost across all
+tuples.
+
+### Remaining Bottleneck: Per-Entity Storage Scans
+
+The 13.7s comes from 23,897 `matcher.Match()` calls — **per-entity
+pattern evaluation**, not per-attribute scans. The or-join from Rule 5
+evaluates per outer tuple: for each of the ~8K tasks, each get-else
+or-join branch calls `matcher.Match()` to scan storage. The branch cache
+prevents re-scanning after the first evaluation, but subsequent patterns
+(bare DataPatterns in the subquery WHERE) still scan per-entity.
+
+The three slowest individual scans:
+```
+3.7s  [?t :task/status :status/complete]  (AVET index — correct)
+3.4s  [?t :task/key ?key]                 (AETV index — correct)
+3.2s  [?t :task/completed-at ?ca]         (AETV index — correct)
+```
+
+Index selection is correct (verified via `chooseIndex` code analysis).
+The cost is inherent to iterating 8K entities per scan from BadgerDB.
+
+### Rule 6: Entity Prefetch into EA Cache
+
+**Problem**: When a pattern scan produces a set of entity IDs (e.g.,
+`[?t :task/root ?s]` → 8K task entities), subsequent patterns referencing
+the same entity variable each trigger independent storage scans. With N
+entities and M subsequent patterns, this is N × M storage hits.
+
+**Solution**: Once a set of entity IDs is known, batch-prefetch ALL
+attributes for those entities into the EA cache in one sequential scan.
+Subsequent patterns resolve from cache — O(1) per (entity, attribute).
+
+**Mechanism**:
+
+```
+Phase 1: Pattern [?t :task/root ?s] → scan AETV → {t1, t2, ..., t8000}
+         → trigger: PrefetchEntities(sorted [t1..t8000])
+
+Phase 2 (concurrent with Phase 1 join processing):
+         → open EATV iterator
+         → for each entity (sorted by L85 byte order = disk order):
+              Seek(EATV_prefix + E_bytes)
+              iterate all (E, A, T, V) entries for this entity
+              CRDT-resolve each (E, A) pair
+              populate EA cache entry
+         → one sequential forward scan with 8K forward seeks
+
+Phase 3: Pattern [?t :task/status :status/complete]
+         → for each ?t: cache.GetOrResolve(t, :task/status) → HIT
+         Pattern [?t :task/key ?key]
+         → for each ?t: cache.GetOrResolve(t, :task/key) → HIT
+```
+
+**Why sorted order matters**: BadgerDB stores keys sorted. EATV keys are
+`prefix(1) + E(20) + A(32) + T(16) + V(...)`. Entity IDs are L85-encoded
+SHA1 hashes — L85 preserves sort order. Sorting entities by their 20-byte
+hash before scanning means the EATV iterator only moves forward. Each
+`Seek()` is cheap (already near the target). Empty ranges between entities
+are skipped instantly.
+
+**Cost analysis**:
+- Before: N entities × M patterns × ~0.6ms per seek = N×M×0.6ms
+  (8K × 3 = 24K seeks × 0.6ms = 14.4s)
+- After: N entities × 1 seek each (sorted, forward-only) + N×M cache lookups
+  (8K seeks × ~0.1ms + 24K cache hits × ~10ns ≈ 0.8s)
+
+**Concurrency**: The prefetch starts as soon as entity IDs are known,
+running in a goroutine. The executor continues processing (hash joins,
+etc.) in parallel. By the time subsequent patterns need the data, the
+cache is warm.
+
+**Trigger points**:
+1. The or-join evaluator: before first per-tuple evaluation, if the outer
+   relation contains entity IDs and branches reference those entities,
+   prefetch them
+2. The clause-by-clause executor: after a DataPattern scan produces entity
+   IDs, if subsequent clauses reference the same entity variable, prefetch
+3. The matcher itself: when `Match()` returns a Relation with entity
+   symbols and bindings reference those entities, trigger prefetch
+
+**What needs to exist**:
+1. `Cache.PrefetchEntities(entities []Entity, resolver CacheResolver)` —
+   batch load all (E, A) pairs for a set of entities
+2. `BadgerMatcher.PrefetchEntities(entities []datalog.Identity)` — sorts
+   by key order, scans EATV, resolves CRDT, populates cache
+3. Integration in executor or or-join to trigger prefetch at the right time
+
+**Guard conditions**:
+- Only prefetch when entity count exceeds a threshold (e.g., >50 entities)
+- Only prefetch when subsequent clauses reference the same entity variable
+- Don't prefetch for temporal queries (AsOf/History have different cache semantics)
