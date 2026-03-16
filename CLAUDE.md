@@ -384,6 +384,18 @@ func (pp *PatternPlan) ApplyConstraints(predicates []PredicatePlan) { ... }
 - **Caching hierarchy**: Pattern compilation, tuple deduplication, query plans
 - **Early termination**: Stop execution immediately on empty intermediate results
 
+### CRITICAL: Profile, Don't Theorize
+
+When performance doesn't match expectations, the FIRST action is `go test -cpuprofile` + `go tool pprof`. Do NOT theorize about what might be slow.
+
+**Case study**: A 13s query bottleneck produced 10+ fabricated explanations ("scan I/O cost", "cons-cell overhead", "BadgerDB block cache", "prefetch does N broad scans") — all wrong. The profiler showed `pthread_cond_wait` at 23% CPU = goroutine scheduler thrashing from `PrefetchValues=true` spawning goroutines per BadgerDB iterator. Fix: one line (`PrefetchValues = false`). Result: 13s → 392ms.
+
+**Rules**:
+- Never say "the bottleneck is X" without profiler evidence
+- Never fabricate per-operation costs ("~0.4ms per datom") — measure them
+- `pthread_cond_wait/signal` in profiles means lock/goroutine contention, not I/O
+- When measurements contradict a theory, the theory is wrong — profile again
+
 ## Query Planning and Execution Architecture
 
 ### Modern Architecture (October 2025)

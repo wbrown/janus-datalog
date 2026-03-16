@@ -148,8 +148,12 @@ func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error)
 	txn := s.db.NewTransaction(false)
 
 	opts := badger.DefaultIteratorOptions
-	opts.PrefetchSize = 1000   // Increased from 10 for better bulk scan performance
-	opts.PrefetchValues = true // We need values for datom construction
+	// All datom data is encoded in keys — values are not stored.
+	// PrefetchValues must be false to avoid spawning prefetch goroutines
+	// per iterator, which causes scheduler thrashing with thousands of
+	// short-lived iterators (e.g., per-(E,A) cache resolution).
+	// PrefetchSize is ignored when PrefetchValues is false.
+	opts.PrefetchValues = false
 
 	it := txn.NewIterator(opts)
 

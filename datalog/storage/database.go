@@ -448,6 +448,8 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableDynamicReordering:     true, // Phase reordering by symbol connectivity
 		EnablePredicatePushdown:     true, // Early predicate filtering (not storage-level)
 		EnableAlgebraOptimizer:      true, // Relational algebra IR clause rewriting (decorrelation via compile → optimize → decompile)
+		EnableScanSharing:           true,  // Share unbound scan results across subqueries via LazySeq
+		EnableEntityPrefetch:        true,  // Warm EA cache after first DataPattern via PrefetchEntities
 		EnableSubqueryDecorrelation: true,  // Selinger's decorrelation optimization
 		EnableParallelDecorrelation: true, // Execute decorrelated merged queries in parallel
 		MaxPhases:                   10,

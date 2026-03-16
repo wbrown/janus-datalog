@@ -38,4 +38,10 @@ type ExecutorOptions struct {
 	// Aggregation options
 	EnableStreamingAggregation      bool
 	EnableStreamingAggregationDebug bool
+
+	// Scan sharing: deduplicate unbound scans across subqueries via LazySeq
+	EnableScanSharing bool
+
+	// Entity prefetch: warm EA cache after first DataPattern
+	EnableEntityPrefetch bool
 }

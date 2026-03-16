@@ -646,6 +646,9 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 			if e.Name == "or-fallback/cache-build" || e.Name == "or-fallback/branch.success" {
 				t.Logf("[%s] %v", e.Name, e.Data)
 			}
+			if e.Name == "scan-sharing/cache-hit" || e.Name == "scan-sharing/cache-miss" {
+				t.Logf("[SCAN-SHARING] [%s] %v", e.Name, e.Data)
+			}
 		},
 	})
 	require.NoError(t, err)

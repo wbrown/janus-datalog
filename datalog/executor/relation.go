@@ -1132,8 +1132,8 @@ func (r *StreamingRelation) Materialize() Relation {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// If already cached, return self (idempotent)
-	if r.cache != nil {
+	// If already cached or cache completed (empty result), return self (idempotent)
+	if r.cache != nil || r.cacheReady {
 		return r
 	}
 

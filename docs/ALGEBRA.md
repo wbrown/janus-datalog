@@ -710,7 +710,7 @@ Enable algebra optimizer by default and fix all regressions.
 5. ✅ **Fix `extractOrJoinClauseSymbols`**: join vars not produced by all
    branches are `requires` (not `provides`), preserving clause ordering
 6. ✅ **Verify**: `go test ./datalog/...` — all 13 packages pass
-7. ✅ **Verify**: downstream `the application` tests pass 
+7. ✅ **Verify**: downstream application tests pass
 
 **Key insight**: or-join's join vars are NOT unconditionally provided.
 When branch 2 (ground default) doesn't produce the join var, it must be

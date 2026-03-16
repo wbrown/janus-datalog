@@ -91,24 +91,26 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			// instead of cold GetOrResolve → per-(E,A) EATV scan.
 			// Materializes streaming relations to extract entity IDs — this
 			// materialization would happen anyway when the next pattern joins.
-			if prefetcher, ok := e.matcher.(EntityPrefetcher); ok && i == 0 && len(groups) > 0 {
-				g := groups[len(groups)-1]
-				if _, isStreaming := g.(*StreamingRelation); isStreaming {
-					g = g.Materialize()
-					groups[len(groups)-1] = g
-				}
-				entities := extractEntityIDs(g, g.Symbols())
-				if len(entities) > 50 {
-					if collector := ctx.Collector(); collector != nil {
-						collector.Add(annotations.Event{
-							Name: "prefetch/trigger",
-							Data: map[string]interface{}{
-								"entity_count": len(entities),
-								"symbols":      fmt.Sprintf("%v", g.Symbols()),
-							},
-						})
+			if e.options.EnableEntityPrefetch && i == 0 && len(groups) > 0 {
+				if prefetcher, ok := e.matcher.(EntityPrefetcher); ok {
+					g := groups[len(groups)-1]
+					if _, isStreaming := g.(*StreamingRelation); isStreaming {
+						g = g.Materialize()
+						groups[len(groups)-1] = g
 					}
-					prefetcher.PrefetchEntities(entities)
+					entities := extractEntityIDs(g, g.Symbols())
+					if len(entities) > 50 {
+						if collector := ctx.Collector(); collector != nil {
+							collector.Add(annotations.Event{
+								Name: "prefetch/trigger",
+								Data: map[string]interface{}{
+									"entity_count": len(entities),
+									"symbols":      fmt.Sprintf("%v", g.Symbols()),
+								},
+							})
+						}
+						prefetcher.PrefetchEntities(entities)
+					}
 				}
 			}
 
@@ -1534,9 +1536,11 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseFallback(ctx Context, clause *
 		outerRel = NewUnitRelation(e.options)
 	}
 
-	// Entity prefetch disabled pending investigation of 25s→13s regression.
-	// The infrastructure (PrefetchEntities, buildBranchFromEACache, prefetched flag)
-	// is in place but not triggered until the inner subquery overhead is resolved.
+	// Entity prefetch DISABLED: benchmarked at 26s vs 13s without.
+	// PrefetchEntities scans EATV per entity (8K broad scans) which is far
+	// more I/O than the normal path's ~4 narrow attribute-specific AETV scans.
+	// The prefetch approach is fundamentally wrong — it does N broad scans
+	// when the query only needs M narrow scans (M << N).
 	prefetched := false
 
 	orClause := &query.OrClause{

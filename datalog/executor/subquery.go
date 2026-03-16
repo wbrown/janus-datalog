@@ -999,6 +999,10 @@ func (sc *subqueryContext) GetMetadata(key string) (interface{}, bool) {
 	return sc.parent.GetMetadata(key)
 }
 
+func (sc *subqueryContext) ScanRegistry() *ScanRegistry {
+	return sc.parent.ScanRegistry()
+}
+
 // canBatchSubquery checks if a subquery can be executed with batched inputs.
 // This requires the subquery to have a RelationInput in its :in clause.
 func canBatchSubquery(q *query.Query) bool {
