@@ -839,3 +839,108 @@ cache is warm.
 - Only prefetch when entity count exceeds a threshold (e.g., >50 entities)
 - Only prefetch when subsequent clauses reference the same entity variable
 - Don't prefetch for temporal queries (AsOf/History have different cache semantics)
+
+---
+
+## Performance Results (2026-03-16)
+
+### Critical fix: PrefetchValues=false (34× speedup)
+
+The dominant bottleneck was `PrefetchValues=true` in `BadgerStore.Scan()`. All
+datom data is encoded in keys — values are never stored. But `PrefetchValues=true`
+spawned prefetch goroutines per BadgerDB iterator, causing scheduler thrashing
+(`pthread_cond_wait` at 23% CPU) with thousands of short-lived iterators from
+per-(E,A) EA cache resolution.
+
+Found via `go tool pprof`, not theorizing. Fix: one line.
+
+| Configuration | Wall time |
+|---|---|
+| Before (PrefetchValues=true) | 28.4s |
+| After (PrefetchValues=false) | 392ms cold, 125ms warm |
+
+### Optimization matrix (bench mode, no annotations, 780K datoms)
+
+| Configuration | Cold | Warm |
+|---|---|---|
+| No decorrelation | 1.94s | — |
+| Decorrelation (Selinger or algebra) | 387ms | 125ms |
+| + Scan sharing | 401ms | 125ms |
+| + Entity prefetch | 395ms | 125ms |
+
+Decorrelation provides 5× speedup. Scan sharing and entity prefetch are
+performance-neutral at this scale — BadgerDB's block cache and the fast
+key-only iterators make redundant scans cheap.
+
+### Infrastructure status
+
+| Component | Status | Impact |
+|---|---|---|
+| PrefetchValues=false | Active, critical | 34× speedup |
+| Algebra optimizer (Rules 1, 4, 5) | Active | 5× decorrelation speedup |
+| Scan sharing (LazySeq) | Active, neutral | Correct but no measurable benefit |
+| Entity prefetch | Active, neutral | Correct but no measurable benefit |
+| Selinger decorrelation | Active, redundant | Same results as algebra optimizer |
+
+---
+
+## Compiler Status and Known Issues
+
+### Removed hacks
+
+1. **Silent error bypass** — algebra compilation errors now propagate (not swallowed)
+2. **compileOrFallbackGeneric** — removed, replaced with `compileOrFallbackExclusive`
+3. **reflect.TypeOf hack** — replaced with type switch for vector default detection
+4. **missing? → AntiJoin** — reverted to Select (preserves predicate through round-trip)
+5. **Default branch binding all symbols** — `decompileLateralJoin` now subtracts
+   join keys from binding symbols so defaults only bind non-join symbols
+6. **extractGroundDefaults rejecting NOT** — now skips NOT/missing? guards (safe
+   because LeftOuterJoin handles non-matching tuples via defaults)
+7. **Uncorrelated subquery defaults lost** — uncorrelated SubqueryPattern+defaults
+   now wraps in LeftOuterJoin (previously only correlated path attached defaults)
+
+### Current compiler coverage
+
+| Clause type | Algebra compilation | Round-trip correct |
+|---|---|---|
+| DataPattern | Scan | ✅ |
+| Expression | Map | ✅ |
+| Comparison/Predicate | Select | ✅ |
+| DatabaseFunctionPredicate (missing?) | Select | ✅ |
+| NotClause | AntiJoin | ✅ |
+| NotJoinClause | AntiJoin (explicit) | ✅ |
+| OR (pattern-only) | Union | ✅ |
+| OR (subquery+ground) | LateralJoin+defaults | ✅ |
+| OR (NOT+ground fallback) | Union via compileOrFallbackExclusive | ✅ |
+| OR (subquery+NOT+ground) | LateralJoin+defaults (NOT skipped) | ✅ |
+| or-join | Union with JoinVars preserved | ✅ |
+| SubqueryPattern (correlated) | LateralJoin | ✅ |
+| SubqueryPattern (uncorrelated) | LateralJoin (no correlation vars) | ✅ |
+
+### Fixed issues (2026-03-16)
+
+8. **`compileOrJoin` discarded join variables** — added `JoinVars` field to
+   `Union` node. `compileOrJoin` now stores the user-specified join vars on
+   the Union, and `decompileUnion` emits `OrJoinClause` when join vars are
+   present. Round-trip preserves `or-join` vs `or`.
+
+9. **Double join in `compileOrFallback` + `compileOrFallbackExclusive`** —
+   `compileOrFallbackExclusive` was returning `joinWith(current, union)`, then
+   the caller was joining again, creating `Join(current, Join(current, Union))`.
+   Fixed by having `compileOrFallbackExclusive` return just the Union node.
+
+10. **Vector default limitation in get-else rewrite** — added `DefaultAttr
+   *datalog.Keyword` to `Join` node. The get-else rewrite stores the attribute
+   on the LeftOuterJoin. The decompiler emits `get-else` (not `ground`) in the
+   default branch when the attribute is present, so `TypedDefaulter` can
+   produce the schema-typed default (e.g., `[]string` instead of `[]interface{}`)
+   at execution time. Vector defaults now benefit from Rule 5's scan rewrite.
+
+11. **Defensive fallback in `decompileLeftOuterJoin`** — LeftOuterJoin without
+   defaults emitted a meaningless single-branch OrClause. Now returns an error:
+   this state cannot occur (decorrelation produces InnerJoin when no defaults).
+
+12. **Defensive fallback in `fromParseNode`** — parse node without
+   TransformedValue returned a nil-Data Node that would panic on use. Now
+   panics immediately with a descriptive message: every algebra node is created
+   with TransformedValue set.

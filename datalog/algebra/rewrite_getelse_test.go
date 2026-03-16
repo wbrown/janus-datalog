@@ -107,10 +107,11 @@ func TestGetElseScanRewrite_NonGetElsePreserved(t *testing.T) {
 	assert.Equal(t, 1, mapsAfter, "non-get-else Map should be preserved")
 }
 
-// TestGetElseScanRewrite_VectorDefaultSkipped verifies that get-else with
-// a vector default (e.g., []) is NOT rewritten, because ground [] loses
-// schema type information ([]interface{} vs []string).
-func TestGetElseScanRewrite_VectorDefaultSkipped(t *testing.T) {
+// TestGetElseScanRewrite_VectorDefaultRewritten verifies that get-else with
+// a vector default (e.g., []) IS rewritten. The default branch emits a
+// get-else expression (not ground) so TypedDefaulter can produce the
+// schema-typed default (e.g., []string instead of []interface{}).
+func TestGetElseScanRewrite_VectorDefaultRewritten(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?lore
 	  :where
 	  [?e :entity/type :entity.type/room]
@@ -128,7 +129,30 @@ func TestGetElseScanRewrite_VectorDefaultSkipped(t *testing.T) {
 	require.NoError(t, err)
 
 	mapsAfter := countNodes(optimized, RuleMap)
-	assert.Equal(t, 1, mapsAfter, "get-else with vector default should NOT be rewritten")
+	assert.Equal(t, 0, mapsAfter, "get-else with vector default should be rewritten")
+
+	joinsAfter := countNodes(optimized, RuleJoin)
+	assert.Greater(t, joinsAfter, 0, "should have LeftOuterJoin from get-else rewrite")
+
+	// Verify the LeftOuterJoin carries the attribute for typed defaults
+	var foundAttr bool
+	walkNodes(optimized, func(n *Node) {
+		if n.Op == RuleJoin {
+			j := n.Data.(*Join)
+			if j.Kind == LeftOuterJoin && j.DefaultAttr != nil {
+				foundAttr = true
+			}
+		}
+	})
+	assert.True(t, foundAttr, "LeftOuterJoin should carry DefaultAttr for typed defaults")
+
+	// Decompile and verify the default branch uses get-else (not ground)
+	clauses, err := Decompile(optimized)
+	require.NoError(t, err)
+	t.Logf("Decompiled %d clauses:", len(clauses))
+	for i, c := range clauses {
+		t.Logf("  [%d] %T: %s", i, c, c.String())
+	}
 }
 
 // TestGetElseScanRewrite_InputParamEntitySkipped verifies that get-else
@@ -167,10 +191,10 @@ func TestCompileMissingPredicateInOr(t *testing.T) {
 	require.NoError(t, err)
 
 	root, err := Compile(q)
-	require.NoError(t, err, "OR with missing? should compile (missing? → AntiJoin)")
+	require.NoError(t, err, "OR with missing? should compile (missing? → Select predicate)")
 	t.Logf("Compiled:\n%s", root.String())
 
-	// Verify the tree contains an AntiJoin (from missing?)
-	antiJoins := countNodes(root, RuleAntiJoin)
-	assert.Greater(t, antiJoins, 0, "should have AntiJoin from missing?")
+	// Verify the tree contains a Select (missing? preserved as predicate)
+	selects := countNodes(root, RuleSelect)
+	assert.Greater(t, selects, 0, "should have Select from missing?")
 }

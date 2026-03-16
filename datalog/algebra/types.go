@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -140,10 +141,11 @@ func (m *Map) String() string {
 
 // Join combines two relations. R ⋈ S
 type Join struct {
-	Kind          JoinKind       // Inner or LeftOuter
-	JoinSymbols   []query.Symbol // Symbols to join on (empty = natural join on shared symbols)
-	Output        []query.Symbol // Combined output symbols
-	DefaultValues []interface{}  // For LeftOuterJoin: fill these when right side has no match
+	Kind          JoinKind         // Inner or LeftOuter
+	JoinSymbols   []query.Symbol   // Symbols to join on (empty = natural join on shared symbols)
+	Output        []query.Symbol   // Combined output symbols
+	DefaultValues []interface{}    // For LeftOuterJoin: fill these when right side has no match
+	DefaultAttr   *datalog.Keyword // For get-else rewrite: the attribute, enabling typed defaults
 }
 
 func (j *Join) OutputSymbols() []query.Symbol { return j.Output }
@@ -176,13 +178,23 @@ func (a *AntiJoin) String() string {
 }
 
 // Union combines branches. R ∪ S
-// Compiled from query.OrClause with union semantics.
+// Compiled from query.OrClause or query.OrJoinClause with union semantics.
 type Union struct {
-	Output []query.Symbol // Shared output symbols across branches
+	Output   []query.Symbol // Shared output symbols across branches
+	JoinVars []query.Symbol // Explicit join variables from or-join (nil for plain or)
 }
 
 func (u *Union) OutputSymbols() []query.Symbol { return u.Output }
-func (u *Union) String() string               { return "∪" }
+func (u *Union) String() string {
+	if len(u.JoinVars) > 0 {
+		syms := make([]string, len(u.JoinVars))
+		for i, s := range u.JoinVars {
+			syms[i] = s.String()
+		}
+		return fmt.Sprintf("∪_join(%s)", strings.Join(syms, ", "))
+	}
+	return "∪"
+}
 
 // LateralJoin is a correlated subquery. R ⋈_L S(r.x)
 // THE target for decorrelation: LateralJoin → Join + Aggregate.

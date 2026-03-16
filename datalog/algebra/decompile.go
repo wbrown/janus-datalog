@@ -145,11 +145,7 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 	}
 
 	if len(join.DefaultValues) == 0 {
-		// No defaults — shouldn't happen for decorrelation output, but handle
-		// gracefully by emitting left clauses + OR wrapping both sides.
-		return append(leftClauses, &query.OrClause{
-			Branches: [][]query.Clause{rightClauses},
-		}), nil
+		return nil, fmt.Errorf("LeftOuterJoin has no defaults (decorrelation produces InnerJoin when no defaults)")
 	}
 
 	// Build ground default branch from Join.DefaultValues.
@@ -173,7 +169,22 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 	}
 
 	var defaultBranch []query.Clause
-	if len(join.DefaultValues) == 1 && len(defaultSyms) == 1 {
+	if join.DefaultAttr != nil && len(join.DefaultValues) == 1 && len(defaultSyms) == 1 && len(join.JoinSymbols) > 0 {
+		// Get-else rewrite origin: emit get-else in the default branch so
+		// TypedDefaulter can convert the default to the schema type (e.g.,
+		// []interface{} → []string). The default branch only runs for entities
+		// that the Scan didn't match, so get-else returns the typed default.
+		defaultBranch = []query.Clause{
+			&query.Expression{
+				Function: &query.GetElseFunction{
+					Entity:  query.VariableTerm{Symbol: join.JoinSymbols[0]},
+					Attr:    *join.DefaultAttr,
+					Default: join.DefaultValues[0],
+				},
+				Binding: defaultSyms[0],
+			},
+		}
+	} else if len(join.DefaultValues) == 1 && len(defaultSyms) == 1 {
 		defaultBranch = []query.Clause{
 			&query.Expression{
 				Function: &query.GroundFunction{Value: join.DefaultValues[0]},
@@ -233,8 +244,9 @@ func decompileAntiJoin(n *Node) ([]query.Clause, error) {
 	return append(leftClauses, notClause), nil
 }
 
-// decompileUnion emits an OR clause with union semantics.
+// decompileUnion emits an OR clause (or OR-join clause if join vars present).
 func decompileUnion(n *Node) ([]query.Clause, error) {
+	u := n.Data.(*Union)
 	var branches [][]query.Clause
 	for _, child := range n.Children {
 		branch, err := decompileNode(child)
@@ -242,6 +254,12 @@ func decompileUnion(n *Node) ([]query.Clause, error) {
 			return nil, err
 		}
 		branches = append(branches, branch)
+	}
+	if len(u.JoinVars) > 0 {
+		return []query.Clause{&query.OrJoinClause{
+			JoinVars: u.JoinVars,
+			Branches: branches,
+		}}, nil
 	}
 	return []query.Clause{&query.OrClause{Branches: branches}}, nil
 }
@@ -285,31 +303,76 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 	// Branch 1: the subquery
 	subqueryBranch := []query.Clause{sp}
 
-	// Branch 2: ground defaults
+	// Compute join vars FIRST — needed to determine default binding symbols.
+	// Join vars = symbols shared between the subquery binding and the outer
+	// relation. The default branch only provides NON-join symbols; the join
+	// keys come from the outer relation via or-join semantics.
 	bindingSyms := bindingFormSymbols(sp.Binding)
+
+	var joinVars []query.Symbol
+	if len(lj.CorrelationVars) > 0 {
+		joinVars = lj.CorrelationVars
+	} else {
+		// Uncorrelated: use symbols shared between binding and outer
+		var outerSyms []query.Symbol
+		for _, child := range n.Children {
+			outerSyms = append(outerSyms, child.Symbols()...)
+		}
+		for _, bs := range bindingSyms {
+			for _, os := range outerSyms {
+				if bs == os {
+					joinVars = append(joinVars, bs)
+				}
+			}
+		}
+	}
+
+	// Default symbols = binding symbols minus join vars.
+	// The join keys come from the outer relation; the default branch
+	// only needs to provide values for the non-join symbols.
+	joinSet := make(map[query.Symbol]bool, len(joinVars))
+	for _, jv := range joinVars {
+		joinSet[jv] = true
+	}
+	var defaultSyms []query.Symbol
+	for _, bs := range bindingSyms {
+		if !joinSet[bs] {
+			defaultSyms = append(defaultSyms, bs)
+		}
+	}
+
+	// Branch 2: ground defaults using only non-join symbols
 	var defaultBranch []query.Clause
-	if len(lj.DefaultValues) == 1 && len(bindingSyms) == 1 {
+	if len(lj.DefaultValues) == 1 && len(defaultSyms) == 1 {
 		// Scalar ground: [(ground val) ?sym]
 		defaultBranch = []query.Clause{
 			&query.Expression{
 				Function: &query.GroundFunction{Value: lj.DefaultValues[0]},
-				Binding:  bindingSyms[0],
+				Binding:  defaultSyms[0],
 			},
 		}
-	} else {
+	} else if len(defaultSyms) > 0 {
 		// Tuple ground: [(ground [v1 v2 ...]) [[?a ?b ...]]]
 		defaultBranch = []query.Clause{
 			&query.Expression{
 				Function: &query.GroundFunction{Value: lj.DefaultValues},
-				Binding:  query.TupleBinding{Variables: bindingSyms},
+				Binding:  query.TupleBinding{Variables: defaultSyms},
 			},
 		}
 	}
 
-	orClause := &query.OrClause{
-		Branches: [][]query.Clause{subqueryBranch, defaultBranch},
+	if len(joinVars) > 0 {
+		orJoinClause := &query.OrJoinClause{
+			JoinVars: joinVars,
+			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
+		}
+		clauses = append(clauses, orJoinClause)
+	} else {
+		orClause := &query.OrClause{
+			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
+		}
+		clauses = append(clauses, orClause)
 	}
-	clauses = append(clauses, orClause)
 	return clauses, nil
 }
 

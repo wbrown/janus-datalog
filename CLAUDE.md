@@ -396,6 +396,16 @@ When performance doesn't match expectations, the FIRST action is `go test -cpupr
 - `pthread_cond_wait/signal` in profiles means lock/goroutine contention, not I/O
 - When measurements contradict a theory, the theory is wrong — profile again
 
+### CRITICAL: Extend, Don't Avoid
+
+When a component can't handle a valid input, **extend the component**. Never:
+- Return an error to refuse the work ("not supported")
+- Route around it ("only call the compiler when it has something to optimize")
+- Pass through unchanged ("compile as opaque node")
+- Blame the caller ("why is the compiler being asked to handle this?")
+
+These are all avoidance disguised as engineering judgment. The correct answer is always: extend the system to handle the new case.
+
 ## Query Planning and Execution Architecture
 
 ### Modern Architecture (October 2025)

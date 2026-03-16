@@ -1,6 +1,8 @@
 package algebra
 
 import (
+	"fmt"
+
 	"github.com/wbrown/ebnf/parse"
 )
 
@@ -62,22 +64,17 @@ func fromParseNode(pn *parse.Node) *Node {
 		}
 	}
 
-	// If the node carries an algebra.Node in TransformedValue, use it
-	// with recovered children.
-	if n, ok := pn.TransformedValue.(*Node); ok {
-		// Clone the node so we don't mutate the original
-		result := &Node{
-			Op:       n.Op,
-			Data:     n.Data,
-			Children: children,
-		}
-		return result
+	// The node must carry an algebra.Node in TransformedValue.
+	// Every node in our algebra tree is created with TransformedValue set.
+	n, ok := pn.TransformedValue.(*Node)
+	if !ok {
+		panic(fmt.Sprintf("algebra adapter: parse node %q has no algebra.Node in TransformedValue", pn.Rule))
 	}
 
-	// Fallback: node was created by a transform or preserved without
-	// TransformedValue. Use the rule name as the Op.
+	// Clone the node so we don't mutate the original
 	return &Node{
-		Op:       pn.Rule,
+		Op:       n.Op,
+		Data:     n.Data,
 		Children: children,
 	}
 }

@@ -29,7 +29,11 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:              dir,
-		AnnotationHandler: func(e annotations.Event) {},
+		AnnotationHandler: func(e annotations.Event) {
+			if e.Name == "algebra/bridge-complete" {
+				t.Logf("[%s] %v", e.Name, e.Data)
+			}
+		},
 	})
 	require.NoError(t, err)
 	defer db.Close()

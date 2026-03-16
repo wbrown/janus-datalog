@@ -429,19 +429,19 @@ func TestRoundTrip_LateralJoin(t *testing.T) {
 		t.Logf("  [%d] %T: %s", i, c, c.String())
 	}
 
-	// Should have a DataPattern and an OrClause (the OR-fallback)
+	// Should have a DataPattern and an OrJoinClause (the OR-fallback with join vars)
 	hasPattern := false
-	hasOr := false
+	hasOrJoin := false
 	for _, c := range clauses {
 		switch c.(type) {
 		case *query.DataPattern:
 			hasPattern = true
-		case *query.OrClause:
-			hasOr = true
+		case *query.OrJoinClause:
+			hasOrJoin = true
 		}
 	}
 	assert.True(t, hasPattern, "decompiled has DataPattern")
-	assert.True(t, hasOr, "decompiled has OrClause (OR-fallback with defaults)")
+	assert.True(t, hasOrJoin, "decompiled has OrJoinClause (OR-fallback with defaults and join vars)")
 }
 
 func TestRoundTrip_LateralJoinNoDefaults(t *testing.T) {

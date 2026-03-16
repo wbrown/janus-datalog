@@ -525,3 +525,13 @@ func countNodes(n *Node, op string) int {
 	}
 	return count
 }
+
+func walkNodes(n *Node, fn func(*Node)) {
+	if n == nil {
+		return
+	}
+	fn(n)
+	for _, child := range n.Children {
+		walkNodes(child, fn)
+	}
+}

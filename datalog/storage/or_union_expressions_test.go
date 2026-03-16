@@ -37,6 +37,9 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			if e.Name == "or/union" || e.Name == "or/branch.complete" || e.Name == "or/complete" {
 				t.Logf("[%s] %v", e.Name, e.Data)
 			}
+			if e.Name == "algebra/compiled" || e.Name == "algebra/optimized" || e.Name == "algebra/bridge-complete" {
+				t.Logf("[%s] %v", e.Name, e.Data)
+			}
 		},
 	})
 	require.NoError(t, err)

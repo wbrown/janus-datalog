@@ -40,14 +40,6 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 		return rebuildWithChildren(node, children)
 	}
 
-	// Skip rewrite when default is a slice/vector — the ground expression
-	// loses schema type information ([]interface{} vs []string).
-	// This is a known limitation: the algebra cannot represent typed defaults.
-	switch ge.Default.(type) {
-	case []interface{}, []string, []int64, []float64, []bool:
-		return rebuildWithChildren(node, children)
-	}
-
 	// Extract the entity variable from the get-else
 	entityVar, ok := ge.Entity.(query.VariableTerm)
 	if !ok {
@@ -94,7 +86,11 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 		},
 	}
 
-	// Build: LeftOuterJoin(on=[?entity], default=[ge.Default])
+	// Build: LeftOuterJoin(on=[?entity], default=[ge.Default], attr=ge.Attr)
+	// The DefaultAttr enables the decompiler to emit a get-else expression
+	// in the default branch instead of plain ground, preserving schema type
+	// information for vector defaults (e.g., []string vs []interface{}).
+	defaultAttr := ge.Attr
 	joinNode := &Node{
 		Op: RuleJoin,
 		Data: &Join{
@@ -102,6 +98,7 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 			JoinSymbols:   []query.Symbol{entityVar.Symbol},
 			Output:        mergeSymbols(childNode.Symbols(), []query.Symbol{bindingSym}),
 			DefaultValues: []interface{}{ge.Default},
+			DefaultAttr:   &defaultAttr,
 		},
 		Children: []*Node{childNode, scanNode},
 	}

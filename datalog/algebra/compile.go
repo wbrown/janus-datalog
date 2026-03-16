@@ -251,15 +251,23 @@ func compileOr(oc *query.OrClause, current *Node) (*Node, error) {
 }
 
 // compileOrJoin is like compileOr but with explicit join variables.
+// The join variables are preserved on the Union node so the decompiler
+// can emit OrJoinClause (not OrClause) to maintain round-trip fidelity.
 func compileOrJoin(oj *query.OrJoinClause, current *Node) (*Node, error) {
-	// For now, treat the same as compileOr.
-	// The join variables constrain which symbols are exposed.
-	oc := &query.OrClause{Branches: oj.Branches}
-	return compileOr(oc, current)
+	if !query.OrHasExpressions(oj.Branches) {
+		return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current)
+	}
+	return compileOrFallbackWithJoinVars(oj.Branches, oj.JoinVars, current)
 }
 
 // compileOrUnion compiles each branch and unions the results.
 func compileOrUnion(branches [][]query.Clause, current *Node) (*Node, error) {
+	return compileOrUnionWithJoinVars(branches, nil, current)
+}
+
+// compileOrUnionWithJoinVars compiles OR branches into a Union node,
+// optionally preserving explicit join variables from or-join.
+func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symbol, current *Node) (*Node, error) {
 	children := make([]*Node, 0, len(branches))
 	for i, branch := range branches {
 		compiled, err := compileClauses(branch)
@@ -277,7 +285,7 @@ func compileOrUnion(branches [][]query.Clause, current *Node) (*Node, error) {
 
 	union := &Node{
 		Op:       RuleUnion,
-		Data:     &Union{Output: output},
+		Data:     &Union{Output: output, JoinVars: joinVars},
 		Children: children,
 	}
 	return joinWith(current, union), nil
@@ -286,6 +294,12 @@ func compileOrUnion(branches [][]query.Clause, current *Node) (*Node, error) {
 // compileOrFallback handles OR-fallback: subquery branch + ground default branch.
 // This is the pattern that produces LateralJoin with defaults.
 func compileOrFallback(branches [][]query.Clause, current *Node) (*Node, error) {
+	return compileOrFallbackWithJoinVars(branches, nil, current)
+}
+
+// compileOrFallbackWithJoinVars handles OR-fallback, preserving explicit join
+// variables from or-join on Union nodes.
+func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.Symbol, current *Node) (*Node, error) {
 	if len(branches) < 2 {
 		return nil, fmt.Errorf("OR fallback requires at least 2 branches")
 	}
@@ -305,10 +319,18 @@ func compileOrFallback(branches [][]query.Clause, current *Node) (*Node, error) 
 	}
 
 	if !isSubqueryFallback {
-		// Not the subquery+ground pattern. The algebra compiler cannot
-		// represent per-tuple fallback semantics (try branch 1, else branch 2)
-		// for arbitrary OR clauses. Return an error so the caller knows.
-		return nil, fmt.Errorf("OR fallback with non-subquery+ground branches is not supported by the algebra compiler")
+		// General OR-fallback: "try branch 1, else branch 2 per tuple."
+		// Algebraically: Union(B1(R), B2(R - B1_entities))
+		// Branch 1 sees the full outer relation. Branch 2 sees only tuples
+		// that branch 1 did NOT match (anti-join complement).
+		// compileOrFallbackExclusive returns a Union node (not joined with
+		// current). We join it here so the decompiler emits outer clauses
+		// separately from the OR.
+		union, err := compileOrFallbackExclusive(branches, joinVars, current)
+		if err != nil {
+			return nil, err
+		}
+		return joinWith(current, union), nil
 	}
 
 	// Compile the subquery branch
@@ -317,16 +339,32 @@ func compileOrFallback(branches [][]query.Clause, current *Node) (*Node, error) 
 		return nil, fmt.Errorf("OR fallback subquery branch: %w", err)
 	}
 
-	// If the subquery branch compiled to a LateralJoin, attach defaults
+	// Attach defaults based on subquery type
 	if lj := findLateralJoin(subNode); lj != nil {
+		// Correlated subquery → LateralJoin with defaults
 		ljData := lj.Data.(*LateralJoin)
 		ljData.DefaultValues = defaultValues
-		// Ensure output includes all default-provided symbols
 		for _, ds := range defaultSymbols {
 			if !containsSymbol(ljData.Output, ds) {
 				ljData.Output = append(ljData.Output, ds)
 			}
 		}
+	} else if len(defaultValues) > 0 {
+		// Uncorrelated subquery → wrap in LeftOuterJoin with defaults.
+		// The subquery returns results for some outer tuples; non-matching
+		// outer tuples get default values via the LeftOuterJoin.
+		joinSyms := sharedSymbols(symbolsOf(current), subNode.Symbols())
+		subNode = &Node{
+			Op: RuleJoin,
+			Data: &Join{
+				Kind:          LeftOuterJoin,
+				JoinSymbols:   joinSyms,
+				Output:        mergeSymbols(symbolsOf(current), subNode.Symbols()),
+				DefaultValues: defaultValues,
+			},
+			Children: []*Node{current, subNode},
+		}
+		return subNode, nil
 	}
 
 	// The subNode is already joined with current (compileSubquery does this)
@@ -342,6 +380,52 @@ func compileOrFallback(branches [][]query.Clause, current *Node) (*Node, error) 
 	return subNode, nil
 }
 
+
+// compileOrFallbackExclusive compiles OR-fallback with exclusive branch semantics:
+// Branch 1 sees the full outer relation. Branch 2 sees only tuples that
+// branch 1 did NOT produce (the complement). Results are unioned.
+//
+// Algebraically: Union(B1(R), B2(R ▷ B1_entities))
+//
+// This correctly implements "try branch 1, else branch 2 per tuple" because
+// branch 2 only runs on tuples where branch 1 produced no results.
+func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symbol, current *Node) (*Node, error) {
+	if current == nil {
+		return nil, fmt.Errorf("OR fallback requires prior relation")
+	}
+	if len(branches) < 2 {
+		return nil, fmt.Errorf("OR fallback requires at least 2 branches")
+	}
+
+	// Schema placeholder: provides outer symbols for NOT/missing? compilation
+	// without embedding the outer's scan nodes. Decompiles to nothing (Project
+	// with no children → nil clauses).
+	outerSchema := &Node{
+		Op:   RuleProject,
+		Data: &Project{Symbols: current.Symbols()},
+	}
+
+	// Compile each branch with the schema placeholder as context.
+	// NOT and missing? get the symbols they need for anti-join, but
+	// the decompiler won't emit the outer scan patterns.
+	compiled := make([]*Node, len(branches))
+	for i, branch := range branches {
+		node, err := compileClausesFrom(branch, outerSchema)
+		if err != nil {
+			return nil, fmt.Errorf("OR fallback branch %d: %w", i, err)
+		}
+		compiled[i] = node
+	}
+
+	output := mergeSymbols(compiled[0].Symbols(), compiled[1].Symbols())
+
+	union := &Node{
+		Op:       RuleUnion,
+		Data:     &Union{Output: output, JoinVars: joinVars},
+		Children: compiled,
+	}
+	return union, nil
+}
 
 // compilePredicate produces a Select node for any predicate type.
 func compilePredicate(p query.Predicate, current *Node) *Node {
@@ -364,48 +448,10 @@ func compileDatabaseFunctionPredicate(p *query.DatabaseFunctionPredicate, curren
 		return nil, fmt.Errorf("database function predicate requires prior relation")
 	}
 
-	switch fn := p.Function.(type) {
-	case *query.MissingFunction:
-		// missing?($ ?e :attr) ≡ (not [?e :attr _])
-		// Compile to AntiJoin(current, Scan([?e :attr _]))
-		entityVar, ok := fn.Entity.(query.VariableTerm)
-		if !ok {
-			// Non-variable entity — fall back to Select
-			return compilePredicate(p, current), nil
-		}
-
-		// Build scan pattern: [?e :attr _]
-		scanPattern := &query.DataPattern{
-			Elements: []query.PatternElement{
-				query.Variable{Name: entityVar.Symbol},
-				query.Constant{Value: fn.Attr},
-				query.Blank{},
-			},
-		}
-		innerNode := &Node{
-			Op: RuleScan,
-			Data: &Scan{
-				Pattern: scanPattern,
-				Output:  []query.Symbol{entityVar.Symbol},
-			},
-		}
-
-		joinSyms := sharedSymbols(current.Symbols(), innerNode.Symbols())
-
-		return &Node{
-			Op: RuleAntiJoin,
-			Data: &AntiJoin{
-				JoinSymbols:  joinSyms,
-				Output:       current.Symbols(),
-				ExplicitJoin: false,
-			},
-			Children: []*Node{current, innerNode},
-		}, nil
-
-	default:
-		// Other database function predicates — compile as Select
-		return compilePredicate(p, current), nil
-	}
+	// Compile all database function predicates (missing?, get-some, etc.)
+	// as Select nodes. The executor handles them via EvalWithLookup.
+	// The predicate is preserved as-is through the round-trip.
+	return compilePredicate(p, current), nil
 }
 
 // --- helpers ---
@@ -562,7 +608,13 @@ func extractGroundDefaults(branch []query.Clause) ([]interface{}, []query.Symbol
 			}
 		case *query.GroundPredicate:
 			// GroundPredicate checks if variables are bound, not a value producer.
-			// In fallback branches it's not expected, but don't fail.
+			continue
+		case *query.NotClause, *query.NotJoinClause, *query.DatabaseFunctionPredicate:
+			// NOT and missing? in default branches are guard conditions
+			// ("entity has no children", "entity lacks attribute"). The
+			// LeftOuterJoin default semantics handle non-matching tuples,
+			// making these guards redundant. Skip them so this branch
+			// routes through the SubqueryPattern+defaults path.
 			continue
 		default:
 			return nil, nil // Non-ground clause
