@@ -114,15 +114,12 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	clauses = rewriter.Rewrite(clauses)
 
 	// Algebraic optimization: clauses → algebra IR → transform passes → clauses
-	// The algebra compiler is experimental and only covers a subset of clause
-	// types. If compilation, optimization, or decompilation fails, fall back
-	// to the original unoptimized clauses — the existing executor handles them.
 	if p.options.EnableAlgebraOptimizer {
 		optimized, err := optimizeViaAlgebra(clauses, p.handler)
-		if err == nil {
-			clauses = optimized
+		if err != nil {
+			return nil, fmt.Errorf("algebra optimization failed: %w", err)
 		}
-		// On error: silently fall back to original clauses
+		clauses = optimized
 	}
 
 	// Step 2b: Detect constant-bindable scalar inputs

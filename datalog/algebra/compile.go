@@ -19,7 +19,14 @@ func Compile(q *query.Query) (*Node, error) {
 // compileClauses builds an algebra tree from an ordered list of clauses.
 // Each clause either produces a new leaf or wraps/joins with the existing tree.
 func compileClauses(clauses []query.Clause) (*Node, error) {
-	var current *Node // accumulates the running relation
+	return compileClausesFrom(clauses, nil)
+}
+
+// compileClausesFrom builds an algebra tree starting with an initial relation.
+// Used by OR branch compilation to thread the outer relation into branches
+// so that NOT clauses have a relation to anti-join against.
+func compileClausesFrom(clauses []query.Clause, initial *Node) (*Node, error) {
+	current := initial
 
 	for _, clause := range clauses {
 		node, err := compileClause(clause, current)
@@ -68,6 +75,9 @@ func compileClause(clause query.Clause, current *Node) (*Node, error) {
 
 	case *query.GroundPredicate:
 		return compilePredicate(c, current), nil
+
+	case *query.DatabaseFunctionPredicate:
+		return compileDatabaseFunctionPredicate(c, current)
 
 	case query.Predicate:
 		return compilePredicate(c, current), nil
@@ -295,9 +305,10 @@ func compileOrFallback(branches [][]query.Clause, current *Node) (*Node, error) 
 	}
 
 	if !isSubqueryFallback {
-		// Not the subquery+ground pattern. Compile as generic fallback.
-		// Falls back to the existing OR-fallback executor path.
-		return compileOrFallbackGeneric(branches, current)
+		// Not the subquery+ground pattern. The algebra compiler cannot
+		// represent per-tuple fallback semantics (try branch 1, else branch 2)
+		// for arbitrary OR clauses. Return an error so the caller knows.
+		return nil, fmt.Errorf("OR fallback with non-subquery+ground branches is not supported by the algebra compiler")
 	}
 
 	// Compile the subquery branch
@@ -331,39 +342,6 @@ func compileOrFallback(branches [][]query.Clause, current *Node) (*Node, error) 
 	return subNode, nil
 }
 
-// compileOrFallbackGeneric handles OR-fallback that doesn't match the
-// subquery+ground pattern. Preserves the original OrClause for the
-// existing executor fallback path.
-func compileOrFallbackGeneric(branches [][]query.Clause, current *Node) (*Node, error) {
-	// Compile each branch independently
-	children := make([]*Node, 0, len(branches))
-	for i, branch := range branches {
-		compiled, err := compileClauses(branch)
-		if err != nil {
-			return nil, fmt.Errorf("OR fallback branch %d: %w", i, err)
-		}
-		if len(compiled.Symbols()) == 0 {
-			return nil, fmt.Errorf("OR fallback branch %d compiled to empty relation (unsupported clause types)", i)
-		}
-		children = append(children, compiled)
-	}
-
-	var output []query.Symbol
-	if len(children) > 0 {
-		output = children[0].Symbols()
-	}
-
-	// Use LeftOuterJoin to represent fallback semantics
-	join := &Node{
-		Op: RuleJoin,
-		Data: &Join{
-			Kind:   LeftOuterJoin,
-			Output: output,
-		},
-		Children: children,
-	}
-	return joinWith(current, join), nil
-}
 
 // compilePredicate produces a Select node for any predicate type.
 func compilePredicate(p query.Predicate, current *Node) *Node {
@@ -375,6 +353,58 @@ func compilePredicate(p query.Predicate, current *Node) *Node {
 			Output:    symbolsOf(current),
 		},
 		Children: childrenOf(current),
+	}
+}
+
+// compileDatabaseFunctionPredicate compiles database function predicates.
+// missing?($ ?e :attr) compiles to AntiJoin(current, Scan([?e :attr _])).
+// Other database function predicates fall back to Select.
+func compileDatabaseFunctionPredicate(p *query.DatabaseFunctionPredicate, current *Node) (*Node, error) {
+	if current == nil {
+		return nil, fmt.Errorf("database function predicate requires prior relation")
+	}
+
+	switch fn := p.Function.(type) {
+	case *query.MissingFunction:
+		// missing?($ ?e :attr) ≡ (not [?e :attr _])
+		// Compile to AntiJoin(current, Scan([?e :attr _]))
+		entityVar, ok := fn.Entity.(query.VariableTerm)
+		if !ok {
+			// Non-variable entity — fall back to Select
+			return compilePredicate(p, current), nil
+		}
+
+		// Build scan pattern: [?e :attr _]
+		scanPattern := &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Variable{Name: entityVar.Symbol},
+				query.Constant{Value: fn.Attr},
+				query.Blank{},
+			},
+		}
+		innerNode := &Node{
+			Op: RuleScan,
+			Data: &Scan{
+				Pattern: scanPattern,
+				Output:  []query.Symbol{entityVar.Symbol},
+			},
+		}
+
+		joinSyms := sharedSymbols(current.Symbols(), innerNode.Symbols())
+
+		return &Node{
+			Op: RuleAntiJoin,
+			Data: &AntiJoin{
+				JoinSymbols:  joinSyms,
+				Output:       current.Symbols(),
+				ExplicitJoin: false,
+			},
+			Children: []*Node{current, innerNode},
+		}, nil
+
+	default:
+		// Other database function predicates — compile as Select
+		return compilePredicate(p, current), nil
 	}
 }
 

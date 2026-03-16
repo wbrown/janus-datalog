@@ -1,8 +1,6 @@
 package algebra
 
 import (
-	"reflect"
-
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -44,7 +42,9 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 
 	// Skip rewrite when default is a slice/vector — the ground expression
 	// loses schema type information ([]interface{} vs []string).
-	if ge.Default != nil && reflect.TypeOf(ge.Default).Kind() == reflect.Slice {
+	// This is a known limitation: the algebra cannot represent typed defaults.
+	switch ge.Default.(type) {
+	case []interface{}, []string, []int64, []float64, []bool:
 		return rebuildWithChildren(node, children)
 	}
 

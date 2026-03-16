@@ -156,10 +156,9 @@ func TestGetElseScanRewrite_InputParamEntitySkipped(t *testing.T) {
 	assert.Equal(t, 1, mapsAfter, "get-else with input param entity should NOT be rewritten")
 }
 
-// TestCompileOrFallbackGeneric_UnsupportedClauseBypass verifies that
-// OR clauses with unsupported clause types (like missing?) cause a
-// compilation error, triggering the planner bypass.
-func TestCompileOrFallbackGeneric_UnsupportedClauseBypass(t *testing.T) {
+// TestCompileMissingPredicateInOr verifies that missing? inside an OR
+// clause compiles successfully to an AntiJoin (not an error).
+func TestCompileMissingPredicateInOr(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?name
 	  :where
 	  [?e :entity/name ?name]
@@ -167,7 +166,11 @@ func TestCompileOrFallbackGeneric_UnsupportedClauseBypass(t *testing.T) {
 	      [?e :entity/lore []])]`)
 	require.NoError(t, err)
 
-	_, err = Compile(q)
-	assert.Error(t, err, "OR with missing? predicate should fail compilation (triggering bypass)")
-	t.Logf("Expected compile error: %v", err)
+	root, err := Compile(q)
+	require.NoError(t, err, "OR with missing? should compile (missing? → AntiJoin)")
+	t.Logf("Compiled:\n%s", root.String())
+
+	// Verify the tree contains an AntiJoin (from missing?)
+	antiJoins := countNodes(root, RuleAntiJoin)
+	assert.Greater(t, antiJoins, 0, "should have AntiJoin from missing?")
 }
