@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -274,6 +275,89 @@ func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
 			require.NoError(t, err)
 			t.Logf("%s: %d results", tc.name, len(results))
 		})
+	}
+}
+
+// TestAlgebraIntegration_PrefetchInDecorrelatedSubquery verifies that entity
+// prefetch warms the EA cache inside decorrelated subqueries. The production
+// bottleneck: a decorrelated subquery scans [?t :task/root ?s], then subsequent
+// patterns [?t :task/status ...], [?t :task/key ...] each do full storage scans.
+// With prefetch, patterns 2+ should resolve from the EA cache.
+func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
+	dir, err := os.MkdirTemp("", "prefetch-decorrelate-test-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	var matchEvents []annotations.Event
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path: dir,
+		AnnotationHandler: func(e annotations.Event) {
+			if e.Name == "matches->relations" {
+				matchEvents = append(matchEvents, e)
+			}
+			if e.Name == "prefetch/trigger" {
+				t.Logf("[PREFETCH] %v", e.Data)
+			}
+			if e.Name == "cache/check" || e.Name == "cache/match-handled" {
+				t.Logf("[%s] %v", e.Name, e.Data)
+			}
+		},
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create scenarios and tasks
+	tx := db.NewTransaction()
+	for s := 0; s < 5; s++ {
+		scenario := datalog.NewIdentity(fmt.Sprintf("scenario:%d", s))
+		tx.Add(scenario, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/scenario"))
+		tx.Add(scenario, datalog.NewKeyword(":scenario/title"), fmt.Sprintf("Scenario %d", s))
+		for i := 0; i < 20; i++ {
+			task := datalog.NewIdentity(fmt.Sprintf("task:%d:%d", s, i))
+			tx.Add(task, datalog.NewKeyword(":task/root"), scenario)
+			tx.Add(task, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete"))
+			tx.Add(task, datalog.NewKeyword(":task/token-count"), int64(100+i))
+		}
+	}
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Decorrelated subquery: counts completed tasks per scenario.
+	// The inner WHERE has [?t :task/root ?s] then [?t :task/status :status/complete].
+	// After decorrelation, this runs once for all scenarios.
+	// Pattern 1 (:task/status) should benefit from prefetch after pattern 0 (:task/root).
+	q := `[:find ?e ?count
+	       :where [?e :entity/type :entity.type/scenario]
+	              (or [(q [:find (count ?t)
+	                       :in $ ?s
+	                       :where [?t :task/root ?s]
+	                              [?t :task/status :status/complete]]
+	                      $ ?e) [[?count]]]
+	                  [(ground 0) ?count])]`
+
+	db.ClearPlanCache()
+	matchEvents = nil
+
+	opts := DefaultPlannerOptions()
+	opts.EnableAlgebraOptimizer = true
+	opts.EnableSubqueryDecorrelation = false
+	rel, err := queryWithPlannerOptions(db, q, opts)
+	require.NoError(t, err)
+	results, err := executor.CollectTuples(rel, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 5, len(results), "should return 5 scenarios")
+	for _, r := range results {
+		t.Logf("  %v: count=%v", r[0], r[1])
+		assert.Equal(t, int64(20), r[1], "each scenario has 20 completed tasks")
+	}
+
+	// Log match events to trace cache vs storage usage
+	t.Logf("Total matches->relations events: %d", len(matchEvents))
+	for _, e := range matchEvents {
+		pattern := e.Data["pattern"]
+		count := e.Data["match.count"]
+		t.Logf("  [%v] %v matches (latency: %v)", pattern, count, e.Latency)
 	}
 }
 

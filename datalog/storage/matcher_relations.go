@@ -105,12 +105,33 @@ func (m *BadgerMatcher) MatchWithConstraints(
 
 	// CACHE OPTIMIZATION: When A is known (from pattern constant or bindings),
 	// use the cache for each E value instead of storage scans.
+	if m.handler != nil {
+		m.handler(annotations.Event{
+			Name: "cache/check",
+			Data: map[string]interface{}{
+				"pattern":      pattern.String(),
+				"a_resolved":   fmt.Sprintf("%v (%T)", aResolved, aResolved),
+				"cache_nil":    m.cache == nil,
+				"txID_nil":     m.txID == nil,
+				"has_bindings": bindings != nil && len(bindings) > 0,
+			},
+		})
+	}
 	if m.cache != nil && m.txID == nil {
 		if aResolved != nil {
 			// Phase 1: A has a single known value (from constant or single-tuple binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
 				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw, -1)
 				if handled {
+					if m.handler != nil {
+						m.handler(annotations.Event{
+							Name: "cache/match-handled",
+							Data: map[string]interface{}{
+								"pattern": pattern.String(),
+								"results": cacheResult.Size(),
+							},
+						})
+					}
 					return cacheResult, nil
 				}
 			}

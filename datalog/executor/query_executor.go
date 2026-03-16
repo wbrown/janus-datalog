@@ -85,6 +85,33 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return []Relation(groups.Collapse(ctx))
 			}))
 
+			// Prefetch entity attributes into EA cache after first DataPattern.
+			// Subsequent patterns calling Match() with bindings will hit
+			// matchWithBindingsFromCache → GetOrResolve → cache hit (O(1))
+			// instead of cold GetOrResolve → per-(E,A) EATV scan.
+			// Materializes streaming relations to extract entity IDs — this
+			// materialization would happen anyway when the next pattern joins.
+			if prefetcher, ok := e.matcher.(EntityPrefetcher); ok && i == 0 && len(groups) > 0 {
+				g := groups[len(groups)-1]
+				if _, isStreaming := g.(*StreamingRelation); isStreaming {
+					g = g.Materialize()
+					groups[len(groups)-1] = g
+				}
+				entities := extractEntityIDs(g, g.Symbols())
+				if len(entities) > 50 {
+					if collector := ctx.Collector(); collector != nil {
+						collector.Add(annotations.Event{
+							Name: "prefetch/trigger",
+							Data: map[string]interface{}{
+								"entity_count": len(entities),
+								"symbols":      fmt.Sprintf("%v", g.Symbols()),
+							},
+						})
+					}
+					prefetcher.PrefetchEntities(entities)
+				}
+			}
+
 		case *query.Expression:
 			var err error
 			groups, err = e.executeExpression(ctx, c, groups)
