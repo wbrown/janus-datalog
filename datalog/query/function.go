@@ -219,9 +219,12 @@ func (g GroundFunction) String() string {
 		for i, v := range values {
 			parts[i] = fmt.Sprintf("%v", v)
 		}
-		result := "[" + parts[0]
-		for i := 1; i < len(parts); i++ {
-			result += " " + parts[i]
+		result := "["
+		for i, p := range parts {
+			if i > 0 {
+				result += " "
+			}
+			result += p
 		}
 		result += "]"
 		return fmt.Sprintf("(ground %s)", result)

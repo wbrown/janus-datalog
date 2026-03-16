@@ -349,13 +349,21 @@ func (cb *cachedBranch) probe(outerTuple Tuple) []Tuple {
 	return nil
 }
 
-// isUncorrelatedBranch returns true if the branch produces the same result
-// regardless of the outer tuple. Per ALGEBRA.md: a branch is uncorrelated
-// if it contains a SubqueryPattern whose Inputs are only $ (database source).
-func isUncorrelatedBranch(branch []query.Clause) bool {
+// isCacheableBranch returns true if the branch can be evaluated once with
+// join variables free, cached, and probed per outer tuple.
+//
+// Two cases:
+// 1. SubqueryPattern with only $ inputs (uncorrelated subquery)
+// 2. In an or-join: DataPattern-only branches where the join variables
+//    are the only connection to the outer context. Evaluated with join
+//    vars free, the DataPattern returns ALL matches; the cache indexes
+//    by join vars for O(1) per-tuple probe.
+func isCacheableBranch(branch []query.Clause, isOrJoin bool) bool {
 	for _, c := range branch {
-		if sp, ok := c.(*query.SubqueryPattern); ok {
-			for _, input := range sp.Inputs {
+		switch cl := c.(type) {
+		case *query.SubqueryPattern:
+			// Uncorrelated subquery: inputs are only $ (database source)
+			for _, input := range cl.Inputs {
 				switch inp := input.(type) {
 				case query.Constant:
 					if sym, ok := inp.Value.(query.Symbol); ok && sym.IsSource() {
@@ -372,9 +380,16 @@ func isUncorrelatedBranch(branch []query.Clause) bool {
 				}
 			}
 			return true
+		case *query.DataPattern:
+			// DataPattern in or-join: can be evaluated with join vars free
+			continue
+		default:
+			// Expressions, predicates, etc. — not cacheable
+			return false
 		}
 	}
-	return false
+	// All clauses are DataPatterns — cacheable in or-join context
+	return isOrJoin && len(branch) > 0
 }
 
 // buildCachedBranch builds a hash index over a branch result keyed on
@@ -507,7 +522,8 @@ func (it *OrFallbackIterator) Next() bool {
 				// SubqueryPattern returns ALL groups (not joined with the
 				// current outer tuple). The cache indexes the full result.
 				execInput := inputRel
-				if isUncorrelatedBranch(branch) {
+				isOrJoin := len(it.joinSyms) > 0
+				if isCacheableBranch(branch, isOrJoin) {
 					execInput = nil
 				}
 				var err error

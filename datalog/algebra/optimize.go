@@ -40,7 +40,15 @@ func (o *Optimizer) Optimize(root *Node) (*Node, error) {
 	// Rebuild passes with handler if set, to enable annotations inside transforms
 	passes := o.passes
 	if o.handler != nil {
-		passes = []Pass{DecorrelationPass(o.handler)}
+		passes = make([]Pass, 0, len(o.passes))
+		for _, p := range o.passes {
+			switch p.Name {
+			case "decorrelation":
+				passes = append(passes, DecorrelationPass(o.handler))
+			default:
+				passes = append(passes, p)
+			}
+		}
 	}
 
 	tree := ToParseTree(root)
@@ -72,5 +80,6 @@ func (o *Optimizer) Optimize(root *Node) (*Node, error) {
 func DefaultPasses() []Pass {
 	return []Pass{
 		DecorrelationPass(nil),
+		GetElseScanRewritePass(),
 	}
 }

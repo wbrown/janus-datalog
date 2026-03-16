@@ -165,6 +165,12 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 			return rebuildWithChildren(node, children)
 		}
 
+		// Log the optimized inner WHERE for debugging
+		emit("algebra/decorrelate-inner-optimized", map[string]interface{}{
+			"clause_count": len(optimizedWhere),
+			"clauses":      fmt.Sprintf("%v", optimizedWhere),
+		})
+
 		// Build the decorrelated query with optimized WHERE
 		optimizedDecorrelated := &query.Query{
 			Find:  decorrelated.Find,

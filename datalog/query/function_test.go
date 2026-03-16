@@ -132,6 +132,27 @@ func TestTimeExtractionFunction(t *testing.T) {
 	}
 }
 
+func TestGroundFunctionString(t *testing.T) {
+	t.Run("scalar", func(t *testing.T) {
+		g := GroundFunction{Value: 42}
+		if g.String() != "(ground 42)" {
+			t.Errorf("got %q", g.String())
+		}
+	})
+	t.Run("vector", func(t *testing.T) {
+		g := GroundFunction{Value: []interface{}{1, 2, 3}}
+		if g.String() != "(ground [1 2 3])" {
+			t.Errorf("got %q", g.String())
+		}
+	})
+	t.Run("empty_vector", func(t *testing.T) {
+		g := GroundFunction{Value: []interface{}{}}
+		if g.String() != "(ground [])" {
+			t.Errorf("got %q", g.String())
+		}
+	})
+}
+
 func TestAggregates(t *testing.T) {
 	values := []interface{}{int64(10), int64(20), int64(30), int64(40)}
 

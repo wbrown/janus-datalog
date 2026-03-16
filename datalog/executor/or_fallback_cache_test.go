@@ -9,8 +9,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-func TestIsUncorrelatedBranch(t *testing.T) {
-	t.Run("uncorrelated_constant_dollar", func(t *testing.T) {
+func TestIsCacheableBranch(t *testing.T) {
+	t.Run("uncorrelated_subquery", func(t *testing.T) {
 		branch := []query.Clause{
 			&query.SubqueryPattern{
 				Inputs: []query.PatternElement{
@@ -18,10 +18,11 @@ func TestIsUncorrelatedBranch(t *testing.T) {
 				},
 			},
 		}
-		assert.True(t, isUncorrelatedBranch(branch))
+		assert.True(t, isCacheableBranch(branch, false))
+		assert.True(t, isCacheableBranch(branch, true))
 	})
 
-	t.Run("correlated_variable_input", func(t *testing.T) {
+	t.Run("correlated_subquery", func(t *testing.T) {
 		branch := []query.Clause{
 			&query.SubqueryPattern{
 				Inputs: []query.PatternElement{
@@ -30,7 +31,8 @@ func TestIsUncorrelatedBranch(t *testing.T) {
 				},
 			},
 		}
-		assert.False(t, isUncorrelatedBranch(branch))
+		assert.False(t, isCacheableBranch(branch, false))
+		assert.False(t, isCacheableBranch(branch, true))
 	})
 
 	t.Run("ground_only_branch", func(t *testing.T) {
@@ -40,12 +42,31 @@ func TestIsUncorrelatedBranch(t *testing.T) {
 				Binding:  datalog.NewSymbol("?count"),
 			},
 		}
-		assert.False(t, isUncorrelatedBranch(branch),
+		assert.False(t, isCacheableBranch(branch, false),
 			"ground-only branches have no SubqueryPattern")
+		assert.False(t, isCacheableBranch(branch, true),
+			"expression branches are not cacheable")
 	})
 
 	t.Run("no_clauses", func(t *testing.T) {
-		assert.False(t, isUncorrelatedBranch(nil))
+		assert.False(t, isCacheableBranch(nil, false))
+		assert.False(t, isCacheableBranch(nil, true))
+	})
+
+	t.Run("data_pattern_in_or_join", func(t *testing.T) {
+		branch := []query.Clause{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: datalog.NewKeyword(":project/title")},
+					query.Variable{Name: datalog.NewSymbol("?title")},
+				},
+			},
+		}
+		assert.False(t, isCacheableBranch(branch, false),
+			"DataPattern not cacheable outside or-join")
+		assert.True(t, isCacheableBranch(branch, true),
+			"DataPattern cacheable in or-join context")
 	})
 }
 

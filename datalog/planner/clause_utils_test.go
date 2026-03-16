@@ -533,6 +533,54 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 	})
 }
 
+// TestOrJoinClauseJoinVarRequiredNotProvided verifies that join vars
+// not produced by all branches are in requires (not provides).
+// This is the Rule 5 get-else pattern: (or-join [?rxn] [?rxn :attr ?v] [(ground "") ?v])
+// Branch 1 produces ?rxn, branch 2 does not. ?rxn must be required from outside.
+func TestOrJoinClauseJoinVarRequiredNotProvided(t *testing.T) {
+	orJoin := &query.OrJoinClause{
+		JoinVars: []query.Symbol{datalog.NewSymbol("?rxn")},
+		Branches: [][]query.Clause{
+			{
+				&query.DataPattern{
+					Elements: []query.PatternElement{
+						query.Variable{Name: datalog.NewSymbol("?rxn")},
+						query.Constant{Value: datalog.NewKeyword(":item/note")},
+						query.Variable{Name: datalog.NewSymbol("?reason")},
+					},
+				},
+			},
+			{
+				&query.Expression{
+					Function: &query.GroundFunction{Value: ""},
+					Binding:  datalog.NewSymbol("?reason"),
+				},
+			},
+		},
+	}
+
+	syms := extractOrJoinClauseSymbols(orJoin)
+
+	requiresSet := make(map[query.Symbol]bool)
+	for _, sym := range syms.Requires {
+		requiresSet[sym] = true
+	}
+	providesSet := make(map[query.Symbol]bool)
+	for _, sym := range syms.Provides {
+		providesSet[sym] = true
+	}
+
+	if !requiresSet[datalog.NewSymbol("?rxn")] {
+		t.Errorf("join var ?rxn should be REQUIRED (not produced by all branches), got Requires: %v", syms.Requires)
+	}
+	if providesSet[datalog.NewSymbol("?rxn")] {
+		t.Errorf("join var ?rxn should NOT be in provides (branch 2 doesn't produce it), got Provides: %v", syms.Provides)
+	}
+	if !providesSet[datalog.NewSymbol("?reason")] {
+		t.Errorf("?reason should be provided (produced by all branches), got Provides: %v", syms.Provides)
+	}
+}
+
 func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 	// Verify NOT clauses require all variables from inner clauses
 	t.Run("NOT requires variables from inner pattern", func(t *testing.T) {

@@ -342,6 +342,9 @@ func compileOrFallbackGeneric(branches [][]query.Clause, current *Node) (*Node, 
 		if err != nil {
 			return nil, fmt.Errorf("OR fallback branch %d: %w", i, err)
 		}
+		if len(compiled.Symbols()) == 0 {
+			return nil, fmt.Errorf("OR fallback branch %d compiled to empty relation (unsupported clause types)", i)
+		}
 		children = append(children, compiled)
 	}
 
