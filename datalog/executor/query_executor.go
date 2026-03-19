@@ -1316,20 +1316,54 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *q
 	return rel, nil
 }
 
-// branchesNeedCorrelatedExecution returns true if any branch has expression
-// clauses that require outer bindings to evaluate. Pattern-only branches
-// don't need correlated execution — they can be evaluated independently
-// and joined with outer context during collapse.
+// branchesNeedCorrelatedExecution returns true if any branch contains
+// expression clauses (at any nesting depth) that require outer bindings
+// to evaluate. Pattern-only branches don't need correlated execution —
+// they can be evaluated independently and joined with outer context
+// during collapse.
 func branchesNeedCorrelatedExecution(branches [][]query.Clause) bool {
 	for _, branch := range branches {
-		for _, c := range branch {
-			switch c.(type) {
-			case *query.Expression, *query.SubqueryPattern:
+		if clausesNeedCorrelation(branch) {
+			return true
+		}
+	}
+	return false
+}
+
+// clausesNeedCorrelation recursively checks whether any clause in the
+// list (or nested within it) contains expressions or correlated predicates.
+func clausesNeedCorrelation(clauses []query.Clause) bool {
+	for _, c := range clauses {
+		switch cl := c.(type) {
+		case *query.Expression, *query.SubqueryPattern:
+			return true
+		case query.Predicate:
+			if len(cl.RequiredSymbols()) > 0 {
 				return true
-			case query.Predicate:
-				if pred, ok := c.(query.Predicate); ok && len(pred.RequiredSymbols()) > 0 {
-					return true
-				}
+			}
+		case *query.OrClause:
+			if branchesNeedCorrelatedExecution(cl.Branches) {
+				return true
+			}
+		case *query.OrJoinClause:
+			if branchesNeedCorrelatedExecution(cl.Branches) {
+				return true
+			}
+		case *query.OrDefaultClause:
+			if branchesNeedCorrelatedExecution(cl.Branches) {
+				return true
+			}
+		case *query.OrDefaultJoinClause:
+			if branchesNeedCorrelatedExecution(cl.Branches) {
+				return true
+			}
+		case *query.NotClause:
+			if clausesNeedCorrelation(cl.Clauses) {
+				return true
+			}
+		case *query.NotJoinClause:
+			if clausesNeedCorrelation(cl.Clauses) {
+				return true
 			}
 		}
 	}

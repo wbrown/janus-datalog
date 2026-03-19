@@ -307,3 +307,75 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 		assert.Equal(t, int64(0), byName["Carol"])
 	})
 }
+
+// TestOrCorrelatedUnionWithNestedOrExpression_E2E verifies that OR with nested
+// OR+expression branches correctly routes to correlated execution when using
+// variable attributes from collection inputs.
+//
+// Without recursive branchesNeedCorrelatedExecution, the outer OR uses
+// uncorrelated union, ?fwd gets dropped from the output (intersection of
+// branch symbols), and ?target picks up values from ALL attributes (not just
+// the collection), causing identity to return wrong types (string, bool
+// instead of Identity).
+func TestOrCorrelatedUnionWithNestedOrExpression_E2E(t *testing.T) {
+	dir, err := os.MkdirTemp("", "or-nested-expr-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	area1 := datalog.NewIdentity("area:caves")
+	room1 := datalog.NewIdentity("room:guard")
+	room2 := datalog.NewIdentity("room:shrine")
+	npc1 := datalog.NewIdentity("npc:merchant")
+
+	tx := db.NewTransaction()
+	tx.Add(area1, datalog.NewKeyword(":entity/name"), "Coastal Caves")
+	tx.Add(room1, datalog.NewKeyword(":entity/name"), "Guard Chamber")
+	tx.Add(room2, datalog.NewKeyword(":entity/name"), "Shrine Hall")
+	tx.Add(npc1, datalog.NewKeyword(":entity/name"), "Merchant")
+	// room1 and room2 share area1
+	tx.Add(room1, datalog.NewKeyword(":entity/area"), area1)
+	tx.Add(room2, datalog.NewKeyword(":entity/area"), area1)
+	// npc1 is located in room1
+	tx.Add(npc1, datalog.NewKeyword(":entity/location"), room1)
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Exact production pattern: variable attributes from collection inputs
+	results, err := executor.CollectTuples(db.Query(`
+		[:find ?related
+		 :in $ ?self [?fwd ...] [?rev ...]
+		 :where
+		 (or (and [?self ?fwd ?target]
+		          (or [?related ?fwd ?target]
+		              [(identity ?target) ?related]))
+		     [?related ?rev ?self])]`,
+		room1,
+		[]datalog.Keyword{datalog.NewKeyword(":entity/area")},
+		[]datalog.Keyword{datalog.NewKeyword(":entity/location")},
+	))
+	require.NoError(t, err)
+
+	t.Logf("Results (%d):", len(results))
+	identities := make(map[datalog.Identity]bool)
+	for i, row := range results {
+		val := row[0]
+		id, ok := val.(datalog.Identity)
+		if !ok {
+			t.Errorf("result[%d]: expected Identity, got %T (%v)", i, val, val)
+			continue
+		}
+		identities[id] = true
+		t.Logf("  [%d] %v", i, id)
+	}
+
+	// room2 shares :entity/area with room1
+	assert.True(t, identities[room2], "missing room2 (shares area via forward ref)")
+	// area1 via (identity ?target)
+	assert.True(t, identities[area1], "missing area1 (area entity via identity)")
+	// npc1 has :entity/location = room1 (reverse ref)
+	assert.True(t, identities[npc1], "missing npc1 (located in room1 via reverse ref)")
+}

@@ -263,16 +263,39 @@ func compileOrJoin(oj *query.OrJoinClause, current *Node) (*Node, error) {
 	return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current)
 }
 
-// branchesRequireOuterContext returns true if any branch contains predicates
-// that are inherently correlated — they reference the outer relation and
-// cannot be compiled as independent union branches.
+// branchesRequireOuterContext returns true if any branch contains (at any
+// nesting depth) predicates that are inherently correlated — they reference
+// the outer relation and cannot be compiled as independent union branches.
 func branchesRequireOuterContext(branches [][]query.Clause) bool {
 	for _, branch := range branches {
-		for _, c := range branch {
-			switch c.(type) {
-			case *query.NotClause, *query.NotJoinClause:
+		if clausesRequireOuterContext(branch) {
+			return true
+		}
+	}
+	return false
+}
+
+func clausesRequireOuterContext(clauses []query.Clause) bool {
+	for _, c := range clauses {
+		switch cl := c.(type) {
+		case *query.NotClause, *query.NotJoinClause:
+			return true
+		case *query.MissingPredicate:
+			return true
+		case *query.OrClause:
+			if branchesRequireOuterContext(cl.Branches) {
 				return true
-			case *query.MissingPredicate:
+			}
+		case *query.OrJoinClause:
+			if branchesRequireOuterContext(cl.Branches) {
+				return true
+			}
+		case *query.OrDefaultClause:
+			if branchesRequireOuterContext(cl.Branches) {
+				return true
+			}
+		case *query.OrDefaultJoinClause:
+			if branchesRequireOuterContext(cl.Branches) {
 				return true
 			}
 		}
