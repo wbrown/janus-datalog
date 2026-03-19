@@ -17,8 +17,10 @@ func (*Expression) clause()        {}
 func (*Subquery) clause()          {}
 func (*NotClause) clause()         {}
 func (*NotJoinClause) clause()     {}
-func (*OrClause) clause()          {}
-func (*OrJoinClause) clause()      {}
+func (*OrClause) clause()              {}
+func (*OrJoinClause) clause()          {}
+func (*OrDefaultClause) clause()       {}
+func (*OrDefaultJoinClause) clause()   {}
 
 // Expression wraps a Function with an optional binding
 type Expression struct {
@@ -120,41 +122,65 @@ type OrJoinClause struct {
 	Branches [][]Clause // Each branch is a list of clauses
 }
 
-// BranchHasExpressions checks if any clause in a branch is an expression type.
-// This is used to determine whether an OR clause should use fallback semantics
-// (Clojure-style first-non-empty-wins) vs union semantics (Datalog-style).
-func BranchHasExpressions(branch []Clause) bool {
-	for _, c := range branch {
-		switch c.(type) {
-		case *Expression, *Subquery, *SubqueryPattern:
-			return true
-		case *GroundPredicate:
-			return true
-		case Predicate:
-			// Predicates that require input symbols (e.g., DatabaseFunctionPredicate
-			// for missing?, Comparison for [(< ?x 5)]) need outer bindings to
-			// evaluate — union mode passes nil. Predicates with no required symbols
-			// (e.g., HistoryPredicate) can work in union mode.
-			if pred, ok := c.(Predicate); ok && len(pred.RequiredSymbols()) > 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// OrHasExpressions checks if any branch in an OR clause contains expressions.
-func OrHasExpressions(branches [][]Clause) bool {
-	for _, branch := range branches {
-		if BranchHasExpressions(branch) {
-			return true
-		}
-	}
-	return false
-}
 
 func (o *OrJoinClause) String() string {
 	result := "(or-join ["
+	for i, v := range o.JoinVars {
+		if i > 0 {
+			result += " "
+		}
+		result += v.String()
+	}
+	result += "]"
+	for _, branch := range o.Branches {
+		if len(branch) == 1 {
+			result += " " + branch[0].String()
+		} else {
+			result += " (and"
+			for _, c := range branch {
+				result += " " + c.String()
+			}
+			result += ")"
+		}
+	}
+	result += ")"
+	return result
+}
+
+// OrDefaultClause represents a disjunction with fallback semantics:
+// (or-default branch1 branch2 ...)
+// For each outer tuple, tries branches in order until one returns results.
+// This is a janus-datalog extension for the "data with default" pattern.
+type OrDefaultClause struct {
+	Branches [][]Clause
+}
+
+func (o *OrDefaultClause) String() string {
+	result := "(or-default"
+	for _, branch := range o.Branches {
+		if len(branch) == 1 {
+			result += " " + branch[0].String()
+		} else {
+			result += " (and"
+			for _, c := range branch {
+				result += " " + c.String()
+			}
+			result += ")"
+		}
+	}
+	result += ")"
+	return result
+}
+
+// OrDefaultJoinClause represents an or-default-join with explicit variable binding:
+// (or-default-join [vars] branch1 branch2 ...)
+type OrDefaultJoinClause struct {
+	JoinVars []Symbol
+	Branches [][]Clause
+}
+
+func (o *OrDefaultJoinClause) String() string {
+	result := "(or-default-join ["
 	for i, v := range o.JoinVars {
 		if i > 0 {
 			result += " "

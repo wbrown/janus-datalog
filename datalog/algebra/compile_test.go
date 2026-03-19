@@ -73,7 +73,7 @@ func TestCompileOrFallback(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count
 	  :where
 	  [?e :entity/type :entity.type/scenario]
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]]
@@ -399,7 +399,7 @@ func TestRoundTrip_LateralJoin(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count
 	  :where
 	  [?e :entity/type :entity.type/scenario]
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]]
@@ -429,19 +429,19 @@ func TestRoundTrip_LateralJoin(t *testing.T) {
 		t.Logf("  [%d] %T: %s", i, c, c.String())
 	}
 
-	// Should have a DataPattern and an OrJoinClause (the OR-fallback with join vars)
+	// Should have a DataPattern and an OrDefaultJoinClause (the OR-fallback with join vars)
 	hasPattern := false
-	hasOrJoin := false
+	hasOrDefaultJoin := false
 	for _, c := range clauses {
 		switch c.(type) {
 		case *query.DataPattern:
 			hasPattern = true
-		case *query.OrJoinClause:
-			hasOrJoin = true
+		case *query.OrDefaultJoinClause:
+			hasOrDefaultJoin = true
 		}
 	}
 	assert.True(t, hasPattern, "decompiled has DataPattern")
-	assert.True(t, hasOrJoin, "decompiled has OrJoinClause (OR-fallback with defaults and join vars)")
+	assert.True(t, hasOrDefaultJoin, "decompiled has OrDefaultJoinClause (OR-fallback with defaults and join vars)")
 }
 
 func TestRoundTrip_LateralJoinNoDefaults(t *testing.T) {

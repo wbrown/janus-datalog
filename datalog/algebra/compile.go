@@ -67,6 +67,12 @@ func compileClause(clause query.Clause, current *Node) (*Node, error) {
 	case *query.OrJoinClause:
 		return compileOrJoin(c, current)
 
+	case *query.OrDefaultClause:
+		return compileOrDefault(c, current)
+
+	case *query.OrDefaultJoinClause:
+		return compileOrDefaultJoin(c, current)
+
 	case *query.Comparison:
 		return compilePredicate(c, current), nil
 
@@ -237,26 +243,50 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 	}, nil
 }
 
-// compileOr handles OR clauses. Union semantics produce a Union node.
-// Fallback semantics (OR with subquery + ground default) produce a
-// LateralJoin with default values.
+// compileOr handles OR clauses — union semantics.
+// When branches contain correlated predicates (NOT, missing?) that require
+// outer context, routes to the fallback/lateral-join path since independent
+// union branches can't express anti-joins against the outer relation.
 func compileOr(oc *query.OrClause, current *Node) (*Node, error) {
-	if !query.OrHasExpressions(oc.Branches) {
-		// Union semantics
-		return compileOrUnion(oc.Branches, current)
+	if branchesRequireOuterContext(oc.Branches) {
+		return compileOrFallback(oc.Branches, current)
 	}
+	return compileOrUnion(oc.Branches, current)
+}
 
-	// Fallback semantics — check for the correlated subquery + ground pattern
+// compileOrJoin handles OR-JOIN clauses — union semantics with join vars.
+// Same correlated-predicate detection as compileOr.
+func compileOrJoin(oj *query.OrJoinClause, current *Node) (*Node, error) {
+	if branchesRequireOuterContext(oj.Branches) {
+		return compileOrFallbackWithJoinVars(oj.Branches, oj.JoinVars, current)
+	}
+	return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current)
+}
+
+// branchesRequireOuterContext returns true if any branch contains predicates
+// that are inherently correlated — they reference the outer relation and
+// cannot be compiled as independent union branches.
+func branchesRequireOuterContext(branches [][]query.Clause) bool {
+	for _, branch := range branches {
+		for _, c := range branch {
+			switch c.(type) {
+			case *query.NotClause, *query.NotJoinClause:
+				return true
+			case *query.MissingPredicate:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// compileOrDefault handles OR-DEFAULT clauses — fallback semantics.
+func compileOrDefault(oc *query.OrDefaultClause, current *Node) (*Node, error) {
 	return compileOrFallback(oc.Branches, current)
 }
 
-// compileOrJoin is like compileOr but with explicit join variables.
-// The join variables are preserved on the Union node so the decompiler
-// can emit OrJoinClause (not OrClause) to maintain round-trip fidelity.
-func compileOrJoin(oj *query.OrJoinClause, current *Node) (*Node, error) {
-	if !query.OrHasExpressions(oj.Branches) {
-		return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current)
-	}
+// compileOrDefaultJoin handles OR-DEFAULT-JOIN clauses — fallback with join vars.
+func compileOrDefaultJoin(oj *query.OrDefaultJoinClause, current *Node) (*Node, error) {
 	return compileOrFallbackWithJoinVars(oj.Branches, oj.JoinVars, current)
 }
 
@@ -419,12 +449,12 @@ func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symb
 
 	output := mergeSymbols(compiled[0].Symbols(), compiled[1].Symbols())
 
-	union := &Node{
-		Op:       RuleUnion,
-		Data:     &Union{Output: output, JoinVars: joinVars},
+	lateralUnion := &Node{
+		Op:       RuleLateralUnion,
+		Data:     &LateralUnion{Output: output, JoinVars: joinVars},
 		Children: compiled,
 	}
-	return union, nil
+	return lateralUnion, nil
 }
 
 // compilePredicate produces a Select node for any predicate type.

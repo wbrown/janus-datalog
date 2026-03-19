@@ -100,7 +100,7 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 			[:find ?name ?count
 			 :where [?p :entity/type :type/parent]
 			        [?p :parent/name ?name]
-			        (or [(q [:find (count ?c)
+			        (or-default [(q [:find (count ?c)
 			                 :in $ ?p
 			                 :where [?c :child/parent ?p]]
 			                $ ?p) [[?count]]]

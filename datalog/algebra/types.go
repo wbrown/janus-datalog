@@ -24,8 +24,9 @@ const (
 	RuleMap         = "Map"
 	RuleJoin        = "Join"
 	RuleAntiJoin    = "AntiJoin"
-	RuleUnion       = "Union"
-	RuleLateralJoin = "LateralJoin"
+	RuleUnion        = "Union"
+	RuleLateralUnion = "LateralUnion"
+	RuleLateralJoin  = "LateralJoin"
 	RuleAggregate   = "Aggregate"
 	RuleConstant    = "Constant"
 )
@@ -177,11 +178,22 @@ func (a *AntiJoin) String() string {
 	return fmt.Sprintf("▷ on [%s]", strings.Join(syms, ", "))
 }
 
-// Union combines branches. R ∪ S
+// Union combines branches independently. R ∪ S
 // Compiled from query.OrClause or query.OrJoinClause with union semantics.
+// Branches are evaluated independently (no outer context).
 type Union struct {
 	Output   []query.Symbol // Shared output symbols across branches
 	JoinVars []query.Symbol // Explicit join variables from or-join (nil for plain or)
+}
+
+// LateralUnion combines branches with per-tuple evaluation against the outer relation.
+// R ⋈_L∪ (B₁ ∪ B₂ ∪ ... Bₙ)
+// Each branch sees the outer tuple as context. Used when branches contain
+// correlated predicates (NOT, missing?) or fallback defaults (or-default).
+// Decompiles to OrDefaultClause/OrDefaultJoinClause.
+type LateralUnion struct {
+	Output   []query.Symbol // Output symbols across branches
+	JoinVars []query.Symbol // Explicit join variables (nil for plain or-default)
 }
 
 func (u *Union) OutputSymbols() []query.Symbol { return u.Output }
@@ -194,6 +206,18 @@ func (u *Union) String() string {
 		return fmt.Sprintf("∪_join(%s)", strings.Join(syms, ", "))
 	}
 	return "∪"
+}
+
+func (lu *LateralUnion) OutputSymbols() []query.Symbol { return lu.Output }
+func (lu *LateralUnion) String() string {
+	if len(lu.JoinVars) > 0 {
+		syms := make([]string, len(lu.JoinVars))
+		for i, s := range lu.JoinVars {
+			syms[i] = s.String()
+		}
+		return fmt.Sprintf("⋈_L∪_join(%s)", strings.Join(syms, ", "))
+	}
+	return "⋈_L∪"
 }
 
 // LateralJoin is a correlated subquery. R ⋈_L S(r.x)

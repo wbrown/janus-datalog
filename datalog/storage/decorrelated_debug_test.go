@@ -45,7 +45,7 @@ func TestDecorrelatedOrJoinBranchResults(t *testing.T) {
 		[:find ?scenario ?taskCount ?totalTokens
 		 :where
 		 [?scenario :scenario/id ?id]
-		 (or [(q [:find (count ?t) (sum ?tok)
+		 (or-default [(q [:find (count ?t) (sum ?tok)
 		          :in $ ?s
 		          :where [?t :task/scenario ?s]
 		                 [?t :task/status :status/complete]

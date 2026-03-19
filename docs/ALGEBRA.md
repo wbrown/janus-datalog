@@ -180,7 +180,7 @@ decompile(left) ++
                <default branch>)
 ```
 
-Left side clauses followed by an or-join:
+Left side clauses followed by an or-default-join:
 - Branch 1: decompiled right side (the Aggregate → SubqueryPattern)
 - Branch 2: default expressions for non-join symbols only (join keys subtracted)
 
@@ -193,13 +193,13 @@ The or-join evaluates per outer tuple. Branch 1 returns all subquery results;
 `filterBranchToOuterTuple` matches to the current outer tuple on shared symbols.
 Non-matching tuples get branch 2 (defaults).
 
-**Round-trip invariant:** Left clauses preserved. Right side becomes an or-join
-SubqueryPattern. Default values map to ground or get-else expressions. Join
-symbols are explicit on the or-join clause.
+**Round-trip invariant:** Left clauses preserved. Right side becomes an
+or-default-join SubqueryPattern. Default values map to ground or get-else
+expressions. Join symbols are explicit on the or-default-join clause.
 
 **Test:** Build LeftOuterJoin(defaults=[0]) over an outer Scan and an inner
-Aggregate. Decompile. Verify: outer DataPattern + OrJoinClause with SubqueryPattern
-branch and default branch.
+Aggregate. Decompile. Verify: outer DataPattern + OrDefaultJoinClause with
+SubqueryPattern branch and default branch.
 
 ### AntiJoin
 
@@ -219,9 +219,13 @@ DataPattern + NotClause.
 
 ### Union
 
-**Compile:** `(or [?e :a ?x] [?e :b ?x])` (pattern-only OR) → `Union(output=[?e, ?x])(branch1, branch2)`
+**Compile:** `(or [?e :a ?x] [?e :b ?x])` → `Union(output=[?e, ?x])(branch1, branch2)`
 
 For `or-join`: `(or-join [?e] ...)` → `Union(output=[?e, ?x], joinVars=[?e])(branch1, branch2)`
+
+When an `(or ...)` or `(or-join ...)` branch contains correlated predicates
+(NOT, missing?) that require outer context, the compiler detects this via
+`branchesRequireOuterContext()` and routes to the LateralUnion path instead.
 
 **Decompile:**
 - `Union(joinVars=nil)(children...)` → `(or <decompile(child1)> <decompile(child2)> ...)`
@@ -233,9 +237,31 @@ For `or-join`: `(or-join [?e] ...)` → `Union(output=[?e, ?x], joinVars=[?e])(b
 **Test:** Compile pattern-only OR and or-join, decompile, assert correct clause
 type with branches and join vars.
 
+### LateralUnion
+
+**Compile:** `(or-default [?e :a ?x] [(ground 0) ?x])` (general fallback) →
+`LateralUnion(output=[?e, ?x])(branch1, branch2)`
+
+For `or-default-join`: `(or-default-join [?x] ...)` →
+`LateralUnion(output=[?e, ?x], joinVars=[?x])(branch1, branch2)`
+
+Also produced when `(or ...)` / `(or-join ...)` branches contain correlated
+predicates (NOT, missing?) that require per-tuple evaluation against the outer
+relation. Independent Union compilation cannot express anti-joins without context.
+
+**Decompile:**
+- `LateralUnion(joinVars=nil)(children...)` → `(or-default <decompile(child1)> <decompile(child2)> ...)`
+- `LateralUnion(joinVars=[?x])(children...)` → `(or-default-join [?x] <decompile(child1)> <decompile(child2)> ...)`
+
+**Round-trip invariant:** Each branch's clauses preserved. `or-default` ↔
+OrDefaultClause, `or-default-join` ↔ OrDefaultJoinClause with join vars preserved.
+
+**Test:** Compile OR-default with ground fallback, decompile, assert
+OrDefaultClause/OrDefaultJoinClause with correct branches.
+
 ### LateralJoin
 
-**Compile:** `(or [(q [...] $ ?x) [[?count]]] [(ground 0) ?count])` →
+**Compile:** `(or-default [(q [...] $ ?x) [[?count]]] [(ground 0) ?count])` →
 
 ```
 LateralJoin(
@@ -250,23 +276,23 @@ LateralJoin(
 
 ```
 decompile(outer) ++
-(or-join [?x] [(q <innerQuery> $ ?x) <binding>]
-               [(ground 0) ?count])
+(or-default-join [?x] [(q <innerQuery> $ ?x) <binding>]
+                       [(ground 0) ?count])
 ```
 
 Join vars come from correlation vars (correlated) or shared symbols between
 binding and outer relation (uncorrelated). Default branch binds only non-join
-symbols — join keys come from the outer relation via or-join.
+symbols — join keys come from the outer relation via or-default-join.
 
 Without defaults: `decompile(outer) ++ [(q <innerQuery> $ ?x) <binding>]`
 
 **Round-trip invariant:** Inner query, binding form, correlation variables, and
 default values all preserved. Correlation variables appear as SubqueryPattern
-inputs. Defaults produce or-join with ground branch. Join vars ensure the
-phaser doesn't reorder the OR before the patterns that provide the join keys.
+inputs. Defaults produce or-default-join with ground branch. Join vars ensure
+the phaser doesn't reorder the OR before the patterns that provide the join keys.
 
 **Test:** Compile an OR-fallback with correlated subquery + ground, decompile,
-assert OrJoinClause (not OrClause) with correct join vars.
+assert OrDefaultJoinClause (not OrJoinClause) with correct join vars.
 
 ---
 
@@ -930,10 +956,12 @@ key-only iterators make redundant scans cheap.
 | NotClause | AntiJoin | ✅ |
 | NotJoinClause | AntiJoin (explicit) | ✅ |
 | OR (pattern-only) | Union | ✅ |
-| OR (subquery+ground) | LateralJoin+defaults | ✅ |
-| OR (NOT+ground fallback) | Union via compileOrFallbackExclusive | ✅ |
-| OR (subquery+NOT+ground) | LateralJoin+defaults (NOT skipped) | ✅ |
+| OR (with correlated predicates) | LateralUnion (detected, routed) | ✅ |
 | or-join | Union with JoinVars preserved | ✅ |
+| or-default (subquery+ground) | LateralJoin+defaults | ✅ |
+| or-default (NOT+ground fallback) | LateralUnion via compileOrFallbackExclusive | ✅ |
+| or-default (subquery+NOT+ground) | LateralJoin+defaults (NOT skipped) | ✅ |
+| or-default-join | LateralUnion with JoinVars preserved | ✅ |
 | SubqueryPattern (correlated) | LateralJoin | ✅ |
 | SubqueryPattern (uncorrelated) | LateralJoin (no correlation vars) | ✅ |
 

@@ -13,29 +13,32 @@ import (
 // Note: fmt is used for String() method
 
 // OrFallbackRelation is a streaming relation that evaluates OR branches
-// lazily per outer tuple. For each outer tuple, it tries branches in order
-// until one produces results, then yields those results.
+// lazily per outer tuple. When shortCircuit=true (or-default), it tries
+// branches in order until one produces results. When shortCircuit=false
+// (correlated union), it evaluates ALL branches and unions the results.
 type OrFallbackRelation struct {
 	executor      *DefaultQueryExecutor
 	ctx           Context
-	clause        *query.OrClause
+	branches      [][]query.Clause
 	outerRel      Relation
 	symbols       []query.Symbol // Determined lazily from first result
 	options       ExecutorOptions
 	iteratorCount int            // Track how many iterators have been created (for debugging)
 	joinSyms      []query.Symbol // From or-join: explicit join variables for cache keying
 	prefetched    bool           // True when PrefetchEntities has warmed the EA cache
+	shortCircuit  bool           // true = fallback (first match wins), false = correlated union (all branches)
 }
 
-// NewOrFallbackRelation creates a streaming OR fallback relation.
-// The symbols are computed upfront from the outer relation and OR clause
-// to avoid needing to peek at results.
+// NewOrFallbackRelation creates a streaming OR relation.
+// When shortCircuit=true, uses fallback semantics (first match wins).
+// When shortCircuit=false, uses correlated union (all branches contribute).
 func NewOrFallbackRelation(
 	executor *DefaultQueryExecutor,
 	ctx Context,
-	clause *query.OrClause,
+	branches [][]query.Clause,
 	outerRel Relation,
 	options ExecutorOptions,
+	shortCircuit bool,
 ) *OrFallbackRelation {
 	// Compute output symbols statically:
 	// Output = outer symbols + symbols produced by branches (that aren't in outer)
@@ -46,7 +49,7 @@ func NewOrFallbackRelation(
 	}
 
 	// Collect symbols that branches produce (common across all branches)
-	branchOutputs := computeOrBranchOutputSymbols(clause)
+	branchOutputs := computeOrBranchOutputSymbols(branches)
 
 	// Build output symbols: outer symbols first, then new symbols from branches
 	symbols := make([]query.Symbol, len(outerSyms))
@@ -58,25 +61,26 @@ func NewOrFallbackRelation(
 	}
 
 	return &OrFallbackRelation{
-		executor: executor,
-		ctx:      ctx,
-		clause:   clause,
-		outerRel: outerRel,
-		symbols:  symbols,
-		options:  options,
+		executor:     executor,
+		ctx:          ctx,
+		branches:     branches,
+		outerRel:     outerRel,
+		symbols:      symbols,
+		options:      options,
+		shortCircuit: shortCircuit,
 	}
 }
 
 // computeOrBranchOutputSymbols computes symbols that OR branches produce.
 // Returns symbols that are common to all branches (intersection).
-func computeOrBranchOutputSymbols(clause *query.OrClause) []query.Symbol {
-	if len(clause.Branches) == 0 {
+func computeOrBranchOutputSymbols(branches [][]query.Clause) []query.Symbol {
+	if len(branches) == 0 {
 		return nil
 	}
 
 	// Collect outputs from first branch
-	firstBranchOutputs := collectBranchOutputSymbols(clause.Branches[0])
-	if len(clause.Branches) == 1 {
+	firstBranchOutputs := collectBranchOutputSymbols(branches[0])
+	if len(branches) == 1 {
 		return firstBranchOutputs
 	}
 
@@ -87,8 +91,8 @@ func computeOrBranchOutputSymbols(clause *query.OrClause) []query.Symbol {
 	}
 
 	// Intersect with other branches
-	for i := 1; i < len(clause.Branches); i++ {
-		branchOutputs := collectBranchOutputSymbols(clause.Branches[i])
+	for i := 1; i < len(branches); i++ {
+		branchOutputs := collectBranchOutputSymbols(branches[i])
 		branchSet := make(map[query.Symbol]bool)
 		for _, sym := range branchOutputs {
 			branchSet[sym] = true
@@ -178,7 +182,15 @@ func collectBranchOutputSymbols(branch []query.Clause) []query.Symbol {
 			}
 		case *query.OrClause:
 			// plain or: output symbols are the intersection across branches
-			orOutputs := computeOrBranchOutputSymbols(clause)
+			orOutputs := computeOrBranchOutputSymbols(clause.Branches)
+			for _, v := range orOutputs {
+				if !seen[v] {
+					seen[v] = true
+					outputs = append(outputs, v)
+				}
+			}
+		case *query.OrDefaultClause:
+			orOutputs := computeOrBranchOutputSymbols(clause.Branches)
 			for _, v := range orOutputs {
 				if !seen[v] {
 					seen[v] = true
@@ -211,7 +223,8 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 	return &OrFallbackIterator{
 		executor:   r.executor,
 		ctx:        r.ctx,
-		clause:     r.clause,
+		branches:     r.branches,
+		shortCircuit: r.shortCircuit,
 		outerIter:  outerIter,
 		outerRel:   r.outerRel, // Materialized relation for EA cache branch building
 		outerSyms:  r.outerRel.Symbols(),
@@ -332,11 +345,12 @@ func (r *OrFallbackRelation) RequiresCopy() bool {
 
 // OrFallbackIterator lazily evaluates OR branches per outer tuple.
 type OrFallbackIterator struct {
-	executor  *DefaultQueryExecutor
-	ctx       Context
-	clause    *query.OrClause
-	outerIter Iterator
-	outerRel  Relation       // Materialized outer relation (for EA cache branch building)
+	executor     *DefaultQueryExecutor
+	ctx          Context
+	branches     [][]query.Clause
+	shortCircuit bool // true = fallback, false = correlated union
+	outerIter    Iterator
+	outerRel     Relation       // Materialized outer relation (for EA cache branch building)
 	outerSyms []query.Symbol
 	options   ExecutorOptions
 	joinSyms  []query.Symbol // From or-join: used as cache key (not all shared symbols)
@@ -353,6 +367,11 @@ type OrFallbackIterator struct {
 	// See ALGEBRA.md "OR-Fallback Branch Caching" for specification.
 	branchCache map[int]*cachedBranch
 	prefetched  bool // True when PrefetchEntities has warmed the EA cache for outer entities
+
+	// Correlated union state: track which branch we're iterating within the current outer tuple
+	unionBranchIdx int    // next branch to try for current outer tuple
+	unionOuterTuple Tuple // current outer tuple being processed
+	unionInputRel   Relation // inputRel for current outer tuple
 }
 
 // cachedBranch holds a hash index over an uncorrelated branch result.
@@ -572,6 +591,98 @@ func (it *OrFallbackIterator) Next() bool {
 		return false
 	}
 
+	// Correlated union mode: yield from buffer if available
+	if !it.shortCircuit {
+		return it.nextCorrelatedUnion()
+	}
+
+	// Short-circuit (fallback/or-default) mode: original behavior
+	return it.nextShortCircuit()
+}
+
+// nextCorrelatedUnion streams through ALL branches per outer tuple.
+// Uses the same projectedIterator as the short-circuit path, but instead of
+// stopping after the first successful branch, advances to the next branch
+// when the current one is exhausted.
+func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
+	for {
+		// If we have a current branch iterator, try to get next tuple from it
+		if it.currentBranchIter != nil {
+			if it.currentBranchIter.Next() {
+				it.currentTuple = it.currentBranchIter.Tuple()
+				return true
+			}
+			// Branch exhausted, close it
+			it.currentBranchIter.Close()
+			it.currentBranchIter = nil
+			it.currentBranchRelation = nil
+		}
+
+		// Try remaining branches for the current outer tuple
+		for it.unionBranchIdx < len(it.branches) {
+			branch := it.branches[it.unionBranchIdx]
+			it.unionBranchIdx++
+
+			branchResult, err := it.executor.executeInnerClauses(it.ctx, branch, it.unionInputRel)
+			if err != nil {
+				it.err = err
+				it.done = true
+				return false
+			}
+			if branchResult == nil {
+				continue
+			}
+
+			branchIter := branchResult.Iterator()
+			if branchIter.Next() {
+				branchSyms := branchResult.Symbols()
+				firstTuple := branchIter.Tuple()
+
+				if len(branchSyms) != len(it.outputSyms) || !symbolsMatch(branchSyms, it.outputSyms) {
+					it.currentTuple = projectTupleWithFallback(firstTuple, branchSyms, it.outputSyms, it.unionOuterTuple, it.outerSyms)
+				} else if branchResult.RequiresCopy() {
+					it.currentTuple = copyTuple(firstTuple)
+				} else {
+					it.currentTuple = firstTuple
+				}
+				it.currentBranchRelation = branchResult
+				it.currentBranchIter = &projectedIterator{
+					inner:          branchIter,
+					branchRelation: branchResult,
+					branchSyms:     branchSyms,
+					outputSyms:     it.outputSyms,
+					outerTuple:     it.unionOuterTuple,
+					outerSyms:      it.outerSyms,
+				}
+				return true
+			}
+			branchIter.Close()
+		}
+
+		// All branches exhausted for current outer tuple — advance to next
+		if !it.outerIter.Next() {
+			it.done = true
+			return false
+		}
+
+		it.unionOuterTuple = it.outerIter.Tuple()
+		it.unionBranchIdx = 0
+
+		// Build single-tuple relation for this input
+		if len(it.outerSyms) > 0 {
+			it.unionInputRel = NewMaterializedRelationWithOptions(
+				it.outerSyms,
+				[]Tuple{it.unionOuterTuple},
+				it.options,
+			)
+		} else {
+			it.unionInputRel = nil
+		}
+	}
+}
+
+// nextShortCircuit tries branches in order until one returns results (fallback semantics).
+func (it *OrFallbackIterator) nextShortCircuit() bool {
 	for {
 		// If we have a current branch iterator, try to get next tuple from it
 		if it.currentBranchIter != nil {
@@ -626,7 +737,7 @@ func (it *OrFallbackIterator) Next() bool {
 		}
 
 		// Try each branch until one returns results
-		for branchIdx, branch := range it.clause.Branches {
+		for branchIdx, branch := range it.branches {
 			var branchResult Relation
 
 			// Check cache for uncorrelated branches (O(1) probe)

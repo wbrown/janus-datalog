@@ -171,6 +171,30 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return []Relation(groups.Collapse(ctx))
 			}))
 
+		case *query.OrDefaultClause:
+			newRel, err := e.executeOrDefaultClause(ctx, c, groups)
+			if err != nil {
+				return nil, fmt.Errorf("clause %d (or-default) failed: %w", i, err)
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(ctx))
+			}))
+
+		case *query.OrDefaultJoinClause:
+			newRel, err := e.executeOrDefaultJoinClause(ctx, c, groups)
+			if err != nil {
+				return nil, fmt.Errorf("clause %d (or-default-join) failed: %w", i, err)
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
+				return []Relation(groups.Collapse(ctx))
+			}))
+
 		case *query.NotClause:
 			// NOT clauses filter existing relations (anti-join)
 			var err error
@@ -1200,7 +1224,9 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 	}, nil
 }
 
-// executeOrClause performs union of OR branches, or fallback semantics for expression branches
+// executeOrClause performs union of OR branches.
+// Routes to correlated union (per-tuple, all branches) when branches reference
+// outer symbols, or uncorrelated union (independent execution) otherwise.
 func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
 	start := time.Now()
 	collector := ctx.Collector()
@@ -1215,8 +1241,7 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 			Name:  annotations.OrClauseBegin,
 			Start: start,
 			Data: map[string]interface{}{
-				"branch_count":    len(clause.Branches),
-				"has_expressions": query.OrHasExpressions(clause.Branches),
+				"branch_count": len(clause.Branches),
 			},
 		})
 	}
@@ -1225,12 +1250,13 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	var err error
 	var semantics string
 
-	// Check if any branch has expressions - use fallback semantics if so
-	if query.OrHasExpressions(clause.Branches) {
-		semantics = "fallback"
-		result, err = e.executeOrClauseFallback(ctx, clause, groups)
+	// Route to correlated union only when branches have expression clauses
+	// that require outer bindings. Pattern-only branches work fine in
+	// uncorrelated union — the join with outer context happens during collapse.
+	if branchesNeedCorrelatedExecution(clause.Branches) {
+		semantics = "correlated-union"
+		result, err = e.executeOrClauseCorrelatedUnion(ctx, clause.Branches, groups)
 	} else {
-		// Standard union semantics for pattern-only OR
 		semantics = "union"
 		result, err = e.executeOrClauseUnion(ctx, clause, groups)
 	}
@@ -1259,63 +1285,86 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 	return result, err
 }
 
-// executeOrClauseFallback implements Clojure-style fallback semantics:
-// For each input tuple, try branches in order until one returns a result.
-// This is truly streaming - we process one tuple at a time with short-circuit evaluation.
-func (e *DefaultQueryExecutor) executeOrClauseFallback(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
-	collector := ctx.Collector()
+// executeOrClauseCorrelatedUnion evaluates all branches per outer tuple and unions results.
+func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branches [][]query.Clause, groups Relations) (Relation, error) {
+	neededSymbols := collectOrBranchRequiredSymbols(branches)
+	outerRel := e.findOuterRelation(neededSymbols, groups)
+	return NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false), nil
+}
 
-	// Emit fallback mode annotation
-	if collector != nil {
-		collector.Add(annotations.Event{
-			Name:  annotations.OrClauseFallback,
-			Start: time.Now(),
-			Data: map[string]interface{}{
-				"branch_count": len(clause.Branches),
-				"groups_count": len(groups),
-			},
-		})
+// executeOrDefaultClause implements fallback semantics for or-default clauses:
+// For each input tuple, try branches in order until one returns a result.
+func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx Context, clause *query.OrDefaultClause, groups Relations) (Relation, error) {
+	neededSymbols := collectOrBranchRequiredSymbols(clause.Branches)
+	outerRel := e.findOuterRelation(neededSymbols, groups)
+	return NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true), nil
+}
+
+// executeOrDefaultJoinClause implements fallback semantics for or-default-join clauses.
+func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *query.OrDefaultJoinClause, groups Relations) (Relation, error) {
+	joinVarSet := make(map[query.Symbol]bool, len(clause.JoinVars))
+	for _, v := range clause.JoinVars {
+		joinVarSet[v] = true
 	}
 
-	// Find which symbols the OR branches need from outer context
-	neededSymbols := collectOrBranchRequiredSymbols(clause)
+	outerRel := e.findOuterRelationBySymbols(joinVarSet, groups)
 
-	// Always have an outer context - use unit relation if none available.
-	// This eliminates the "global fallback" path and unifies execution:
-	// per-tuple fallback on unit relation (one empty tuple) = try branches until one works.
-	var outerRel Relation
-	if len(groups) == 0 {
-		// No input groups - use unit relation as base case
-		outerRel = NewUnitRelation(e.options)
-	} else if len(neededSymbols) == 0 {
-		// No symbols needed from outer context - use unit relation
-		outerRel = NewUnitRelation(e.options)
-	} else {
-		// Find the group that provides ANY of the needed symbols
-		// Note: We use containsAny because neededSymbols may include OUTPUT symbols from
-		// the OR branches (like ?count in [(ground 0) ?count]). We correlate on whatever
-		// symbols ARE available from outer context.
-		var outerBindingIdx int = -1
-		for i, rel := range groups {
-			if containsAny(rel.Symbols(), neededSymbols) {
-				outerBindingIdx = i
-				break
+	prefetched := false
+	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
+	rel.joinSyms = clause.JoinVars
+	rel.prefetched = prefetched
+	return rel, nil
+}
+
+// branchesNeedCorrelatedExecution returns true if any branch has expression
+// clauses that require outer bindings to evaluate. Pattern-only branches
+// don't need correlated execution — they can be evaluated independently
+// and joined with outer context during collapse.
+func branchesNeedCorrelatedExecution(branches [][]query.Clause) bool {
+	for _, branch := range branches {
+		for _, c := range branch {
+			switch c.(type) {
+			case *query.Expression, *query.SubqueryPattern:
+				return true
+			case query.Predicate:
+				if pred, ok := c.(query.Predicate); ok && len(pred.RequiredSymbols()) > 0 {
+					return true
+				}
 			}
 		}
-		if outerBindingIdx < 0 {
-			// No group has needed symbols - use unit relation
-			outerRel = NewUnitRelation(e.options)
-		} else {
-			// Materialize the outer binding so it can be iterated multiple times:
-			// 1. By the OrFallbackRelation internally (per-tuple evaluation)
-			// 2. In the collapse operation after this function returns
-			groups[outerBindingIdx] = groups[outerBindingIdx].Materialize()
-			outerRel = groups[outerBindingIdx]
+	}
+	return false
+}
+
+// findOuterRelation finds and materializes the outer relation from groups
+// that provides any of the needed symbols. Returns unit relation if none found.
+func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) Relation {
+	if len(groups) == 0 || len(neededSymbols) == 0 {
+		return NewUnitRelation(e.options)
+	}
+
+	for i, rel := range groups {
+		if containsAny(rel.Symbols(), neededSymbols) {
+			groups[i] = groups[i].Materialize()
+			return groups[i]
 		}
 	}
 
-	// Always use OrFallbackRelation for per-tuple evaluation
-	return NewOrFallbackRelation(e, ctx, clause, outerRel, e.options), nil
+	return NewUnitRelation(e.options)
+}
+
+// findOuterRelationBySymbols finds and materializes the outer relation that
+// provides any of the specified symbols. Returns unit relation if none found.
+func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbol]bool, groups Relations) Relation {
+	for i, rel := range groups {
+		for _, sym := range rel.Symbols() {
+			if symSet[sym] {
+				groups[i] = groups[i].Materialize()
+				return groups[i]
+			}
+		}
+	}
+	return NewUnitRelation(e.options)
 }
 
 // findCommonColumns returns symbols that exist in all relations
@@ -1519,7 +1568,8 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 	return unionRelations(branchResults, commonSyms, e.options), nil
 }
 
-// executeOrJoinClause performs union with explicit join variables, or fallback for expressions
+// executeOrJoinClause performs union with explicit join variables.
+// Routes to correlated union when branches reference outer symbols.
 func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
 	if len(clause.Branches) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
@@ -1530,9 +1580,8 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 		return nil, fmt.Errorf("OR-JOIN clause has no join variables")
 	}
 
-	// Check if any branch has expressions - use fallback semantics if so
-	if query.OrHasExpressions(clause.Branches) {
-		return e.executeOrJoinClauseFallback(ctx, clause, groups)
+	if branchesNeedCorrelatedExecution(clause.Branches) {
+		return e.executeOrJoinClauseCorrelatedUnion(ctx, clause, groups)
 	}
 
 	var branchResults []Relation
@@ -1556,47 +1605,18 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 	return unionRelations(branchResults, joinVars, e.options), nil
 }
 
-// executeOrJoinClauseFallback implements per-tuple fallback semantics for or-join
-// with expressions. Uses the join variables to identify the outer relation,
-// then evaluates branches per outer tuple with OrFallbackRelation.
-func (e *DefaultQueryExecutor) executeOrJoinClauseFallback(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
-	// Find the outer group that provides any of the join variables
+// executeOrJoinClauseCorrelatedUnion evaluates all branches per outer tuple
+// for or-join clauses where branches reference outer symbols.
+func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
 	joinVarSet := make(map[query.Symbol]bool, len(clause.JoinVars))
 	for _, v := range clause.JoinVars {
 		joinVarSet[v] = true
 	}
 
-	var outerRel Relation
-	for i, rel := range groups {
-		for _, sym := range rel.Symbols() {
-			if joinVarSet[sym] {
-				groups[i] = groups[i].Materialize()
-				outerRel = groups[i]
-				break
-			}
-		}
-		if outerRel != nil {
-			break
-		}
-	}
+	outerRel := e.findOuterRelationBySymbols(joinVarSet, groups)
 
-	if outerRel == nil {
-		outerRel = NewUnitRelation(e.options)
-	}
-
-	// Entity prefetch DISABLED: benchmarked at 26s vs 13s without.
-	// PrefetchEntities scans EATV per entity (8K broad scans) which is far
-	// more I/O than the normal path's ~4 narrow attribute-specific AETV scans.
-	// The prefetch approach is fundamentally wrong — it does N broad scans
-	// when the query only needs M narrow scans (M << N).
-	prefetched := false
-
-	orClause := &query.OrClause{
-		Branches: clause.Branches,
-	}
-	rel := NewOrFallbackRelation(e, ctx, orClause, outerRel, e.options)
+	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, false)
 	rel.joinSyms = clause.JoinVars
-	rel.prefetched = prefetched
 	return rel, nil
 }
 
@@ -1639,11 +1659,11 @@ func extractEntityIDs(rel Relation, syms []query.Symbol) []datalog.Identity {
 }
 
 // collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context
-func collectOrBranchRequiredSymbols(clause *query.OrClause) []query.Symbol {
+func collectOrBranchRequiredSymbols(branches [][]query.Clause) []query.Symbol {
 	seen := make(map[query.Symbol]bool)
 	var result []query.Symbol
 
-	for _, branch := range clause.Branches {
+	for _, branch := range branches {
 		// Track which symbols this branch provides (to distinguish from required)
 		branchProvides := make(map[query.Symbol]bool)
 
@@ -2013,6 +2033,26 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 
 		case *query.OrJoinClause:
 			newRel, err := e.executeOrJoinClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = groups.Collapse(ctx)
+
+		case *query.OrDefaultClause:
+			newRel, err := e.executeOrDefaultClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = groups.Collapse(ctx)
+
+		case *query.OrDefaultJoinClause:
+			newRel, err := e.executeOrDefaultJoinClause(ctx, c, groups)
 			if err != nil {
 				return nil, err
 			}

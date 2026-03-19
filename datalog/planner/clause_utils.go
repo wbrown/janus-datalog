@@ -39,6 +39,10 @@ func extractClauseSymbols(clause query.Clause) ClauseSymbols {
 		return extractOrClauseSymbols(c)
 	case *query.OrJoinClause:
 		return extractOrJoinClauseSymbols(c)
+	case *query.OrDefaultClause:
+		return extractOrDefaultClauseSymbols(c)
+	case *query.OrDefaultJoinClause:
+		return extractOrDefaultJoinClauseSymbols(c)
 	default:
 		// Unknown clause type - conservative: requires and provides nothing
 		return ClauseSymbols{}
@@ -220,19 +224,109 @@ func extractNotJoinClauseSymbols(n *query.NotJoinClause) ClauseSymbols {
 	}
 }
 
-// extractOrClauseSymbols extracts symbols from an OR clause
-// - For union semantics (pattern-only): provides intersection of all branches
-// - For fallback semantics (has expressions): provides union of all branches
-// - Requires: symbols needed by branches but not provided within those branches
+// extractOrClauseSymbols extracts symbols from an OR clause.
+// Always uses INTERSECTION for provides (all branches execute in union mode).
 func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
-	if len(o.Branches) == 0 {
+	return extractOrBranchSymbolsIntersection(o.Branches)
+}
+
+// extractOrDefaultClauseSymbols extracts symbols from an OR-DEFAULT clause.
+// Uses UNION for provides (only one branch executes in fallback mode).
+// Requires correlation symbols from pattern branches.
+func extractOrDefaultClauseSymbols(o *query.OrDefaultClause) ClauseSymbols {
+	return extractOrBranchSymbolsFallback(o.Branches)
+}
+
+// extractOrBranchSymbolsIntersection computes symbols for union semantics.
+// Provides = intersection of all branch provides. Requires = any branch's unmet needs.
+func extractOrBranchSymbolsIntersection(branches [][]query.Clause) ClauseSymbols {
+	if len(branches) == 0 {
 		return ClauseSymbols{}
 	}
 
-	// Collect provides and requires from each branch
-	branchProvides := make([]map[query.Symbol]bool, len(o.Branches))
-	branchRequires := make([]map[query.Symbol]bool, len(o.Branches))
-	for i, branch := range o.Branches {
+	branchProvides, branchRequires := collectBranchSymbols(branches)
+
+	// INTERSECTION: only symbols ALL branches provide
+	var provides []query.Symbol
+	for sym := range branchProvides[0] {
+		inAll := true
+		for i := 1; i < len(branchProvides); i++ {
+			if !branchProvides[i][sym] {
+				inAll = false
+				break
+			}
+		}
+		if inAll {
+			provides = append(provides, sym)
+		}
+	}
+
+	requires := collectBranchRequires(branchProvides, branchRequires)
+
+	return ClauseSymbols{
+		Requires: requires,
+		Provides: provides,
+	}
+}
+
+// extractOrBranchSymbolsFallback computes symbols for fallback semantics.
+// Provides = union of all branch provides (any branch might execute).
+// Requires correlation symbols from pattern branches for per-tuple evaluation.
+func extractOrBranchSymbolsFallback(branches [][]query.Clause) ClauseSymbols {
+	if len(branches) == 0 {
+		return ClauseSymbols{}
+	}
+
+	branchProvides, branchRequires := collectBranchSymbols(branches)
+
+	// UNION: any symbol any branch provides
+	var provides []query.Symbol
+	allSymbols := make(map[query.Symbol]bool)
+	for _, syms := range branchProvides {
+		for sym := range syms {
+			allSymbols[sym] = true
+		}
+	}
+	for sym := range allSymbols {
+		provides = append(provides, sym)
+	}
+
+	requires := collectBranchRequires(branchProvides, branchRequires)
+
+	// Add correlation symbols from pattern branches (entity variable of first pattern)
+	for _, branch := range branches {
+		for _, clause := range branch {
+			if pattern, ok := clause.(*query.DataPattern); ok {
+				if len(pattern.Elements) > 0 {
+					if v, ok := pattern.Elements[0].(query.Variable); ok {
+						found := false
+						for _, r := range requires {
+							if r == v.Name {
+								found = true
+								break
+							}
+						}
+						if !found {
+							requires = append(requires, v.Name)
+						}
+					}
+				}
+				break
+			}
+		}
+	}
+
+	return ClauseSymbols{
+		Requires: requires,
+		Provides: provides,
+	}
+}
+
+// collectBranchSymbols extracts provides/requires from each branch.
+func collectBranchSymbols(branches [][]query.Clause) ([]map[query.Symbol]bool, []map[query.Symbol]bool) {
+	branchProvides := make([]map[query.Symbol]bool, len(branches))
+	branchRequires := make([]map[query.Symbol]bool, len(branches))
+	for i, branch := range branches {
 		branchProvides[i] = make(map[query.Symbol]bool)
 		branchRequires[i] = make(map[query.Symbol]bool)
 		for _, clause := range branch {
@@ -245,84 +339,24 @@ func extractOrClauseSymbols(o *query.OrClause) ClauseSymbols {
 			}
 		}
 	}
+	return branchProvides, branchRequires
+}
 
-	var provides []query.Symbol
-
-	// Check if fallback semantics apply (any branch has expressions)
-	if query.OrHasExpressions(o.Branches) {
-		// Fallback semantics: only one branch executes, so use UNION
-		// Any symbol that any branch provides will be provided
-		allSymbols := make(map[query.Symbol]bool)
-		for _, syms := range branchProvides {
-			for sym := range syms {
-				allSymbols[sym] = true
-			}
-		}
-		for sym := range allSymbols {
-			provides = append(provides, sym)
-		}
-	} else {
-		// Union semantics: all branches execute, so use INTERSECTION
-		// Only symbols that ALL branches provide are guaranteed
-		for sym := range branchProvides[0] {
-			inAll := true
-			for i := 1; i < len(branchProvides); i++ {
-				if !branchProvides[i][sym] {
-					inAll = false
-					break
-				}
-			}
-			if inAll {
-				provides = append(provides, sym)
-			}
-		}
-	}
-
-	// Collect required symbols: any symbol required by any branch
-	// that isn't provided within that branch needs to come from outside
+// collectBranchRequires collects symbols required by any branch but not self-provided.
+func collectBranchRequires(branchProvides, branchRequires []map[query.Symbol]bool) []query.Symbol {
 	allRequires := make(map[query.Symbol]bool)
 	for i, reqs := range branchRequires {
 		for sym := range reqs {
-			// Only require if this branch doesn't self-provide it
 			if !branchProvides[i][sym] {
 				allRequires[sym] = true
 			}
 		}
 	}
-
-	// For fallback semantics, require the "correlation" symbol from pattern branches.
-	// This is the entity variable (first element) of the first pattern in each
-	// pattern branch. It represents the connection to outer context that enables
-	// per-tuple fallback evaluation.
-	//
-	// Example: (or [?scenario :task ?t] [(ground 0) ?x])
-	// Here ?scenario is the correlation symbol that should be bound from outside.
-	if query.OrHasExpressions(o.Branches) {
-		for _, branch := range o.Branches {
-			// Find the first pattern in this branch
-			for _, clause := range branch {
-				if pattern, ok := clause.(*query.DataPattern); ok {
-					// The entity variable (first element) is the correlation symbol
-					if len(pattern.Elements) > 0 {
-						if v, ok := pattern.Elements[0].(query.Variable); ok {
-							allRequires[v.Name] = true
-						}
-					}
-					break // Only look at the first pattern
-				}
-			}
-		}
-	}
-
 	var requires []query.Symbol
 	for sym := range allRequires {
 		requires = append(requires, sym)
 	}
-
-	return ClauseSymbols{
-		Requires: requires,
-		Provides: provides,
-	}
+	return requires
 }
 
 // extractOrJoinClauseSymbols extracts symbols from an OR-JOIN clause
@@ -407,6 +441,55 @@ func extractOrJoinClauseSymbols(o *query.OrJoinClause) ClauseSymbols {
 	}
 }
 
+// extractOrDefaultJoinClauseSymbols extracts symbols from an OR-DEFAULT-JOIN clause.
+// Uses fallback semantics (UNION of provides) with explicit join variables.
+func extractOrDefaultJoinClauseSymbols(o *query.OrDefaultJoinClause) ClauseSymbols {
+	if len(o.Branches) == 0 {
+		return ClauseSymbols{}
+	}
+
+	branchProvides, branchRequires := collectBranchSymbols(o.Branches)
+	requires := collectBranchRequires(branchProvides, branchRequires)
+
+	// Filter source symbols from requires
+	var filteredRequires []query.Symbol
+	for _, sym := range requires {
+		if !sym.IsSource() {
+			filteredRequires = append(filteredRequires, sym)
+		}
+	}
+
+	// UNION provides (fallback: any branch might execute)
+	providesSet := make(map[query.Symbol]bool)
+	for _, syms := range branchProvides {
+		for sym := range syms {
+			providesSet[sym] = true
+		}
+	}
+
+	// Join vars not produced by any branch are required from outside
+	allRequiresSet := make(map[query.Symbol]bool)
+	for _, r := range filteredRequires {
+		allRequiresSet[r] = true
+	}
+	for _, jv := range o.JoinVars {
+		if !providesSet[jv] && !allRequiresSet[jv] {
+			allRequiresSet[jv] = true
+			filteredRequires = append(filteredRequires, jv)
+		}
+	}
+
+	var provides []query.Symbol
+	for sym := range providesSet {
+		provides = append(provides, sym)
+	}
+
+	return ClauseSymbols{
+		Requires: filteredRequires,
+		Provides: provides,
+	}
+}
+
 // patternDependsOnPendingExpression checks if a data pattern uses a variable
 // that a pending (unselected) expression provides but that isn't yet available.
 // This prevents the planner from reordering data patterns before the expressions
@@ -480,22 +563,29 @@ func canExecuteClauseWithContext(clause query.Clause, available map[query.Symbol
 	// They should wait for correlation symbols IF those symbols will become available
 	// (i.e., some other clause provides them). If no other clause provides them,
 	// the OR can execute with global fallback.
-	if orClause, ok := clause.(*query.OrClause); ok {
-		if query.OrHasExpressions(orClause.Branches) {
-			for _, req := range symbols.Requires {
-				if available[req] {
-					// Symbol is available - good
-					continue
-				}
-				// Symbol not available - check if it could become available
-				if potentiallyProvidable != nil && potentiallyProvidable[req] {
-					// Another clause could provide this symbol - wait for it
-					return false
-				}
-				// No clause will provide this symbol - global fallback is OK
+	// Or-default clauses with fallback semantics need special handling for correlation symbols.
+	// They should wait for correlation symbols IF those symbols will become available.
+	if _, ok := clause.(*query.OrDefaultClause); ok {
+		for _, req := range symbols.Requires {
+			if available[req] {
+				continue
 			}
-			return true
+			if potentiallyProvidable != nil && potentiallyProvidable[req] {
+				return false
+			}
 		}
+		return true
+	}
+	if _, ok := clause.(*query.OrDefaultJoinClause); ok {
+		for _, req := range symbols.Requires {
+			if available[req] {
+				continue
+			}
+			if potentiallyProvidable != nil && potentiallyProvidable[req] {
+				return false
+			}
+		}
+		return true
 	}
 
 	// Standard check: all required symbols must be available
@@ -541,10 +631,8 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 	}
 
 	// OR clauses that provide symbols are data sources too
-	if _, ok := clause.(*query.OrClause); ok {
-		score += 80
-	}
-	if _, ok := clause.(*query.OrJoinClause); ok {
+	switch clause.(type) {
+	case *query.OrClause, *query.OrJoinClause, *query.OrDefaultClause, *query.OrDefaultJoinClause:
 		score += 80
 	}
 
@@ -635,6 +723,14 @@ func collectDataPatternSymbols(clauses []query.Clause, out map[query.Symbol]bool
 				collectDataPatternSymbols(branch, out)
 			}
 		case *query.OrJoinClause:
+			for _, branch := range c.Branches {
+				collectDataPatternSymbols(branch, out)
+			}
+		case *query.OrDefaultClause:
+			for _, branch := range c.Branches {
+				collectDataPatternSymbols(branch, out)
+			}
+		case *query.OrDefaultJoinClause:
 			for _, branch := range c.Branches {
 				collectDataPatternSymbols(branch, out)
 			}
