@@ -35,6 +35,13 @@ type EntityLookupMatcher interface {
 	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool)
 }
 
+// EntityPrefetcher extends PatternMatcher with batch entity prefetch capability.
+// When a large set of entity IDs is known upfront, prefetching all their
+// attributes into the EA cache avoids per-entity storage scans later.
+type EntityPrefetcher interface {
+	PrefetchEntities(entities []datalog.Identity)
+}
+
 // EntityResolver provides CRDT-aware entity resolution.
 // This is used by wildcard pulls to get all attributes for an entity with
 // proper CRDT resolution (LWW for cardinality-one, add-wins for many, RGA for vector).

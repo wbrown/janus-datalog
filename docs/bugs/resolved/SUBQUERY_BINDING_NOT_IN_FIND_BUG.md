@@ -79,7 +79,7 @@ Any query that:
 
 ## Discovered
 
-2024-12-14, while implementing `GetCharacterTaskStatuses` in narrative-generators.
+2024-12-14, while implementing `GetCharacterTaskStatuses` in the application.
 
 ## Root Cause
 

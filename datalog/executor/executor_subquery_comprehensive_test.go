@@ -46,8 +46,14 @@ func TestSubqueryWithNoResults(t *testing.T) {
 
 	// EXPECTED: Empty result (not an error)
 	// When subquery returns no results, the pattern fails to match
-	if result.Size() != 0 {
-		t.Errorf("Expected 0 results (empty subquery = failed pattern), got %d", result.Size())
+	var results []Tuple
+	it := result.Iterator()
+	for it.Next() {
+		results = append(results, it.Tuple())
+	}
+	it.Close()
+	if len(results) != 0 {
+		t.Errorf("Expected 0 results (empty subquery = failed pattern), got %d", len(results))
 	}
 }
 
@@ -100,16 +106,24 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 	}
 
 	// Should get 3 results (3 prices for AAPL)
-	if result.Size() != 3 {
-		t.Errorf("Expected 3 results, got %d", result.Size())
-		for i := 0; i < result.Size(); i++ {
-			t.Logf("Result %d: %v", i, result.Get(i))
+	var tuples []Tuple
+	it := result.Iterator()
+	for it.Next() {
+		t := it.Tuple()
+		cp := make(Tuple, len(t))
+		copy(cp, t)
+		tuples = append(tuples, cp)
+	}
+	it.Close()
+	if len(tuples) != 3 {
+		t.Errorf("Expected 3 results, got %d", len(tuples))
+		for i, tp := range tuples {
+			t.Logf("Result %d: %v", i, tp)
 		}
 	}
 
 	// Check that all results have AAPL as symbol
-	for i := 0; i < result.Size(); i++ {
-		tuple := result.Get(i)
+	for i, tuple := range tuples {
 		if symbol := tuple[0].(string); symbol != "AAPL" {
 			t.Errorf("Result %d: expected symbol AAPL, got %s", i, symbol)
 		}
@@ -164,17 +178,25 @@ func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 	}
 
 	// Should get 2 results (one per department)
-	if result.Size() != 2 {
-		t.Errorf("Expected 2 results, got %d", result.Size())
-		for i := 0; i < result.Size(); i++ {
-			t.Logf("Result %d: %v", i, result.Get(i))
+	var tuples []Tuple
+	it := result.Iterator()
+	for it.Next() {
+		t := it.Tuple()
+		cp := make(Tuple, len(t))
+		copy(cp, t)
+		tuples = append(tuples, cp)
+	}
+	it.Close()
+	if len(tuples) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(tuples))
+		for i, tp := range tuples {
+			t.Logf("Result %d: %v", i, tp)
 		}
 	}
 
 	// Check results
 	resultMap := make(map[string]float64)
-	for i := 0; i < result.Size(); i++ {
-		tuple := result.Get(i)
+	for _, tuple := range tuples {
 		dept := tuple[0].(string)
 		avg := tuple[1].(float64)
 		resultMap[dept] = avg
@@ -555,13 +577,21 @@ func TestSubqueryPerformance(t *testing.T) {
 	}
 
 	// Should get 10 results (one per category)
-	if result.Size() != 10 {
-		t.Errorf("Expected 10 results, got %d", result.Size())
+	var perfTuples []Tuple
+	perfIt := result.Iterator()
+	for perfIt.Next() {
+		t := perfIt.Tuple()
+		cp := make(Tuple, len(t))
+		copy(cp, t)
+		perfTuples = append(perfTuples, cp)
+	}
+	perfIt.Close()
+	if len(perfTuples) != 10 {
+		t.Errorf("Expected 10 results, got %d", len(perfTuples))
 	}
 
 	// Check that each category has count of 100
-	for i := 0; i < result.Size(); i++ {
-		tuple := result.Get(i)
+	for _, tuple := range perfTuples {
 		count := tuple[1].(int64)
 		if count != 100 {
 			t.Errorf("Expected count 100, got %d for %v", count, tuple[0])

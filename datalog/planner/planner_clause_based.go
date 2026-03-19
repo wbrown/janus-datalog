@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -13,6 +14,7 @@ type ClauseBasedPlanner struct {
 	stats   *Statistics
 	options PlannerOptions
 	cache   *PlanCache
+	handler annotations.Handler // Set per-query for algebra bridge annotations
 }
 
 // NewClauseBasedPlanner creates a new clause-based planner
@@ -111,8 +113,14 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	rewriter := NewSemanticRewriter(p.options)
 	clauses = rewriter.Rewrite(clauses)
 
-	// TODO: Implement decorrelation as pure clause transformation
-	// (Conditional aggregate rewriting is buggy and moved to experimental/)
+	// Algebraic optimization: clauses → algebra IR → transform passes → clauses
+	if p.options.EnableAlgebraOptimizer {
+		optimized, err := optimizeViaAlgebra(clauses, p.handler)
+		if err != nil {
+			return nil, fmt.Errorf("algebra optimization failed: %w", err)
+		}
+		clauses = optimized
+	}
 
 	// Step 2b: Detect constant-bindable scalar inputs
 	// Scalars that only appear in predicates/expressions (not data patterns)

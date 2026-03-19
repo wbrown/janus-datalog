@@ -174,6 +174,7 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 	// Hash planner options that affect the plan
 	fmt.Fprintf(h, "OPTIONS:")
 	fmt.Fprintf(h, "SemanticRewrite:%v;", opts.EnableSemanticRewriting)
+	fmt.Fprintf(h, "AlgebraOptimizer:%v;", opts.EnableAlgebraOptimizer)
 
 	return hex.EncodeToString(h.Sum(nil))
 }

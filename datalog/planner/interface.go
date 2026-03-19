@@ -1,6 +1,9 @@
 package planner
 
-import "github.com/wbrown/janus-datalog/datalog/query"
+import (
+	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/query"
+)
 
 // QueryPlanner is the interface for query planners
 type QueryPlanner interface {
@@ -15,6 +18,9 @@ type QueryPlanner interface {
 
 	// SetCache sets the query plan cache
 	SetCache(cache *PlanCache)
+
+	// SetHandler sets the annotation handler for query planning observability
+	SetHandler(h annotations.Handler)
 }
 
 // Ensure ClauseBasedPlanner implements the interface
@@ -38,6 +44,11 @@ func (p *ClauseBasedPlanner) Options() PlannerOptions {
 // SetCache implements QueryPlanner for ClauseBasedPlanner
 func (p *ClauseBasedPlanner) SetCache(cache *PlanCache) {
 	p.cache = cache
+}
+
+// SetHandler implements QueryPlanner for ClauseBasedPlanner
+func (p *ClauseBasedPlanner) SetHandler(h annotations.Handler) {
+	p.handler = h
 }
 
 // CreatePlanner creates a query planner with the given options

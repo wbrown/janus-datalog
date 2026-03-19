@@ -65,7 +65,7 @@ func (f *OutputFormatter) Format(event Event) string {
 
 	switch event.Name {
 	case QueryInvoked:
-		return fmt.Sprintf("%s Query: %s", latency, truncateQuery(event.Data["query"].(string)))
+		return fmt.Sprintf("%s Query: %s", latency, event.Data["query"].(string))
 
 	case QueryPlanCreated:
 		return fmt.Sprintf("\n%s\n", event.Data["plan"].(string))
@@ -586,19 +586,6 @@ func (f *OutputFormatter) colorize(text string, attrs ...color.Attribute) string
 		return text
 	}
 	return color.New(attrs...).Sprint(text)
-}
-
-// truncateQuery shortens long queries for display.
-func truncateQuery(query string) string {
-	// Remove extra whitespace
-	query = strings.Join(strings.Fields(query), " ")
-
-	const maxLen = 80
-	if len(query) <= maxLen {
-		return query
-	}
-
-	return query[:maxLen-3] + "..."
 }
 
 // ConsoleHandler creates a handler that prints formatted events to stdout.

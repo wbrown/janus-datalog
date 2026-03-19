@@ -227,6 +227,68 @@ func (c *Cache) GetCachedAttrs(e Entity) map[Attribute]bool {
 	return result
 }
 
+// PopulateFromDatoms resolves a group of datoms for a single (E, A) pair
+// and stores the result in the cache. Uses the canonical Resolve*FromDatoms
+// functions from crdt_resolve.go — no CRDT logic duplication.
+//
+// This is the dispatch target for PrefetchEntities: as the EATV iterator
+// crosses an attribute boundary, the accumulated datoms are resolved and
+// cached here in a single call.
+func (c *Cache) PopulateFromDatoms(key CacheKey, card schema.Cardinality, datoms []datalog.Datom) {
+	// Skip if already cached and fresh
+	if val, ok := c.entries.Load(key); ok {
+		entry := val.(*CacheEntry)
+		if maxVal, ok := c.maxVersions.Load(key); ok {
+			if entry.version == maxVal.(datalog.ElementID) {
+				return
+			}
+		}
+	}
+
+	var entry *CacheEntry
+
+	switch card {
+	case schema.CardinalityOne:
+		value, maxID := ResolveLWWFromDatoms(datoms)
+		entry = &CacheEntry{
+			version:     maxID,
+			cardinality: schema.CardinalityOne,
+			oneValue:    value,
+		}
+
+	case schema.CardinalityMany:
+		members, maxID := ResolveAddWinsFromDatoms(datoms)
+		entry = &CacheEntry{
+			version:     maxID,
+			cardinality: schema.CardinalityMany,
+			manySet:     members,
+		}
+
+	case schema.CardinalityVector:
+		elements, positions, maxID := ResolveRGAFromDatoms(datoms)
+		entry = &CacheEntry{
+			version:     maxID,
+			cardinality: schema.CardinalityVector,
+			vectorList:  elements,
+			vectorIndex: positions,
+		}
+
+	default:
+		value, maxID := ResolveLWWFromDatoms(datoms)
+		entry = &CacheEntry{
+			version:     maxID,
+			cardinality: schema.CardinalityOne,
+			oneValue:    value,
+		}
+	}
+
+	if entry != nil {
+		c.entries.Store(key, entry)
+		c.UpdateMaxVersion(key, entry.version)
+		c.TrackEntityAttr(key.E, key.A)
+	}
+}
+
 // rebuild resolves the current value for (E, A) based on cardinality
 func (c *Cache) rebuild(key CacheKey, resolver CacheResolver) *CacheEntry {
 	card := resolver.GetCardinality(key.A)

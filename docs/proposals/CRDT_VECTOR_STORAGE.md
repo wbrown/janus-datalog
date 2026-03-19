@@ -1645,7 +1645,7 @@ The current design uses RGA for ordered collections, but there's a fundamental c
 | Insert/Remove API | By value (clean) | By position (exposes internals) or not supported |
 | Use cases | Skills, tags, inventory | Event logs, repeated items |
 
-**Question:** Do we need both? Or is ordered set sufficient for narrative-generators use cases?
+**Question:** Do we need both? Or is ordered set sufficient for the application use cases?
 
 **Recommendation:** Start with ordered set semantics. If duplicate support is needed later, it can be added as a fourth cardinality type.
 

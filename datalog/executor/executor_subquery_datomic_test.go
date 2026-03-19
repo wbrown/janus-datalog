@@ -52,14 +52,14 @@ func TestSubqueryDatomicCompatible(t *testing.T) {
 		}
 
 		// Check results
-		if result.Size() != 2 {
-			t.Errorf("Expected 2 results, got %d", result.Size())
+		tuples := collectResult(result)
+		if len(tuples) != 2 {
+			t.Errorf("Expected 2 results, got %d", len(tuples))
 		}
 
 		// Create a map for easier checking
 		resultMap := make(map[string]float64)
-		for i := 0; i < result.Size(); i++ {
-			tuple := result.Get(i)
+		for _, tuple := range tuples {
 			symbol := tuple[0].(string)
 			maxPrice := tuple[1].(float64)
 			resultMap[symbol] = maxPrice
@@ -99,14 +99,14 @@ func TestSubqueryDatomicCompatible(t *testing.T) {
 		}
 
 		// Both symbols should have prices > 100
-		if result.Size() != 2 {
-			t.Errorf("Expected 2 results, got %d", result.Size())
+		tuples := collectResult(result)
+		if len(tuples) != 2 {
+			t.Errorf("Expected 2 results, got %d", len(tuples))
 		}
 
 		// Create a map for easier checking
 		resultMap := make(map[string]float64)
-		for i := 0; i < result.Size(); i++ {
-			tuple := result.Get(i)
+		for _, tuple := range tuples {
 			symbol := tuple[0].(string)
 			maxPrice := tuple[1].(float64)
 			resultMap[symbol] = maxPrice

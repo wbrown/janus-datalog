@@ -40,11 +40,16 @@ type Context interface {
 	// Metadata operations for passing optimization hints
 	SetMetadata(key string, value interface{})
 	GetMetadata(key string) (interface{}, bool)
+
+	// ScanRegistry returns the per-query scan registry for sharing unbound
+	// scan results across subqueries. Lazy-initialized on first call.
+	ScanRegistry() *ScanRegistry
 }
 
 // BaseContext provides a no-op implementation with zero overhead.
 type BaseContext struct {
-	metadata map[string]interface{}
+	metadata     map[string]interface{}
+	scanRegistry *ScanRegistry
 }
 
 // NewContext creates an appropriate context based on whether annotations are needed.
@@ -122,6 +127,14 @@ func (c *BaseContext) GetMetadata(key string) (interface{}, bool) {
 	}
 	val, ok := c.metadata[key]
 	return val, ok
+}
+
+// ScanRegistry returns the per-query scan registry, initializing lazily.
+func (c *BaseContext) ScanRegistry() *ScanRegistry {
+	if c.scanRegistry == nil {
+		c.scanRegistry = NewScanRegistry()
+	}
+	return c.scanRegistry
 }
 
 // AnnotatedContext provides full annotation tracking

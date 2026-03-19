@@ -40,7 +40,7 @@ func TestOrSubqueryPlannerPhases(t *testing.T) {
  (or [(q [:find (count ?t)
           :in $ ?s
           :where [?t :task/scenario ?s]
-                 [?t :task/key :scenario/opening]
+                 [?t :task/key :task/opening]
                  [?t :task/status :status/complete]]
         $ ?scenario) [[?openingCount]]]
      [(ground 0) ?openingCount])

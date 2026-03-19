@@ -85,6 +85,35 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return []Relation(groups.Collapse(ctx))
 			}))
 
+			// Prefetch entity attributes into EA cache after first DataPattern.
+			// Subsequent patterns calling Match() with bindings will hit
+			// matchWithBindingsFromCache → GetOrResolve → cache hit (O(1))
+			// instead of cold GetOrResolve → per-(E,A) EATV scan.
+			// Materializes streaming relations to extract entity IDs — this
+			// materialization would happen anyway when the next pattern joins.
+			if e.options.EnableEntityPrefetch && i == 0 && len(groups) > 0 {
+				if prefetcher, ok := e.matcher.(EntityPrefetcher); ok {
+					g := groups[len(groups)-1]
+					if _, isStreaming := g.(*StreamingRelation); isStreaming {
+						g = g.Materialize()
+						groups[len(groups)-1] = g
+					}
+					entities := extractEntityIDs(g, g.Symbols())
+					if len(entities) > 50 {
+						if collector := ctx.Collector(); collector != nil {
+							collector.Add(annotations.Event{
+								Name: "prefetch/trigger",
+								Data: map[string]interface{}{
+									"entity_count": len(entities),
+									"symbols":      fmt.Sprintf("%v", g.Symbols()),
+								},
+							})
+						}
+						prefetcher.PrefetchEntities(entities)
+					}
+				}
+			}
+
 		case *query.Expression:
 			var err error
 			groups, err = e.executeExpression(ctx, c, groups)
@@ -837,6 +866,7 @@ func extractBindingSymbols(binding query.BindingForm) []query.Symbol {
 
 // executeSubqueryComponentized executes subquery using component-based optimization
 // This uses: SubqueryStrategySelector, SubqueryBatcher, WorkerPool, StreamingUnionBuilder
+
 func (e *DefaultQueryExecutor) executeSubqueryComponentized(ctx Context, subq *query.SubqueryPattern, groups []Relation) (Relation, error) {
 	// Initialize components (could be cached on executor for reuse)
 	selector := NewSubqueryStrategySelector(100) // Default threshold
@@ -1478,24 +1508,86 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 	return unionRelations(branchResults, joinVars, e.options), nil
 }
 
-// executeOrJoinClauseFallback implements fallback semantics for or-join with expressions
+// executeOrJoinClauseFallback implements per-tuple fallback semantics for or-join
+// with expressions. Uses the join variables to identify the outer relation,
+// then evaluates branches per outer tuple with OrFallbackRelation.
 func (e *DefaultQueryExecutor) executeOrJoinClauseFallback(ctx Context, clause *query.OrJoinClause, groups Relations) (Relation, error) {
-	joinVars := clause.JoinVars
+	// Find the outer group that provides any of the join variables
+	joinVarSet := make(map[query.Symbol]bool, len(clause.JoinVars))
+	for _, v := range clause.JoinVars {
+		joinVarSet[v] = true
+	}
 
-	for i, branch := range clause.Branches {
-		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
-		if err != nil {
-			return nil, fmt.Errorf("OR-JOIN branch %d execution failed: %w", i+1, err)
+	var outerRel Relation
+	for i, rel := range groups {
+		for _, sym := range rel.Symbols() {
+			if joinVarSet[sym] {
+				groups[i] = groups[i].Materialize()
+				outerRel = groups[i]
+				break
+			}
 		}
-
-		// Return first non-empty result, projected to join vars
-		if branchResult != nil && branchResult.Size() > 0 {
-			return projectToColumns(branchResult, joinVars, e.options), nil
+		if outerRel != nil {
+			break
 		}
 	}
 
-	// All branches empty
-	return NewMaterializedRelationWithOptions(joinVars, nil, e.options), nil
+	if outerRel == nil {
+		outerRel = NewUnitRelation(e.options)
+	}
+
+	// Entity prefetch DISABLED: benchmarked at 26s vs 13s without.
+	// PrefetchEntities scans EATV per entity (8K broad scans) which is far
+	// more I/O than the normal path's ~4 narrow attribute-specific AETV scans.
+	// The prefetch approach is fundamentally wrong — it does N broad scans
+	// when the query only needs M narrow scans (M << N).
+	prefetched := false
+
+	orClause := &query.OrClause{
+		Branches: clause.Branches,
+	}
+	rel := NewOrFallbackRelation(e, ctx, orClause, outerRel, e.options)
+	rel.joinSyms = clause.JoinVars
+	rel.prefetched = prefetched
+	return rel, nil
+}
+
+// extractEntityIDs extracts datalog.Identity values from the specified symbol
+// columns of a materialized relation. Used to collect entity IDs for prefetch.
+func extractEntityIDs(rel Relation, syms []query.Symbol) []datalog.Identity {
+	symIdx := make(map[query.Symbol]int)
+	for i, s := range rel.Symbols() {
+		symIdx[s] = i
+	}
+
+	var indices []int
+	for _, s := range syms {
+		if idx, ok := symIdx[s]; ok {
+			indices = append(indices, idx)
+		}
+	}
+	if len(indices) == 0 {
+		return nil
+	}
+
+	seen := make(map[datalog.Identity]bool)
+	var entities []datalog.Identity
+
+	it := rel.Iterator()
+	for it.Next() {
+		t := it.Tuple()
+		for _, idx := range indices {
+			if idx < len(t) {
+				if eid, ok := t[idx].(datalog.Identity); ok && !seen[eid] {
+					seen[eid] = true
+					entities = append(entities, eid)
+				}
+			}
+		}
+	}
+	it.Close()
+
+	return entities
 }
 
 // collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context
@@ -1846,6 +1938,20 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				groups = append(groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
+
+		case *query.NotClause:
+			var err error
+			groups, err = e.executeNotClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+
+		case *query.NotJoinClause:
+			var err error
+			groups, err = e.executeNotJoinClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
 
 		default:
 			return nil, fmt.Errorf("unsupported inner clause type: %T", clause)

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -13,6 +14,7 @@ type config struct {
 	replicaID         uint64
 	annotationHandler annotations.Handler
 	disableCache      bool
+	plannerOptions    *planner.PlannerOptions
 }
 
 // Option configures a database opened with Open.
@@ -37,6 +39,11 @@ func WithAnnotationHandler(h annotations.Handler) Option {
 // WithoutCache disables the EA cache; queries resolve directly from storage.
 func WithoutCache() Option {
 	return func(c *config) { c.disableCache = true }
+}
+
+// WithPlannerOptions overrides the default planner options.
+func WithPlannerOptions(opts planner.PlannerOptions) Option {
+	return func(c *config) { c.plannerOptions = &opts }
 }
 
 // WithVerbose enables query tracing to stdout.

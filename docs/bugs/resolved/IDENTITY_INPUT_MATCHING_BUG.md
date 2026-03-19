@@ -111,7 +111,7 @@ None known. The fundamental operation of "find entities where ref = X" is broken
 ## Test Location
 
 - Bug reproduction test: `tests/identity_input_matching_bug_test.go`
-- Original discovery: `narrative-generators/pkg/scenario/identity_bug_test.go`
+- Original discovery: `the application/pkg/scenario/identity_bug_test.go`
 
 ## Related Issues
 

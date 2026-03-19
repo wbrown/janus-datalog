@@ -12,7 +12,7 @@ Extend janus-datalog to query across multiple data sources in a single query. Th
 
 ### The Problem: Rules Trapped in Code
 
-The `pkg/tasks` dependency resolver in narrative-generators has:
+The `pkg/tasks` dependency resolver in the application has:
 
 - **Rules as Go structs** - Data trapped in code, not queryable
 - **Custom filter DSL** - `"region = $.region"`, `"spans($key)"` interpreted by Go

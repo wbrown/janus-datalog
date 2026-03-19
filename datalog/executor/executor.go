@@ -79,6 +79,8 @@ func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
 		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
 		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
 		EnableDebugLogging:              opts.EnableDebugLogging,
+		EnableScanSharing:               opts.EnableScanSharing,
+		EnableEntityPrefetch:            opts.EnableEntityPrefetch,
 	}
 }
 
@@ -112,6 +114,18 @@ func (e *Executor) ExecuteWithContext(ctx Context, q *query.Query) (Relation, er
 func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelations []Relation) (Relation, error) {
 	// Apply decorator pattern: wrap matcher with annotations if context has a handler
 	matcher := e.matcher
+
+	// Wrap with scan sharing if enabled — must come before annotation wrapping
+	// so that annotations see the sharing layer's decisions
+	if e.options.EnableScanSharing {
+		reg := ctx.ScanRegistry()
+		var handler annotations.Handler
+		if collector := ctx.Collector(); collector != nil {
+			handler = collector.Handler()
+		}
+		matcher = NewScanSharingMatcher(matcher, reg, handler)
+	}
+
 	if collector := ctx.Collector(); collector != nil {
 		matcher = WrapMatcher(matcher, collector.Handler())
 	}
@@ -127,6 +141,12 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 	}
 
 	ctx.QueryBegin(q.String())
+
+	// Pass annotation handler to planner for algebra bridge observability
+	if collector := ctx.Collector(); collector != nil {
+		executor.planner.SetHandler(collector.Handler())
+		defer executor.planner.SetHandler(nil)
+	}
 
 	// Build initial bindings from input relations
 	initialBindings := make(map[query.Symbol]bool)

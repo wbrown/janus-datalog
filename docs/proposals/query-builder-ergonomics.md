@@ -334,7 +334,7 @@ Compare to the equivalent EDN, which reuses `?t` and `?s` freely:
 (or [(q [:find (count ?t)
          :in $ ?s
          :where [?t :task/scenario ?s]
-                [?t :task/key :scenario/opening] ...]
+                [?t :task/key :task/opening] ...]
         $ ?scenario) [[?openingCount]]]
     [(ground 0) ?openingCount])
 ```

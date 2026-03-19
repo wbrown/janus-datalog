@@ -572,7 +572,7 @@ func TestCacheRemove_StaleInvalidation(t *testing.T) {
 // Set() + Remove Tests (S7)
 // =============================================================================
 //
-// All existing tests use tx.Add(). The narrative-generators reproducer uses
+// All existing tests use tx.Add(). The the application reproducer uses
 // tx.Set(). These tests verify the cache path with Set() then Remove().
 // =============================================================================
 

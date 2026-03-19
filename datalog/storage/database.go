@@ -49,8 +49,9 @@ type Database struct {
 	planCache         *planner.PlanCache    // Shared query plan cache
 	parseCache        *ParseCache           // Shared query parse cache
 	schema            schema.SchemaProvider // Optional schema for validation
-	annotationHandler annotations.Handler   // Optional handler for query tracing
-	clock             *LamportClock         // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
+	annotationHandler annotations.Handler      // Optional handler for query tracing
+	plannerOptions    *planner.PlannerOptions // Optional planner options override
+	clock             *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
 	replicaID         uint64                // CRDT: This database's replica identifier
 	cache             *Cache                // CRDT: Unified cache for resolved CRDT views
 	temporalTxID      *datalog.ElementID    // nil = current; set = temporal mode (AsOf/History)
@@ -73,11 +74,12 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
-	Path              string                // Path to the database directory
-	Schema            schema.SchemaProvider // Optional schema for validation
-	AnnotationHandler annotations.Handler   // Optional handler for query tracing
-	ReplicaID         uint64                // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
-	DisableCache      bool                  // Disable EA cache; queries resolve directly from storage
+	Path              string                    // Path to the database directory
+	Schema            schema.SchemaProvider     // Optional schema for validation
+	AnnotationHandler annotations.Handler       // Optional handler for query tracing
+	ReplicaID         uint64                    // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
+	DisableCache      bool                      // Disable EA cache; queries resolve directly from storage
+	PlannerOptions    *planner.PlannerOptions   // Optional override for default planner options
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -155,6 +157,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		parseCache:        NewParseCache(1000),
 		schema:            opts.Schema,
 		annotationHandler: opts.AnnotationHandler,
+		plannerOptions:    opts.PlannerOptions,
 		clock:             clock,
 		replicaID:         replicaID,
 		cache:             cache,
@@ -378,6 +381,8 @@ func (d *Database) Matcher() executor.PatternMatcher {
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
+	// Set annotation handler for storage-level events (index selection, scan details)
+	matcher.SetHandler(d.annotationHandler)
 	// Set schema for CRDT cardinality-aware resolution
 	if d.schema != nil {
 		matcher.SetSchema(d.schema)
@@ -442,7 +447,10 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		// Planner options (for old planner - kept for compatibility when UseClauseBasedPlanner: false)
 		EnableDynamicReordering:     true, // Phase reordering by symbol connectivity
 		EnablePredicatePushdown:     true, // Early predicate filtering (not storage-level)
-		EnableSubqueryDecorrelation: true, // Selinger's decorrelation optimization
+		EnableAlgebraOptimizer:      true,  // Relational algebra IR clause rewriting (decorrelation via compile → optimize → decompile)
+		EnableScanSharing:           false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
+		EnableEntityPrefetch:        false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
+		EnableSubqueryDecorrelation: false, // Selinger's decorrelation (redundant: algebra optimizer handles decorrelation)
 		EnableParallelDecorrelation: true, // Execute decorrelated merged queries in parallel
 		MaxPhases:                   10,
 		EnableFineGrainedPhases:     true, // Selectivity-based phase creation
@@ -469,7 +477,12 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 
 // NewExecutor creates a new query executor that uses the database's plan cache
 func (d *Database) NewExecutor() *executor.Executor {
-	opts := DefaultPlannerOptions()
+	var opts planner.PlannerOptions
+	if d.plannerOptions != nil {
+		opts = *d.plannerOptions
+	} else {
+		opts = DefaultPlannerOptions()
+	}
 	opts.Cache = d.planCache // Use database's cache
 	return executor.NewExecutorWithOptions(d.Matcher(), d, opts)
 }
