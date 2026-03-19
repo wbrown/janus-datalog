@@ -65,8 +65,8 @@ func (tf *TableFormatter) formatTable(symbols []query.Symbol, tuples []Tuple) st
 
 	// Set headers
 	headers := make([]string, len(symbols))
-	for i, col := range symbols {
-		headers[i] = col.String()
+	for i, sym := range symbols {
+		headers[i] = sym.String()
 	}
 	table.Header(headers)
 

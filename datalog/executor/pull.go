@@ -222,10 +222,10 @@ func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr 
 
 	if it.Next() {
 		tuple := it.Tuple()
-		cols := rel.Symbols()
+		syms := rel.Symbols()
 		symV := datalog.NewSymbol("?v")
-		for i, col := range cols {
-			if col == symV && i < len(tuple) {
+		for i, sym := range syms {
+			if sym == symV && i < len(tuple) {
 				return tuple[i], true
 			}
 		}
@@ -267,15 +267,15 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 	}
 
 	// Find symbol indices
-	cols := rel.Symbols()
+	syms := rel.Symbols()
 	symA := datalog.NewSymbol("?a")
 	symV := datalog.NewSymbol("?v")
 	aIdx := -1
 	vIdx := -1
-	for i, col := range cols {
-		if col == symA {
+	for i, sym := range syms {
+		if sym == symA {
 			aIdx = i
-		} else if col == symV {
+		} else if sym == symV {
 			vIdx = i
 		}
 	}
@@ -535,11 +535,11 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 	}
 
 	// Find value symbol index
-	cols := rel.Symbols()
+	syms := rel.Symbols()
 	symV := datalog.NewSymbol("?v")
 	vIdx := -1
-	for i, col := range cols {
-		if col == symV {
+	for i, sym := range syms {
+		if sym == symV {
 			vIdx = i
 			break
 		}

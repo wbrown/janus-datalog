@@ -90,8 +90,8 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		for sym, val := range constantBindings {
 			bindings[sym] = val
 		}
-		for i, col := range symbols {
-			bindings[col] = tuple[i]
+		for i, sym := range symbols {
+			bindings[sym] = tuple[i]
 		}
 
 		// Evaluate the predicate
@@ -143,8 +143,8 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	existingBindingIndices := make(map[query.Symbol]int)
 	for _, bindSym := range bindingSymbols {
 		found := false
-		for i, col := range symbols {
-			if col == bindSym {
+		for i, sym := range symbols {
+			if sym == bindSym {
 				existingBindingIndices[bindSym] = i
 				found = true
 				break
@@ -189,8 +189,8 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		for sym, val := range constantBindings {
 			bindings[sym] = val
 		}
-		for i, col := range symbols {
-			bindings[col] = tuple[i]
+		for i, sym := range symbols {
+			bindings[sym] = tuple[i]
 		}
 
 		// Evaluate the expression
@@ -267,8 +267,8 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 				}
 			} else {
 				// Scalar binding
-				for i, col := range symbols {
-					if bindSym, ok := expr.Binding.(query.Symbol); ok && col == bindSym {
+				for i, sym := range symbols {
+					if bindSym, ok := expr.Binding.(query.Symbol); ok && sym == bindSym {
 						newTuple[i] = result
 						break
 					}
@@ -306,24 +306,24 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	return NewMaterializedRelationWithOptions(newColumns, newTuples, opts)
 }
 
-// projectToColumns projects a relation to the specified symbols
-func projectToColumns(rel Relation, cols []query.Symbol, opts ExecutorOptions) Relation {
-	relCols := rel.Symbols()
+// projectToSymbols projects a relation to the specified symbols
+func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) Relation {
+	relSyms := rel.Symbols()
 
 	// Build symbol index mapping
-	colIndices := make([]int, len(cols))
-	for i, col := range cols {
+	symIndices := make([]int, len(syms))
+	for i, sym := range syms {
 		found := false
-		for j, relCol := range relCols {
-			if relCol == col {
-				colIndices[i] = j
+		for j, relSym := range relSyms {
+			if relSym == sym {
+				symIndices[i] = j
 				found = true
 				break
 			}
 		}
 		if !found {
 			// Symbol not found - return empty relation
-			return NewMaterializedRelationWithOptions(cols, nil, opts)
+			return NewMaterializedRelationWithOptions(syms, nil, opts)
 		}
 	}
 
@@ -331,15 +331,15 @@ func projectToColumns(rel Relation, cols []query.Symbol, opts ExecutorOptions) R
 	iter := rel.Iterator()
 	for iter.Next() {
 		tuple := iter.Tuple()
-		newTuple := make(Tuple, len(cols))
-		for i, idx := range colIndices {
+		newTuple := make(Tuple, len(syms))
+		for i, idx := range symIndices {
 			newTuple[i] = tuple[idx]
 		}
 		projected = append(projected, newTuple)
 	}
 	iter.Close()
 
-	return NewMaterializedRelationWithOptions(cols, projected, opts)
+	return NewMaterializedRelationWithOptions(syms, projected, opts)
 }
 
 // collectInnerVars collects all variables from inner clauses
@@ -379,18 +379,18 @@ func collectInnerVars(clauses []query.Clause) []query.Symbol {
 }
 
 // getUniqueCombinations extracts unique value combinations for the given symbols
-func getUniqueCombinations(rel Relation, cols []query.Symbol) []Tuple {
-	if rel == nil || len(cols) == 0 {
+func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
+	if rel == nil || len(syms) == 0 {
 		return nil
 	}
 
-	relCols := rel.Symbols()
-	colIndices := make([]int, len(cols))
-	for i, col := range cols {
+	relSyms := rel.Symbols()
+	symIndices := make([]int, len(syms))
+	for i, sym := range syms {
 		found := false
-		for j, relCol := range relCols {
-			if relCol == col {
-				colIndices[i] = j
+		for j, relSym := range relSyms {
+			if relSym == sym {
+				symIndices[i] = j
 				found = true
 				break
 			}
@@ -406,8 +406,8 @@ func getUniqueCombinations(rel Relation, cols []query.Symbol) []Tuple {
 	iter := rel.Iterator()
 	for iter.Next() {
 		tuple := iter.Tuple()
-		combo := make(Tuple, len(colIndices))
-		for i, idx := range colIndices {
+		combo := make(Tuple, len(symIndices))
+		for i, idx := range symIndices {
 			combo[i] = tuple[idx]
 		}
 		key := notOrTupleKey(combo)
@@ -433,15 +433,15 @@ func notOrTupleKey(tuple Tuple) string {
 	return key
 }
 
-// countOverlap counts how many symbols from syms are present in cols
-func countOverlap(cols, syms []query.Symbol) int {
-	colSet := make(map[query.Symbol]bool, len(cols))
-	for _, col := range cols {
-		colSet[col] = true
+// countOverlap counts how many symbols from targetSyms are present in refSyms
+func countOverlap(refSyms, targetSyms []query.Symbol) int {
+	symSet := make(map[query.Symbol]bool, len(refSyms))
+	for _, sym := range refSyms {
+		symSet[sym] = true
 	}
 	count := 0
-	for _, sym := range syms {
-		if colSet[sym] {
+	for _, sym := range targetSyms {
+		if symSet[sym] {
 			count++
 		}
 	}
@@ -449,9 +449,9 @@ func countOverlap(cols, syms []query.Symbol) int {
 }
 
 // unionRelations creates a union of multiple relations, projecting to common symbols
-func unionRelations(relations []Relation, cols []query.Symbol, opts ExecutorOptions) Relation {
+func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOptions) Relation {
 	if len(relations) == 0 {
-		return NewMaterializedRelationWithOptions(cols, nil, opts)
+		return NewMaterializedRelationWithOptions(syms, nil, opts)
 	}
 
 	seen := make(map[string]bool)
@@ -459,14 +459,14 @@ func unionRelations(relations []Relation, cols []query.Symbol, opts ExecutorOpti
 
 	for _, rel := range relations {
 		// Build symbol index mapping
-		relCols := rel.Symbols()
-		colIndices := make([]int, len(cols))
+		relSyms := rel.Symbols()
+		symIndices := make([]int, len(syms))
 		valid := true
-		for i, col := range cols {
+		for i, sym := range syms {
 			found := false
-			for j, relCol := range relCols {
-				if relCol == col {
-					colIndices[i] = j
+			for j, relSym := range relSyms {
+				if relSym == sym {
+					symIndices[i] = j
 					found = true
 					break
 				}
@@ -484,8 +484,8 @@ func unionRelations(relations []Relation, cols []query.Symbol, opts ExecutorOpti
 		iter := rel.Iterator()
 		for iter.Next() {
 			tuple := iter.Tuple()
-			projected := make(Tuple, len(cols))
-			for i, idx := range colIndices {
+			projected := make(Tuple, len(syms))
+			for i, idx := range symIndices {
 				projected[i] = tuple[idx]
 			}
 			key := notOrTupleKey(projected)
@@ -497,7 +497,7 @@ func unionRelations(relations []Relation, cols []query.Symbol, opts ExecutorOpti
 		iter.Close()
 	}
 
-	return NewMaterializedRelationWithOptions(cols, allTuples, opts)
+	return NewMaterializedRelationWithOptions(syms, allTuples, opts)
 }
 
 // convertPlannerConstraints converts planner-level storage constraints to executor-level constraints

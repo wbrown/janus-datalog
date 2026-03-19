@@ -199,8 +199,8 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 	for i, agg := range aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, col := range symbols {
-				if col == agg.Predicate {
+			for j, sym := range symbols {
+				if sym == agg.Predicate {
 					predicateIndices[i] = j
 					break
 				}
@@ -227,8 +227,8 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 
 			// Predicate passed (or no predicate), find symbol index for this aggregate
 			found := false
-			for j, col := range symbols {
-				if col == agg.Arg {
+			for j, sym := range symbols {
+				if sym == agg.Arg {
 					if j < len(tuple) {
 						aggValues[i] = append(aggValues[i], tuple[j])
 						found = true
@@ -277,8 +277,8 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	symbols := rel.Symbols()
 	groupIndices := make([]int, len(groupByVars))
 	for i, groupVar := range groupByVars {
-		for j, col := range symbols {
-			if col == groupVar {
+		for j, sym := range symbols {
+			if sym == groupVar {
 				groupIndices[i] = j
 				break
 			}
@@ -287,8 +287,8 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 
 	aggIndices := make([]int, len(aggregates))
 	for i, agg := range aggregates {
-		for j, col := range symbols {
-			if col == agg.Arg {
+		for j, sym := range symbols {
+			if sym == agg.Arg {
 				aggIndices[i] = j
 				break
 			}
@@ -300,8 +300,8 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	for i, agg := range aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, col := range symbols {
-				if col == agg.Predicate {
+			for j, sym := range symbols {
+				if sym == agg.Predicate {
 					predicateIndices[i] = j
 					break
 				}
@@ -659,9 +659,9 @@ func (r *StreamingAggregateRelation) FilterWithPredicate(pred query.Predicate) R
 }
 
 // EvaluateFunction evaluates a function and adds result as new symbol
-func (r *StreamingAggregateRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
+func (r *StreamingAggregateRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
 	r.Iterator()
-	return r.materialized.EvaluateFunction(fn, outputColumn)
+	return r.materialized.EvaluateFunction(fn, outputSymbol)
 }
 
 // Select returns a new relation filtered by predicate
@@ -677,21 +677,21 @@ func (r *StreamingAggregateRelation) Join(other Relation) Relation {
 }
 
 // HashJoin performs a hash join (delegates to materialized result)
-func (r *StreamingAggregateRelation) HashJoin(other Relation, joinCols []query.Symbol) Relation {
+func (r *StreamingAggregateRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
 	r.Iterator()
-	return r.materialized.HashJoin(other, joinCols)
+	return r.materialized.HashJoin(other, joinSyms)
 }
 
 // SemiJoin returns tuples from this relation that have matches in the other
-func (r *StreamingAggregateRelation) SemiJoin(other Relation, joinCols []query.Symbol) Relation {
+func (r *StreamingAggregateRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
 	r.Iterator()
-	return r.materialized.SemiJoin(other, joinCols)
+	return r.materialized.SemiJoin(other, joinSyms)
 }
 
 // AntiJoin returns tuples from this relation that have no matches in the other
-func (r *StreamingAggregateRelation) AntiJoin(other Relation, joinCols []query.Symbol) Relation {
+func (r *StreamingAggregateRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
 	r.Iterator()
-	return r.materialized.AntiJoin(other, joinCols)
+	return r.materialized.AntiJoin(other, joinSyms)
 }
 
 // Aggregate applies aggregation (delegates to materialized result)
@@ -716,8 +716,8 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 		groupIndices[i] = -1 // Initialize to -1 (not found)
 	}
 	for i, groupVar := range r.groupByVars {
-		for j, col := range symbols {
-			if col == groupVar {
+		for j, sym := range symbols {
+			if sym == groupVar {
 				groupIndices[i] = j
 				break
 			}
@@ -729,8 +729,8 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 		aggIndices[i] = -1 // Initialize to -1 (not found)
 	}
 	for i, agg := range r.aggregates {
-		for j, col := range symbols {
-			if col == agg.Arg {
+		for j, sym := range symbols {
+			if sym == agg.Arg {
 				aggIndices[i] = j
 				break
 			}
@@ -747,8 +747,8 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 	for i, agg := range r.aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, col := range symbols {
-				if col == agg.Predicate {
+			for j, sym := range symbols {
+				if sym == agg.Predicate {
 					predicateIndices[i] = j
 					break
 				}

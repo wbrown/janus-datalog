@@ -237,10 +237,10 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			groupsHaveSymbols := make([][]bool, len(groups))
 			for i, group := range groups {
 				groupsHaveSymbols[i] = make([]bool, len(findSymbols))
-				cols := group.Symbols()
-				for j, sym := range findSymbols {
-					for _, col := range cols {
-						if col == sym {
+				grpSyms := group.Symbols()
+				for j, fs := range findSymbols {
+					for _, gs := range grpSyms {
+						if gs == fs {
 							groupsHaveSymbols[i][j] = true
 							break
 						}
@@ -431,10 +431,10 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 
 	for _, rel := range groups {
 		hasAny := false
-		relCols := rel.Symbols()
+		relSyms := rel.Symbols()
 		for _, sym := range unresolvedExprSyms {
-			for _, col := range relCols {
-				if col == sym {
+			for _, rs := range relSyms {
+				if rs == sym {
 					hasAny = true
 					break
 				}
@@ -477,11 +477,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			}
 
 			// Determine binding symbols and values
-			var bindingCols []query.Symbol
+			var bindingSyms []query.Symbol
 			var bindingValues []interface{}
 			switch binding := expr.Binding.(type) {
 			case query.TupleBinding:
-				bindingCols = binding.Variables
+				bindingSyms = binding.Variables
 				values, ok := result.([]interface{})
 				if !ok {
 					return nil, fmt.Errorf("tuple binding requires tuple result, got %T", result)
@@ -493,7 +493,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				bindingValues = values
 			case query.Symbol:
 				if binding != nil {
-					bindingCols = []query.Symbol{binding}
+					bindingSyms = []query.Symbol{binding}
 					bindingValues = []interface{}{result}
 				}
 			}
@@ -505,11 +505,11 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				relSyms := rel.Symbols()
 
 				// Partition binding symbols into existing (filter) and new (extend)
-				var filterIdx []int   // indices into bindingCols that already exist in rel
+				var filterIdx []int   // indices into bindingSyms that already exist in rel
 				var filterRelIdx []int // corresponding positions in relSyms
-				var extendIdx []int   // indices into bindingCols that are new
+				var extendIdx []int   // indices into bindingSyms that are new
 
-				for i, bs := range bindingCols {
+				for i, bs := range bindingSyms {
 					found := false
 					for j, rs := range relSyms {
 						if bs == rs {
@@ -528,7 +528,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				outputSyms := make([]query.Symbol, len(relSyms))
 				copy(outputSyms, relSyms)
 				for _, ei := range extendIdx {
-					outputSyms = append(outputSyms, bindingCols[ei])
+					outputSyms = append(outputSyms, bindingSyms[ei])
 				}
 
 				var outputTuples []Tuple
@@ -678,10 +678,10 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 	for _, rel := range groups {
 		hasAny := false
-		relCols := rel.Symbols()
+		relSyms := rel.Symbols()
 		for _, sym := range unresolvedSyms {
-			for _, col := range relCols {
-				if col == sym {
+			for _, rs := range relSyms {
+				if rs == sym {
 					hasAny = true
 					break
 				}
@@ -1132,8 +1132,8 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 	for _, elem := range find {
 		if pull, ok := elem.(query.FindPull); ok {
 			// Find the symbol index for this pull variable
-			for i, col := range symbols {
-				if col == pull.Variable {
+			for i, sym := range symbols {
+				if sym == pull.Variable {
 					pullSpecs[i] = pull
 					break
 				}
@@ -1160,13 +1160,13 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 		copy(newTuple, tuple)
 
 		// Execute pulls for each pull symbol
-		for colIdx, pull := range pullSpecs {
-			if colIdx >= len(tuple) {
+		for symIdx, pull := range pullSpecs {
+			if symIdx >= len(tuple) {
 				continue
 			}
 
 			// Get the entity value
-			entity, ok := tuple[colIdx].(datalog.Identity)
+			entity, ok := tuple[symIdx].(datalog.Identity)
 			if !ok || entity == nil {
 				// Value is not an entity - keep it as is
 				continue
@@ -1185,7 +1185,7 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 			}
 
 			// Replace entity with pulled map (nil if entity not found)
-			newTuple[colIdx] = pulled
+			newTuple[symIdx] = pulled
 		}
 
 		resultTuples = append(resultTuples, newTuple)
@@ -1325,30 +1325,30 @@ func findCommonSymbols(relations []Relation) []query.Symbol {
 	}
 
 	// Start with first relation's symbols
-	colSet := make(map[query.Symbol]bool)
-	for _, col := range relations[0].Symbols() {
-		colSet[col] = true
+	symSet := make(map[query.Symbol]bool)
+	for _, sym := range relations[0].Symbols() {
+		symSet[sym] = true
 	}
 
 	// Intersect with each subsequent relation
 	for i := 1; i < len(relations); i++ {
-		relCols := make(map[query.Symbol]bool)
-		for _, col := range relations[i].Symbols() {
-			relCols[col] = true
+		relSyms := make(map[query.Symbol]bool)
+		for _, sym := range relations[i].Symbols() {
+			relSyms[sym] = true
 		}
 		// Keep only symbols that exist in both
-		for col := range colSet {
-			if !relCols[col] {
-				delete(colSet, col)
+		for sym := range symSet {
+			if !relSyms[sym] {
+				delete(symSet, sym)
 			}
 		}
 	}
 
 	// Preserve order from first relation
 	var result []query.Symbol
-	for _, col := range relations[0].Symbols() {
-		if colSet[col] {
-			result = append(result, col)
+	for _, sym := range relations[0].Symbols() {
+		if symSet[sym] {
+			result = append(result, sym)
 		}
 	}
 	return result
@@ -1363,10 +1363,10 @@ func antiJoinOnSymbols(left, right Relation, symbols []query.Symbol) Relation {
 	// Build set of key values from right
 	rightKeys := make(map[string]bool)
 	rightIter := right.Iterator()
-	rightCols := right.Symbols()
+	rightSyms := right.Symbols()
 	for rightIter.Next() {
 		tuple := rightIter.Tuple()
-		key := extractKeyFromTuple(tuple, rightCols, symbols)
+		key := extractKeyFromTuple(tuple, rightSyms, symbols)
 		rightKeys[key] = true
 	}
 	rightIter.Close()
@@ -1374,29 +1374,29 @@ func antiJoinOnSymbols(left, right Relation, symbols []query.Symbol) Relation {
 	// Filter left to only tuples not in right
 	var remaining []Tuple
 	leftIter := left.Iterator()
-	leftCols := left.Symbols()
+	leftSyms := left.Symbols()
 	for leftIter.Next() {
 		tuple := leftIter.Tuple()
-		key := extractKeyFromTuple(tuple, leftCols, symbols)
+		key := extractKeyFromTuple(tuple, leftSyms, symbols)
 		if !rightKeys[key] {
 			remaining = append(remaining, tuple)
 		}
 	}
 	leftIter.Close()
 
-	return NewMaterializedRelationWithOptions(leftCols, remaining, left.Options())
+	return NewMaterializedRelationWithOptions(leftSyms, remaining, left.Options())
 }
 
 // extractKeyFromTuple extracts a string key from tuple for the given symbols
-func extractKeyFromTuple(tuple Tuple, cols []query.Symbol, symbols []query.Symbol) string {
-	colIdx := make(map[query.Symbol]int)
-	for i, col := range cols {
-		colIdx[col] = i
+func extractKeyFromTuple(tuple Tuple, syms []query.Symbol, symbols []query.Symbol) string {
+	symIdx := make(map[query.Symbol]int)
+	for i, sym := range syms {
+		symIdx[sym] = i
 	}
 
 	var key string
 	for _, sym := range symbols {
-		if idx, ok := colIdx[sym]; ok && idx < len(tuple) {
+		if idx, ok := symIdx[sym]; ok && idx < len(tuple) {
 			key += fmt.Sprintf("%v|", tuple[idx])
 		}
 	}
@@ -1410,13 +1410,13 @@ func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
 		return branch
 	}
 
-	outerCols := outer.Symbols()
-	branchCols := branch.Symbols()
+	outerSyms := outer.Symbols()
+	branchSyms := branch.Symbols()
 
 	// Combined symbols: outer symbols + branch symbols
-	combinedCols := make([]query.Symbol, 0, len(outerCols)+len(branchCols))
-	combinedCols = append(combinedCols, outerCols...)
-	combinedCols = append(combinedCols, branchCols...)
+	combinedSyms := make([]query.Symbol, 0, len(outerSyms)+len(branchSyms))
+	combinedSyms = append(combinedSyms, outerSyms...)
+	combinedSyms = append(combinedSyms, branchSyms...)
 
 	// Materialize branch result (usually small, like a single ground value)
 	var branchTuples []Tuple
@@ -1436,7 +1436,7 @@ func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
 	}
 	outerIter.Close()
 
-	return NewMaterializedRelationWithOptions(combinedCols, resultTuples, opts)
+	return NewMaterializedRelationWithOptions(combinedSyms, resultTuples, opts)
 }
 
 // executeOrClauseUnion implements standard Datalog union semantics
@@ -1456,7 +1456,7 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 
 	// Execute each branch and collect results
 	var branchResults []Relation
-	var commonCols []query.Symbol
+	var commonSyms []query.Symbol
 
 	for i, branch := range clause.Branches {
 		branchStart := time.Now()
@@ -1492,31 +1492,31 @@ func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.O
 
 		// Track symbols for intersection
 		if len(branchResults) == 0 {
-			commonCols = branchResult.Symbols()
+			commonSyms = branchResult.Symbols()
 		} else {
 			// Intersect symbols
-			branchColSet := make(map[query.Symbol]bool)
-			for _, col := range branchResult.Symbols() {
-				branchColSet[col] = true
+			branchSymSet := make(map[query.Symbol]bool)
+			for _, sym := range branchResult.Symbols() {
+				branchSymSet[sym] = true
 			}
 			var newCommon []query.Symbol
-			for _, col := range commonCols {
-				if branchColSet[col] {
-					newCommon = append(newCommon, col)
+			for _, sym := range commonSyms {
+				if branchSymSet[sym] {
+					newCommon = append(newCommon, sym)
 				}
 			}
-			commonCols = newCommon
+			commonSyms = newCommon
 		}
 
 		branchResults = append(branchResults, branchResult)
 	}
 
-	if len(branchResults) == 0 || len(commonCols) == 0 {
+	if len(branchResults) == 0 || len(commonSyms) == 0 {
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 	}
 
 	// Union all branch results, projecting to common symbols
-	return unionRelations(branchResults, commonCols, e.options), nil
+	return unionRelations(branchResults, commonSyms, e.options), nil
 }
 
 // executeOrJoinClause performs union with explicit join variables, or fallback for expressions
@@ -1790,15 +1790,15 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	input = input.Materialize()
 
 	// Filter to only variables present in input relation
-	inputCols := input.Symbols()
-	inputColSet := make(map[query.Symbol]bool)
-	for _, col := range inputCols {
-		inputColSet[col] = true
+	inputSyms := input.Symbols()
+	inputSymSet := make(map[query.Symbol]bool)
+	for _, sym := range inputSyms {
+		inputSymSet[sym] = true
 	}
 
 	var actualJoinVars []query.Symbol
 	for _, v := range joinVars {
-		if inputColSet[v] {
+		if inputSymSet[v] {
 			actualJoinVars = append(actualJoinVars, v)
 		}
 	}
@@ -1834,8 +1834,8 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	// Build join key symbol indices for input
 	keyIndices := make([]int, len(actualJoinVars))
 	for i, v := range actualJoinVars {
-		for j, col := range inputCols {
-			if col == v {
+		for j, sym := range inputSyms {
+			if sym == v {
 				keyIndices[i] = j
 				break
 			}
@@ -1860,7 +1860,7 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	}
 	iter.Close()
 
-	return NewMaterializedRelationWithOptions(inputCols, filtered, e.options), nil
+	return NewMaterializedRelationWithOptions(inputSyms, filtered, e.options), nil
 }
 
 // filterWithNotJoinClause applies anti-join with explicit join vars to a single relation
@@ -1871,16 +1871,16 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 
 	// Materialize input
 	input = input.Materialize()
-	inputCols := input.Symbols()
+	inputSyms := input.Symbols()
 
 	// Verify join vars exist in input
-	inputColSet := make(map[query.Symbol]bool)
-	for _, col := range inputCols {
-		inputColSet[col] = true
+	inputSymSet := make(map[query.Symbol]bool)
+	for _, sym := range inputSyms {
+		inputSymSet[sym] = true
 	}
 
 	for _, v := range clause.JoinVars {
-		if !inputColSet[v] {
+		if !inputSymSet[v] {
 			return nil, fmt.Errorf("NOT-JOIN variable %s not found in input relation", v)
 		}
 	}
@@ -1908,8 +1908,8 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 	// Build key indices
 	keyIndices := make([]int, len(clause.JoinVars))
 	for i, v := range clause.JoinVars {
-		for j, col := range inputCols {
-			if col == v {
+		for j, sym := range inputSyms {
+			if sym == v {
 				keyIndices[i] = j
 				break
 			}
@@ -1933,7 +1933,7 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 	}
 	iter.Close()
 
-	return NewMaterializedRelationWithOptions(inputCols, filtered, e.options), nil
+	return NewMaterializedRelationWithOptions(inputSyms, filtered, e.options), nil
 }
 
 // executeInnerClauses executes a list of clauses and returns the result

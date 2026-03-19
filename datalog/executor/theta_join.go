@@ -33,16 +33,16 @@ func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, looku
 // thetaJoinPair performs a nested-loop join between two relations with optional predicate.
 // The outer relation streams; the inner is buffered for re-iteration via BufferedIterator.
 func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) Relation {
-	outerCols := outer.Symbols()
-	innerCols := inner.Symbols()
-	combinedCols := make([]query.Symbol, 0, len(outerCols)+len(innerCols))
-	combinedCols = append(combinedCols, outerCols...)
-	combinedCols = append(combinedCols, innerCols...)
+	outerSyms := outer.Symbols()
+	innerSyms := inner.Symbols()
+	combinedSyms := make([]query.Symbol, 0, len(outerSyms)+len(innerSyms))
+	combinedSyms = append(combinedSyms, outerSyms...)
+	combinedSyms = append(combinedSyms, innerSyms...)
 
 	// Buffer the inner relation for re-iteration
 	innerBuf := NewBufferedIterator(inner.Iterator())
 
-	bindings := make(map[query.Symbol]interface{}, len(combinedCols)+len(constants))
+	bindings := make(map[query.Symbol]interface{}, len(combinedSyms)+len(constants))
 
 	// Check if predicate needs database lookup
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
@@ -76,11 +76,11 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 				for sym, val := range constants {
 					bindings[sym] = val
 				}
-				for i, col := range outerCols {
-					bindings[col] = outerTuple[i]
+				for i, sym := range outerSyms {
+					bindings[sym] = outerTuple[i]
 				}
-				for i, col := range innerCols {
-					bindings[col] = innerTuple[i]
+				for i, sym := range innerSyms {
+					bindings[sym] = innerTuple[i]
 				}
 
 				// Evaluate predicate
@@ -105,7 +105,7 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 	outerIt.Close()
 	innerBuf.Close()
 
-	return NewMaterializedRelationWithOptions(combinedCols, filtered, opts)
+	return NewMaterializedRelationWithOptions(combinedSyms, filtered, opts)
 }
 
 // crossJoinWithExpression performs a nested-loop cross-join between multiple relations,

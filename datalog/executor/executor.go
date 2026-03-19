@@ -252,25 +252,25 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		if len(allConstBindable) > 0 {
 			// Extract constant values from the bound input relation
 			boundRel := currentGroups[0]
-			cols := boundRel.Symbols()
+			syms := boundRel.Symbols()
 
 			// Find symbol indices for constant-bindable symbols
 			constValues := make(map[query.Symbol]interface{})
-			constColIndices := make(map[int]bool)
-			for i, col := range cols {
-				if allConstBindable[col] {
-					constColIndices[i] = true
+			constSymIndices := make(map[int]bool)
+			for i, sym := range syms {
+				if allConstBindable[sym] {
+					constSymIndices[i] = true
 				}
 			}
 
 			// Read first tuple to get the constant values (scalar inputs have exactly 1 tuple)
-			if len(constColIndices) > 0 {
+			if len(constSymIndices) > 0 {
 				it := boundRel.Iterator()
 				if it.Next() {
 					tuple := it.Tuple()
-					for i, col := range cols {
-						if allConstBindable[col] && i < len(tuple) {
-							constValues[col] = tuple[i]
+					for i, sym := range syms {
+						if allConstBindable[sym] && i < len(tuple) {
+							constValues[sym] = tuple[i]
 						}
 					}
 				}
@@ -280,19 +280,19 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 					queryExecutor.constantBindings = constValues
 
 					// Project out constant symbols from the bound relation
-					var keepCols []query.Symbol
-					for i, col := range cols {
-						if !constColIndices[i] {
-							keepCols = append(keepCols, col)
+					var keepSyms []query.Symbol
+					for i, sym := range syms {
+						if !constSymIndices[i] {
+							keepSyms = append(keepSyms, sym)
 						}
 					}
 
-					if len(keepCols) == 0 {
+					if len(keepSyms) == 0 {
 						// All symbols were constants — no input relation needed
 						currentGroups = nil
-					} else if len(keepCols) < len(cols) {
+					} else if len(keepSyms) < len(syms) {
 						// Re-materialize without constant symbols
-						projected, err := boundRel.Materialize().Project(keepCols)
+						projected, err := boundRel.Materialize().Project(keepSyms)
 						if err == nil {
 							currentGroups = []Relation{projected}
 						}
@@ -721,11 +721,11 @@ func (e *Executor) Options() ExecutorOptions {
 }
 
 // HashJoin performs a hash join using the executor's options
-func (e *Executor) HashJoin(left, right Relation, joinCols []query.Symbol) Relation {
-	return HashJoinWithOptions(left, right, joinCols, e.options)
+func (e *Executor) HashJoin(left, right Relation, joinSyms []query.Symbol) Relation {
+	return HashJoinWithOptions(left, right, joinSyms, e.options)
 }
 
 // SymmetricHashJoin performs a symmetric hash join using the executor's options
-func (e *Executor) SymmetricHashJoin(left, right Relation, joinCols []query.Symbol) Relation {
-	return SymmetricHashJoinWithOptions(left, right, joinCols, e.options)
+func (e *Executor) SymmetricHashJoin(left, right Relation, joinSyms []query.Symbol) Relation {
+	return SymmetricHashJoinWithOptions(left, right, joinSyms, e.options)
 }

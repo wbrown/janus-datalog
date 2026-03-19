@@ -48,8 +48,8 @@ func (b *SubqueryBatcher) BuildBatchedInput(
 	var tuples []Tuple
 	for _, values := range combinations {
 		tuple := make(Tuple, len(symbols))
-		for i, col := range symbols {
-			if val, ok := values[col]; ok {
+		for i, sym := range symbols {
+			if val, ok := values[sym]; ok {
 				tuple[i] = val
 			}
 			// Note: If value not found, tuple[i] remains nil

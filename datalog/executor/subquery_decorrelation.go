@@ -277,20 +277,20 @@ func applyBindingRenamesAndReorder(joined Relation, groupResults []Relation, dec
 	oldColumns := joined.Symbols()
 	indexMapping := make([]int, len(finalColumns))
 
-	for finalIdx, col := range finalColumns {
+	for finalIdx, sym := range finalColumns {
 		// Check if this is a binding variable that maps to an aggregate
-		if aggSymbol, isBound := bindingToSymbol[col]; isBound {
+		if aggSymbol, isBound := bindingToSymbol[sym]; isBound {
 			// Find the aggregate symbol in the joined result
-			for joinedIdx, joinedCol := range oldColumns {
-				if aggSymbol == joinedCol {
+			for joinedIdx, joinedSym := range oldColumns {
+				if aggSymbol == joinedSym {
 					indexMapping[finalIdx] = joinedIdx
 					break
 				}
 			}
 		} else {
 			// This is an input symbol - find by name directly
-			for joinedIdx, joinedCol := range oldColumns {
-				if col == joinedCol {
+			for joinedIdx, joinedSym := range oldColumns {
+				if sym == joinedSym {
 					indexMapping[finalIdx] = joinedIdx
 					break
 				}
@@ -368,7 +368,7 @@ func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbo
 
 		// If key not found in either relation, return empty
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
-			resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), filteredRightKeys)...)
+			resultColumns := append(left.Symbols(), filterSymbols(right.Symbols(), filteredRightKeys)...)
 			return NewMaterializedRelation(resultColumns, []Tuple{})
 		}
 	}
@@ -405,7 +405,7 @@ func hashJoinWithMapping(left, right Relation, leftKeys, rightKeys []query.Symbo
 
 	// Probe and build result
 	var resultTuples []Tuple
-	resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), filteredRightKeys)...)
+	resultColumns := append(left.Symbols(), filterSymbols(right.Symbols(), filteredRightKeys)...)
 
 	it = probeRel.Iterator()
 	for it.Next() {
@@ -453,7 +453,7 @@ func hashJoinOnKeys(left, right Relation, keys []query.Symbol) Relation {
 		// But we'll handle it gracefully by treating it as no match
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
 			// Return empty relation
-			resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), keys)...)
+			resultColumns := append(left.Symbols(), filterSymbols(right.Symbols(), keys)...)
 			return NewMaterializedRelation(resultColumns, []Tuple{})
 		}
 	}
@@ -490,7 +490,7 @@ func hashJoinOnKeys(left, right Relation, keys []query.Symbol) Relation {
 
 	// Probe and build result
 	var resultTuples []Tuple
-	resultColumns := append(left.Symbols(), filterColumns(right.Symbols(), keys)...)
+	resultColumns := append(left.Symbols(), filterSymbols(right.Symbols(), keys)...)
 
 	it = probeRel.Iterator()
 	for it.Next() {
@@ -532,17 +532,17 @@ func makeJoinKey(tuple Tuple, indices []int) string {
 	return strings.Join(parts, "|")
 }
 
-// filterColumns removes key symbols from symbol list (to avoid duplicates in join result)
-func filterColumns(symbols []query.Symbol, keys []query.Symbol) []query.Symbol {
+// filterSymbols removes key symbols from symbol list (to avoid duplicates in join result)
+func filterSymbols(symbols []query.Symbol, keys []query.Symbol) []query.Symbol {
 	keySet := make(map[query.Symbol]bool)
 	for _, key := range keys {
 		keySet[key] = true
 	}
 
 	var result []query.Symbol
-	for _, col := range symbols {
-		if !keySet[col] {
-			result = append(result, col)
+	for _, sym := range symbols {
+		if !keySet[sym] {
+			result = append(result, sym)
 		}
 	}
 	return result
@@ -579,8 +579,8 @@ type timeKey struct {
 // This enables semi-join pushdown by constraining merged queries to scan only relevant time periods
 func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) ([]TimeRange, error) {
 	// Get symbols from input relation
-	cols := inputRelation.Symbols()
-	if len(cols) == 0 {
+	syms := inputRelation.Symbols()
+	if len(syms) == 0 {
 		return nil, nil
 	}
 
@@ -595,21 +595,21 @@ func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) (
 	symH := datalog.NewSymbol("?h")
 	symHr := datalog.NewSymbol("?hr")
 
-	var colYearIdx, colMonthIdx, colDayIdx, colHourIdx int = -1, -1, -1, -1
-	for i, col := range cols {
-		if col == symYear || col == symY {
-			colYearIdx = i
-		} else if col == symMonth || col == symM {
-			colMonthIdx = i
-		} else if col == symDay || col == symD {
-			colDayIdx = i
-		} else if col == symHour || col == symH || col == symHr {
-			colHourIdx = i
+	var yearIdx, monthIdx, dayIdx, hourIdx int = -1, -1, -1, -1
+	for i, sym := range syms {
+		if sym == symYear || sym == symY {
+			yearIdx = i
+		} else if sym == symMonth || sym == symM {
+			monthIdx = i
+		} else if sym == symDay || sym == symD {
+			dayIdx = i
+		} else if sym == symHour || sym == symH || sym == symHr {
+			hourIdx = i
 		}
 	}
 
 	// We need at least year, month, day to construct time ranges
-	if colYearIdx < 0 || colMonthIdx < 0 || colDayIdx < 0 {
+	if yearIdx < 0 || monthIdx < 0 || dayIdx < 0 {
 		return nil, nil // Not time-based, skip optimization
 	}
 
@@ -624,14 +624,14 @@ func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) (
 
 	for it.Next() {
 		tuple := it.Tuple()
-		if len(tuple) <= colDayIdx {
+		if len(tuple) <= dayIdx {
 			continue
 		}
 
 		// Extract time components (handle both int64 and int)
 		var year, month, day, hour int64
 
-		switch v := tuple[colYearIdx].(type) {
+		switch v := tuple[yearIdx].(type) {
 		case int64:
 			year = v
 		case int:
@@ -640,7 +640,7 @@ func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) (
 			continue
 		}
 
-		switch v := tuple[colMonthIdx].(type) {
+		switch v := tuple[monthIdx].(type) {
 		case int64:
 			month = v
 		case int:
@@ -649,7 +649,7 @@ func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) (
 			continue
 		}
 
-		switch v := tuple[colDayIdx].(type) {
+		switch v := tuple[dayIdx].(type) {
 		case int64:
 			day = v
 		case int:
@@ -658,8 +658,8 @@ func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) (
 			continue
 		}
 
-		if colHourIdx >= 0 && colHourIdx < len(tuple) {
-			switch v := tuple[colHourIdx].(type) {
+		if hourIdx >= 0 && hourIdx < len(tuple) {
+			switch v := tuple[hourIdx].(type) {
 			case int64:
 				hour = v
 			case int:
@@ -677,7 +677,7 @@ func extractTimeRanges(inputRelation Relation, correlationKeys []query.Symbol) (
 		// Convert to time range
 		start := time.Date(int(year), time.Month(month), int(day), int(hour), 0, 0, 0, time.UTC)
 		var end time.Time
-		if colHourIdx >= 0 {
+		if hourIdx >= 0 {
 			// Hour-level granularity: [hour:00, hour+1:00)
 			end = start.Add(1 * time.Hour)
 		} else {

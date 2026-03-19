@@ -111,8 +111,8 @@ func (r *PrependedRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	return r.Materialize().FilterWithPredicate(pred)
 }
 
-func (r *PrependedRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
-	return r.Materialize().EvaluateFunction(fn, outputColumn)
+func (r *PrependedRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
+	return r.Materialize().EvaluateFunction(fn, outputSymbol)
 }
 
 func (r *PrependedRelation) Select(pred func(Tuple) bool) Relation {
@@ -127,16 +127,16 @@ func (r *PrependedRelation) Join(other Relation) Relation {
 	return r.HashJoin(other, common)
 }
 
-func (r *PrependedRelation) HashJoin(other Relation, joinCols []query.Symbol) Relation {
-	return HashJoin(r, other, joinCols)
+func (r *PrependedRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return HashJoin(r, other, joinSyms)
 }
 
-func (r *PrependedRelation) SemiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return SemiJoin(r, other, joinCols)
+func (r *PrependedRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return SemiJoin(r, other, joinSyms)
 }
 
-func (r *PrependedRelation) AntiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return AntiJoin(r, other, joinCols)
+func (r *PrependedRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return AntiJoin(r, other, joinSyms)
 }
 
 func (r *PrependedRelation) Aggregate(findElements []query.FindElement) Relation {

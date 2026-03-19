@@ -422,22 +422,22 @@ func (c *AnnotatedContext) JoinRelations(left, right Relation, fn func() Relatio
 	// Add relation attributes for rendering
 	if left != nil {
 		leftAttrs := make([]string, len(left.Symbols()))
-		for i, col := range left.Symbols() {
-			leftAttrs[i] = col.String()
+		for i, sym := range left.Symbols() {
+			leftAttrs[i] = sym.String()
 		}
 		data["left.attrs"] = leftAttrs
 	}
 	if right != nil {
 		rightAttrs := make([]string, len(right.Symbols()))
-		for i, col := range right.Symbols() {
-			rightAttrs[i] = col.String()
+		for i, sym := range right.Symbols() {
+			rightAttrs[i] = sym.String()
 		}
 		data["right.attrs"] = rightAttrs
 	}
 	if result != nil {
 		resultAttrs := make([]string, len(result.Symbols()))
-		for i, col := range result.Symbols() {
-			resultAttrs[i] = col.String()
+		for i, sym := range result.Symbols() {
+			resultAttrs[i] = sym.String()
 		}
 		data["result.attrs"] = resultAttrs
 	}

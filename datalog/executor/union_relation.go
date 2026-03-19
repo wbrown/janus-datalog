@@ -131,8 +131,8 @@ func (ur *UnionRelation) FilterWithPredicate(pred query.Predicate) Relation {
 }
 
 // EvaluateFunction evaluates a function
-func (ur *UnionRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
-	return ur.Materialize().EvaluateFunction(fn, outputColumn)
+func (ur *UnionRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
+	return ur.Materialize().EvaluateFunction(fn, outputSymbol)
 }
 
 // Select returns tuples matching predicate
@@ -146,18 +146,18 @@ func (ur *UnionRelation) Join(other Relation) Relation {
 }
 
 // HashJoin performs a hash join
-func (ur *UnionRelation) HashJoin(other Relation, joinCols []query.Symbol) Relation {
-	return ur.Materialize().HashJoin(other, joinCols)
+func (ur *UnionRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return ur.Materialize().HashJoin(other, joinSyms)
 }
 
 // SemiJoin performs a semi-join
-func (ur *UnionRelation) SemiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return ur.Materialize().SemiJoin(other, joinCols)
+func (ur *UnionRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return ur.Materialize().SemiJoin(other, joinSyms)
 }
 
 // AntiJoin performs an anti-join
-func (ur *UnionRelation) AntiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return ur.Materialize().AntiJoin(other, joinCols)
+func (ur *UnionRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return ur.Materialize().AntiJoin(other, joinSyms)
 }
 
 // Aggregate performs aggregation

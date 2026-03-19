@@ -288,53 +288,82 @@ func (it *PredicateFilterIterator) Error() error { return it.source.Error() }
 type FunctionEvaluatorIterator struct {
 	source       Iterator
 	function     query.Function
-	outputColumn query.Symbol
+	outputSymbol query.Symbol
 	symbols      []query.Symbol // Original symbols
-	newSymbols   []query.Symbol // Symbols after adding function output
+	newSymbols   []query.Symbol // Symbols after adding function output (or same if unifying)
 	current      Tuple
+	existingIdx  int // >=0 if outputSymbol already in symbols (unification mode)
 }
 
-// NewFunctionEvaluatorIterator creates an iterator that adds a symbol via function evaluation
-func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, function query.Function, outputColumn query.Symbol) *FunctionEvaluatorIterator {
-	newSymbols := append(symbols, outputColumn)
+// NewFunctionEvaluatorIterator creates an iterator that adds a symbol via function evaluation.
+// If outputSymbol already exists in the source symbols, the iterator unifies
+// (filters to tuples where the function result matches the existing value)
+// instead of appending a duplicate.
+func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, function query.Function, outputSymbol query.Symbol) *FunctionEvaluatorIterator {
+	// Check if the output symbol already exists (unification case)
+	existingIdx := -1
+	for i, sym := range symbols {
+		if sym == outputSymbol {
+			existingIdx = i
+			break
+		}
+	}
+
+	var newSymbols []query.Symbol
+	if existingIdx >= 0 {
+		// Symbol already exists — output symbols unchanged (unification, not extension)
+		newSymbols = symbols
+	} else {
+		newSymbols = append(symbols, outputSymbol)
+	}
+
 	return &FunctionEvaluatorIterator{
 		source:       source,
 		function:     function,
-		outputColumn: outputColumn,
+		outputSymbol: outputSymbol,
 		symbols:      symbols,
 		newSymbols:   newSymbols,
+		existingIdx:  existingIdx,
 	}
 }
 
 // Next advances to the next tuple and evaluates the function
 func (it *FunctionEvaluatorIterator) Next() bool {
-	if !it.source.Next() {
-		return false
-	}
+	for it.source.Next() {
+		sourceTuple := it.source.Tuple()
 
-	sourceTuple := it.source.Tuple()
-
-	// Create bindings for function evaluation
-	bindings := make(map[query.Symbol]interface{})
-	for i, sym := range it.symbols {
-		if i < len(sourceTuple) {
-			bindings[sym] = sourceTuple[i]
+		// Create bindings for function evaluation
+		bindings := make(map[query.Symbol]interface{})
+		for i, sym := range it.symbols {
+			if i < len(sourceTuple) {
+				bindings[sym] = sourceTuple[i]
+			}
 		}
+
+		// Evaluate function
+		result, err := it.function.Eval(bindings)
+		if err != nil {
+			// Skip tuples where function evaluation fails
+			continue
+		}
+
+		if it.existingIdx >= 0 {
+			// Unification: check that function result matches existing binding
+			if it.existingIdx < len(sourceTuple) && !valuesEqual(sourceTuple[it.existingIdx], result) {
+				continue // Mismatch — filter this tuple
+			}
+			// Match — pass through unchanged (no new symbol added)
+			it.current = sourceTuple
+		} else {
+			// Extension: append function result as new symbol
+			it.current = make(Tuple, len(sourceTuple)+1)
+			copy(it.current, sourceTuple)
+			it.current[len(sourceTuple)] = result
+		}
+
+		return true
 	}
-
-	// Evaluate function
-	result, err := it.function.Eval(bindings)
-	if err != nil {
-		// Skip tuples where function evaluation fails
-		return it.Next()
-	}
-
-	// Create new tuple with function result appended
-	it.current = make(Tuple, len(sourceTuple)+1)
-	copy(it.current, sourceTuple)
-	it.current[len(sourceTuple)] = result
-
-	return true
+	return false
 }
 
 // Tuple returns the current tuple with function result

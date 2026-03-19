@@ -25,23 +25,23 @@ import (
 // 5. Repeat until both iterators exhausted
 //
 // This allows both relations to be streaming without materializing either completely.
-func SymmetricHashJoin(left, right Relation, joinCols []query.Symbol) Relation {
+func SymmetricHashJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	// Try to get options from either relation
 	opts := left.Options()
 	if opts == (ExecutorOptions{}) {
 		opts = right.Options()
 	}
-	return SymmetricHashJoinWithOptions(left, right, joinCols, opts)
+	return SymmetricHashJoinWithOptions(left, right, joinSyms, opts)
 }
 
 // SymmetricHashJoinWithOptions performs a streaming symmetric hash join with explicit options
-func SymmetricHashJoinWithOptions(left, right Relation, joinCols []query.Symbol, opts ExecutorOptions) Relation {
+func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts ExecutorOptions) Relation {
 	// Build symbol mappings
-	leftIndices := make([]int, len(joinCols))
-	rightIndices := make([]int, len(joinCols))
-	for i, col := range joinCols {
-		leftIndices[i] = SymbolIndex(left, col)
-		rightIndices[i] = SymbolIndex(right, col)
+	leftIndices := make([]int, len(joinSyms))
+	rightIndices := make([]int, len(joinSyms))
+	for i, sym := range joinSyms {
+		leftIndices[i] = SymbolIndex(left, sym)
+		rightIndices[i] = SymbolIndex(right, sym)
 		if leftIndices[i] < 0 || rightIndices[i] < 0 {
 			// Join symbol not found
 			return NewMaterializedRelation(nil, nil)
@@ -49,16 +49,16 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinCols []query.Symbol,
 	}
 
 	// Determine output symbols (union without duplicates)
-	outputCols := append([]query.Symbol{}, left.Symbols()...)
-	rightColSet := make(map[query.Symbol]bool)
-	for _, col := range joinCols {
-		rightColSet[col] = true
+	outputSyms := append([]query.Symbol{}, left.Symbols()...)
+	rightSymSet := make(map[query.Symbol]bool)
+	for _, sym := range joinSyms {
+		rightSymSet[sym] = true
 	}
 
 	// Add right symbols that aren't in join symbols
-	for _, col := range right.Symbols() {
-		if !rightColSet[col] {
-			outputCols = append(outputCols, col)
+	for _, sym := range right.Symbols() {
+		if !rightSymSet[sym] {
+			outputSyms = append(outputSyms, sym)
 		}
 	}
 
@@ -79,17 +79,17 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinCols []query.Symbol,
 		rightTable:   NewTupleKeyMapWithCapacity(tableSize),
 		leftIndices:  leftIndices,
 		rightIndices: rightIndices,
-		joinCols:     joinCols,
-		leftCols:     left.Symbols(),
-		rightCols:    right.Symbols(),
-		outputCols:   outputCols,
+		joinSyms:     joinSyms,
+		leftSyms:     left.Symbols(),
+		rightSyms:    right.Symbols(),
+		outputSyms:   outputSyms,
 		resultQueue:  make([]Tuple, 0),
 		seen:         NewTupleKeyMapWithCapacity(tableSize),
 		batchSize:    100, // Process tuples in batches for efficiency
 	}
 
 	// Return a streaming relation with the symmetric join iterator
-	return NewStreamingRelationWithOptions(outputCols, iter, opts)
+	return NewStreamingRelationWithOptions(outputSyms, iter, opts)
 }
 
 // symmetricHashJoinIterator implements Iterator for symmetric hash join
@@ -97,9 +97,9 @@ type symmetricHashJoinIterator struct {
 	leftIt, rightIt           Iterator
 	leftTable, rightTable     *TupleKeyMap
 	leftIndices, rightIndices []int
-	joinCols                  []query.Symbol
-	leftCols, rightCols       []query.Symbol
-	outputCols                []query.Symbol
+	joinSyms                  []query.Symbol
+	leftSyms, rightSyms       []query.Symbol
+	outputSyms                []query.Symbol
 	resultQueue               []Tuple
 	seen                      *TupleKeyMap // For deduplication
 	leftDone, rightDone       bool
@@ -233,26 +233,26 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 // combineTuples combines left and right tuples, avoiding duplication of join symbols
 func (it *symmetricHashJoinIterator) combineTuples(leftTuple, rightTuple Tuple, leftFirst bool) Tuple {
 	// Start with all symbols from left
-	result := make(Tuple, len(it.outputCols))
+	result := make(Tuple, len(it.outputSyms))
 	copy(result, leftTuple)
 
 	// Add non-join symbols from right
 	rightOffset := len(leftTuple)
-	rightColIndex := 0
-	for i, col := range it.rightCols {
+	rightSymIndex := 0
+	for i, sym := range it.rightSyms {
 		// Skip join symbols
-		isJoinCol := false
-		for _, joinCol := range it.joinCols {
-			if col == joinCol {
-				isJoinCol = true
+		isJoinSym := false
+		for _, joinSym := range it.joinSyms {
+			if sym == joinSym {
+				isJoinSym = true
 				break
 			}
 		}
 
-		if !isJoinCol {
-			if rightOffset+rightColIndex < len(result) {
-				result[rightOffset+rightColIndex] = rightTuple[i]
-				rightColIndex++
+		if !isJoinSym {
+			if rightOffset+rightSymIndex < len(result) {
+				result[rightOffset+rightSymIndex] = rightTuple[i]
+				rightSymIndex++
 			}
 		}
 	}
@@ -298,7 +298,7 @@ func (it *symmetricHashJoinIterator) Error() error {
 }
 
 // ChooseJoinStrategy selects the appropriate join strategy based on relation types
-func ChooseJoinStrategy(left, right Relation, joinCols []query.Symbol, opts ExecutorOptions) string {
+func ChooseJoinStrategy(left, right Relation, joinSyms []query.Symbol, opts ExecutorOptions) string {
 	leftStreaming := isStreaming(left)
 	rightStreaming := isStreaming(right)
 

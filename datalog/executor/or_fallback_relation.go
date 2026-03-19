@@ -288,8 +288,8 @@ func (r *OrFallbackRelation) FilterWithPredicate(pred query.Predicate) Relation 
 	return r.Materialize().FilterWithPredicate(pred)
 }
 
-func (r *OrFallbackRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
-	return r.Materialize().EvaluateFunction(fn, outputColumn)
+func (r *OrFallbackRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
+	return r.Materialize().EvaluateFunction(fn, outputSymbol)
 }
 
 func (r *OrFallbackRelation) Select(pred func(Tuple) bool) Relation {
@@ -304,16 +304,16 @@ func (r *OrFallbackRelation) Join(other Relation) Relation {
 	return r.HashJoin(other, common)
 }
 
-func (r *OrFallbackRelation) HashJoin(other Relation, joinCols []query.Symbol) Relation {
-	return HashJoin(r, other, joinCols)
+func (r *OrFallbackRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return HashJoin(r, other, joinSyms)
 }
 
-func (r *OrFallbackRelation) SemiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return SemiJoin(r, other, joinCols)
+func (r *OrFallbackRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return SemiJoin(r, other, joinSyms)
 }
 
-func (r *OrFallbackRelation) AntiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return AntiJoin(r, other, joinCols)
+func (r *OrFallbackRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return AntiJoin(r, other, joinSyms)
 }
 
 func (r *OrFallbackRelation) Aggregate(findElements []query.FindElement) Relation {

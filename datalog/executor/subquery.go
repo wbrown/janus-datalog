@@ -905,7 +905,7 @@ func (sc *subqueryContext) matchesWithRelation(datom datalog.Datom, pattern *que
 		return true // No constraints
 	}
 
-	cols := rel.Symbols()
+	syms := rel.Symbols()
 	it := rel.Iterator()
 	if !it.Next() {
 		it.Close()
@@ -916,9 +916,9 @@ func (sc *subqueryContext) matchesWithRelation(datom datalog.Datom, pattern *que
 
 	// Build value map from relation
 	valueMap := make(map[query.Symbol]interface{})
-	for i, col := range cols {
+	for i, sym := range syms {
 		if i < len(tuple) {
-			valueMap[col] = tuple[i]
+			valueMap[sym] = tuple[i]
 		}
 	}
 
@@ -1051,8 +1051,8 @@ func executeBatchedSubqueryWithCombinations(ctx Context, parentExec *Executor, s
 	// Build tuples from all combinations
 	for _, values := range inputCombinations {
 		var tuple Tuple
-		for _, col := range symbols {
-			if val, ok := values[col]; ok {
+		for _, sym := range symbols {
+			if val, ok := values[sym]; ok {
 				tuple = append(tuple, val)
 			}
 		}

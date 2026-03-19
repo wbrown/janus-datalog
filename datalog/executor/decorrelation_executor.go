@@ -375,10 +375,10 @@ func (e *DefaultQueryExecutor) executeWithDecorrelation(ctx Context, q *query.Qu
 	groupsHaveSymbols := make([][]bool, len(groups))
 	for i, group := range groups {
 		groupsHaveSymbols[i] = make([]bool, len(findVars))
-		cols := group.Symbols()
-		for j, sym := range findVars {
-			for _, col := range cols {
-				if col == sym {
+		syms := group.Symbols()
+		for j, fv := range findVars {
+			for _, s := range syms {
+				if s == fv {
 					groupsHaveSymbols[i][j] = true
 					break
 				}
@@ -538,8 +538,8 @@ func createBatchedInputRelation(inputSymbols []query.Symbol, combinations []map[
 	var tuples []Tuple
 	for _, values := range combinations {
 		tuple := make(Tuple, len(symbols))
-		for i, col := range symbols {
-			if val, ok := values[col]; ok {
+		for i, sym := range symbols {
+			if val, ok := values[sym]; ok {
 				tuple[i] = val
 			}
 		}

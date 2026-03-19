@@ -91,8 +91,8 @@ func (r *LazySeqRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	return r.Materialize().FilterWithPredicate(pred)
 }
 
-func (r *LazySeqRelation) EvaluateFunction(fn query.Function, outputColumn query.Symbol) Relation {
-	return r.Materialize().EvaluateFunction(fn, outputColumn)
+func (r *LazySeqRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
+	return r.Materialize().EvaluateFunction(fn, outputSymbol)
 }
 
 func (r *LazySeqRelation) Join(other Relation) Relation {
@@ -103,16 +103,16 @@ func (r *LazySeqRelation) Join(other Relation) Relation {
 	return r.HashJoin(other, common)
 }
 
-func (r *LazySeqRelation) HashJoin(other Relation, joinCols []query.Symbol) Relation {
-	return HashJoin(r, other, joinCols)
+func (r *LazySeqRelation) HashJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return HashJoin(r, other, joinSyms)
 }
 
-func (r *LazySeqRelation) SemiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return SemiJoin(r, other, joinCols)
+func (r *LazySeqRelation) SemiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return SemiJoin(r, other, joinSyms)
 }
 
-func (r *LazySeqRelation) AntiJoin(other Relation, joinCols []query.Symbol) Relation {
-	return AntiJoin(r, other, joinCols)
+func (r *LazySeqRelation) AntiJoin(other Relation, joinSyms []query.Symbol) Relation {
+	return AntiJoin(r, other, joinSyms)
 }
 
 func (r *LazySeqRelation) Aggregate(findElements []query.FindElement) Relation {

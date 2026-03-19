@@ -387,6 +387,80 @@ func TestFunctionEvaluatorIterator(t *testing.T) {
 	assert.Equal(t, int64(110), results[2][2]) // 50 + 60
 }
 
+// TestFunctionEvaluatorIterator_UnifiesExistingSymbol verifies that when the
+// output symbol already exists in the source, the iterator filters (unifies)
+// instead of appending a duplicate. In Datalog, [(+ ?x 0) ?x] means "keep
+// tuples where ?x + 0 == ?x", not "add a second ?x column."
+func TestFunctionEvaluatorIterator_UnifiesExistingSymbol(t *testing.T) {
+	tuples := []Tuple{
+		{int64(10), int64(20)},
+		{int64(30), int64(40)},
+		{int64(50), int64(60)},
+	}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+
+	// identity function on ?x, binding back to ?x — should unify (all pass)
+	fn := query.ArithmeticFunction{
+		Op:    query.OpAdd,
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+		Right: query.ConstantTerm{Value: int64(0)},
+	}
+
+	source := newMockIterator(tuples)
+	evalIter := NewFunctionEvaluatorIterator(source, symbols, fn, datalog.NewSymbol("?x"))
+
+	var results []Tuple
+	for evalIter.Next() {
+		tuple := evalIter.Tuple()
+		tupleCopy := make(Tuple, len(tuple))
+		copy(tupleCopy, tuple)
+		results = append(results, tupleCopy)
+	}
+	evalIter.Close()
+
+	// All 3 tuples should pass (identity unification)
+	assert.Len(t, results, 3, "all tuples should pass identity unification")
+	// Tuple width should be 2 (not 3) — no duplicate symbol
+	assert.Len(t, results[0], 2, "should not duplicate existing symbol")
+	assert.Equal(t, int64(10), results[0][0])
+	assert.Equal(t, int64(20), results[0][1])
+}
+
+// TestFunctionEvaluatorIterator_UnifiesFilters verifies that unification
+// filters tuples where the function result doesn't match the existing binding.
+func TestFunctionEvaluatorIterator_UnifiesFilters(t *testing.T) {
+	tuples := []Tuple{
+		{int64(10), int64(20)}, // ?x=10, ?y=20, ?x+?y=30 != ?x → filtered
+		{int64(0), int64(0)},   // ?x=0, ?y=0, ?x+?y=0 == ?x → passes
+		{int64(5), int64(-5)},  // ?x=5, ?y=-5, ?x+?y=0 != ?x → filtered
+	}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+
+	// (+ ?x ?y) binding to ?x — unifies: keep only where ?x + ?y == ?x
+	fn := query.ArithmeticFunction{
+		Op:    query.OpAdd,
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+		Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+	}
+
+	source := newMockIterator(tuples)
+	evalIter := NewFunctionEvaluatorIterator(source, symbols, fn, datalog.NewSymbol("?x"))
+
+	var results []Tuple
+	for evalIter.Next() {
+		tuple := evalIter.Tuple()
+		tupleCopy := make(Tuple, len(tuple))
+		copy(tupleCopy, tuple)
+		results = append(results, tupleCopy)
+	}
+	evalIter.Close()
+
+	// Only tuple {0, 0} passes: 0 + 0 == 0 == ?x
+	assert.Len(t, results, 1, "only tuples where function result matches existing binding should pass")
+	assert.Equal(t, int64(0), results[0][0])
+	assert.Equal(t, int64(0), results[0][1])
+}
+
 // BenchmarkIteratorComposition benchmarks composed iterators vs materialized operations
 func BenchmarkIteratorComposition(b *testing.B) {
 	// Create large test dataset
