@@ -285,6 +285,18 @@ func (it *symmetricHashJoinIterator) Close() error {
 	return err2
 }
 
+func (it *symmetricHashJoinIterator) Error() error {
+	if it.leftIt != nil {
+		if err := it.leftIt.Error(); err != nil {
+			return err
+		}
+	}
+	if it.rightIt != nil {
+		return it.rightIt.Error()
+	}
+	return nil
+}
+
 // ChooseJoinStrategy selects the appropriate join strategy based on relation types
 func ChooseJoinStrategy(left, right Relation, joinCols []query.Symbol, opts ExecutorOptions) string {
 	leftStreaming := isStreaming(left)

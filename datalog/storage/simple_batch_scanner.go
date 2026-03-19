@@ -26,6 +26,8 @@ type simpleBatchScanner struct {
 
 	// Optimized tuple builder
 	tupleBuilder *query.InternedTupleBuilder
+
+	err error // First error from storage operations during scan
 }
 
 // newSimpleBatchScanner creates a new simple batch scanner
@@ -280,7 +282,8 @@ func (s *simpleBatchScanner) scanAndFilter(iter Iterator, bindingSet map[string]
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			continue
+			s.err = err
+			break
 		}
 		datomCount++
 
@@ -369,3 +372,5 @@ func (s *simpleBatchScanner) Close() error {
 	// Results are already materialized, nothing to close
 	return nil
 }
+
+func (s *simpleBatchScanner) Error() error { return s.err }

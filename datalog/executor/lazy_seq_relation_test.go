@@ -136,6 +136,7 @@ func makeTupleSeq(tuples []Tuple) *LazySeq {
 type sliceTupleIterator struct {
 	tuples []Tuple
 	pos    int
+	err    error
 }
 
 func (it *sliceTupleIterator) Next() bool {
@@ -153,3 +154,5 @@ func (it *sliceTupleIterator) Tuple() Tuple {
 func (it *sliceTupleIterator) Close() error {
 	return nil
 }
+
+func (it *sliceTupleIterator) Error() error { return it.err }

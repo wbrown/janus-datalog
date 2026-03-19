@@ -132,6 +132,7 @@ type lazySeqTestIterator struct {
 	pos     int
 	closed  bool
 	closeMu sync.Mutex
+	err     error
 }
 
 func newLazySeqTestIterator(tuples []Tuple) *lazySeqTestIterator {
@@ -156,6 +157,8 @@ func (m *lazySeqTestIterator) Close() error {
 	m.closed = true
 	return nil
 }
+
+func (m *lazySeqTestIterator) Error() error { return m.err }
 
 func (m *lazySeqTestIterator) IsClosed() bool {
 	m.closeMu.Lock()

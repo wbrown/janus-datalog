@@ -241,6 +241,7 @@ type countingMockIterator struct {
 	tuples        []Tuple
 	pos           int
 	nextCallCount *int
+	err           error
 }
 
 func (it *countingMockIterator) Next() bool {
@@ -259,6 +260,8 @@ func (it *countingMockIterator) Tuple() Tuple {
 func (it *countingMockIterator) Close() error {
 	return nil
 }
+
+func (it *countingMockIterator) Error() error { return it.err }
 
 func TestStreamingRelationWithBuffering(t *testing.T) {
 	// Test that StreamingRelation uses auto-materialization for multiple iterations

@@ -124,6 +124,13 @@ func (it *hashJoinIterator) Close() error {
 	return nil
 }
 
+func (it *hashJoinIterator) Error() error {
+	if it.probeIt != nil {
+		return it.probeIt.Error()
+	}
+	return nil
+}
+
 // HashJoin performs a hash join on specified symbols
 // It attempts to get options from the input relations
 func HashJoin(left, right Relation, joinCols []query.Symbol) Relation {

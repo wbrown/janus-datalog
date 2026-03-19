@@ -29,6 +29,8 @@ type unboundIterator struct {
 	// CRDT cardinality-one support: stop after first result
 	returnOnlyFirst bool
 	foundFirst      bool
+
+	err error // First error from storage operations
 }
 
 func (it *unboundIterator) Next() bool {
@@ -40,7 +42,8 @@ func (it *unboundIterator) Next() bool {
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
 		if err != nil {
-			continue
+			it.err = err
+			return false
 		}
 
 		it.datomsScanned++
@@ -64,6 +67,8 @@ func (it *unboundIterator) Next() bool {
 func (it *unboundIterator) Tuple() executor.Tuple {
 	return it.currentTuple
 }
+
+func (it *unboundIterator) Error() error { return it.err }
 
 func (it *unboundIterator) Close() error {
 	// Emit scan statistics if handler is available
@@ -109,6 +114,8 @@ type unboundMaskIterator struct {
 	// CRDT cardinality-one support: stop after first result
 	returnOnlyFirst bool
 	foundFirst      bool
+
+	err error // First error from storage operations
 }
 
 func (it *unboundMaskIterator) Next() bool {
@@ -121,7 +128,8 @@ func (it *unboundMaskIterator) Next() bool {
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
 		if err != nil {
-			continue
+			it.err = err
+			return false
 		}
 
 		it.datomsScanned++
@@ -176,3 +184,5 @@ func (it *unboundMaskIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *unboundMaskIterator) Error() error { return it.err }

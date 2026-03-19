@@ -66,6 +66,7 @@ type mockUnsafeIterator struct {
 	data      [][]interface{}
 	workspace Tuple // Reused on each Next()
 	pos       int
+	err       error
 }
 
 func (it *mockUnsafeIterator) Next() bool {
@@ -85,6 +86,8 @@ func (it *mockUnsafeIterator) Tuple() Tuple {
 func (it *mockUnsafeIterator) Close() error {
 	return nil
 }
+
+func (it *mockUnsafeIterator) Error() error { return it.err }
 
 // =============================================================================
 // Test 1: UnionIterator with RequiresCopy source

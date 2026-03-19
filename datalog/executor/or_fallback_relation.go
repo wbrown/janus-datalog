@@ -881,3 +881,5 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 func (it *projectedIterator) Close() error {
 	return it.inner.Close()
 }
+
+func (it *projectedIterator) Error() error { return it.inner.Error() }

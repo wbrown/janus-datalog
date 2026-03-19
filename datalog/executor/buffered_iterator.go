@@ -85,6 +85,13 @@ func (it *BufferedIterator) Close() error {
 	return nil
 }
 
+func (it *BufferedIterator) Error() error {
+	if it.source != nil {
+		return it.source.Error()
+	}
+	return nil
+}
+
 // Size returns the number of tuples (requires full consumption)
 func (it *BufferedIterator) Size() int {
 	it.mu.Lock()
@@ -186,3 +193,5 @@ func (it *bufferedSliceIterator) Tuple() Tuple {
 func (it *bufferedSliceIterator) Close() error {
 	return nil
 }
+
+func (it *bufferedSliceIterator) Error() error { return nil }

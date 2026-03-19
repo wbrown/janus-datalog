@@ -656,6 +656,7 @@ func TestMultiPositionWithStreamingBinding(t *testing.T) {
 type sliceTupleIterator struct {
 	tuples []executor.Tuple
 	idx    int
+	err    error
 }
 
 func (it *sliceTupleIterator) Next() bool {
@@ -673,3 +674,5 @@ func (it *sliceTupleIterator) Tuple() executor.Tuple {
 func (it *sliceTupleIterator) Close() error {
 	return nil
 }
+
+func (it *sliceTupleIterator) Error() error { return it.err }

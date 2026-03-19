@@ -201,3 +201,10 @@ func (it *PrependedIterator) Close() error {
 	it.done = true
 	return nil
 }
+
+func (it *PrependedIterator) Error() error {
+	if it.restIter != nil {
+		return it.restIter.Error()
+	}
+	return nil
+}

@@ -111,6 +111,7 @@ type lazySeqIterator struct {
 	cur     *LazySeq
 	current Tuple
 	done    bool
+	err     error
 }
 
 func (it *lazySeqIterator) Next() bool {
@@ -122,7 +123,12 @@ func (it *lazySeqIterator) Next() bool {
 		return false
 	}
 	v, err := it.cur.First()
-	if err != nil || v == nil {
+	if err != nil {
+		it.err = err
+		it.done = true
+		return false
+	}
+	if v == nil {
 		it.done = true
 		return false
 	}
@@ -150,3 +156,5 @@ func (it *lazySeqIterator) Close() error {
 	it.done = true
 	return nil
 }
+
+func (it *lazySeqIterator) Error() error { return it.err }

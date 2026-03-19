@@ -22,6 +22,7 @@ type nonReusingIterator struct {
 	workspace    executor.Tuple // Reusable workspace for tuple building
 	totalScanned int
 	totalMatched int
+	err          error // First error from storage operations
 
 	// Pattern extraction utility
 	patternExtractor *query.PatternExtractor
@@ -36,7 +37,8 @@ func (it *nonReusingIterator) Next() bool {
 		for it.currentScan.Next() {
 			datom, err := it.currentScan.Datom()
 			if err != nil {
-				continue
+				it.err = err
+				return false
 			}
 
 			it.totalScanned++
@@ -73,6 +75,7 @@ func (it *nonReusingIterator) Next() bool {
 
 	rawIter, err := it.matcher.store.ScanKeysOnly(index, start, end)
 	if err != nil {
+		it.err = err
 		return false
 	}
 
@@ -97,6 +100,8 @@ func (it *nonReusingIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *nonReusingIterator) Error() error { return it.err }
 
 func (it *nonReusingIterator) extractBoundValues(bindingTuple executor.Tuple) (e, a, v, tx interface{}) {
 	// Use the pattern extractor to get all bound values at once
