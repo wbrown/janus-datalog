@@ -498,21 +498,69 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				}
 			}
 
-			// Add the new symbols to each relation in groups
+			// For each binding symbol: if already in the relation, filter
+			// (unify) instead of extending. If not present, extend.
 			var resultRels []Relation
 			for _, rel := range groups {
-				newCols := append(rel.Symbols(), bindingCols...)
-				var newTuples []Tuple
+				relSyms := rel.Symbols()
+
+				// Partition binding symbols into existing (filter) and new (extend)
+				var filterIdx []int   // indices into bindingCols that already exist in rel
+				var filterRelIdx []int // corresponding positions in relSyms
+				var extendIdx []int   // indices into bindingCols that are new
+
+				for i, bs := range bindingCols {
+					found := false
+					for j, rs := range relSyms {
+						if bs == rs {
+							filterIdx = append(filterIdx, i)
+							filterRelIdx = append(filterRelIdx, j)
+							found = true
+							break
+						}
+					}
+					if !found {
+						extendIdx = append(extendIdx, i)
+					}
+				}
+
+				// Build output symbols: existing + only the new binding symbols
+				outputSyms := make([]query.Symbol, len(relSyms))
+				copy(outputSyms, relSyms)
+				for _, ei := range extendIdx {
+					outputSyms = append(outputSyms, bindingCols[ei])
+				}
+
+				var outputTuples []Tuple
 				iter := rel.Iterator()
 				for iter.Next() {
 					oldTuple := iter.Tuple()
-					newTuple := make(Tuple, len(oldTuple)+len(bindingValues))
+
+					// Check filter conditions: existing symbols must match ground values
+					match := true
+					for k, fi := range filterIdx {
+						_ = k
+						if filterRelIdx[k] < len(oldTuple) {
+							if !valuesEqual(oldTuple[filterRelIdx[k]], bindingValues[fi]) {
+								match = false
+								break
+							}
+						}
+					}
+					if !match {
+						continue
+					}
+
+					// Build output tuple: old values + new extension values
+					newTuple := make(Tuple, len(outputSyms))
 					copy(newTuple, oldTuple)
-					copy(newTuple[len(oldTuple):], bindingValues)
-					newTuples = append(newTuples, newTuple)
+					for i, ei := range extendIdx {
+						newTuple[len(relSyms)+i] = bindingValues[ei]
+					}
+					outputTuples = append(outputTuples, newTuple)
 				}
 				iter.Close()
-				resultRels = append(resultRels, NewMaterializedRelationWithOptions(newCols, newTuples, e.options))
+				resultRels = append(resultRels, NewMaterializedRelationWithOptions(outputSyms, outputTuples, e.options))
 			}
 			return resultRels, nil
 		}
@@ -1952,6 +2000,26 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 			if err != nil {
 				return nil, err
 			}
+
+		case *query.OrClause:
+			newRel, err := e.executeOrClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = groups.Collapse(ctx)
+
+		case *query.OrJoinClause:
+			newRel, err := e.executeOrJoinClause(ctx, c, groups)
+			if err != nil {
+				return nil, err
+			}
+			if newRel != nil {
+				groups = append(groups, newRel)
+			}
+			groups = groups.Collapse(ctx)
 
 		default:
 			return nil, fmt.Errorf("unsupported inner clause type: %T", clause)

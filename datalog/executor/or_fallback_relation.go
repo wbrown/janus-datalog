@@ -168,6 +168,23 @@ func collectBranchOutputSymbols(branch []query.Clause) []query.Symbol {
 					outputs = append(outputs, b.Variable)
 				}
 			}
+		case *query.OrJoinClause:
+			// or-join declares its output symbols as join vars
+			for _, v := range clause.JoinVars {
+				if !seen[v] {
+					seen[v] = true
+					outputs = append(outputs, v)
+				}
+			}
+		case *query.OrClause:
+			// plain or: output symbols are the intersection across branches
+			orOutputs := computeOrBranchOutputSymbols(clause)
+			for _, v := range orOutputs {
+				if !seen[v] {
+					seen[v] = true
+					outputs = append(outputs, v)
+				}
+			}
 		}
 	}
 	return outputs

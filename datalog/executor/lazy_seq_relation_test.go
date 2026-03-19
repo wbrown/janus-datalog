@@ -156,3 +156,105 @@ func (it *sliceTupleIterator) Close() error {
 }
 
 func (it *sliceTupleIterator) Error() error { return it.err }
+
+// TestLazySeqRelation_MultipleIteratorsSafe verifies that calling Iterator()
+// multiple times on a LazySeqRelation produces independent cursors that all
+// see the same data, and the underlying iterator advances only once.
+func TestLazySeqRelation_MultipleIteratorsSafe(t *testing.T) {
+	callCount := 0
+	tuples := make([]Tuple, 10)
+	for i := range tuples {
+		tuples[i] = Tuple{i, "val"}
+	}
+
+	// Wrap in a counting iterator to track how many Next() calls reach storage
+	countingIt := &countingSliceIterator{tuples: tuples, nextCalls: &callCount}
+	seq := NewTupleSeq(countingIt, false)
+	syms := []query.Symbol{datalog.NewSymbol("?i"), datalog.NewSymbol("?v")}
+	rel := NewLazySeqRelation(seq, syms)
+
+	// Create three independent cursors
+	var results [3][]Tuple
+	for c := 0; c < 3; c++ {
+		it := rel.Iterator()
+		for it.Next() {
+			results[c] = append(results[c], it.Tuple())
+		}
+		it.Close()
+	}
+
+	// All three cursors see the same 10 tuples
+	for c := 0; c < 3; c++ {
+		require.Len(t, results[c], 10, "cursor %d should see 10 tuples", c)
+		for i, tuple := range results[c] {
+			assert.Equal(t, i, tuple[0], "cursor %d tuple %d", c, i)
+		}
+	}
+
+	// The underlying iterator advanced exactly 10 steps (not 30)
+	assert.Equal(t, 10, callCount, "underlying iterator should advance only 10 times total")
+}
+
+// TestLazySeqRelation_FromStreamingRelation verifies the specific wrapping
+// pattern: StreamingRelation → NewTupleSeq → LazySeqRelation. Two Iterator()
+// calls on the result both produce identical data with no panic.
+func TestLazySeqRelation_FromStreamingRelation(t *testing.T) {
+	tuples := []Tuple{{1, "a"}, {2, "b"}, {3, "c"}}
+	syms := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+
+	// Create a StreamingRelation (single-use)
+	baseIt := &sliceTupleIterator{tuples: tuples}
+	sr := NewStreamingRelation(syms, baseIt)
+
+	// Wrap: consume the streaming iterator once via NewTupleSeq, then
+	// create a LazySeqRelation that supports multiple cursors.
+	seq := NewTupleSeq(sr.Iterator(), sr.RequiresCopy())
+	lazyRel := NewLazySeqRelation(seq, sr.Symbols())
+
+	// First cursor
+	var results1 []Tuple
+	it1 := lazyRel.Iterator()
+	for it1.Next() {
+		results1 = append(results1, it1.Tuple())
+	}
+	it1.Close()
+
+	// Second cursor — must not panic
+	var results2 []Tuple
+	it2 := lazyRel.Iterator()
+	for it2.Next() {
+		results2 = append(results2, it2.Tuple())
+	}
+	it2.Close()
+
+	require.Len(t, results1, 3)
+	require.Len(t, results2, 3)
+	for i := range results1 {
+		assert.Equal(t, results1[i][0], results2[i][0])
+		assert.Equal(t, results1[i][1], results2[i][1])
+	}
+}
+
+// countingSliceIterator tracks how many times Next() is called.
+type countingSliceIterator struct {
+	tuples    []Tuple
+	pos       int
+	nextCalls *int
+	err       error
+}
+
+func (it *countingSliceIterator) Next() bool {
+	if it.pos >= len(it.tuples) {
+		return false
+	}
+	*it.nextCalls++
+	it.pos++
+	return true
+}
+
+func (it *countingSliceIterator) Tuple() Tuple {
+	return it.tuples[it.pos-1]
+}
+
+func (it *countingSliceIterator) Close() error { return nil }
+func (it *countingSliceIterator) Error() error { return it.err }
