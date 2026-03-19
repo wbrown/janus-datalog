@@ -434,6 +434,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 		Next() bool
 		Tuple() executor.Tuple
 		Close() error
+		Error() error
 	}
 
 	if keyMask != nil {
@@ -671,6 +672,8 @@ type validatingVBoundIterator struct {
 
 	// Current V value being searched
 	currentBoundV any
+
+	err error // First error from storage operations
 }
 
 func (it *validatingVBoundIterator) Next() bool {
@@ -680,7 +683,8 @@ func (it *validatingVBoundIterator) Next() bool {
 			for it.crdtIter.Next() {
 				datom, err := it.crdtIter.Datom()
 				if err != nil {
-					continue
+					it.err = err
+					return false
 				}
 
 				// Emit annotation for CRDT-resolved candidate
@@ -740,7 +744,8 @@ func (it *validatingVBoundIterator) Next() bool {
 		var err error
 		it.crdtIter, it.rawIter, err = it.openCRDTScan()
 		if err != nil {
-			continue
+			it.err = err
+			return false
 		}
 	}
 }
@@ -995,6 +1000,8 @@ func (it *validatingVBoundIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *validatingVBoundIterator) Error() error { return it.err }
 
 // matchWithSimpleBatchScanning uses simplified batch scanning to process large binding sets efficiently
 func (m *BadgerMatcher) matchWithSimpleBatchScanning(
@@ -1674,6 +1681,7 @@ type cardinalityManyScanAllEntitiesIterator struct {
 	currentMaxElementID datalog.ElementID
 	currentMemberIdx    int
 	currentTuple        executor.Tuple
+	err                 error // First error from storage operations
 }
 
 func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
@@ -1709,7 +1717,8 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 		for it.storageIter.Next() {
 			datom, err := it.storageIter.Datom()
 			if err != nil {
-				continue
+				it.err = err
+				return false
 			}
 
 			// Get entity bytes
@@ -1724,7 +1733,8 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			// Resolve the set for this entity using add-wins semantics
 			result, err := it.matcher.resolveAddWinsSet(eBytes[:], it.aBytes[:])
 			if err != nil {
-				continue
+				it.err = err
+				return false
 			}
 
 			// If set has members, set up iteration
@@ -1760,6 +1770,8 @@ func (it *cardinalityManyScanAllEntitiesIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *cardinalityManyScanAllEntitiesIterator) Error() error { return it.err }
 
 // matchVectorScanAllEntities handles [?e :attr <vector-literal>] where E is unbound.
 // Scans all entities with the attribute and resolves each vector using RGA.
@@ -1814,13 +1826,15 @@ type vectorScanAllEntitiesIterator struct {
 	seenEntities map[[20]byte]bool
 
 	currentTuple executor.Tuple
+	err          error // First error from storage operations
 }
 
 func (it *vectorScanAllEntitiesIterator) Next() bool {
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
 		if err != nil {
-			continue
+			it.err = err
+			return false
 		}
 
 		eBytes := datom.E.Hash()
@@ -1832,7 +1846,8 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 		// Resolve vector for this entity
 		result, err := it.matcher.resolveVector(eBytes[:], it.aBytes[:])
 		if err != nil {
-			continue
+			it.err = err
+			return false
 		}
 
 		// Never set — skip
@@ -1886,6 +1901,8 @@ func (it *vectorScanAllEntitiesIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *vectorScanAllEntitiesIterator) Error() error { return it.err }
 
 // matchCardinalityManyScanAllEntities handles [?e :attr ?v] where E is unbound
 // Scans all entities with the attribute and resolves each set using add-wins
@@ -1955,6 +1972,7 @@ type cardinalityManyAVETValueIterator struct {
 	// Result
 	currentTuple executor.Tuple
 	done         bool
+	err          error // First error from storage operations
 }
 
 func (it *cardinalityManyAVETValueIterator) Next() bool {
@@ -1975,7 +1993,8 @@ func (it *cardinalityManyAVETValueIterator) Next() bool {
 
 		datom, err := it.storageIter.Datom()
 		if err != nil {
-			continue
+			it.err = err
+			return false
 		}
 
 		eBytes := datom.E.Hash()
@@ -2073,6 +2092,8 @@ func (it *cardinalityManyAVETValueIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *cardinalityManyAVETValueIterator) Error() error { return it.err }
 
 // cardinalityManyFindEntitiesWithValueIterator streams results for [?e :attr "value"] patterns
 // where E is unbound and cardinality is many. It iterates through entities and checks

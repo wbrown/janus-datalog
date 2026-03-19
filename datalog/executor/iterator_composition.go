@@ -71,6 +71,8 @@ func (it *FilterIterator) Close() error {
 	return it.source.Close()
 }
 
+func (it *FilterIterator) Error() error { return it.source.Error() }
+
 // ProjectIterator projects specific symbols from the source relation
 type ProjectIterator struct {
 	relation   Relation // Source relation (may be cached/materialized)
@@ -135,6 +137,13 @@ func (it *ProjectIterator) Close() error {
 	return nil
 }
 
+func (it *ProjectIterator) Error() error {
+	if it.source != nil {
+		return it.source.Error()
+	}
+	return nil
+}
+
 // TransformIterator applies a transformation function to each tuple
 type TransformIterator struct {
 	source    Iterator
@@ -168,6 +177,8 @@ func (it *TransformIterator) Tuple() Tuple {
 func (it *TransformIterator) Close() error {
 	return it.source.Close()
 }
+
+func (it *TransformIterator) Error() error { return it.source.Error() }
 
 // ConcatIterator concatenates multiple iterators sequentially
 type ConcatIterator struct {
@@ -213,6 +224,13 @@ func (it *ConcatIterator) Close() error {
 		}
 	}
 	return lastErr
+}
+
+func (it *ConcatIterator) Error() error {
+	if it.current < len(it.iterators) {
+		return it.iterators[it.current].Error()
+	}
+	return nil
 }
 
 // PredicateFilterIterator wraps another iterator and filters based on a query.Predicate
@@ -263,6 +281,8 @@ func (it *PredicateFilterIterator) Tuple() Tuple {
 func (it *PredicateFilterIterator) Close() error {
 	return it.source.Close()
 }
+
+func (it *PredicateFilterIterator) Error() error { return it.source.Error() }
 
 // FunctionEvaluatorIterator adds a new symbol by evaluating a function
 type FunctionEvaluatorIterator struct {
@@ -327,6 +347,8 @@ func (it *FunctionEvaluatorIterator) Close() error {
 	return it.source.Close()
 }
 
+func (it *FunctionEvaluatorIterator) Error() error { return it.source.Error() }
+
 // DedupIterator removes duplicate tuples based on full tuple equality
 type DedupIterator struct {
 	source  Iterator
@@ -364,3 +386,5 @@ func (it *DedupIterator) Tuple() Tuple {
 func (it *DedupIterator) Close() error {
 	return it.source.Close()
 }
+
+func (it *DedupIterator) Error() error { return it.source.Error() }

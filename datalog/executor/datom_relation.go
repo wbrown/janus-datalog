@@ -73,6 +73,8 @@ func (it *DatomIterator) Close() error {
 	return nil
 }
 
+func (it *DatomIterator) Error() error { return nil }
+
 // NewDatomRelation creates a relation from datoms
 func NewDatomRelation(datoms []datalog.Datom, binding PatternBinding) Relation {
 	// Build symbols from binding

@@ -158,6 +158,11 @@ type Iterator interface {
 
 	// Close releases any resources
 	Close() error
+
+	// Error returns any error encountered during iteration.
+	// Callers must check Error() after Next() returns false to
+	// distinguish normal exhaustion from execution failure.
+	Error() error
 }
 
 // CountingIterator wraps an iterator and tracks tuple count without buffering
@@ -193,6 +198,8 @@ func (i *CountingIterator) Tuple() Tuple {
 func (i *CountingIterator) Close() error {
 	return i.inner.Close()
 }
+
+func (i *CountingIterator) Error() error { return i.inner.Error() }
 
 // Count returns the number of tuples seen so far
 func (i *CountingIterator) Count() int {
@@ -274,6 +281,8 @@ func (ci *CachingIterator) Close() error {
 	ci.signalComplete()
 	return ci.inner.Close()
 }
+
+func (ci *CachingIterator) Error() error { return ci.inner.Error() }
 
 func (ci *CachingIterator) signalComplete() {
 	ci.mu.Lock()
@@ -747,6 +756,8 @@ func (it *sliceIterator) Tuple() Tuple {
 func (it *sliceIterator) Close() error {
 	return nil
 }
+
+func (it *sliceIterator) Error() error { return nil }
 
 // StreamingRelation wraps an iterator as a relation
 type StreamingRelation struct {
@@ -1560,6 +1571,17 @@ func (pi *ProductIterator) Close() error {
 	for _, it := range pi.iterators {
 		if it != nil {
 			it.Close()
+		}
+	}
+	return nil
+}
+
+func (pi *ProductIterator) Error() error {
+	for _, it := range pi.iterators {
+		if it != nil {
+			if err := it.Error(); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

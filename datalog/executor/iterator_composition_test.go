@@ -13,6 +13,7 @@ import (
 type mockIterator struct {
 	tuples []Tuple
 	pos    int
+	err    error
 }
 
 func newMockIterator(tuples []Tuple) *mockIterator {
@@ -37,6 +38,8 @@ func (it *mockIterator) Tuple() Tuple {
 func (it *mockIterator) Close() error {
 	return nil
 }
+
+func (it *mockIterator) Error() error { return it.err }
 
 func TestFilterIterator(t *testing.T) {
 	// Create test data

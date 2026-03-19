@@ -310,6 +310,8 @@ func (it *datomIterator) Close() error {
 	return nil
 }
 
+func (it *datomIterator) Error() error { return nil }
+
 // datomsToRelation converts datoms to a streaming relation (zero-copy lazy evaluation)
 func datomsToRelation(datoms []datalog.Datom, pattern *query.DataPattern, symbols []query.Symbol) Relation {
 	return datomsToRelationWithOptions(datoms, pattern, symbols, ExecutorOptions{})

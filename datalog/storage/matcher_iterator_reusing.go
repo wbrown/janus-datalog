@@ -35,6 +35,8 @@ type reusingIterator struct {
 	// Performance tracking
 	datomsScanned int // Total datoms scanned
 	datomsMatched int // Total datoms matched
+
+	err error // First error from storage operations
 }
 
 func (it *reusingIterator) Next() bool {
@@ -66,6 +68,7 @@ func (it *reusingIterator) Next() bool {
 		var err error
 		rawIter, err := it.matcher.store.ScanKeysOnly(it.index, startKey, endKey)
 		if err != nil {
+			it.err = err
 			return false
 		}
 
@@ -91,8 +94,8 @@ func (it *reusingIterator) Next() bool {
 			for hasNext {
 				datom, err := it.storageIter.Datom()
 				if err != nil {
-					hasNext = it.storageIter.Next()
-					continue
+					it.err = err
+					return false
 				}
 
 				// Track datom scan
@@ -249,6 +252,8 @@ func (it *reusingIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *reusingIterator) Error() error { return it.err }
 
 // getSymbolIndex returns the index of a symbol in the binding relation symbols
 func (it *reusingIterator) getSymbolIndex(variable query.Variable) int {

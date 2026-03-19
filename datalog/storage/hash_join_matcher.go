@@ -748,13 +748,15 @@ type hashJoinIterator struct {
 	workspace     executor.Tuple // Reusable workspace for tuple building
 	datomsScanned int            // Track number of datoms scanned for event reporting
 	matchesFound  int            // Track number of matches for event reporting
+	err           error          // First error from storage operations
 }
 
 func (it *hashJoinIterator) Next() bool {
 	for it.iter.Next() {
 		datom, err := it.iter.Datom()
 		if err != nil {
-			continue
+			it.err = err
+			return false
 		}
 
 		// Count every datom scanned for performance monitoring
@@ -824,6 +826,8 @@ func (it *hashJoinIterator) Close() error {
 	return nil
 }
 
+func (it *hashJoinIterator) Error() error { return it.err }
+
 // mergeJoinIterator performs lazy merge join iteration
 type mergeJoinIterator struct {
 	matcher      *BadgerMatcher
@@ -839,13 +843,15 @@ type mergeJoinIterator struct {
 	tupleBuilder *query.InternedTupleBuilder
 	current      executor.Tuple
 	workspace    executor.Tuple // Reusable workspace for tuple building
+	err          error          // First error from storage operations
 }
 
 func (it *mergeJoinIterator) Next() bool {
 	for it.iter.Next() {
 		datom, err := it.iter.Datom()
 		if err != nil {
-			continue
+			it.err = err
+			return false
 		}
 
 		// Check transaction validity
@@ -913,3 +919,5 @@ func (it *mergeJoinIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *mergeJoinIterator) Error() error { return it.err }

@@ -77,6 +77,8 @@ func (it *boundDatomIterator) Close() error {
 	return nil
 }
 
+func (it *boundDatomIterator) Error() error { return nil }
+
 // NewIndexedMemoryMatcher creates a new indexed pattern matcher for in-memory datoms
 func NewIndexedMemoryMatcher(datoms []datalog.Datom) *IndexedMemoryMatcher {
 	return &IndexedMemoryMatcher{

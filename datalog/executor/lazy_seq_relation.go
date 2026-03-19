@@ -24,6 +24,19 @@ func NewLazySeqRelation(seq *LazySeq, symbols []query.Symbol) *LazySeqRelation {
 	return &LazySeqRelation{seq: seq, symbols: symbols}
 }
 
+// WrapStreamingAsLazy wraps a StreamingRelation's iterator in a LazySeqRelation
+// so it can be safely re-iterated. Non-streaming relations are returned as-is.
+// Use this when a streaming result will participate in a join or collapse that
+// may call Iterator() multiple times.
+func WrapStreamingAsLazy(rel Relation) Relation {
+	sr, ok := rel.(*StreamingRelation)
+	if !ok {
+		return rel
+	}
+	seq := NewTupleSeq(sr.Iterator(), sr.RequiresCopy())
+	return NewLazySeqRelation(seq, sr.Symbols())
+}
+
 func (r *LazySeqRelation) Symbols() []query.Symbol { return r.symbols }
 func (r *LazySeqRelation) Size() int               { return -1 } // streaming
 func (r *LazySeqRelation) Get(i int) Tuple          { return nil }
@@ -111,6 +124,7 @@ type lazySeqIterator struct {
 	cur     *LazySeq
 	current Tuple
 	done    bool
+	err     error
 }
 
 func (it *lazySeqIterator) Next() bool {
@@ -122,7 +136,12 @@ func (it *lazySeqIterator) Next() bool {
 		return false
 	}
 	v, err := it.cur.First()
-	if err != nil || v == nil {
+	if err != nil {
+		it.err = err
+		it.done = true
+		return false
+	}
+	if v == nil {
 		it.done = true
 		return false
 	}
@@ -150,3 +169,5 @@ func (it *lazySeqIterator) Close() error {
 	it.done = true
 	return nil
 }
+
+func (it *lazySeqIterator) Error() error { return it.err }

@@ -296,3 +296,13 @@ func (it *UnionIterator) Close() error {
 	}
 	return it.firstError
 }
+
+func (it *UnionIterator) Error() error {
+	if it.firstError != nil {
+		return it.firstError
+	}
+	if it.currentIter != nil {
+		return it.currentIter.Error()
+	}
+	return nil
+}
