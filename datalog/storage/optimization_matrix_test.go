@@ -63,7 +63,7 @@ func TestOptimizationMatrix(t *testing.T) {
 	  [?scenario :entity/type :entity.type/scenario]
 	  [?scenario :scenario/title ?title]
 	  [?scenario :scenario/created-at ?createdAt]
-	  (or [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+	  (or-default [(q [:find (count ?t) (sum ?tok) (sum ?dur)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]
@@ -71,7 +71,7 @@ func TestOptimizationMatrix(t *testing.T) {
 	                  [(get-else $ ?t :task/duration 0) ?dur]]
 	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
 	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/key :task/opening]
@@ -79,7 +79,7 @@ func TestOptimizationMatrix(t *testing.T) {
 	          $ ?scenario) [[?openingCount]]]
 	      [(ground 0) ?openingCount])
 	  [[(> ?openingCount 0)] ?complete]
-	  (or [(q [:find ?key ?ca
+	  (or-default [(q [:find ?key ?ca
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]

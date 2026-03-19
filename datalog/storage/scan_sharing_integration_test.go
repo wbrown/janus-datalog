@@ -56,7 +56,7 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 
 	q := `[:find ?e ?count ?total
 	       :where [?e :entity/type :entity.type/scenario]
-	              (or [(q [:find (count ?t) (sum ?tok)
+	              (or-default [(q [:find (count ?t) (sum ?tok)
 	                       :in $ ?s
 	                       :where [?t :task/root ?s]
 	                              [?t :task/status :status/complete]
@@ -112,7 +112,7 @@ func TestScanSharing_CorrectnessDifferential(t *testing.T) {
 
 	q := `[:find ?e ?count
 	       :where [?e :entity/type :entity.type/scenario]
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/root ?s]
 	                              [?t :task/status :status/complete]]
@@ -157,7 +157,7 @@ func TestScanSharing_DisabledByDefault(t *testing.T) {
 
 	q := `[:find ?e ?count
 	       :where [?e :entity/type :entity.type/scenario]
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/root ?s]
 	                              [?t :task/status :status/complete]]

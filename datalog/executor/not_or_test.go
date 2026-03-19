@@ -551,14 +551,14 @@ func TestOrFallbackFirstBranchMatches(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(datoms)
 	executor := NewExecutor(matcher, nil)
 
-	// Query: (or [?e :user/name ?x] [(ground "fallback") ?x])
+	// Query: (or-default [?e :user/name ?x] [(ground "fallback") ?x])
 	// First branch should match, so we should get "Alice", not "fallback"
 	q := &query.Query{
 		Find: []query.FindElement{
 			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 		},
 		Where: []query.Clause{
-			&query.OrClause{
+			&query.OrDefaultClause{
 				Branches: [][]query.Clause{
 					{
 						&query.DataPattern{
@@ -798,14 +798,14 @@ func TestOrFallbackPatternWithStreamingRelation(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(datoms)
 	executor := NewExecutor(matcher, nil)
 
-	// Query: (or [?e :user/name ?x] [(ground "fallback") ?x])
+	// Query: (or-default [?e :user/name ?x] [(ground "fallback") ?x])
 	// Pattern should match, returning "Alice"
 	q := &query.Query{
 		Find: []query.FindElement{
 			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
 		},
 		Where: []query.Clause{
-			&query.OrClause{
+			&query.OrDefaultClause{
 				Branches: [][]query.Clause{
 					{
 						&query.DataPattern{
@@ -858,9 +858,9 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 	queryExecutor := NewExecutor(matcher, nil)
 
 	// Build the OR clause with SubqueryPattern and ground fallback
-	// (or [(q [:find (count ?t) :where [?t :task/status :status/complete]] $) [[?count]]]
-	//     [(ground 0) ?count])
-	orClause := &query.OrClause{
+	// (or-default [(q [:find (count ?t) :where [?t :task/status :status/complete]] $) [[?count]]]
+	//             [(ground 0) ?count])
+	orClause := &query.OrDefaultClause{
 		Branches: [][]query.Clause{
 			{
 				&query.SubqueryPattern{
@@ -966,7 +966,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 	//                         [?t :task/status :status/complete]]
 	//                $ ?scenario) [[?count]]]
 	//             [(ground 0) ?count])]
-	orClause := &query.OrClause{
+	orClause := &query.OrDefaultClause{
 		Branches: [][]query.Clause{
 			{
 				&query.SubqueryPattern{
@@ -1090,10 +1090,10 @@ func TestOrFallbackWithPatternAndTupleGround(t *testing.T) {
 	// Query:
 	// [:find ?scenario ?name ?taskCount
 	//  :where [?scenario :scenario/name ?name]
-	//         (or (and [?scenario :scenario/task ?task]
-	//                  [?task :task/count ?taskCount])
-	//             [(ground [0]) [?taskCount]])]
-	orClause := &query.OrClause{
+	//         (or-default (and [?scenario :scenario/task ?task]
+	//                         [?task :task/count ?taskCount])
+	//                    [(ground [0]) [?taskCount]])]
+	orClause := &query.OrDefaultClause{
 		Branches: [][]query.Clause{
 			// Branch 1: pattern-only (matches scenario1, not scenario2)
 			{
@@ -1209,7 +1209,7 @@ func TestOrFallbackWithPatternAndScalarGround(t *testing.T) {
 	executor := NewExecutor(matcher, nil)
 
 	// Same as TestOrFallbackWithPatternAndTupleGround but with SCALAR ground
-	orClause := &query.OrClause{
+	orClause := &query.OrDefaultClause{
 		Branches: [][]query.Clause{
 			{
 				&query.DataPattern{
@@ -1357,5 +1357,191 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 		if val != int64(0) {
 			t.Errorf("Expected count=0 (fallback), got %v (type %T)", val, val)
 		}
+	}
+}
+
+// TestOrCorrelatedUnionWithIdentityBranch reproduces the bug where OR clauses
+// drop expression-only branches due to fallback short-circuiting.
+// See docs/bugs/BUG-OR-FALLBACK-DROPS-EXPRESSION-BRANCHES.md
+//
+// The OR has a data pattern branch (finds rooms in an area) and an identity
+// expression branch (binds the area entity itself). Both branches should
+// contribute results (union semantics). The bug: fallback short-circuits
+// after the data pattern branch succeeds, so the identity branch is never
+// evaluated.
+func TestOrCorrelatedUnionWithIdentityBranch(t *testing.T) {
+	area1 := datalog.NewIdentity("area:caves")
+	room1 := datalog.NewIdentity("room:guard")
+	room2 := datalog.NewIdentity("room:shrine")
+	room3 := datalog.NewIdentity("room:depths")
+
+	nameAttr := datalog.NewKeyword(":entity/name")
+	areaAttr := datalog.NewKeyword(":entity/area")
+
+	datoms := []datalog.Datom{
+		{E: area1, A: nameAttr, V: "Coastal Caves", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: room1, A: nameAttr, V: "Guard Chamber", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: room2, A: nameAttr, V: "Shrine Hall", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: room3, A: nameAttr, V: "The Depths", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: room1, A: areaAttr, V: area1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: room2, A: areaAttr, V: area1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: room3, A: areaAttr, V: area1, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	executor := NewExecutor(matcher, nil)
+
+	// Query:
+	// [:find ?rname
+	//  :where [?self :entity/name "Guard Chamber"]
+	//         [?self :entity/area ?target]
+	//         (or [?related :entity/area ?target]
+	//             [(identity ?target) ?related])
+	//         [?related :entity/name ?rname]]
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: datalog.NewSymbol("?rname")},
+		},
+		Where: []query.Clause{
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?self")},
+					query.Constant{Value: nameAttr},
+					query.Constant{Value: "Guard Chamber"},
+				},
+			},
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?self")},
+					query.Constant{Value: areaAttr},
+					query.Variable{Name: datalog.NewSymbol("?target")},
+				},
+			},
+			&query.OrClause{
+				Branches: [][]query.Clause{
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: datalog.NewSymbol("?related")},
+								query.Constant{Value: areaAttr},
+								query.Variable{Name: datalog.NewSymbol("?target")},
+							},
+						},
+					},
+					{
+						&query.Expression{
+							Function: query.IdentityFunction{
+								Arg: query.VariableTerm{Symbol: datalog.NewSymbol("?target")},
+							},
+							Binding: datalog.NewSymbol("?related"),
+						},
+					},
+				},
+			},
+			&query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?related")},
+					query.Constant{Value: nameAttr},
+					query.Variable{Name: datalog.NewSymbol("?rname")},
+				},
+			},
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	names := make(map[string]bool)
+	for i := 0; i < result.Size(); i++ {
+		name := result.Get(i)[0].(string)
+		names[name] = true
+		t.Logf("result[%d]: %s", i, name)
+	}
+
+	// All 3 rooms in the area (including Guard Chamber itself) + the area entity
+	if result.Size() != 4 {
+		t.Errorf("expected 4 results, got %d", result.Size())
+	}
+	if !names["Guard Chamber"] {
+		t.Error("missing 'Guard Chamber' (room in same area)")
+	}
+	if !names["Shrine Hall"] {
+		t.Error("missing 'Shrine Hall' (room in same area)")
+	}
+	if !names["The Depths"] {
+		t.Error("missing 'The Depths' (room in same area)")
+	}
+	if !names["Coastal Caves"] {
+		t.Error("missing 'Coastal Caves' (area entity via identity branch)")
+	}
+}
+
+// TestOrUnionIncludesAllBranches verifies that (or ...) with expression branches
+// uses union semantics (all branches contribute), not fallback (first-match-wins).
+func TestOrUnionIncludesAllBranches(t *testing.T) {
+	alice := datalog.NewIdentity("user:alice")
+	nameAttr := datalog.NewKeyword(":user/name")
+
+	datoms := []datalog.Datom{
+		{E: alice, A: nameAttr, V: "Alice", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	executor := NewExecutor(matcher, nil)
+
+	// Query:
+	// [:find ?x
+	//  :where (or [?e :user/name ?x]
+	//             [(ground "nobody") ?x])]
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: datalog.NewSymbol("?x")},
+		},
+		Where: []query.Clause{
+			&query.OrClause{
+				Branches: [][]query.Clause{
+					{
+						&query.DataPattern{
+							Elements: []query.PatternElement{
+								query.Variable{Name: datalog.NewSymbol("?e")},
+								query.Constant{Value: nameAttr},
+								query.Variable{Name: datalog.NewSymbol("?x")},
+							},
+						},
+					},
+					{
+						&query.Expression{
+							Function: &query.GroundFunction{Value: "nobody"},
+							Binding:  datalog.NewSymbol("?x"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := executor.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+
+	values := make(map[string]bool)
+	for i := 0; i < result.Size(); i++ {
+		val := result.Get(i)[0].(string)
+		values[val] = true
+		t.Logf("result[%d]: %s", i, val)
+	}
+
+	// Union: both branches should contribute
+	if result.Size() != 2 {
+		t.Errorf("expected 2 results (union of both branches), got %d", result.Size())
+	}
+	if !values["Alice"] {
+		t.Error("missing 'Alice' from data pattern branch")
+	}
+	if !values["nobody"] {
+		t.Error("missing 'nobody' from ground expression branch")
 	}
 }

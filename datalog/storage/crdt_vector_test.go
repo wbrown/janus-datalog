@@ -2446,7 +2446,7 @@ func TestVectorLiteralMatch(t *testing.T) {
 }
 
 // TestVectorLiteralWithOr verifies the (or ...) scenario from the bug report:
-// (or [(missing? $ ?e :attr)] [?e :attr []]) should return entities where the
+// (or-default [(missing? $ ?e :attr)] [?e :attr []]) should return entities where the
 // attribute is missing OR empty, but NOT entities with non-empty vectors.
 func TestVectorLiteralWithOr(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "vector-literal-or-test")
@@ -2507,7 +2507,7 @@ func TestVectorLiteralWithOr(t *testing.T) {
 	results, err := executor.CollectTuples(db.Query(
 		`[:find ?name :where
 		  [?e :entity/name ?name]
-		  (or [(missing? $ ?e :entity/lore)]
+		  (or-default [(missing? $ ?e :entity/lore)]
 		      [?e :entity/lore []])]`))
 	require.NoError(t, err)
 	t.Logf("or combined: %v", results)

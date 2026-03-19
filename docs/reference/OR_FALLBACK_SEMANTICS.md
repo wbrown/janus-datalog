@@ -1,156 +1,124 @@
-# OR Clause Fallback Semantics
+# OR Clause Semantics
 
-This document describes the extended OR clause semantics that allow expressions (including `ground` and arithmetic) to be used as fallback values when pattern branches return no results.
+This document describes the OR clause variants and their semantics.
 
-## Overview
+## Two Clause Types, Two Semantics
 
-Standard Datalog OR clauses use **union semantics**: all branches are executed and results are merged. This works well for pattern matching but doesn't support providing default values when queries return empty.
+| Clause | Semantics | Behavior |
+|--------|-----------|----------|
+| `(or ...)` / `(or-join ...)` | **Union** (Datomic-compatible) | All branches execute, results merged |
+| `(or-default ...)` / `(or-default-join ...)` | **Fallback** (janus extension) | Branches tried in order, first non-empty wins |
 
-When an OR clause contains expression branches (e.g., `ground`, arithmetic), janus-datalog switches to **fallback semantics**: branches are tried in order, and the first non-empty result is returned.
+## Union Semantics: `(or ...)`
 
-## Motivation
-
-Consider a scenario where you want to count tasks but return 0 when none exist:
-
-```clojure
-;; Standard subquery - returns empty when no tasks match
-[(q [:find (count ?t)
-     :in $ ?scenario
-     :where [?t :task/scenario ?scenario]
-            [?t :task/status :status/complete]]
-   $ ?scenario) [[?count]]]
-```
-
-When no matching tasks exist, this subquery returns empty (no tuples), causing the outer query tuple to be excluded entirely.
-
-With OR fallback semantics, you can provide a default:
+Standard Datalog/Datomic union. All branches are evaluated and results are combined.
 
 ```clojure
-(or [(q [:find (count ?t) ...] $ ?scenario) [[?count]]]
-    [(ground 0) ?count])
-```
-
-Now when the subquery returns empty, the ground expression provides `0` as the fallback.
-
-## Semantics
-
-### Pattern-Only OR (Union Semantics)
-
-When all branches contain only patterns, standard Datalog union semantics apply:
-
-```clojure
-;; Union: returns ALL users who are either active OR premium
+;; Returns ALL users who are active OR premium (both branches contribute)
 (or [?e :user/active true]
     [?e :user/premium true])
 ```
 
-Both branches execute, and results are merged (deduplicated on common symbols).
-
-### OR with Expressions (Fallback Semantics)
-
-When any branch contains an expression, fallback semantics apply:
+Expression branches work in union mode — both data patterns and expressions contribute:
 
 ```clojure
-;; Fallback: returns first non-empty result
-(or [?e :user/name ?name]           ;; Try pattern first
-    [(ground "Unknown") ?name])      ;; Fallback if no match
+;; Returns rooms sharing the area AND the area entity itself
+(or [?related :entity/area ?target]
+    [(identity ?target) ?related])
 ```
 
-Branches are tried in order:
-1. If branch 1 returns results, return immediately
+When branches reference symbols from the outer query context, the executor uses **correlated union**: each outer tuple evaluates all branches, and results are unioned per tuple.
+
+When branches are independent (no outer symbol references), the executor uses **uncorrelated union**: branches execute independently and results are merged.
+
+### or-join
+
+Explicit join variables control which symbols are exposed:
+
+```clojure
+(or-join [?e]
+  [?e :user/status "active"]
+  [?e :admin/status "enabled"])
+```
+
+## Fallback Semantics: `(or-default ...)`
+
+A janus-datalog extension for the "data with default" pattern. Branches are tried in order, and the first non-empty result is returned.
+
+```clojure
+;; Return "Unknown" if no name exists
+(or-default [?e :user/name ?name]
+            [(ground "Unknown") ?name])
+```
+
+Evaluation order:
+1. If branch 1 returns results, return immediately (short-circuit)
 2. If branch 1 is empty, try branch 2
 3. Continue until a non-empty result or all branches exhausted
 
-## Supported Expression Types
+### Common Patterns
 
-The following expressions can be used in OR branches:
-
-### Ground Expressions
-
-Bind a constant value to a variable:
-
-```clojure
-(or [?e :config/value ?v]
-    [(ground "default") ?v])
-```
-
-### Arithmetic Expressions
-
-Compute values when patterns don't match:
-
-```clojure
-(or [?e :item/discount ?discount]
-    [(* ?price 0) ?discount])  ;; 0 discount if none specified
-```
-
-### Subquery Expressions
-
-Use subqueries as branches with fallbacks:
-
-```clojure
-(or [(q [:find (sum ?amount) :where ...] $) [[?total]]]
-    [(ground 0) ?total])
-```
-
-## Examples
-
-### Default Value for Missing Attribute
+**Default value for missing attribute:**
 
 ```clojure
 [:find ?name ?status
  :where [?e :user/name ?name]
-        (or [?e :user/status ?status]
-            [(ground :status/unknown) ?status])]
+        (or-default [?e :user/status ?status]
+                    [(ground :status/unknown) ?status])]
 ```
 
-### Count with Zero Default
+**Count with zero default:**
 
 ```clojure
 [:find ?category ?count
  :where [?c :category/name ?category]
-        (or [(q [:find (count ?p)
-                 :in $ ?c
-                 :where [?p :product/category ?c]]
-               $ ?c) [[?count]]]
-            [(ground 0) ?count])]
+        (or-default [(q [:find (count ?p)
+                         :in $ ?c
+                         :where [?p :product/category ?c]]
+                        $ ?c) [[?count]]]
+                    [(ground 0) ?count])]
 ```
 
-### Multiple Fallback Levels
+**Multiple fallback levels:**
 
 ```clojure
-;; Try multiple sources in priority order
-(or [?e :user/nickname ?display]
-    [?e :user/fullname ?display]
-    [?e :user/email ?display]
-    [(ground "Anonymous") ?display])
+(or-default [?e :user/nickname ?display]
+            [?e :user/fullname ?display]
+            [?e :user/email ?display]
+            [(ground "Anonymous") ?display])
 ```
 
-## OR-JOIN with Fallback
+### or-default-join
 
-The same semantics apply to `or-join` when expressions are present:
+Explicit join variables for fallback:
 
 ```clojure
-(or-join [?x]
+(or-default-join [?x]
   [?e :source1/value ?x]
   [?e :source2/value ?x]
   [(ground 0) ?x])
 ```
 
-## Implementation Notes
+## Algebra IR Representation
 
-- Fallback semantics require materializing branch results to check for emptiness
-- Pattern-only OR continues to use efficient union/streaming semantics
-- Detection is automatic based on branch contents - no explicit syntax needed
-- Predicates are also supported within expression branches
+| Clause | IR Node | Description |
+|--------|---------|-------------|
+| `(or ...)` / `(or-join ...)` | `Union` | Independent branch evaluation |
+| `(or-default ...)` / `(or-default-join ...)` | `LateralUnion` | Correlated per-tuple evaluation |
+| `(or-default ...)` with subquery+ground | `LateralJoin` | Correlated subquery with defaults |
+
+When `(or ...)` contains correlated predicates (NOT, missing?) that require
+outer context, the compiler detects this and routes to `LateralUnion` instead
+of `Union`, since independent union branches cannot express anti-joins.
 
 ## Comparison with Datomic
 
-Datomic's OR clauses use pure union semantics and do not support this fallback pattern directly. The workaround in Datomic is typically application-level code:
+| Feature | Datomic | janus-datalog |
+|---------|---------|---------------|
+| `(or ...)` union | Yes | Yes (identical semantics) |
+| `(or-join ...)` union | Yes | Yes (identical semantics) |
+| Default values in query | No (application-level) | Yes via `(or-default ...)` |
+| `get-else` for single attr | Yes | Yes |
 
-```clojure
-;; Datomic workaround
-(or (seq (d/q [:find ...] db))
-    [[0]])  ;; application-level default
-```
-
-janus-datalog's fallback semantics provide this capability within the query itself, enabling more declarative queries.
+Datomic users who need "default if missing" handle it in application code.
+janus-datalog's `(or-default ...)` provides this within the query itself.

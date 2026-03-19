@@ -15,7 +15,7 @@ func TestDecorrelation_SimpleAggregate(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count
 	  :where
 	  [?e :entity/type :entity.type/scenario]
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]]
@@ -122,13 +122,13 @@ func TestDecorrelation_MultipleSubqueries(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count ?total
 	  :where
 	  [?e :entity/type :entity.type/scenario]
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]]
 	          $ ?e) [[?count]]]
 	      [(ground 0) ?count])
-	  (or [(q [:find (sum ?v)
+	  (or-default [(q [:find (sum ?v)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/value ?v]]
@@ -162,14 +162,14 @@ func TestDecorrelation_NestedWithIntermediateMap(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count ?ready
 	  :where
 	  [?e :entity/type :entity.type/project]
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/status :status/done]]
 	          $ ?e) [[?count]]]
 	      [(ground 0) ?count])
 	  [[(> ?count 0)] ?ready]
-	  (or [(q [:find (sum ?c)
+	  (or-default [(q [:find (sum ?c)
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/cost ?c]]
@@ -205,14 +205,14 @@ func TestDecorrelation_NestedWithNotAndGetElse(t *testing.T) {
 	  [?e :entity/type :entity.type/project]
 	  (not [?e :entity/deleted true])
 	  [(get-else $ ?e :project/label "") ?label]
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/status :status/done]]
 	          $ ?e) [[?count]]]
 	      [(ground 0) ?count])
 	  [[(> ?count 0)] ?ready]
-	  (or [(q [:find (sum ?c)
+	  (or-default [(q [:find (sum ?c)
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/cost ?c]]
@@ -248,13 +248,13 @@ func TestDecorrelation_MixedAggregateAndNonAggregate(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count ?lastKey
 	  :where
 	  [?e :entity/type :entity.type/project]
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/status :status/done]]
 	          $ ?e) [[?count]]]
 	      [(ground 0) ?count])
-	  (or [(q [:find ?key
+	  (or-default [(q [:find ?key
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/key ?key]]
@@ -303,7 +303,7 @@ func TestDecorrelation_ProductionStructure(t *testing.T) {
 	  [(get-else $ ?project :project/region "") ?region]
 	  [(get-else $ ?project :project/owner "") ?owner]
 	  [(get-else $ ?project :project/notes "") ?notes]
-	  (or [(q [:find (count ?i) (sum ?c) (sum ?w) (sum ?iu) (sum ?ou)
+	  (or-default [(q [:find (count ?i) (sum ?c) (sum ?w) (sum ?iu) (sum ?ou)
 	           :in $ ?p
 	           :where [?i :item/project ?p]
 	                  [?i :item/status :status/done]
@@ -314,7 +314,7 @@ func TestDecorrelation_ProductionStructure(t *testing.T) {
 	                  [(get-else $ ?i :item/output-units 0) ?ou]]
 	          $ ?project) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]]
 	      [(ground [0 0 0 0 0]) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]])
-	  (or [(q [:find (count ?i)
+	  (or-default [(q [:find (count ?i)
 	           :in $ ?p
 	           :where [?i :item/project ?p]
 	                  [?i :item/key :step/init]
@@ -323,7 +323,7 @@ func TestDecorrelation_ProductionStructure(t *testing.T) {
 	          $ ?project) [[?initCount]]]
 	      [(ground 0) ?initCount])
 	  [[(> ?initCount 0)] ?ready]
-	  (or [(q [:find ?key ?ca
+	  (or-default [(q [:find ?key ?ca
 	           :in $ ?p
 	           :where [?i :item/project ?p]
 	                  [?i :item/status :status/done]
@@ -383,13 +383,13 @@ func TestDecorrelation_NestedLateralJoins(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count ?total
 	  :where
 	  [?e :entity/type :entity.type/project]
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/status :status/done]]
 	          $ ?e) [[?count]]]
 	      [(ground 0) ?count])
-	  (or [(q [:find (sum ?c)
+	  (or-default [(q [:find (sum ?c)
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/cost ?c]]
@@ -425,7 +425,7 @@ func TestDecorrelation_ArgmaxPattern(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?lastKey ?lastUpdatedAt
 	  :where
 	  [?e :entity/type :entity.type/project]
-	  (or [(q [:find ?key ?ca
+	  (or-default [(q [:find ?key ?ca
 	           :in $ ?s
 	           :where [?t :item/project ?s]
 	                  [?t :item/completed-at ?ca]
@@ -471,7 +471,7 @@ func TestDecorrelation_PureDataPatternSkipped(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?val
 	  :where
 	  [?e :entity/type :entity.type/project]
-	  (or [(q [:find ?v
+	  (or-default [(q [:find ?v
 	           :in $ ?s
 	           :where [?s :project/value ?v]]
 	          $ ?e) [[?val]]]

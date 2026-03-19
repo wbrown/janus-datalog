@@ -31,6 +31,8 @@ func decompileNode(n *Node) ([]query.Clause, error) {
 		return decompileAntiJoin(n)
 	case RuleUnion:
 		return decompileUnion(n)
+	case RuleLateralUnion:
+		return decompileLateralUnion(n)
 	case RuleLateralJoin:
 		return decompileLateralJoin(n)
 	case RuleAggregate:
@@ -200,16 +202,16 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 		}
 	}
 
-	// Use or-join with explicit join variables so the phaser knows this OR
+	// Use or-default-join with explicit join variables so the phaser knows this OR
 	// depends on the join symbols from the outer relation. Without explicit
 	// join vars, the phaser may reorder the OR before the DataPattern that
 	// provides the join symbols.
-	orJoinClause := &query.OrJoinClause{
+	orDefaultJoinClause := &query.OrDefaultJoinClause{
 		JoinVars: join.JoinSymbols,
 		Branches: [][]query.Clause{rightClauses, defaultBranch},
 	}
 
-	return append(leftClauses, orJoinClause), nil
+	return append(leftClauses, orDefaultJoinClause), nil
 }
 
 // decompileAntiJoin emits child clauses from left, then a NOT clause wrapping right.
@@ -245,6 +247,7 @@ func decompileAntiJoin(n *Node) ([]query.Clause, error) {
 }
 
 // decompileUnion emits an OR clause (or OR-join clause if join vars present).
+// Union nodes always decompile to OrClause/OrJoinClause (independent union).
 func decompileUnion(n *Node) ([]query.Clause, error) {
 	u := n.Data.(*Union)
 	var branches [][]query.Clause
@@ -262,6 +265,27 @@ func decompileUnion(n *Node) ([]query.Clause, error) {
 		}}, nil
 	}
 	return []query.Clause{&query.OrClause{Branches: branches}}, nil
+}
+
+// decompileLateralUnion emits an OR-DEFAULT clause (or OR-DEFAULT-JOIN if join vars present).
+// LateralUnion nodes represent correlated per-tuple branch evaluation.
+func decompileLateralUnion(n *Node) ([]query.Clause, error) {
+	lu := n.Data.(*LateralUnion)
+	var branches [][]query.Clause
+	for _, child := range n.Children {
+		branch, err := decompileNode(child)
+		if err != nil {
+			return nil, err
+		}
+		branches = append(branches, branch)
+	}
+	if len(lu.JoinVars) > 0 {
+		return []query.Clause{&query.OrDefaultJoinClause{
+			JoinVars: lu.JoinVars,
+			Branches: branches,
+		}}, nil
+	}
+	return []query.Clause{&query.OrDefaultClause{Branches: branches}}, nil
 }
 
 // decompileLateralJoin emits a SubqueryPattern clause.
@@ -362,16 +386,16 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 	}
 
 	if len(joinVars) > 0 {
-		orJoinClause := &query.OrJoinClause{
+		orDefaultJoinClause := &query.OrDefaultJoinClause{
 			JoinVars: joinVars,
 			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
 		}
-		clauses = append(clauses, orJoinClause)
+		clauses = append(clauses, orDefaultJoinClause)
 	} else {
-		orClause := &query.OrClause{
+		orDefaultClause := &query.OrDefaultClause{
 			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
 		}
-		clauses = append(clauses, orClause)
+		clauses = append(clauses, orDefaultClause)
 	}
 	return clauses, nil
 }

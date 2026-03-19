@@ -372,6 +372,24 @@ func collectInnerVars(clauses []query.Clause) []query.Symbol {
 					}
 				}
 			}
+		case *query.OrDefaultClause:
+			for _, branch := range c.Branches {
+				for _, sym := range collectInnerVars(branch) {
+					if !seen[sym] {
+						seen[sym] = true
+						vars = append(vars, sym)
+					}
+				}
+			}
+		case *query.OrDefaultJoinClause:
+			for _, branch := range c.Branches {
+				for _, sym := range collectInnerVars(branch) {
+					if !seen[sym] {
+						seen[sym] = true
+						vars = append(vars, sym)
+					}
+				}
+			}
 		}
 	}
 

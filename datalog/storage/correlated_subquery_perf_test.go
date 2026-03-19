@@ -104,7 +104,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	  [?scenario :scenario/created-at ?createdAt]
 
 	  ;; Subquery 1: task stats (count, sum tokens, sum duration)
-	  (or [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+	  (or-default [(q [:find (count ?t) (sum ?tok) (sum ?dur)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]
@@ -114,7 +114,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
 
 	  ;; Subquery 2: opening count (determines completeness)
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/key :task/opening]
@@ -124,7 +124,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	  [[(> ?openingCount 0)] ?complete]
 
 	  ;; Subquery 3: last task key (nested subquery for max timestamp)
-	  (or [(q [:find ?key ?ca
+	  (or-default [(q [:find ?key ?ca
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]
@@ -225,7 +225,7 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 			  [?scenario :entity/type :entity.type/scenario]
 			  [?scenario :scenario/title ?title]
 			  [?scenario :scenario/created-at ?createdAt]
-			  (or [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+			  (or-default [(q [:find (count ?t) (sum ?tok) (sum ?dur)
 			           :in $ ?s
 			           :where [?t :task/root ?s]
 			                  [?t :task/status :status/complete]
@@ -233,7 +233,7 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 			                  [(get-else $ ?t :task/duration 0) ?dur]]
 			          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
 			      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
-			  (or [(q [:find (count ?t)
+			  (or-default [(q [:find (count ?t)
 			           :in $ ?s
 			           :where [?t :task/root ?s]
 			                  [?t :task/key :task/opening]
@@ -241,7 +241,7 @@ func BenchmarkCorrelatedSubqueryPattern(b *testing.B) {
 			          $ ?scenario) [[?openingCount]]]
 			      [(ground 0) ?openingCount])
 			  [[(> ?openingCount 0)] ?complete]
-			  (or [(q [:find ?key ?ca
+			  (or-default [(q [:find ?key ?ca
 			           :in $ ?s
 			           :where [?t :task/root ?s]
 			                  [?t :task/status :status/complete]
@@ -349,7 +349,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 	  [?scenario :entity/type :entity.type/scenario]
 	  [?scenario :scenario/title ?title]
 	  [?scenario :scenario/created-at ?createdAt]
-	  (or [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+	  (or-default [(q [:find (count ?t) (sum ?tok) (sum ?dur)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]
@@ -357,7 +357,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 	                  [(get-else $ ?t :task/duration 0) ?dur]]
 	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
 	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/key :task/opening]
@@ -365,7 +365,7 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 	          $ ?scenario) [[?openingCount]]]
 	      [(ground 0) ?openingCount])
 	  [[(> ?openingCount 0)] ?complete]
-	  (or [(q [:find ?key ?ca
+	  (or-default [(q [:find ?key ?ca
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]
@@ -508,7 +508,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 	  [?scenario :entity/type :entity.type/scenario]
 	  [?scenario :scenario/title ?title]
 	  [?scenario :scenario/created-at ?createdAt]
-	  (or [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+	  (or-default [(q [:find (count ?t) (sum ?tok) (sum ?dur)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]
@@ -516,7 +516,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 	                  [(get-else $ ?t :task/duration 0) ?dur]]
 	          $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
 	      [(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
-	  (or [(q [:find (count ?t)
+	  (or-default [(q [:find (count ?t)
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/key :task/opening]
@@ -524,7 +524,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 	          $ ?scenario) [[?openingCount]]]
 	      [(ground 0) ?openingCount])
 	  [[(> ?openingCount 0)] ?complete]
-	  (or [(q [:find ?key ?ca
+	  (or-default [(q [:find ?key ?ca
 	           :in $ ?s
 	           :where [?t :task/root ?s]
 	                  [?t :task/status :status/complete]
@@ -703,7 +703,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 	  [(get-else $ ?project :project/region "") ?region]
 	  [(get-else $ ?project :project/owner "") ?owner]
 	  [(get-else $ ?project :project/notes "") ?notes]
-	  (or [(q [:find (count ?i) (sum ?c) (sum ?w) (sum ?iu) (sum ?ou)
+	  (or-default [(q [:find (count ?i) (sum ?c) (sum ?w) (sum ?iu) (sum ?ou)
 	           :in $ ?p
 	           :where [?i :item/project ?p]
 	                  [?i :item/status :status/done]
@@ -714,7 +714,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 	                  [(get-else $ ?i :item/output-units 0) ?ou]]
 	          $ ?project) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]]
 	      [(ground [0 0 0 0 0]) [[?itemCount ?totalCost ?totalWeight ?inputUnits ?outputUnits]]])
-	  (or [(q [:find (count ?i)
+	  (or-default [(q [:find (count ?i)
 	           :in $ ?p
 	           :where [?i :item/project ?p]
 	                  [?i :item/key :step/init]
@@ -723,7 +723,7 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 	          $ ?project) [[?initCount]]]
 	      [(ground 0) ?initCount])
 	  [[(> ?initCount 0)] ?ready]
-	  (or [(q [:find ?key ?ca
+	  (or-default [(q [:find ?key ?ca
 	           :in $ ?p
 	           :where [?i :item/project ?p]
 	                  [?i :item/status :status/done]

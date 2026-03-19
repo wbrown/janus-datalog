@@ -578,6 +578,55 @@ func TestOrJoinClause(t *testing.T) {
 	}
 }
 
+func TestOrDefaultClauseQB(t *testing.T) {
+	e := NewVar("e")
+	x := NewVar("x")
+	attr := Kw(":user/score")
+
+	od := OrDefault().
+		Branch(Pat(e, attr, x)).
+		Branch(Ground(int64(0)).As(x))
+
+	clause := od.toClause()
+	odc, ok := clause.(*query.OrDefaultClause)
+	if !ok {
+		t.Fatalf("Expected *query.OrDefaultClause, got %T", clause)
+	}
+	if len(odc.Branches) != 2 {
+		t.Errorf("Expected 2 branches, got %d", len(odc.Branches))
+	}
+	// Branch 0 should be a DataPattern
+	if _, ok := odc.Branches[0][0].(*query.DataPattern); !ok {
+		t.Errorf("Expected DataPattern in branch 0, got %T", odc.Branches[0][0])
+	}
+	// Branch 1 should be an Expression
+	if _, ok := odc.Branches[1][0].(*query.Expression); !ok {
+		t.Errorf("Expected Expression in branch 1, got %T", odc.Branches[1][0])
+	}
+}
+
+func TestOrDefaultJoinClauseQB(t *testing.T) {
+	e := NewVar("e")
+	x := NewVar("x")
+	attr := Kw(":user/score")
+
+	odj := OrDefaultJoin(x).
+		Branch(Pat(e, attr, x)).
+		Branch(Ground(int64(0)).As(x))
+
+	clause := odj.toClause()
+	odjc, ok := clause.(*query.OrDefaultJoinClause)
+	if !ok {
+		t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
+	}
+	if len(odjc.JoinVars) != 1 {
+		t.Errorf("Expected 1 join var, got %d", len(odjc.JoinVars))
+	}
+	if len(odjc.Branches) != 2 {
+		t.Errorf("Expected 2 branches, got %d", len(odjc.Branches))
+	}
+}
+
 // TestOrderSpecs tests ordering specifications
 func TestOrderSpecs(t *testing.T) {
 	name := NewVar("name")

@@ -186,8 +186,8 @@ func TestCompileMissingPredicateInOr(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?name
 	  :where
 	  [?e :entity/name ?name]
-	  (or [(missing? $ ?e :entity/lore)]
-	      [?e :entity/lore []])]`)
+	  (or-default [(missing? $ ?e :entity/lore)]
+	              [?e :entity/lore []])]`)
 	require.NoError(t, err)
 
 	root, err := Compile(q)

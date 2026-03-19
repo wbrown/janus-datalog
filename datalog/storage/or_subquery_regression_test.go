@@ -54,7 +54,7 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 	// This is the exact pattern that fails in user's code
 	queryStr := `[:find ?scenario ?count
 	              :where [?scenario :scenario/name ?name]
-	                     (or [(q [:find (count ?t)
+	                     (or-default [(q [:find (count ?t)
 	                              :in $ ?s
 	                              :where [?t :task/scenario ?s]
 	                                     [?t :task/status :status/complete]]
@@ -118,7 +118,7 @@ func TestScenarioSummaryQuery_E2E(t *testing.T) {
 	queryStr := `[:find ?scenario ?taskCount
 	              :where
 	              [?scenario :scenario/id ?id]
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/status :status/complete]]
@@ -154,7 +154,7 @@ const scenarioSummaryQueryFull = `
  [(get-else $ ?scenario :idea/setting "") ?setting]
 
  ;; Task stats with OR fallback for scenarios with no completed tasks
- (or [(q [:find (count ?t) (sum ?tok) (sum ?dur) (sum ?cc) (sum ?cr)
+ (or-default [(q [:find (count ?t) (sum ?tok) (sum ?dur) (sum ?cc) (sum ?cr)
           :in $ ?s
           :where [?t :task/scenario ?s]
                  [?t :task/status :status/complete]
@@ -170,7 +170,7 @@ const scenarioSummaryQueryFull = `
           [(ground 0) ?cacheRead]))
 
  ;; Opening count: count completed opening tasks
- (or [(q [:find (count ?t)
+ (or-default [(q [:find (count ?t)
           :in $ ?s
           :where [?t :task/scenario ?s]
                  [?t :task/key :task/opening]
@@ -182,7 +182,7 @@ const scenarioSummaryQueryFull = `
  [(> ?openingCount 0) ?complete]
 
  ;; Last task key: find the task with max completed-at timestamp
- (or [(q [:find ?key
+ (or-default [(q [:find ?key
           :in $ ?s
           :where [?t :task/scenario ?s]
                  [?t :task/status :status/complete]
@@ -233,7 +233,7 @@ func TestNestedSubqueryInOr_E2E(t *testing.T) {
 	              :where
 	              [?scenario :scenario/id ?id]
 
-	              (or [(q [:find ?key
+	              (or-default [(q [:find ?key
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/status :status/complete]
@@ -301,7 +301,7 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 	              [(get-else $ ?scenario :scenario/pov "") ?pov]
 
 	              ;; First OR - task count
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/status :status/complete]]
@@ -309,7 +309,7 @@ func TestProductionQueryStructure_E2E(t *testing.T) {
 	                  [(ground 0) ?taskCount])
 
 	              ;; Second OR - opening count
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/key :task/opening]
@@ -364,7 +364,7 @@ func TestGetElseBeforeOrClause_E2E(t *testing.T) {
 	              [?scenario :scenario/id ?id]
 	              [(get-else $ ?scenario :scenario/title "") ?title]
 
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/status :status/complete]]
@@ -413,7 +413,7 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 	              [?scenario :scenario/id ?id]
 
 	              ;; First OR clause
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/status :status/complete]]
@@ -421,7 +421,7 @@ func TestMultipleSequentialOrClauses_E2E(t *testing.T) {
 	                  [(ground 0) ?count1])
 
 	              ;; Second OR clause (same pattern)
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/status :status/complete]]
@@ -468,7 +468,7 @@ func TestOrWithGetElseInsideSubquery_E2E(t *testing.T) {
 	queryStr := `[:find ?scenario ?taskCount ?totalTokens
 	              :where
 	              [?scenario :scenario/id ?id]
-	              (or [(q [:find (count ?t) (sum ?tok)
+	              (or-default [(q [:find (count ?t) (sum ?tok)
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/status :status/complete]
@@ -518,7 +518,7 @@ func TestOrWithMultipleAggregations_E2E(t *testing.T) {
 	queryStr := `[:find ?scenario ?taskCount ?totalTokens
 	              :where
 	              [?scenario :scenario/id ?id]
-	              (or [(q [:find (count ?t) (sum ?tok)
+	              (or-default [(q [:find (count ?t) (sum ?tok)
 	                       :in $ ?s
 	                       :where [?t :task/scenario ?s]
 	                              [?t :task/status :status/complete]

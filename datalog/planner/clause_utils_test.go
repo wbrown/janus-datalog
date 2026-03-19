@@ -237,10 +237,10 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 		}
 	})
 
-	t.Run("OR with expression uses union", func(t *testing.T) {
+	t.Run("OR with expression uses intersection", func(t *testing.T) {
 		// Branch 1 (pattern) provides: ?e, ?x
 		// Branch 2 (expression) provides: ?x
-		// Union should be: ?e, ?x (fallback semantics - one branch executes)
+		// OrClause always uses intersection now (all branches execute in union mode)
 		orClause := &query.OrClause{
 			Branches: [][]query.Clause{
 				{
@@ -263,7 +263,44 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 
 		syms := extractOrClauseSymbols(orClause)
 
-		// Should have both ?e and ?x (union)
+		// Intersection: only ?x is common to both branches
+		providedSet := make(map[query.Symbol]bool)
+		for _, sym := range syms.Provides {
+			providedSet[sym] = true
+		}
+
+		if !providedSet[datalog.NewSymbol("?x")] {
+			t.Errorf("Expected ?x to be provided (intersection), got: %v", syms.Provides)
+		}
+		if providedSet[datalog.NewSymbol("?e")] {
+			t.Errorf("?e should NOT be provided (intersection: not in branch 2), got: %v", syms.Provides)
+		}
+	})
+
+	t.Run("OR-DEFAULT with expression uses union", func(t *testing.T) {
+		// Same branches but OrDefaultClause — uses union provides (fallback: one branch executes)
+		orDefaultClause := &query.OrDefaultClause{
+			Branches: [][]query.Clause{
+				{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: datalog.NewKeyword(":test/attr")},
+							query.Variable{Name: datalog.NewSymbol("?x")},
+						},
+					},
+				},
+				{
+					&query.Expression{
+						Function: &query.GroundFunction{Value: int64(0)},
+						Binding:  datalog.NewSymbol("?x"),
+					},
+				},
+			},
+		}
+
+		syms := extractOrDefaultClauseSymbols(orDefaultClause)
+
 		providedSet := make(map[query.Symbol]bool)
 		for _, sym := range syms.Provides {
 			providedSet[sym] = true
@@ -277,12 +314,12 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 		}
 	})
 
-	t.Run("SubqueryPattern with ground fallback uses union", func(t *testing.T) {
+	t.Run("OrDefault SubqueryPattern with ground fallback uses union", func(t *testing.T) {
 		// Branch 1 (SubqueryPattern) provides: ?openingCount
 		// Branch 2 (Expression) provides: ?openingCount
 		// Union should be: ?openingCount
-		// This is the real-world use case that broke
-		orClause := &query.OrClause{
+		// This is the real-world use case — uses OrDefaultClause for fallback
+		orClause := &query.OrDefaultClause{
 			Branches: [][]query.Clause{
 				{
 					&query.SubqueryPattern{
@@ -307,7 +344,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 			},
 		}
 
-		syms := extractOrClauseSymbols(orClause)
+		syms := extractOrDefaultClauseSymbols(orClause)
 
 		foundOpeningCount := false
 		for _, sym := range syms.Provides {

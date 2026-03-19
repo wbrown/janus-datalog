@@ -175,7 +175,7 @@ func TestAlgebraIntegration_OrFallbackWithSubquery(t *testing.T) {
 	q := `[:find ?e ?count
 	       :where [?e :entity/type :entity.type/scenario]
 	              (not [?e :entity/deleted true])
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/root ?s]
 	                              [?t :task/status :status/complete]]
@@ -220,7 +220,7 @@ func TestAlgebraIntegration_SubqueryWithNot(t *testing.T) {
 	q := `[:find ?e ?count
 	       :where [?e :entity/type :entity.type/scenario]
 	              (not [?e :entity/deleted true])
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/root ?s]
 	                              [?t :task/status :status/complete]
@@ -260,7 +260,7 @@ func TestAlgebraIntegration_SequentialQueries(t *testing.T) {
 		{"with_subquery", `[:find ?e ?count
 			:where [?e :entity/type :entity.type/scenario]
 			       (not [?e :entity/deleted true])
-			       (or [(q [:find (count ?t) :in $ ?s
+			       (or-default [(q [:find (count ?t) :in $ ?s
 			                :where [?t :task/root ?s] [?t :task/status :status/complete]
 			                       (not [?t :entity/deleted true])]
 			               $ ?e) [[?count]]]
@@ -328,7 +328,7 @@ func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
 	// Pattern 1 (:task/status) should benefit from prefetch after pattern 0 (:task/root).
 	q := `[:find ?e ?count
 	       :where [?e :entity/type :entity.type/scenario]
-	              (or [(q [:find (count ?t)
+	              (or-default [(q [:find (count ?t)
 	                       :in $ ?s
 	                       :where [?t :task/root ?s]
 	                              [?t :task/status :status/complete]]
@@ -370,7 +370,7 @@ func TestAlgebraIntegration_MultipleOrFallbacks(t *testing.T) {
 	q := `[:find ?e ?count ?total
 	       :where [?e :entity/type :entity.type/scenario]
 	              (not [?e :entity/deleted true])
-	              (or [(q [:find (count ?t) (sum ?tok)
+	              (or-default [(q [:find (count ?t) (sum ?tok)
 	                       :in $ ?s
 	                       :where [?t :task/root ?s]
 	                              [?t :task/status :status/complete]

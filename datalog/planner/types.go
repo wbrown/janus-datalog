@@ -35,8 +35,10 @@ type Phase struct {
 	DecorrelatedSubqueries []DecorrelatedSubqueryPlan // Decorrelated subquery groups
 	NotClauses             []*query.NotClause         // NOT clauses to apply (anti-join filtering)
 	NotJoinClauses         []*query.NotJoinClause     // NOT-JOIN clauses to apply
-	OrClauses              []*query.OrClause          // OR clauses to execute (union)
-	OrJoinClauses          []*query.OrJoinClause      // OR-JOIN clauses to execute
+	OrClauses              []*query.OrClause              // OR clauses to execute (union)
+	OrJoinClauses          []*query.OrJoinClause          // OR-JOIN clauses to execute
+	OrDefaultClauses       []*query.OrDefaultClause       // OR-DEFAULT clauses (fallback)
+	OrDefaultJoinClauses   []*query.OrDefaultJoinClause   // OR-DEFAULT-JOIN clauses (fallback)
 	Available              []query.Symbol             // Symbols available from previous phases (including bindings)
 	Provides               []query.Symbol             // Symbols this phase provides
 	Keep                   []query.Symbol             // Symbols to keep for later phases
@@ -715,6 +717,16 @@ func realizePhase(phase Phase, isLastPhase bool, prevKeep []query.Symbol) Realiz
 	// 3. Add OR-JOIN clauses (data sources)
 	for _, ojc := range phase.OrJoinClauses {
 		where = append(where, ojc)
+	}
+
+	// 3a. Add OR-DEFAULT clauses (fallback)
+	for _, odc := range phase.OrDefaultClauses {
+		where = append(where, odc)
+	}
+
+	// 3b. Add OR-DEFAULT-JOIN clauses (fallback)
+	for _, odjc := range phase.OrDefaultJoinClauses {
+		where = append(where, odjc)
 	}
 
 	// 4. Add expressions (in order)

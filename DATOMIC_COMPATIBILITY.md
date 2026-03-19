@@ -244,23 +244,33 @@ Logical negation and disjunction for complex query patterns:
                  [?e :admin/status "enabled"])]
 ```
 
-**OR with fallback expressions:**
+**OR semantics (Datomic-compatible):**
 
-When an OR clause contains expression branches (e.g., `ground`, arithmetic), janus-datalog uses **fallback semantics**: branches are tried in order, returning the first non-empty result. This enables default values:
+`(or ...)` and `(or-join ...)` use **union semantics**, matching Datomic: all branches are evaluated and results are merged. This includes branches with expressions like `identity`:
+
+```clojure
+;; Union: returns rooms sharing the area AND the area entity itself
+(or [?related :entity/area ?target]
+    [(identity ?target) ?related])
+```
+
+**OR-DEFAULT (janus extension for fallback/defaults):**
+
+`(or-default ...)` and `(or-default-join ...)` use **fallback semantics**: branches are tried in order, returning the first non-empty result. This enables default values — a pattern not available in Datomic's query language:
 
 ```clojure
 ;; Return "Unknown" if no name exists
 [:find ?name
- :where (or [?e :person/name ?name]
-            [(ground "Unknown") ?name])]
+ :where (or-default [?e :person/name ?name]
+                    [(ground "Unknown") ?name])]
 
 ;; Count with zero default
 [:find ?count
- :where (or [(q [:find (count ?t) :where [?t :task/done true]] $) [[?count]]]
-            [(ground 0) ?count])]
+ :where (or-default [(q [:find (count ?t) :where [?t :task/done true]] $) [[?count]]]
+                    [(ground 0) ?count])]
 ```
 
-This differs from Datomic, where OR always uses union semantics. See [OR_FALLBACK_SEMANTICS.md](docs/reference/OR_FALLBACK_SEMANTICS.md) for details.
+See [OR_FALLBACK_SEMANTICS.md](docs/reference/OR_FALLBACK_SEMANTICS.md) for details.
 
 **Note:** NOT clauses support data patterns. Predicates and expressions inside NOT are not yet supported.
 

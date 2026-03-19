@@ -868,6 +868,10 @@ func parseListClause(node *edn.Node) (query.Clause, error) {
 		return parseOrClause(node)
 	case "or-join":
 		return parseOrJoinClause(node)
+	case "or-default":
+		return parseOrDefaultClause(node)
+	case "or-default-join":
+		return parseOrDefaultJoinClause(node)
 	default:
 		return nil, fmt.Errorf("unknown list clause type: %s", keyword)
 	}
@@ -977,6 +981,55 @@ func parseOrJoinClause(node *edn.Node) (*query.OrJoinClause, error) {
 	}
 
 	return &query.OrJoinClause{JoinVars: joinVars, Branches: branches}, nil
+}
+
+// parseOrDefaultClause parses (or-default branch1 branch2 ...)
+func parseOrDefaultClause(node *edn.Node) (*query.OrDefaultClause, error) {
+	var branches [][]query.Clause
+	for i := 1; i < len(node.Nodes); i++ {
+		branch, err := parseBranch(&node.Nodes[i])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing or-default branch %d: %w", i, err)
+		}
+		branches = append(branches, branch)
+	}
+
+	if len(branches) < 2 {
+		return nil, fmt.Errorf("or-default clause must have at least two branches")
+	}
+
+	return &query.OrDefaultClause{Branches: branches}, nil
+}
+
+// parseOrDefaultJoinClause parses (or-default-join [?x] branch1 branch2 ...)
+func parseOrDefaultJoinClause(node *edn.Node) (*query.OrDefaultJoinClause, error) {
+	if len(node.Nodes) < 4 {
+		return nil, fmt.Errorf("or-default-join clause must have join vars and at least two branches")
+	}
+
+	if node.Nodes[1].Type != edn.NodeVector {
+		return nil, fmt.Errorf("or-default-join second element must be a vector of join variables, got %v", node.Nodes[1].Type)
+	}
+
+	joinVars, err := parseJoinVars(&node.Nodes[1])
+	if err != nil {
+		return nil, fmt.Errorf("error parsing or-default-join vars: %w", err)
+	}
+
+	var branches [][]query.Clause
+	for i := 2; i < len(node.Nodes); i++ {
+		branch, err := parseBranch(&node.Nodes[i])
+		if err != nil {
+			return nil, fmt.Errorf("error parsing or-default-join branch %d: %w", i, err)
+		}
+		branches = append(branches, branch)
+	}
+
+	if len(branches) < 2 {
+		return nil, fmt.Errorf("or-default-join clause must have at least two branches")
+	}
+
+	return &query.OrDefaultJoinClause{JoinVars: joinVars, Branches: branches}, nil
 }
 
 // parseJoinVars parses a vector of join variables [?x ?y ...]
