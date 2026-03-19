@@ -270,7 +270,13 @@ func chooseBestMultiPositionStrategy(
 		tuple := it.Tuple()
 		for i, pi := range info {
 			if pi.symIdx >= 0 && pi.symIdx < len(tuple) {
-				sets[i][tuple[pi.symIdx]] = true
+				val := tuple[pi.symIdx]
+				// []byte is not comparable — convert to string for map key.
+				// This only affects cardinality counting, not the actual tuple values.
+				if b, ok := val.([]byte); ok {
+					val = string(b)
+				}
+				sets[i][val] = true
 			}
 		}
 	}

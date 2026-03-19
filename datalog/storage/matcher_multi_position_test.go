@@ -676,3 +676,52 @@ func (it *sliceTupleIterator) Close() error {
 }
 
 func (it *sliceTupleIterator) Error() error { return it.err }
+
+// TestMultiPositionWithBytesValue verifies that chooseBestMultiPositionStrategy
+// does not panic when binding relation tuples contain []byte values.
+// []byte is not comparable in Go and cannot be used as map keys.
+// This reproduces the panic: "hash of unhashable type []uint8"
+func TestMultiPositionWithBytesValue(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := NewDatabase(tempDir)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create entities with []byte values (TypeBytes)
+	e1 := datalog.NewIdentity("entity:1")
+	e2 := datalog.NewIdentity("entity:2")
+
+	tx := db.NewTransaction()
+	tx.Add(e1, datalog.NewKeyword(":item/data"), []byte{0x01, 0x02, 0x03})
+	tx.Add(e2, datalog.NewKeyword(":item/data"), []byte{0x04, 0x05, 0x06})
+	tx.Add(e1, datalog.NewKeyword(":item/name"), "alpha")
+	tx.Add(e2, datalog.NewKeyword(":item/name"), "beta")
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Pattern [?e :item/data ?v] with both E and V bound in the binding relation.
+	// This forces chooseBestMultiPositionStrategy which counts distinct values
+	// using map[interface{}]bool — panics on []byte.
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: datalog.NewKeyword(":item/data")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+		},
+	}
+
+	bindingRel := executor.NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
+		[]executor.Tuple{
+			{e1, []byte{0x01, 0x02, 0x03}},
+			{e2, []byte{0x04, 0x05, 0x06}},
+		},
+	)
+
+	matcher := NewBadgerMatcher(db.store)
+
+	// This should not panic
+	results, err := executor.CollectTuples(matcher.Match(pattern, executor.Relations{bindingRel}))
+	require.NoError(t, err)
+	require.Len(t, results, 2, "should match both entities")
+}
