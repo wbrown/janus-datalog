@@ -605,6 +605,22 @@ func (it *OrFallbackIterator) Next() bool {
 // stopping after the first successful branch, advances to the next branch
 // when the current one is exhausted.
 func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
+	// Initialize: advance to first outer tuple before trying any branches
+	if it.unionInputRel == nil && it.unionBranchIdx == 0 {
+		if !it.outerIter.Next() {
+			it.done = true
+			return false
+		}
+		it.unionOuterTuple = it.outerIter.Tuple()
+		if len(it.outerSyms) > 0 {
+			it.unionInputRel = NewMaterializedRelationWithOptions(
+				it.outerSyms,
+				[]Tuple{it.unionOuterTuple},
+				it.options,
+			)
+		}
+	}
+
 	for {
 		// If we have a current branch iterator, try to get next tuple from it
 		if it.currentBranchIter != nil {

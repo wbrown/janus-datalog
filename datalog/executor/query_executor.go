@@ -1370,35 +1370,52 @@ func clausesNeedCorrelation(clauses []query.Clause) bool {
 	return false
 }
 
-// findOuterRelation finds and materializes the outer relation from groups
-// that provides any of the needed symbols. Returns unit relation if none found.
+// findOuterRelation collects and joins all groups that provide any of the
+// needed symbols into a single outer relation. Returns unit relation if none found.
 func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) Relation {
 	if len(groups) == 0 || len(neededSymbols) == 0 {
 		return NewUnitRelation(e.options)
 	}
 
+	var result Relation
 	for i, rel := range groups {
 		if containsAny(rel.Symbols(), neededSymbols) {
 			groups[i] = groups[i].Materialize()
-			return groups[i]
+			if result == nil {
+				result = groups[i]
+			} else {
+				result = result.Join(groups[i])
+			}
 		}
 	}
 
-	return NewUnitRelation(e.options)
+	if result == nil {
+		return NewUnitRelation(e.options)
+	}
+	return result
 }
 
-// findOuterRelationBySymbols finds and materializes the outer relation that
-// provides any of the specified symbols. Returns unit relation if none found.
+// findOuterRelationBySymbols collects and joins all groups that provide any
+// of the specified symbols into a single outer relation. Returns unit relation if none found.
 func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbol]bool, groups Relations) Relation {
+	var result Relation
 	for i, rel := range groups {
 		for _, sym := range rel.Symbols() {
 			if symSet[sym] {
 				groups[i] = groups[i].Materialize()
-				return groups[i]
+				if result == nil {
+					result = groups[i]
+				} else {
+					result = result.Join(groups[i])
+				}
+				break
 			}
 		}
 	}
-	return NewUnitRelation(e.options)
+	if result == nil {
+		return NewUnitRelation(e.options)
+	}
+	return result
 }
 
 // findCommonColumns returns symbols that exist in all relations
