@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -359,11 +360,11 @@ func TestRoundTrip_AntiJoin(t *testing.T) {
 	root, err := Compile(q)
 	require.NoError(t, err)
 
-	// Pattern + NOT → AntiJoin
+	// Pattern + NOT → AntiJoin with explicit join vars (not → not-join conversion)
 	assert.Equal(t, RuleAntiJoin, root.Op, "NOT → AntiJoin")
 	aj := root.Data.(*AntiJoin)
 	assert.NotEmpty(t, aj.JoinSymbols, "AntiJoin has join symbols")
-	assert.False(t, aj.ExplicitJoin, "NOT (not not-join) → ExplicitJoin=false")
+	assert.True(t, aj.ExplicitJoin, "NOT is converted to explicit join (not → not-join)")
 	assert.Len(t, root.Children, 2, "AntiJoin has 2 children (outer, inner)")
 
 	clauses, err := Decompile(root)
@@ -372,8 +373,9 @@ func TestRoundTrip_AntiJoin(t *testing.T) {
 
 	_, isPattern := clauses[0].(*query.DataPattern)
 	assert.True(t, isPattern, "first clause is DataPattern")
-	_, isNot := clauses[1].(*query.NotClause)
-	assert.True(t, isNot, "second clause is NotClause")
+	notJoin, isNotJoin := clauses[1].(*query.NotJoinClause)
+	assert.True(t, isNotJoin, "NOT decompiles to NotJoinClause (explicit join vars)")
+	assert.Contains(t, notJoin.JoinVars, datalog.NewSymbol("?e"), "join var is ?e")
 }
 
 func TestRoundTrip_AntiJoinExplicit(t *testing.T) {

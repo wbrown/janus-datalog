@@ -207,7 +207,10 @@ func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
 		return nil, fmt.Errorf("NOT inner clauses: %w", err)
 	}
 
-	// Join symbols = variables shared between current and inner
+	// Join symbols = variables shared between current and inner.
+	// The algebra bridge resolves NOT's context-dependent join variables
+	// statically and emits NotJoinClause so the executor needs no runtime
+	// inference. This is the not → not-join conversion.
 	joinSyms := sharedSymbols(current.Symbols(), inner.Symbols())
 
 	return &Node{
@@ -215,7 +218,7 @@ func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
 		Data: &AntiJoin{
 			JoinSymbols:  joinSyms,
 			Output:       current.Symbols(),
-			ExplicitJoin: false, // NotClause — executor infers join vars
+			ExplicitJoin: true,
 		},
 		Children: []*Node{current, inner},
 	}, nil
