@@ -217,7 +217,7 @@ func (g GroundFunction) String() string {
 	if values, ok := g.Value.([]interface{}); ok {
 		parts := make([]string, len(values))
 		for i, v := range values {
-			parts[i] = fmt.Sprintf("%v", v)
+			parts[i] = FormatValueEDN(v)
 		}
 		result := "["
 		for i, p := range parts {
@@ -229,7 +229,7 @@ func (g GroundFunction) String() string {
 		result += "]"
 		return fmt.Sprintf("(ground %s)", result)
 	}
-	return fmt.Sprintf("(ground %v)", g.Value)
+	return fmt.Sprintf("(ground %s)", FormatValueEDN(g.Value))
 }
 
 func (g GroundFunction) ReturnType() string {

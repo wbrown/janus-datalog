@@ -80,7 +80,7 @@ func (c ConstantTerm) RequiredSymbols() []Symbol {
 }
 
 func (c ConstantTerm) String() string {
-	return fmt.Sprintf("%v", c.Value)
+	return FormatValueEDN(c.Value)
 }
 
 // Comparison implements comparison predicates: [(< ?x 10)], [(>= ?y ?z)], etc.

@@ -611,7 +611,7 @@ func TestVectorFunctionStrings(t *testing.T) {
 			VecTerm:   VariableTerm{Symbol: datalog.NewSymbol("?vec")},
 			ValueTerm: ConstantTerm{Value: "x"},
 		}
-		assert.Equal(t, "(contains? ?vec x)", fn.String())
+		assert.Equal(t, `(contains? ?vec "x")`, fn.String())
 	})
 
 	t.Run("subvec", func(t *testing.T) {

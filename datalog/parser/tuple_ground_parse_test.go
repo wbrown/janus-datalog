@@ -2,6 +2,7 @@ package parser
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,4 +101,61 @@ func TestParseTupleGroundBinding(t *testing.T) {
 			assert.True(t, foundTupleBinding, "should find a tuple binding in the parsed query")
 		})
 	}
+}
+
+// TestVectorConstantTaggedLiterals verifies that tagged literals (#inst, #db/id)
+// are accepted inside vector constants. The parser currently rejects them with
+// "unsupported type in vector constant" because the vector element switch
+// doesn't handle edn.NodeTagged.
+//
+// This blocks round-trippability: FormatValueEDN correctly emits #inst for
+// time.Time values, but the parser can't parse it back inside (ground [...]).
+func TestVectorConstantTaggedLiterals(t *testing.T) {
+	t.Run("inst in ground vector", func(t *testing.T) {
+		q, err := ParseQuery(`[:find ?tag ?ts
+		                       :where [?e :item/tag ?tag]
+		                              [(ground [:none #inst "2024-01-01T00:00:00Z"]) [?tag ?ts]]]`)
+		require.NoError(t, err, "#inst must be valid inside ground vector")
+
+		// Find the ground expression
+		var found bool
+		for _, clause := range q.Where {
+			expr, ok := clause.(*query.Expression)
+			if !ok {
+				continue
+			}
+			gf, ok := expr.Function.(*query.GroundFunction)
+			if !ok {
+				continue
+			}
+			values, ok := gf.Value.([]interface{})
+			if !ok {
+				continue
+			}
+			found = true
+			require.Len(t, values, 2)
+			assert.Equal(t, datalog.NewKeyword(":none"), values[0])
+			ts, ok := values[1].(time.Time)
+			require.True(t, ok, "expected time.Time, got %T", values[1])
+			assert.Equal(t, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), ts)
+		}
+		assert.True(t, found, "should find ground expression with vector")
+	})
+
+	t.Run("inst in or-default ground vector", func(t *testing.T) {
+		q, err := ParseQuery(`[:find ?e ?tag ?ts
+		                       :where [?e :item/status :status/done]
+		                              (or-default [?e :item/tag ?tag]
+		                                          [?e :item/updated-at ?ts]
+		                                          [(ground [:none #inst "0001-01-01T00:00:00Z"]) [[?tag ?ts]]])]`)
+		require.NoError(t, err, "#inst must be valid inside or-default ground vector")
+		_ = q
+	})
+
+	t.Run("identity in ground vector", func(t *testing.T) {
+		q, err := ParseQuery(`[:find ?ref ?label
+		                       :where [(ground [#identity "0$&1Jt:M;j(7P!6s0BvD4k!,!" "N/A"]) [?ref ?label]]]`)
+		require.NoError(t, err, "#identity must be valid inside ground vector")
+		_ = q
+	})
 }

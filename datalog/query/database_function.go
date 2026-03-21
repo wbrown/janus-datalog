@@ -92,7 +92,7 @@ func (g *GetElseFunction) ReturnType() string {
 }
 
 func (g *GetElseFunction) String() string {
-	return fmt.Sprintf("(get-else $ %s %s %v)", g.Entity, g.Attr, g.Default)
+	return fmt.Sprintf("(get-else $ %s %s %s)", g.Entity, g.Attr, FormatValueEDN(g.Default))
 }
 
 // MissingFunction implements the Datomic missing? function.

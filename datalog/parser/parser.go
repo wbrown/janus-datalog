@@ -752,6 +752,12 @@ func parsePatternElement(node *edn.Node) (query.PatternElement, error) {
 				values[i] = datalog.NewKeyword(elem.Value)
 			case edn.NodeSymbol:
 				values[i] = datalog.NewSymbol(elem.Value)
+			case edn.NodeTagged:
+				val, err := parseTaggedLiteral(&elem)
+				if err != nil {
+					return nil, fmt.Errorf("invalid tagged literal in vector: %w", err)
+				}
+				values[i] = val.(query.Constant).Value
 			default:
 				return nil, fmt.Errorf("unsupported type in vector constant: %v", elem.Type)
 			}
