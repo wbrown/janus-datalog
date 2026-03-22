@@ -1,0 +1,4 @@
+#!/bin/sh
+echo "Running go test ./..."
+go test -count=1 ./...
+exit $?
