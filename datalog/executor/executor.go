@@ -25,7 +25,6 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 		EnablePredicatePushdown:     true,
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
-		EnableCSE:                   false,
 		UseStreamingSubqueryUnion:   false,
 		MaxPhases:                   10,
 		EnableFineGrainedPhases:     true,

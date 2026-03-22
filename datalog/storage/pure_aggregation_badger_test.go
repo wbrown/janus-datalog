@@ -69,7 +69,6 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 		EnablePredicatePushdown:     true,
 		EnableSubqueryDecorrelation: true,
 		EnableParallelDecorrelation: true,
-		EnableCSE:                   false,
 		MaxPhases:                   10,
 		EnableFineGrainedPhases:     true,
 		EnableIteratorComposition:   execOpts.EnableIteratorComposition,

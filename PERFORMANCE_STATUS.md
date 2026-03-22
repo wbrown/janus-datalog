@@ -206,23 +206,14 @@ During development, benchmarks showed dramatic speedups (49-4802×) comparing li
 **Recommended**: `EnableSemanticRewriting: true`
 **Details**: See `docs/archive/2025-10/SEMANTIC_REWRITING_FINDINGS.md`
 
-### 5. Common Subexpression Elimination - CSE (COMPLETE, DISABLED BY DEFAULT)
-**Status**: ✅ Correctly implemented, minimal benefit with parallelization
-**Performance**: 1-3% improvement sequential, -1% with parallel
+### 5. Common Subexpression Elimination - CSE (REMOVED)
+**Status**: ❌ Removed in v0.10.2. The Selinger-style implementation operated on
+filter groups from the old decorrelation path, which is superseded by the algebra
+bridge. The option, tests, and implementation were dead code.
 
-**What Was Done**:
-- ✅ Merges filter groups with identical structure
-- ✅ Reduces multiple queries → single merged query
-- ✅ Comprehensive testing (correctness + performance)
-
-**Why Disabled**:
-- Parallel execution already runs filter groups concurrently
-- Merging removes parallelism opportunity
-- 1% improvement too small to justify enabled by default
-
-**When to Enable**: Single-threaded environments, expensive predicates
-**Recommended**: `EnableCSE: false`
-**Details**: See `docs/archive/2025-10/CSE_FINDINGS.md`
+**Future**: CSE at the algebra IR level (identifying shared subtrees across
+decorrelated subqueries) would require extending the IR from tree to DAG.
+See `docs/archive/2025-10/CSE_FINDINGS.md` for historical analysis.
 
 ### 6. Parallel Subquery Execution (COMPLETE)
 **Status**: ✅ Implemented and enabled by default
@@ -795,7 +786,7 @@ PlannerOptions{
     EnableSemanticRewriting:      true,  // ✅ 2-6× on time queries
     EnableSubqueryDecorrelation:  true,  // ✅ Batch identical subqueries
     EnableParallelDecorrelation:  true,  // ✅ 6.9× speedup in-memory
-    EnableCSE:                    false, // ❌ 1-3% benefit, disabled by default
+    // CSE removed in v0.10.2 — Selinger-style implementation was dead code
 }
 
 // Recommended executor options
