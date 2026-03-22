@@ -50,6 +50,8 @@ go test -v ./package -run TestName
 - ❌ Commit on first failure with unrelated error
 - ❌ Skip verification because of timeouts
 - ❌ Assume a fix works based on theory alone
+- ❌ Use `t.Skip` to hide known bugs or unimplemented features. If a test exists, it documents expected behavior. If it fails, that's a bug to track — not a skip to add. Skips are a one-way ratchet: easy to add, never removed, and they silently degrade coverage when the underlying bug gets fixed by other work.
+- ❌ Scope test runs to `./datalog/...` — always use `./...` to include integration tests in `tests/`
 
 ---
 

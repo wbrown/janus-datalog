@@ -293,7 +293,6 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 
 // TestSubqueryWithNoInput tests subquery that doesn't need input from outer query
 func TestSubqueryWithNoInput(t *testing.T) {
-	t.Skip("Planner doesn't handle subqueries without inputs in predicates correctly")
 
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
@@ -360,7 +359,6 @@ func TestSubqueryWithNoInput(t *testing.T) {
 
 // TestSubqueryInFilter tests using subquery result in a filter/predicate
 func TestSubqueryInFilter(t *testing.T) {
-	t.Skip("Planner doesn't handle subqueries used in predicates correctly")
 
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{

@@ -186,11 +186,6 @@ func TestSubqueryComplete(t *testing.T) {
 			t.Fatalf("Failed to parse query: %v", err)
 		}
 
-		// TODO: This test is failing - subquery not properly filtering based on input parameter
-		// Getting results for both AAPL and GOOG instead of just AAPL
-		// This is a pre-existing bug, not related to streaming changes
-		t.Skip("Skipping due to pre-existing subquery filtering bug")
-
 		result, err := exec.Execute(q)
 		if err != nil {
 			t.Fatalf("Failed to execute query: %v", err)

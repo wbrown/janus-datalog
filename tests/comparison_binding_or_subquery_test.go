@@ -19,8 +19,8 @@ import (
 //
 // The pattern is:
 //
-//	(or [(q [...count subquery...] $ ?scenario) [[?taskCount]]]
-//	    [(ground 0) ?taskCount])
+//	(or-default [(q [...count subquery...] $ ?scenario) [[?taskCount]]]
+//	            [(ground 0) ?taskCount])
 //	[(> ?taskCount 0) ?complete]
 func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 	dir, err := os.MkdirTemp("", "comparison-or-subquery-*")
@@ -77,7 +77,7 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 	// The problematic query pattern from downstream
 	queryStr := `[:find ?scenario ?name ?taskCount ?complete
 	              :where [?scenario :scenario/name ?name]
-	                     (or [(q [:find (count ?t)
+	                     (or-default [(q [:find (count ?t)
 	                              :in $ ?scenario
 	                              :where [?scenario :scenario/task ?t]]
 	                            $ ?scenario) [[?taskCount]]]

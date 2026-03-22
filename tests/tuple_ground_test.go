@@ -145,7 +145,7 @@ func TestTupleGroundOrFallback(t *testing.T) {
 	// two separate [(ground 0) ?taskCount] and [(ground 0) ?totalValue]
 	queryStr := `[:find ?scenario ?name ?taskCount ?totalValue
 	              :where [?scenario :scenario/name ?name]
-	                     (or [(q [:find (count ?t) (sum ?v)
+	                     (or-default [(q [:find (count ?t) (sum ?v)
 	                              :in $ ?scenario
 	                              :where [?scenario :scenario/task ?t]
 	                                     [?t :task/value ?v]]
@@ -427,7 +427,7 @@ func TestTupleGroundQBInOr(t *testing.T) {
 		Find(scenario, name, taskCount).
 		Where(
 			qb.Pat(scenario, ScenarioName, name),
-			qb.Or().
+			qb.OrDefault().
 				Branch(
 					// Branch 1: scenario has task with count
 					qb.Pat(scenario, ScenarioTask, task),
