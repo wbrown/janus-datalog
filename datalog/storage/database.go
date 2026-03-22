@@ -46,15 +46,15 @@ type Database struct {
 	txCounter         atomic.Uint64
 	mu                sync.RWMutex
 	activeTx          map[*Transaction]bool
-	planCache         *planner.PlanCache    // Shared query plan cache
-	parseCache        *ParseCache           // Shared query parse cache
-	schema            schema.SchemaProvider // Optional schema for validation
-	annotationHandler annotations.Handler      // Optional handler for query tracing
+	planCache         *planner.PlanCache      // Shared query plan cache
+	parseCache        *ParseCache             // Shared query parse cache
+	schema            schema.SchemaProvider   // Optional schema for validation
+	annotationHandler annotations.Handler     // Optional handler for query tracing
 	plannerOptions    *planner.PlannerOptions // Optional planner options override
 	clock             *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
-	replicaID         uint64                // CRDT: This database's replica identifier
-	cache             *Cache                // CRDT: Unified cache for resolved CRDT views
-	temporalTxID      *datalog.ElementID    // nil = current; set = temporal mode (AsOf/History)
+	replicaID         uint64                  // CRDT: This database's replica identifier
+	cache             *Cache                  // CRDT: Unified cache for resolved CRDT views
+	temporalTxID      *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -74,12 +74,12 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
-	Path              string                    // Path to the database directory
-	Schema            schema.SchemaProvider     // Optional schema for validation
-	AnnotationHandler annotations.Handler       // Optional handler for query tracing
-	ReplicaID         uint64                    // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
-	DisableCache      bool                      // Disable EA cache; queries resolve directly from storage
-	PlannerOptions    *planner.PlannerOptions   // Optional override for default planner options
+	Path              string                  // Path to the database directory
+	Schema            schema.SchemaProvider   // Optional schema for validation
+	AnnotationHandler annotations.Handler     // Optional handler for query tracing
+	ReplicaID         uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
+	DisableCache      bool                    // Disable EA cache; queries resolve directly from storage
+	PlannerOptions    *planner.PlannerOptions // Optional override for default planner options
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -445,13 +445,13 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		UseClauseBasedPlanner: true, // Use new clause-based planner (greedy phasing, pure clause transformations)
 
 		// Planner options (for old planner - kept for compatibility when UseClauseBasedPlanner: false)
-		EnableDynamicReordering:     true, // Phase reordering by symbol connectivity
-		EnablePredicatePushdown:     true, // Early predicate filtering (not storage-level)
+		EnableDynamicReordering:     true,  // Phase reordering by symbol connectivity
+		EnablePredicatePushdown:     true,  // Early predicate filtering (not storage-level)
 		EnableAlgebraOptimizer:      true,  // Relational algebra IR clause rewriting (decorrelation via compile → optimize → decompile)
 		EnableScanSharing:           false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
 		EnableEntityPrefetch:        false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
 		EnableSubqueryDecorrelation: false, // Selinger's decorrelation (redundant: algebra optimizer handles decorrelation)
-		EnableParallelDecorrelation: true, // Execute decorrelated merged queries in parallel
+		EnableParallelDecorrelation: true,  // Execute decorrelated merged queries in parallel
 		MaxPhases:                   10,
 		EnableFineGrainedPhases:     true, // Selectivity-based phase creation
 

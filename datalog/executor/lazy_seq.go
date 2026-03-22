@@ -26,13 +26,13 @@ type iterGuard struct {
 // Thread-safe via sync.Mutex.
 type LazySeq struct {
 	once     sync.Once
-	hasElems bool  // true when the seq has at least one element
-	first    any   // cached first element
-	rest     any   // nil, or *LazySeq
-	err      error // cached error from thunk
-	thunk    func()      // sets hasElems/first/rest/err directly as side effects
-	closer   func()      // optional: closes underlying resource (iterator)
-	guard    *iterGuard   // prevents GC of iterator while cells are reachable
+	hasElems bool       // true when the seq has at least one element
+	first    any        // cached first element
+	rest     any        // nil, or *LazySeq
+	err      error      // cached error from thunk
+	thunk    func()     // sets hasElems/first/rest/err directly as side effects
+	closer   func()     // optional: closes underlying resource (iterator)
+	guard    *iterGuard // prevents GC of iterator while cells are reachable
 }
 
 // realize calls the thunk and caches first/rest. Thread-safe via sync.Once:

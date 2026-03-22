@@ -107,7 +107,7 @@ REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE claude -p --model haik
 }
 
 echo "$REVIEW_RESULT" >> /tmp/supervisor_log.txt
-echo "SUPERVISOR: $REVIEW_RESULT"
+echo "SUPERVISOR: $REVIEW_RESULT" >&2
 
 if echo "$REVIEW_RESULT" | grep -q "BLOCK"; then
     exit 2

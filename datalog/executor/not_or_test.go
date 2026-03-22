@@ -1545,5 +1545,3 @@ func TestOrUnionIncludesAllBranches(t *testing.T) {
 		t.Error("missing 'nobody' from ground expression branch")
 	}
 }
-
-

@@ -17,9 +17,10 @@ import (
 //
 // The idea: instead of OR-fallback (per-tuple, correlated), use OR-union
 // with two branches:
-//   Branch 1: entities WITH matching data → get the value
-//   Branch 2: entities WITHOUT matching data → get the default
-//   Union = all entities with values
+//
+//	Branch 1: entities WITH matching data → get the value
+//	Branch 2: entities WITHOUT matching data → get the default
+//	Union = all entities with values
 //
 // This avoids correlated execution entirely — both branches run independently.
 func TestOrUnionAsLeftJoin(t *testing.T) {
@@ -28,7 +29,7 @@ func TestOrUnionAsLeftJoin(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:              dir,
+		Path: dir,
 		AnnotationHandler: func(e annotations.Event) {
 			if e.Name == "algebra/bridge-complete" {
 				t.Logf("[%s] %v", e.Name, e.Data)

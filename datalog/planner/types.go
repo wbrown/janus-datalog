@@ -28,22 +28,22 @@ type QueryPlan struct {
 
 // Phase represents a phase of query execution
 type Phase struct {
-	Patterns               []PatternPlan              // Patterns to execute in this phase
-	Predicates             []PredicatePlan            // Predicates to apply after patterns
-	Expressions            []ExpressionPlan           // Expressions to evaluate in this phase
-	Subqueries             []SubqueryPlan             // Subqueries to execute in this phase
-	DecorrelatedSubqueries []DecorrelatedSubqueryPlan // Decorrelated subquery groups
-	NotClauses             []*query.NotClause         // NOT clauses to apply (anti-join filtering)
-	NotJoinClauses         []*query.NotJoinClause     // NOT-JOIN clauses to apply
-	OrClauses              []*query.OrClause              // OR clauses to execute (union)
-	OrJoinClauses          []*query.OrJoinClause          // OR-JOIN clauses to execute
-	OrDefaultClauses       []*query.OrDefaultClause       // OR-DEFAULT clauses (fallback)
-	OrDefaultJoinClauses   []*query.OrDefaultJoinClause   // OR-DEFAULT-JOIN clauses (fallback)
-	Available              []query.Symbol             // Symbols available from previous phases (including bindings)
-	Provides               []query.Symbol             // Symbols this phase provides
-	Keep                   []query.Symbol             // Symbols to keep for later phases
-	Find                   []query.FindElement        // Find clause elements (preserves aggregates)
-	Metadata               map[string]interface{}     // Phase metadata (e.g., decorrelation analysis)
+	Patterns               []PatternPlan                // Patterns to execute in this phase
+	Predicates             []PredicatePlan              // Predicates to apply after patterns
+	Expressions            []ExpressionPlan             // Expressions to evaluate in this phase
+	Subqueries             []SubqueryPlan               // Subqueries to execute in this phase
+	DecorrelatedSubqueries []DecorrelatedSubqueryPlan   // Decorrelated subquery groups
+	NotClauses             []*query.NotClause           // NOT clauses to apply (anti-join filtering)
+	NotJoinClauses         []*query.NotJoinClause       // NOT-JOIN clauses to apply
+	OrClauses              []*query.OrClause            // OR clauses to execute (union)
+	OrJoinClauses          []*query.OrJoinClause        // OR-JOIN clauses to execute
+	OrDefaultClauses       []*query.OrDefaultClause     // OR-DEFAULT clauses (fallback)
+	OrDefaultJoinClauses   []*query.OrDefaultJoinClause // OR-DEFAULT-JOIN clauses (fallback)
+	Available              []query.Symbol               // Symbols available from previous phases (including bindings)
+	Provides               []query.Symbol               // Symbols this phase provides
+	Keep                   []query.Symbol               // Symbols to keep for later phases
+	Find                   []query.FindElement          // Find clause elements (preserves aggregates)
+	Metadata               map[string]interface{}       // Phase metadata (e.g., decorrelation analysis)
 }
 
 // combineTimeExtractions merges time extraction expressions with predicates

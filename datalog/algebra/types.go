@@ -18,25 +18,25 @@ import (
 // These are the strings used in parse.Node.Rule when the algebra tree
 // is adapted for the EBNF transform framework.
 const (
-	RuleScan        = "Scan"
-	RuleSelect      = "Select"
-	RuleProject     = "Project"
-	RuleMap         = "Map"
-	RuleJoin        = "Join"
-	RuleAntiJoin    = "AntiJoin"
+	RuleScan         = "Scan"
+	RuleSelect       = "Select"
+	RuleProject      = "Project"
+	RuleMap          = "Map"
+	RuleJoin         = "Join"
+	RuleAntiJoin     = "AntiJoin"
 	RuleUnion        = "Union"
 	RuleLateralUnion = "LateralUnion"
 	RuleLateralJoin  = "LateralJoin"
-	RuleAggregate   = "Aggregate"
-	RuleConstant    = "Constant"
+	RuleAggregate    = "Aggregate"
+	RuleConstant     = "Constant"
 )
 
 // JoinKind distinguishes inner joins from left outer joins.
 type JoinKind int
 
 const (
-	InnerJoin    JoinKind = iota
-	LeftOuterJoin // OR-fallback semantics: preserve left side, fill defaults
+	InnerJoin     JoinKind = iota
+	LeftOuterJoin          // OR-fallback semantics: preserve left side, fill defaults
 )
 
 func (k JoinKind) String() string {
@@ -87,9 +87,9 @@ type OpData interface {
 // Scan reads from storage via pattern matching.
 // Compiled from query.DataPattern.
 type Scan struct {
-	Source   query.Symbol       // "$" or named source
-	Pattern *query.DataPattern  // Original pattern for executor
-	Output  []query.Symbol      // Symbols this scan produces
+	Source  query.Symbol       // "$" or named source
+	Pattern *query.DataPattern // Original pattern for executor
+	Output  []query.Symbol     // Symbols this scan produces
 }
 
 func (s *Scan) OutputSymbols() []query.Symbol { return s.Output }
@@ -164,9 +164,9 @@ func (j *Join) String() string {
 // AntiJoin returns tuples from left with no match in right. R ▷ S
 // Compiled from query.NotClause / query.NotJoinClause.
 type AntiJoin struct {
-	JoinSymbols    []query.Symbol // Variables to anti-join on
-	Output         []query.Symbol // Same as left child's output
-	ExplicitJoin   bool           // True if compiled from NotJoinClause (user specified join vars)
+	JoinSymbols  []query.Symbol // Variables to anti-join on
+	Output       []query.Symbol // Same as left child's output
+	ExplicitJoin bool           // True if compiled from NotJoinClause (user specified join vars)
 }
 
 func (a *AntiJoin) OutputSymbols() []query.Symbol { return a.Output }
@@ -223,11 +223,11 @@ func (lu *LateralUnion) String() string {
 // LateralJoin is a correlated subquery. R ⋈_L S(r.x)
 // THE target for decorrelation: LateralJoin → Join + Aggregate.
 type LateralJoin struct {
-	CorrelationVars []query.Symbol    // Variables passed from outer to inner
-	InnerQuery      *query.Query      // The nested query to execute per outer tuple
-	Binding         interface{}       // query.Symbol, query.TupleBinding, etc.
-	Output          []query.Symbol    // Combined output (outer + binding symbols)
-	DefaultValues   []interface{}     // Fallback values when inner produces no results (from OR-fallback ground)
+	CorrelationVars []query.Symbol // Variables passed from outer to inner
+	InnerQuery      *query.Query   // The nested query to execute per outer tuple
+	Binding         interface{}    // query.Symbol, query.TupleBinding, etc.
+	Output          []query.Symbol // Combined output (outer + binding symbols)
+	DefaultValues   []interface{}  // Fallback values when inner produces no results (from OR-fallback ground)
 }
 
 func (l *LateralJoin) OutputSymbols() []query.Symbol { return l.Output }

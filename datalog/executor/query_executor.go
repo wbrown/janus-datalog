@@ -530,9 +530,9 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				relSyms := rel.Symbols()
 
 				// Partition binding symbols into existing (filter) and new (extend)
-				var filterIdx []int   // indices into bindingSyms that already exist in rel
+				var filterIdx []int    // indices into bindingSyms that already exist in rel
 				var filterRelIdx []int // corresponding positions in relSyms
-				var extendIdx []int   // indices into bindingSyms that are new
+				var extendIdx []int    // indices into bindingSyms that are new
 
 				for i, bs := range bindingSyms {
 					found := false

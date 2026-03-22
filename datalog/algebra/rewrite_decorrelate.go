@@ -330,7 +330,9 @@ func decorrelateQuery(q *query.Query, innerParamNames []query.Symbol) *query.Que
 
 // mapCorrelationToInnerParams finds the inner parameter names that correspond
 // to the outer correlation variables. The mapping is positional:
-//   SubqueryPattern.Inputs: [$ ?e]  maps to  Query.In: [$ ?s]
+//
+//	SubqueryPattern.Inputs: [$ ?e]  maps to  Query.In: [$ ?s]
+//
 // So outer ?e corresponds to inner ?s.
 func mapCorrelationToInnerParams(innerQuery *query.Query, outerVars []query.Symbol) []query.Symbol {
 	// Match outer correlation vars to inner parameter names by position.

@@ -97,11 +97,11 @@ func TestOptimizationMatrix(t *testing.T) {
 	  :order-by [[?lastUpdatedAt :desc]]]`
 
 	type config struct {
-		name         string
-		algebra      bool
-		scanSharing  bool
-		prefetch     bool
-		decorrelate  bool // Selinger decorrelation (only when algebra=false)
+		name        string
+		algebra     bool
+		scanSharing bool
+		prefetch    bool
+		decorrelate bool // Selinger decorrelation (only when algebra=false)
 	}
 
 	configs := []config{

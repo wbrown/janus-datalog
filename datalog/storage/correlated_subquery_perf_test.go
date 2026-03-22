@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -37,7 +37,7 @@ func TestCorrelatedSubqueryPerformance(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	const (
-		numScenarios    = 75
+		numScenarios     = 75
 		tasksPerScenario = 100
 	)
 
@@ -636,8 +636,8 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	const (
-		numProjects      = 10
-		itemsPerProject  = 5
+		numProjects     = 10
+		itemsPerProject = 5
 	)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{

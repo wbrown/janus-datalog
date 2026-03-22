@@ -221,17 +221,17 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 	}
 
 	return &OrFallbackIterator{
-		executor:   r.executor,
-		ctx:        r.ctx,
+		executor:     r.executor,
+		ctx:          r.ctx,
 		branches:     r.branches,
 		shortCircuit: r.shortCircuit,
-		outerIter:  outerIter,
-		outerRel:   r.outerRel, // Materialized relation for EA cache branch building
-		outerSyms:  r.outerRel.Symbols(),
-		outputSyms: r.symbols, // Use pre-computed symbols
-		options:    r.options,
-		joinSyms:   r.joinSyms,
-		prefetched: r.prefetched,
+		outerIter:    outerIter,
+		outerRel:     r.outerRel, // Materialized relation for EA cache branch building
+		outerSyms:    r.outerRel.Symbols(),
+		outputSyms:   r.symbols, // Use pre-computed symbols
+		options:      r.options,
+		joinSyms:     r.joinSyms,
+		prefetched:   r.prefetched,
 	}
 }
 
@@ -350,10 +350,10 @@ type OrFallbackIterator struct {
 	branches     [][]query.Clause
 	shortCircuit bool // true = fallback, false = correlated union
 	outerIter    Iterator
-	outerRel     Relation       // Materialized outer relation (for EA cache branch building)
-	outerSyms []query.Symbol
-	options   ExecutorOptions
-	joinSyms  []query.Symbol // From or-join: used as cache key (not all shared symbols)
+	outerRel     Relation // Materialized outer relation (for EA cache branch building)
+	outerSyms    []query.Symbol
+	options      ExecutorOptions
+	joinSyms     []query.Symbol // From or-join: used as cache key (not all shared symbols)
 
 	// Current state
 	currentBranchIter     Iterator
@@ -369,8 +369,8 @@ type OrFallbackIterator struct {
 	prefetched  bool // True when PrefetchEntities has warmed the EA cache for outer entities
 
 	// Correlated union state: track which branch we're iterating within the current outer tuple
-	unionBranchIdx int    // next branch to try for current outer tuple
-	unionOuterTuple Tuple // current outer tuple being processed
+	unionBranchIdx  int      // next branch to try for current outer tuple
+	unionOuterTuple Tuple    // current outer tuple being processed
 	unionInputRel   Relation // inputRel for current outer tuple
 }
 
@@ -489,11 +489,11 @@ func (cb *cachedBranch) probe(outerTuple Tuple) []Tuple {
 // join variables free, cached, and probed per outer tuple.
 //
 // Two cases:
-// 1. SubqueryPattern with only $ inputs (uncorrelated subquery)
-// 2. In an or-join: DataPattern-only branches where the join variables
-//    are the only connection to the outer context. Evaluated with join
-//    vars free, the DataPattern returns ALL matches; the cache indexes
-//    by join vars for O(1) per-tuple probe.
+//  1. SubqueryPattern with only $ inputs (uncorrelated subquery)
+//  2. In an or-join: DataPattern-only branches where the join variables
+//     are the only connection to the outer context. Evaluated with join
+//     vars free, the DataPattern returns ALL matches; the cache indexes
+//     by join vars for O(1) per-tuple probe.
 func isCacheableBranch(branch []query.Clause, isOrJoin bool) bool {
 	for _, c := range branch {
 		switch cl := c.(type) {
@@ -797,45 +797,45 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				}
 
 				if !eaCacheUsed {
-				var err error
-				branchResult, err = it.executor.executeInnerClauses(it.ctx, branch, execInput)
-				if err != nil {
-					it.err = err
-					it.done = true
-					return false
-				}
-
-				if branchResult != nil {
-					// First evaluation: cache uncorrelated branches
-					if execInput == nil {
-						if collector := it.ctx.Collector(); collector != nil {
-							collector.Add(annotations.Event{
-								Name: "or-fallback/cache-build",
-								Data: map[string]interface{}{
-									"branch":      branchIdx,
-									"branch_syms": fmt.Sprintf("%v", branchResult.Symbols()),
-									"outer_syms":  fmt.Sprintf("%v", it.outerSyms),
-									"branch_size": branchResult.Size(),
-								},
-							})
-						}
-						cb := buildCachedBranch(branchResult, it.outerSyms, it.joinSyms)
-						if cb != nil {
-							if it.branchCache == nil {
-								it.branchCache = make(map[int]*cachedBranch)
-							}
-							it.branchCache[branchIdx] = cb
-							// Probe the freshly-built cache instead of scanning
-							matches := cb.probe(outerTuple)
-							branchResult = NewMaterializedRelation(cb.branchSyms, matches)
-						} else {
-							// No shared symbols — pass through unfiltered
-						}
-					} else {
-						// Correlated branch — filter per tuple
-						branchResult = filterBranchToOuterTuple(branchResult, outerTuple, it.outerSyms)
+					var err error
+					branchResult, err = it.executor.executeInnerClauses(it.ctx, branch, execInput)
+					if err != nil {
+						it.err = err
+						it.done = true
+						return false
 					}
-				}
+
+					if branchResult != nil {
+						// First evaluation: cache uncorrelated branches
+						if execInput == nil {
+							if collector := it.ctx.Collector(); collector != nil {
+								collector.Add(annotations.Event{
+									Name: "or-fallback/cache-build",
+									Data: map[string]interface{}{
+										"branch":      branchIdx,
+										"branch_syms": fmt.Sprintf("%v", branchResult.Symbols()),
+										"outer_syms":  fmt.Sprintf("%v", it.outerSyms),
+										"branch_size": branchResult.Size(),
+									},
+								})
+							}
+							cb := buildCachedBranch(branchResult, it.outerSyms, it.joinSyms)
+							if cb != nil {
+								if it.branchCache == nil {
+									it.branchCache = make(map[int]*cachedBranch)
+								}
+								it.branchCache[branchIdx] = cb
+								// Probe the freshly-built cache instead of scanning
+								matches := cb.probe(outerTuple)
+								branchResult = NewMaterializedRelation(cb.branchSyms, matches)
+							} else {
+								// No shared symbols — pass through unfiltered
+							}
+						} else {
+							// Correlated branch — filter per tuple
+							branchResult = filterBranchToOuterTuple(branchResult, outerTuple, it.outerSyms)
+						}
+					}
 				} // end if !eaCacheUsed
 			}
 

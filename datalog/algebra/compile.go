@@ -448,7 +448,6 @@ func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.S
 	return subNode, nil
 }
 
-
 // compileOrFallbackExclusive compiles OR-fallback with exclusive branch semantics:
 // Branch 1 sees the full outer relation. Branch 2 sees only tuples that
 // branch 1 did NOT produce (the complement). Results are unioned.
@@ -751,4 +750,3 @@ func findLateralJoin(n *Node) *Node {
 	}
 	return nil
 }
-

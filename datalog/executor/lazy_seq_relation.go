@@ -37,11 +37,11 @@ func WrapStreamingAsLazy(rel Relation) Relation {
 	return NewLazySeqRelation(seq, sr.Symbols())
 }
 
-func (r *LazySeqRelation) Symbols() []query.Symbol { return r.symbols }
-func (r *LazySeqRelation) Size() int               { return -1 } // streaming
+func (r *LazySeqRelation) Symbols() []query.Symbol  { return r.symbols }
+func (r *LazySeqRelation) Size() int                { return -1 } // streaming
 func (r *LazySeqRelation) Get(i int) Tuple          { return nil }
 func (r *LazySeqRelation) RequiresCopy() bool       { return false }
-func (r *LazySeqRelation) Options() ExecutorOptions  { return r.options }
+func (r *LazySeqRelation) Options() ExecutorOptions { return r.options }
 
 func (r *LazySeqRelation) IsEmpty() bool {
 	return r.seq.Empty()
@@ -73,10 +73,10 @@ func (r *LazySeqRelation) String() string {
 	return fmt.Sprintf("LazySeqRelation([%s])", strings.Join(symStrs, " "))
 }
 
-func (r *LazySeqRelation) Table() string            { return r.Materialize().Table() }
-func (r *LazySeqRelation) Sorted() []Tuple          { return r.Materialize().Sorted() }
+func (r *LazySeqRelation) Table() string                         { return r.Materialize().Table() }
+func (r *LazySeqRelation) Sorted() []Tuple                       { return r.Materialize().Sorted() }
 func (r *LazySeqRelation) Sort(o []query.OrderByClause) Relation { return r.Materialize().Sort(o) }
-func (r *LazySeqRelation) Filter(f Filter) Relation  { return FilterRelation(r, f) }
+func (r *LazySeqRelation) Filter(f Filter) Relation              { return FilterRelation(r, f) }
 func (r *LazySeqRelation) Select(pred func(Tuple) bool) Relation { return Select(r, pred) }
 
 func (r *LazySeqRelation) Project(symbols []query.Symbol) (Relation, error) {
