@@ -2,10 +2,62 @@ package query
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 )
+
+// FormatValueEDN formats a Go value as a parseable EDN string.
+// This is the canonical way to render values in query String() methods
+// so that the output round-trips through the parser.
+func FormatValueEDN(v interface{}) string {
+	switch val := v.(type) {
+	case datalog.Keyword:
+		return val.String()
+	case datalog.Identity:
+		return `#identity "` + val.String() + `"`
+	case string:
+		var sb strings.Builder
+		sb.WriteRune('"')
+		for _, r := range val {
+			switch r {
+			case '"':
+				sb.WriteString(`\"`)
+			case '\\':
+				sb.WriteString(`\\`)
+			case '\n':
+				sb.WriteString(`\n`)
+			case '\r':
+				sb.WriteString(`\r`)
+			case '\t':
+				sb.WriteString(`\t`)
+			default:
+				sb.WriteRune(r)
+			}
+		}
+		sb.WriteRune('"')
+		return sb.String()
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case int:
+		return strconv.Itoa(val)
+	case float64:
+		return strconv.FormatFloat(val, 'g', -1, 64)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case time.Time:
+		return `#inst "` + val.UTC().Format(time.RFC3339Nano) + `"`
+	case []byte:
+		return fmt.Sprintf("#bytes \"%x\"", val)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
 
 // Tuple represents a tuple of values in a relation
 // It's used throughout the executor and storage layers for query results
@@ -46,7 +98,7 @@ type Constant struct {
 
 func (c Constant) IsVariable() bool { return false }
 func (c Constant) IsBlank() bool    { return false }
-func (c Constant) String() string   { return fmt.Sprintf("%v", c.Value) }
+func (c Constant) String() string   { return FormatValueEDN(c.Value) }
 
 // VectorConstant represents a vector of constant values in a pattern
 // Used for tuple ground: [(ground [1 2 3]) [?a ?b ?c]]
@@ -62,7 +114,7 @@ func (v VectorConstant) String() string {
 		if i > 0 {
 			result += " "
 		}
-		result += fmt.Sprintf("%v", val)
+		result += FormatValueEDN(val)
 	}
 	result += "]"
 	return result

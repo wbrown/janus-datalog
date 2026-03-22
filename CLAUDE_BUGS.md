@@ -271,6 +271,20 @@ if len(phase.Patterns) == 0 && len(collapsed) == 0 {
 
 ---
 
+## Decorrelation Inside Union Branches (2026-03-21)
+
+**Critical Semantic Bug**: The algebra bridge's decorrelation pass transformed correlated subqueries inside Union branches into uncorrelated ones, producing Cartesian products.
+
+**Root Cause**: Decorrelation moves the correlation variable from `:in` (input) to `:find` (output). Inside a Union, the other branch (ground default) doesn't have this variable. The Union produces branches with incompatible schemas. When joined with the outer relation, the ground branch rows cross-product because they lack the join key.
+
+**The Fix**: The decorrelation transform checks `ctx.Parent.Rule == RuleUnion` using the EBNF transform framework's `TransformContext.Parent`. LateralJoins inside Union nodes are not decorrelated — their per-tuple correlation is semantically load-bearing.
+
+**Key Insight**: Algebraic equivalence rules have structural preconditions. The decorrelation rule `R ⋈_L S(r.x) → R ⋈ (S GROUP BY x)` requires that the LateralJoin result is consumed directly by a Join. Inside a Union, the result is unioned with other branches first — a different structure the rule doesn't cover.
+
+**Pattern**: Optimization rules are not universally applicable. Always verify the structural context matches the rule's preconditions. A rule that's valid at the top level may be invalid inside a compound operator.
+
+---
+
 ## Meta-Patterns Across All Bugs
 
 ### 1. Type Mismatches Kill

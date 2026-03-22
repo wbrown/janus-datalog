@@ -18,7 +18,7 @@ func TestDataPatternString(t *testing.T) {
 			pattern: DataPattern{
 				Elements: []PatternElement{
 					Variable{Name: datalog.NewSymbol("?e")},
-					Constant{Value: ":attr"},
+					Constant{Value: datalog.NewKeyword(":attr")},
 					Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
@@ -30,7 +30,7 @@ func TestDataPatternString(t *testing.T) {
 				Source: datalog.NewSymbol("$users"),
 				Elements: []PatternElement{
 					Variable{Name: datalog.NewSymbol("?e")},
-					Constant{Value: ":attr"},
+					Constant{Value: datalog.NewKeyword(":attr")},
 					Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},
@@ -42,7 +42,7 @@ func TestDataPatternString(t *testing.T) {
 				Source: nil,
 				Elements: []PatternElement{
 					Variable{Name: datalog.NewSymbol("?e")},
-					Constant{Value: ":a"},
+					Constant{Value: datalog.NewKeyword(":a")},
 					Variable{Name: datalog.NewSymbol("?v")},
 				},
 			},

@@ -38,7 +38,11 @@ func extractClauseSymbols(clause query.Clause) ClauseSymbols {
 	case *query.OrClause:
 		return extractOrClauseSymbols(c)
 	case *query.OrJoinClause:
-		return extractOrJoinClauseSymbols(c)
+		// Same symbol extraction as OrClause — join vars are planner scheduling
+		// metadata, not additional requirements. The algebra bridge infers join
+		// vars that may include branch-produced symbols; treating those as
+		// Requires would break phasing.
+		return extractOrClauseSymbols(&query.OrClause{Branches: c.Branches})
 	case *query.OrDefaultClause:
 		return extractOrDefaultClauseSymbols(c)
 	case *query.OrDefaultJoinClause:
@@ -186,16 +190,17 @@ func extractSubqueryPatternSymbols(sp *query.SubqueryPattern) ClauseSymbols {
 	}
 }
 
-// extractNotClauseSymbols extracts symbols from a NOT clause
-// NOT requires ALL variables from inner clauses to be bound before it executes
-// NOT provides nothing - it filters, doesn't produce new bindings
+// extractNotClauseSymbols extracts symbols from a NOT clause.
+// Collects all variables from inner clauses as Requires. This is conservative:
+// when the algebra bridge is enabled, NOT is converted to NOT-JOIN with
+// explicit join vars before the planner sees it. This function is only used
+// when the algebra bridge is disabled.
+// NOT provides nothing — it filters, doesn't produce new bindings.
 func extractNotClauseSymbols(n *query.NotClause) ClauseSymbols {
 	requires := make(map[query.Symbol]bool)
 
-	// Collect all variables from inner clauses
 	for _, innerClause := range n.Clauses {
 		innerSymbols := extractClauseSymbols(innerClause)
-		// All variables in inner clauses must be bound before NOT
 		for _, sym := range innerSymbols.Requires {
 			requires[sym] = true
 		}
@@ -211,7 +216,7 @@ func extractNotClauseSymbols(n *query.NotClause) ClauseSymbols {
 
 	return ClauseSymbols{
 		Requires: requiresSlice,
-		Provides: nil, // NOT does not provide new bindings
+		Provides: nil,
 	}
 }
 
