@@ -152,10 +152,19 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 		}
 	}
 
-	// Output = current symbols + binding symbols
+	// Output = current symbols + correlation vars + binding symbols.
+	// Correlation vars are always in the output — they're the join keys
+	// that connect the subquery result to the outer relation, even when
+	// the subquery is compiled without an outer context (e.g., inside
+	// a union OR branch).
 	var output []query.Symbol
 	if current != nil {
 		output = append(output, current.Symbols()...)
+	}
+	for _, cv := range correlationVars {
+		if !containsSymbol(output, cv) {
+			output = append(output, cv)
+		}
 	}
 	for _, bs := range bindingSyms {
 		if !containsSymbol(output, bs) {
@@ -317,6 +326,9 @@ func compileOrDefaultJoin(oj *query.OrDefaultJoinClause, current *Node) (*Node, 
 }
 
 // compileOrUnion compiles each branch and unions the results.
+// Infers join variables from shared symbols between current and branches,
+// so the decompiler emits OrJoinClause with explicit join vars (same
+// pattern as not → not-join).
 func compileOrUnion(branches [][]query.Clause, current *Node) (*Node, error) {
 	return compileOrUnionWithJoinVars(branches, nil, current)
 }
@@ -570,6 +582,50 @@ func bindingFormSymbols(binding query.BindingForm) []query.Symbol {
 		return b.Variables
 	}
 	return nil
+}
+
+// collectBranchSymbols collects all variable symbols from OR branch clauses.
+func collectBranchSymbols(branches [][]query.Clause) []query.Symbol {
+	seen := make(map[query.Symbol]bool)
+	var syms []query.Symbol
+	for _, branch := range branches {
+		for _, clause := range branch {
+			for _, sym := range clauseSymbols(clause) {
+				if !seen[sym] {
+					seen[sym] = true
+					syms = append(syms, sym)
+				}
+			}
+		}
+	}
+	return syms
+}
+
+// clauseSymbols extracts all variable symbols from a clause.
+func clauseSymbols(clause query.Clause) []query.Symbol {
+	switch c := clause.(type) {
+	case *query.DataPattern:
+		return patternVariables(c)
+	case *query.Expression:
+		var syms []query.Symbol
+		syms = append(syms, c.Function.RequiredSymbols()...)
+		syms = append(syms, bindingSymbols(c.Binding)...)
+		return syms
+	case *query.SubqueryPattern:
+		var syms []query.Symbol
+		// Include input variables (correlation vars that link to outer scope)
+		for _, input := range c.Inputs {
+			if v, ok := input.(query.Variable); ok {
+				if !strings.HasPrefix(v.Name.String(), "$") {
+					syms = append(syms, v.Name)
+				}
+			}
+		}
+		syms = append(syms, bindingFormSymbols(c.Binding)...)
+		return syms
+	default:
+		return nil
+	}
 }
 
 // sharedSymbols returns symbols present in both a and b.

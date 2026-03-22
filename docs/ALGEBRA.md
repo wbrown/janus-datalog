@@ -309,6 +309,11 @@ R ⋈_LeftOuter(x, defaults) Aggregate(x, F)(S)
 **Preconditions:**
 - Inner query has aggregate functions in `:find`
 - Correlation variable `x` maps to an inner parameter
+- **The LateralJoin is NOT a child of a Union node.** Decorrelation inside a
+  Union moves the correlation variable from input to output, creating a schema
+  mismatch with other Union branches (e.g., ground defaults) that lack the
+  correlation variable. This causes cross-products when the Union result is
+  joined with the outer relation.
 
 **Proof of equivalence:**
 
@@ -416,6 +421,11 @@ Where S' is S with:
 
 **Preconditions:**
 - Correlation variable `x` maps to an inner parameter
+- **The LateralJoin is NOT a child of a Union node.** Decorrelation inside a
+  Union moves the correlation variable from input to output, creating a schema
+  mismatch with other Union branches (e.g., ground defaults) that lack the
+  correlation variable. This causes cross-products when the Union result is
+  joined with the outer relation.
 - Inner query satisfies at least one of:
   1. Has aggregate functions in `:find` (Rule 1 — already handled)
   2. Contains a nested correlated subquery sharing the same correlation variable

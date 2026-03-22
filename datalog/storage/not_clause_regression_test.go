@@ -120,19 +120,19 @@ func buildComplexNotQuery() *query.Query {
 			qb.GetElse(project, kw(":project/opt-e"), "").As(optE),
 			qb.GetElse(project, kw(":project/opt-f"), "").As(optF),
 
-			qb.Or().
+			qb.OrDefault().
 				Branch(qb.Subquery(itemStatsSubquery, project).BindTuple(
 					itemCount, totalCost, totalWeight, totalVolume, totalUnits)).
 				Branch(qb.TupleGround(0, 0, 0, 0, 0).As(
 					itemCount, totalCost, totalWeight, totalVolume, totalUnits)),
 
-			qb.Or().
+			qb.OrDefault().
 				Branch(qb.Subquery(doneCountSubquery, project).BindTuple(doneCount)).
 				Branch(qb.Ground(0).As(doneCount)),
 
 			qb.Gt(doneCount, 0).As(ready),
 
-			qb.Or().
+			qb.OrDefault().
 				Branch(qb.Subquery(lastTagSubquery, project).BindTuple(lastTag, lastUpdatedAt)).
 				Branch(qb.TupleGround(datalog.NewKeyword(":none"), time.Time{}).As(lastTag, lastUpdatedAt)),
 		).OrderBy(qb.Desc(lastUpdatedAt)).MustBuild()

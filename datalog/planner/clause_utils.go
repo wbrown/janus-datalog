@@ -38,7 +38,11 @@ func extractClauseSymbols(clause query.Clause) ClauseSymbols {
 	case *query.OrClause:
 		return extractOrClauseSymbols(c)
 	case *query.OrJoinClause:
-		return extractOrJoinClauseSymbols(c)
+		// Same symbol extraction as OrClause — join vars are planner scheduling
+		// metadata, not additional requirements. The algebra bridge infers join
+		// vars that may include branch-produced symbols; treating those as
+		// Requires would break phasing.
+		return extractOrClauseSymbols(&query.OrClause{Branches: c.Branches})
 	case *query.OrDefaultClause:
 		return extractOrDefaultClauseSymbols(c)
 	case *query.OrDefaultJoinClause:

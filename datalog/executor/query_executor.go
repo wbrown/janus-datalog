@@ -159,8 +159,9 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			}))
 
 		case *query.OrJoinClause:
-			// OR-JOIN clauses produce new relations with explicit join variables
-			newRel, err := e.executeOrJoinClause(ctx, c, groups)
+			// OR-JOIN has the same union semantics as OR. Join vars are planner
+			// metadata for scheduling; the executor uses the same path for both.
+			newRel, err := e.executeOrClause(ctx, &query.OrClause{Branches: c.Branches}, groups)
 			if err != nil {
 				return nil, fmt.Errorf("clause %d (or-join) failed: %w", i, err)
 			}
@@ -2083,7 +2084,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 			groups = groups.Collapse(ctx)
 
 		case *query.OrJoinClause:
-			newRel, err := e.executeOrJoinClause(ctx, c, groups)
+			newRel, err := e.executeOrClause(ctx, &query.OrClause{Branches: c.Branches}, groups)
 			if err != nil {
 				return nil, err
 			}

@@ -397,6 +397,49 @@ func TestRoundTrip_AntiJoinExplicit(t *testing.T) {
 	assert.True(t, isNJC, "second clause is NotJoinClause (not NotClause)")
 }
 
+func TestRoundTrip_OrUnion(t *testing.T) {
+	// OR with two pattern branches — compiles to Union, decompiles back to OrClause.
+	// Unlike not → not-join, the or → or-join conversion is not applied because
+	// the round-trip doesn't preserve branch semantics for complex union queries.
+	q, err := parser.ParseQuery(`[:find ?e ?val
+	  :where
+	  [?e :item/type :type/active]
+	  (or [?e :item/cost ?val]
+	      [?e :item/weight ?val])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	t.Logf("Tree:\n%s", root.String())
+
+	// Top level should be a Join (outer pattern joined with Union)
+	assert.Equal(t, RuleJoin, root.Op, "pattern + OR → Join")
+
+	// Find the Union child
+	var unionNode *Node
+	for _, child := range root.Children {
+		if child.Op == RuleUnion {
+			unionNode = child
+		}
+	}
+	require.NotNil(t, unionNode, "should have Union child")
+
+	// Decompile
+	clauses, err := Decompile(root)
+	require.NoError(t, err)
+	t.Logf("Decompiled %d clauses:", len(clauses))
+	for i, c := range clauses {
+		t.Logf("  [%d] %T: %s", i, c, c.String())
+	}
+
+	// Round-trips to DataPattern + OrClause (union preserved)
+	_, isPattern := clauses[0].(*query.DataPattern)
+	assert.True(t, isPattern, "first clause is DataPattern")
+
+	_, isOr := clauses[1].(*query.OrClause)
+	assert.True(t, isOr, "OR round-trips to OrClause")
+}
+
 func TestRoundTrip_LateralJoin(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?count
 	  :where

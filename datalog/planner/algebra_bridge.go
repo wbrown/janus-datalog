@@ -68,8 +68,25 @@ func optimizeViaAlgebra(clauses []query.Clause, handler annotations.Handler) ([]
 	}
 
 	var resultTypes []string
+	var resultDetails []string
 	for _, c := range result {
 		resultTypes = append(resultTypes, fmt.Sprintf("%T", c))
+		detail := fmt.Sprintf("%T", c)
+		switch cl := c.(type) {
+		case *query.OrClause:
+			detail += fmt.Sprintf(" branches=%d", len(cl.Branches))
+		case *query.OrJoinClause:
+			detail += fmt.Sprintf(" joinVars=%v branches=%d", cl.JoinVars, len(cl.Branches))
+		case *query.OrDefaultClause:
+			detail += fmt.Sprintf(" branches=%d", len(cl.Branches))
+		case *query.OrDefaultJoinClause:
+			detail += fmt.Sprintf(" joinVars=%v branches=%d", cl.JoinVars, len(cl.Branches))
+		case *query.NotClause:
+			detail += fmt.Sprintf(" innerClauses=%d", len(cl.Clauses))
+		case *query.NotJoinClause:
+			detail += fmt.Sprintf(" joinVars=%v innerClauses=%d", cl.JoinVars, len(cl.Clauses))
+		}
+		resultDetails = append(resultDetails, detail)
 	}
 
 	emit("algebra/bridge-complete", map[string]interface{}{
@@ -77,6 +94,7 @@ func optimizeViaAlgebra(clauses []query.Clause, handler annotations.Handler) ([]
 		"output_clauses": len(result),
 		"changed":        changed,
 		"output_types":   resultTypes,
+		"output_details": resultDetails,
 	})
 
 	return result, nil

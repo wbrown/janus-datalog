@@ -41,12 +41,12 @@ func DecorrelationPass(handler annotations.Handler) Pass {
 type emitFn func(name string, data map[string]interface{})
 
 func makeDecorrelateTransform(emit emitFn) parse.TransformFunc {
-	return func(node *parse.Node, children ...interface{}) interface{} {
-		return decorrelateTransform(node, emit, children...)
+	return func(ctx *parse.TransformContext, node *parse.Node, children ...interface{}) interface{} {
+		return decorrelateTransform(ctx, node, emit, children...)
 	}
 }
 
-func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}) interface{} {
+func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit emitFn, children ...interface{}) interface{} {
 	if node.TransformedValue == nil {
 		return node
 	}
@@ -57,6 +57,14 @@ func decorrelateTransform(node *parse.Node, emit emitFn, children ...interface{}
 	lj, ok := algNode.Data.(*LateralJoin)
 	if !ok {
 		return node
+	}
+
+	// Decorrelation inside a Union is semantically incorrect: it moves the
+	// correlation variable from input to output, creating a schema mismatch
+	// with the ground branch. The ground branch lacks the correlation var,
+	// causing a cross-product when the Union result is joined with the outer.
+	if ctx.Parent != nil && ctx.Parent.Rule == RuleUnion {
+		return rebuildWithChildren(node, children)
 	}
 
 	emit("algebra/decorrelate-check", map[string]interface{}{
