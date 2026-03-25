@@ -137,8 +137,6 @@ Changed `BadgerMatcher.txID` from `datalog.ElementID` (value) to `*datalog.Eleme
 
 ### Next steps (not yet implemented)
 
-- **`[(as-of ?tx N)]` predicate is parsed but not wired up** to the executor. The Datomic approach is to apply as-of at the database level, not in the query. A `:as-of` parameter at the EDN query root level would be the right design.
-- **`[(history)]` predicate is parsed but not wired up** — `db.History()` now provides this at the database level.
-- **`HistoryPredicate.TargetLamport` is still `uint64`** — needs to become `ElementID` if the predicate is kept.
+- **`[(history)]` and `[(as-of ?tx N)]` predicates have been removed** from the parser. Temporal access is provided at the database level via `db.History()` and `db.AsOf(elementID)`, following Datomic's design.
 - **`TxRangePredicate.Low`/`.High` are still `uint64`** — same issue.
 - **`examples/*.go`** need rewrite to use Transaction API instead of fabricating ElementIDs from timestamps.

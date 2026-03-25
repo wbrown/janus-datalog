@@ -1002,19 +1002,19 @@ The big wins:
 
 Built-in history without separate indices:
 
-```clojure
-;; Get all historical values for name (with transaction ID)
-[:find ?name ?tx
- :where [?e :person/name ?name ?tx]
- [(history)]]  ;; Marker to return all versions, not just current
+```go
+// Get all historical values for name (with transaction ID)
+hist := d.History()
+results, _ := hist.Query(`[:find ?name ?tx
+ :where [?e :person/name ?name ?tx]]`)
 
-;; Get value as of specific transaction
-[:find ?name
- :where [?e :person/name ?name ?tx]
- [(as-of ?tx 5000)]]  ;; Filter to Tx <= 5000
+// Get value as of specific transaction
+asOf := d.AsOf(txID)
+results, _ = asOf.Query(`[:find ?name
+ :where [?e :person/name ?name]]`)
 ```
 
-Note: `as-of` uses Transaction ID (T), not ElementID. Transaction ID is the user-facing temporal marker ("when was this committed?"). ElementID is internal for CRDT conflict resolution.
+> **NOTE (2026-03):** The `[(history)]` and `[(as-of ?tx N)]` query predicates originally proposed here were never implemented. Temporal access is provided at the database level via `d.History()` and `d.AsOf(elementID)`, following Datomic's pattern.
 
 **Implementation:**
 

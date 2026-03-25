@@ -701,7 +701,7 @@ asOf, _ := d.AsOf(tx1).Query(
 // Returns: [["Alice"]]
 ```
 
-**Design note:** Temporal filters are applied at the database level (following Datomic's pattern), not as query predicates. `[(history)]` and `[(as-of ?tx N)]` predicates exist in the parser but are not yet wired to the executor — use `d.History().Query(...)` and `d.AsOf(elementID).Query(...)` instead.
+**Design note:** Temporal filters are applied at the database level (following Datomic's pattern), not as query predicates. Use `d.History().Query(...)` and `d.AsOf(elementID).Query(...)` to access historical data.
 
 **Not supported:**
 - No `since` queries (use `[(tx-between ?tx start ∞)]` instead)

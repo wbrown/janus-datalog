@@ -163,10 +163,11 @@ db.PullMany(entities, `[:person/name :person/age :person/email]`)
 - AETV: Scan, find first Tx ≤ target per (A, E)
 
 ### 5. Attribute History/Audit
-```datalog
-[:find ?e ?v ?tx :where [?e :user/password ?v ?tx] [(history)]]
+```go
+// All changes to :user/password across all users
+hist := d.History()
+results, _ := hist.Query(`[:find ?e ?v ?tx :where [?e :user/password ?v ?tx]]`)
 ```
-- All changes to `:user/password` across all users
 - AETV: Natural grouping by (A, E), Tx descending (newest first)
 
 ### 6. Schema Migration

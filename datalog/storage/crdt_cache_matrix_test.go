@@ -722,10 +722,6 @@ func TestCacheMatrix_CardinalityMany(t *testing.T) {
 	}
 }
 
-// NOTE: [(history)] predicate removed from test matrix.
-// History queries will use db.History() Datomic-style database view (future work).
-// See: https://docs.datomic.com/client-tutorial/history.html
-
 // TestCacheMatrix_PullIntoComparison verifies PullInto works in both modes
 func TestCacheMatrix_PullIntoComparison(t *testing.T) {
 	for _, mode := range cacheTestModes {

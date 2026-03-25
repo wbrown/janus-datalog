@@ -291,9 +291,9 @@ All tests follow the same data setup pattern as the existing `TestElementIDBindi
 - **Exercises**: `CompareValues(*ElementID, ElementID)`, `equalityConstraint` with `DerefElementID`
 
 #### `TestElementIDBinding_HistoryQuery`
-- **Purpose**: `[(history)]` returns all writes with ElementID Tx values
+- **Purpose**: `d.History()` returns all writes with ElementID Tx values
 - **Setup**: Write "Alice" then overwrite with "Alice2" (CardinalityOne, LWW)
-- **Query**: `[:find ?v ?tx :where [?e :person/name ?v ?tx] [(history)]]`
+- **Query**: `d.History().Query([:find ?v ?tx :where [?e :person/name ?v ?tx]])`
 - **Assert**: Returns 2 results (both historical values), each `?tx` is an ElementID
 - **Then**: Use one of the returned ElementIDs as a scalar binding to filter
 - **Exercises**: Full round-trip — ElementID from storage → user code → binding → back to storage

@@ -4321,7 +4321,9 @@ func valuesEqual(a, b any) bool {
 
 ### 8.4 History Query Predicates
 
-**Goal:** Implement `[(history)]` and `[(as-of ?tx N)]` predicates for time-travel queries.
+> **NOTE (2026-03):** The `[(history)]` and `[(as-of ?tx N)]` query predicates described below were never wired to the executor and have been removed from the parser. History and as-of access is provided at the database level via `d.History()` and `d.AsOf(elementID)`, following Datomic's design. The section below is retained for historical context.
+
+**Original goal:** Implement `[(history)]` and `[(as-of ?tx N)]` predicates for time-travel queries.
 
 **Parser Changes:**
 
@@ -5404,7 +5406,7 @@ func TestConcurrentCardinalityOneWrites(t *testing.T) {
     assert.Len(t, result, 1)  // Only one current value
 
     // Verify all values in history
-    history, _ := db.ExecuteQuery(`[:find ?name :where [?e :name ?name] [(history)]]`)
+    history, _ := db.History().ExecuteQuery(`[:find ?name :where [?e :name ?name]]`)
     assert.Len(t, history, 10)  // All 10 writes preserved
 }
 ```
@@ -5518,8 +5520,8 @@ Composition primitives prepare for full CRDT toolkit (see `CRDT_COMPOSABLE_TOOLK
 | `storage/export.go` | EDN | Export/Import using Merge() for cross-replica sync |
 | `storage/migration.go` | Schema | Cardinality migration (One↔Many↔Vector) |
 | `query/vector_functions.go` | 8.3 | All 8 vector functions (enumerate, nth, contains?, length, first, last, index-of, subvec) | ✅ Exists |
-| `query/history.go` | 8.4 | History predicate types (HistoryAll, HistoryAsOf) |
-| `parser/predicate_parser.go` | 8.4 | Parser for [(history)] and [(as-of ?tx N)] predicates |
+| `query/history.go` | 8.4 | TxRangePredicate (history predicates removed — use `d.History()`/`d.AsOf()`) |
+| `parser/predicate_parser.go` | 8.4 | Parser for [(tx-between ?tx low high)] predicate |
 | `planner/tx_range_rewriter.go` | 8.5 | Tx range bound inversion for queries |
 
 ### Modified Files

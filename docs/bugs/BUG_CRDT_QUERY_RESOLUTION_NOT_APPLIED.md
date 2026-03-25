@@ -607,7 +607,7 @@ type DatabaseOptions struct {
 
 The key requirement is **contiguous groups**, not any particular ordering of groups. Both indices provide this. Transaction ordering within each group allows finding the LWW winner.
 
-**Every storage scan must return CRDT-resolved values unless explicitly requesting history via `[(history)]`.**
+**Every storage scan must return CRDT-resolved values unless using `d.History()` to access raw datoms.**
 
 The cache can then be layered on top as a pure optimization - caching the results of scans that would otherwise be correct but slower.
 
@@ -802,8 +802,8 @@ Each cell must be tested with cache enabled AND disabled:
 
 | Feature | CRDT Behavior | Test Required |
 |---------|---------------|---------------|
-| `[(history)]` | Return ALL values (no resolution) | ✓ Verify no resolution |
-| `[(as-of ?tx N)]` | Resolve as of transaction N | ✓ Time-travel resolution |
+| `d.History()` | Return ALL values (no resolution) | ✓ Verify no resolution |
+| `d.AsOf(id)` | Resolve as of transaction N | ✓ Time-travel resolution |
 | `(not ...)` | Resolve before NOT evaluation | ✓ |
 | `(not-join ...)` | Resolve before NOT evaluation | ✓ |
 | `(or ...)` | Resolve in each OR branch | ✓ |
@@ -909,11 +909,8 @@ func TestCRDTResolution_Matrix(t *testing.T) {
 ;; 13. With aggregation
 [:find ?a (count ?v) :in $ ?e :where [?e ?a ?v]]
 
-;; 14. History query (should NOT resolve)
-[:find ?v :where [?e :person/name ?v] [(history)]]
-
-;; 15. As-of query
-[:find ?v :in $ ?e ?a ?tx :where [?e ?a ?v] [(as-of ?tx 1000)]]
+;; 14. History query (should NOT resolve) — use d.History().Query(...)
+;; 15. As-of query — use d.AsOf(elementID).Query(...)
 ```
 
 ### For Each Test Pattern
