@@ -77,7 +77,7 @@ func (d *Database) Import(r io.Reader) error {
 	// Increase buffer size for long lines
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
-	const batchSize = 5000
+	const batchSize = 1000
 	datoms := make([]datalog.Datom, 0, batchSize)
 	lineNum := 0
 
