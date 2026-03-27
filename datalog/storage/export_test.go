@@ -1299,3 +1299,47 @@ func extractStringValues(results [][]interface{}) []string {
 func parseEDNValue(s string) (*edn.Node, error) {
 	return edn.Parse(s)
 }
+
+// TestImport_ClockAdvancedAfterImport verifies that the Lamport clock is
+// advanced after Import so that subsequent writes (Add/Remove) get higher
+// Lamport values than imported data. Without this, Remove on a cardinality-many
+// attribute silently loses to add-wins because its Lamport is lower.
+func TestImport_ClockAdvancedAfterImport(t *testing.T) {
+	db := createTempDatabase(t)
+
+	// Register cardinality-many attribute
+	s := schema.NewBuilder().
+		Attribute(":entity/state").Type(schema.TypeKeyword).Many().Add().
+		MustBuild()
+	db.SetSchema(s)
+
+	// Build EDN with a cardinality-many datom at a high Lamport value
+	entity := datalog.NewIdentity("test-entity")
+	l85 := entity.L85()
+	// Lamport=5000, ReplicaID=1, Op=add
+	ednData := `[#identity "` + l85 + `" :entity/state :entity.state/unconscious [5000 1] :op/add]`
+
+	err := db.Import(strings.NewReader(ednData))
+	require.NoError(t, err)
+
+	// Verify the value exists
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(db.Schema())
+	vals, err := matcher.LookupAllAttributes(entity, datalog.NewKeyword(":entity/state"))
+	require.NoError(t, err)
+	require.Len(t, vals, 1, "state should exist after import")
+	assert.Equal(t, datalog.NewKeyword(":entity.state/unconscious"), vals[0])
+
+	// Now Remove it — this must get a Lamport > 5000 to win
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Remove(entity, datalog.NewKeyword(":entity/state"), datalog.NewKeyword(":entity.state/unconscious")))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	// Verify the value is gone
+	matcher2 := NewBadgerMatcher(db.Store())
+	matcher2.SetSchema(db.Schema())
+	vals, err = matcher2.LookupAllAttributes(entity, datalog.NewKeyword(":entity/state"))
+	require.NoError(t, err)
+	assert.Empty(t, vals, "state should be empty after Remove")
+}
