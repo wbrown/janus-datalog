@@ -78,8 +78,9 @@ type DatabaseOptions struct {
 	Schema            schema.SchemaProvider   // Optional schema for validation
 	AnnotationHandler annotations.Handler     // Optional handler for query tracing
 	ReplicaID         uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
-	DisableCache      bool                    // Disable EA cache; queries resolve directly from storage
-	PlannerOptions    *planner.PlannerOptions // Optional override for default planner options
+	DisableCache           bool                    // Disable EA cache; queries resolve directly from storage
+	PlannerOptions         *planner.PlannerOptions // Optional override for default planner options
+	CompressionThreshold   int                     // Compress string/[]byte values >= this size (0 = disabled)
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -101,7 +102,13 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		return nil, fmt.Errorf("database path is required")
 	}
 
-	store, err := NewBadgerStore(opts.Path, NewKeyEncoder(BinaryStrategy))
+	encoder := NewKeyEncoder(BinaryStrategy)
+	if opts.CompressionThreshold > 0 {
+		if be, ok := encoder.(*BinaryKeyEncoder); ok {
+			be.CompressionThreshold = opts.CompressionThreshold
+		}
+	}
+	store, err := NewBadgerStore(opts.Path, encoder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create store: %w", err)
 	}

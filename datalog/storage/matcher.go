@@ -26,6 +26,29 @@ type BadgerMatcher struct {
 	cache             *Cache                   // CRDT resolution cache for O(1) access to resolved views
 }
 
+// encodeValueForSearch encodes a value for use in index lookups, applying
+// compression if the encoder has it enabled. This ensures the search prefix
+// matches the stored key's value encoding.
+func encodeValueForSearch(v interface{}, encoder KeyEncoder) []byte {
+	// Check if the encoder has compression enabled
+	if be, ok := encoder.(*BinaryKeyEncoder); ok && be.CompressionThreshold > 0 {
+		vType, vData, _ := datalog.EncodeValue(v, be.CompressionThreshold)
+		return append([]byte{byte(vType)}, vData...)
+	}
+
+	// L85 reference handling
+	vType := byte(datalog.Type(v))
+	if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
+		var vArr [20]byte
+		copy(vArr[:], datalog.ValueBytes(v))
+		return append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
+	}
+
+	// Default: type + raw bytes
+	vData := datalog.ValueBytes(v)
+	return append([]byte{vType}, vData...)
+}
+
 // isHistoryMode returns true when raw (non-CRDT-resolved) datoms are requested.
 func (m *BadgerMatcher) isHistoryMode() bool {
 	return m.txID != nil && *m.txID == (datalog.ElementID{})
@@ -547,32 +570,13 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 					aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
 					_ = aStorage // used below
 
-					// Create a dummy datom to use encoder
-					dummyDatom := &datalog.Datom{
-						E:  eId,
-						A:  aPtr,
-						V:  nil,
-						Tx: datalog.ElementID{},
-					}
-
 					if v != nil {
 						// E, A, and V are bound - use AEVT prefix range
 						// CRITICAL: Must use prefix range, not exact key!
 						// EncodeKey includes Tx=0, but actual datoms have real Tx values.
 						// The scan range [A+E+V+Tx(0), A+E+V+Tx(1)) would miss all real datoms.
 						// Instead, use EncodePrefixRange to scan all Tx values for (A, E, V) prefix.
-						sDatom := ToStorageDatom(*dummyDatom)
-						sDatom.V = v
-						vType := byte(datalog.Type(sDatom.V))
-						var valueBytes []byte
-						if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
-							var vArr [20]byte
-							copy(vArr[:], datalog.ValueBytes(sDatom.V))
-							valueBytes = append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
-						} else {
-							vData := datalog.ValueBytes(sDatom.V)
-							valueBytes = append([]byte{vType}, vData...)
-						}
+						valueBytes := encodeValueForSearch(v, encoder)
 						// AEVT order: A + E + V + Tx, so prefix with (A, E, V) to scan all Tx
 						start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:], valueBytes)
 						return AEVT, start, end
@@ -614,31 +618,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 
 			if v != nil {
 				// A and V bound - use AVET index
-				// Create dummy datom for encoding
-				dummyDatom := &datalog.Datom{
-					E:  datalog.NewIdentity(""),
-					A:  aPtr,
-					V:  v,
-					Tx: datalog.ElementID{},
-				}
-				// Get value bytes with type prefix
-				// Must match how EncodeKey encodes values!
-				sDatom := ToStorageDatom(*dummyDatom)
-				vType := byte(datalog.Type(sDatom.V))
-				var valueBytes []byte
-
-				// Check if we're using L85 encoding and have a reference value
-				if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
-					// L85 encoder stores references as type + L85-encoded bytes
-					var vArr [20]byte
-					copy(vArr[:], datalog.ValueBytes(sDatom.V))
-					valueBytes = append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
-				} else {
-					// Binary encoder or non-reference values: type + raw bytes
-					vData := datalog.ValueBytes(sDatom.V)
-					valueBytes = append([]byte{vType}, vData...)
-				}
-
+				valueBytes := encodeValueForSearch(v, encoder)
 				start, end := encoder.EncodePrefixRange(AVET, aStorage[:], valueBytes)
 				return AVET, start, end
 			}
@@ -665,29 +645,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	} else if v != nil {
 		// Only V bound - use VAET index with per-datom cardinality resolution
 		// VAET: V → A → E → Tx↓ - groups by A, enabling efficient cardinality lookup
-		// Create dummy datom for value encoding
-		dummyDatom := &datalog.Datom{
-			E:  datalog.NewIdentity(""),
-			A:  datalog.NewKeyword(""),
-			V:  v,
-			Tx: datalog.ElementID{},
-		}
-		sDatom := ToStorageDatom(*dummyDatom)
-		vType := byte(datalog.Type(sDatom.V))
-		var valueBytes []byte
-
-		// Check if we're using L85 encoding and have a reference value
-		if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
-			// L85 encoder stores references as type + L85-encoded bytes
-			var vArr [20]byte
-			copy(vArr[:], datalog.ValueBytes(sDatom.V))
-			valueBytes = append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
-		} else {
-			// Binary encoder or non-reference values: type + raw bytes
-			vData := datalog.ValueBytes(sDatom.V)
-			valueBytes = append([]byte{vType}, vData...)
-		}
-
+		valueBytes := encodeValueForSearch(v, encoder)
 		start, end := encoder.EncodePrefixRange(VAET, valueBytes)
 		return VAET, start, end
 	} else if tx != nil {

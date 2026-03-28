@@ -935,28 +935,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 
 // encodeValue converts a value to bytes for index prefix
 func (it *validatingVBoundIterator) encodeValue(v any) []byte {
-	encoder := it.matcher.store.encoder
-
-	// Create dummy datom for encoding
-	dummyDatom := &datalog.Datom{
-		E:  datalog.NewIdentity(""),
-		A:  datalog.NewKeyword(":dummy"),
-		V:  v,
-		Tx: datalog.ElementID{},
-	}
-	sDatom := ToStorageDatom(*dummyDatom)
-	vType := byte(datalog.Type(sDatom.V))
-
-	// Check if we're using L85 encoding and have a reference value
-	if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
-		var vArr [20]byte
-		copy(vArr[:], datalog.ValueBytes(sDatom.V))
-		return append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
-	}
-
-	// Binary encoder or non-reference values: type + raw bytes
-	vData := datalog.ValueBytes(sDatom.V)
-	return append([]byte{vType}, vData...)
+	return encodeValueForSearch(v, it.matcher.store.encoder)
 }
 
 // buildTuple creates a result tuple from a validated datom

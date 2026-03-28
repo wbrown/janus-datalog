@@ -98,10 +98,9 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 
 	// Use EAVT index to find matching datoms (E+A+V, any Tx)
 	// Build prefix: index byte + E + A + V (without Tx)
+	// Must encode value the same way EncodeKey does (compression-aware)
 	prefix := []byte{byte(EAVT)}
-	vType := byte(datalog.Type(sd.V))
-	vData := datalog.ValueBytes(sd.V)
-	vBytes := append([]byte{vType}, vData...)
+	vBytes := encodeValueForSearch(sd.V, s.encoder)
 	searchPrefix := concatBytes(prefix, sd.E[:], sd.A[:], vBytes)
 
 	// Iterate to find matching keys with their actual Tx values

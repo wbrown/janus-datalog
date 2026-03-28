@@ -10,11 +10,12 @@ import (
 )
 
 type config struct {
-	schema            schema.SchemaProvider
-	replicaID         uint64
-	annotationHandler annotations.Handler
-	disableCache      bool
-	plannerOptions    *planner.PlannerOptions
+	schema               schema.SchemaProvider
+	replicaID            uint64
+	annotationHandler    annotations.Handler
+	disableCache         bool
+	plannerOptions       *planner.PlannerOptions
+	compressionThreshold int
 }
 
 // Option configures a database opened with Open.
@@ -44,6 +45,13 @@ func WithoutCache() Option {
 // WithPlannerOptions overrides the default planner options.
 func WithPlannerOptions(opts planner.PlannerOptions) Option {
 	return func(c *config) { c.plannerOptions = &opts }
+}
+
+// WithCompressionThreshold enables transparent compression for string and
+// []byte values at or above the given size in bytes. Set to 0 to disable.
+// Recommended: 256. See docs/proposals/COMPRESSED_STRING_VALUES.md.
+func WithCompressionThreshold(bytes int) Option {
+	return func(c *config) { c.compressionThreshold = bytes }
 }
 
 // WithVerbose enables query tracing to stdout.

@@ -8,7 +8,9 @@ import (
 )
 
 // BinaryKeyEncoder implements KeyEncoder using raw binary for space efficiency
-type BinaryKeyEncoder struct{}
+type BinaryKeyEncoder struct {
+	CompressionThreshold int // 0 = disabled; values >= this size are compressed
+}
 
 // txToDescending applies bitwise NOT to Tx bytes for descending sort order.
 // This ensures highest ElementID sorts first in forward scans, enabling O(1)
@@ -55,8 +57,18 @@ func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 	prefix := []byte{byte(index)}
 
 	// Get value bytes with type prefix (1 byte type + variable length data)
-	vType := byte(datalog.Type(sd.V))
-	vData := datalog.ValueBytes(sd.V)
+	// When compression is enabled, EncodeValue handles tier routing.
+	var vType byte
+	var vData []byte
+	if e.CompressionThreshold > 0 {
+		vt, vd, _ := datalog.EncodeValue(sd.V, e.CompressionThreshold)
+		vType = byte(vt)
+		vData = vd
+		// Note: BlobData (Tier 3) is ignored here — assertDatom handles blob writes
+	} else {
+		vType = byte(datalog.Type(sd.V))
+		vData = datalog.ValueBytes(sd.V)
+	}
 	vBytes := append([]byte{vType}, vData...)
 
 	// Encode Tx with bitwise NOT for descending sort order
