@@ -103,10 +103,12 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	}
 
 	encoder := NewKeyEncoder(BinaryStrategy)
-	// Default compression threshold is 256 bytes. Use -1 to disable.
+	// Default compression threshold is 512 bytes. Use -1 to disable.
+	// Values below ~500 bytes rarely compress due to ~300 bytes of
+	// FSE table + block header overhead in the compressed format.
 	threshold := opts.CompressionThreshold
 	if threshold == 0 {
-		threshold = 256
+		threshold = 512
 	}
 	if threshold > 0 {
 		if be, ok := encoder.(*BinaryKeyEncoder); ok {
