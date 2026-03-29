@@ -388,33 +388,39 @@ type goldenTest struct {
 	minRatio       float64
 }
 
-// The golden tests are initially run without expectedHex to record the outputs.
-// Once recorded, the hex strings are frozen.
+// Golden tests: frozen compressed outputs. If ANY of these change, the codec
+// determinism guarantee is broken and the change MUST be rejected.
+// Recorded 2026-03-28 from CompressionVersion 0x01.
 var goldenTests = []goldenTest{
 	{
-		name:     "paragraph_500",
-		input:    []byte(strings.Repeat("The quick brown fox jumps over the lazy dog. ", 11))[:500],
-		minRatio: 2.0,
+		name:        "paragraph_500",
+		input:       []byte(strings.Repeat("The quick brown fox jumps over the lazy dog. ", 11))[:500],
+		minRatio:    2.0,
+		expectedHex: "01000001f4000300030000002e0000002e010000002e54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2000000000030100000003140001000000030100000003171701000000030100000003050500000000040100000004fd6ead06",
 	},
 	{
-		name:     "prose_1kb",
-		input:    []byte(strings.Repeat("To be or not to be, that is the question. Whether tis nobler in the mind to suffer the slings and arrows. ", 10))[:1024],
-		minRatio: 2.0,
+		name:        "prose_1kb",
+		input:       []byte(strings.Repeat("To be or not to be, that is the question. Whether tis nobler in the mind to suffer the slings and arrows. ", 10))[:1024],
+		minRatio:    2.0,
+		expectedHex: "01000004000008000800000059000000590100000059546f206265206f72206e6f7420742c207468617420697320746865207175657374696f6e2e205768657468657220746973206e6f626c657220696e6d696e6473756666686520736c696e677320616e64206172726f77732e200000000801000000080e14040412000000000000080100000008010201011717171600000008010000000803050505060606060000000a010000000a6dc2836ff5adbed55e05",
 	},
 	{
-		name:     "edn_1kb",
-		input:    []byte(strings.Repeat("[#identity \"hash25\" :test/attr \"some value here\" [42 1] :op/none]\n", 16))[:1024],
-		minRatio: 2.0,
+		name:        "edn_1kb",
+		input:       []byte(strings.Repeat("[#identity \"hash25\" :test/attr \"some value here\" [42 1] :op/none]\n", 16))[:1024],
+		minRatio:    2.0,
+		expectedHex: "010000040000040004000000420000004201000000425b236964656e74697479202268617368323522203a746573742f617474722022736f6d652076616c7565206865726522205b343220315d203a6f702f6e6f6e655d0a000000040100000004150000000000000401000000041717171700000004010000000406060606000000080100000008f22dbc85b7501200",
 	},
 	{
-		name:     "repetitive_1kb",
-		input:    bytes.Repeat([]byte{0xDE, 0xAD, 0xBE, 0xEF}, 256),
-		minRatio: 5.0,
+		name:        "repetitive_1kb",
+		input:       bytes.Repeat([]byte{0xDE, 0xAD, 0xBE, 0xEF}, 256),
+		minRatio:    5.0,
+		expectedHex: "01000004000004000400000004000000040100000004deadbeef0000000401000000040400000000000004010000000417171717000000040100000004020202020000000501000000056fdebc1903",
 	},
 	{
-		name:     "all_same_1kb",
-		input:    bytes.Repeat([]byte{'a'}, 1024),
-		minRatio: 10.0,
+		name:        "all_same_1kb",
+		input:       bytes.Repeat([]byte{'a'}, 1024),
+		minRatio:    10.0,
+		expectedHex: "0100000400000400040000000100000001010000000161000000040100000004010000000000000401000000041717171700000004010000000400000000000000040100000004eff7db0c",
 	},
 }
 
