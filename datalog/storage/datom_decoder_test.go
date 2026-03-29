@@ -25,12 +25,12 @@ func TestDatomFromKeyValueSemantics(t *testing.T) {
 	key := encoder.EncodeKey(EAVT, originalDatom)
 
 	// Decode twice
-	d1, err1 := DatomFromKey(EAVT, key, encoder)
+	d1, err1 := DatomFromKey(EAVT, key, encoder, nil)
 	if err1 != nil {
 		t.Fatalf("DatomFromKey first call failed: %v", err1)
 	}
 
-	d2, err2 := DatomFromKey(EAVT, key, encoder)
+	d2, err2 := DatomFromKey(EAVT, key, encoder, nil)
 	if err2 != nil {
 		t.Fatalf("DatomFromKey second call failed: %v", err2)
 	}
@@ -78,7 +78,7 @@ func TestDatomFromKeyAllIndexTypes(t *testing.T) {
 		t.Run(indexNames[i], func(t *testing.T) {
 			key := encoder.EncodeKey(idx, originalDatom)
 
-			decoded, err := DatomFromKey(idx, key, encoder)
+			decoded, err := DatomFromKey(idx, key, encoder, nil)
 			if err != nil {
 				t.Fatalf("DatomFromKey(%s) failed: %v", indexNames[i], err)
 			}

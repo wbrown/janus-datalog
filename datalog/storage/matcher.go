@@ -824,7 +824,7 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 				if len(set) > 0 {
 					// Return all values as slice for consistency with cardinality-vector
 					result := make([]interface{}, 0, len(set))
-					for v := range set {
+					for _, v := range set {
 						result = append(result, v)
 					}
 					return result, true
@@ -1037,7 +1037,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 			case schema.CardinalityMany:
 				set := entry.ManySet()
 				result := make([]interface{}, 0, len(set))
-				for v := range set {
+				for _, v := range set {
 					result = append(result, v)
 				}
 				return result, nil
@@ -1094,7 +1094,7 @@ func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]in
 			return nil, fmt.Errorf("resolving add-wins set: %w", err)
 		}
 		values := make([]interface{}, 0, len(result.Members))
-		for v := range result.Members {
+		for _, v := range result.Members {
 			values = append(values, v)
 		}
 		return values, nil

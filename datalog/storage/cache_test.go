@@ -16,7 +16,7 @@ type mockCacheResolver struct {
 	lwwValue        any
 	lwwMaxID        datalog.ElementID
 	lwwErr          error
-	addWinsSet      map[any]bool
+	addWinsSet      map[any]any
 	addWinsMaxID    datalog.ElementID
 	addWinsErr      error
 	rgaElements     []any
@@ -37,7 +37,7 @@ func (m *mockCacheResolver) ResolveLWW(e Entity, a Attribute) (any, datalog.Elem
 	return m.lwwValue, m.lwwMaxID, m.lwwErr
 }
 
-func (m *mockCacheResolver) ResolveAddWins(e Entity, a Attribute) (map[any]bool, datalog.ElementID, error) {
+func (m *mockCacheResolver) ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, error) {
 	m.resolveAddCalls++
 	return m.addWinsSet, m.addWinsMaxID, m.addWinsErr
 }
@@ -260,7 +260,7 @@ func TestCacheRebuildCardinalityMany(t *testing.T) {
 	cache := NewCache()
 	resolver := &mockCacheResolver{
 		cardinality:  schema.CardinalityMany,
-		addWinsSet:   map[any]bool{"warrior": true, "veteran": true},
+		addWinsSet:   map[any]any{"warrior": "warrior", "veteran": "veteran"},
 		addWinsMaxID: datalog.ElementID{Lamport: 100, ReplicaID: 1},
 	}
 
@@ -274,8 +274,10 @@ func TestCacheRebuildCardinalityMany(t *testing.T) {
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
 	assert.Nil(t, entry.OneValue())
-	assert.True(t, entry.ManySet()["warrior"])
-	assert.True(t, entry.ManySet()["veteran"])
+	_, hasWarrior := entry.ManySet()["warrior"]
+	_, hasVeteran := entry.ManySet()["veteran"]
+	assert.True(t, hasWarrior)
+	assert.True(t, hasVeteran)
 	assert.Nil(t, entry.VectorList())
 }
 
@@ -307,7 +309,7 @@ func TestCacheManySetMembership(t *testing.T) {
 	cache := NewCache()
 	resolver := &mockCacheResolver{
 		cardinality:  schema.CardinalityMany,
-		addWinsSet:   map[any]bool{"a": true, "b": true, "c": true},
+		addWinsSet:   map[any]any{"a": "a", "b": "b", "c": "c"},
 		addWinsMaxID: datalog.ElementID{Lamport: 100, ReplicaID: 1},
 	}
 
@@ -322,17 +324,21 @@ func TestCacheManySetMembership(t *testing.T) {
 
 	// O(1) membership check via map
 	set := entry.ManySet()
-	assert.True(t, set["a"])
-	assert.True(t, set["b"])
-	assert.True(t, set["c"])
-	assert.False(t, set["d"])
+	_, hasA := set["a"]
+	_, hasB := set["b"]
+	_, hasC := set["c"]
+	_, hasD := set["d"]
+	assert.True(t, hasA)
+	assert.True(t, hasB)
+	assert.True(t, hasC)
+	assert.False(t, hasD)
 }
 
 func TestCacheManyEmptyAfterRemoves(t *testing.T) {
 	cache := NewCache()
 	resolver := &mockCacheResolver{
 		cardinality:  schema.CardinalityMany,
-		addWinsSet:   map[any]bool{}, // Empty set after all removes
+		addWinsSet:   map[any]any{}, // Empty set after all removes
 		addWinsMaxID: datalog.ElementID{Lamport: 100, ReplicaID: 1},
 	}
 

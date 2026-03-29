@@ -9,10 +9,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/codec"
 )
 
-// DatomFromKey reconstructs a datom from an index key
-// This allows us to avoid fetching values since the key contains all information
-// Returns by value to allow callers to reuse storage (no heap allocation per call)
-func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (datalog.Datom, error) {
+// DatomFromKey reconstructs a datom from an index key.
+// For Tier 3 (hashed) values, db is required to fetch compressed data from the blob store.
+// Pass nil for db when Tier 3 values are not expected.
+func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder, db *badger.DB) (datalog.Datom, error) {
 	// DecodeKey returns fixed-size arrays directly (no heap escape)
 	entity, attr, vBytes, tx, op, afterRef, err := encoder.DecodeKey(index, key)
 	if err != nil {
@@ -34,14 +34,43 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (datalog.Dato
 		}
 	}
 
+	// Tier 3: hashed values need blob store lookup
+	if vType == datalog.TypeHashedString || vType == datalog.TypeHashedBytes {
+		if db == nil {
+			return datalog.Datom{}, fmt.Errorf("hashed value requires database for blob lookup")
+		}
+		if len(vData) != 20 {
+			return datalog.Datom{}, fmt.Errorf("hashed value hash must be 20 bytes, got %d", len(vData))
+		}
+		var hash [20]byte
+		copy(hash[:], vData)
+		compressed, err := getBlob(db, hash)
+		if err != nil {
+			return datalog.Datom{}, fmt.Errorf("failed to read blob: %w", err)
+		}
+		// Decompress and return as the original type
+		decompressed, err := datalog.ValueFromBytes(
+			datalog.ValueType(vType-2), // TypeHashedString→TypeCompressedString, etc.
+			compressed,
+		)
+		if err != nil {
+			return datalog.Datom{}, fmt.Errorf("failed to decompress blob: %w", err)
+		}
+		return datalog.Datom{
+			E:        datalog.InternIdentityFromHash(entity),
+			A:        datalog.InternKeywordFromBytes(attr),
+			V:        decompressed,
+			Tx:       Tx(tx).ToElementID(),
+			Op:       datalog.CRDTOp(op),
+			AfterRef: Tx(afterRef).ToElementID(),
+		}, nil
+	}
+
 	v, err := datalog.ValueFromBytes(vType, vData)
 	if err != nil {
 		return datalog.Datom{}, fmt.Errorf("failed to decode value: %w", err)
 	}
 
-	// Convert to user datom using direct array-based interning
-	// No intermediate copies needed - arrays go straight to intern cache lookup
-	// tx is [16]byte, convert to Tx type then to uint64
 	return datalog.Datom{
 		E:        datalog.InternIdentityFromHash(entity),
 		A:        datalog.InternKeywordFromBytes(attr),
@@ -53,10 +82,11 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder) (datalog.Dato
 }
 
 // KeyOnlyIterator wraps a BadgerIterator to decode datoms from keys
-// This avoids fetching values entirely
+// This avoids fetching values entirely (except for Tier 3 blob lookups)
 type KeyOnlyIterator struct {
 	*BadgerIterator
 	encoder      KeyEncoder
+	db           *badger.DB
 	currentDatom datalog.Datom
 	hasDatom     bool
 	currentError error
@@ -83,6 +113,7 @@ func NewKeyOnlyIterator(store *BadgerStore, index IndexType, start, end []byte) 
 	return &KeyOnlyIterator{
 		BadgerIterator: bi,
 		encoder:        store.encoder,
+		db:             store.db,
 	}, nil
 }
 
@@ -101,7 +132,7 @@ func (i *KeyOnlyIterator) Next() bool {
 	// Decode datom from key - must copy since BadgerDB reuses the key buffer
 	key := i.it.Item().KeyCopy(nil)
 
-	i.currentDatom, i.currentError = DatomFromKey(i.index, key, i.encoder)
+	i.currentDatom, i.currentError = DatomFromKey(i.index, key, i.encoder, i.db)
 
 	if i.currentError != nil {
 		return false

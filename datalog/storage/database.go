@@ -2398,7 +2398,7 @@ func entryToValue(entry *CacheEntry, valueType schema.ValueType) interface{} {
 			return nil
 		}
 		values := make([]interface{}, 0, len(set))
-		for v := range set {
+		for _, v := range set {
 			values = append(values, v)
 		}
 		return values
@@ -2490,7 +2490,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 			set := entry.ManySet()
 			if len(set) > 0 {
 				values := make([]interface{}, 0, len(set))
-				for v := range set {
+				for _, v := range set {
 					values = append(values, v)
 				}
 				result[kw] = values

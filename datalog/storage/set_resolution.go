@@ -6,9 +6,12 @@ import (
 
 // SetResolutionResult contains the resolved set membership and metadata
 type SetResolutionResult struct {
-	// Members contains values currently in the set (after add-wins resolution)
-	// Uses map for O(1) membership lookup, as required by cache design.
-	Members map[interface{}]bool
+	// Members maps hashable keys to original Go values in the set.
+	// Keys are produced by setKey(). For most types the key equals the value.
+	// For []byte, the key is string(bytes) but the value is the original []byte.
+	// Point lookup: _, ok := Members[setKey(v)]
+	// Iteration: for _, v := range Members
+	Members map[interface{}]interface{}
 
 	// MaxElementID is the highest ElementID seen during resolution
 	// Used for cache freshness tracking
@@ -48,7 +51,7 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 	defer iter.Close()
 
 	result := &SetResolutionResult{
-		Members: make(map[interface{}]bool),
+		Members: make(map[interface{}]interface{}),
 	}
 
 	// Track state per value: map[valueKey] -> {highestAddTx, highestRemoveTx, hasAdd, hasRemove, value}
@@ -120,7 +123,11 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 		// If only removes (no adds), not in set
 
 		if inSet {
-			result.Members[state.value] = true
+			key := state.value
+			if b, ok := key.([]byte); ok {
+				key = string(b) // []byte is not hashable as a Go map key
+			}
+			result.Members[key] = state.value
 		}
 	}
 

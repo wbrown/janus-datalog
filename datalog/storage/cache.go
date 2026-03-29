@@ -20,7 +20,7 @@ type CacheEntry struct {
 
 	// Resolved views (one populated based on cardinality)
 	oneValue    any                 // Cardinality-One: single current value
-	manySet     map[any]bool        // Cardinality-Many: current set members
+	manySet     map[any]any         // Cardinality-Many: hashable key → original value
 	vectorList  []any               // Cardinality-Vector: ordered elements
 	vectorIndex []datalog.ElementID // Cardinality-Vector: position → ElementID for O(1) access
 }
@@ -41,7 +41,7 @@ func (e *CacheEntry) OneValue() any {
 }
 
 // ManySet returns the set for cardinality-many attributes
-func (e *CacheEntry) ManySet() map[any]bool {
+func (e *CacheEntry) ManySet() map[any]any {
 	return e.manySet
 }
 
@@ -365,7 +365,7 @@ type CacheResolver interface {
 
 	// ResolveAddWins returns the current set members for cardinality-many
 	// Returns (members, maxElementID, error)
-	ResolveAddWins(e Entity, a Attribute) (map[any]bool, datalog.ElementID, error)
+	ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, error)
 
 	// ResolveRGA returns the ordered vector for cardinality-vector
 	// Returns (elements, positionIndex, maxElementID, error)

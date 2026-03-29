@@ -49,27 +49,42 @@ func txFromDescending(encoded []byte) [16]byte {
 //	TAEV: [prefix][Tx↓][A][E][type][value][AfterRef?][Op]  - transaction log
 //
 // AfterRef? = 16 bytes present only if Op ∈ {OpRGAInsert(3), OpRGATombstone(4)}
-func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
-	// Convert to storage datom first
-	sd := ToStorageDatom(*d)
-
-	// Each index has a 1-byte prefix to separate namespaces
-	prefix := []byte{byte(index)}
-
-	// Get value bytes with type prefix (1 byte type + variable length data)
-	// When compression is enabled, EncodeValue handles tier routing.
+// EncodeValueBytes computes the type+data bytes for a value, applying
+// compression if enabled. Returns the bytes for the key and optional
+// BlobData for Tier 3 values. Call this once per datom, then pass the
+// result to EncodeKeyWithValueBytes for each index.
+func (e *BinaryKeyEncoder) EncodeValueBytes(v interface{}) (vBytes []byte, blobData *datalog.BlobData) {
 	var vType byte
 	var vData []byte
 	if e.CompressionThreshold > 0 {
-		vt, vd, _ := datalog.EncodeValue(sd.V, e.CompressionThreshold)
+		vt, vd, bd := datalog.EncodeValue(v, e.CompressionThreshold)
 		vType = byte(vt)
 		vData = vd
-		// Note: BlobData (Tier 3) is ignored here — assertDatom handles blob writes
+		blobData = bd
 	} else {
-		vType = byte(datalog.Type(sd.V))
-		vData = datalog.ValueBytes(sd.V)
+		vType = byte(datalog.Type(v))
+		vData = datalog.ValueBytes(v)
 	}
-	vBytes := append([]byte{vType}, vData...)
+	vBytes = append([]byte{vType}, vData...)
+	return
+}
+
+func (e *BinaryKeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
+	sd := ToStorageDatom(*d)
+	vBytes, _ := e.EncodeValueBytes(sd.V)
+	return e.encodeKeyWithParts(index, &sd, vBytes)
+}
+
+// EncodeKeyWithValueBytes builds an index key using pre-encoded value bytes.
+// Use this when encoding the same datom into multiple indexes to avoid
+// recomputing compression 7 times.
+func (e *BinaryKeyEncoder) EncodeKeyWithValueBytes(index IndexType, d *datalog.Datom, vBytes []byte) []byte {
+	sd := ToStorageDatom(*d)
+	return e.encodeKeyWithParts(index, &sd, vBytes)
+}
+
+func (e *BinaryKeyEncoder) encodeKeyWithParts(index IndexType, sd *StorageDatom, vBytes []byte) []byte {
+	prefix := []byte{byte(index)}
 
 	// Encode Tx with bitwise NOT for descending sort order
 	txDesc := txToDescending(sd.Tx)

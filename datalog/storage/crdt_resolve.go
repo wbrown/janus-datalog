@@ -44,9 +44,9 @@ func ResolveLWWFromDatoms(datoms []datalog.Datom) (any, datalog.ElementID) {
 // - If add has higher Lamport: in set
 // - If remove has higher Lamport: not in set
 // - Same Lamport (concurrent): add wins
-func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[any]bool, datalog.ElementID) {
+func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[any]any, datalog.ElementID) {
 	if len(datoms) == 0 {
-		return make(map[any]bool), datalog.ElementID{}
+		return make(map[any]any), datalog.ElementID{}
 	}
 
 	var maxID datalog.ElementID
@@ -93,7 +93,7 @@ func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[any]bool, datalog.Ele
 	}
 
 	// Resolve membership
-	result := make(map[any]bool)
+	result := make(map[any]any)
 	for _, state := range valueStates {
 		inSet := false
 		if state.hasAdd && !state.hasRemove {
@@ -107,7 +107,11 @@ func ResolveAddWinsFromDatoms(datoms []datalog.Datom) (map[any]bool, datalog.Ele
 			}
 		}
 		if inSet {
-			result[state.value] = true
+			key := state.value
+			if b, ok := key.([]byte); ok {
+				key = string(b)
+			}
+			result[key] = state.value
 		}
 	}
 

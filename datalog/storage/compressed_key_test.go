@@ -43,7 +43,7 @@ func TestCompressedKey_RoundTrip_AllIndexes(t *testing.T) {
 			key := enc.EncodeKey(idx, d)
 			require.NotEmpty(t, key)
 
-			decoded, err := DatomFromKey(idx, key, enc)
+			decoded, err := DatomFromKey(idx, key, enc, nil)
 			require.NoError(t, err)
 
 			assert.Equal(t, longStr, decoded.V.(string),
@@ -65,7 +65,7 @@ func TestCompressedKey_RoundTrip_Bytes(t *testing.T) {
 	for _, idx := range []IndexType{EAVT, AEVT, AVET} {
 		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
 			key := enc.EncodeKey(idx, d)
-			decoded, err := DatomFromKey(idx, key, enc)
+			decoded, err := DatomFromKey(idx, key, enc, nil)
 			require.NoError(t, err)
 			assert.True(t, bytes.Equal(longBytes, decoded.V.([]byte)))
 		})
@@ -99,7 +99,7 @@ func TestCompressedKey_SmallValueStaysRaw(t *testing.T) {
 		"short string should use TypeString, not compressed")
 
 	// Round-trip
-	decoded, err := DatomFromKey(EAVT, key, enc)
+	decoded, err := DatomFromKey(EAVT, key, enc, nil)
 	require.NoError(t, err)
 	assert.Equal(t, shortStr, decoded.V.(string))
 }
@@ -175,11 +175,11 @@ func TestCompressedKey_MixedTiers(t *testing.T) {
 	key1 := enc.EncodeKey(EAVT, d1)
 	key2 := enc.EncodeKey(EAVT, d2)
 
-	decoded1, err := DatomFromKey(EAVT, key1, enc)
+	decoded1, err := DatomFromKey(EAVT, key1, enc, nil)
 	require.NoError(t, err)
 	assert.Equal(t, shortStr, decoded1.V.(string))
 
-	decoded2, err := DatomFromKey(EAVT, key2, enc)
+	decoded2, err := DatomFromKey(EAVT, key2, enc, nil)
 	require.NoError(t, err)
 	assert.Equal(t, longStr, decoded2.V.(string))
 }
@@ -200,7 +200,7 @@ func TestCompressedKey_BackwardCompat(t *testing.T) {
 	assert.Equal(t, byte(datalog.TypeString), key[53], "raw encoder should use TypeString")
 
 	// Decode with compression-enabled encoder — should still work
-	decoded, err := DatomFromKey(EAVT, key, compEnc)
+	decoded, err := DatomFromKey(EAVT, key, compEnc, nil)
 	require.NoError(t, err)
 	assert.Equal(t, longStr, decoded.V.(string),
 		"compression-enabled decoder should read uncompressed keys")
