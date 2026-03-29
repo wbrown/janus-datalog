@@ -375,8 +375,7 @@ func TestTier3_AVET_ExactMatch(t *testing.T) {
 
 	iter := results.Iterator()
 	require.True(t, iter.Next(), "AVET lookup should find the entity for Tier 3 value")
-	gotEntity := iter.Tuple()[0].(datalog.Identity)
-	assert.Equal(t, entity.L85(), gotEntity.L85())
+	assert.Equal(t, entity, iter.Tuple()[0])
 	assert.False(t, iter.Next(), "should be exactly one result")
 }
 

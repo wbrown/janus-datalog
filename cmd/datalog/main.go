@@ -28,6 +28,7 @@ func main() {
 	var enableDecorrelation bool
 	var exportPath string
 	var importPath string
+	var compressedExport bool
 
 	var inputValues ednSliceFlag
 
@@ -38,6 +39,7 @@ func main() {
 	flag.StringVar(&queryStr, "query", "", "run a single query and exit")
 	flag.BoolVar(&enableDecorrelation, "decorrelate", true, "enable subquery decorrelation optimization (default: true)")
 	flag.StringVar(&exportPath, "export", "", "export database to EDN file")
+	flag.BoolVar(&compressedExport, "compressed", false, "use #lzj compressed tagged literals in export")
 	flag.StringVar(&importPath, "import", "", "import database from EDN file")
 	flag.Var(&inputValues, "in", "input parameter as EDN value (repeatable, one per :in binding)")
 	flag.Usage = func() {
@@ -82,7 +84,7 @@ func main() {
 
 	// Handle export mode
 	if exportPath != "" {
-		runExport(dbPath, exportPath)
+		runExport(dbPath, exportPath, compressedExport)
 		return
 	}
 
@@ -398,7 +400,7 @@ func isDatabaseEmpty(db *storage.Database) bool {
 }
 
 // runExport exports the database to an EDN file
-func runExport(dbPath, exportPath string) {
+func runExport(dbPath, exportPath string, compressed bool) {
 	// Check if database exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		log.Fatalf("Database does not exist: %s", dbPath)
@@ -419,7 +421,7 @@ func runExport(dbPath, exportPath string) {
 	defer f.Close()
 
 	// Export database
-	if err := db.Export(f); err != nil {
+	if err := db.Export(f, storage.ExportOptions{Compressed: compressed}); err != nil {
 		log.Fatalf("Failed to export database: %v", err)
 	}
 

@@ -190,7 +190,7 @@ func TestCompressedIntegration_AVET_ExactMatch(t *testing.T) {
 	iter := results.Iterator()
 	require.True(t, iter.Next(), "AVET lookup should find the entity")
 	gotEntity := iter.Tuple()[0]
-	assert.Equal(t, entity.L85(), gotEntity.(datalog.Identity).L85(),
+	assert.Equal(t, entity, gotEntity,
 		"AVET lookup returned wrong entity")
 	assert.False(t, iter.Next(), "expected exactly one result")
 }

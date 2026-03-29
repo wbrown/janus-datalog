@@ -48,7 +48,7 @@ func TestCompressedKey_RoundTrip_AllIndexes(t *testing.T) {
 
 			assert.Equal(t, longStr, decoded.V.(string),
 				"value round-trip failed for %s", idx)
-			assert.Equal(t, d.E.L85(), decoded.E.L85(),
+			assert.Equal(t, d.E, decoded.E,
 				"entity round-trip failed for %s", idx)
 			assert.Equal(t, d.A.String(), decoded.A.String(),
 				"attribute round-trip failed for %s", idx)

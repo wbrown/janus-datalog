@@ -182,11 +182,11 @@ encoding for the compressed bytes (the same encoding used for entity IDs
 and transaction IDs throughout the codebase):
 
 ```clojure
-[#identity "abc123" :task/content #compressed "L85-encoded-compressed-data" [100 1] :op/none]
+[#identity "abc123" :task/content #lzj "L85-encoded-compressed-data" [100 1] :op/none]
 ```
 
 Both tiers serialize the same way in EDN — the compressed bytes with a
-`#compressed` tagged literal. The tier distinction (key vs value log) is a
+`#lzj` tagged literal. The tier distinction (key vs value log) is a
 storage detail that doesn't affect the logical datom.
 
 L85 has 25% encoding overhead (vs base64's 33%), is terminal/JSON/URL safe,
@@ -197,7 +197,7 @@ than offset by the compression ratio (~70-80% reduction).
 compatibility. A `--compressed` flag enables compressed tagged literals for
 size-sensitive use cases (backup, transfer).
 
-On import, the EDN parser recognizes `#compressed`, L85-decodes the
+On import, the EDN parser recognizes `#lzj`, L85-decodes the
 payload, and routes through the same compress-and-tier logic — no
 decompress-then-recompress round-trip for Tier 2 values. Tier 3 values
 derive the content hash from the compressed bytes at import time.
@@ -254,9 +254,9 @@ Existing databases have uncompressed strings. No migration needed:
 - Write path: new writes above the threshold are compressed and tiered.
   Old uncompressed values remain until overwritten.
 - Export: uncompressed values export as plain strings. Compressed values
-  export with `#compressed` tag (if `--compressed` flag is set) or
+  export with `#lzj` tag (if `--compressed` flag is set) or
   decompressed as plain strings (default).
-- Import: both plain and `#compressed` tagged values import correctly.
+- Import: both plain and `#lzj` tagged values import correctly.
 
 ## Trade-offs
 
