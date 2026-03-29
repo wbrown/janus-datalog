@@ -47,11 +47,16 @@ func WithPlannerOptions(opts planner.PlannerOptions) Option {
 	return func(c *config) { c.plannerOptions = &opts }
 }
 
-// WithCompressionThreshold enables transparent compression for string and
-// []byte values at or above the given size in bytes. Set to 0 to disable.
-// Recommended: 256. See docs/proposals/COMPRESSED_STRING_VALUES.md.
+// WithCompressionThreshold sets the compression threshold in bytes.
+// Values at or above this size are transparently compressed.
+// Default is 256 (enabled). Use -1 to disable compression.
 func WithCompressionThreshold(bytes int) Option {
 	return func(c *config) { c.compressionThreshold = bytes }
+}
+
+// WithoutCompression disables transparent value compression.
+func WithoutCompression() Option {
+	return func(c *config) { c.compressionThreshold = -1 }
 }
 
 // WithVerbose enables query tracing to stdout.

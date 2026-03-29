@@ -80,7 +80,7 @@ type DatabaseOptions struct {
 	ReplicaID         uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
 	DisableCache           bool                    // Disable EA cache; queries resolve directly from storage
 	PlannerOptions         *planner.PlannerOptions // Optional override for default planner options
-	CompressionThreshold   int                     // Compress string/[]byte values >= this size (0 = disabled)
+	CompressionThreshold   int                     // Compress string/[]byte values >= this size (default 256; -1 to disable)
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -103,9 +103,14 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	}
 
 	encoder := NewKeyEncoder(BinaryStrategy)
-	if opts.CompressionThreshold > 0 {
+	// Default compression threshold is 256 bytes. Use -1 to disable.
+	threshold := opts.CompressionThreshold
+	if threshold == 0 {
+		threshold = 256
+	}
+	if threshold > 0 {
 		if be, ok := encoder.(*BinaryKeyEncoder); ok {
-			be.CompressionThreshold = opts.CompressionThreshold
+			be.CompressionThreshold = threshold
 		}
 	}
 	store, err := NewBadgerStore(opts.Path, encoder)
