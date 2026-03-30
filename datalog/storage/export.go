@@ -16,6 +16,11 @@ import (
 // ExportOptions configures EDN export behavior.
 type ExportOptions struct {
 	Compressed bool // Use #lzj tagged literals for large string values
+	// SkipEntity, when non-nil, is called for each datom's entity Identity.
+	// If it returns true, the datom is omitted from the export.
+	// This enables filtering out entire entity classes (e.g., task metadata)
+	// without a separate pass over the database.
+	SkipEntity func(datalog.Identity) bool
 }
 
 // Export writes all datoms in the database to EDN format.
@@ -23,19 +28,24 @@ type ExportOptions struct {
 // With Compressed: true, large strings use #lzj tagged literals.
 func (d *Database) Export(w io.Writer, opts ...ExportOptions) error {
 	formatter := FormatDatomEDN
-	if len(opts) > 0 && opts[0].Compressed {
-		formatter = FormatDatomEDNCompressed
+	var skipEntity func(datalog.Identity) bool
+	if len(opts) > 0 {
+		if opts[0].Compressed {
+			formatter = FormatDatomEDNCompressed
+		}
+		skipEntity = opts[0].SkipEntity
 	}
-	return d.export(w, formatter)
+	return d.export(w, formatter, skipEntity)
 }
 
 // ExportCompressed is a convenience alias for Export with Compressed: true.
+// To filter entities during compressed export, use Export directly with ExportOptions.
 func (d *Database) ExportCompressed(w io.Writer) error {
 	return d.Export(w, ExportOptions{Compressed: true})
 }
 
 // export is the shared implementation for Export and ExportCompressed.
-func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string) error {
+func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, skipEntity func(datalog.Identity) bool) error {
 	start := []byte{byte(EAVT)}
 	end := []byte{byte(EATV)}
 	iter, err := d.store.Scan(EAVT, start, end)
@@ -50,6 +60,10 @@ func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string) 
 		datom, err := iter.Datom()
 		if err != nil {
 			return fmt.Errorf("failed to read datom: %w", err)
+		}
+
+		if skipEntity != nil && skipEntity(datom.E) {
+			continue
 		}
 
 		line := formatDatom(datom)
