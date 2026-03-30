@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -53,6 +55,9 @@ func main() {
 		if line == "" || strings.HasPrefix(line, ";") {
 			continue
 		}
+
+		// Scan raw line for #lzj compression stats before parsing
+		stats.recordLZJ(line)
 
 		datom, err := storage.ParseDatomEDN(line)
 		if err != nil {
@@ -86,6 +91,12 @@ type attrStats struct {
 	sizes      []int
 }
 
+type lzjEntry struct {
+	attr             string
+	compressedSize   int // L85-decoded compressed bytes
+	decompressedSize int // original string length
+}
+
 type stats struct {
 	totalDatoms int
 	parseErrors int
@@ -105,6 +116,10 @@ type stats struct {
 	// RGA vector groups: (entity, attribute) → list of value sizes
 	// Only tracks string values with rga-insert ops
 	rgaGroups map[entityAttrKey]*rgaGroup
+
+	// #lzj compression stats (from raw EDN lines)
+	lzjEntries []lzjEntry
+	lzjByAttr  map[string][]lzjEntry
 }
 
 type rgaGroup struct {
@@ -121,6 +136,39 @@ func newStats() *stats {
 		attrString: make(map[string]*attrStats),
 		attrBytes:  make(map[string]*attrStats),
 		rgaGroups:  make(map[entityAttrKey]*rgaGroup),
+		lzjByAttr:  make(map[string][]lzjEntry),
+	}
+}
+
+// lzjPattern matches #lzj "..." in a raw EDN line.
+// Captures the attribute keyword and the L85-encoded payload.
+var lzjPattern = regexp.MustCompile(`(:\S+)\s+#lzj\s+"([^"]*)"`)
+
+// recordLZJ scans a raw EDN line for #lzj tagged literals and records
+// compressed vs decompressed sizes.
+func (s *stats) recordLZJ(line string) {
+	matches := lzjPattern.FindAllStringSubmatch(line, -1)
+	for _, m := range matches {
+		attr := m[1]
+		l85Data := m[2]
+
+		compressed, err := codec.DecodeL85(l85Data)
+		if err != nil {
+			continue
+		}
+
+		decompressed, err := codec.Decompress(compressed)
+		if err != nil {
+			continue
+		}
+
+		entry := lzjEntry{
+			attr:             attr,
+			compressedSize:   len(compressed),
+			decompressedSize: len(decompressed),
+		}
+		s.lzjEntries = append(s.lzjEntries, entry)
+		s.lzjByAttr[attr] = append(s.lzjByAttr[attr], entry)
 	}
 }
 
@@ -458,6 +506,82 @@ func (s *stats) report(topN int) {
 			totalSavings := 100.0 * float64(totalOrig-totalStored) / float64(totalOrig)
 			fmt.Printf("| **Total** | %d | %s | %s | **%.0f%%** |\n",
 				tier1Count+tier2Count, humanBytes(totalOrig), humanBytes(totalStored), totalSavings)
+		}
+		fmt.Println()
+	}
+
+	// LZJ compression analysis (from raw #lzj tagged literals)
+	if len(s.lzjEntries) > 0 {
+		fmt.Println("## LZJ Compression Analysis")
+		fmt.Println()
+
+		totalCompressed := 0
+		totalDecompressed := 0
+		var ratios []float64
+		for _, e := range s.lzjEntries {
+			totalCompressed += e.compressedSize
+			totalDecompressed += e.decompressedSize
+			if e.compressedSize > 0 {
+				ratios = append(ratios, float64(e.decompressedSize)/float64(e.compressedSize))
+			}
+		}
+		sort.Float64s(ratios)
+
+		overallRatio := float64(totalDecompressed) / float64(totalCompressed)
+		savings := 100.0 * float64(totalDecompressed-totalCompressed) / float64(totalDecompressed)
+
+		fmt.Printf("- Compressed values: %d of %d datoms (%.1f%%)\n",
+			len(s.lzjEntries), s.totalDatoms,
+			100.0*float64(len(s.lzjEntries))/float64(s.totalDatoms))
+		fmt.Printf("- Total decompressed: %s\n", humanBytes(totalDecompressed))
+		fmt.Printf("- Total compressed: %s\n", humanBytes(totalCompressed))
+		fmt.Printf("- Overall ratio: %.1fx (%.0f%% savings)\n", overallRatio, savings)
+		fmt.Println()
+
+		fmt.Println("**Compression ratio distribution:**")
+		fmt.Println()
+		fmt.Printf("| P50 | P75 | P90 | P95 | Max |\n")
+		fmt.Printf("|-----|-----|-----|-----|-----|\n")
+		fmt.Printf("| %.1fx | %.1fx | %.1fx | %.1fx | %.1fx |\n",
+			percentileFloat(ratios, 50),
+			percentileFloat(ratios, 75),
+			percentileFloat(ratios, 90),
+			percentileFloat(ratios, 95),
+			ratios[len(ratios)-1])
+		fmt.Println()
+
+		// Per-attribute breakdown
+		fmt.Println("**Per-attribute compression:**")
+		fmt.Println()
+		fmt.Println("| Attribute | Count | Decompressed | Compressed | Ratio | Savings |")
+		fmt.Println("|-----------|-------|--------------|------------|-------|---------|")
+
+		// Sort by decompressed size descending
+		type attrLZJ struct {
+			attr         string
+			count        int
+			decompressed int
+			compressed   int
+		}
+		var attrs []attrLZJ
+		for attr, entries := range s.lzjByAttr {
+			a := attrLZJ{attr: attr, count: len(entries)}
+			for _, e := range entries {
+				a.decompressed += e.decompressedSize
+				a.compressed += e.compressedSize
+			}
+			attrs = append(attrs, a)
+		}
+		sort.Slice(attrs, func(i, j int) bool {
+			return attrs[i].decompressed > attrs[j].decompressed
+		})
+		for _, a := range attrs {
+			ratio := float64(a.decompressed) / float64(a.compressed)
+			sav := 100.0 * float64(a.decompressed-a.compressed) / float64(a.decompressed)
+			fmt.Printf("| %s | %d | %s | %s | %.1fx | %.0f%% |\n",
+				a.attr, a.count,
+				humanBytes(a.decompressed), humanBytes(a.compressed),
+				ratio, sav)
 		}
 		fmt.Println()
 	}
