@@ -64,7 +64,7 @@ func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementI
 
 // ResolveAddWins returns the current set members for cardinality-many
 // Uses the existing resolveAddWinsSet method and converts to map
-func (m *BadgerMatcher) ResolveAddWins(e Entity, a Attribute) (map[any]bool, datalog.ElementID, error) {
+func (m *BadgerMatcher) ResolveAddWins(e Entity, a Attribute) (map[any]any, datalog.ElementID, error) {
 	result, err := m.resolveAddWinsSet(e[:], a[:])
 	if err != nil {
 		return nil, datalog.ElementID{}, err

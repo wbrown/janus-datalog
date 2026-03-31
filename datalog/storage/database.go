@@ -78,8 +78,9 @@ type DatabaseOptions struct {
 	Schema            schema.SchemaProvider   // Optional schema for validation
 	AnnotationHandler annotations.Handler     // Optional handler for query tracing
 	ReplicaID         uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
-	DisableCache      bool                    // Disable EA cache; queries resolve directly from storage
-	PlannerOptions    *planner.PlannerOptions // Optional override for default planner options
+	DisableCache           bool                    // Disable EA cache; queries resolve directly from storage
+	PlannerOptions         *planner.PlannerOptions // Optional override for default planner options
+	CompressionThreshold   int                     // Compress string/[]byte values >= this size (default 256; -1 to disable)
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -101,7 +102,20 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		return nil, fmt.Errorf("database path is required")
 	}
 
-	store, err := NewBadgerStore(opts.Path, NewKeyEncoder(BinaryStrategy))
+	encoder := NewKeyEncoder(BinaryStrategy)
+	// Default compression threshold is 512 bytes. Use -1 to disable.
+	// Values below ~500 bytes rarely compress due to ~300 bytes of
+	// FSE table + block header overhead in the compressed format.
+	threshold := opts.CompressionThreshold
+	if threshold == 0 {
+		threshold = 512
+	}
+	if threshold > 0 {
+		if be, ok := encoder.(*BinaryKeyEncoder); ok {
+			be.CompressionThreshold = threshold
+		}
+	}
+	store, err := NewBadgerStore(opts.Path, encoder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create store: %w", err)
 	}
@@ -2391,7 +2405,7 @@ func entryToValue(entry *CacheEntry, valueType schema.ValueType) interface{} {
 			return nil
 		}
 		values := make([]interface{}, 0, len(set))
-		for v := range set {
+		for _, v := range set {
 			values = append(values, v)
 		}
 		return values
@@ -2483,7 +2497,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 			set := entry.ManySet()
 			if len(set) > 0 {
 				values := make([]interface{}, 0, len(set))
-				for v := range set {
+				for _, v := range set {
 					values = append(values, v)
 				}
 				result[kw] = values

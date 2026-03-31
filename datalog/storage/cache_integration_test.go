@@ -324,7 +324,8 @@ func TestCacheResolverInterface(t *testing.T) {
 	// Test ResolveAddWins
 	set, maxID, err := matcher.ResolveAddWins(eBytes, tagsAttr)
 	require.NoError(t, err)
-	assert.True(t, set["dev"])
+	_, hasDev := set["dev"]
+	assert.True(t, hasDev)
 	assert.NotZero(t, maxID.Lamport)
 }
 
@@ -480,8 +481,10 @@ func TestCardinalityManyQueryUsesCache(t *testing.T) {
 
 	entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
 	require.NotNil(t, entry, "cache should be populated after cardinality-many query")
-	assert.True(t, entry.ManySet()["developer"])
-	assert.True(t, entry.ManySet()["golang"])
+	_, hasDeveloper := entry.ManySet()["developer"]
+	_, hasGolang := entry.ManySet()["golang"]
+	assert.True(t, hasDeveloper)
+	assert.True(t, hasGolang)
 }
 
 // TestCacheConcurrency verifies that concurrent cache access with real storage

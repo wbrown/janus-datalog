@@ -97,8 +97,10 @@ func TestMatcherCacheCardinalityMany(t *testing.T) {
 	entry := db.Cache().GetOrResolve(key, matcher)
 	require.NotNil(t, entry)
 	assert.Equal(t, schema.CardinalityMany, entry.Cardinality())
-	assert.True(t, entry.ManySet()["warrior"])
-	assert.True(t, entry.ManySet()["veteran"])
+	_, hasWarrior := entry.ManySet()["warrior"]
+	_, hasVeteran := entry.ManySet()["veteran"]
+	assert.True(t, hasWarrior)
+	assert.True(t, hasVeteran)
 }
 
 func TestMatcherCacheCardinalityVector(t *testing.T) {
@@ -339,7 +341,8 @@ func TestMatcherCacheAddWinsResolution(t *testing.T) {
 
 	entry := db.Cache().GetOrResolve(key, matcher)
 	require.NotNil(t, entry)
-	assert.True(t, entry.ManySet()["warrior"], "warrior should be in set after add-remove-add")
+	_, hasWarrior2 := entry.ManySet()["warrior"]
+	assert.True(t, hasWarrior2, "warrior should be in set after add-remove-add")
 }
 
 // =============================================================================

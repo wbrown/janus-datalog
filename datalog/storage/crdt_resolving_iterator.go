@@ -224,16 +224,22 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 // - REMOVE before ADD = remove has higher Tx = value is removed
 // - REMOVE after ADD = we already emitted = ignore remove
 func (it *CRDTResolvingIterator) processAddWins(datom *datalog.Datom) *datalog.Datom {
+	// Use a hashable key for map lookups. []byte is not hashable in Go,
+	// but the datom itself (returned to caller) preserves the original type.
 	v := datom.V
+	key := v
+	if b, ok := key.([]byte); ok {
+		key = string(b)
+	}
 
 	if datom.Op == datalog.OpCRDTAdd {
 		// Already emitted this value?
-		if it.emitted[v] {
+		if it.emitted[key] {
 			return nil
 		}
 
 		// Check if tombstoned
-		if tombstoneLamport, exists := it.tombstones[v]; exists {
+		if tombstoneLamport, exists := it.tombstones[key]; exists {
 			// Add wins at same Lamport, otherwise remove wins
 			if datom.Tx.Lamport < tombstoneLamport {
 				return nil // Remove wins
@@ -242,13 +248,13 @@ func (it *CRDTResolvingIterator) processAddWins(datom *datalog.Datom) *datalog.D
 		}
 
 		// Emit this add
-		it.emitted[v] = true
+		it.emitted[key] = true
 		return datom
 
 	} else if datom.Op == datalog.OpCRDTRemove {
 		// Record tombstone (first one we see = highest Tx)
-		if _, exists := it.tombstones[v]; !exists {
-			it.tombstones[v] = datom.Tx.Lamport
+		if _, exists := it.tombstones[key]; !exists {
+			it.tombstones[key] = datom.Tx.Lamport
 		}
 		return nil
 	}

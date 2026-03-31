@@ -24,6 +24,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **CRDT storage**: **~25-35µs writes** across all cardinalities, **O(1) LWW resolution** (965ns for 1000 versions), linear vector scaling (verified 2026-01-31)
 - ✅ **CRDT allocation optimization**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch while adding full CRDT semantics (verified 2026-02-02)
 - ✅ **AETV index & value elimination**: **5% faster**, **19% less memory**, **17% fewer allocations** (geomean); complex queries see **35% memory reduction** (verified 2026-02-06)
+- ✅ **LZ77+FSE compression codec**: **2.1-2.4 GB/s decompression** (7 allocs), **3.6x on prose**, **10-13x on structured/repetitive** data (verified 2026-03-28)
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -1393,6 +1394,52 @@ For relations and iterators—called millions of times during query execution—
 - Achieved 4× speedup on hourly OHLC (41s → 10.2s)
 - Fixed daily OHLC regression with size check
 - Optimized extractTimeRanges: 4.7× faster, 108× fewer allocations
+
+### 2026-03-28: LZ77+FSE Compression Codec (Phase 1-3)
+
+Custom-owned LZ77+FSE compression codec for transparent value compression in storage keys.
+Implementation: `datalog/codec/compress.go`, `fse.go`, `lz77.go`, `sequences.go`.
+Design: `docs/proposals/COMPRESSED_STRING_VALUES.md`, `docs/proposals/COMPRESSION_RESEARCH.md`.
+
+**Compression Ratios (LZ77 + FSE, verified):**
+
+| Data Type | Ratio |
+|-----------|-------|
+| English prose 1KB | 3.6× |
+| EDN structured data | 12.9× |
+| Source code | 10.6× |
+| Repetitive binary | 12.7× |
+| All-same bytes | 13.3× |
+| Repeated text 50KB | 110× |
+
+**Full Pipeline Throughput (Apple M5 Max, verified):**
+
+| Operation | 256B | 1KB | 4KB | 16KB |
+|-----------|------|-----|-----|------|
+| Compress | 14 MB/s | 43 MB/s | 112 MB/s | 284 MB/s |
+| Decompress | 1.7 GB/s | 2.1 GB/s | 2.3 GB/s | 2.4 GB/s |
+
+**Per-Value Latency:**
+
+| Operation | 256B | 1KB | 4KB |
+|-----------|------|-----|-----|
+| Compress | 18μs | 24μs | 37μs |
+| Decompress | 153ns | 477ns | 1.8μs |
+
+**Allocations:**
+
+| Operation | 256B | 1KB | 4KB | 16KB |
+|-----------|------|-----|-----|------|
+| Compress | 38 | 56 | 74 | 103 |
+| Decompress | 6 | 7 | 7 | 9 |
+
+**Key optimizations:**
+- FSE decode table cached via `sync.Map` — eliminates table reconstruction on repeated decompressions
+- Encode work buffers pooled via `sync.Pool` — reduces GC pressure on write path
+- LZ77 reconstruct: 2.6 GB/s, 1 alloc (just output buffer)
+- Determinism verified: 1000× repeated compression + concurrent goroutine compression produce identical output
+
+**Test coverage:** 185 tests including round-trip fuzz (500 random + 200 text + 100 structured), determinism stress, golden byte-level output assertions, safety net validation, and compression ratio assertions.
 
 ### 2025-10-04: Parallel Execution & Intern Optimization
 - Identified intern cache as 35% CPU bottleneck

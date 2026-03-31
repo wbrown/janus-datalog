@@ -63,12 +63,33 @@ func (s *BadgerStore) Assert(datoms []datalog.Datom) error {
 
 // assertDatom adds a single datom to all indices
 func (s *BadgerStore) assertDatom(txn *badger.Txn, d *datalog.Datom) error {
-	// Write to all CRDT indices
-	// Value is nil - all datom information is encoded in the key
-	for _, idx := range Indices {
-		key := s.encoder.EncodeKey(idx, d)
-		if err := txn.Set(key, nil); err != nil {
-			return fmt.Errorf("failed to write to %v index: %w", idx, err)
+	// Pre-encode value bytes once (avoids recomputing compression 7 times)
+	var vBytes []byte
+	if be, ok := s.encoder.(*BinaryKeyEncoder); ok {
+		var blobData *datalog.BlobData
+		vBytes, blobData = be.EncodeValueBytes(d.V)
+
+		// Tier 3: write compressed data to blob store
+		if blobData != nil {
+			if err := putBlob(txn, blobData.Hash, blobData.CompressedBytes); err != nil {
+				return fmt.Errorf("failed to write blob: %w", err)
+			}
+		}
+
+		// Write to all indices using pre-encoded value bytes
+		for _, idx := range Indices {
+			key := be.EncodeKeyWithValueBytes(idx, d, vBytes)
+			if err := txn.Set(key, nil); err != nil {
+				return fmt.Errorf("failed to write to %v index: %w", idx, err)
+			}
+		}
+	} else {
+		// Non-binary encoder (L85): use standard path
+		for _, idx := range Indices {
+			key := s.encoder.EncodeKey(idx, d)
+			if err := txn.Set(key, nil); err != nil {
+				return fmt.Errorf("failed to write to %v index: %w", idx, err)
+			}
 		}
 	}
 
@@ -98,10 +119,9 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 
 	// Use EAVT index to find matching datoms (E+A+V, any Tx)
 	// Build prefix: index byte + E + A + V (without Tx)
+	// Must encode value the same way EncodeKey does (compression-aware)
 	prefix := []byte{byte(EAVT)}
-	vType := byte(datalog.Type(sd.V))
-	vData := datalog.ValueBytes(sd.V)
-	vBytes := append([]byte{vType}, vData...)
+	vBytes := encodeValueForSearch(sd.V, s.encoder)
 	searchPrefix := concatBytes(prefix, sd.E[:], sd.A[:], vBytes)
 
 	// Iterate to find matching keys with their actual Tx values
@@ -126,7 +146,7 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 	for _, eavtKey := range keysToDelete {
 		// Decode the EAVT key to get the full datom including Tx
 		// DatomFromKey handles all the complexity of decoding components
-		storedDatom, err := DatomFromKey(EAVT, eavtKey, s.encoder)
+		storedDatom, err := DatomFromKey(EAVT, eavtKey, s.encoder, s.db)
 		if err != nil {
 			return fmt.Errorf("failed to decode key for retraction: %w", err)
 		}
@@ -163,7 +183,8 @@ func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error)
 		start:   start,
 		end:     end,
 		index:   index,
-		encoder: s.encoder, // For decoding Op from key
+		encoder: s.encoder,
+		db:      s.db,
 	}
 	runtime.SetFinalizer(iter, (*BadgerIterator).Close)
 	return iter, nil
@@ -181,7 +202,7 @@ func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
 		}
 
 		// Decode datom from key - values are not stored
-		datom, err := DatomFromKey(index, key, s.encoder)
+		datom, err := DatomFromKey(index, key, s.encoder, s.db)
 		if err != nil {
 			return err
 		}
@@ -426,6 +447,7 @@ type BadgerIterator struct {
 	index   IndexType
 	valid   bool
 	encoder KeyEncoder // For decoding Op from key
+	db      *badger.DB // For Tier 3 blob lookups in Datom()
 }
 
 // Next advances the iterator
@@ -466,7 +488,7 @@ func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 	key := item.KeyCopy(nil)
 
 	// Decode datom from key - all information is in the key
-	datom, err := DatomFromKey(i.index, key, i.encoder)
+	datom, err := DatomFromKey(i.index, key, i.encoder, i.db)
 	if err != nil {
 		return nil, err
 	}

@@ -106,7 +106,7 @@ func BenchmarkRawOperations(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			decoded := 0
 			for _, key := range keys {
-				_, err := DatomFromKey(AEVT, key, encoder)
+				_, err := DatomFromKey(AEVT, key, encoder, nil)
 				if err == nil {
 					decoded++
 				}
@@ -132,7 +132,7 @@ func BenchmarkRawOperations(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			decoded := 0
 			for _, key := range matchingKeys {
-				_, err := DatomFromKey(AEVT, key, encoder)
+				_, err := DatomFromKey(AEVT, key, encoder, nil)
 				if err == nil {
 					decoded++
 				}
@@ -152,7 +152,7 @@ func BenchmarkRawOperations(b *testing.B) {
 			decoded := 0
 			for _, key := range keys {
 				if bytes.Equal(key[valueStart:valueEnd], targetValue) {
-					_, err := DatomFromKey(AEVT, key, encoder)
+					_, err := DatomFromKey(AEVT, key, encoder, nil)
 					if err == nil {
 						decoded++
 					}
@@ -209,7 +209,7 @@ func BenchmarkKeyMaskVsDecoding(b *testing.B) {
 			matches := 0
 			for _, key := range keys {
 				// Decode the full datom
-				datom, err := DatomFromKey(AEVT, key, encoder)
+				datom, err := DatomFromKey(AEVT, key, encoder, nil)
 				if err != nil {
 					b.Fatal(err)
 				}

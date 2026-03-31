@@ -13,27 +13,41 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/edn"
 )
 
+// ExportOptions configures EDN export behavior.
+type ExportOptions struct {
+	Compressed bool // Use #lzj tagged literals for large string values
+	// SkipEntity, when non-nil, is called for each datom's entity Identity.
+	// If it returns true, the datom is omitted from the export.
+	// This enables filtering out entire entity classes (e.g., task metadata)
+	// without a separate pass over the database.
+	SkipEntity func(datalog.Identity) bool
+}
+
 // Export writes all datoms in the database to EDN format.
-// Each line contains a single EDN vector: [#identity "L85" :attribute value tx-id]
-//
-// The format preserves all type information for round-trip fidelity:
-//   - Entities: #identity "L85hash" (always L85 encoded, 25 chars)
-//   - Attributes: keyword (e.g., :person/name)
-//   - Values: EDN representation with type tags where needed
-//   - Transaction IDs: integers
-//
-// Example output:
-//
-//	[#identity "0$&1Jt:M;j(7P!6s0BvD4k!,!" :person/name "Alice" 1]
-//	[#identity "0$&1Jt:M;j(7P!6s0BvD4k!,!" :person/age 30 1]
-//	[#identity "0$&1Jt:M;j(7P!6s0BvD4k!,!" :person/created #inst "2025-01-15T10:30:00Z" 1]
-//
-// The output is suitable for Import() to restore the database.
-func (d *Database) Export(w io.Writer) error {
-	// Scan all datoms from EAVT index only
-	// Keys are prefixed with index type byte, so we scan from EAVT prefix to EATV prefix
+// With no options, values are serialized as plain EDN strings.
+// With Compressed: true, large strings use #lzj tagged literals.
+func (d *Database) Export(w io.Writer, opts ...ExportOptions) error {
+	formatter := FormatDatomEDN
+	var skipEntity func(datalog.Identity) bool
+	if len(opts) > 0 {
+		if opts[0].Compressed {
+			formatter = FormatDatomEDNCompressed
+		}
+		skipEntity = opts[0].SkipEntity
+	}
+	return d.export(w, formatter, skipEntity)
+}
+
+// ExportCompressed is a convenience alias for Export with Compressed: true.
+// To filter entities during compressed export, use Export directly with ExportOptions.
+func (d *Database) ExportCompressed(w io.Writer) error {
+	return d.Export(w, ExportOptions{Compressed: true})
+}
+
+// export is the shared implementation for Export and ExportCompressed.
+func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, skipEntity func(datalog.Identity) bool) error {
 	start := []byte{byte(EAVT)}
-	end := []byte{byte(EATV)} // EATV is the next index after EAVT
+	end := []byte{byte(EATV)}
 	iter, err := d.store.Scan(EAVT, start, end)
 	if err != nil {
 		return fmt.Errorf("failed to scan database: %w", err)
@@ -48,8 +62,11 @@ func (d *Database) Export(w io.Writer) error {
 			return fmt.Errorf("failed to read datom: %w", err)
 		}
 
-		// Format as EDN vector
-		line := FormatDatomEDN(datom)
+		if skipEntity != nil && skipEntity(datom.E) {
+			continue
+		}
+
+		line := formatDatom(datom)
 		if _, err := bw.WriteString(line); err != nil {
 			return fmt.Errorf("failed to write datom: %w", err)
 		}
@@ -63,6 +80,42 @@ func (d *Database) Export(w io.Writer) error {
 	}
 
 	return nil
+}
+
+// FormatDatomEDNCompressed formats a datom as EDN, using #lzj for compressible values.
+func FormatDatomEDNCompressed(d *datalog.Datom) string {
+	nodes := []edn.Node{
+		IdentityNode(d.E),
+		{Type: edn.NodeKeyword, Value: d.A.String()},
+		ValueNodeCompressed(d.V),
+		ElementIDNode(d.Tx),
+		{Type: edn.NodeKeyword, Value: FormatCRDTOpEDN(d.Op)},
+	}
+	if d.Op.HasAfterRef() {
+		nodes = append(nodes, ElementIDNode(d.AfterRef))
+	}
+	vec := edn.Node{Type: edn.NodeVector, Nodes: nodes}
+	return vec.String()
+}
+
+// ValueNodeCompressed builds an EDN node for a value, using #lzj for large
+// string values that compress well. []byte values use #bytes (uncompressed)
+// to avoid type ambiguity on import. Small strings use plain EDN.
+func ValueNodeCompressed(v interface{}) edn.Node {
+	if s, ok := v.(string); ok {
+		compressed := codec.Compress([]byte(s))
+		if compressed != nil {
+			return edn.Node{
+				Type: edn.NodeTagged,
+				Tag:  "lzj",
+				Tagged: &edn.Node{
+					Type:  edn.NodeString,
+					Value: codec.EncodeL85(compressed),
+				},
+			}
+		}
+	}
+	return ValueNode(v)
 }
 
 // Import reads datoms from EDN format and loads them into the database.
@@ -546,6 +599,24 @@ func parseTaggedValue(node *edn.Node) (interface{}, error) {
 		}
 
 		return datalog.ElementID{Lamport: lamport, ReplicaID: replicaID}, nil
+
+	case "lzj":
+		// LZJ compressed string: L85-decode, then decompress
+		if valueNode.Type != edn.NodeString {
+			return nil, fmt.Errorf("#lzj requires string value")
+		}
+		if valueNode.Value == "" {
+			return "", nil
+		}
+		compressed, err := codec.DecodeL85(valueNode.Value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid L85 in #lzj: %w", err)
+		}
+		decompressed, err := codec.Decompress(compressed)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decompress #lzj: %w", err)
+		}
+		return string(decompressed), nil
 
 	default:
 		return nil, fmt.Errorf("unknown tag: #%s", tag)

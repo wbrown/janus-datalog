@@ -94,7 +94,7 @@ func TestAfterRefHeuristicBug_Unit(t *testing.T) {
 				"%s: key[73] must be 3 to trigger heuristic", tc.name)
 
 			// Decode must round-trip correctly
-			decoded, err := DatomFromKey(tc.idx, key, encoder)
+			decoded, err := DatomFromKey(tc.idx, key, encoder, nil)
 			require.NoError(t, err, "%s: decode must succeed", tc.name)
 
 			decodedRef, ok := decoded.V.(datalog.Identity)
@@ -260,7 +260,7 @@ func TestAfterRefHeuristicBug_Statistical(t *testing.T) {
 
 		// Test EATV (the primary CRDT index used for reads)
 		key := encoder.EncodeKey(EATV, datom)
-		_, err := DatomFromKey(EATV, key, encoder)
+		_, err := DatomFromKey(EATV, key, encoder, nil)
 		if err != nil {
 			failures++
 			k := key[1:] // skip prefix
@@ -314,7 +314,7 @@ func TestAfterRefHeuristicBug_NonRefValues(t *testing.T) {
 			}
 			for _, idx := range Indices {
 				key := encoder.EncodeKey(idx, datom)
-				_, err := DatomFromKey(idx, key, encoder)
+				_, err := DatomFromKey(idx, key, encoder, nil)
 				assert.NoError(t, err, "non-reference value should always decode in %v", idx)
 			}
 		})

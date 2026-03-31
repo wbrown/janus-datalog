@@ -49,7 +49,7 @@ func BenchmarkDatomDecoding(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := DatomFromKey(AVET, key, encoder)
+		_, err := DatomFromKey(AVET, key, encoder, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -195,7 +195,7 @@ func BenchmarkDatomFromKeyToTuple(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		// This is the hot path in iterator.Next()
-		d, err := DatomFromKey(EAVT, key, encoder)
+		d, err := DatomFromKey(EAVT, key, encoder, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -935,28 +935,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 
 // encodeValue converts a value to bytes for index prefix
 func (it *validatingVBoundIterator) encodeValue(v any) []byte {
-	encoder := it.matcher.store.encoder
-
-	// Create dummy datom for encoding
-	dummyDatom := &datalog.Datom{
-		E:  datalog.NewIdentity(""),
-		A:  datalog.NewKeyword(":dummy"),
-		V:  v,
-		Tx: datalog.ElementID{},
-	}
-	sDatom := ToStorageDatom(*dummyDatom)
-	vType := byte(datalog.Type(sDatom.V))
-
-	// Check if we're using L85 encoding and have a reference value
-	if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
-		var vArr [20]byte
-		copy(vArr[:], datalog.ValueBytes(sDatom.V))
-		return append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
-	}
-
-	// Binary encoder or non-reference values: type + raw bytes
-	vData := datalog.ValueBytes(sDatom.V)
-	return append([]byte{vType}, vData...)
+	return encodeValueForSearch(v, it.matcher.store.encoder)
 }
 
 // buildTuple creates a result tuple from a validated datom
@@ -1129,7 +1108,12 @@ func (m *BadgerMatcher) matchFromCache(
 		}
 		if v != nil {
 			// V is bound - membership check
-			if set[v] {
+			// []byte keys are stored as string(bytes) for hashability
+			lookupKey := v
+			if b, ok := lookupKey.([]byte); ok {
+				lookupKey = string(b)
+			}
+			if _, exists := set[lookupKey]; exists {
 				tuple := buildTuple(v, entry.Version())
 				return executor.NewMaterializedRelationWithOptions(symbols, []executor.Tuple{tuple}, m.options), true
 			}
@@ -1137,7 +1121,7 @@ func (m *BadgerMatcher) matchFromCache(
 		}
 		// V is unbound - return all set members
 		tuples := make([]executor.Tuple, 0, len(set))
-		for val := range set {
+		for _, val := range set {
 			tuple := buildTuple(val, entry.Version())
 			tuples = append(tuples, tuple)
 		}
@@ -1350,12 +1334,16 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 			}
 			if v != nil {
 				// Membership check
-				if set[v] {
+				lookupKey := v
+				if b, ok := lookupKey.([]byte); ok {
+					lookupKey = string(b)
+				}
+				if _, exists := set[lookupKey]; exists {
 					resultTuples = append(resultTuples, buildTuple(eIdent, v, entry.Version()))
 				}
 			} else {
 				// Return all set members
-				for val := range set {
+				for _, val := range set {
 					resultTuples = append(resultTuples, buildTuple(eIdent, val, entry.Version()))
 				}
 			}
@@ -1403,7 +1391,7 @@ func (m *BadgerMatcher) matchCardinalityManyAsRelation(
 	// We need to map the values to the correct symbol positions
 	tuples := make([]executor.Tuple, 0, len(result.Members))
 
-	for member := range result.Members {
+	for _, member := range result.Members {
 		tuple := make(executor.Tuple, len(symbols))
 		for i, sym := range symbols {
 			switch {
@@ -1741,7 +1729,7 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			if len(result.Members) > 0 {
 				it.currentEntity = datom.E
 				it.currentSetMembers = make([]interface{}, 0, len(result.Members))
-				for member := range result.Members {
+				for _, member := range result.Members {
 					it.currentSetMembers = append(it.currentSetMembers, member)
 				}
 				it.currentMaxElementID = result.MaxElementID

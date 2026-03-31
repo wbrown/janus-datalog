@@ -41,12 +41,13 @@ func Open(path string, opts ...Option) (*DB, error) {
 		opt(&cfg)
 	}
 	d, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
-		Path:              path,
-		Schema:            cfg.schema,
-		ReplicaID:         cfg.replicaID,
-		AnnotationHandler: cfg.annotationHandler,
-		DisableCache:      cfg.disableCache,
-		PlannerOptions:    cfg.plannerOptions,
+		Path:                 path,
+		Schema:               cfg.schema,
+		ReplicaID:            cfg.replicaID,
+		AnnotationHandler:    cfg.annotationHandler,
+		DisableCache:         cfg.disableCache,
+		PlannerOptions:       cfg.plannerOptions,
+		CompressionThreshold: cfg.compressionThreshold,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)

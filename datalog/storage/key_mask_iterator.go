@@ -226,6 +226,7 @@ func NewKeyMaskIteratorFromStore(store *BadgerStore, index IndexType, start, end
 		mask:     mask,
 		encoder:  store.encoder,
 		index:    index,
+		db:       store.db,
 	}, nil
 }
 
@@ -235,6 +236,7 @@ type KeyMaskFilterWrapper struct {
 	mask         *KeyMaskConstraint
 	encoder      KeyEncoder
 	index        IndexType
+	db           *badger.DB
 	currentDatom datalog.Datom
 	hasDatom     bool
 	currentError error
@@ -276,7 +278,7 @@ func (w *KeyMaskFilterWrapper) Next() bool {
 			w.datomsDecoded++
 
 			// Decode the datom
-			w.currentDatom, w.currentError = DatomFromKey(w.index, key, w.encoder)
+			w.currentDatom, w.currentError = DatomFromKey(w.index, key, w.encoder, w.db)
 			if w.currentError != nil {
 				continue
 			}
@@ -354,7 +356,7 @@ func (i *KeyMaskIterator) Next() bool {
 
 		// Only decode if the mask matches
 		i.datomsDecoded++
-		i.currentDatom, i.currentError = DatomFromKey(i.index, key, i.encoder)
+		i.currentDatom, i.currentError = DatomFromKey(i.index, key, i.encoder, i.db)
 
 		if i.currentError != nil {
 			continue
