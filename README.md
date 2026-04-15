@@ -155,30 +155,17 @@ See [docs/reference/QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md) for compl
 
 ## Running Examples
 
-The `examples/` directory contains working demonstrations of Janus features. Examples use build tags to avoid `main()` function conflicts:
+The `examples/` directory contains 14 working examples covering the full API. Run from the repository root:
 
 ```bash
-# Build a specific example
-go build -tags example examples/aggregation_demo.go
+# Start here
+go run -tags example examples/getting_started.go
 
-# Run directly
-go run -tags example examples/aggregation_demo.go
-
-# List available examples
-ls examples/*.go
+# Query builder
+go run -tags example examples/query_builder.go
 ```
 
-**Note:** You cannot run `go build ./examples` due to multiple main functions. Build examples individually.
-
-Available examples:
-- `aggregation_demo.go` - Aggregation functions (sum, avg, min, max, count)
-- `subquery_ohlc_demo.go` - Financial OHLC queries with subqueries
-- `financial_time_demo.go` - Time-based queries and as-of queries
-- `expression_demo.go` - Expression clauses and arithmetic
-- `schema_demo.go` - Schema validation, cardinality, and uniqueness
-- `pull_demo.go` - Pull API for entity attribute retrieval
-- `reflect_demo.go` - Struct reflection API for Go structs ↔ datoms
-- And many more in `examples/`
+See [`examples/README.md`](examples/README.md) for the full learning path.
 
 ## Tutorial
 
@@ -945,25 +932,11 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 
 ## Examples
 
-The `examples/` directory contains progressively complex demonstrations:
+See [`examples/README.md`](examples/README.md) for the full list of 14 examples with a suggested learning path. Start with:
 
 ```bash
-# Start here
-go run examples/simple_example.go           # Social network
-go run examples/storage_demo.go             # Persistent queries
-
-# Core features
-go run examples/expression_demo.go          # Computed values
-go run examples/aggregation_demo.go         # Group by and aggregations
-go run examples/subquery_proper_demo.go     # Nested queries
-
-# Time-based queries
-go run examples/financial_time_demo.go      # Time transactions
-go run examples/financial_asof_demo.go      # Historical queries
-go run examples/time_functions_demo.go      # year, month, day, etc.
+go run -tags example examples/getting_started.go
 ```
-
-Each example is self-contained and demonstrates specific features.
 
 ## Running Tests
 

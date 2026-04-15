@@ -62,7 +62,7 @@ This document catalogs critical bugs that have been fixed and the patterns that 
 
 3. **Solves Aggregation Bug**: Subqueries properly scope aggregations, solving the Cartesian product issue
 
-4. **Demo Added**: `examples/subquery_proper_demo.go` demonstrates multi-day OHLC aggregation without Cartesian products
+4. **Demo Added**: `examples/subqueries.go` demonstrates subquery patterns including aggregation
 
 **Pattern**: Test with real-world use cases. The OHLC demo proved the implementation works for production scenarios.
 
