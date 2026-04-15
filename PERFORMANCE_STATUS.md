@@ -1343,7 +1343,7 @@ For relations and iterators—called millions of times during query execution—
   - Schema resolution: **225ns** one-time cost per pattern
   - Cardinality-many: ~370ns per additional value (linear scaling)
 - **Key Finding**: Schema validation is essentially free; use freely for type safety
-- **Files created**: `datalog/schema/` package, `docs/reference/SCHEMA.md`, `examples/schema_demo.go`
+- **Files created**: `datalog/schema/` package, `docs/reference/SCHEMA.md`, `examples/schema.go`
 
 ### 2025-12-17: Pull API Implementation & Benchmarking
 - Implemented Datomic-style Pull API with nested references and cycle detection

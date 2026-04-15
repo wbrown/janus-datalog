@@ -114,18 +114,14 @@ go test ./tests/
 
 ## Running Examples
 
-Examples use build tags to avoid `main()` function conflicts:
+Examples use build tags and must be run from the repository root:
 
 ```bash
-# Build a specific example
-go build -tags example examples/aggregation_demo.go
-
-# Run directly
-go run -tags example examples/aggregation_demo.go
-
-# List available examples
-ls examples/*.go
+# Run an example
+go run -tags example examples/getting_started.go
 ```
+
+See [`examples/README.md`](examples/README.md) for the full list.
 
 **Note:** You cannot run `go build ./examples` due to multiple main functions. Build examples individually.
 
@@ -296,7 +292,7 @@ Use conventional commits format:
 go build ./examples
 
 # Do this instead:
-go build -tags example examples/aggregation_demo.go
+go build -tags example examples/getting_started.go
 ```
 
 **Problem:** Import cycle detected
