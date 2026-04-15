@@ -159,9 +159,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			}))
 
 		case *query.OrJoinClause:
-			// OR-JOIN has the same union semantics as OR. Join vars are planner
-			// metadata for scheduling; the executor uses the same path for both.
-			newRel, err := e.executeOrClause(ctx, &query.OrClause{Branches: c.Branches}, groups)
+			newRel, err := e.executeOrJoinClause(ctx, c, groups)
 			if err != nil {
 				return nil, fmt.Errorf("clause %d (or-join) failed: %w", i, err)
 			}
@@ -835,7 +833,10 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 	combinedRel = combinedRel.Materialize()
 
 	// Get unique combinations of input values
-	inputCombinations := getUniqueInputCombinations(combinedRel, inputSymbols)
+	inputCombinations, err := getUniqueInputCombinations(combinedRel, inputSymbols)
+	if err != nil {
+		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
+	}
 
 	// Execute subquery for each combination
 	var allResults []Relation
@@ -865,15 +866,16 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		}
 
 		// For subqueries, we expect a single result group (aggregations should have collapsed)
+		var nestedResult Relation
 		if len(nestedGroups) == 0 {
-			// Empty result - skip this combination
-			continue
-		}
-		if len(nestedGroups) > 1 {
+			// No result groups — create empty relation with the subquery's output symbols
+			// so applyBindingForm can produce a properly-typed empty result.
+			nestedResult = NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{})
+		} else if len(nestedGroups) > 1 {
 			return nil, fmt.Errorf("subquery returned %d disjoint groups - expected 1", len(nestedGroups))
+		} else {
+			nestedResult = nestedGroups[0]
 		}
-
-		nestedResult := nestedGroups[0]
 
 		// Apply binding form to join results with outer query values
 		boundResult, err := applyBindingForm(nestedResult, subq.Binding, inputValues, inputSymbols)
@@ -961,7 +963,10 @@ func (e *DefaultQueryExecutor) executeSubqueryComponentized(ctx Context, subq *q
 	inputSymbols := batcher.ExtractInputSymbols(subq.Query.In)
 
 	// Get unique input combinations
-	inputCombinations := getUniqueInputCombinations(combinedRel, inputSymbols)
+	inputCombinations, err := getUniqueInputCombinations(combinedRel, inputSymbols)
+	if err != nil {
+		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
+	}
 
 	// Select execution strategy
 	strategy := selector.SelectStrategy(subq.Query, len(inputCombinations), e.options)
@@ -1627,34 +1632,13 @@ func (e *DefaultQueryExecutor) executeOrJoinClause(ctx Context, clause *query.Or
 		return NewMaterializedRelationWithOptions(nil, nil, e.options), nil
 	}
 
-	joinVars := clause.JoinVars
-	if len(joinVars) == 0 {
+	if len(clause.JoinVars) == 0 {
 		return nil, fmt.Errorf("OR-JOIN clause has no join variables")
 	}
 
-	if branchesNeedCorrelatedExecution(clause.Branches) {
-		return e.executeOrJoinClauseCorrelatedUnion(ctx, clause, groups)
-	}
-
-	var branchResults []Relation
-
-	for i, branch := range clause.Branches {
-		branchResult, err := e.executeInnerClauses(ctx, branch, nil)
-		if err != nil {
-			return nil, fmt.Errorf("OR-JOIN branch %d execution failed: %w", i+1, err)
-		}
-
-		if branchResult != nil {
-			branchResults = append(branchResults, branchResult)
-		}
-	}
-
-	if len(branchResults) == 0 {
-		return NewMaterializedRelationWithOptions(joinVars, nil, e.options), nil
-	}
-
-	// Union all branch results, projecting to join vars
-	return unionRelations(branchResults, joinVars, e.options), nil
+	// Or-join always uses correlated execution. Its purpose is to vary
+	// which clause matches while preserving outer-bound join variables.
+	return e.executeOrJoinClauseCorrelatedUnion(ctx, clause, groups)
 }
 
 // executeOrJoinClauseCorrelatedUnion evaluates all branches per outer tuple
@@ -2084,7 +2068,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 			groups = groups.Collapse(ctx)
 
 		case *query.OrJoinClause:
-			newRel, err := e.executeOrClause(ctx, &query.OrClause{Branches: c.Branches}, groups)
+			newRel, err := e.executeOrJoinClause(ctx, c, groups)
 			if err != nil {
 				return nil, err
 			}

@@ -38,11 +38,7 @@ func extractClauseSymbols(clause query.Clause) ClauseSymbols {
 	case *query.OrClause:
 		return extractOrClauseSymbols(c)
 	case *query.OrJoinClause:
-		// Same symbol extraction as OrClause — join vars are planner scheduling
-		// metadata, not additional requirements. The algebra bridge infers join
-		// vars that may include branch-produced symbols; treating those as
-		// Requires would break phasing.
-		return extractOrClauseSymbols(&query.OrClause{Branches: c.Branches})
+		return extractOrJoinClauseSymbols(c)
 	case *query.OrDefaultClause:
 		return extractOrDefaultClauseSymbols(c)
 	case *query.OrDefaultJoinClause:
@@ -698,14 +694,46 @@ func findConstantBindableScalars(scalarInputs []query.Symbol, clauses []query.Cl
 	patternSyms := make(map[query.Symbol]bool)
 	collectDataPatternSymbols(clauses, patternSyms)
 
-	// Return scalar inputs not found in any data pattern
+	// Also collect symbols used as subquery inputs — these must remain in the
+	// relation so executeSubquery can extract them via getUniqueInputCombinations.
+	subqueryInputSyms := make(map[query.Symbol]bool)
+	collectSubqueryInputSymbols(clauses, subqueryInputSyms)
+
+	// Return scalar inputs not found in any data pattern or subquery input
 	var result []query.Symbol
 	for _, sym := range scalarInputs {
-		if !patternSyms[sym] {
+		if !patternSyms[sym] && !subqueryInputSyms[sym] {
 			result = append(result, sym)
 		}
 	}
 	return result
+}
+
+// collectSubqueryInputSymbols recursively walks clauses and collects all variable
+// symbols that appear as subquery inputs (the arguments passed to nested queries).
+func collectSubqueryInputSymbols(clauses []query.Clause, out map[query.Symbol]bool) {
+	for _, clause := range clauses {
+		switch c := clause.(type) {
+		case *query.SubqueryPattern:
+			for _, input := range c.Inputs {
+				if v, ok := input.(query.Variable); ok {
+					out[v.Name] = true
+				}
+			}
+		case *query.NotClause:
+			collectSubqueryInputSymbols(c.Clauses, out)
+		case *query.NotJoinClause:
+			collectSubqueryInputSymbols(c.Clauses, out)
+		case *query.OrClause:
+			for _, branch := range c.Branches {
+				collectSubqueryInputSymbols(branch, out)
+			}
+		case *query.OrJoinClause:
+			for _, branch := range c.Branches {
+				collectSubqueryInputSymbols(branch, out)
+			}
+		}
+	}
 }
 
 // collectDataPatternSymbols recursively walks clauses and collects all variable
