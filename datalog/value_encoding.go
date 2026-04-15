@@ -164,7 +164,7 @@ func ValueFromBytes(vType ValueType, data []byte) (Value, error) {
 			return nil, fmt.Errorf("time value must be 8 bytes, got %d", len(data))
 		}
 		nanos := int64(binary.BigEndian.Uint64(data))
-		return time.Unix(0, nanos), nil
+		return time.Unix(0, nanos).UTC(), nil
 	case TypeBytes:
 		return data, nil
 	case TypeReference:

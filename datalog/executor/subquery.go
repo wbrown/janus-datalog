@@ -35,7 +35,10 @@ func (e *Executor) executeSubquery(ctx Context, subqPlan planner.SubqueryPlan, i
 func ExecuteSubquery(ctx Context, parentExec *Executor, subqPlan planner.SubqueryPlan, inputRelation Relation) (Relation, error) {
 	// CRITICAL: Extract input combinations ONCE before trying batched vs sequential paths
 	// Both paths need the combinations, and calling Iterator() twice on a StreamingRelation will panic
-	inputCombinations := getUniqueInputCombinations(inputRelation, subqPlan.Inputs)
+	inputCombinations, err := getUniqueInputCombinations(inputRelation, subqPlan.Inputs)
+	if err != nil {
+		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
+	}
 
 	// Check if we can batch execute with RelationInput
 	if canBatchSubquery(subqPlan.Subquery.Query) {
@@ -417,7 +420,7 @@ func executePhasesWithInputs(ctx Context, parentExec *Executor, plan *planner.Qu
 
 // getUniqueInputCombinations extracts unique combinations of input values.
 // This is a pure function that performs data transformation.
-func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) []map[query.Symbol]interface{} {
+func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) ([]map[query.Symbol]interface{}, error) {
 	// Find symbol indices for input symbols
 	indices := make([]int, len(inputSymbols))
 	for i, sym := range inputSymbols {
@@ -427,8 +430,7 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) []map
 		} else {
 			indices[i] = SymbolIndex(rel, sym)
 			if indices[i] < 0 {
-				// Symbol not found - should not happen if planner is correct
-				return nil
+				return nil, fmt.Errorf("subquery input symbol %s not found in outer relation (available: %v)", sym, rel.Symbols())
 			}
 		}
 	}
@@ -469,7 +471,7 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) []map
 		}
 	}
 
-	return combinations
+	return combinations, nil
 }
 
 // createInputRelationsFromPattern creates relations from a subquery pattern's inputs.

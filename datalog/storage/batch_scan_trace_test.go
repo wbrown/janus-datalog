@@ -27,14 +27,12 @@ func TestBatchScanTrace(t *testing.T) {
 	priceSymbol := datalog.NewKeyword(":price/symbol")
 	priceTime := datalog.NewKeyword(":price/time")
 
-	loc, _ := time.LoadLocation("America/New_York")
-
-	// Create 200 bars - 100 on day 1, 100 on day 2
+	// Create 200 bars - 100 on day 1, 100 on day 2 (UTC)
 	tx = db.NewTransaction()
 	for day := 1; day <= 2; day++ {
 		for i := 0; i < 100; i++ {
 			barEntity := datalog.NewIdentity(fmt.Sprintf("bar-%d-%d", day, i))
-			barTime := time.Date(2025, 6, day, 9, 30+i, 0, 0, loc)
+			barTime := time.Date(2025, 6, day, 9, 30+i, 0, 0, time.UTC)
 			tx.Add(barEntity, priceSymbol, symbolEntity)
 			tx.Add(barEntity, priceTime, barTime)
 		}

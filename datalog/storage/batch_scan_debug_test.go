@@ -23,11 +23,10 @@ func TestBatchScanDebug(t *testing.T) {
 	tx := db.NewTransaction()
 
 	priceTime := datalog.NewKeyword(":price/time")
-	loc, _ := time.LoadLocation("America/New_York")
 
 	for i := 1; i <= 5; i++ {
 		entity := datalog.NewIdentity(fmt.Sprintf("e%d", i))
-		tm := time.Date(2025, 6, 2, 10+i, 0, 0, 0, loc) // All on day 2
+		tm := time.Date(2025, 6, 2, 10+i, 0, 0, 0, time.UTC) // All on day 2 UTC
 		tx.Add(entity, priceTime, tm)
 		t.Logf("Added: %s -> day %d", entity.String(), tm.Day())
 	}

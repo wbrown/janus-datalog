@@ -449,7 +449,10 @@ func (e *DefaultQueryExecutor) executeBatchedGroup(
 	combinedRel := combineGroups(groups)
 
 	// Get unique combinations of input values
-	inputCombinations := getUniqueInputCombinations(combinedRel, inputSymbols)
+	inputCombinations, err := getUniqueInputCombinations(combinedRel, inputSymbols)
+	if err != nil {
+		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
+	}
 
 	if len(inputCombinations) == 0 {
 		// No input combinations - return empty results for all subqueries

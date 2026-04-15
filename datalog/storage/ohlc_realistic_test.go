@@ -41,8 +41,6 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	priceClose := datalog.NewKeyword(":price/close")
 	priceVolume := datalog.NewKeyword(":price/volume")
 
-	loc, _ := time.LoadLocation("America/New_York")
-
 	// Create CRWV symbol entity
 	tx := db.NewTransaction()
 	crwvEntity := datalog.NewIdentity("CRWV")
@@ -57,7 +55,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 	// Market hours: 9:30 AM (570 minutes) to 4:00 PM (960 minutes)
 	// 5-minute bars: 78 bars per day
 	tx = db.NewTransaction()
-	baseTime := time.Date(2025, 8, 22, 9, 30, 0, 0, loc)
+	baseTime := time.Date(2025, 8, 22, 9, 30, 0, 0, time.UTC)
 	basePrice := 100.0
 
 	for i := 0; i < 78; i++ {
