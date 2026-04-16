@@ -1922,7 +1922,10 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		return datalog.ElementID{}, fmt.Errorf("transaction is closed")
 	}
 
-	// Validate uniqueness constraints before committing
+	// Validate uniqueness constraints before opening the storage transaction.
+	// (Note: this is a TOCTOU check against committed state. CRDT-aligned
+	// resolution at the read path is tracked in
+	// docs/proposals/CRDT_UNIQUE_SEMANTICS.md.)
 	if err := t.validateUniqueness(); err != nil {
 		return datalog.ElementID{}, err
 	}
@@ -1942,22 +1945,8 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		t.retracts[i].Tx = t.db.clock.Next()
 	}
 
-	// Apply retractions first
-	if len(t.retracts) > 0 {
-		if err := t.db.store.Retract(t.retracts); err != nil {
-			return datalog.ElementID{}, fmt.Errorf("failed to retract datoms: %w", err)
-		}
-	}
-
-	// Then apply assertions
-	if len(t.datoms) > 0 {
-		if err := t.db.store.Assert(t.datoms); err != nil {
-			return datalog.ElementID{}, fmt.Errorf("failed to assert datoms: %w", err)
-		}
-	}
-
-	// Add transaction metadata with its own Lamport timestamp
-	// This is the final operation in the transaction, so its Lamport is the "transaction time"
+	// Build transaction metadata. Same Lamport as the rest — final operation
+	// in the logical commit, used as the high-water mark for as-of queries.
 	metadataElemID := t.db.clock.Next()
 	txEntity := datalog.NewIdentity(fmt.Sprintf("tx:%d", metadataElemID.Lamport))
 	txMetadata := []datalog.Datom{
@@ -1968,9 +1957,41 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			Tx: metadataElemID,
 		},
 	}
-	if err := t.db.store.Assert(txMetadata); err != nil {
-		// Log but don't fail the transaction
-		fmt.Printf("Warning: failed to write transaction metadata: %v\n", err)
+
+	// Open a single storage transaction for the entire logical commit so
+	// retractions, assertions, and metadata writes are atomic. Any failure
+	// rolls back all of them; no partial commit is observable.
+	stx, err := t.db.store.BeginTx()
+	if err != nil {
+		return datalog.ElementID{}, fmt.Errorf("failed to begin storage transaction: %w", err)
+	}
+
+	commitErr := func() error {
+		if len(t.retracts) > 0 {
+			if err := stx.Retract(t.retracts); err != nil {
+				return fmt.Errorf("failed to retract datoms: %w", err)
+			}
+		}
+		if len(t.datoms) > 0 {
+			if err := stx.Assert(t.datoms); err != nil {
+				return fmt.Errorf("failed to assert datoms: %w", err)
+			}
+		}
+		// Transaction metadata is part of the same atomic commit; failure
+		// rolls back the entire transaction (no more best-effort metadata).
+		if err := stx.Assert(txMetadata); err != nil {
+			return fmt.Errorf("failed to write transaction metadata: %w", err)
+		}
+		return nil
+	}()
+
+	if commitErr != nil {
+		_ = stx.Rollback()
+		return datalog.ElementID{}, commitErr
+	}
+
+	if err := stx.Commit(); err != nil {
+		return datalog.ElementID{}, fmt.Errorf("failed to commit storage transaction: %w", err)
 	}
 
 	// Update cache: track max versions and invalidate stale entries
@@ -2024,7 +2045,12 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	return metadataElemID, nil
 }
 
-// validateUniqueness checks uniqueness constraints for all datoms in the transaction
+// validateUniqueness checks uniqueness constraints for all datoms in the transaction.
+//
+// Note: this is a TOCTOU check — it reads committed state via the matcher,
+// then writes happen in a separate phase. The proper CRDT-aligned design
+// (read-time (A, V)-LWW resolution, no write-time enforcement) is captured
+// in docs/proposals/CRDT_UNIQUE_SEMANTICS.md.
 func (t *Transaction) validateUniqueness() error {
 	s := t.db.Schema()
 	if s == nil || !s.HasSchema() {
