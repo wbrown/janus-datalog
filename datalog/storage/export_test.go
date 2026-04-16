@@ -16,7 +16,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Helper to create a temp BadgerDB database
+// createExportTestDB creates a temp BadgerDB database
 func createTempDatabase(t *testing.T) *Database {
 	dir := t.TempDir()
 	db, err := NewDatabase(dir)
@@ -25,7 +25,7 @@ func createTempDatabase(t *testing.T) *Database {
 	return db
 }
 
-// Helper to create keywords
+// kw creates keywords
 func kw(s string) datalog.Keyword {
 	return datalog.NewKeyword(s)
 }
@@ -1279,7 +1279,7 @@ func TestDatabaseRoundTrip_RGA(t *testing.T) {
 }
 
 // =============================================================================
-// Helper functions
+// Test utilities
 // =============================================================================
 
 // extractStringValues extracts string values from query result tuples (first symbol)

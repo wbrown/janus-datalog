@@ -167,7 +167,7 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 	t.Logf("✓ Decorrelation test passed: 2 subqueries executed with batched inputs")
 }
 
-// Helper functions for testing
+// Test utilities
 
 func columnsEqualTest(a, b []query.Symbol) bool {
 	if len(a) != len(b) {

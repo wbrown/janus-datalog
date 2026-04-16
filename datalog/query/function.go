@@ -262,7 +262,7 @@ func (i IdentityFunction) ReturnType() string {
 	return "any"
 }
 
-// Helper functions for type conversion
+// Type conversion functions
 func toNumber(val interface{}) interface{} {
 	switch v := val.(type) {
 	case int:

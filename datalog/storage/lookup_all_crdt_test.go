@@ -314,7 +314,7 @@ func TestLookupAllAttributes_NoCacheNoSchema_RGA_ConcurrentInserts(t *testing.T)
 	assertInterfaceSlicesEqual(t, "concurrent RGA inserts", vals, expected)
 }
 
-// --- Helpers ---
+// --- Test utilities ---
 
 func createLookupTestDB(t *testing.T) (*Database, func()) {
 	t.Helper()

@@ -128,7 +128,7 @@ func (c Comparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 	}
 }
 
-// Helper methods for planner analysis
+// Methods for planner analysis
 func (c *Comparison) classifyType() string {
 	if c.Op == OpEQ {
 		return "equality"

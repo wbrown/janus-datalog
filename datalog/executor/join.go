@@ -750,7 +750,7 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 	return NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
 }
 
-// Helper functions
+// Join utility functions
 
 func isStreaming(rel Relation) bool {
 	_, ok := rel.(*StreamingRelation)

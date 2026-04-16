@@ -8,7 +8,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// mockPatternMatcher is a test helper for PatternMatcher
+// mockPatternMatcher is a test double for PatternMatcher
 type mockPatternMatcher struct {
 	matchFunc func(pattern *query.DataPattern, bindings Relations) (Relation, error)
 	wasCalled bool

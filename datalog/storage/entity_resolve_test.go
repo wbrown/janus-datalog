@@ -9,7 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Helper to create test database with schema
+// createEntityResolveTestDB creates a test database with schema
 func createEntityResolveTestDB(t *testing.T) (*Database, func()) {
 	dir := t.TempDir()
 	db, err := NewDatabase(dir)

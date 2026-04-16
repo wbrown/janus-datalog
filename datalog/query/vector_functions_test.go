@@ -8,7 +8,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// Helper to create bindings
+// createBindings creates bindings
 func makeBindings(pairs ...interface{}) map[Symbol]interface{} {
 	if len(pairs)%2 != 0 {
 		panic("makeBindings requires key-value pairs")

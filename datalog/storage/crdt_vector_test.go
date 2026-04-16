@@ -1986,7 +1986,7 @@ func TestVectorTypeLong_QueryPath(t *testing.T) {
 }
 
 // TestSetWithTypedSlices verifies that tx.Set() accepts typed slices ([]string,
-// []int64, etc.) directly, not just []interface{}. The toAnySlice helper uses
+// []int64, etc.) directly, not just []interface{}. toAnySlice uses
 // reflection to convert them.
 func TestSetWithTypedSlices(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "set-typed-slices-test")
@@ -2303,7 +2303,7 @@ func TestVectorLiteralMatch(t *testing.T) {
 	_, err = tx7.Commit()
 	require.NoError(t, err)
 
-	// Helper to collect names from query results
+	// collectNames collects names from query results
 	collectNames := func(t *testing.T, q string) []string {
 		t.Helper()
 		results, err := executor.CollectTuples(db.Query(q))

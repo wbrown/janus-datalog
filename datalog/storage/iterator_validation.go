@@ -9,9 +9,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Iterator helper functions to reduce code duplication across iterator implementations.
+// Iterator validation and statistics functions shared across iterator implementations.
 //
-// PERFORMANCE NOTE: These helpers introduce a small overhead (~6.4% or 0.2ns per datom)
+// PERFORMANCE NOTE: These functions introduce a small overhead (~6.4% or 0.2ns per datom)
 // compared to inlined code, as measured by BenchmarkIteratorLoop. This tradeoff was
 // accepted to eliminate ~120 lines of duplicated validation and statistics code across
 // three iterator types. The absolute overhead is minimal:

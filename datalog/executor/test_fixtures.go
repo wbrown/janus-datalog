@@ -64,7 +64,7 @@ func (m *MockPatternMatcher) Match(pattern *query.DataPattern, bindings Relation
 	return PatternToRelation(filteredDatoms, pattern), nil
 }
 
-// Helper to check if a datom matches a pattern with bound values
+// matchesDatomPattern checks if a datom matches a pattern with bound values
 func matchesBoundPattern(d datalog.Datom, pattern *query.DataPattern, boundValues map[query.Symbol]interface{}) bool {
 	// Check E position
 	if v, ok := pattern.GetE().(query.Variable); ok {

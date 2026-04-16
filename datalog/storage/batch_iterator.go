@@ -378,7 +378,7 @@ func (it *batchScanIterator) Close() error {
 	return nil
 }
 
-// Helper function to convert a value to string for map keys
+// valueToString converts a value to string for map keys
 // For Identity types, we use the hash as the key to ensure proper comparison
 func valueToString(v interface{}) string {
 	switch val := v.(type) {

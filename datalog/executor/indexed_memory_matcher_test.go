@@ -474,7 +474,7 @@ func TestIndexedMatcher_WithConstraints(t *testing.T) {
 	}
 }
 
-// Helper function to compare tuples for equality (test-local version)
+// tupleEqualityCheck compares tuples for equality (test-local version)
 func tupleEqualityCheck(t1, t2 Tuple) bool {
 	if len(t1) != len(t2) {
 		return false

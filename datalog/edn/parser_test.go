@@ -442,7 +442,7 @@ func TestParseAll(t *testing.T) {
 	}
 }
 
-// Helper functions
+// Test utilities
 
 func nodesEqual(a, b Node) bool {
 	if a.Type != b.Type || a.Value != b.Value || a.Tag != b.Tag {

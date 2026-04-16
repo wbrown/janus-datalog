@@ -157,7 +157,7 @@ func TestConcurrentStreamingMaterialization(t *testing.T) {
 	}
 }
 
-// Helper types and functions
+// Test types and functions
 
 type testError struct {
 	goroutine int

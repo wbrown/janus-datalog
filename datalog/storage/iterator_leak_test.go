@@ -23,7 +23,7 @@ import (
 // disk. This is cross-platform — Go's GC collects unreachable objects but does
 // not call skiplist.DecrRef() (Go has no destructors).
 //
-// Root cause: executor/helpers.go — filterWithPredicateAndLookup and
+// Root cause: executor/relation_ops.go — filterWithPredicateAndLookup and
 // evaluateExpressionWithLookup call rel.Iterator() without iter.Close().
 func TestIteratorLeak_BuiltinPatternDiscoveredEntity(t *testing.T) {
 	type testCase struct {

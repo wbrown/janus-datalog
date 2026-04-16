@@ -206,7 +206,7 @@ func (gs *GetSomeFunction) String() string {
 	return fmt.Sprintf("(get-some $ %s %s)", gs.Entity, attrs)
 }
 
-// Helper function to convert interface{} to Identity
+// toIdentity converts interface{} to Identity
 func toIdentity(val interface{}) (datalog.Identity, error) {
 	switch v := val.(type) {
 	case datalog.Identity:

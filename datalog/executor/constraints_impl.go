@@ -167,7 +167,7 @@ func (c *timeExtractionConstraint) String() string {
 	return fmt.Sprintf("%s(V) = %v", c.extractFn, c.expected)
 }
 
-// Helper functions
+// Value comparison functions
 
 func compareValuesForConstraints(a, b interface{}) int {
 	// Handle time.Time specially

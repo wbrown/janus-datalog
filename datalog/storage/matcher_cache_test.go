@@ -14,7 +14,7 @@ import (
 
 // Note: fmt, executor, query imports used by benchmarks at end of file
 
-// Helper to create a temp database for matcher-cache tests
+// createMatcherCacheTestDB creates a temp database for matcher-cache tests
 func createMatcherCacheTestDatabase(t *testing.T) (*Database, func()) {
 	dir := t.TempDir()
 	db, err := NewDatabase(dir)

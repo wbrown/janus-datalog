@@ -18,7 +18,7 @@ import (
 // produce only one result when projecting to just the value.
 // =============================================================================
 
-// Helper: check for duplicates in query results
+// assertNoDuplicates checks for duplicates in query results
 func assertResultNoDuplicates(t *testing.T, name string, results [][]interface{}) {
 	t.Helper()
 	seen := make(map[string]int)

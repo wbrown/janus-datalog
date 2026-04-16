@@ -1,6 +1,6 @@
 // Tests for tuple-key collision behavior in NOT/OR/union dedup paths.
 //
-// Background: notOrTupleKey (helpers.go) builds dedup keys via
+// Background: notOrTupleKey (relation_ops.go) builds dedup keys via
 // fmt.Sprintf("%v",...) joined by "|". This stringification is not
 // injective — distinct tuples can map to the same key — and the
 // dedup logic silently drops valid distinct tuples or matches the
@@ -8,7 +8,7 @@
 //
 // These tests assert correct dedup semantics. They are expected to FAIL
 // against the current notOrTupleKey-based implementation and PASS once
-// the call sites in helpers.go and query_executor.go migrate to the
+// the call sites in relation_ops.go and query_executor.go migrate to the
 // existing TupleKey / TupleKeyMap primitive.
 //
 // Each adversarial pair is constructed so that
@@ -63,7 +63,7 @@ var adversarialTuplePairs = []adversarialTuplePair{
 // distinct tuples whose stringified forms collide under "|" concatenation
 // are still returned as distinct combinations.
 //
-// Exercises: helpers.go getUniqueCombinations
+// Exercises: relation_ops.go getUniqueCombinations
 func TestGetUniqueCombinations_NoCollisionAcrossTupleBoundaries(t *testing.T) {
 	syms := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
@@ -83,7 +83,7 @@ func TestGetUniqueCombinations_NoCollisionAcrossTupleBoundaries(t *testing.T) {
 // branch dedup (unionRelations) preserves distinct tuples whose stringified
 // forms collide.
 //
-// Exercises: helpers.go unionRelations
+// Exercises: relation_ops.go unionRelations
 func TestUnionRelations_NoCollisionAcrossTupleBoundaries(t *testing.T) {
 	syms := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	opts := ExecutorOptions{}

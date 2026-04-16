@@ -225,4 +225,4 @@ func TestParallelSubqueryWorkerCount(t *testing.T) {
 	}
 }
 
-// Helper function (note: collectTuples and tuplesEqual are defined in join_test.go)
+// Note: collectTuples and tuplesEqual are defined in join_test.go

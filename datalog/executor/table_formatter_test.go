@@ -149,7 +149,7 @@ func TestTableFormatter(t *testing.T) {
 	})
 }
 
-func TestPrintHelpers(t *testing.T) {
+func TestPrintFunctions(t *testing.T) {
 	// Just test that these don't panic
 	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
@@ -164,7 +164,7 @@ func TestPrintHelpers(t *testing.T) {
 	result := NewMaterializedRelation(symbols, tuples)
 	PrintResult(result)
 
-	// Test string helpers
+	// Test string formatting
 	relStr := RelationString(rel)
 	if relStr == "" {
 		t.Error("RelationString should not be empty")

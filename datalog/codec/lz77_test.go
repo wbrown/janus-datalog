@@ -397,5 +397,5 @@ func BenchmarkReconstruct_1KB(b *testing.B) {
 	}
 }
 
-// Helper to keep fmt import used
+// keep fmt import used
 var _ = fmt.Sprintf

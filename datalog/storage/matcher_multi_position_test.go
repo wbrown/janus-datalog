@@ -560,7 +560,7 @@ func BenchmarkMultiPositionBinding(b *testing.B) {
 	}
 }
 
-// Helper functions
+// Test utilities
 
 func countResults(result executor.Relation) int {
 	count := 0

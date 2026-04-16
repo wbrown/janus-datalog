@@ -24,7 +24,7 @@ type Value interface{}
 // This makes it clear when we're storing an entity reference
 type Reference = Identity
 
-// Helper functions for creating typed values
+// Typed value constructors
 func String(s string) Value        { return s }
 func Int(i int64) Value            { return i }
 func Float(f float64) Value        { return f }

@@ -1014,12 +1014,12 @@ func TestMapAll_MixedMode(t *testing.T) {
 	}
 }
 
-// Helper function
+// Test utility
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
 }
 
-func containsHelper(s, substr string) bool {
+func containsSubstr(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
 			return true

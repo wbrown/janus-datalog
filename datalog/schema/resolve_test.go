@@ -8,7 +8,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// kw helper is defined in schema_test.go
+// kw is defined in schema_test.go
 
 func TestResolvePullPatternNilPattern(t *testing.T) {
 	schema, _ := NewBuilder().

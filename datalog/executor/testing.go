@@ -170,7 +170,7 @@ func FormatRelationSummary(rel Relation) string {
 	return fmt.Sprintf("symbols=%v, tuples=%v", rel.Symbols(), tuples)
 }
 
-// Helper functions (unexported)
+// Unexported test utilities
 
 func compareSymbols(a, b []query.Symbol) bool {
 	if len(a) != len(b) {

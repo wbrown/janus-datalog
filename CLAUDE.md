@@ -363,6 +363,18 @@ This codebase should follow Go idioms, NOT Java/Enterprise patterns:
 - If you need different behavior, add a parameter/option
 - Creating parallel implementations is Java-style abstraction madness
 
+### CRITICAL: No "Helpers"
+**NEVER name files, functions, or packages `helper`, `helpers`, `utils`, `common`, `misc`, or `shared`.** Never use "helper" in comments to describe code. Every function does something specific — name it for what it does.
+
+**Why this matters**: `helpers.go` is a junk drawer. Code in it escapes scrutiny because the name signals "secondary, not important." This is how parallel implementations hide unnoticed — `notOrTupleKey` lived in `helpers.go` for four months next to `TupleKey` in `tuple_key.go`, with a collision bug, untested, because nobody looks critically at "helpers." If the file had been `relation_ops.go`, the duplication would have been obvious.
+
+Naming something precisely forces you to think about what it does and where it belongs. That thinking is where bugs get caught. "Helper" defers that thinking indefinitely.
+
+**If you're tempted to create a helpers file or call something a helper:**
+- Name the file for what the functions do (`relation_ops.go`, `iterator_validation.go`)
+- Name the function for what it does (`getUniqueCombinations`, not `helperGetCombos`)
+- If you can't name it, you don't understand it well enough to write it
+
 **DO (Go idioms):**
 - Simple functions for stateless operations
 - Methods on types that operate on that type's data

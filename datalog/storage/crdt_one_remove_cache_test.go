@@ -42,7 +42,7 @@ type PersonWithCity struct {
 	City *string          `datalog:"person/city"`
 }
 
-// helper: create a DB with :person/name (one) and :person/city (one)
+// createRemoveCacheTestDB creates a DB with :person/name (one) and :person/city (one)
 func createCacheRemoveTestDB(t *testing.T) (*Database, func()) {
 	t.Helper()
 	dir := t.TempDir()
@@ -939,7 +939,7 @@ func TestCacheRemove_Pull_SetThenRemove(t *testing.T) {
 // P7×S2-S6: ResolveLWW direct — full scenario coverage
 // =============================================================================
 
-// helper: call ResolveLWW and return (value, elementID)
+// resolveLWWValue calls ResolveLWW and returns (value, elementID)
 func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) (any, datalog.ElementID) {
 	t.Helper()
 	matcher := NewBadgerMatcher(db.Store())
@@ -1076,7 +1076,7 @@ func TestCacheRemove_ResolveLWW_MultipleEntities(t *testing.T) {
 // P8×S2-S7: Cache rebuild — full scenario coverage
 // =============================================================================
 
-// helper: clear cache, rebuild, return OneValue
+// rebuildAndGetOneValue clears cache, rebuilds, returns OneValue
 func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) any {
 	t.Helper()
 	db.Cache().Clear()
@@ -1238,7 +1238,7 @@ func TestCacheRemove_CacheRebuild_SetThenRemove(t *testing.T) {
 // P9×S2-S7: Stale cache invalidation — full scenario coverage
 // =============================================================================
 
-// helper: warm PullInto cache, return the name value (or nil)
+// pullName warms PullInto cache and returns the name value (or nil)
 func warmCachePullIntoName(t *testing.T, db *Database, e datalog.Identity) *string {
 	t.Helper()
 	var p PersonOptionalName

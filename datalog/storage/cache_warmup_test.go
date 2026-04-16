@@ -9,7 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Helper to create a temp database for warmup tests
+// createWarmupTestDB creates a temp database for warmup tests
 func createWarmupTestDatabase(t *testing.T) (*Database, func()) {
 	dir := t.TempDir()
 	db, err := NewDatabase(dir)

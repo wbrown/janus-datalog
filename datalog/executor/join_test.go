@@ -212,7 +212,7 @@ func TestAntiJoin(t *testing.T) {
 	it.Close()
 }
 
-// Helper functions
+// Test utilities
 
 func collectTuples(rel Relation) []Tuple {
 	var tuples []Tuple

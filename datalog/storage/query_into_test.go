@@ -39,7 +39,7 @@ type WithPointers struct {
 	Email *string `datalog:"?email"`
 }
 
-// Helper to create a test database with data
+// createQueryIntoTestDB creates a test database with data
 func createTestDatabaseWithPeople(t *testing.T) (*Database, func()) {
 	t.Helper()
 

@@ -203,7 +203,7 @@ func (m MaxAggregate) String() string {
 	return fmt.Sprintf("(max %s)", m.Var)
 }
 
-// Helper to determine if a value is numeric
+// isNumeric returns whether a value is numeric
 func isNumeric(val interface{}) bool {
 	switch val.(type) {
 	case int, int32, int64, float32, float64:
@@ -213,7 +213,7 @@ func isNumeric(val interface{}) bool {
 	}
 }
 
-// Helper to determine if a value is a time
+// isTime returns whether a value is a time.Time
 func isTime(val interface{}) bool {
 	_, ok := val.(time.Time)
 	return ok

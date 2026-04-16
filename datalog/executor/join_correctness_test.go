@@ -137,7 +137,7 @@ func TestJoinCorrectnessEarlyTermination(t *testing.T) {
 	checkJoinCorrectness(t, "Symmetric (LIMIT)", symmetricResults)
 }
 
-// Helper: Get all join results
+// getAllJoinResults gets all join results
 func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rightCols []query.Symbol, symmetric bool) []Tuple {
 	left := &StreamingRelation{
 		symbols:  leftCols,
@@ -176,7 +176,7 @@ func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rig
 	return results
 }
 
-// Helper: Get limited join results
+// getLimitedJoinResults gets limited join results
 func getJoinResultsWithLimit(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rightCols []query.Symbol, symmetric bool, limit int) []Tuple {
 	left := &StreamingRelation{
 		symbols:  leftCols,
@@ -289,7 +289,7 @@ func checkResultsEqual(t *testing.T, results1, results2 []Tuple) {
 	}
 }
 
-// Helper to convert tuple to string for comparison
+// tupleToString converts tuple to string for comparison
 func tupleToString(tuple Tuple) string {
 	return fmt.Sprintf("%v", tuple)
 }

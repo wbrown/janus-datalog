@@ -605,14 +605,14 @@ func TestSubqueryPerformance(t *testing.T) {
 	}
 }
 
-// Helper function
+// Test utility
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && s[len(s)-len(substr):] == substr ||
 		len(s) >= len(substr) && s[:len(substr)] == substr ||
-		len(s) > len(substr) && findSubstringHelper(s, substr)
+		len(s) > len(substr) && findSubstring(s, substr)
 }
 
-func findSubstringHelper(s, substr string) bool {
+func findSubstring(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
 			return true

@@ -355,7 +355,7 @@ func (f EnumerateFunction) ReturnType() string {
 	return "tuples" // Special return type indicating multiple bindings
 }
 
-// Helper functions for vector operations
+// Vector operation functions
 
 // toSlice converts a value to []interface{} if possible.
 func toSlice(val interface{}) ([]interface{}, bool) {

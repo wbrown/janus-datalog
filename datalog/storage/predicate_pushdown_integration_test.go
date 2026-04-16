@@ -222,7 +222,7 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 	})
 }
 
-// Helper to create time extraction constraint (matches executor's implementation)
+// createTimeExtractionConstraint creates a time extraction constraint
 type timeExtractionConstraint struct {
 	position  int
 	extractFn string

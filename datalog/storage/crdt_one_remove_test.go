@@ -28,7 +28,7 @@ import (
 // See: docs/bugs/BUG_SCHEMALESS_ATTR_BOUND_QUERY.md
 // =============================================================================
 
-// helper: create a database with a CardinalityOne schema
+// createRemoveTestDB creates a database with a CardinalityOne schema
 func createCardinalityOneDB(t *testing.T) (*Database, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "crdt-one-remove-*")
@@ -52,7 +52,7 @@ func createCardinalityOneDB(t *testing.T) (*Database, func()) {
 	return db, cleanup
 }
 
-// helper: run a bound query for a single attribute value
+// queryBoundValue runs a bound query for a single attribute value
 func queryBoundValue(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) [][]interface{} {
 	t.Helper()
 	results, err := executor.CollectTuples(db.Query(
@@ -63,7 +63,7 @@ func queryBoundValue(t *testing.T, db *Database, e datalog.Identity, a datalog.K
 	return results
 }
 
-// helper: run an unbound query and filter for a specific (E, A)
+// queryUnboundAndFilter runs an unbound query and filters for a specific (E, A)
 func queryUnboundForEA(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) [][]interface{} {
 	t.Helper()
 	results, err := executor.CollectTuples(db.Query(
@@ -551,7 +551,7 @@ func TestCardinalityOneRemove_Unbound_SetThenRemove(t *testing.T) {
 // P3×S2-S7: Streaming (V-bound) — full scenario coverage
 // =============================================================================
 
-// helper: count V-bound pattern matches for a given attribute and value
+// countVBoundMatches counts V-bound pattern matches for a given attribute and value
 func vBoundMatchCount(t *testing.T, db *Database, a datalog.Keyword, v interface{}) int {
 	t.Helper()
 	matcher := NewBadgerMatcher(db.Store())

@@ -9,7 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// Helper to create a temp database for vector cache tests
+// createVectorCacheTestDB creates a temp database for vector cache tests
 func createVectorCacheTestDatabase(t *testing.T) (*Database, func()) {
 	dir := t.TempDir()
 	db, err := NewDatabase(dir)

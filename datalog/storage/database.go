@@ -354,8 +354,15 @@ func (d *Database) SetAnnotationHandler(handler annotations.Handler) {
 	d.annotationHandler = handler
 }
 
-// NewTransaction starts a new write transaction
+// NewTransaction starts a new write transaction.
+//
+// Panics if called on a read-only temporal handle (AsOf/History). Temporal
+// views share the parent's store and have no write-side state; use the
+// parent handle for writes.
 func (d *Database) NewTransaction() *Transaction {
+	if d.temporalTxID != nil {
+		panic("NewTransaction called on a read-only temporal database handle (AsOf/History); use the parent handle for writes")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -421,8 +428,14 @@ func (d *Database) Match(pattern *query.DataPattern, bindings executor.Relations
 // Compile-time verification that Database implements PatternMatcher
 var _ executor.PatternMatcher = (*Database)(nil)
 
-// AsOf returns a new Database handle that queries state as of the given transaction.
-// The returned handle uses CRDT resolution filtered to that point in causal time.
+// AsOf returns a read-only Database handle that queries state as of the given
+// transaction. The returned handle uses CRDT resolution filtered to that point
+// in causal time.
+//
+// The temporal handle shares the parent's underlying store, cache, and schema.
+// It supports reads (Query, NewExecutor, NewExecutorWithOptions, Matcher, Pull)
+// but not writes: NewTransaction will panic. Close is a no-op — the parent
+// owns the store lifetime.
 func (d *Database) AsOf(txID datalog.ElementID) *Database {
 	return &Database{
 		store:             d.store,
@@ -436,8 +449,13 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 	}
 }
 
-// History returns a new Database handle that returns all raw datoms without
-// CRDT resolution. Every write is visible, including superseded values.
+// History returns a read-only Database handle that returns all raw datoms
+// without CRDT resolution. Every write is visible, including superseded values.
+//
+// The temporal handle shares the parent's underlying store, cache, and schema.
+// It supports reads (Query, NewExecutor, NewExecutorWithOptions, Matcher, Pull)
+// but not writes: NewTransaction will panic. Close is a no-op — the parent
+// owns the store lifetime.
 func (d *Database) History() *Database {
 	empty := datalog.ElementID{}
 	return &Database{
@@ -501,11 +519,29 @@ func (d *Database) NewExecutor() *executor.Executor {
 	return executor.NewExecutorWithOptions(d.Matcher(), d, opts)
 }
 
-// NewExecutorWithOptions creates a new query executor with custom options and the database's plan cache
+// NewExecutorWithOptions creates a new query executor with custom planner
+// options and the database's plan cache.
+//
+// Uses d.Matcher() to construct the pattern matcher, so schema, cache,
+// annotation handler, and temporal mode (AsOf/History) are all applied.
+// The executor options from the planner options override the matcher's
+// default executor options.
 func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor.Executor {
-	// Override cache with database's cache
 	opts.Cache = d.planCache
-	// Create matcher with custom options
+	// Build the matcher via d.Matcher() which applies schema, cache,
+	// annotation handler, and temporal mode. Then override its executor
+	// options with the caller's custom options.
+	matcher := d.matcherWithExecOptions(opts)
+	return executor.NewExecutorWithOptions(matcher, d, opts)
+}
+
+// matcherWithExecOptions builds a fully-configured BadgerMatcher using the
+// caller's executor options (from PlannerOptions) while applying all
+// database-level state: schema, cache, annotation handler, temporal mode.
+//
+// This is the same as Matcher() but with custom executor options instead of
+// the defaults.
+func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
 	execOpts := executor.ExecutorOptions{
 		EnableIteratorComposition:       opts.EnableIteratorComposition,
 		EnableTrueStreaming:             opts.EnableTrueStreaming,
@@ -519,7 +555,17 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
-	return executor.NewExecutorWithOptions(matcher, d, opts)
+	matcher.SetHandler(d.annotationHandler)
+	if d.schema != nil {
+		matcher.SetSchema(d.schema)
+	}
+	if d.cache != nil {
+		matcher.SetCache(d.cache)
+	}
+	if d.temporalTxID != nil {
+		return matcher.AsOf(*d.temporalTxID)
+	}
+	return matcher
 }
 
 // Store returns the underlying store for direct access (debugging/testing)
@@ -527,8 +573,16 @@ func (d *Database) Store() *BadgerStore {
 	return d.store
 }
 
-// Close closes the database
+// Close closes the database.
+//
+// On a temporal handle (AsOf/History), Close is a no-op — the parent owns
+// the store lifetime. Closing a temporal handle must not close the shared
+// underlying store.
 func (d *Database) Close() error {
+	if d.temporalTxID != nil {
+		return nil // Read-only view; parent owns the store.
+	}
+
 	// Copy active transactions while holding lock, then release before calling Rollback
 	// to avoid deadlock (Rollback also acquires d.mu)
 	d.mu.Lock()
@@ -2363,7 +2417,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	matcher := d.Matcher().(*BadgerMatcher)
 	result := make(map[datalog.Keyword]interface{})
 
-	// Helper to get value type from schema
+	// getValueType returns the schema value type for a keyword
 	getValueType := func(kw datalog.Keyword) schema.ValueType {
 		if d.schema != nil {
 			if s, ok := d.schema.(*schema.Schema); ok {

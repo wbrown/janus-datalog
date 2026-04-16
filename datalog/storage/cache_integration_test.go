@@ -14,7 +14,7 @@ import (
 // These tests verify that the cache is actually integrated into the query path,
 // not just available for direct LookupAttribute calls.
 
-// Helper to create a test database with cache for integration tests
+// createCacheIntegrationTestDB creates a test database with cache for integration tests
 func createCacheIntegrationTestDatabase(t *testing.T) (*Database, func()) {
 	dir := t.TempDir()
 	db, err := NewDatabase(dir)

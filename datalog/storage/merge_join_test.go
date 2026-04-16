@@ -571,7 +571,7 @@ func TestCompareJoinKeys(t *testing.T) {
 	}
 }
 
-// Helper functions
+// Test utilities
 
 func createMockRelation(size int, symbols []query.Symbol) executor.Relation {
 	tuples := make([]executor.Tuple, size)

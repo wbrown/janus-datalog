@@ -521,7 +521,7 @@ func compileDatabaseFunctionPredicate(p *query.DatabaseFunctionPredicate, curren
 	return compilePredicate(p, current), nil
 }
 
-// --- helpers ---
+// --- internal functions ---
 
 // joinWith combines two nodes with a natural join.
 // If left is nil, returns right directly.

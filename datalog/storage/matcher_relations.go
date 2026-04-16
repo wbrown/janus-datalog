@@ -1077,7 +1077,7 @@ func (m *BadgerMatcher) matchFromCache(
 	datomBuf.E = e
 	datomBuf.A = a
 
-	// Helper to build tuple from datom (reuses buffer)
+	// buildTupleFromDatom builds a tuple from datom (reuses buffer)
 	buildTuple := func(val interface{}, tx datalog.ElementID) executor.Tuple {
 		datomBuf.V = val
 		datomBuf.Tx = tx

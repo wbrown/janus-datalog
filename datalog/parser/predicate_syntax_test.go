@@ -184,7 +184,7 @@ func TestNotEqualKeywordIntegration(t *testing.T) {
 	}
 }
 
-// Helper to get type as string
+// typeString returns type as string
 func typeStr(v interface{}) string {
 	switch v.(type) {
 	case *query.Comparison:

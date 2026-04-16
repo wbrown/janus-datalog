@@ -132,7 +132,7 @@ func (tf *TableFormatter) truncate(s string) string {
 	return runewidth.Truncate(s, tf.MaxWidth, tf.TruncateString)
 }
 
-// Quick helper functions for debugging
+// Quick debug-print functions
 
 // PrintRelation prints a relation to stdout
 func PrintRelation(rel Relation) {

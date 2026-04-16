@@ -7,12 +7,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// Helper to create ElementID with specific Lamport clock
+// makeElementID creates an ElementID with specific Lamport clock
 func elemID(lamport uint64, replica uint64) datalog.ElementID {
 	return datalog.ElementID{Lamport: lamport, ReplicaID: replica}
 }
 
-// Helper to create a datom for testing
+// makeDatom creates a datom for testing
 func testDatom(tx datalog.ElementID, value any, op datalog.CRDTOp) datalog.Datom {
 	return datalog.Datom{
 		Tx: tx,
@@ -21,7 +21,7 @@ func testDatom(tx datalog.ElementID, value any, op datalog.CRDTOp) datalog.Datom
 	}
 }
 
-// Helper to create RGA datom with AfterRef
+// makeRGADatom creates an RGA datom with AfterRef
 func rgaDatom(tx datalog.ElementID, value any, op datalog.CRDTOp, afterRef datalog.ElementID) datalog.Datom {
 	return datalog.Datom{
 		Tx:       tx,

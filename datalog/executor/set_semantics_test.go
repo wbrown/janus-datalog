@@ -18,7 +18,7 @@ import (
 // These tests verify set semantics are maintained throughout the pipeline.
 // =============================================================================
 
-// Helper: check that a relation has no duplicate tuples
+// assertNoDuplicateTuples checks that a relation has no duplicate tuples
 // Uses datalog.ValuesEqual for comparison - same semantics as production code
 func assertNoDuplicates(t *testing.T, name string, rel Relation) {
 	t.Helper()
@@ -37,7 +37,7 @@ func assertNoDuplicates(t *testing.T, name string, rel Relation) {
 	}
 }
 
-// Helper: check if two tuples are equal using the same logic as production code
+// tuplesEqual checks if two tuples are equal using the same logic as production code
 func setTestTuplesEqual(a, b Tuple) bool {
 	if len(a) != len(b) {
 		return false
@@ -50,7 +50,7 @@ func setTestTuplesEqual(a, b Tuple) bool {
 	return true
 }
 
-// Helper: find duplicate index using production equality semantics
+// findDuplicateIndex finds duplicate index using production equality semantics
 // Returns -1 if no duplicate found
 func setTestFindDuplicate(tuples []Tuple, newTuple Tuple) int {
 	for i, existing := range tuples {
@@ -61,7 +61,7 @@ func setTestFindDuplicate(tuples []Tuple, newTuple Tuple) int {
 	return -1
 }
 
-// Helper: collect all tuples from a relation
+// collectAllTuples collects all tuples from a relation
 func setTestCollectTuples(rel Relation) []Tuple {
 	var tuples []Tuple
 	iter := rel.Iterator()

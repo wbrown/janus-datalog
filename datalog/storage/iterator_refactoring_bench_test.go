@@ -9,8 +9,8 @@ import (
 
 // Benchmark to measure function call overhead for iterator validation logic
 
-// validateDatomWithConstraintsHelper is the proposed helper function
-func validateDatomWithConstraintsHelper(
+// benchValidateDatomWithConstraints validates a datom against temporal and constraint filters
+func benchValidateDatomWithConstraints(
 	datom *datalog.Datom,
 	txID *datalog.ElementID,
 	constraints []executor.StorageConstraint,
@@ -106,11 +106,11 @@ func BenchmarkIteratorValidation(b *testing.B) {
 			b.ReportMetric(float64(passed)/float64(b.N), "pass_rate")
 		})
 
-		b.Run(scenario.name+"/helper", func(b *testing.B) {
+		b.Run(scenario.name+"/shared", func(b *testing.B) {
 			passed := 0
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if validateDatomWithConstraintsHelper(datom, scenario.txID, constraints) {
+				if benchValidateDatomWithConstraints(datom, scenario.txID, constraints) {
 					passed++
 				}
 			}
@@ -164,14 +164,14 @@ func BenchmarkIteratorLoop(b *testing.B) {
 		b.ReportMetric(float64(matched)/float64(b.N), "matched/iter")
 	})
 
-	b.Run("helper", func(b *testing.B) {
+	b.Run("shared", func(b *testing.B) {
 		matched := 0
 		benchTxID := datalog.ElementID{Lamport: 500, ReplicaID: 1}
 		b.ResetTimer()
 		for n := 0; n < b.N; n++ {
 			for _, datom := range datoms {
-				// Helper function approach
-				if validateDatomWithConstraintsHelper(datom, &benchTxID, constraints) {
+				// Shared function approach
+				if benchValidateDatomWithConstraints(datom, &benchTxID, constraints) {
 					matched++
 				}
 			}
