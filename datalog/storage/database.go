@@ -2360,12 +2360,8 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		return make(map[datalog.Keyword]interface{}), nil
 	}
 
-	eBytes := Entity(entity.Hash())
 	matcher := d.Matcher().(*BadgerMatcher)
 	result := make(map[datalog.Keyword]interface{})
-
-	// Get what's already cached for this entity
-	cachedAttrs := d.cache.GetCachedAttrs(eBytes)
 
 	// Helper to get value type from schema
 	getValueType := func(kw datalog.Keyword) schema.ValueType {
@@ -2378,6 +2374,34 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 		}
 		return ""
 	}
+
+	// Cache-less path: the cache is an optimization, not a correctness
+	// requirement. When DisableCache is set, query the matcher directly for
+	// each attribute. The matcher applies CRDT resolution via
+	// CRDTResolvingIterator when no cache is set.
+	if d.cache == nil {
+		for _, kw := range attrs {
+			card := schema.CardinalityOne
+			if d.schema != nil {
+				if def := d.schema.GetAttribute(kw); def != nil {
+					card = def.Cardinality
+				}
+			}
+			val, err := d.resolveAttributeViaMatcher(entity, kw, matcher, card, getValueType(kw))
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve %s: %w", kw.String(), err)
+			}
+			if val != nil {
+				result[kw] = val
+			}
+		}
+		return result, nil
+	}
+
+	eBytes := Entity(entity.Hash())
+
+	// Get what's already cached for this entity
+	cachedAttrs := d.cache.GetCachedAttrs(eBytes)
 
 	// Partition needed attrs into cached vs missing
 	var missing []datalog.Keyword
@@ -2418,6 +2442,76 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	return result, nil
 }
 
+// resolveAttributeViaMatcher resolves a single (entity, attribute) by
+// querying the matcher directly. Used when the EA cache is disabled — the
+// matcher applies CRDT resolution (LWW for one, add-wins for many, RGA for
+// vector) via CRDTResolvingIterator. Returns nil if the entity has no
+// current value for the attribute.
+func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *BadgerMatcher, card schema.Cardinality, valueType schema.ValueType) (interface{}, error) {
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Constant{Value: entity},
+			query.Constant{Value: attr},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+			query.Blank{},
+		},
+	}
+	rel, err := matcher.Match(pattern, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	iter := rel.Iterator()
+	defer iter.Close()
+
+	switch card {
+	case schema.CardinalityMany:
+		// Matcher emits one tuple per current member (add-wins resolved).
+		var values []interface{}
+		for iter.Next() {
+			tuple := iter.Tuple()
+			if len(tuple) > 0 && tuple[0] != nil {
+				values = append(values, tuple[0])
+			}
+		}
+		if len(values) == 0 {
+			return nil, nil
+		}
+		return values, nil
+
+	case schema.CardinalityVector:
+		// Matcher emits a single tuple containing the RGA-resolved vector.
+		if iter.Next() {
+			tuple := iter.Tuple()
+			if len(tuple) > 0 && tuple[0] != nil {
+				if vec, ok := tuple[0].([]interface{}); ok {
+					if len(vec) == 0 {
+						return nil, nil
+					}
+					if valueType != "" {
+						return typedVector(vec, valueType), nil
+					}
+					return vec, nil
+				}
+				// Unexpected type — return as-is rather than dropping data.
+				return tuple[0], nil
+			}
+		}
+		return nil, nil
+
+	default:
+		// CardinalityOne and unknown both use LWW semantics; matcher emits
+		// the LWW winner first. Take it.
+		if iter.Next() {
+			tuple := iter.Tuple()
+			if len(tuple) > 0 {
+				return tuple[0], nil
+			}
+		}
+		return nil, nil
+	}
+}
+
 // entryToValue converts a CacheEntry to its appropriate value representation.
 // For vector entries, valueType is used to return typed slices (e.g. []string).
 func entryToValue(entry *CacheEntry, valueType schema.ValueType) interface{} {
@@ -2443,22 +2537,25 @@ func entryToValue(entry *CacheEntry, valueType schema.ValueType) interface{} {
 }
 
 // ResolveAllAttributes retrieves all CRDT-resolved attributes for an entity.
-// This is used by wildcard pulls to get all attributes with proper CRDT resolution.
+// This is used by wildcard pulls to get all attributes with proper CRDT
+// resolution.
 //
-// It scans EAVT for all datoms with the given entity, discovers unique attributes,
-// and resolves each using the cache (LWW for one, add-wins for many, RGA for vector).
+// Two paths:
+//   - With schema: enumerate the schema's attributes and resolve each
+//   - Without schema: scan EAVT to discover the entity's attributes, then resolve
 //
-// Returns a map of keyword -> resolved value. The value type depends on cardinality:
-// - CardinalityOne: single value (LWW)
-// - CardinalityMany: []interface{} (add-wins set)
-// - CardinalityVector: []interface{} (RGA ordered list)
+// Both paths delegate the per-attribute resolution to ResolveEntityAttributes,
+// which handles cache-aware and cache-less modes uniformly. Per the codebase
+// principle that the cache is an optimization, not a correctness requirement,
+// this method works correctly under DisableCache: true.
+//
+// Returns a map of keyword -> resolved value. The value type depends on
+// cardinality:
+//   - CardinalityOne: single value (LWW)
+//   - CardinalityMany: []interface{} (add-wins set)
+//   - CardinalityVector: []interface{} (RGA ordered list)
 func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error) {
-	if d.cache == nil {
-		return nil, fmt.Errorf("ResolveAllAttributes requires cache")
-	}
-
-	// If schema exists, delegate to ResolveEntityAttributes with all schema attrs.
-	// This uses difference-based logic: check cache first, scan only if needed.
+	// If schema exists, enumerate schema attributes.
 	if d.schema != nil {
 		if s, ok := d.schema.(*schema.Schema); ok && s.HasSchema() {
 			attrs := s.Attributes()
@@ -2470,7 +2567,8 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		}
 	}
 
-	// No schema: must scan EAVT to discover all attributes for this entity
+	// No schema: scan EAVT to discover all attributes for this entity, then
+	// delegate per-attribute resolution to ResolveEntityAttributes.
 	eBytes := entity.Bytes()
 	encoder := d.store.encoder
 	start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
@@ -2481,7 +2579,6 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	}
 	defer iter.Close()
 
-	// Discover unique attributes
 	seenAttrs := make(map[Attribute]datalog.Keyword)
 	for iter.Next() {
 		datom, err := iter.Datom()
@@ -2494,49 +2591,11 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		}
 	}
 
-	// Resolve each attribute using cache
-	matcher := d.Matcher().(*BadgerMatcher)
-	eEntity := Entity(eBytes)
-	result := make(map[datalog.Keyword]interface{})
-
-	for aBytes, kw := range seenAttrs {
-		key := CacheKey{E: eEntity, A: aBytes}
-		entry := d.cache.GetOrResolve(key, matcher)
-		if entry == nil {
-			continue
-		}
-
-		// Determine cardinality for proper value conversion
-		card := schema.CardinalityOne
-		if d.schema != nil {
-			if def := d.schema.GetAttribute(kw); def != nil {
-				card = def.Cardinality
-			}
-		}
-
-		switch card {
-		case schema.CardinalityOne:
-			if v := entry.OneValue(); v != nil {
-				result[kw] = v
-			}
-		case schema.CardinalityMany:
-			set := entry.ManySet()
-			if len(set) > 0 {
-				values := make([]interface{}, 0, len(set))
-				for _, v := range set {
-					values = append(values, v)
-				}
-				result[kw] = values
-			}
-		case schema.CardinalityVector:
-			list := entry.VectorList()
-			if len(list) > 0 {
-				result[kw] = list
-			}
-		}
+	keywords := make([]datalog.Keyword, 0, len(seenAttrs))
+	for _, kw := range seenAttrs {
+		keywords = append(keywords, kw)
 	}
-
-	return result, nil
+	return d.ResolveEntityAttributes(entity, keywords)
 }
 
 // PullInto retrieves entity data and populates the provided struct.
