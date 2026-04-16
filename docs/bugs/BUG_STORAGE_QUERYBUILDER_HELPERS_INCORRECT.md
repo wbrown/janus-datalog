@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-16
 **Severity**: Medium - auxiliary API returns wrong results and accidental full scans
-**Status**: Open (direct code-path issue; no dedicated tests currently cover it)
+**Status**: Resolved 2026-04-17 (deleted; dead code with zero callers)
 **Affected**: `datalog/storage/queries.go`
 
 ## Summary
@@ -217,3 +217,15 @@ docs so downstream callers do not assume production semantics.
 2. Differential-test helper results against equivalent Datalog queries.
 3. Add tests for reference values and ElementID ranges specifically.
 4. Decide whether this API is supported, deprecated, or experimental.
+
+## Resolution
+
+**Resolved**: 2026-04-17 — deleted `datalog/storage/queries.go`.
+
+The API had zero callers anywhere in the codebase (production, tests,
+examples, CLI). It shipped in the initial release as scaffolding and was
+never wired up. The real query infrastructure (matcher with CRDT-aware index
+selection, `d.Query()`, `d.Pull()`, `datalog/qb`) covers every use case
+this file attempted, correctly.
+
+The `CompareTx` function in the same file was also unused and deleted.
