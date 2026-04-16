@@ -1867,7 +1867,7 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	uniqueCombos := getUniqueCombinations(input, actualJoinVars)
 
 	// Track which key combinations matched the inner clauses
-	matchedKeys := make(map[string]bool)
+	matchedKeys := NewTupleKeyMap()
 
 	// For each unique combination, execute inner clauses
 	for _, combo := range uniqueCombos {
@@ -1882,8 +1882,8 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 
 		// If inner produced any results, this combo is "matched" and should be excluded
 		if innerResult != nil && innerResult.Size() > 0 {
-			key := notOrTupleKey(combo)
-			matchedKeys[key] = true
+			key := NewTupleKeyFull(combo)
+			matchedKeys.Put(key, struct{}{})
 		}
 	}
 
@@ -1908,9 +1908,9 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 		for i, idx := range keyIndices {
 			keyVals[i] = tuple[idx]
 		}
-		key := notOrTupleKey(keyVals)
+		key := NewTupleKeyFull(keyVals)
 
-		if !matchedKeys[key] {
+		if !matchedKeys.Exists(key) {
 			filtered = append(filtered, tuple)
 		}
 	}
@@ -1945,7 +1945,7 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 	uniqueCombos := getUniqueCombinations(input, clause.JoinVars)
 
 	// Track matched keys
-	matchedKeys := make(map[string]bool)
+	matchedKeys := NewTupleKeyMap()
 
 	for _, combo := range uniqueCombos {
 		bindingRel := NewMaterializedRelationWithOptions(clause.JoinVars, []Tuple{combo}, e.options)
@@ -1956,8 +1956,8 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 		}
 
 		if innerResult != nil && innerResult.Size() > 0 {
-			key := notOrTupleKey(combo)
-			matchedKeys[key] = true
+			key := NewTupleKeyFull(combo)
+			matchedKeys.Put(key, struct{}{})
 		}
 	}
 
@@ -1981,9 +1981,9 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 		for i, idx := range keyIndices {
 			keyVals[i] = tuple[idx]
 		}
-		key := notOrTupleKey(keyVals)
+		key := NewTupleKeyFull(keyVals)
 
-		if !matchedKeys[key] {
+		if !matchedKeys.Exists(key) {
 			filtered = append(filtered, tuple)
 		}
 	}

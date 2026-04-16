@@ -1,8 +1,6 @@
 package executor
 
 import (
-	"fmt"
-
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -418,7 +416,7 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
 		}
 	}
 
-	seen := make(map[string]bool)
+	seen := NewTupleKeyMap()
 	var combos []Tuple
 
 	iter := rel.Iterator()
@@ -428,27 +426,15 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
 		for i, idx := range symIndices {
 			combo[i] = tuple[idx]
 		}
-		key := notOrTupleKey(combo)
-		if !seen[key] {
-			seen[key] = true
+		key := NewTupleKeyFull(combo)
+		if !seen.Exists(key) {
+			seen.Put(key, struct{}{})
 			combos = append(combos, combo)
 		}
 	}
 	iter.Close()
 
 	return combos
-}
-
-// notOrTupleKey creates a string key from a tuple for deduplication in NOT/OR execution
-func notOrTupleKey(tuple Tuple) string {
-	if len(tuple) == 0 {
-		return ""
-	}
-	key := fmt.Sprintf("%v", tuple[0])
-	for i := 1; i < len(tuple); i++ {
-		key += fmt.Sprintf("|%v", tuple[i])
-	}
-	return key
 }
 
 // countOverlap counts how many symbols from targetSyms are present in refSyms
@@ -472,7 +458,7 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 		return NewMaterializedRelationWithOptions(syms, nil, opts)
 	}
 
-	seen := make(map[string]bool)
+	seen := NewTupleKeyMap()
 	var allTuples []Tuple
 
 	for _, rel := range relations {
@@ -506,9 +492,9 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 			for i, idx := range symIndices {
 				projected[i] = tuple[idx]
 			}
-			key := notOrTupleKey(projected)
-			if !seen[key] {
-				seen[key] = true
+			key := NewTupleKeyFull(projected)
+			if !seen.Exists(key) {
+				seen.Put(key, struct{}{})
 				allTuples = append(allTuples, projected)
 			}
 		}
