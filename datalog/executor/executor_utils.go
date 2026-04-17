@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -83,21 +82,15 @@ func MaterializeResult(rel Relation, symbols []query.Symbol) Relation {
 	var tuples []Tuple
 	collectTuplesInto(&tuples, rel)
 
-	// DEBUG: Check for tuple copying bug
-	if len(tuples) > 1 {
-		first := tuples[0]
-		last := tuples[len(tuples)-1]
-		allSame := true
-		for i := range first {
-			if first[i] != last[i] {
-				allSame = false
-				break
-			}
-		}
-		if allSame {
-			panic(fmt.Sprintf("BUG DETECTED in MaterializeResult: All %d tuples identical! First=%v Last=%v", len(tuples), first, last))
-		}
-	}
+	// Note: an earlier debug assertion here panicked with
+	// "BUG DETECTED" when the first and last tuples were
+	// interface-equal on every element. It was intended to catch a
+	// historical iterator-workspace-reuse bug. Under the current
+	// interning and BufferedIterator invariants, the original bug is
+	// fixed; the assertion became a false-positive trap for
+	// legitimate queries whose results happened to contain repeated
+	// interned values (two entities with the same name, for example).
+	// Removed in the EXTERNAL_REVIEW_2026_04 item-5 fix pass.
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()

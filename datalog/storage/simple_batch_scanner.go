@@ -184,60 +184,116 @@ func (s *simpleBatchScanner) calculateScanRange(bindingSet map[string]executor.T
 	return minKey, maxKey
 }
 
-// buildKey builds a storage key for a binding value
+// buildKey builds a storage key for a binding value.
+//
+// Value type invariants:
+//   - datalog.Identity and datalog.Keyword are pointer type aliases
+//     (*identity / *keyword). They are kept as pointers throughout —
+//     interning depends on pointer identity. Do NOT dereference them;
+//     doing so produces unexported struct values that subsequent
+//     type assertions against the pointer alias type cannot match,
+//     which used to silently route keyword-bound scans to the
+//     "return nil" fall-through.
+//   - *uint64 is a non-interned boxed scalar sometimes used for
+//     comparable-value workarounds; dereference it for uniform
+//     handling.
 func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
-	// Handle pointers by dereferencing first
-	// Note: Identity is always a pointer type now, no dereferencing needed
-	if ptr, ok := value.(datalog.Keyword); ok {
-		value = *ptr
-	} else if ptr, ok := value.(*uint64); ok {
+	if ptr, ok := value.(*uint64); ok {
 		value = *ptr
 	}
 
 	// Use the store's encoder to build proper keys
 	encoder := s.matcher.store.encoder
 
+	// Use named IndexType constants. The earlier implementation switched
+	// on integer literals (0=EAVT, 1=AEVT, 3=VAET, 4=TAEV), which was
+	// correct for the 5-index enum but silently broke when the enum
+	// expanded to 7 values: now 1=EATV (not AEVT), 3=AETV (not VAET),
+	// 4=AVET (not TAEV). Callers passing AETV (a common choice for
+	// A-bound CardinalityOne under CRDT resolution) fell into the VAET
+	// branch and produced wrong-shaped keys, causing silent
+	// under-counting on bindingRel.Size() > 100.
 	switch s.index {
-	case 0: // EAVT
+	case EAVT:
+		// EAVT: [E][A][V][Tx]
 		if e, ok := value.(datalog.Identity); ok {
-			// Get the entity hash directly
 			hash := e.Hash()
-
 			parts := [][]byte{hash[:]}
 			if constA != nil {
 				parts = append(parts, constA)
 			}
 			return encoder.EncodePrefix(s.index, parts...)
 		}
-	case 1: // AEVT
-		// AEVT index order: A + E + V + Tx
-		// Position 0 = E bound, Position 1 = A bound
+	case EATV:
+		// EATV: [E][A][Tx][V] — same [E][A] prefix as EAVT for
+		// E-bound + A-constant batch scans.
+		if e, ok := value.(datalog.Identity); ok {
+			hash := e.Hash()
+			parts := [][]byte{hash[:]}
+			if constA != nil {
+				parts = append(parts, constA)
+			}
+			return encoder.EncodePrefix(s.index, parts...)
+		}
+	case AEVT:
+		// AEVT: [A][E][V][Tx]. Position 0 = E bound, Position 1 = A bound.
 		if s.position == 0 {
-			// Entity bound, attribute is constant
-			if e, ok := value.(datalog.Identity); ok {
+			if e, ok := value.(datalog.Identity); ok && constA != nil {
 				hash := e.Hash()
-				// AEVT: A is first, E is second
-				if constA != nil {
-					parts := [][]byte{constA, hash[:]}
-					return encoder.EncodePrefix(s.index, parts...)
-				}
+				return encoder.EncodePrefix(s.index, constA, hash[:])
 			}
 		} else if s.position == 1 {
-			// Attribute bound (A varies)
 			if kw, ok := value.(datalog.Keyword); ok {
 				var attr Attribute
 				copy(attr[:], kw.String())
-				parts := [][]byte{attr[:]}
-				return encoder.EncodePrefix(s.index, parts...)
+				return encoder.EncodePrefix(s.index, attr[:])
 			}
 		}
-	case 3: // VAET
-		// For VAET, the value is the first component
-		// Need to handle different value types appropriately
+	case AETV:
+		// AETV: [A][E][Tx][V] — A-primary CRDT index. Common for
+		// batch scans of A-bound + E-from-input patterns.
+		if s.position == 0 {
+			if e, ok := value.(datalog.Identity); ok && constA != nil {
+				hash := e.Hash()
+				return encoder.EncodePrefix(s.index, constA, hash[:])
+			}
+		} else if s.position == 1 {
+			if kw, ok := value.(datalog.Keyword); ok {
+				var attr Attribute
+				copy(attr[:], kw.String())
+				return encoder.EncodePrefix(s.index, attr[:])
+			}
+		}
+	case AVET:
+		// AVET: [A][type+V][E][Tx]. Useful prefixes:
+		//   position=1 (A varies):  [A] prefix from the binding keyword
+		//   position=2 (V varies):  [A][V] prefix; requires constA
+		//   position=0 (E varies):  [A] prefix only — E comes after V,
+		//                           so we cannot tighten without V.
+		//                           The scanner's filter phase narrows
+		//                           by E in memory.
+		switch s.position {
+		case 1:
+			if kw, ok := value.(datalog.Keyword); ok {
+				var attr Attribute
+				copy(attr[:], kw.String())
+				return encoder.EncodePrefix(s.index, attr[:])
+			}
+		case 2:
+			if constA != nil {
+				valueBytes := encodeValueForSearch(value, encoder)
+				return encoder.EncodePrefix(s.index, constA, valueBytes)
+			}
+		case 0:
+			if constA != nil {
+				return encoder.EncodePrefix(s.index, constA)
+			}
+		}
+	case VAET:
+		// VAET: [V][A][E][Tx] — the value is the first component.
 		var valueBytes []byte
 		switch v := value.(type) {
 		case datalog.Identity:
-			// References are stored as 20-byte hashes
 			hash := v.Hash()
 			valueBytes = hash[:]
 		case datalog.Keyword:
@@ -249,7 +305,6 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 		case []byte:
 			valueBytes = v
 		default:
-			// For other types, encode as bytes
 			valueBytes = []byte(fmt.Sprintf("%v", v))
 		}
 		parts := [][]byte{valueBytes}
@@ -257,18 +312,17 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 			parts = append(parts, constA)
 		}
 		return encoder.EncodePrefix(s.index, parts...)
-	case 4: // TAEV
-		// Tx must be encoded with bitwise-NOT for descending sort order
+	case TAEV:
+		// TAEV: [Tx][A][E][V] — Tx encoded with bitwise-NOT for
+		// descending sort.
 		if eid, ok := datalog.DerefElementID(value); ok {
 			txBytes := NewTxFromElementID(eid)
 			encTx := encoder.EncodeTxForPrefix(txBytes)
-			parts := [][]byte{encTx}
-			return encoder.EncodePrefix(s.index, parts...)
+			return encoder.EncodePrefix(s.index, encTx)
 		} else if tx, ok := value.(uint64); ok {
 			txBytes := NewTxFromUint(tx)
 			encTx := encoder.EncodeTxForPrefix(txBytes)
-			parts := [][]byte{encTx}
-			return encoder.EncodePrefix(s.index, parts...)
+			return encoder.EncodePrefix(s.index, encTx)
 		}
 	}
 	return nil

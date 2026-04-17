@@ -16,7 +16,11 @@ import (
 // Input: datoms for a single (E, A) pair, any order.
 // Output: current value (highest ElementID wins), max ElementID seen.
 //
-// Returns (nil, zero ElementID) if no datoms provided.
+// Returns (nil, zero ElementID) if no datoms provided. Returns
+// (nil, maxID) if the highest-Tx datom is a Remove — the attribute
+// has been tombstoned and does not currently exist. Mirrors the check
+// in BadgerMatcher.ResolveLWW (cache_resolver.go). Callers use maxID
+// for cache freshness tracking regardless of whether V is nil.
 func ResolveLWWFromDatoms(datoms []datalog.Datom) (any, datalog.ElementID) {
 	if len(datoms) == 0 {
 		return nil, datalog.ElementID{}
@@ -28,7 +32,11 @@ func ResolveLWWFromDatoms(datoms []datalog.Datom) (any, datalog.ElementID) {
 	for _, d := range datoms {
 		if d.Tx.Compare(maxID) > 0 {
 			maxID = d.Tx
-			currentValue = d.V
+			if d.Op == datalog.OpCRDTRemove {
+				currentValue = nil
+			} else {
+				currentValue = d.V
+			}
 		}
 	}
 

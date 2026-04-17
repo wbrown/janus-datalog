@@ -568,11 +568,26 @@ func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {
 		txBytes = key[offset : offset+txSize]
 
 	case EAVT, AEVT, AVET, VAET:
-		// These have Tx at the end: [...][Tx:16]
-		if len(key) < txSize {
+		// These indices have Tx near the tail, but the tail also
+		// carries Op (1 byte, always last) and optionally AfterRef
+		// (16 bytes, immediately before Op when Op.HasAfterRef()).
+		// Layout: [...][Tx:16][AfterRef:16?][Op:1]
+		//
+		// Previous implementation read key[len-16:], which returned
+		// the Op byte + last 15 bytes of Tx (no AfterRef), or all 16
+		// bytes of AfterRef (with AfterRef) — both wrong.
+		if len(key) < 1 {
 			return datalog.ElementID{}
 		}
-		txBytes = key[len(key)-txSize:]
+		opByte := key[len(key)-1]
+		tailAfterTx := 1 // Op byte
+		if datalog.CRDTOp(opByte).HasAfterRef() {
+			tailAfterTx += 16 // AfterRef block
+		}
+		if len(key) < tailAfterTx+txSize {
+			return datalog.ElementID{}
+		}
+		txBytes = key[len(key)-tailAfterTx-txSize : len(key)-tailAfterTx]
 
 	default:
 		return datalog.ElementID{}

@@ -863,7 +863,11 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 				continue
 			}
 
-			// First entry with valid Tx is the current value (LWW)
+			// First entry with valid Tx is the LWW winner. If it is a
+			// Remove tombstone, the attribute does not currently exist.
+			if datom.Op == datalog.OpCRDTRemove {
+				return nil, false
+			}
 			return datom.V, true
 		}
 		return nil, false
