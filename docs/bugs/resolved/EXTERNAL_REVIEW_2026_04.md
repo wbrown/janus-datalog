@@ -610,3 +610,219 @@ less drift surface exists.
 5. For any file with a "CANDIDATE FOR REMOVAL" or "DEPRECATED" comment: either remove or
    remove the comment. A comment saying "this is dead" is a worse outcome than removing the
    dead code, because the comment rot-guarantees the code.
+
+---
+
+# Resolution (2026-04-17)
+
+All 24 items closed on branch `fix/external-review-2026-04` across six commits:
+
+```
+03205b0 Delete key-mask filtering infrastructure (item 12)
+f56aef8 Fix 5 correctness bugs (items 1-5)
+cffa61b Address items 6-7 + streaming rewrite
+b8eb8c2 Cleanup items 8-14, 16-23
+2ca8f7d Replace bug5 test's encodeKeyword shim with production attribute encoding
+c791358 Delete RepeatOffsets from codec (item 15)
+```
+
+Net: roughly 1,500 lines removed, ~200 lines of tests and small fixes added. Full
+test suite green at every commit.
+
+## How each item was resolved
+
+### Correctness bugs (items 1–5)
+
+**1. `ResolveLWWFromDatoms` tombstone ignore.** Added the `Op == OpCRDTRemove`
+check that the sibling `BadgerMatcher.ResolveLWW` already had. Cache-populate path
+now correctly returns `(nil, tx)` when the latest (E,A) entry is a tombstone.
+Regression test `TestResolveLWWFromDatoms_TombstoneReturnsNil` added.
+
+**2. `LookupAttribute` storage fallback tombstone ignore.** Same fix pattern at the
+cache-miss path in `storage/matcher.go`. Regression test
+`TestLookupAttribute_StorageFallback_Tombstone` verifies tombstoned attributes are
+invisible via both cache and storage-fallback.
+
+**3. `extractElementIDFromKey` tail-Tx miscalculation.** The function read
+`key[len-16:]` assuming Tx was at the tail, but the Op-at-last migration moved the
+layout to `[...][Tx][Op]` (with an optional 16-byte AfterRef when
+`Op.HasAfterRef()`). Fixed by walking back from the end: 1 byte for Op, +16 if
+AfterRef is present, then 16 bytes for Tx. Regression tests
+`TestExtractElementIDFromKey_TailIndices` and `_WithAfterRef` cover both layouts.
+
+**4. `SimpleBatchScanner.buildKey` post-expansion enum.** The switch used raw
+int values (0=EAVT, 1=AEVT, …) from before EATV/AETV were inserted into the enum.
+Replaced with named `IndexType` constants, added AVET (position 0, 1, 2) and EATV
+branches. Also fixed a pre-existing unconditional `Keyword` pointer dereference
+that silently caused the AVET branch to return empty keys — the underlying bug the
+test revealed. Regression coverage in `TestSimpleBatchScanner_BuildKey_*`.
+
+**5. `MaterializeResult` false-positive "BUG DETECTED" panic.** Removed the debug
+panic that triggered on any relation where two tuples happened to be `==`-equal
+(common for relations with a few discrete values). Added
+`TestMaterializeResult_EqualTuplesDoNotPanic`.
+
+### Feature gap + self-rule violation (items 6–7)
+
+**6. EDN schema parser accepts `:db.cardinality/vector`.** Added the case and
+`:db/unique-elements true` parsing. During this work the parser was refactored
+from `switch kw.Value` string comparison to pointer-equality against pre-interned
+`datalog.NewKeyword(...)` constants, matching the idiom elsewhere in the codebase.
+
+**7. `SubqueryWorkerCount` global eliminated.** Deleted the package-level `var`
+from `executor/subquery.go` and routed the two read sites
+(`executeSubqueryParallelStreaming`, `executeSubqueryParallelMaterialized`)
+through `parentExec.maxSubqueryWorkers`, which was already populated by
+`NewExecutorWithOptions` and the `EnableParallelSubqueries` setter. Two tests in
+`parallel_subquery_test.go` that mutated the deleted global were removed; coverage
+now lives in `TestMaxSubqueryWorkers_ProducesConsistentResults` in
+`subquery_worker_count_test.go`.
+
+**Streaming rewrite of `applyBindingForm` (bundled with item 7).** Writing the
+item 7 test surfaced two pre-existing correctness bugs: `applyBindingForm` called
+`result.Size()` and `result.Get(i)`, both of which misbehave on streaming
+relations. On streaming input, `Size() == -1` silently skipped the
+datalog "empty pattern match" branch and produced a misleading error. Rewrote
+the function to iterate directly (`readAtMostTwo` for `TupleBinding` /
+`ScalarBinding`, a `prefixingIterator` wrapper that preserves streaming for
+`RelationBinding`). Consolidated the two exactly-one-tuple binding forms into a
+single routine (`applyExactlyOneBinding`) — they differ only by label and arity.
+Ten new tests in `apply_binding_form_streaming_test.go` cover all three forms
+across empty / single / multi / schema-mismatch cases.
+
+### Dead code (items 8–12)
+
+**8. `batch_iterator.go`.** 511 lines, zero callers outside the file. Contained the
+same pre-expansion enum bug as item 4 plus natural-order Tx encoding. Deleted.
+Review had the path wrong (`executor/`); actual path was `storage/`. One fallout:
+`bug5_vector_avet_test.go` used the file's `encodeKeyword` shim — a local copy
+moved into the test file under item 8, then replaced in follow-up commit
+`2ca8f7d` with `ToStorageDatom(datalog.Datom{A: kw}).A`, the production encoding
+path.
+
+**9. `context_minimal.go`.** 9-line `MinimalContext` TODO stub. `BaseContext`
+already provides the no-op behavior the TODO pointed at. Deleted.
+
+**10. Dead `MemoryPatternMatcher`.** The constructor returned an
+`*IndexedMemoryMatcher` while the named struct plus ~100 lines of methods had no
+callers anywhere. Deleted the struct and its methods; kept the shared
+pattern-matching routines below (`matchesDatomWithPattern`,
+`evaluateConstraints`, `bindPatternFromTuple`) that are still used by
+`indexed_memory_matcher.go` and `test_fixtures.go`.
+
+**11. `datom_relation.go` is test-only.** Renamed to `datom_relation_test.go`.
+`NewDatomIterator` / `NewDatomRelation` now exist only in the test build.
+
+**12. `key_mask_iterator.go` + `ScanKeysOnlyWithMask`.** Closed before this
+session in commit `03205b0` — ~425 lines of key-mask infrastructure deleted along
+with the `ScanKeysOnlyWithMask` method, the `unboundMaskIterator` wrapper, and
+the `TryConvertConstraintsToMasks` call site.
+
+### Cleanup (items 13–20)
+
+**13. Marked-for-removal tuple builders.** Both `query/tuple_builder.go`
+(TupleBuilder) and `query/tuple_builder_optimized.go` (OptimizedTupleBuilder)
+self-documented as "CANDIDATE FOR REMOVAL"; only users were a storage benchmark.
+Deleted both files plus the orphaned `storage/tuple_builder_bench_test.go`.
+`InternedTupleBuilder` remains as the sole production tuple builder.
+
+**14. `storage/utils.go` deleted.** Violated the project's no-utils naming rule.
+Its one function, `concatBytes`, moved into `key_encoder_base.go` — its natural
+home, since every key encoder in the package uses it.
+
+**15. `RepeatOffsets` (codec/lz77.go).** Wired into `EncodeSequences` /
+`DecodeSequences` on this branch with a v2 format bump and `supportedVersions`
+map for backward-compatible decode of v1 blobs, then benchmarked against the
+golden corpus. Four of five inputs regressed under v2:
+
+| Input           | v1 bytes | v2 bytes | Δ          |
+|-----------------|----------|----------|------------|
+| paragraph_500   | 114      | 116      | +2 (worse) |
+| prose_1kb       | ~164     | 179      | +15        |
+| edn_1kb         | 110      | 141      | +31        |
+| repetitive_1kb  | 81       | 78       | −3 (better)|
+| all_same_1kb    | 78       | 75       | −3         |
+
+The ring pays off at zstd-scale block sizes with diverse-but-cyclic match
+distances. For Datom-sized values (<=1KB typical, dominated by a single
+recurring match offset), v1's FSE already assigns the dominant code near-zero
+bits; v2's two-symbol distribution carries strictly more FSE table overhead.
+Reverted the wiring, deleted the algorithm plus its unit tests. Measured numbers
+are in commit `c791358`. Future re-evaluation at batched-compression scale would
+start from that commit's parent.
+
+**16. `isTerminal` tty detection.** Replaced the `fd == 1 || fd == 2` heuristic
+with `mattn/go-isatty` (already an indirect dep; promoted to direct). ANSI color
+output now correctly suppresses when stdout/stderr are redirected.
+
+**17. `AGGREGATE BUG` printf.** Unconditional `fmt.Printf` that fired to stdout on
+a missing-symbol edge case — removed. The surrounding `found` flag existed only to
+gate the printf and is now unused (also removed).
+
+**18. Planner `IndexType` enum stale.** Added `EATV` and `AETV` (the two indices
+the CRDT-Tx expansion missed in this copy), updated `indexName`, and added a
+comment clarifying that `selectIndexForMask` does not yet emit the new variants
+but the enum now tracks storage reality. Integer values remain independent of
+storage's enum, noted in the comment.
+
+**19. `hash_join_matcher.go` stale case-label comments.** Removed `// 3` and `//
+4` comments that were numerically wrong after the enum expansion. Kept the
+descriptive comment on `AETV` (clarifies the CRDT ordering).
+
+**20. `SplitPredicatesForPattern` phase mutation.** Now shallow-copies the phase
+before substituting predicates, so callers passing a shared `*planner.Phase` no
+longer have their `Predicates` slice stomped.
+
+### Doc drift (items 21–24)
+
+**21. `iterator_composition.go` stale comment.** Removed the "managed by
+ExecutorOptions but kept for backward compatibility" note — the package-level
+variables it referenced no longer exist.
+
+**22. `STREAMING_ARCHITECTURE_DECISION.md` deleted.** The "pragmatic compromise"
+the document advocated (keep streaming flags as read-only globals) was fully
+reversed; all three streaming flags and (as of item 7) `SubqueryWorkerCount`
+thread through `ExecutorOptions`. Reference in `docs/decisions/README.md`
+cleaned up.
+
+**23. README Datomic-parity figure.** Both `~70%` occurrences in `README.md`
+updated to `~80%` to match `DATOMIC_COMPATIBILITY.md`, `CLAUDE.md`, and
+`ARCHITECTURE.md`.
+
+**24. `key_mask_iterator.go` layout comments.** Moot — the whole file was
+deleted under item 12.
+
+## Discrepancies against the original review
+
+Three corrections worth recording:
+
+- **Item 8 path was wrong.** Review said `executor/batch_iterator.go`; file was at
+  `storage/batch_iterator.go`. Grep found it in seconds.
+- **Item 15 compression estimate was optimistic.** Review and the initial
+  plan-out on this branch estimated a 2–5% compression win from wiring the
+  repeat-offset ring. Actual result was a net regression on most inputs; see the
+  table above.
+- **`bug5_vector_avet_test.go` attribute-encoding comment was flipped.** When
+  moving the `encodeKeyword` shim under item 8, an accompanying comment claimed
+  production uses a 32-byte *hash* for the attribute. Production actually
+  zero-pads the keyword string into a 32-byte array via
+  `copy(a[:], d.A.String())`. Commit `2ca8f7d` corrected the shim to go through
+  `ToStorageDatom` and fixed the comment.
+
+## Mitigations still unaddressed
+
+The review's "Mitigations worth considering" section proposed five durable changes:
+
+1. **One source of truth for index layout.** Most of the drift-prone prose
+   comment sites were deleted along with the dead files, but a principled
+   replacement (runtime assertion or single authoritative comment block) was not
+   pursued. Still open.
+2. **Merge planner's local `IndexType` enum into storage's.** Not done — would
+   require breaking the storage → planner import cycle. The planner enum was
+   made consistent with storage (item 18); a full unification is a bigger
+   refactor.
+3. **`SubqueryWorkerCount` → `ExecutorOptions.MaxSubqueryWorkers`.** Done
+   (item 7).
+4. **Delete the half-dozen dead files/types.** Done (items 8–14).
+5. **"CANDIDATE FOR REMOVAL" / "DEPRECATED" comment audit.** Done for the
+   comments this review flagged; no broader sweep performed.

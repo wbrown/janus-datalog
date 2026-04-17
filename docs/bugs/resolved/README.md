@@ -101,6 +101,21 @@ Each bug report follows a consistent format:
 
 ---
 
+### [EXTERNAL_REVIEW_2026_04.md](./EXTERNAL_REVIEW_2026_04.md)
+**Fixed:** April 17, 2026
+
+**Problem:** A full-codebase external review identified 24 items: five correctness bugs (CRDT tombstone handling, Op-at-last key decoding, pre-expansion index enum use, false-positive debug panic), one feature gap (EDN parser rejecting `:db.cardinality/vector`), one self-rule violation (`SubqueryWorkerCount` global), and 17 cleanup/dead-code/doc-drift items.
+
+**Key Lessons:**
+1. **Globals survive refactors quietly.** Three of four streaming flags were threaded through `ExecutorOptions`; a fourth (`SubqueryWorkerCount`) was missed and drifted from the rule for months.
+2. **Dead code accumulates its own bugs.** `batch_iterator.go` (zero callers) had the same pre-expansion enum bug as its live counterpart, plus natural-order Tx encoding.
+3. **Optimizations need empirical validation before wiring.** The `RepeatOffsets` ring was expected to give 2–5% compression on structured data; measured result on the actual Datom-scale corpus was a net regression for most inputs. The algorithm had sat unwired for exactly this reason.
+4. **Version-gated format evolution is a design commitment.** A codec change that loses backward-read compatibility breaks every existing BadgerDB database at once.
+
+**Commits:** `03205b0`, `f56aef8`, `cffa61b`, `b8eb8c2`, `2ca8f7d`, `c791358`
+
+---
+
 ## Contributing
 
 When documenting a new resolved bug:
