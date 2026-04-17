@@ -321,6 +321,18 @@ func (w *KeyMaskFilterWrapper) Datom() (*datalog.Datom, error) {
 	return &w.currentDatom, nil
 }
 
+// Error surfaces any decode error from the most recent Next() call, as
+// well as propagating errors from the wrapped base iterator.
+func (w *KeyMaskFilterWrapper) Error() error {
+	if w.currentError != nil {
+		return w.currentError
+	}
+	if w.baseIter != nil {
+		return w.baseIter.Error()
+	}
+	return nil
+}
+
 func (w *KeyMaskFilterWrapper) Close() error {
 	return w.baseIter.Close()
 }
@@ -379,6 +391,11 @@ func (i *KeyMaskIterator) Datom() (*datalog.Datom, error) {
 	}
 	return &i.currentDatom, nil
 }
+
+// Error surfaces any decode error encountered during the most recent
+// Next() call so that callers who have abandoned iteration can still
+// detect partial failures.
+func (i *KeyMaskIterator) Error() error { return i.currentError }
 
 // Stats returns scanning statistics
 func (i *KeyMaskIterator) Stats() (keysScanned, keysMatched, datomsDecoded int) {

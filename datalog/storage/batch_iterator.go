@@ -378,6 +378,16 @@ func (it *batchScanIterator) Close() error {
 	return nil
 }
 
+// Error propagates any error from the wrapped storage iterator so that
+// callers observing the executor-level Iterator.Error() contract see
+// failures that originated deep inside the storage scan chain.
+func (it *batchScanIterator) Error() error {
+	if it.storageIter != nil {
+		return it.storageIter.Error()
+	}
+	return nil
+}
+
 // valueToString converts a value to string for map keys
 // For Identity types, we use the hash as the key to ensure proper comparison
 func valueToString(v interface{}) string {

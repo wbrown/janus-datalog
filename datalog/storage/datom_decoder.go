@@ -152,3 +152,9 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 	}
 	return &i.currentDatom, nil
 }
+
+// Error returns the latest decode error if any. Unlike Datom(), which
+// returns an error only when called on a failing current item, Error()
+// surfaces the error persistently so that callers who have already
+// abandoned iteration (Next() returned false) can still detect it.
+func (i *KeyOnlyIterator) Error() error { return i.currentError }

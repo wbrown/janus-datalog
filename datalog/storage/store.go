@@ -48,7 +48,25 @@ type Store interface {
 	Close() error
 }
 
-// Iterator provides sequential access to datoms
+// Iterator provides sequential access to datoms.
+//
+// Iteration pattern:
+//
+//	for iter.Next() {
+//	    d, err := iter.Datom()
+//	    if err != nil { handle }
+//	    // use d
+//	}
+//	if err := iter.Error(); err != nil {
+//	    // iteration was aborted by an internal failure
+//	}
+//
+// Error() must be checked after Next() returns false. A nil result
+// indicates normal exhaustion; non-nil indicates that iteration
+// aborted partway through (storage scan failure, sub-scan failure
+// inside a wrapping iterator, or a Datom() decode error that
+// couldn't be returned to the caller because Next() had already
+// indicated "no next item").
 type Iterator interface {
 	Next() bool
 	Datom() (*datalog.Datom, error)
@@ -60,6 +78,12 @@ type Iterator interface {
 	// (e.g., for cache freshness checks, CRDT version comparisons).
 	// Returns zero ElementID if iterator is not positioned on a valid entry.
 	ElementID() datalog.ElementID
+
+	// Error returns the first error encountered during iteration.
+	// Implementations that cannot error return nil. Wrapping iterators
+	// propagate from their inner iterator (return the first non-nil
+	// between the outer's own error and inner.Error()).
+	Error() error
 }
 
 // StoreTx represents a storage transaction

@@ -128,7 +128,13 @@ func (it *CRDTResolvingIterator) Next() bool {
 			isNewGroup = true
 		} else {
 			if !it.source.Next() {
-				// Source exhausted - emit final group if CardinalityVector
+				// Source exhausted - emit final group if CardinalityVector.
+				// Also capture any deferred error from the source so it
+				// surfaces via Error() rather than being lost when
+				// iteration terminates.
+				if srcErr := it.source.Error(); srcErr != nil && it.err == nil {
+					it.err = srcErr
+				}
 				it.sourceExhausted = true
 				if it.hasGroup && it.card == schema.CardinalityVector {
 					return it.emitRGAGroup()
@@ -139,7 +145,15 @@ func (it *CRDTResolvingIterator) Next() bool {
 			var err error
 			datom, err = it.source.Datom()
 			if err != nil {
-				continue
+				// Record the first Datom() decode error; abort iteration
+				// so the caller can observe via Error(). Silently
+				// continuing masks real storage corruption and (for
+				// unique walks) can cause supersession checks to run on
+				// zero-value data.
+				if it.err == nil {
+					it.err = err
+				}
+				return false
 			}
 
 			// Apply as-of filtering

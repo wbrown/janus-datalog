@@ -722,6 +722,13 @@ func (it *validatingVBoundIterator) Next() bool {
 				it.currentTuple = it.buildTuple(datom)
 				return true
 			}
+			// Inner iterator exhausted — propagate any deferred error
+			// so Error() surfaces failures (e.g., unique-walk sub-scan
+			// errors that caused the scan to abort rather than return
+			// a datom).
+			if srcErr := it.crdtIter.Error(); srcErr != nil && it.err == nil {
+				it.err = srcErr
+			}
 			it.crdtIter.Close()
 			it.crdtIter = nil
 			it.rawIter = nil
@@ -1815,7 +1822,11 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			continue // Yield first member
 		}
 
-		// No more entities
+		// No more entities — propagate any deferred error from the
+		// inner storage iterator so Error() surfaces deep failures.
+		if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+			it.err = srcErr
+		}
 		return false
 	}
 }
@@ -1948,6 +1959,10 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 		it.currentTuple = tuple
 		return true
 	}
+	// Propagate any deferred error from the inner storage iterator.
+	if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+		it.err = srcErr
+	}
 	return false
 }
 
@@ -2042,7 +2057,12 @@ func (it *cardinalityManyAVETValueIterator) Next() bool {
 
 	for {
 		if !it.storageIter.Next() {
-			// End of scan - emit final entity if it's a member
+			// End of scan - emit final entity if it's a member.
+			// Also surface any deferred error from the inner iterator
+			// so Error() reflects deep failures.
+			if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+				it.err = srcErr
+			}
 			if it.hasCurrentEntity && it.isCurrentEntityMember() {
 				it.buildTuple()
 				it.done = true
@@ -2170,13 +2190,17 @@ type cardinalityManyFindEntitiesWithValueIterator struct {
 	storageIter  Iterator
 	seenEntities map[[20]byte]bool
 	currentTuple executor.Tuple
+	err          error // First error from storage operations
 }
 
 func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
 		if err != nil {
-			continue
+			if it.err == nil {
+				it.err = err
+			}
+			return false
 		}
 
 		// Get entity bytes
@@ -2191,7 +2215,10 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
 		// Check if the specific value is in this entity's set
 		isMember, err := it.matcher.checkSetMembership(eBytes[:], it.aBytes[:], it.v)
 		if err != nil {
-			continue
+			if it.err == nil {
+				it.err = err
+			}
+			return false
 		}
 
 		if !isMember {
@@ -2219,6 +2246,10 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
 		it.currentTuple = tuple
 		return true
 	}
+	// Propagate any deferred error from the inner storage iterator.
+	if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+		it.err = srcErr
+	}
 	return false
 }
 
@@ -2232,6 +2263,8 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *cardinalityManyFindEntitiesWithValueIterator) Error() error { return it.err }
 
 // matchCardinalityManyFindEntitiesWithValue handles [?e :attr "value"] where E is unbound
 // Finds all entities where the specific value is in the set.
