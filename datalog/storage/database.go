@@ -2050,6 +2050,21 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
 		seenKeys := make(map[CacheKey]bool)
 
+		// Attributes written in this commit that are declared Unique.
+		// Writes to these attributes can silently supersede other entities'
+		// cached values under (A, V)-LWW fallback, so we invalidate all
+		// cached (E, A) entries for the attribute after per-key updates.
+		uniqueAttrsWritten := make(map[Attribute]bool)
+		sch := t.db.Schema()
+		checkUnique := func(a datalog.Keyword, aBytes Attribute) {
+			if sch == nil || !sch.HasSchema() {
+				return
+			}
+			if def := sch.GetAttribute(a); def != nil && def.Unique != "" {
+				uniqueAttrsWritten[aBytes] = true
+			}
+		}
+
 		// Process asserted datoms
 		for _, d := range t.datoms {
 			eBytes := Entity(d.E.Hash())
@@ -2063,6 +2078,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 				touched = append(touched, key)
 				t.db.cache.UpdateMaxVersion(key, d.Tx)
 			}
+			checkUnique(d.A, aBytes)
 		}
 
 		// Process retracted datoms
@@ -2078,10 +2094,18 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 				touched = append(touched, key)
 				t.db.cache.UpdateMaxVersion(key, d.Tx)
 			}
+			checkUnique(d.A, aBytes)
 		}
 
 		// Invalidate cache entries for all touched (E, A) pairs
 		t.db.cache.Invalidate(touched)
+
+		// Conservative unique-attr invalidation: for each unique attribute
+		// written in this commit, invalidate every cached entry for that
+		// attribute across all entities. See CRDT_UNIQUE_SEMANTICS.md D3.
+		for aBytes := range uniqueAttrsWritten {
+			t.db.cache.InvalidateAttribute(aBytes)
+		}
 	}
 
 	// Clean up

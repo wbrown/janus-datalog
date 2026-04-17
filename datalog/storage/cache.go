@@ -159,6 +159,36 @@ func (c *Cache) Invalidate(touched []CacheKey) {
 	// next IsAttributeFresh() call will fetch current max from store
 }
 
+// InvalidateAttribute removes all cached entries for the given attribute,
+// regardless of entity. Used when a write to a unique attribute may have
+// silently staled other entities' cached values under the walk-based
+// (A, V)-LWW resolution.
+//
+// Conservative strategy (CRDT_UNIQUE_SEMANTICS.md D3): one unique-attr
+// write invalidates every cached entry for that attribute. A future
+// optimization could maintain an (A, V) → [E] reverse index to invalidate
+// only the entities whose walks could actually change; the current
+// approach is simpler and correct.
+//
+// Also removes the per-(E, A) max-version entries for this attribute so
+// the next read recomputes freshness from storage. attrVersions (for
+// whole-attribute freshness) is not touched here — subsequent writes
+// on any E still advance the per-key max.
+func (c *Cache) InvalidateAttribute(a Attribute) {
+	c.entries.Range(func(k, _ any) bool {
+		if key, ok := k.(CacheKey); ok && key.A == a {
+			c.entries.Delete(key)
+		}
+		return true
+	})
+	c.maxVersions.Range(func(k, _ any) bool {
+		if key, ok := k.(CacheKey); ok && key.A == a {
+			c.maxVersions.Delete(key)
+		}
+		return true
+	})
+}
+
 // IsAttributeFresh checks if the entire attribute is fresh in cache
 // Used for A-bound queries like [?e :name "Bob"] to avoid checking every entity
 //
