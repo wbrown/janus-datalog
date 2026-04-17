@@ -226,19 +226,13 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 			}
 
 			// Predicate passed (or no predicate), find symbol index for this aggregate
-			found := false
 			for j, sym := range symbols {
 				if sym == agg.Arg {
 					if j < len(tuple) {
 						aggValues[i] = append(aggValues[i], tuple[j])
-						found = true
 					}
 					break
 				}
-			}
-			// DEBUG: Log when symbol not found
-			if !found && len(symbols) > 0 {
-				fmt.Printf("AGGREGATE BUG: Symbol %v not found in symbols %v for aggregate %d\n", agg.Arg, symbols, i)
 			}
 		}
 	}

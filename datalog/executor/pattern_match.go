@@ -26,114 +26,11 @@ type TimeRangeAware interface {
 	WithTimeRanges(ranges []TimeRange) TimeRangeAware
 }
 
-// MemoryPatternMatcher matches patterns against in-memory datoms
-// This is useful for testing and small datasets
-type MemoryPatternMatcher struct {
-	datoms []datalog.Datom
-}
-
-// NewMemoryPatternMatcher creates a pattern matcher for in-memory datoms
-// Uses IndexedMemoryMatcher for performance (5-5000× faster depending on query)
+// NewMemoryPatternMatcher creates a pattern matcher for in-memory datoms.
+// Returns an IndexedMemoryMatcher, which indexes datoms by (E, A, V) for
+// 5-5000× speedups over linear scans depending on query shape.
 func NewMemoryPatternMatcher(datoms []datalog.Datom) PatternMatcher {
 	return NewIndexedMemoryMatcher(datoms)
-}
-
-// Match implements PatternMatcher.Match
-func (m *MemoryPatternMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
-	// No constraints available via this interface - delegate to MatchWithConstraints
-	return m.MatchWithConstraints(pattern, bindings, nil)
-}
-
-// MatchWithConstraints implements PredicateAwareMatcher.MatchWithConstraints
-func (m *MemoryPatternMatcher) MatchWithConstraints(
-	pattern *query.DataPattern,
-	bindings Relations,
-	constraints []StorageConstraint,
-) (Relation, error) {
-	symbols := pattern.ExtractColumns()
-
-	// Extract options from bindings if available
-	var opts ExecutorOptions
-	if bindings != nil && len(bindings) > 0 {
-		opts = bindings[0].Options()
-	}
-
-	if bindings == nil || len(bindings) == 0 {
-		// No bindings - match all
-		datoms, err := m.matchWithoutBindings(pattern, constraints)
-		if err != nil {
-			return nil, err
-		}
-		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
-	}
-
-	// Find best binding relation
-	bindingRel := bindings.FindBestForPattern(pattern)
-	if bindingRel == nil || bindingRel.Size() == 0 {
-		// No relevant bindings
-		datoms, err := m.matchWithoutBindings(pattern, constraints)
-		if err != nil {
-			return nil, err
-		}
-		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
-	}
-
-	// Match with bindings
-	var allTuples []Tuple
-	boundTuples := bindingRel.Sorted()
-	//fmt.Printf("DEBUG: Matching with %d binding tuples\n", len(boundTuples))
-	for _, tuple := range boundTuples {
-		boundPattern := bindPatternFromTuple(pattern, tuple, bindingRel)
-		datoms, err := m.matchWithBoundPattern(boundPattern, constraints)
-		if err != nil {
-			return nil, err
-		}
-
-		// Convert datoms to tuples
-		for _, datom := range datoms {
-			if tuple := query.DatomToTuple(datom, pattern, symbols); tuple != nil {
-				allTuples = append(allTuples, tuple)
-			}
-		}
-	}
-
-	return NewMaterializedRelationWithOptions(symbols, allTuples, bindingRel.Options()), nil
-}
-
-// matchWithoutBindings returns datoms matching the pattern without bindings
-func (m *MemoryPatternMatcher) matchWithoutBindings(pattern *query.DataPattern, constraints []StorageConstraint) ([]datalog.Datom, error) {
-	var results []datalog.Datom
-
-	for _, datom := range m.datoms {
-		// Apply constraints first (early filtering)
-		if !evaluateConstraints(&datom, constraints) {
-			continue
-		}
-
-		if matchesDatomWithPattern(datom, pattern) {
-			results = append(results, datom)
-		}
-	}
-
-	return results, nil
-}
-
-// matchWithBoundPattern matches a pattern that has been bound with constants
-func (m *MemoryPatternMatcher) matchWithBoundPattern(pattern *query.DataPattern, constraints []StorageConstraint) ([]datalog.Datom, error) {
-	var results []datalog.Datom
-
-	for _, datom := range m.datoms {
-		// Apply constraints first (early filtering)
-		if !evaluateConstraints(&datom, constraints) {
-			continue
-		}
-
-		if matchesDatomWithPattern(datom, pattern) {
-			results = append(results, datom)
-		}
-	}
-
-	return results, nil
 }
 
 // evaluateConstraints checks if a datom passes all constraints

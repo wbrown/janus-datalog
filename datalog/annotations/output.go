@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-isatty"
 )
 
 // OutputFormatter formats events for human-readable display.
@@ -596,10 +597,10 @@ func ConsoleHandler() Handler {
 	}
 }
 
-// isTerminal checks if the file descriptor is a terminal.
-// This is a simplified version - in production you'd use a proper terminal detection library.
+// isTerminal reports whether fd refers to an interactive terminal.
+// Used to decide whether to emit ANSI color codes: we only want color
+// when the output is going to a tty, not when redirected to a file or
+// piped to another process.
 func isTerminal(fd uintptr) bool {
-	// This is platform-specific. For a real implementation,
-	// use golang.org/x/term or similar.
-	return fd == uintptr(1) || fd == uintptr(2) // stdout or stderr
+	return isatty.IsTerminal(fd)
 }

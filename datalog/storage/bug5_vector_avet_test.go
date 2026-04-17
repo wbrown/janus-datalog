@@ -17,6 +17,16 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
+// encodeKeyword renders a keyword as its raw string bytes. Used only
+// by the Bug #5 tests below, which build AVET index prefixes by hand
+// to verify lookup behavior. This is NOT the production attribute
+// encoding (which is a 32-byte hash via ToStorageDatom); these tests
+// rely on the truncation behavior of `copy(prefix[1:33], aBytes[:])`
+// when aBytes is shorter than 32 bytes.
+func encodeKeyword(kw datalog.Keyword) []byte {
+	return []byte(kw.String())
+}
+
 // TestVectorAVETLookup verifies that AVET index works for vector elements.
 //
 // Bug #5: Currently fails because V contains RGAElement bytes (TypeBytes),

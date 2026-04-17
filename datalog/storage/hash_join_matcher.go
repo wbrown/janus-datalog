@@ -310,7 +310,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 			}
 		}
 
-	case AEVT: // 2
+	case AEVT:
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
 				var attr Attribute
@@ -328,7 +328,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 			}
 		}
 
-	case AETV: // 3 - A-primary CRDT index (A → E → Tx↓ → V)
+	case AETV: // A-primary CRDT index (A → E → Tx↓ → V)
 		// Same prefix structure as AEVT: A first, then E
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
@@ -347,7 +347,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 			}
 		}
 
-	case AVET: // 4
+	case AVET:
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
 				var attr Attribute
@@ -371,7 +371,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 			}
 		}
 
-	case VAET: // 3
+	case VAET:
 		// VAET: Value-Attribute-Entity-Transaction
 		// Key format: [index][V][A][E][Op][Tx] (Op before Tx, not between V and A)
 		// Values in VAET are encoded with type prefix
@@ -394,7 +394,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 			}
 		}
 
-	case TAEV: // 4
+	case TAEV:
 		// TAEV: Transaction-Attribute-Entity-Value
 		// Tx must be encoded with bitwise-NOT for descending sort order
 		if tx != nil {

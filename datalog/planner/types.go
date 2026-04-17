@@ -8,15 +8,24 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// IndexType represents different index orderings (copied to avoid circular import)
+// IndexType names the index orderings the planner may report in its
+// explain output. Mirrors the storage-layer enum of the same name but
+// defined separately to avoid a planner → storage import cycle; the
+// integer values are independent of storage's and must not be
+// cross-cast. selectIndexForMask does not yet emit EATV or AETV — they
+// are included here so the set of reportable indices stays aligned
+// with what storage actually maintains (seven indices since the
+// CRDT-Tx migration).
 type IndexType uint8
 
 const (
 	EAVT IndexType = iota // Entity-Attribute-Value-Tx
+	EATV                  // Entity-Attribute-Tx-Value  (cardinality-one: first entry wins)
 	AEVT                  // Attribute-Entity-Value-Tx
+	AETV                  // Attribute-Entity-Tx-Value  (A-primary CRDT: first entry wins)
 	AVET                  // Attribute-Value-Entity-Tx
 	VAET                  // Value-Attribute-Entity-Tx
-	TAEV                  // Tx-Attribute-Entity-Value
+	TAEV                  // Tx-Attribute-Entity-Value  (clock recovery / audit log)
 )
 
 // QueryPlan represents an optimized execution plan for a query
@@ -518,8 +527,12 @@ func indexName(idx IndexType) string {
 	switch idx {
 	case EAVT:
 		return "EAVT"
+	case EATV:
+		return "EATV"
 	case AEVT:
 		return "AEVT"
+	case AETV:
+		return "AETV"
 	case AVET:
 		return "AVET"
 	case VAET:
