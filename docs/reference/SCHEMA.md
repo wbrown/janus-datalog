@@ -108,13 +108,15 @@ Uniqueness is enforced **at read time**, not at write time. See
 [CRDT_UNIQUE_SEMANTICS.md](./CRDT_UNIQUE_SEMANTICS.md) for the full
 design discussion.
 
-> **Note on `UniqueIdentity`**: currently it differs from `UniqueValue`
-> only in that it is eligible to be used as a lookup-ref (via
-> `db.LookupByUnique`). Datomic-style write-time upsert / entity
-> merging is explicitly **not** performed — see
-> [CRDT_UNIQUE_SEMANTICS.md](./CRDT_UNIQUE_SEMANTICS.md) D1 for the
-> rationale (split-entity convergence in concurrent-write CRDTs is
-> deferred to a future design round).
+> **Note on `UniqueIdentity`**: today, `LookupByUnique` accepts either
+> `UniqueValue` or `UniqueIdentity` — the Go API does not discriminate.
+> The distinction will matter for the future query-language lookup-ref
+> syntax (`[:user/email "x@y"]` used as an entity reference in query
+> patterns), which will require `UniqueIdentity`. Datomic-style
+> write-time upsert / entity merging is explicitly **not** performed
+> for either — see [CRDT_UNIQUE_SEMANTICS.md](./CRDT_UNIQUE_SEMANTICS.md)
+> D1 for the full rationale (split-entity convergence in
+> concurrent-write CRDTs is deferred to a future design round).
 
 ### `:db/doc`
 

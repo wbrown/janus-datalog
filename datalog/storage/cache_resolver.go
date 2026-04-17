@@ -38,11 +38,18 @@ func (m *BadgerMatcher) GetCardinality(a Attribute) schema.Cardinality {
 // the returned value is the entity's first non-superseded assertion,
 // which may fall back to an older entry if the latest has been claimed
 // by another entity.
+//
+// Exception: in history mode, the walk is bypassed entirely. History
+// mode exposes raw assertions without CRDT resolution; applying the
+// walk would produce fallback values that don't correspond to any
+// single raw datom. ResolveLWW in history mode returns the first-entry
+// (highest-Tx raw Set), matching the pre-redesign behavior for
+// non-unique attributes in the same mode.
 func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, error) {
 	// Unique-attribute walk path (applies only when schema declares
-	// the attribute unique; otherwise falls through to the simple
-	// first-entry path below).
-	if m.schema != nil {
+	// the attribute unique AND the matcher is not in history mode;
+	// otherwise falls through to the simple first-entry path below).
+	if m.schema != nil && !m.isHistoryMode() {
 		kw := decodeAttribute(a)
 		if kw != "" {
 			if def := m.schema.GetAttribute(datalog.NewKeyword(kw)); def != nil && def.Unique != "" {

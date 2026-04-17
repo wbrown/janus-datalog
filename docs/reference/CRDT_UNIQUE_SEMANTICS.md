@@ -364,9 +364,23 @@ None of this requires Position 2's semantics to change. The primitive (`resolveA
 Before this work, `UniqueIdentity` was declared in `schema/types.go` but never branched on — it behaved identically to `UniqueValue` (both fell through `validateUniqueness`'s single check). After this work:
 
 - Both produce the same read-time resolution: `(A, V)`-LWW winner selection for V-view, entity-view fallback.
-- `UniqueIdentity` additionally permits lookup-by-unique-value as an entity reference (via `LookupByUnique`, and eventually query-language lookup refs).
-- Neither performs write-time entity merging.
+- `LookupByUnique` accepts either — the Go API does not discriminate between `UniqueValue` and `UniqueIdentity` at call time. This is pragmatic ergonomics: natural-key lookup is the common need, and requiring `UniqueIdentity` specifically would force users to choose the stricter schema declaration just to call the Go API.
+- The distinction surfaces in the **future** query-language lookup-ref syntax: `[:user/email "x@y"]` as an entity reference in query patterns (not yet implemented) will require `UniqueIdentity` to be declared. This matches Datomic's model, where `UniqueIdentity` is the stronger declaration signaling "this value identifies an entity."
+- Neither performs write-time entity merging (deferred to Position 3 future work).
 - Schema API unchanged; applications using `UniqueIdentity` today get improved semantics with no code changes.
+
+**Summary of the `UniqueValue` / `UniqueIdentity` distinction today**:
+
+| Feature | `UniqueValue` | `UniqueIdentity` |
+|---|---|---|
+| `(A, V)`-LWW read resolution | Yes | Yes |
+| Entity-view walk fallback | Yes | Yes |
+| Cache invalidation on write | Yes | Yes |
+| `db.LookupByUnique` (Go API) | Accepted | Accepted |
+| Query-language lookup refs (future) | Not eligible | Eligible |
+| Write-time upsert / entity merging | No | No (deferred) |
+
+The only practical difference today is documentation intent: `UniqueIdentity` signals "this attribute is a natural key suitable for entity identification," which is information future features will consume.
 
 ### D2. Pull semantics for superseded entities: fallback value
 
