@@ -1,5 +1,46 @@
 # Key Mask Iterator Implementation Plan
 
+> **Epilogue (2026-04-17)**: this optimization was ultimately removed.
+> After the initial implementation was benchmarked slower than plain
+> key-only scanning, `ScanKeysOnlyWithMask` was demoted to a
+> pass-through to `NewKeyOnlyIterator`. The rest of the infrastructure
+> (`KeyMaskConstraint`, `KeyMaskIterator`, `KeyMaskFilterWrapper`,
+> `unboundMaskIterator`, `TryConvertConstraintsToMasks`) remained
+> compiled but dead — the mask was built, consulted only as a
+> branch-selector in `matchWithIteratorReuse`, then discarded at the
+> pass-through. The comment at `matcher_iterator_unbound.go:148`
+> acknowledged this explicitly ("`ScanKeysOnlyWithMask` doesn't
+> actually apply the mask").
+>
+> Additionally, stale key-layout comments in `key_mask_iterator.go`
+> (lines 31-84) documented the pre-Op-to-end key format. The 7-index
+> expansion (EAVT/EATV/AEVT/AETV/AVET/VAET/TAEV) also did not touch
+> this code. So even as a revival candidate, the scaffolding was
+> already incorrect for the current storage layout.
+>
+> The deletion was prompted by the external code review
+> ([`docs/bugs/EXTERNAL_REVIEW_2026_04.md`](../../bugs/EXTERNAL_REVIEW_2026_04.md) item #12),
+> which observed that dead-but-compiled parallel implementations
+> impose real maintenance cost: each storage-layer migration had to
+> remember to update this code too, and each migration skipped it.
+>
+> Removed:
+> - `datalog/storage/key_mask_iterator.go` (~425 lines)
+> - `datalog/storage/key_mask_test.go`
+> - `unboundMaskIterator` in `datalog/storage/matcher_iterator_unbound.go` (~100 lines)
+> - The `keyMask` dispatch branch in `matcher_relations.go` (~50 lines)
+> - `BadgerStore.ScanKeysOnlyWithMask`
+>
+> Net: ~600 lines deleted, behavior unchanged. If someone later wants
+> key-layout-aware filtering, it should be built fresh against the
+> current layout rather than revived from this dormant code.
+>
+> The rest of this document is preserved as the original design
+> proposal and its motivation, for anyone taking another run at the
+> same problem.
+
+---
+
 ## Problem Statement
 
 Current predicate pushdown with key mask filtering is **slower** than traditional decoding despite doing 100x less work. The benchmarks show:
