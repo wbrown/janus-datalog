@@ -1,6 +1,6 @@
 package codec
 
-// LZ77 match finder with hash-chain, lazy matching, and repeat offset tracking.
+// LZ77 match finder with hash-chain and lazy matching.
 // Produces Sequence blocks that the FSE entropy coder compresses.
 
 const (
@@ -222,72 +222,3 @@ func Reconstruct(sb *SequenceBlock) []byte {
 	return out
 }
 
-// ---- Repeat Offset Tracking ----
-
-// RepeatOffsets tracks the 3 most recently used match offsets.
-// When a match reuses a recent offset, it can be encoded as a small
-// code (1, 2, or 3) instead of the full offset value.
-type RepeatOffsets [3]int
-
-// NewRepeatOffsets returns initial repeat offsets (1, 4, 8 — standard defaults).
-func NewRepeatOffsets() RepeatOffsets {
-	return RepeatOffsets{1, 4, 8}
-}
-
-// Offset encoding:
-//   1 = repeat offset 0 (most recent)
-//   2 = repeat offset 1
-//   3 = repeat offset 2
-//   N > 3 = literal offset N-3
-
-// EncodeOffset converts a raw offset to a coded offset, updating the repeat state.
-func (ro *RepeatOffsets) EncodeOffset(offset int) int {
-	if offset == ro[0] {
-		// Most recent — no ring change
-		return 1
-	}
-	if offset == ro[1] {
-		// Second most recent — swap [0] and [1]
-		ro[0], ro[1] = ro[1], ro[0]
-		return 2
-	}
-	if offset == ro[2] {
-		// Third most recent — rotate to front: [C,A,B] from [A,B,C]
-		ro[2] = ro[1]
-		ro[1] = ro[0]
-		ro[0] = offset
-		return 3
-	}
-	// New offset — push to front, shift others
-	ro[2] = ro[1]
-	ro[1] = ro[0]
-	ro[0] = offset
-	return offset + 3
-}
-
-// DecodeOffset converts a coded offset back to a raw offset, updating the repeat state.
-func (ro *RepeatOffsets) DecodeOffset(code int) int {
-	if code == 1 {
-		// Most recent — no ring change
-		return ro[0]
-	}
-	if code == 2 {
-		// Swap [0] and [1]
-		ro[0], ro[1] = ro[1], ro[0]
-		return ro[0]
-	}
-	if code == 3 {
-		// Rotate from [A,B,C] to [C,A,B]
-		offset := ro[2]
-		ro[2] = ro[1]
-		ro[1] = ro[0]
-		ro[0] = offset
-		return offset
-	}
-	// Literal offset — push to front
-	offset := code - 3
-	ro[2] = ro[1]
-	ro[1] = ro[0]
-	ro[0] = offset
-	return offset
-}

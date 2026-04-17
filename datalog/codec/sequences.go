@@ -48,7 +48,6 @@ var matchLenTable = []struct {
 // offsetTable: offset codes (0-31)
 // Offsets use pure exponential coding: code N covers [2^N, 2^(N+1))
 // Code 0 is special: covers value 1 (offset of 1)
-// This is applied AFTER repeat offset encoding (so values are coded offsets, not raw)
 
 // EncodedStreams holds the three parallel streams produced from sequences,
 // ready for FSE compression.
