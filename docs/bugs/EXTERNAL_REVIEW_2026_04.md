@@ -1,13 +1,13 @@
 # External Code Review — Bug Report
 
 **Reviewer:** Claude (Opus 4.7), 1M context, reading code directly rather than relying on docs
-**Date:** 2026-04-17
-**Scope:** Most of `datalog/` root + `codec/` + `edn/` + `query/` + `parser/` + `annotations/` +
-`constraints/` + `schema/` + most of `storage/`. **Not** reviewed: most of `executor/`, `algebra/`,
-`planner/`, `qb/`, `reflect/`, `db/`, `cmd/`. Each item below includes file:line; please verify
-against current HEAD before acting.
+**Date:** 2026-04-17 (updated after finishing full codebase read)
+**Scope:** Full codebase read. All items include file:line; please verify against current HEAD
+before acting.
 
 ## Summary
+
+Correctness bugs first, then dead/duplicated code, then doc drift, then cleanup nits.
 
 | # | Severity | File | Issue |
 |---|----------|------|-------|
@@ -15,14 +15,26 @@ against current HEAD before acting.
 | 2 | Correctness | `storage/matcher.go:844-869` | `LookupAttribute` storage fallback does not check `Op` — cache-miss path returns tombstoned values |
 | 3 | Correctness | `storage/badger_store.go:571-584` | `extractElementIDFromKey` reads `key[len-16:]` but Op is now the last byte — garbled ElementIDs for EAVT/AEVT/AVET/VAET |
 | 4 | Correctness | `storage/simple_batch_scanner.go:200-273` | Switch uses pre-expansion enum values — when invoked with EATV/AETV/AVET it builds wrong-shaped keys |
-| 5 | Feature gap | `schema/parser.go:170-177` | EDN schema parser rejects `:db.cardinality/vector` |
-| 6 | Doc drift | `executor/iterator_composition.go:7-8` | Comment references package-level `Enable*` variables that do not exist |
-| 7 | Doc drift | `docs/STREAMING_ARCHITECTURE_DECISION.md` | Describes package globals as the implementation; code actually threads `ExecutorOptions` |
-| 8 | Doc drift | `README.md` | Claims both "~70%" and "~80%" Datomic parity in different places |
-| 9 | Cleanup | `query/tuple_builder.go:7-9`, `query/tuple_builder_optimized.go:8-10` | Both marked "UNUSED / CANDIDATE FOR REMOVAL" in their own comments |
-| 10 | Cleanup | `storage/utils.go` | 18-line file named `utils.go` — violates stated naming rule |
-| 11 | Cleanup | `codec/lz77.go:230-293` | `RepeatOffsets` defined but not wired into `FindMatches` or `encodeOffset` |
-| 12 | Cleanup | `annotations/output.go:599-605` | `isTerminal` just returns `fd == 1 \|\| fd == 2` — not actual tty detection |
+| 5 | Correctness | `executor/executor_utils.go:87-99` | `MaterializeResult` panics with "BUG DETECTED" on any relation where N tuples happen to be `==`-equal — false-positive heuristic in production path |
+| 6 | Feature gap | `schema/parser.go:170-177` | EDN schema parser rejects `:db.cardinality/vector` |
+| 7 | Self-rule violation | `executor/subquery.go:21, 173, 279` | `SubqueryWorkerCount` is a package-level mutable `var` — duplicates `ExecutorOptions.MaxSubqueryWorkers` and violates the "no global config state" rule in CLAUDE.md |
+| 8 | Dead code | `executor/batch_iterator.go` (501 lines) | `batchScanIterator` never instantiated anywhere; contains the same obsolete-enum bug as #4 plus natural-order Tx encoding (no bitwise NOT) |
+| 9 | Dead code | `executor/context_minimal.go` (9 lines) | `MinimalContext` with TODO "Replace with full implementation" — never referenced |
+| 10 | Dead code | `executor/pattern_match.go:29-137` (~110 lines) | `MemoryPatternMatcher` struct + methods — `NewMemoryPatternMatcher` returns `NewIndexedMemoryMatcher` (line 38), struct literal never used anywhere |
+| 11 | Dead code | `executor/datom_relation.go` | `NewDatomIterator`/`NewDatomRelation` only referenced from `datom_test.go` |
+| 12 | Dead code | `storage/key_mask_iterator.go` + `storage/badger_store.go:410-413` | `ScanKeysOnlyWithMask` marked deprecated, now just returns plain `ScanKeysOnly`; ~400 lines of key-mask infrastructure still compiled with stale key-layout offsets |
+| 13 | Cleanup | `query/tuple_builder.go:7-9`, `query/tuple_builder_optimized.go:8-10` | Both marked "UNUSED / CANDIDATE FOR REMOVAL" in their own comments |
+| 14 | Cleanup | `storage/utils.go` | 18-line file named `utils.go` — violates stated naming rule |
+| 15 | Cleanup | `codec/lz77.go:225-293` | `RepeatOffsets` defined but not wired into `FindMatches` or `encodeOffset` |
+| 16 | Cleanup | `annotations/output.go:599-605` | `isTerminal` just returns `fd == 1 \|\| fd == 2` — not actual tty detection |
+| 17 | Cleanup | `aggregation.go:241` | `fmt.Printf("AGGREGATE BUG: ...")` fires to stdout unconditionally on an edge case, outside any debug gate |
+| 18 | Cleanup | `planner/types.go:14-20` | Planner has its own 5-index `IndexType` enum that doesn't include `EATV`/`AETV` — stale copy, used only in explain output |
+| 19 | Cleanup | `storage/hash_join_matcher.go:374, 397` | Case-label comments say `// 3`/`// 4` for VAET/TAEV; actual enum values are 5/6. Code uses named constants so this is cosmetic, but the comments predate the EATV/AETV expansion |
+| 20 | Cleanup | `executor/predicate_classifier.go:330` | `SplitPredicatesForPattern` mutates `phase.Predicates` via `classifier.phase.Predicates = predicates` — concerning if phase is shared |
+| 21 | Doc drift | `executor/iterator_composition.go:7-8` | Comment references package-level `Enable*` variables that do not exist |
+| 22 | Doc drift | `docs/STREAMING_ARCHITECTURE_DECISION.md` | Describes package globals as the current implementation; they were removed and replaced by `ExecutorOptions` threading |
+| 23 | Doc drift | `README.md` | Claims both "~70%" and "~80%" Datomic parity in different places |
+| 24 | Doc drift | `storage/key_mask_iterator.go:31-84` | Key-layout comments `[1 prefix][20 entity][32 attr][value][20 tx]` predate the Op-at-last migration; no longer accurate |
 
 ---
 
@@ -215,7 +227,193 @@ parsing `:db/unique-elements` (or equivalent) for the `UniqueElements` flag.
 
 ---
 
-## 6 & 7. Stale streaming-architecture docs
+## 5. `MaterializeResult` production panic on identical tuples
+
+**File:** `datalog/executor/executor_utils.go:82-105`
+
+```go
+func MaterializeResult(rel Relation, symbols []query.Symbol) Relation {
+    var tuples []Tuple
+    collectTuplesInto(&tuples, rel)
+
+    // DEBUG: Check for tuple copying bug
+    if len(tuples) > 1 {
+        first := tuples[0]
+        last := tuples[len(tuples)-1]
+        allSame := true
+        for i := range first {
+            if first[i] != last[i] {
+                allSame = false
+                break
+            }
+        }
+        if allSame {
+            panic(fmt.Sprintf("BUG DETECTED in MaterializeResult: All %d tuples identical! ...", ...))
+        }
+    }
+    ...
+}
+```
+
+This is a runtime debug check that panics in production if any two tuples (first and last) happen
+to have interface-equal elements. The comment says "tuple copying bug" — suggesting this caught a
+real iterator-workspace-reuse bug at some point. If that bug has been fixed (which the interning
+invariants, `BufferedIterator`, and `RequiresCopy()` plumbing suggest), this is now a
+false-positive waiting to fire on any legitimate query that returns interned-pointer tuples that
+happen to match.
+
+**Suggested fix:** remove the check or gate it behind a test-only build tag. If it's still valuable
+as a debug assert, make it a logged warning rather than a panic.
+
+---
+
+## 6. EDN schema parser rejects `:db.cardinality/vector`
+
+(Was #5 in initial report — moved for numbering consistency with the table above.)
+
+**File:** `datalog/schema/parser.go:170-177` — unchanged, see previous section on Vector support.
+
+---
+
+## 7. `SubqueryWorkerCount` is a mutable package-level global
+
+**File:** `datalog/executor/subquery.go:19-21`
+
+```go
+// SubqueryWorkerCount is the number of goroutines to use for parallel subquery execution
+// Default is runtime.NumCPU() for optimal CPU utilization
+var SubqueryWorkerCount = runtime.NumCPU()
+```
+
+Read at `subquery.go:173` and `279`, mutated by tests at
+`parallel_subquery_test.go:201, 207`:
+
+```go
+oldCount := SubqueryWorkerCount
+defer func() { SubqueryWorkerCount = oldCount }()
+SubqueryWorkerCount = count
+```
+
+This duplicates `ExecutorOptions.MaxSubqueryWorkers` (which exists on the struct at
+`options.go:19`) and directly violates the "No Global Configuration State" rule in CLAUDE.md
+(lines 351-358). It also makes concurrent tests of subquery parallelism race with each other.
+
+**Suggested fix:** delete `SubqueryWorkerCount`. Pass workers via `ExecutorOptions.MaxSubqueryWorkers`,
+which is already propagated correctly elsewhere (`executor.go:73`). Update the two read sites and
+the test.
+
+**Author's note:** earlier in this review I incorrectly claimed all streaming-related globals had
+been refactored away. I only checked `EnableIteratorComposition`/`EnableTrueStreaming`/`EnableSymmetricHashJoin`
+and assumed the pattern was universal. This one survived the refactor and is real.
+
+---
+
+## 8. `batchScanIterator` — 500 lines of dead code with the same enum bug
+
+**File:** `datalog/executor/batch_iterator.go` (entire file, 501 lines)
+
+`newBatchScanIterator` and `batchScanIterator` type are referenced only within the file itself
+(verified by grep — no other callers in production or tests). The file contains:
+
+1. The **same obsolete-enum bug** as `simpleBatchScanner` (case 0=EAVT, 1=AEVT, 3=VAET, 4=TAEV) in
+   `calculateKey` (lines 200-228).
+2. **Natural-order Tx encoding** in `encodeUint64` (line 494) — no bitwise NOT, so Tx scans would
+   iterate in wrong direction.
+3. A declared-but-unused `tupleBuilder *query.OptimizedTupleBuilder` field (line 40).
+4. Uses the old `query.DatomToTuple` function (329) instead of the production `InternedTupleBuilder`.
+
+**Suggested fix:** delete the file. If any of the sub-algorithms are valuable (range grouping logic?),
+lift them into `simple_batch_scanner.go` with proper enum constants and correct Tx encoding.
+
+---
+
+## 9. `MinimalContext` — 9-line TODO stub
+
+**File:** `datalog/executor/context_minimal.go`
+
+```go
+// MinimalContext provides a no-op implementation for immediate compilation fix.
+// TODO: Replace with full implementation from context.go
+type MinimalContext struct{}
+
+func NewMinimalContext() *MinimalContext {
+    return &MinimalContext{}
+}
+```
+
+Grep confirms no callers anywhere. `BaseContext` in `context.go` already provides the no-op
+implementation the TODO is pointing to.
+
+**Suggested fix:** delete the file.
+
+---
+
+## 10. `MemoryPatternMatcher` struct is dead — constructor swaps to a different type
+
+**File:** `datalog/executor/pattern_match.go:29-137`
+
+```go
+type MemoryPatternMatcher struct {
+    datoms []datalog.Datom
+}
+
+func NewMemoryPatternMatcher(datoms []datalog.Datom) PatternMatcher {
+    return NewIndexedMemoryMatcher(datoms)   // ← returns a DIFFERENT type
+}
+
+func (m *MemoryPatternMatcher) Match(...) { ... }   // ← never called
+func (m *MemoryPatternMatcher) MatchWithConstraints(...) { ... }   // ← never called
+```
+
+The constructor returns `*IndexedMemoryMatcher`, not `*MemoryPatternMatcher`. The struct and its
+methods (~100 lines, lines 42-137) are unreachable from any caller. Grep for
+`&MemoryPatternMatcher{` or `MemoryPatternMatcher{` returns no matches.
+
+The bottom half of the file (from `matchesDatomWithPattern` at line 175 down) contains helpers
+that *are* still used elsewhere in the package, so don't delete the whole file.
+
+**Suggested fix:** delete the struct definition and its methods (lines 29-137). Keep the helpers
+below.
+
+---
+
+## 11. `NewDatomIterator`/`NewDatomRelation` only used in tests
+
+**File:** `datalog/executor/datom_relation.go`
+
+Grep confirms all non-test callers are absent. Used only by `datom_test.go`. 125 lines.
+
+**Suggested fix:** move the file to `_test.go` or delete if tests can use `NewMaterializedRelation`
+directly.
+
+---
+
+## 12. `ScanKeysOnlyWithMask` is disabled but key-mask infrastructure persists
+
+**File:** `datalog/storage/badger_store.go:408-413`
+
+```go
+// ScanKeysOnlyWithMask - DEPRECATED: Key mask filtering was benchmarked slower
+// Just use regular key-only scanning with filtering in the matcher
+func (s *BadgerStore) ScanKeysOnlyWithMask(...) (Iterator, error) {
+    return NewKeyOnlyIterator(s, index, start, end)
+}
+```
+
+The ~425-line `key_mask_iterator.go` file still exists and is called from
+`matcher_relations.go:461`, `unbound_mask_iterator` still exists and is instantiated. Since
+`ScanKeysOnlyWithMask` now returns a plain iterator, `unboundMaskIterator` wrapping it does
+nothing useful on the mask side — but it still runs the mask construction code, which has
+**outdated key-layout comments** (key_mask_iterator.go lines 31-84) that predate the Op-at-last
+migration.
+
+**Suggested fix:** delete `key_mask_iterator.go`, `unboundMaskIterator` (matcher_iterator_unbound.go:92+),
+the `TryConvertConstraintsToMasks` call site (matcher_relations.go:421-430), and the
+`ScanKeysOnlyWithMask` method. All dead weight.
+
+---
+
+## 21 & 22. Stale streaming-architecture docs
 
 **`executor/iterator_composition.go:7-8`:**
 
@@ -224,22 +422,18 @@ parsing `:db/unique-elements` (or equivalent) for the `UniqueElements` flag.
 // Use ExecutorOptions instead of these global variables
 ```
 
-No such variables exist in the file or anywhere in `executor/`. Verified by grep: every occurrence
-of `EnableIteratorComposition`/`EnableTrueStreaming`/`EnableSymmetricHashJoin` is either a field of
-an `ExecutorOptions{}` literal or a field access on an `opts` parameter.
+No such variables exist in `iterator_composition.go`. Three streaming flags (`EnableIteratorComposition`,
+`EnableTrueStreaming`, `EnableSymmetricHashJoin`) were fully moved to `ExecutorOptions`. But — see
+item 7 above — `SubqueryWorkerCount` is still a global, so the rule isn't universally enforced.
 
 **`docs/STREAMING_ARCHITECTURE_DECISION.md`:** the body describes a "pragmatic compromise" of
-keeping package-level globals `EnableIteratorComposition = true`, etc., as "READ-ONLY after
-initialization." This is no longer the implementation; options are properly threaded via
-`ExecutorOptions`.
+keeping package-level globals. For the three streaming flags, this no longer applies; the
+refactor was completed. For `SubqueryWorkerCount`, the compromise is de-facto still in place,
+just not documented.
 
 **Suggested fix:** delete the stale comment in `iterator_composition.go`. Either delete
-`STREAMING_ARCHITECTURE_DECISION.md` entirely or move it to `docs/archive/` with a header noting
-it's historical.
-
-**Meta:** CLAUDE.md explicitly forbids "backwards-compatibility shims" and the phrase that was in
-that comment. A future Claude or reader seeing the comment would reasonably assume globals still
-existed somewhere — this is exactly the kind of artifact the rule in CLAUDE.md exists to prevent.
+`STREAMING_ARCHITECTURE_DECISION.md` entirely or rewrite it to reflect current reality (three
+flags threaded through options, `SubqueryWorkerCount` still a global).
 
 ---
 
@@ -308,27 +502,99 @@ The comment already admits this is "simplified."
 
 ---
 
+## Items 13-20 (cleanup nits)
+
+Covered in the summary table above and earlier sections 13-20. Brief recap:
+
+- **13** Two tuple builders marked "CANDIDATE FOR REMOVAL" in their own comments
+  (`query/tuple_builder.go:7-9`, `query/tuple_builder_optimized.go:8-10`). Either delete or
+  move to `_test.go`.
+- **14** `storage/utils.go` — 18 lines, violates naming rule. Move `concatBytes` into
+  `key_encoder_base.go`.
+- **15** `RepeatOffsets` in `codec/lz77.go:225-293` defined but not wired; genuine missed
+  compression opportunity or dead code.
+- **16** `isTerminal` in `annotations/output.go:599-605` is just `fd == 1 || fd == 2`; will
+  emit ANSI codes into redirected files.
+- **17** `aggregation.go:241` has unconditional `fmt.Printf("AGGREGATE BUG: ...")` outside any
+  debug flag — pollutes production logs.
+- **18** `planner/types.go:14-20` defines its own `IndexType` enum with only 5 values (missing
+  `EATV`/`AETV`). Used only in explain output so mostly benign, but tells a misleading story.
+- **19** `hash_join_matcher.go:374, 397` have case-label comments (`// 3`, `// 4`) that are
+  numerically wrong after the EATV/AETV expansion. Code itself is correct (uses named
+  constants).
+- **20** `executor/predicate_classifier.go:330` — `SplitPredicatesForPattern` mutates its
+  `phase` argument via `classifier.phase.Predicates = predicates`. Concerning under shared
+  phase access.
+
+---
+
 ## Meta-observations
 
-These bugs cluster into two recognizable patterns:
+These bugs cluster into three recognizable patterns:
 
-**Scope-audit omission.** When a migration landed (Op-to-end, 7-index expansion, globals-to-options)
-the "obvious" sites were updated but parallel code paths were not. `extractElementIDFromKey`,
-`simpleBatchScanner.buildKey`, and both tombstone gaps all share this shape: a rule changed, one
-implementation was updated, siblings were left stale. This is exactly the pattern CLAUDE.md
-documents for the original tombstone bug; it's now also true of its fix.
+**1. Scope-audit omission after a migration.** When a migration landed (Op-to-end, 7-index
+expansion, globals-to-options) the "obvious" sites were updated but parallel code paths were
+not:
 
-**Doc drift under refactoring.** `STREAMING_ARCHITECTURE_DECISION.md`, the comment in
-`iterator_composition.go`, and the README percentage discrepancy all describe intermediate states
-that got cleaned up in code but not in prose.
+- `extractElementIDFromKey` missed the Op-to-end migration
+- `simpleBatchScanner.buildKey` missed the 7-index expansion
+- `batch_iterator.go` missed both
+- Both tombstone gaps (`ResolveLWWFromDatoms`, `LookupAttribute` fallback) missed the Op
+  check
+- `SubqueryWorkerCount` missed the globals-to-options migration
+- `planner/types.go` has a stale copy of the old 5-index enum
+- `key_mask_iterator.go` offset comments describe the old key layout
 
-The two patterns interact: prior docs that describe "fixed" states cause future readers (and future
-AI agents) to confidently state things that are no longer true. I did this myself earlier in the
-review before directly reading the code.
+One fix, many uncaught siblings. This is exactly the pattern CLAUDE.md documents for the
+original tombstone bug; it's now also true of its fix, and of every migration in the history.
 
-A partial mitigation visible in the codebase: invariants enforced by the compiler or by panics
-(interning checks, `_ = (*Schema)(nil)` compile-time assertions, the Op-always-last convention
-with panic on unknown index) stay accurate because they break the build when violated. Invariants
-written only in prose drift. Moving as much documentation as possible into `const`, `var _ Interface
-= (*Impl)(nil)`, tests named after the invariant, or runtime assertions would narrow the surface
-where drift can hide.
+**2. Unreachable code accumulating around migrations.** Multiple parallel implementations
+persist after being replaced:
+
+- `TupleBuilder` and `OptimizedTupleBuilder` (marked CANDIDATE FOR REMOVAL, still compiled)
+- `batchScanIterator` (501 lines, zero callers)
+- `MemoryPatternMatcher` struct (~100 lines, constructor swaps to `IndexedMemoryMatcher`)
+- `MinimalContext` (TODO stub)
+- `NewDatomIterator` (test-only)
+- `ScanKeysOnlyWithMask` + `unboundMaskIterator` + `KeyMaskIterator` (disabled but
+  instantiated)
+
+This is real maintenance cost: the scope-audit omissions above happened in part because the
+author (or an AI agent) had to remember to update N parallel implementations instead of 1.
+
+**3. Doc drift under refactoring.** `STREAMING_ARCHITECTURE_DECISION.md`, the comment in
+`iterator_composition.go`, the planner's `IndexType` enum, and the README percentage
+discrepancy all describe intermediate states that got cleaned up in code but not in prose.
+
+These interact: prior docs that describe "fixed" states cause future readers (and future AI
+agents) to confidently state things that are no longer true. I did this myself earlier in the
+review before directly reading the code — specifically, I claimed all streaming globals had
+been removed, which is true for three of them and false for `SubqueryWorkerCount`.
+
+---
+
+## Mitigations worth considering
+
+**Compiler-enforced invariants stay accurate.** The codebase already does this well in
+places: the interning `panic` on pointer-equality-but-value-equality violations, the
+`_ = (*Schema)(nil)` compile-time interface assertions, the panic on unknown index in the
+key encoders. These never drift because they break the build when violated.
+
+Prose invariants drift silently. Every doc file that describes current state is a liability;
+every comment block next to code is a liability. The fewer invariants encoded in prose, the
+less drift surface exists.
+
+**Concrete suggestions:**
+
+1. Replace stale index-layout comments in `key_mask_iterator.go` with a runtime `panic(...)`
+   or `// LAYOUT: ...` block next to the constants in `key_encoder_binary.go` — one source of
+   truth.
+2. Kill the planner's local `IndexType` enum. Import storage's. One enum, one story.
+3. Move `SubqueryWorkerCount` into `ExecutorOptions.MaxSubqueryWorkers`. Close the loop the
+   streaming refactor started.
+4. Delete the half-dozen dead-or-duplicated files/types. They're not paying for themselves
+   in testing or documentation value; they're paying *against* themselves in scope-audit
+   cost.
+5. For any file with a "CANDIDATE FOR REMOVAL" or "DEPRECATED" comment: either remove or
+   remove the comment. A comment saying "this is dead" is a worse outcome than removing the
+   dead code, because the comment rot-guarantees the code.
