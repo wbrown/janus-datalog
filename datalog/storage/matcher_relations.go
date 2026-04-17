@@ -416,98 +416,40 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 		})
 	}
 
-	// Always try to convert constraints to key masks first for efficient filtering
-	// The TryConvertConstraintsToMasks function will safely return nil if it can't optimize
-	var keyMask *KeyMaskConstraint
-	if len(constraints) > 0 {
-		// Try for any index, not just AEVT - the function will check compatibility
-		keyMask = TryConvertConstraintsToMasks(constraints, index)
-
-		// If we got a mask but don't have the required bounds, clear it
-		if keyMask != nil && keyMask.IndexType == AEVT && a == nil {
-			keyMask = nil // Can't use AEVT mask without attribute bound
-		}
+	// Streaming iterator: key-only scan wrapped with CRDT resolution in
+	// current/as-of mode, or raw scan in history mode.
+	regularIter := &unboundIterator{
+		matcher:         m,
+		index:           index,
+		start:           start,
+		end:             end,
+		pattern:         pattern,
+		symbols:         symbols,
+		e:               e,
+		a:               a,
+		v:               v,
+		tx:              tx,
+		constraints:     constraints,
+		workspace:       make(executor.Tuple, len(symbols)),
+		tupleBuilder:    m.getTupleBuilder(pattern, symbols),
+		returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
 	}
 
-	// Create streaming iterator
-	var iter interface {
-		Next() bool
-		Tuple() executor.Tuple
-		Close() error
-		Error() error
+	rawStorageIter, err := m.store.ScanKeysOnly(index, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
 	}
 
-	if keyMask != nil {
-		// Use key mask iterator for efficient filtering
-		maskIter := &unboundMaskIterator{
-			matcher:         m,
-			index:           index,
-			start:           start,
-			end:             end,
-			pattern:         pattern,
-			symbols:         symbols,
-			e:               e,
-			a:               a,
-			v:               v,
-			tx:              tx,
-			keyMask:         keyMask,
-			constraints:     constraints, // Still need for non-mask constraints
-			workspace:       make(executor.Tuple, len(symbols)),
-			tupleBuilder:    m.getTupleBuilder(pattern, symbols),
-			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
-		}
-
-		// Initialize the key mask iterator using the optimized method
-		rawStorageIter, err := m.store.ScanKeysOnlyWithMask(index, start, end, keyMask)
-		if err != nil {
-			return nil, fmt.Errorf("key mask scan failed: %w", err)
-		}
-
-		// Wrap with CRDT resolution unless in history mode (raw datoms)
-		if m.isHistoryMode() {
-			maskIter.storageIter = rawStorageIter
-		} else {
-			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m)
-		}
-		iter = maskIter
+	if m.isHistoryMode() {
+		regularIter.storageIter = rawStorageIter
 	} else {
-		// Use regular iterator
-		regularIter := &unboundIterator{
-			matcher:         m,
-			index:           index,
-			start:           start,
-			end:             end,
-			pattern:         pattern,
-			symbols:         symbols,
-			e:               e,
-			a:               a,
-			v:               v,
-			tx:              tx,
-			constraints:     constraints,
-			workspace:       make(executor.Tuple, len(symbols)),
-			tupleBuilder:    m.getTupleBuilder(pattern, symbols),
-			returnOnlyFirst: returnOnlyFirst, // CRDT cardinality-one support
-		}
-
-		// Initialize the storage iterator using key-only scanning
-		rawStorageIter, err := m.store.ScanKeysOnly(index, start, end)
-		if err != nil {
-			return nil, fmt.Errorf("scan failed: %w", err)
-		}
-
-		// Wrap with CRDT resolution unless in history mode (raw datoms)
-		if m.isHistoryMode() {
-			regularIter.storageIter = rawStorageIter
-		} else {
-			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m)
-		}
-		iter = regularIter
+		regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m)
 	}
 
 	// Return streaming relation with lazy materialization
 	// The iterator will be consumed and cached on first call to Iterator(),
 	// eliminating the 6.3 GB of upfront allocations while maintaining correctness
-	rel := executor.NewStreamingRelationWithOptions(symbols, iter, m.options)
+	rel := executor.NewStreamingRelationWithOptions(symbols, regularIter, m.options)
 	return rel, nil
 }
 

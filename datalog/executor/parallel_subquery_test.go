@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog/planner"
@@ -9,28 +8,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 )
-
-// TestParallelSubqueryConfiguration tests configuration flags
-// SKIPPED: Configuration is now passed via ExecutorOptions, not globals
-func Skip_TestParallelSubqueryConfiguration(t *testing.T) {
-	// Test default values
-	// NOTE: No longer testing globals since they were removed
-	/*
-		if !EnableParallelSubqueries {
-			t.Error("EnableParallelSubqueries should default to true")
-		}
-	*/
-
-	// These still exist as package-level variables for default config
-	if SubqueryWorkerCount != runtime.NumCPU() {
-		t.Errorf("SubqueryWorkerCount should default to runtime.NumCPU()=%d, got %d",
-			runtime.NumCPU(), SubqueryWorkerCount)
-	}
-
-	if ParallelSubqueryThreshold != 10 {
-		t.Errorf("ParallelSubqueryThreshold should be 10, got %d", ParallelSubqueryThreshold)
-	}
-}
 
 // TestCombineSubqueryResults tests result combination logic
 func TestCombineSubqueryResults(t *testing.T) {
@@ -196,33 +173,8 @@ func TestExecuteSubqueryThresholdLogic(t *testing.T) {
 	}
 }
 
-// TestParallelSubqueryWorkerCount tests worker count configuration
-func TestParallelSubqueryWorkerCount(t *testing.T) {
-	oldCount := SubqueryWorkerCount
-	defer func() { SubqueryWorkerCount = oldCount }()
-
-	testCounts := []int{0, 1, 2, 4, 8, 16}
-
-	for _, count := range testCounts {
-		SubqueryWorkerCount = count
-
-		// Test normalization logic
-		numWorkers := SubqueryWorkerCount
-		if numWorkers <= 0 {
-			numWorkers = runtime.NumCPU()
-		}
-
-		if count <= 0 {
-			if numWorkers != runtime.NumCPU() {
-				t.Errorf("Worker count %d should normalize to NumCPU()=%d, got %d",
-					count, runtime.NumCPU(), numWorkers)
-			}
-		} else {
-			if numWorkers != count {
-				t.Errorf("Worker count should be %d, got %d", count, numWorkers)
-			}
-		}
-	}
-}
+// Worker count propagation through ExecutorOptions.MaxSubqueryWorkers
+// is covered by TestMaxSubqueryWorkers_ProducesConsistentResults in
+// subquery_worker_count_test.go.
 
 // Note: collectTuples and tuplesEqual are defined in join_test.go

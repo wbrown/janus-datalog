@@ -17,6 +17,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
+// attrBytes returns the 32-byte Attribute encoding a keyword receives
+// in storage — a right-zero-padded copy of the keyword string. Used
+// by the Bug #5 tests below to assemble AVET / VAET prefix keys by
+// hand. Mirrors `copy(a[:], d.A.String())` in `ToStorageDatom`.
+func attrBytes(kw datalog.Keyword) Attribute {
+	return ToStorageDatom(datalog.Datom{A: kw}).A
+}
+
 // TestVectorAVETLookup verifies that AVET index works for vector elements.
 //
 // Bug #5: Currently fails because V contains RGAElement bytes (TypeBytes),
@@ -65,13 +73,13 @@ func TestVectorAVETLookup(t *testing.T) {
 	vData := []byte("stealth")
 	vBytes := append([]byte{vType}, vData...)
 
-	// Encode attribute
-	aBytes := encodeKeyword(skills)
+	// Encode attribute as the 32-byte Attribute the storage layer writes.
+	a := attrBytes(skills)
 
 	// Build AVET prefix: [prefix][A][V]
 	prefix := make([]byte, 1+32+len(vBytes))
 	prefix[0] = byte(AVET)
-	copy(prefix[1:33], aBytes[:])
+	copy(prefix[1:33], a[:])
 	copy(prefix[33:], vBytes)
 
 	// Build end range
@@ -153,14 +161,14 @@ func TestVectorAVETMultipleEntities(t *testing.T) {
 	}
 
 	// Build AVET prefix for "important"
-	aBytes := encodeKeyword(tags)
+	a := attrBytes(tags)
 	vType := byte(datalog.TypeString)
 	vData := []byte("important")
 	vBytes := append([]byte{vType}, vData...)
 
 	prefix := make([]byte, 1+32+len(vBytes))
 	prefix[0] = byte(AVET)
-	copy(prefix[1:33], aBytes[:])
+	copy(prefix[1:33], a[:])
 	copy(prefix[33:], vBytes)
 
 	end := make([]byte, len(prefix))
@@ -269,12 +277,12 @@ func TestVectorVAETReverseLookup(t *testing.T) {
 	vData := bobRef.Bytes()
 	vBytes := append([]byte{vType}, vData...)
 
-	aBytes := encodeKeyword(friends)
+	a := attrBytes(friends)
 
 	prefix := make([]byte, 1+len(vBytes)+32)
 	prefix[0] = byte(VAET)
 	copy(prefix[1:1+len(vBytes)], vBytes)
-	copy(prefix[1+len(vBytes):], aBytes[:])
+	copy(prefix[1+len(vBytes):], a[:])
 
 	end := make([]byte, len(prefix))
 	copy(end, prefix)

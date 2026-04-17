@@ -17,3 +17,23 @@ func incrementLastByte(start []byte) []byte {
 	}
 	return end
 }
+
+// concatBytes joins the parts into a single slice, sizing the result
+// up front to avoid the growth-copy cascade of repeated appends. Used
+// throughout key encoding, where keys are assembled from several
+// fixed- and variable-length fields.
+func concatBytes(parts ...[]byte) []byte {
+	size := 0
+	for _, p := range parts {
+		size += len(p)
+	}
+
+	result := make([]byte, size)
+	offset := 0
+	for _, p := range parts {
+		copy(result[offset:], p)
+		offset += len(p)
+	}
+
+	return result
+}

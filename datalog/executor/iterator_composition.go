@@ -4,9 +4,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Note: These variables are now managed by ExecutorOptions but kept for backward compatibility
-// Use ExecutorOptions instead of these global variables
-
 // SimpleFilter is a simple filter function that implements the Filter interface
 type SimpleFilter struct {
 	filterFunc func(Tuple) bool

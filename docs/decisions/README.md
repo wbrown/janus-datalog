@@ -26,6 +26,5 @@ Each decision record should include:
 
 ## Related Documentation
 
-- `../STREAMING_ARCHITECTURE_DECISION.md` - Streaming implementation and configuration approach
 - `../proposals/` - Future feature proposals
 - `../archive/completed/` - Completed implementation plans

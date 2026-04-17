@@ -324,9 +324,13 @@ func (pc *PredicateClassifier) convertFunctionPredicate(fp *query.FunctionPredic
 	return nil
 }
 
-// SplitPredicatesForPattern separates predicates into pushable and remaining for a specific pattern
+// SplitPredicatesForPattern separates predicates into pushable and remaining for a specific pattern.
+// The phase is shallow-copied before predicates are substituted, so callers
+// can pass a shared *planner.Phase without worrying about this routine
+// stomping on its Predicates slice.
 func SplitPredicatesForPattern(pattern *query.DataPattern, predicates []planner.PredicatePlan, phase *planner.Phase) (pushable []StorageConstraint, remaining []planner.PredicatePlan) {
-	classifier := NewPredicateClassifier(pattern, phase)
-	classifier.phase.Predicates = predicates
+	phaseCopy := *phase
+	phaseCopy.Predicates = predicates
+	classifier := NewPredicateClassifier(pattern, &phaseCopy)
 	return classifier.ClassifyAndConvert()
 }
