@@ -2257,6 +2257,51 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 //	// Get all attributes
 //	result, err := db.Pull(entityID, `[*]`)
 //
+// LookupByUnique returns the entity currently owning (attr, value) under
+// (A, V)-LWW resolution. Returns a nil Identity with a nil error if no
+// entity currently claims the value.
+//
+// The attribute must be declared unique in the schema (UniqueValue or
+// UniqueIdentity). Calling LookupByUnique on a non-unique attribute, an
+// attribute not present in the schema, or a database without a schema
+// returns an error.
+//
+// LookupByUnique is the primitive for natural-key lookup in the CRDT model:
+// application-layer upsert ("find-or-create by email") is built on top of
+// it. See docs/proposals/CRDT_UNIQUE_SEMANTICS.md for the design rationale.
+//
+// Concurrent writers may change the canonical owner between calls; treat
+// the result as a snapshot. If an application needs to verify a write
+// "won," it should call LookupByUnique after the commit and compare the
+// returned Identity to its own.
+func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (datalog.Identity, error) {
+	if d.schema == nil {
+		return nil, fmt.Errorf("LookupByUnique requires a schema declaring %s as unique", attr.String())
+	}
+	def := d.schema.GetAttribute(attr)
+	if def == nil {
+		return nil, fmt.Errorf("LookupByUnique: attribute %s not found in schema", attr.String())
+	}
+	if def.Unique == "" {
+		return nil, fmt.Errorf("LookupByUnique: attribute %s is not unique", attr.String())
+	}
+
+	matcher, ok := d.Matcher().(*BadgerMatcher)
+	if !ok {
+		return nil, fmt.Errorf("LookupByUnique: unsupported matcher type %T", d.Matcher())
+	}
+
+	var aBytes Attribute
+	copy(aBytes[:], attr.String())
+	vBytes := encodeValueForSearch(value, d.store.encoder)
+
+	owner, _, err := matcher.resolveAVLWW(aBytes, vBytes, value)
+	if err != nil {
+		return nil, fmt.Errorf("LookupByUnique: resolution failed: %w", err)
+	}
+	return owner, nil
+}
+
 //	// Get attributes with nested reference
 //	result, err := db.Pull(entityID, `[:entity/name {:entity/region [:region/code]}]`)
 //

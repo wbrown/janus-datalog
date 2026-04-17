@@ -740,6 +740,22 @@ func (it *validatingVBoundIterator) Next() bool {
 			continue // V not bound in this tuple
 		}
 
+		// Unique-attribute short-circuit: resolve the (A, V)-LWW winner
+		// once via a dedicated primitive and emit that one entity (or
+		// nothing) instead of streaming all validated candidates. This
+		// makes V-bound queries on unique attributes return exactly the
+		// canonical owner, satisfying the symmetry between the value view
+		// and the entity view under the CRDT-unique semantics.
+		if emitted, err := it.tryEmitUniqueWinner(); err != nil {
+			it.err = err
+			return false
+		} else if emitted {
+			return true
+		} else if it.isBoundAUniqueAttr() {
+			// Attribute is unique but no valid claimant — skip this binding.
+			continue
+		}
+
 		// Open CRDT-resolving scan on V-primary index
 		var err error
 		it.crdtIter, it.rawIter, err = it.openCRDTScan()
@@ -748,6 +764,62 @@ func (it *validatingVBoundIterator) Next() bool {
 			return false
 		}
 	}
+}
+
+// isBoundAUniqueAttr reports whether the bound attribute (if any) is
+// declared unique in the schema. Returns false if A is a variable (not
+// constant), if no schema is set, or if the attribute is not unique.
+func (it *validatingVBoundIterator) isBoundAUniqueAttr() bool {
+	if it.boundA == nil {
+		return false
+	}
+	aKw, ok := it.boundA.(datalog.Keyword)
+	if !ok {
+		return false
+	}
+	if it.matcher.schema == nil {
+		return false
+	}
+	def := it.matcher.schema.GetAttribute(aKw)
+	if def == nil {
+		return false
+	}
+	return def.Unique != ""
+}
+
+// tryEmitUniqueWinner resolves the (A, V)-LWW winner for the current
+// binding and, if a valid claimant exists, sets it.currentTuple and
+// returns (true, nil). If the attribute is not unique, returns
+// (false, nil) and the caller falls through to the normal scan path.
+// If the attribute is unique but no entity currently claims the bound
+// value, returns (false, nil) with a short-circuit indicator (see caller).
+func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
+	if !it.isBoundAUniqueAttr() {
+		return false, nil
+	}
+
+	aKw := it.boundA.(datalog.Keyword)
+	var aStorage Attribute
+	copy(aStorage[:], aKw.String())
+	vBytes := encodeValueForSearch(it.currentBoundV, it.matcher.store.encoder)
+
+	owner, ownerTx, err := it.matcher.resolveAVLWW(aStorage, vBytes, it.currentBoundV)
+	if err != nil {
+		return false, err
+	}
+	if owner == nil {
+		return false, nil // No claimant; caller treats this as skip-binding.
+	}
+
+	// Build a synthetic winner datom for tuple construction.
+	winner := &datalog.Datom{
+		E:  owner,
+		A:  aKw,
+		V:  it.currentBoundV,
+		Tx: ownerTx,
+	}
+	it.currentTuple = it.buildTuple(winner)
+	return true, nil
 }
 
 // validateCandidate checks if the current value of (E, A) matches boundV
