@@ -1976,13 +1976,9 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		return datalog.ElementID{}, fmt.Errorf("transaction is closed")
 	}
 
-	// Validate uniqueness constraints before opening the storage transaction.
-	// (Note: this is a TOCTOU check against committed state. CRDT-aligned
-	// resolution at the read path is tracked in
-	// docs/proposals/CRDT_UNIQUE_SEMANTICS.md.)
-	if err := t.validateUniqueness(); err != nil {
-		return datalog.ElementID{}, err
-	}
+	// Uniqueness is a read-time CRDT resolution rule, not a write-time gate.
+	// All writes succeed; the canonical owner of a unique (A, V) is determined
+	// at read time by (A, V)-LWW. See docs/proposals/CRDT_UNIQUE_SEMANTICS.md.
 
 	// Record transaction time for metadata
 	var txTime time.Time
@@ -2097,97 +2093,6 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	// Return the metadata ElementID - it has the highest Lamport in this tx,
 	// making it the correct high-water mark for as-of queries
 	return metadataElemID, nil
-}
-
-// validateUniqueness checks uniqueness constraints for all datoms in the transaction.
-//
-// Note: this is a TOCTOU check — it reads committed state via the matcher,
-// then writes happen in a separate phase. The proper CRDT-aligned design
-// (read-time (A, V)-LWW resolution, no write-time enforcement) is captured
-// in docs/proposals/CRDT_UNIQUE_SEMANTICS.md.
-func (t *Transaction) validateUniqueness() error {
-	s := t.db.Schema()
-	if s == nil || !s.HasSchema() {
-		return nil // No schema = no validation
-	}
-
-	// Track values seen in this transaction for within-transaction uniqueness
-	// Key: attribute + serialized value
-	seenInTx := make(map[string]datalog.Identity)
-
-	matcher := NewBadgerMatcher(t.db.store)
-
-	for _, d := range t.datoms {
-		def := s.GetAttribute(d.A)
-		if def == nil || def.Unique == "" {
-			continue // No uniqueness constraint
-		}
-
-		// Create a key for tracking this attr+value combination
-		txKey := fmt.Sprintf("%s:%v", d.A.String(), d.V)
-
-		// Check within transaction uniqueness
-		if existingEntity, ok := seenInTx[txKey]; ok {
-			if existingEntity != d.E {
-				return fmt.Errorf("uniqueness violation for %s: value %v already used by entity %s in this transaction",
-					d.A.String(), d.V, existingEntity.String())
-			}
-			// Same entity, same value - OK (idempotent update)
-			continue
-		}
-		seenInTx[txKey] = d.E
-
-		// Check database for existing value
-		// Create a pattern [?e :attr value _] to find entities with this value
-		pattern := &query.DataPattern{
-			Elements: []query.PatternElement{
-				query.Variable{Name: datalog.NewSymbol("?e")}, // Entity variable
-				query.Constant{Value: d.A},                    // Bound attribute
-				query.Constant{Value: d.V},                    // Bound value
-				query.Blank{},                                 // Transaction wildcard
-			},
-		}
-
-		results, err := matcher.Match(pattern, nil)
-		if err != nil {
-			return fmt.Errorf("failed to check uniqueness for %s: %w", d.A.String(), err)
-		}
-
-		// Find the index of ?e in the result symbols
-		symbols := results.Symbols()
-		eIndex := -1
-		for i, sym := range symbols {
-			if sym == datalog.NewSymbol("?e") {
-				eIndex = i
-				break
-			}
-		}
-		if eIndex < 0 {
-			continue // No entity symbol in results (shouldn't happen)
-		}
-
-		// Check if any existing datoms have a different entity
-		iter := results.Iterator()
-		for iter.Next() {
-			tuple := iter.Tuple()
-			if eIndex >= len(tuple) {
-				continue
-			}
-			// Get Identity (now always a pointer type)
-			existingEntity, ok := tuple[eIndex].(datalog.Identity)
-			if !ok || existingEntity == nil {
-				continue
-			}
-			if !existingEntity.Equal(d.E) {
-				iter.Close()
-				return fmt.Errorf("uniqueness violation for %s: value %v already exists on entity %s",
-					d.A.String(), d.V, existingEntity.String())
-			}
-		}
-		iter.Close()
-	}
-
-	return nil
 }
 
 // Rollback aborts the transaction
