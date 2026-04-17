@@ -502,47 +502,31 @@ func (it *CRDTResolvingIterator) Error() error {
 	return it.err
 }
 
-// processUniqueEntry applies the unique-attribute walk rule to one entry
-// in the current (E, A) group. Returns (true, nil) when the entry should
-// be emitted (it.currentDatom is set), (false, nil) to skip, or
-// (false, err) on lookup failure.
+// processUniqueEntry applies the unique-attribute walk rule to one
+// entry in the current (E, A) group via the shared walkApplyEntry
+// primitive. Returns (true, nil) when the entry should be emitted
+// (it.currentDatom is set), (false, nil) to skip or record a
+// retraction, or (false, err) on supersession-check failure.
 //
-// Rules:
-//   - Remove(V, T): record retracted[V] = max(retracted[V], T), skip.
-//   - Set(V, T): skip if retracted[V] > T (cancelled by later Remove).
-//   - Set(V, T): skip if another entity's assertion of V has Tx > T
-//     (superseded). Otherwise emit.
-//
-// Because the source iterator returns entries in Tx-descending order, the
-// first entry passing these checks is the walk's emission — correct by
-// construction without having to materialize the full group.
+// Because the source iterator returns entries in Tx-descending order,
+// the first entry that walkApplyEntry returns Emit for is the walk's
+// emission — correct by construction without having to materialize
+// the full group.
 func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool, error) {
-	vKey := string(encodeValueForSearch(datom.V, it.uniqueMatcher.store.encoder))
-
-	if datom.Op == datalog.OpCRDTRemove {
-		if existing, ok := it.uniqueRetracted[vKey]; !ok || existing.Less(datom.Tx) {
-			it.uniqueRetracted[vKey] = datom.Tx
-		}
-		return false, nil
-	}
-
-	// Set (or default OpNone).
-	if rTx, ok := it.uniqueRetracted[vKey]; ok && datom.Tx.Less(rTx) {
-		return false, nil // cancelled by a later Remove in this group
-	}
-
-	// Supersession check: compute max other-entity Tx for V and compare.
 	var aBytes Attribute
 	copy(aBytes[:], datom.A.String())
-	exceptE := Entity(datom.E.Hash())
+	eBytes := Entity(datom.E.Hash())
 
-	maxOther, err := it.uniqueMatcher.resolveMaxOtherTxForValue(aBytes, datom.V, exceptE)
+	state := &uniqueWalkState{retracted: it.uniqueRetracted}
+	decision, err := it.uniqueMatcher.walkApplyEntry(state, datom, eBytes, aBytes)
 	if err != nil {
 		return false, err
 	}
-	if datom.Tx.Less(maxOther) {
-		return false, nil // superseded by another entity
+	if decision == walkEntryEmit {
+		it.currentDatom = datom
+		return true, nil
 	}
-	it.currentDatom = datom
-	return true, nil
+	// walkEntrySkip or walkEntryRetract — no emission. The retraction
+	// bookkeeping already updated it.uniqueRetracted via the shared map.
+	return false, nil
 }

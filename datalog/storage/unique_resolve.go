@@ -4,24 +4,96 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// walkUniqueEntityValue resolves E's current value for unique attribute a
-// using the walk-based (A, V)-LWW rule:
+// walkEntryDecision is the outcome of applying the CRDT-unique walk
+// rule to one (V_i, T_i, op) entry in an entity's (E, A) history.
+type walkEntryDecision int
+
+const (
+	// walkEntrySkip: advance to the next entry. The walk has not
+	// concluded — continue iterating.
+	walkEntrySkip walkEntryDecision = iota
+	// walkEntryEmit: this entry is the walk's result. For the batch
+	// walk, return this entry's V and Tx as the emitted value. For the
+	// streaming walk, set currentDatom and yield to the caller.
+	walkEntryEmit
+	// walkEntryRetract: this entry is a Remove that was just recorded
+	// in the retracted state. Behaves like Skip for control flow, but
+	// distinguished so callers can tell "Set skipped due to retract"
+	// from "Remove recorded."
+	walkEntryRetract
+)
+
+// uniqueWalkState is the per-(E, A) state tracked across entries of
+// the walk: retracted values (by encoded-V key) with their highest
+// Remove Tx. Both the batch primitive (walkUniqueEntityValue) and the
+// streaming path (CRDTResolvingIterator.processUniqueEntry) build this
+// state and feed it to walkApplyEntry.
+type uniqueWalkState struct {
+	retracted map[string]datalog.ElementID
+}
+
+// newUniqueWalkState constructs an empty walk state.
+func newUniqueWalkState() *uniqueWalkState {
+	return &uniqueWalkState{retracted: make(map[string]datalog.ElementID)}
+}
+
+// walkApplyEntry applies the CRDT-unique walk rule to one entry. The
+// caller is responsible for driving iteration (batch: scan loop;
+// streaming: per-datom callback from the source iterator) and acting
+// on the returned decision.
 //
-//  1. Walk E's EATV history in descending Tx order.
-//  2. A Remove(V_i, T_i) entry retracts V_i for this entity at T_i.
-//  3. For a Set(V_i, T_i) entry, skip if V_i was retracted at a higher Tx.
-//  4. Otherwise, check whether any OTHER entity has an assertion of V_i
-//     with Tx > T_i. If no, E currently owns V_i — emit it.
-//  5. If no entry passes, E has no current value for this attribute.
+// Rules:
+//   - Remove(V, T): record retracted[V] = max(retracted[V], T), return Retract.
+//   - Set(V, T): return Skip if retracted[V] > T (cancelled by later Remove).
+//   - Set(V, T): return Skip if any OTHER entity asserted V with Tx > T
+//     (superseded). Otherwise return Emit.
+//
+// The (E, A) bytes parameters are required for the supersession check
+// against other entities via AVET. The as-of / history-mode filtering
+// is applied at the caller's iteration level (not here), because the
+// streaming path already filters at its source.
+func (m *BadgerMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute) (walkEntryDecision, error) {
+	vKey := string(encodeValueForSearch(datom.V, m.store.encoder))
+
+	if datom.Op == datalog.OpCRDTRemove {
+		if existing, ok := state.retracted[vKey]; !ok || existing.Less(datom.Tx) {
+			state.retracted[vKey] = datom.Tx
+		}
+		return walkEntryRetract, nil
+	}
+
+	// Set (or default OpNone). Check if this V has been retracted at a
+	// higher Tx by a later entry in this entity's own history.
+	if rTx, ok := state.retracted[vKey]; ok && datom.Tx.Less(rTx) {
+		return walkEntrySkip, nil
+	}
+
+	// Supersession check against other entities' assertions of V.
+	maxOther, err := m.resolveMaxOtherTxForValue(aBytes, datom.V, eBytes)
+	if err != nil {
+		return walkEntrySkip, err
+	}
+	// Emit iff no other entity's assertion of V has a Tx greater than
+	// ours. Strict < check; ties (same Lamport, different replica)
+	// favor the current entity.
+	if datom.Tx.Less(maxOther) {
+		return walkEntrySkip, nil
+	}
+	return walkEntryEmit, nil
+}
+
+// walkUniqueEntityValue resolves E's current value for unique attribute
+// a using the walk-based (A, V)-LWW rule (see walkApplyEntry). The
+// walk iterates E's EATV history in descending Tx order and emits the
+// first entry that passes retraction and supersession checks.
 //
 // Returns (value, tx, true, nil) when a value is found, or
-// (nil, zero, false, nil) when E has no current value. The returned tx is
-// the Tx of the emitted Set assertion, suitable for cache-freshness
-// tracking and for identifying the emitted entry.
+// (nil, zero, false, nil) when E has no current value. The returned tx
+// is the Tx of the emitted Set, suitable for cache-freshness tracking.
 //
-// The walk honors the matcher's temporal mode: entries with Tx > m.txID in
-// as-of mode are skipped, and the supersession check against other
-// entities is likewise restricted to Tx ≤ m.txID.
+// Honors the matcher's temporal mode: entries with Tx > m.txID in as-of
+// mode are skipped. The supersession check against other entities is
+// likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
 func (m *BadgerMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (any, datalog.ElementID, bool, error) {
 	start, end := m.store.encoder.EncodePrefixRange(EATV, eBytes[:], aBytes[:])
 	iter, err := m.store.ScanKeysOnly(EATV, start, end)
@@ -30,45 +102,27 @@ func (m *BadgerMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (
 	}
 	defer iter.Close()
 
-	// Per-entity retraction map: value-bytes key → highest Remove Tx seen.
-	// We build the key using encodeValueForSearch so it matches the storage
-	// layer's value-equality semantics (distinguishes int64(5) from "5", etc.).
-	retracted := make(map[string]datalog.ElementID)
-
+	state := newUniqueWalkState()
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			continue
+			return nil, datalog.ElementID{}, false, err
 		}
 		if m.shouldFilterTx(datom.Tx) {
 			continue
 		}
-
-		vKey := string(encodeValueForSearch(datom.V, m.store.encoder))
-
-		if datom.Op == datalog.OpCRDTRemove {
-			if existing, ok := retracted[vKey]; !ok || existing.Less(datom.Tx) {
-				retracted[vKey] = datom.Tx
-			}
-			continue
-		}
-
-		// Set (or default OpNone) — check retraction.
-		if rTx, ok := retracted[vKey]; ok && datom.Tx.Less(rTx) {
-			continue // cancelled by a later Remove
-		}
-
-		// Check supersession by another entity.
-		maxOther, err := m.resolveMaxOtherTxForValue(aBytes, datom.V, eBytes)
+		decision, err := m.walkApplyEntry(state, datom, eBytes, aBytes)
 		if err != nil {
 			return nil, datalog.ElementID{}, false, err
 		}
-		// Emit if no other entity's assertion of V has a Tx greater than ours.
-		// datom.Tx.Less(maxOther) is strict <; we emit on >=.
-		if !datom.Tx.Less(maxOther) {
+		if decision == walkEntryEmit {
 			return datom.V, datom.Tx, true, nil
 		}
-		// Superseded — continue walking.
+		// walkEntrySkip or walkEntryRetract — continue to next entry.
+	}
+	// Surface any deferred error from the scan.
+	if err := iter.Error(); err != nil {
+		return nil, datalog.ElementID{}, false, err
 	}
 	return nil, datalog.ElementID{}, false, nil
 }

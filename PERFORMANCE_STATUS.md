@@ -900,6 +900,117 @@ The engine is **production-ready for datasets up to 10M+ datoms**. All major opt
 
 ## Session History
 
+### 2026-04-17: CRDT Unique Resolution Redesign
+
+**Branch**: `feature/crdt-unique-resolution`
+**Status**: ✅ Complete — read-time (A, V)-LWW replaces write-time enforcement
+
+**The Story**:
+Write-time `validateUniqueness` was incompatible with this codebase's
+CRDT-oriented architecture (concurrent writers, `DetectConflicts=false`,
+append-only storage with LWW resolution). The bug report framed it as a
+TOCTOU race; the real framing was that the whole write-time gate was
+the wrong model. Replaced with walk-based `(A, V)`-LWW resolution at
+read time: V-view and entity-view share a single rule, all writes
+succeed, reads compute the canonical owner via walk.
+
+See `docs/reference/CRDT_UNIQUE_SEMANTICS.md` for the complete design
+discussion and decisions (D1–D5).
+
+**What Was Done**:
+
+1. **Walk-based resolution primitive** (`unique_resolve.go`):
+   `walkUniqueEntityValue(E, A)` walks an entity's EATV history in
+   descending Tx order, handling retractions and supersession by other
+   entities. Returns the first non-superseded Set or nothing.
+
+2. **V-view via walk** (`resolveAVLWW`, `LookupByUnique`):
+   Finds max-Tx entry for V across all entities, verifies that
+   entity's walk emits V. V-view and entity-view are symmetric by
+   construction.
+
+3. **Streaming integration** (`CRDTResolvingIterator`):
+   CardinalityOne + Unique groups use the walk inline; other paths
+   unchanged. Shared `walkApplyEntry` primitive avoids duplicated
+   rule-logic between batch and streaming paths.
+
+4. **Cache invalidation** (`Cache.InvalidateAttribute`):
+   Conservative: writes to a unique attribute invalidate all cached
+   `(E, A)` entries for that attribute, since any write can silently
+   stale other entities' walk results.
+
+5. **History-mode bypass**: `ResolveLWW` skips the walk in history
+   mode, returning raw first-entry semantics. Fixes a latent issue
+   where `d.History().Pull()` via wildcard would return walk-resolved
+   fallback values instead of raw assertions.
+
+6. **Error propagation**: `Iterator` interface extended with
+   `Error() error`. All storage iterators implement it; wrapping
+   iterators propagate deferred errors from inner iterators. Closes
+   multiple pre-existing silent-swallow sites (e.g., CRDTResolvingIterator
+   `source.Datom() err → continue`).
+
+**Benchmark Results** (Apple M5, 2s duration):
+
+| Benchmark | ns/op | B/op | allocs/op | vs baseline |
+|---|---:|---:|---:|---|
+| NonUniqueRead_Baseline (cached) | 387 | 801 | 6 | — |
+| UniqueRead_Uncontested (cached) | 377 | 802 | 6 | **~0% (noise)** |
+| UniqueRead_ContestedLinear (empty result) | 305 | 593 | 5 | -21% (less data) |
+| UniqueRead_DeepFallback (5 layers, empty) | 283 | 593 | 5 | -27% (less data) |
+| LookupByUnique_Uncontested (V-view warm) | 7319 | 5793 | 93 | n/a |
+| LookupByUnique_ColdCache (V-view cold) | 7605 | 5796 | 93 | n/a |
+
+**Key Findings**:
+
+- **Hot path (cached entity-view reads)**: the walk adds effectively
+  **zero overhead** vs non-unique CardinalityOne. Both paths land
+  around 380 ns/op. The cache stores walk-resolved values, so
+  subsequent reads don't repeat the walk.
+
+- **Contested scenarios are faster, not slower**: when the walk finds
+  no fallback value (all entries superseded), the result map is empty
+  and `ResolveEntityAttributes` has less work. Deep-fallback (5
+  superseded entries) comes out at 283 ns/op — faster than both
+  uncontested and non-unique — because the empty-result path is
+  genuinely cheaper than the populate-map path.
+
+- **LookupByUnique (V-view) is ~7μs per call**. Not cheap, but
+  acceptable for realistic use (authentication flows, reconciliation
+  lookups). Cold vs warm cache: similar, because V-view doesn't
+  benefit from per-(E, A) cache entries. Improving this is a
+  follow-up opportunity if profiling warrants it.
+
+- **Allocation profile unchanged**: cached entity-view reads allocate
+  the same 6 times as non-unique. No hidden allocations from the
+  walk infrastructure.
+
+**The redesign imposes no measurable cost on the read hot path.**
+
+**Files Changed**:
+
+- `datalog/storage/unique_resolve.go` — walk primitive, shared rule
+- `datalog/storage/crdt_resolving_iterator.go` — streaming integration
+- `datalog/storage/cache_resolver.go` — `ResolveLWW` routes unique
+  through walk; history-mode bypass
+- `datalog/storage/cache.go` — `InvalidateAttribute`
+- `datalog/storage/database.go` — `LookupByUnique` API, removed
+  `validateUniqueness`, unique-attr invalidation in `Transaction.Commit`
+- `datalog/storage/matcher_relations.go` — V-view single-winner
+  selection in `validatingVBoundIterator`
+- `datalog/storage/store.go` — `Iterator.Error()` interface extension
+- All storage iterator implementations — `Error()` method
+- `datalog/storage/unique_benchmark_test.go` — 6 benchmarks
+- Multiple test files — 40+ new tests covering V-view, entity-view
+  symmetry, retract semantics, history/AsOf, cache invalidation,
+  value-encoding edge cases, error propagation
+- `docs/reference/CRDT_UNIQUE_SEMANTICS.md` — design doc (promoted
+  from `docs/proposals/`)
+- `docs/reference/SCHEMA.md`, `docs/reference/CRDT.md` — updated with
+  new semantics
+
+---
+
 ### 2026-02-06: AETV Index & Value Elimination - Streaming CRDT Fixes
 
 **Branch**: `main`
