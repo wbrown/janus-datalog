@@ -467,7 +467,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 		if m.isHistoryMode() {
 			maskIter.storageIter = rawStorageIter
 		} else {
-			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID())
+			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m)
 		}
 		iter = maskIter
 	} else {
@@ -499,7 +499,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 		if m.isHistoryMode() {
 			regularIter.storageIter = rawStorageIter
 		} else {
-			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID())
+			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m)
 		}
 		iter = regularIter
 	}
@@ -989,7 +989,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// - Add-wins with same-Tx tiebreaking for CardinalityMany
 	// - RGA for CardinalityVector
 	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
-	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, datalog.ElementID{})
+	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, datalog.ElementID{}, it.matcher)
 
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{

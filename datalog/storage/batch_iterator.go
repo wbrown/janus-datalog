@@ -259,7 +259,7 @@ func (it *batchScanIterator) scanRange(rg RangeGroup) {
 	if it.matcher.isHistoryMode() {
 		it.storageIter = rawIter
 	} else {
-		it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID())
+		it.storageIter = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher)
 	}
 	it.totalScans++
 

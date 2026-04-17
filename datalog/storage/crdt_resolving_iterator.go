@@ -17,6 +17,14 @@ type CRDTResolvingIterator struct {
 	schema schema.SchemaProvider
 	txID   datalog.ElementID // For as-of queries: only consider datoms with Tx.Lamport <= txID
 
+	// uniqueMatcher enables unique-attribute walk-based resolution. When
+	// set, CardinalityOne groups for unique attributes walk the entity's
+	// (E, A) history and emit the first non-superseded assertion (rather
+	// than simply emitting the EATV first-entry). Nil is permitted and
+	// disables unique-walk resolution (CardinalityOne falls back to the
+	// non-unique first-entry semantic).
+	uniqueMatcher *BadgerMatcher
+
 	// Current (E, A) group tracking
 	currentE datalog.Identity
 	currentA datalog.Keyword
@@ -29,6 +37,19 @@ type CRDTResolvingIterator struct {
 	// - REMOVE before ADD means remove has higher Tx
 	emitted    map[any]bool   // values we've already emitted
 	tombstones map[any]uint64 // value → remove Lamport (for add-wins-at-same-Tx)
+
+	// CardinalityOne unique-walk state (reset per-group when attribute is
+	// declared Unique in the schema):
+	//   - uniqueMode: true if current group is a unique CardinalityOne
+	//     attribute and uniqueMatcher is non-nil.
+	//   - uniqueRetracted: value-byte key → highest Remove Tx seen within
+	//     the current (E, A) group. Used to skip Set entries that have
+	//     been cancelled by a later Remove.
+	//   - uniqueEmitted: whether we have already emitted a value for the
+	//     current group (emit at most one).
+	uniqueMode      bool
+	uniqueRetracted map[string]datalog.ElementID
+	uniqueEmitted   bool
 
 	// CardinalityVector: TODO - placeholder for discussion
 	rgaElements []rgaElement
@@ -48,6 +69,11 @@ type CRDTResolvingIterator struct {
 
 	// Current datom being yielded
 	currentDatom *datalog.Datom
+
+	// err holds the first error encountered during walk-based resolution
+	// (unique-attr max-other-Tx lookups). Surfaced via Error() (caller
+	// checks after iterator exhaustion).
+	err error
 }
 
 // rgaElement stores minimal state for RGA reconstruction (no datom pointers)
@@ -59,11 +85,19 @@ type rgaElement struct {
 }
 
 // NewCRDTResolvingIterator creates a new CRDT-resolving iterator wrapper.
-func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID) *CRDTResolvingIterator {
+//
+// When matcher is non-nil, CardinalityOne groups whose attribute is
+// declared Unique in the schema apply the walk-based (A, V)-LWW
+// resolution: the first non-superseded Set entry in each group is
+// emitted, with supersession determined by an AVET sub-scan for
+// max-other-Tx per candidate V. When matcher is nil, all CardinalityOne
+// groups use first-entry semantics (the Unique field is ignored).
+func NewCRDTResolvingIterator(source Iterator, schema schema.SchemaProvider, txID datalog.ElementID, matcher *BadgerMatcher) *CRDTResolvingIterator {
 	return &CRDTResolvingIterator{
-		source: source,
-		schema: schema,
-		txID:   txID,
+		source:        source,
+		schema:        schema,
+		txID:          txID,
+		uniqueMatcher: matcher,
 	}
 }
 
@@ -149,6 +183,19 @@ func (it *CRDTResolvingIterator) Next() bool {
 		// Process datom based on cardinality
 		switch it.card {
 		case schema.CardinalityOne:
+			if it.uniqueMode {
+				if it.uniqueEmitted {
+					continue // already emitted winner for this group
+				}
+				if emit, err := it.processUniqueEntry(datom); err != nil {
+					it.err = err
+					return false
+				} else if emit {
+					it.uniqueEmitted = true
+					return true
+				}
+				continue
+			}
 			if isNewGroup {
 				if datom.Op == datalog.OpCRDTRemove {
 					// Value was retracted — attribute doesn't exist. Skip group.
@@ -196,16 +243,26 @@ func (it *CRDTResolvingIterator) startNewGroup(datom *datalog.Datom) {
 	// If no schema definition exists for this attribute, use CardinalityUnknown
 	// which defaults to CardinalityOne (LWW) semantics
 	it.card = schema.CardinalityUnknown
+	it.uniqueMode = false
 	if it.schema != nil {
 		if attr := it.schema.GetAttribute(datom.A); attr != nil {
 			it.card = attr.Cardinality
+			// Unique CardinalityOne attributes use the walk-based
+			// resolution. Other cardinalities ignore Unique (uniqueness
+			// applies only to single-valued attributes).
+			if attr.Cardinality == schema.CardinalityOne && attr.Unique != "" && it.uniqueMatcher != nil {
+				it.uniqueMode = true
+			}
 		}
 	}
 
 	// Reset state based on cardinality
 	switch it.card {
 	case schema.CardinalityOne:
-		// No state needed
+		if it.uniqueMode {
+			it.uniqueRetracted = make(map[string]datalog.ElementID)
+			it.uniqueEmitted = false
+		}
 	case schema.CardinalityMany:
 		it.emitted = make(map[any]bool)
 		it.tombstones = make(map[any]uint64)
@@ -422,4 +479,56 @@ func (it *CRDTResolvingIterator) ElementID() datalog.ElementID {
 		return it.currentDatom.Tx
 	}
 	return datalog.ElementID{}
+}
+
+// Error returns the first error encountered during unique-walk resolution,
+// or nil if iteration proceeded cleanly. Callers that expect walk-based
+// resolution should check this after iterator exhaustion.
+func (it *CRDTResolvingIterator) Error() error {
+	return it.err
+}
+
+// processUniqueEntry applies the unique-attribute walk rule to one entry
+// in the current (E, A) group. Returns (true, nil) when the entry should
+// be emitted (it.currentDatom is set), (false, nil) to skip, or
+// (false, err) on lookup failure.
+//
+// Rules:
+//   - Remove(V, T): record retracted[V] = max(retracted[V], T), skip.
+//   - Set(V, T): skip if retracted[V] > T (cancelled by later Remove).
+//   - Set(V, T): skip if another entity's assertion of V has Tx > T
+//     (superseded). Otherwise emit.
+//
+// Because the source iterator returns entries in Tx-descending order, the
+// first entry passing these checks is the walk's emission — correct by
+// construction without having to materialize the full group.
+func (it *CRDTResolvingIterator) processUniqueEntry(datom *datalog.Datom) (bool, error) {
+	vKey := string(encodeValueForSearch(datom.V, it.uniqueMatcher.store.encoder))
+
+	if datom.Op == datalog.OpCRDTRemove {
+		if existing, ok := it.uniqueRetracted[vKey]; !ok || existing.Less(datom.Tx) {
+			it.uniqueRetracted[vKey] = datom.Tx
+		}
+		return false, nil
+	}
+
+	// Set (or default OpNone).
+	if rTx, ok := it.uniqueRetracted[vKey]; ok && datom.Tx.Less(rTx) {
+		return false, nil // cancelled by a later Remove in this group
+	}
+
+	// Supersession check: compute max other-entity Tx for V and compare.
+	var aBytes Attribute
+	copy(aBytes[:], datom.A.String())
+	exceptE := Entity(datom.E.Hash())
+
+	maxOther, err := it.uniqueMatcher.resolveMaxOtherTxForValue(aBytes, datom.V, exceptE)
+	if err != nil {
+		return false, err
+	}
+	if datom.Tx.Less(maxOther) {
+		return false, nil // superseded by another entity
+	}
+	it.currentDatom = datom
+	return true, nil
 }
