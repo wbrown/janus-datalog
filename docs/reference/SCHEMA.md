@@ -100,8 +100,23 @@ builder.Attribute(":character/prefs").Type(schema.TypeString).Vector().UniqueEle
 | Unique | Description | Constant |
 |--------|-------------|----------|
 | (none) | No uniqueness constraint | `""` |
-| `:db.unique/value` | Value must be unique across entities | `schema.UniqueValue` |
-| `:db.unique/identity` | Value uniqueness (upsert semantics planned) | `schema.UniqueIdentity` |
+| `:db.unique/value` | Value is canonical for one entity | `schema.UniqueValue` |
+| `:db.unique/identity` | `UniqueValue` + eligible for `LookupByUnique` lookup-refs | `schema.UniqueIdentity` |
+
+Uniqueness is enforced **at read time**, not at write time. See
+[Uniqueness Semantics](#uniqueness-semantics) below and
+[CRDT_UNIQUE_SEMANTICS.md](./CRDT_UNIQUE_SEMANTICS.md) for the full
+design discussion.
+
+> **Note on `UniqueIdentity`**: today, `LookupByUnique` accepts either
+> `UniqueValue` or `UniqueIdentity` — the Go API does not discriminate.
+> The distinction will matter for the future query-language lookup-ref
+> syntax (`[:user/email "x@y"]` used as an entity reference in query
+> patterns), which will require `UniqueIdentity`. Datomic-style
+> write-time upsert / entity merging is explicitly **not** performed
+> for either — see [CRDT_UNIQUE_SEMANTICS.md](./CRDT_UNIQUE_SEMANTICS.md)
+> D1 for the full rationale (split-entity convergence in
+> concurrent-write CRDTs is deferred to a future design round).
 
 ### `:db/doc`
 
@@ -124,47 +139,134 @@ err := tx.Add(alice, kw(":person/name"), 123)
 // err: "schema validation failed for :person/name: expected db.type/string (string), got int"
 ```
 
-### Uniqueness Validation
+### Uniqueness Semantics
 
-Uniqueness validation occurs at `Transaction.Commit()` time:
+Uniqueness is a **read-time CRDT resolution rule**, not a write-time
+validation gate. All writes to a unique attribute succeed; the
+canonical owner of each unique value is determined when the database
+is read, using walk-based `(A, V)`-LWW resolution.
+
+> Rationale and full design discussion: see
+> [CRDT_UNIQUE_SEMANTICS.md](./CRDT_UNIQUE_SEMANTICS.md). This is a
+> deliberate departure from Datomic's write-time enforcement, motivated
+> by this codebase's CRDT architecture.
+
+#### Writes always succeed
 
 ```go
-// First transaction succeeds
 tx1 := d.NewTransaction()
-tx1.Add(alice, kw(":person/email"), "alice@example.com")
-tx1.Commit()
+tx1.Set(alice, kw(":person/email"), "alice@example.com")
+tx1.Commit() // succeeds
 
-// Second transaction fails - email already exists
 tx2 := d.NewTransaction()
-tx2.Add(bob, kw(":person/email"), "alice@example.com")
-_, err := tx2.Commit()
-// err: "uniqueness violation for :person/email: value alice@example.com already exists on entity ..."
+tx2.Set(bob, kw(":person/email"), "alice@example.com")
+_, err := tx2.Commit() // succeeds — no uniqueness violation at write time
 ```
 
-Uniqueness is also checked within a single transaction:
+After this sequence, the database contains both assertions. The walk
+rule (described below) determines which entity is the canonical owner
+and which falls back.
+
+#### Read-time resolution: `(A, V)`-LWW with walk fallback
+
+For a unique attribute, each entity's current value is determined by
+walking its `(E, A)` history in descending `Tx` order. For each entry
+`(V_i, T_i)`:
+
+1. If it is a `Remove(V_i)`, record `V_i` as retracted at `T_i`.
+2. If it is a `Set(V_i)` and `V_i` was retracted at a higher `Tx`, skip.
+3. If it is a `Set(V_i)` and **another entity** has asserted `V_i` with
+   `Tx > T_i`, skip (superseded).
+4. Otherwise, emit `V_i` as the entity's current value.
+
+If no entry passes the checks, the entity has no current value for
+this attribute.
+
+**Value-view** (e.g., `LookupByUnique(attr, v)` or a query like
+`[?e :user/email "x@y"]`): returns the entity whose walk emits `v`
+(always exactly one or none). Symmetric with the entity-view by
+construction.
+
+#### Worked example
 
 ```go
+// Alice first claims email=v1, then email=v2.
+tx1 := d.NewTransaction()
+tx1.Set(alice, email, "v1@example.com")
+tx1.Commit() // Tx = T1
+
+tx2 := d.NewTransaction()
+tx2.Set(alice, email, "v2@example.com")
+tx2.Commit() // Tx = T2
+
+// Bob then takes v2 with a higher Tx.
+tx3 := d.NewTransaction()
+tx3.Set(bob, email, "v2@example.com")
+tx3.Commit() // Tx = T3 > T2
+
+// Alice's walk: T2:v2 is superseded by bob's T3:v2 → skip.
+//               T1:v1 is not superseded by anyone → emit.
+//   Alice's current email = "v1@example.com"
+//
+// Bob's walk:   T3:v2 is not superseded → emit.
+//   Bob's current email = "v2@example.com"
+//
+// LookupByUnique(email, "v1@example.com") → alice
+// LookupByUnique(email, "v2@example.com") → bob
+```
+
+#### History preservation
+
+`d.History()` returns every raw assertion, including superseded ones —
+the walk rule applies only to current-state reads. Time-travel via
+`d.AsOf(tx)` applies the walk restricted to `Tx ≤ target`.
+
+#### Idempotent updates
+
+Asserting the same value for the same entity is a no-op under the walk:
+the entity's current value is already that V and remains so.
+
+```go
+tx1 := d.NewTransaction()
+tx1.Set(alice, email, "alice@example.com")
+tx1.Commit()
+
+tx2 := d.NewTransaction()
+tx2.Set(alice, email, "alice@example.com") // second assertion at higher Tx
+tx2.Commit() // succeeds; alice still owns "alice@example.com"
+```
+
+#### Application-level upsert with `LookupByUnique`
+
+Upsert-by-natural-key is built on `LookupByUnique`:
+
+```go
+// "Find the user with this email, creating one if needed."
+e, err := d.LookupByUnique(email, "alice@example.com")
+if err != nil {
+    return err
+}
+if e == nil {
+    e = datalog.NewIdentity("user:" + uuid.New().String())
+}
 tx := d.NewTransaction()
-tx.Add(alice, kw(":person/email"), "shared@example.com")
-tx.Add(bob, kw(":person/email"), "shared@example.com")
-_, err := tx.Commit()
-// err: "uniqueness violation for :person/email: value shared@example.com already used by entity ..."
+tx.Set(e, email, "alice@example.com")
+tx.Set(e, name,  "Alice")
+_, err = tx.Commit()
 ```
 
-### Idempotent Updates
+`LookupByUnique` requires the attribute to be declared unique in the
+schema (either `UniqueValue` or `UniqueIdentity`). Applications that
+need to detect "did my write win?" after a concurrent commit should
+call `LookupByUnique` after the commit and compare the returned
+Identity to their own.
 
-Asserting the same value for the same entity is allowed:
+#### Migration from pre-redesign behavior
 
-```go
-tx1 := d.NewTransaction()
-tx1.Add(alice, kw(":person/email"), "alice@example.com")
-tx1.Commit()
-
-// OK - same entity, same value
-tx2 := d.NewTransaction()
-tx2.Add(alice, kw(":person/email"), "alice@example.com")
-tx2.Commit() // succeeds
-```
+Applications that previously relied on `Commit()` returning a
+uniqueness-violation error must now check ownership explicitly via
+`LookupByUnique`. The old error string (`"uniqueness violation..."`)
+no longer occurs.
 
 ## Pull API with Schema
 

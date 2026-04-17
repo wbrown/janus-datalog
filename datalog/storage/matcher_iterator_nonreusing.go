@@ -83,7 +83,7 @@ func (it *nonReusingIterator) Next() bool {
 	if it.matcher.isHistoryMode() {
 		it.currentScan = rawIter
 	} else {
-		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID())
+		it.currentScan = NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher)
 	}
 
 	// Try to find first match

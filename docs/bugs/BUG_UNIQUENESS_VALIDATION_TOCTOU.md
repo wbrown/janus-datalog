@@ -2,16 +2,27 @@
 
 **Date**: 2026-04-16
 **Severity**: High - uniqueness races and false rejections possible
-**Status**: Open — framing superseded by [CRDT_UNIQUE_SEMANTICS.md](../proposals/CRDT_UNIQUE_SEMANTICS.md)
+**Status**: Resolved 2026-04-17 — validateUniqueness deleted on `feature/crdt-unique-resolution`
 
-> **Note (2026-04-16)**: The bugs described below are real, but the proposed
-> "fix `validateUniqueness`" framing is wrong for this codebase's CRDT-aligned
-> architecture. The right resolution is a read-time (A, V)-LWW redesign that
+> **Note (2026-04-16)**: The bugs described below were real, but the proposed
+> "fix `validateUniqueness`" framing was wrong for this codebase's CRDT-aligned
+> architecture. The right resolution was a read-time (A, V)-LWW redesign that
 > removes write-time enforcement entirely. See
-> [docs/proposals/CRDT_UNIQUE_SEMANTICS.md](../proposals/CRDT_UNIQUE_SEMANTICS.md)
-> for the design discussion and target model. The current `validateUniqueness`
-> remains in place; both bugs below are still observable until that proposal is
-> implemented.
+> [docs/reference/CRDT_UNIQUE_SEMANTICS.md](../reference/CRDT_UNIQUE_SEMANTICS.md)
+> for the design discussion and target model.
+>
+> **Resolution (2026-04-17, Commit 1 of the redesign)**: `validateUniqueness`
+> and its call site in `Transaction.Commit` have been deleted. Both the TOCTOU
+> race and the retract-and-reassign rejection described below no longer occur
+> because there is no write-time gate. The three Datomic-strict tests that
+> encoded the old behavior (`TestSchemaUniquenessValue`,
+> `TestSchemaUniquenessWithinTransaction`, `TestSchemaUniquenessIdempotent`)
+> were deleted in the same commit. At this point in the redesign, read-side
+> (A, V)-LWW resolution is not yet implemented — reads for unique attributes
+> with multiple claimants will return all claimants. Subsequent commits
+> (Commits 2–5 of the redesign, per CRDT_UNIQUE_SEMANTICS.md) introduce the
+> read-time resolution layer that makes unique attributes behave correctly
+> again under the new semantics.
 **Affected**: `storage.Transaction.validateUniqueness()`
 
 ## Summary

@@ -198,7 +198,7 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	if m.isHistoryMode() {
 		resolvedIter = storageIter
 	} else {
-		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID())
+		resolvedIter = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m)
 	}
 
 	// PHASE 4: Create streaming hash join iterator
@@ -586,7 +586,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 	if m.isHistoryMode() {
 		resolvedIterMerge = storageIter
 	} else {
-		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID())
+		resolvedIterMerge = NewCRDTResolvingIterator(storageIter, m.schema, m.crdtTxID(), m)
 	}
 
 	// PHASE 4: Create streaming merge join iterator

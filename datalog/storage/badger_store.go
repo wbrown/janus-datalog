@@ -528,6 +528,12 @@ func (i *BadgerIterator) ElementID() datalog.ElementID {
 	return extractElementIDFromKey(i.index, key)
 }
 
+// Error returns nil — BadgerIterator.Next() does not perform any
+// fallible operations; errors surface exclusively through Datom() on
+// the current item. Returning nil satisfies the Iterator interface
+// and tells wrapping iterators there is no deferred error to collect.
+func (i *BadgerIterator) Error() error { return nil }
+
 // extractElementIDFromKey extracts the ElementID from a key based on index type.
 // The Tx is encoded with bitwise NOT, so we reverse it here.
 func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {

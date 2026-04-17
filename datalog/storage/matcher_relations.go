@@ -467,7 +467,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 		if m.isHistoryMode() {
 			maskIter.storageIter = rawStorageIter
 		} else {
-			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID())
+			maskIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m)
 		}
 		iter = maskIter
 	} else {
@@ -499,7 +499,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 		if m.isHistoryMode() {
 			regularIter.storageIter = rawStorageIter
 		} else {
-			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID())
+			regularIter.storageIter = NewCRDTResolvingIterator(rawStorageIter, m.schema, m.crdtTxID(), m)
 		}
 		iter = regularIter
 	}
@@ -722,6 +722,13 @@ func (it *validatingVBoundIterator) Next() bool {
 				it.currentTuple = it.buildTuple(datom)
 				return true
 			}
+			// Inner iterator exhausted — propagate any deferred error
+			// so Error() surfaces failures (e.g., unique-walk sub-scan
+			// errors that caused the scan to abort rather than return
+			// a datom).
+			if srcErr := it.crdtIter.Error(); srcErr != nil && it.err == nil {
+				it.err = srcErr
+			}
 			it.crdtIter.Close()
 			it.crdtIter = nil
 			it.rawIter = nil
@@ -740,6 +747,22 @@ func (it *validatingVBoundIterator) Next() bool {
 			continue // V not bound in this tuple
 		}
 
+		// Unique-attribute short-circuit: resolve the (A, V)-LWW winner
+		// once via a dedicated primitive and emit that one entity (or
+		// nothing) instead of streaming all validated candidates. This
+		// makes V-bound queries on unique attributes return exactly the
+		// canonical owner, satisfying the symmetry between the value view
+		// and the entity view under the CRDT-unique semantics.
+		if emitted, err := it.tryEmitUniqueWinner(); err != nil {
+			it.err = err
+			return false
+		} else if emitted {
+			return true
+		} else if it.isBoundAUniqueAttr() {
+			// Attribute is unique but no valid claimant — skip this binding.
+			continue
+		}
+
 		// Open CRDT-resolving scan on V-primary index
 		var err error
 		it.crdtIter, it.rawIter, err = it.openCRDTScan()
@@ -748,6 +771,62 @@ func (it *validatingVBoundIterator) Next() bool {
 			return false
 		}
 	}
+}
+
+// isBoundAUniqueAttr reports whether the bound attribute (if any) is
+// declared unique in the schema. Returns false if A is a variable (not
+// constant), if no schema is set, or if the attribute is not unique.
+func (it *validatingVBoundIterator) isBoundAUniqueAttr() bool {
+	if it.boundA == nil {
+		return false
+	}
+	aKw, ok := it.boundA.(datalog.Keyword)
+	if !ok {
+		return false
+	}
+	if it.matcher.schema == nil {
+		return false
+	}
+	def := it.matcher.schema.GetAttribute(aKw)
+	if def == nil {
+		return false
+	}
+	return def.Unique != ""
+}
+
+// tryEmitUniqueWinner resolves the (A, V)-LWW winner for the current
+// binding and, if a valid claimant exists, sets it.currentTuple and
+// returns (true, nil). If the attribute is not unique, returns
+// (false, nil) and the caller falls through to the normal scan path.
+// If the attribute is unique but no entity currently claims the bound
+// value, returns (false, nil) with a short-circuit indicator (see caller).
+func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
+	if !it.isBoundAUniqueAttr() {
+		return false, nil
+	}
+
+	aKw := it.boundA.(datalog.Keyword)
+	var aStorage Attribute
+	copy(aStorage[:], aKw.String())
+	vBytes := encodeValueForSearch(it.currentBoundV, it.matcher.store.encoder)
+
+	owner, ownerTx, err := it.matcher.resolveAVLWW(aStorage, vBytes, it.currentBoundV)
+	if err != nil {
+		return false, err
+	}
+	if owner == nil {
+		return false, nil // No claimant; caller treats this as skip-binding.
+	}
+
+	// Build a synthetic winner datom for tuple construction.
+	winner := &datalog.Datom{
+		E:  owner,
+		A:  aKw,
+		V:  it.currentBoundV,
+		Tx: ownerTx,
+	}
+	it.currentTuple = it.buildTuple(winner)
+	return true, nil
 }
 
 // validateCandidate checks if the current value of (E, A) matches boundV
@@ -917,7 +996,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// - Add-wins with same-Tx tiebreaking for CardinalityMany
 	// - RGA for CardinalityVector
 	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
-	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, datalog.ElementID{})
+	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, datalog.ElementID{}, it.matcher)
 
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{
@@ -1743,7 +1822,11 @@ func (it *cardinalityManyScanAllEntitiesIterator) Next() bool {
 			continue // Yield first member
 		}
 
-		// No more entities
+		// No more entities — propagate any deferred error from the
+		// inner storage iterator so Error() surfaces deep failures.
+		if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+			it.err = srcErr
+		}
 		return false
 	}
 }
@@ -1876,6 +1959,10 @@ func (it *vectorScanAllEntitiesIterator) Next() bool {
 		it.currentTuple = tuple
 		return true
 	}
+	// Propagate any deferred error from the inner storage iterator.
+	if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+		it.err = srcErr
+	}
 	return false
 }
 
@@ -1970,7 +2057,12 @@ func (it *cardinalityManyAVETValueIterator) Next() bool {
 
 	for {
 		if !it.storageIter.Next() {
-			// End of scan - emit final entity if it's a member
+			// End of scan - emit final entity if it's a member.
+			// Also surface any deferred error from the inner iterator
+			// so Error() reflects deep failures.
+			if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+				it.err = srcErr
+			}
 			if it.hasCurrentEntity && it.isCurrentEntityMember() {
 				it.buildTuple()
 				it.done = true
@@ -2098,13 +2190,17 @@ type cardinalityManyFindEntitiesWithValueIterator struct {
 	storageIter  Iterator
 	seenEntities map[[20]byte]bool
 	currentTuple executor.Tuple
+	err          error // First error from storage operations
 }
 
 func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
 	for it.storageIter.Next() {
 		datom, err := it.storageIter.Datom()
 		if err != nil {
-			continue
+			if it.err == nil {
+				it.err = err
+			}
+			return false
 		}
 
 		// Get entity bytes
@@ -2119,7 +2215,10 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
 		// Check if the specific value is in this entity's set
 		isMember, err := it.matcher.checkSetMembership(eBytes[:], it.aBytes[:], it.v)
 		if err != nil {
-			continue
+			if it.err == nil {
+				it.err = err
+			}
+			return false
 		}
 
 		if !isMember {
@@ -2147,6 +2246,10 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Next() bool {
 		it.currentTuple = tuple
 		return true
 	}
+	// Propagate any deferred error from the inner storage iterator.
+	if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+		it.err = srcErr
+	}
 	return false
 }
 
@@ -2160,6 +2263,8 @@ func (it *cardinalityManyFindEntitiesWithValueIterator) Close() error {
 	}
 	return nil
 }
+
+func (it *cardinalityManyFindEntitiesWithValueIterator) Error() error { return it.err }
 
 // matchCardinalityManyFindEntitiesWithValue handles [?e :attr "value"] where E is unbound
 // Finds all entities where the specific value is in the set.

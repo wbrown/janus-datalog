@@ -256,7 +256,7 @@ The uniqueness TOCTOU bug
 shares the "split across multiple writes" structure with this bug, but its
 fix is much larger than wrapping in one storage txn — it requires a
 fundamental redesign of how uniqueness fits into the CRDT model. See
-[CRDT_UNIQUE_SEMANTICS.md](../proposals/CRDT_UNIQUE_SEMANTICS.md) for the
+[CRDT_UNIQUE_SEMANTICS.md](../reference/CRDT_UNIQUE_SEMANTICS.md) for the
 proposed design. `validateUniqueness()` continues to run as before in this
 fix; both uniqueness bugs from the original report remain observable until
 that proposal is implemented.

@@ -78,7 +78,7 @@ func (s *simpleBatchScanner) Scan() error {
 	if s.matcher.isHistoryMode() {
 		iter = rawIter
 	} else {
-		iter = NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.crdtTxID())
+		iter = NewCRDTResolvingIterator(rawIter, s.matcher.schema, s.matcher.crdtTxID(), s.matcher)
 	}
 	defer iter.Close()
 

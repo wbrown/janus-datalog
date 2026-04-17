@@ -48,6 +48,99 @@ tx2.Commit()
 
 **Resolution**: O(1) - just read first entry.
 
+**Unique variant**: when a cardinality-one attribute is declared
+`:db.unique/value` or `:db.unique/identity`, an additional `(A, V)`-LWW
+resolution rule applies at read time (see
+[Unique Attributes](#unique-attributes-av-lww-with-walk-fallback)
+below). The simple first-entry shortcut is replaced by a walk that
+falls back to older assertions when the latest is superseded by
+another entity's claim.
+
+---
+
+## Unique Attributes: (A, V)-LWW with walk fallback
+
+For cardinality-one attributes declared unique in the schema, janus
+applies an additional CRDT rule at read time so that lookup-by-value
+returns exactly one canonical entity.
+
+**Why read-time**: in this codebase's concurrent-write CRDT model, a
+write-time uniqueness gate cannot work without imposing coordination
+that contradicts the rest of the architecture. Uniqueness is expressed
+instead as a merge rule: every assertion is a fact, and resolution
+determines which one wins per `(A, V)`. See
+[CRDT_UNIQUE_SEMANTICS.md](./CRDT_UNIQUE_SEMANTICS.md) for the full
+design discussion, including why each alternative was rejected.
+
+**Walk rule** (per-entity):
+
+Walk E's EATV history in descending Tx order. For each entry
+`(V_i, T_i, op)`:
+
+  1. `Remove(V_i, T_i)` — record `retracted[V_i] = max(retracted[V_i], T_i)`.
+  2. `Set(V_i, T_i)` — skip if `retracted[V_i] > T_i` (cancelled).
+  3. `Set(V_i, T_i)` — skip if any OTHER entity has asserted `V_i` with
+     `Tx > T_i` (superseded).
+  4. Otherwise — emit `V_i` as E's current value.
+
+If no entry qualifies, E has no current value for this attribute.
+
+**Symmetric views**:
+
+| View | Question | Answer |
+|---|---|---|
+| Entity | "What is E's value?" | The walk's emission. |
+| Value | "Who owns V?" | The entity whose walk emits V (at most one). |
+
+V-view (`LookupByUnique(a, v)`) and entity-view always agree because
+they derive from the same walk rule.
+
+**Operational cost**:
+
+- Non-unique cardinality-one reads: O(1) EATV first-entry (unchanged).
+- Unique reads, uncontested: O(1) — walk emits the first entry.
+- Unique reads, contested: O(history-depth × AVET-candidates-per-V).
+  Common case (rare takeovers): still near-O(1). Worst case: walk
+  proceeds until a non-superseded entry is found.
+
+**Lookup-ref API** (`UniqueIdentity`):
+
+```go
+e, err := d.LookupByUnique(":user/email", "alice@example.com")
+// Returns the canonical owner, or (nil, nil) if no entity owns V.
+```
+
+`LookupByUnique` is the primitive for natural-key lookup; application-
+layer upsert is built on top.
+
+**Storage**:
+
+No new indices. The walk uses the existing EATV for per-entity history
+and AVET for per-(A, V) supersession checks. Writes remain simple
+append-only datom inserts; the resolution complexity lives entirely in
+the read path.
+
+**Tombstones and retractions**:
+
+Remove operations participate in the walk: a `Remove(V)` at higher Tx
+cancels a `Set(V)` at lower Tx within the same entity's history. This
+preserves the property that `Set → Remove` produces no current value,
+while `Set → Remove → Set` correctly re-asserts V at the highest Tx.
+
+**History and AsOf**:
+
+`d.History()` bypasses the walk entirely — all raw assertions are
+visible, including superseded ones. `d.AsOf(tx)` applies the walk with
+`Tx ≤ target` restricting both the walked entity's history and the
+supersession check against other entities.
+
+**Cache invalidation**:
+
+Writes to a unique attribute can silently stale cached values for
+other entities whose walks may now produce different results. The
+cache invalidates all `(E, A)` entries for the attribute on any commit
+that writes it (conservative strategy per design D3).
+
 ---
 
 ## Cardinality-Many (Add-Wins Set)

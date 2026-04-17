@@ -61,6 +61,13 @@ func (it *unboundIterator) Next() bool {
 		}
 	}
 
+	// Storage iterator exhausted — propagate any deferred error so
+	// callers observing Error() see failures that occurred inside
+	// the inner iterator (e.g., CRDTResolvingIterator unique-walk
+	// sub-scan failures that cause Next() to return false).
+	if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+		it.err = srcErr
+	}
 	return false
 }
 
@@ -157,6 +164,10 @@ func (it *unboundMaskIterator) Next() bool {
 		it.keysFiltered = keysScanned - keysMatched
 	}
 
+	// Propagate any deferred error from the inner iterator.
+	if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+		it.err = srcErr
+	}
 	return false
 }
 

@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -101,138 +100,14 @@ func TestSchemaUnknownAttribute(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestSchemaUniquenessValue(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "db-unique-value-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create schema with unique value constraint
-	s, err := schema.NewBuilder().
-		Attribute(":user/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
-		Build()
-	require.NoError(t, err)
-
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
-
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
-
-	// First user with email - use Set() for cardinality-one
-	tx := db.NewTransaction()
-	err = tx.Set(alice, email, "alice@example.com")
-	require.NoError(t, err)
-	txid, err := tx.Commit()
-	require.NoError(t, err)
-	t.Logf("First commit txid: %d", txid)
-
-	// Verify data was written by querying directly
-	matcher := NewBadgerMatcher(db.Store())
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Variable{Name: datalog.NewSymbol("?e")},
-			query.Constant{Value: email},
-			query.Constant{Value: "alice@example.com"},
-			query.Blank{},
-		},
-	}
-	results, err := matcher.Match(pattern, nil)
-	require.NoError(t, err, "matcher.Match should succeed")
-	t.Logf("Result symbols: %v", results.Symbols())
-
-	iter := results.Iterator()
-	count := 0
-	for iter.Next() {
-		tuple := iter.Tuple()
-		t.Logf("Found tuple: %v", tuple)
-		if len(tuple) > 0 {
-			t.Logf("  tuple[0] type: %T, value: %v", tuple[0], tuple[0])
-			if id, ok := tuple[0].(datalog.Identity); ok {
-				t.Logf("  Is Identity: %s", id.String())
-			} else {
-				t.Logf("  NOT an Identity type")
-			}
-		}
-		count++
-	}
-	iter.Close()
-	t.Logf("Total matches found: %d", count)
-	require.Greater(t, count, 0, "should find at least one existing datom")
-
-	// Second user with same email should fail
-	tx2 := db.NewTransaction()
-	err = tx2.Set(bob, email, "alice@example.com")
-	require.NoError(t, err) // Set succeeds (type check passes)
-	_, err = tx2.Commit()
-	require.Error(t, err, "should fail uniqueness check")
-	assert.Contains(t, err.Error(), "uniqueness violation")
-}
-
-func TestSchemaUniquenessWithinTransaction(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "db-unique-tx-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create schema with unique value constraint
-	s, err := schema.NewBuilder().
-		Attribute(":user/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
-		Build()
-	require.NoError(t, err)
-
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
-
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
-
-	// Two different entities with same email in same transaction
-	tx := db.NewTransaction()
-	err = tx.Set(alice, email, "shared@example.com")
-	require.NoError(t, err)
-	err = tx.Set(bob, email, "shared@example.com")
-	require.NoError(t, err) // Set succeeds (checked at commit time for cross-entity)
-	_, err = tx.Commit()
-	assert.Error(t, err, "should fail uniqueness check within transaction")
-	assert.Contains(t, err.Error(), "uniqueness violation")
-	assert.Contains(t, err.Error(), "already used by entity")
-}
-
-func TestSchemaUniquenessIdempotent(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "db-unique-idempotent-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create schema with unique value constraint
-	s, err := schema.NewBuilder().
-		Attribute(":user/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
-		Build()
-	require.NoError(t, err)
-
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
-
-	alice := datalog.NewIdentity("alice")
-	email := datalog.NewKeyword(":user/email")
-
-	// First assertion
-	tx := db.NewTransaction()
-	err = tx.Set(alice, email, "alice@example.com")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Same entity, same value should succeed (idempotent)
-	tx2 := db.NewTransaction()
-	err = tx2.Set(alice, email, "alice@example.com")
-	require.NoError(t, err)
-	_, err = tx2.Commit()
-	assert.NoError(t, err, "idempotent update should succeed")
-}
+// The three Datomic-strict uniqueness tests (TestSchemaUniquenessValue,
+// TestSchemaUniquenessWithinTransaction, TestSchemaUniquenessIdempotent)
+// were deleted in the CRDT-uniqueness redesign. They asserted that the
+// second commit of a duplicate unique value fails with "uniqueness
+// violation" — the old write-time gate contract. The new model (see
+// docs/proposals/CRDT_UNIQUE_SEMANTICS.md) resolves uniqueness at read
+// time via (A, V)-LWW; all writes succeed. Tests for the new contract
+// are added in subsequent commits (Commits 2–5 of that redesign).
 
 func TestNoSchemaNoValidation(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "db-no-schema-test")

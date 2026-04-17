@@ -29,9 +29,42 @@ func (m *BadgerMatcher) GetCardinality(a Attribute) schema.Cardinality {
 	return attr.Cardinality
 }
 
-// ResolveLWW returns the current value for cardinality-one (highest ElementID wins)
-// Uses EATV index where first entry (highest Tx) is the current value
+// ResolveLWW returns the current value for cardinality-one (highest
+// ElementID wins).
+//
+// For non-unique attributes, uses the EATV first-entry shortcut (highest
+// Tx due to descending sort). For attributes declared Unique in the
+// schema, delegates to walkUniqueEntityValue for walk-based resolution:
+// the returned value is the entity's first non-superseded assertion,
+// which may fall back to an older entry if the latest has been claimed
+// by another entity.
+//
+// Exception: in history mode, the walk is bypassed entirely. History
+// mode exposes raw assertions without CRDT resolution; applying the
+// walk would produce fallback values that don't correspond to any
+// single raw datom. ResolveLWW in history mode returns the first-entry
+// (highest-Tx raw Set), matching the pre-redesign behavior for
+// non-unique attributes in the same mode.
 func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementID, error) {
+	// Unique-attribute walk path (applies only when schema declares
+	// the attribute unique AND the matcher is not in history mode;
+	// otherwise falls through to the simple first-entry path below).
+	if m.schema != nil && !m.isHistoryMode() {
+		kw := decodeAttribute(a)
+		if kw != "" {
+			if def := m.schema.GetAttribute(datalog.NewKeyword(kw)); def != nil && def.Unique != "" {
+				v, tx, found, err := m.walkUniqueEntityValue(e, a)
+				if err != nil {
+					return nil, datalog.ElementID{}, err
+				}
+				if !found {
+					return nil, datalog.ElementID{}, nil
+				}
+				return v, tx, nil
+			}
+		}
+	}
+
 	// Build prefix for E+A on EATV index
 	prefix := make([]byte, 1+20+32) // prefix byte + E + A
 	prefix[0] = byte(EATV)

@@ -1976,13 +1976,9 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		return datalog.ElementID{}, fmt.Errorf("transaction is closed")
 	}
 
-	// Validate uniqueness constraints before opening the storage transaction.
-	// (Note: this is a TOCTOU check against committed state. CRDT-aligned
-	// resolution at the read path is tracked in
-	// docs/proposals/CRDT_UNIQUE_SEMANTICS.md.)
-	if err := t.validateUniqueness(); err != nil {
-		return datalog.ElementID{}, err
-	}
+	// Uniqueness is a read-time CRDT resolution rule, not a write-time gate.
+	// All writes succeed; the canonical owner of a unique (A, V) is determined
+	// at read time by (A, V)-LWW. See docs/proposals/CRDT_UNIQUE_SEMANTICS.md.
 
 	// Record transaction time for metadata
 	var txTime time.Time
@@ -2054,6 +2050,21 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
 		seenKeys := make(map[CacheKey]bool)
 
+		// Attributes written in this commit that are declared Unique.
+		// Writes to these attributes can silently supersede other entities'
+		// cached values under (A, V)-LWW fallback, so we invalidate all
+		// cached (E, A) entries for the attribute after per-key updates.
+		uniqueAttrsWritten := make(map[Attribute]bool)
+		sch := t.db.Schema()
+		checkUnique := func(a datalog.Keyword, aBytes Attribute) {
+			if sch == nil || !sch.HasSchema() {
+				return
+			}
+			if def := sch.GetAttribute(a); def != nil && def.Unique != "" {
+				uniqueAttrsWritten[aBytes] = true
+			}
+		}
+
 		// Process asserted datoms
 		for _, d := range t.datoms {
 			eBytes := Entity(d.E.Hash())
@@ -2067,6 +2078,7 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 				touched = append(touched, key)
 				t.db.cache.UpdateMaxVersion(key, d.Tx)
 			}
+			checkUnique(d.A, aBytes)
 		}
 
 		// Process retracted datoms
@@ -2082,10 +2094,18 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 				touched = append(touched, key)
 				t.db.cache.UpdateMaxVersion(key, d.Tx)
 			}
+			checkUnique(d.A, aBytes)
 		}
 
 		// Invalidate cache entries for all touched (E, A) pairs
 		t.db.cache.Invalidate(touched)
+
+		// Conservative unique-attr invalidation: for each unique attribute
+		// written in this commit, invalidate every cached entry for that
+		// attribute across all entities. See CRDT_UNIQUE_SEMANTICS.md D3.
+		for aBytes := range uniqueAttrsWritten {
+			t.db.cache.InvalidateAttribute(aBytes)
+		}
 	}
 
 	// Clean up
@@ -2097,97 +2117,6 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	// Return the metadata ElementID - it has the highest Lamport in this tx,
 	// making it the correct high-water mark for as-of queries
 	return metadataElemID, nil
-}
-
-// validateUniqueness checks uniqueness constraints for all datoms in the transaction.
-//
-// Note: this is a TOCTOU check — it reads committed state via the matcher,
-// then writes happen in a separate phase. The proper CRDT-aligned design
-// (read-time (A, V)-LWW resolution, no write-time enforcement) is captured
-// in docs/proposals/CRDT_UNIQUE_SEMANTICS.md.
-func (t *Transaction) validateUniqueness() error {
-	s := t.db.Schema()
-	if s == nil || !s.HasSchema() {
-		return nil // No schema = no validation
-	}
-
-	// Track values seen in this transaction for within-transaction uniqueness
-	// Key: attribute + serialized value
-	seenInTx := make(map[string]datalog.Identity)
-
-	matcher := NewBadgerMatcher(t.db.store)
-
-	for _, d := range t.datoms {
-		def := s.GetAttribute(d.A)
-		if def == nil || def.Unique == "" {
-			continue // No uniqueness constraint
-		}
-
-		// Create a key for tracking this attr+value combination
-		txKey := fmt.Sprintf("%s:%v", d.A.String(), d.V)
-
-		// Check within transaction uniqueness
-		if existingEntity, ok := seenInTx[txKey]; ok {
-			if existingEntity != d.E {
-				return fmt.Errorf("uniqueness violation for %s: value %v already used by entity %s in this transaction",
-					d.A.String(), d.V, existingEntity.String())
-			}
-			// Same entity, same value - OK (idempotent update)
-			continue
-		}
-		seenInTx[txKey] = d.E
-
-		// Check database for existing value
-		// Create a pattern [?e :attr value _] to find entities with this value
-		pattern := &query.DataPattern{
-			Elements: []query.PatternElement{
-				query.Variable{Name: datalog.NewSymbol("?e")}, // Entity variable
-				query.Constant{Value: d.A},                    // Bound attribute
-				query.Constant{Value: d.V},                    // Bound value
-				query.Blank{},                                 // Transaction wildcard
-			},
-		}
-
-		results, err := matcher.Match(pattern, nil)
-		if err != nil {
-			return fmt.Errorf("failed to check uniqueness for %s: %w", d.A.String(), err)
-		}
-
-		// Find the index of ?e in the result symbols
-		symbols := results.Symbols()
-		eIndex := -1
-		for i, sym := range symbols {
-			if sym == datalog.NewSymbol("?e") {
-				eIndex = i
-				break
-			}
-		}
-		if eIndex < 0 {
-			continue // No entity symbol in results (shouldn't happen)
-		}
-
-		// Check if any existing datoms have a different entity
-		iter := results.Iterator()
-		for iter.Next() {
-			tuple := iter.Tuple()
-			if eIndex >= len(tuple) {
-				continue
-			}
-			// Get Identity (now always a pointer type)
-			existingEntity, ok := tuple[eIndex].(datalog.Identity)
-			if !ok || existingEntity == nil {
-				continue
-			}
-			if !existingEntity.Equal(d.E) {
-				iter.Close()
-				return fmt.Errorf("uniqueness violation for %s: value %v already exists on entity %s",
-					d.A.String(), d.V, existingEntity.String())
-			}
-		}
-		iter.Close()
-	}
-
-	return nil
 }
 
 // Rollback aborts the transaction
@@ -2352,6 +2281,51 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 //	// Get all attributes
 //	result, err := db.Pull(entityID, `[*]`)
 //
+// LookupByUnique returns the entity currently owning (attr, value) under
+// (A, V)-LWW resolution. Returns a nil Identity with a nil error if no
+// entity currently claims the value.
+//
+// The attribute must be declared unique in the schema (UniqueValue or
+// UniqueIdentity). Calling LookupByUnique on a non-unique attribute, an
+// attribute not present in the schema, or a database without a schema
+// returns an error.
+//
+// LookupByUnique is the primitive for natural-key lookup in the CRDT model:
+// application-layer upsert ("find-or-create by email") is built on top of
+// it. See docs/proposals/CRDT_UNIQUE_SEMANTICS.md for the design rationale.
+//
+// Concurrent writers may change the canonical owner between calls; treat
+// the result as a snapshot. If an application needs to verify a write
+// "won," it should call LookupByUnique after the commit and compare the
+// returned Identity to its own.
+func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (datalog.Identity, error) {
+	if d.schema == nil {
+		return nil, fmt.Errorf("LookupByUnique requires a schema declaring %s as unique", attr.String())
+	}
+	def := d.schema.GetAttribute(attr)
+	if def == nil {
+		return nil, fmt.Errorf("LookupByUnique: attribute %s not found in schema", attr.String())
+	}
+	if def.Unique == "" {
+		return nil, fmt.Errorf("LookupByUnique: attribute %s is not unique", attr.String())
+	}
+
+	matcher, ok := d.Matcher().(*BadgerMatcher)
+	if !ok {
+		return nil, fmt.Errorf("LookupByUnique: unsupported matcher type %T", d.Matcher())
+	}
+
+	var aBytes Attribute
+	copy(aBytes[:], attr.String())
+	vBytes := encodeValueForSearch(value, d.store.encoder)
+
+	owner, _, err := matcher.resolveAVLWW(aBytes, vBytes, value)
+	if err != nil {
+		return nil, fmt.Errorf("LookupByUnique: resolution failed: %w", err)
+	}
+	return owner, nil
+}
+
 //	// Get attributes with nested reference
 //	result, err := db.Pull(entityID, `[:entity/name {:entity/region [:region/code]}]`)
 //
