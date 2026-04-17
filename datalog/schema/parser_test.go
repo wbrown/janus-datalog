@@ -219,3 +219,41 @@ func TestParseSchemaEmptyMap(t *testing.T) {
 	assert.False(t, schema.HasSchema())
 	assert.Equal(t, 0, schema.Count())
 }
+
+// TestParseSchema_CardinalityVector verifies the EDN parser accepts
+// :db.cardinality/vector, matching the Go builder API's Vector()
+// method. Regression for EXTERNAL_REVIEW_2026_04 item 6 — prior to
+// the fix, the EDN path rejected :db.cardinality/vector with
+// "unknown cardinality", despite the schema supporting vector
+// cardinality everywhere else.
+func TestParseSchema_CardinalityVector(t *testing.T) {
+	input := `{:person/skills {:db/valueType :db.type/string
+	                          :db/cardinality :db.cardinality/vector}}`
+
+	schema, err := ParseSchema(input)
+	require.NoError(t, err)
+
+	skills := schema.GetAttribute(kw(":person/skills"))
+	require.NotNil(t, skills)
+	assert.Equal(t, CardinalityVector, skills.Cardinality)
+	assert.Equal(t, TypeString, skills.ValueType)
+}
+
+// TestParseSchema_UniqueElements verifies :db/unique-elements true
+// round-trips through the EDN parser, matching the Go builder's
+// UniqueElements() / OrderedSet() semantics. Required for OrderedSet
+// attributes to be expressible in EDN schema files.
+func TestParseSchema_UniqueElements(t *testing.T) {
+	input := `{:character/prefs {:db/valueType :db.type/string
+	                             :db/cardinality :db.cardinality/vector
+	                             :db/unique-elements true}}`
+
+	schema, err := ParseSchema(input)
+	require.NoError(t, err)
+
+	prefs := schema.GetAttribute(kw(":character/prefs"))
+	require.NotNil(t, prefs)
+	assert.Equal(t, CardinalityVector, prefs.Cardinality)
+	assert.True(t, prefs.UniqueElements,
+		":db/unique-elements true should populate AttributeDefinition.UniqueElements")
+}

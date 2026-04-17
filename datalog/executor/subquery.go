@@ -14,12 +14,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// Note: Parallel subquery settings are now managed by ExecutorOptions
-
-// SubqueryWorkerCount is the number of goroutines to use for parallel subquery execution
-// Default is runtime.NumCPU() for optimal CPU utilization
-var SubqueryWorkerCount = runtime.NumCPU()
-
 // ParallelSubqueryThreshold is the minimum number of iterations to use parallel execution
 // For small iteration counts, sequential execution is faster due to lower overhead
 const ParallelSubqueryThreshold = 10
@@ -170,7 +164,7 @@ func executeSubqueryParallel(ctx Context, parentExec *Executor, subqPlan planner
 
 // executeSubqueryParallelStreaming executes subqueries in parallel and streams results via channel
 func executeSubqueryParallelStreaming(ctx Context, parentExec *Executor, subqPlan planner.SubqueryPlan, inputCombinations []map[query.Symbol]interface{}) (Relation, error) {
-	numWorkers := SubqueryWorkerCount
+	numWorkers := parentExec.maxSubqueryWorkers
 	if numWorkers <= 0 {
 		numWorkers = runtime.NumCPU()
 	}
@@ -276,7 +270,7 @@ func executeSubqueryParallelStreaming(ctx Context, parentExec *Executor, subqPla
 
 // executeSubqueryParallelMaterialized executes subqueries in parallel and materializes all results
 func executeSubqueryParallelMaterialized(ctx Context, parentExec *Executor, subqPlan planner.SubqueryPlan, inputCombinations []map[query.Symbol]interface{}) (Relation, error) {
-	numWorkers := SubqueryWorkerCount
+	numWorkers := parentExec.maxSubqueryWorkers
 	if numWorkers <= 0 {
 		numWorkers = runtime.NumCPU()
 	}
@@ -689,164 +683,205 @@ func augmentWithInputValues(rel Relation, inputSymbols []query.Symbol, inputValu
 }
 
 // applyBindingForm applies the binding form to transform subquery results.
-// This is a pure function that handles different binding forms (TupleBinding, RelationBinding).
+// The input relation may be streaming (Size() == -1), so this function
+// iterates rather than indexing — Size()/Get() are only safe on already
+// materialized relations.
+//
+// Output shape by binding form:
+//   - TupleBinding, ScalarBinding: 1-tuple MaterializedRelation on match,
+//     empty MaterializedRelation when subquery returns no rows (datalog
+//     "pattern fails to match" semantics). Cardinality is validated by
+//     reading at most one extra tuple after the first.
+//   - RelationBinding: StreamingRelation that wraps the input iterator
+//     and emits inputValues++tuple per Next(). Preserves end-to-end
+//     streaming through the subquery → union boundary.
 func applyBindingForm(result Relation, binding query.BindingForm, inputValues map[query.Symbol]interface{}, inputSymbols []query.Symbol) (Relation, error) {
-	// fmt.Printf("DEBUG: applyBindingForm - binding type: %T, binding: %v\n", binding, binding)
-	// fmt.Printf("DEBUG: Result symbols: %v\n", result.Symbols)
-
 	switch b := binding.(type) {
 	case query.TupleBinding:
-		// [[?var]] - expect single result, bind to variable
-
-		// Filter out source markers from input symbols - they're not real variables
-		var realInputSymbols []query.Symbol
-		for _, sym := range inputSymbols {
-			if !sym.IsSource() {
-				realInputSymbols = append(realInputSymbols, sym)
-			}
-		}
-
-		// EMPTY RESULT = PATTERN FAILS TO MATCH
-		// Return empty relation instead of error (datalog semantics)
-		if result.Size() == 0 {
-			symbols := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
-			copy(symbols, realInputSymbols)
-			copy(symbols[len(realInputSymbols):], b.Variables)
-			return NewMaterializedRelation(symbols, []Tuple{}), nil
-		}
-
-		if result.Size() != 1 {
-			return nil, fmt.Errorf("tuple binding expects exactly 1 result, got %d", result.Size())
-		}
-
-		// fmt.Printf("DEBUG: TupleBinding variables: %v\n", b.Variables)
-
-		// Create relation with input symbols + binding symbols (excluding $)
-		symbols := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
-		copy(symbols, realInputSymbols)
-		copy(symbols[len(realInputSymbols):], b.Variables)
-
-		// Create tuple with input values + result values (excluding $)
-		tuple := make(Tuple, len(symbols))
-		for i, sym := range realInputSymbols {
-			tuple[i] = inputValues[sym]
-		}
-
-		// Add result values
-		resultTuple := result.Get(0)
-		// fmt.Printf("DEBUG: Result tuple: %v\n", resultTuple)
-
-		// Check for nil values in result (INVARIANT: should never happen)
-		for i, val := range resultTuple {
-			if val == nil {
-				return nil, fmt.Errorf("subquery result contains nil value at position %d - this violates datalog semantics", i)
-			}
-		}
-
-		for i := range b.Variables {
-			// For aggregates, the result symbol is the aggregate expression (e.g., "(max ?price)")
-			// We need to match this with the binding variable
-			if i < len(resultTuple) {
-				tuple[len(realInputSymbols)+i] = resultTuple[i]
-				// fmt.Printf("DEBUG: Binding %v to position %d: %v\n", sym, len(realInputSymbols)+i, resultTuple[i])
-			} else {
-				// fmt.Printf("DEBUG: No value for binding variable %v at index %d\n", sym, i)
-			}
-		}
-
-		// fmt.Printf("DEBUG: Final tuple: %v\n", tuple)
-		return NewMaterializedRelation(symbols, []Tuple{tuple}), nil
+		// TupleBinding [[?a ?b]]: subquery must return exactly one
+		// tuple; its N columns bind to the N variables. Arity of the
+		// subquery's schema must match len(Variables).
+		return applyExactlyOneBinding(result, inputValues, inputSymbols, b.Variables, "tuple", len(b.Variables))
 
 	case query.ScalarBinding:
-		// ?var - expect single result with single symbol, bind to variable
-		// This is the Datomic scalar binding pattern used with scalar find spec
-
-		// Filter out source markers from input symbols
-		var realInputSymbols []query.Symbol
-		for _, sym := range inputSymbols {
-			if !sym.IsSource() {
-				realInputSymbols = append(realInputSymbols, sym)
-			}
-		}
-
-		// EMPTY RESULT = PATTERN FAILS TO MATCH
-		if result.Size() == 0 {
-			symbols := append(realInputSymbols, b.Variable)
-			return NewMaterializedRelation(symbols, []Tuple{}), nil
-		}
-
-		// Scalar binding expects exactly 1 tuple
-		if result.Size() != 1 {
-			return nil, fmt.Errorf("scalar binding expects 1 result, got %d", result.Size())
-		}
-
-		resultTuple := result.Get(0)
-
-		// Scalar binding expects exactly 1 symbol
-		if len(resultTuple) != 1 {
-			return nil, fmt.Errorf("scalar binding expects 1 symbol, got %d", len(resultTuple))
-		}
-
-		// Create relation with input symbols + binding variable
-		symbols := append(realInputSymbols, b.Variable)
-		tuple := make(Tuple, len(symbols))
-		for i, sym := range realInputSymbols {
-			tuple[i] = inputValues[sym]
-		}
-		tuple[len(realInputSymbols)] = resultTuple[0]
-
-		return NewMaterializedRelation(symbols, []Tuple{tuple}), nil
+		// ScalarBinding ?x: subquery must return exactly one tuple
+		// with exactly one column; ScalarBinding is the arity-1 case
+		// of TupleBinding.
+		return applyExactlyOneBinding(result, inputValues, inputSymbols, []query.Symbol{b.Variable}, "scalar", 1)
 
 	case query.CollectionBinding:
-		// [?coll ...] - collect all values from a single symbol into a collection
-		// For now, implement as a simple relation
+		// [?coll ...] - collect all values from a single symbol into a collection.
 		return nil, fmt.Errorf("collection binding not yet implemented")
 
 	case query.RelationBinding:
-		// [[?a ?b] ...] - bind as relation with multiple symbols
 		resultCols := result.Symbols()
 		if len(b.Variables) != len(resultCols) {
 			return nil, fmt.Errorf("relation binding expects %d symbols, got %d", len(b.Variables), len(resultCols))
 		}
 
-		// Filter out source markers from input symbols - they're not real variables
-		var realInputSymbols []query.Symbol
-		for _, sym := range inputSymbols {
-			if !sym.IsSource() {
-				realInputSymbols = append(realInputSymbols, sym)
-			}
+		realInputSymbols := filterSourceSymbols(inputSymbols)
+		outSymbols := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
+		copy(outSymbols, realInputSymbols)
+		copy(outSymbols[len(realInputSymbols):], b.Variables)
+
+		// Pre-compute the input-value prefix — it's constant for this
+		// applyBindingForm call, applied to every row of the subquery.
+		prefix := make([]interface{}, len(realInputSymbols))
+		for i, sym := range realInputSymbols {
+			prefix[i] = inputValues[sym]
 		}
 
-		// Create relation with input symbols + binding symbols (excluding source markers)
-		symbols := make([]query.Symbol, len(realInputSymbols)+len(b.Variables))
-		copy(symbols, realInputSymbols)
-		copy(symbols[len(realInputSymbols):], b.Variables)
-
-		// Create tuples with input values + each result tuple (excluding $)
-		var tuples []Tuple
-		for i := 0; i < result.Size(); i++ {
-			tuple := make(Tuple, len(symbols))
-
-			// Add input values (excluding $)
-			for j, sym := range realInputSymbols {
-				tuple[j] = inputValues[sym]
-			}
-
-			// Add result values
-			resultTuple := result.Get(i)
-			for j := range b.Variables {
-				tuple[len(realInputSymbols)+j] = resultTuple[j]
-			}
-
-			tuples = append(tuples, tuple)
+		// Stream: wrap the subquery's iterator and emit prefix++row per
+		// Next(). No buffering.
+		wrapped := &prefixingIterator{
+			inner:    result.Iterator(),
+			prefix:   prefix,
+			bodyLen:  len(b.Variables),
 		}
-
-		return NewMaterializedRelation(symbols, tuples), nil
+		return NewStreamingRelationWithOptions(outSymbols, wrapped, result.Options()), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported binding form: %T", binding)
 	}
 }
+
+// filterSourceSymbols returns inputSymbols with source markers ($, $foo)
+// removed — those are execution context, not data variables.
+func filterSourceSymbols(inputSymbols []query.Symbol) []query.Symbol {
+	out := make([]query.Symbol, 0, len(inputSymbols))
+	for _, s := range inputSymbols {
+		if !s.IsSource() {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// applyExactlyOneBinding performs the binding transform for TupleBinding
+// and ScalarBinding — both require the subquery to return exactly one
+// tuple, and differ only in error-message phrasing and expected arity.
+//
+// Empty subquery result → returns an empty relation (datalog "pattern
+// fails to match" semantics, not an error).
+// More than one tuple → returns an error naming the binding form.
+// Arity mismatch against expectedArity → returns an error upfront
+// without iterating; the schema check is a pure property of the
+// subquery's find spec.
+func applyExactlyOneBinding(
+	result Relation,
+	inputValues map[query.Symbol]interface{},
+	inputSymbols []query.Symbol,
+	bindingVars []query.Symbol,
+	label string,
+	expectedArity int,
+) (Relation, error) {
+	realInputSymbols := filterSourceSymbols(inputSymbols)
+	outSymbols := make([]query.Symbol, len(realInputSymbols)+len(bindingVars))
+	copy(outSymbols, realInputSymbols)
+	copy(outSymbols[len(realInputSymbols):], bindingVars)
+
+	// Schema check upfront — pure property of the subquery's find
+	// spec, no iteration required.
+	if got := len(result.Symbols()); got != expectedArity {
+		return nil, fmt.Errorf("%s binding expects %d symbol(s), got %d", label, expectedArity, got)
+	}
+
+	first, moreThanOne, err := readAtMostTwo(result)
+	if err != nil {
+		return nil, err
+	}
+	if first == nil {
+		return NewMaterializedRelation(outSymbols, []Tuple{}), nil
+	}
+	if moreThanOne {
+		return nil, fmt.Errorf("%s binding expects exactly 1 result, got more than 1", label)
+	}
+
+	// INVARIANT: subquery tuples contain no nil values.
+	for i, val := range first {
+		if val == nil {
+			return nil, fmt.Errorf("subquery result contains nil value at position %d - this violates datalog semantics", i)
+		}
+	}
+
+	tuple := make(Tuple, len(outSymbols))
+	for i, sym := range realInputSymbols {
+		tuple[i] = inputValues[sym]
+	}
+	for i := range bindingVars {
+		tuple[len(realInputSymbols)+i] = first[i]
+	}
+	return NewMaterializedRelation(outSymbols, []Tuple{tuple}), nil
+}
+
+// readAtMostTwo advances the relation's iterator by up to two tuples,
+// returning a copy of the first (safe to retain after the iterator is
+// closed) and a cardinality indicator:
+//
+//	moreThanOne == false, first == nil: empty relation.
+//	moreThanOne == false, first != nil: exactly one tuple.
+//	moreThanOne == true:                more than one tuple; iteration
+//	                                    stops immediately after seeing
+//	                                    the second.
+//
+// Used by TupleBinding / ScalarBinding to enforce cardinality without
+// draining the subquery result.
+func readAtMostTwo(rel Relation) (first Tuple, moreThanOne bool, err error) {
+	it := rel.Iterator()
+	defer it.Close()
+
+	if !it.Next() {
+		return nil, false, it.Error()
+	}
+
+	// Copy the first tuple — the underlying iterator may reuse its
+	// workspace on the next Next() call.
+	src := it.Tuple()
+	first = make(Tuple, len(src))
+	copy(first, src)
+
+	if it.Next() {
+		return first, true, it.Error()
+	}
+	return first, false, it.Error()
+}
+
+// prefixingIterator wraps an Iterator and emits [prefix... inner...] on
+// each Next(). Used by RelationBinding to preserve streaming — the
+// subquery's iterator flows through without buffering.
+//
+// Reuses its output buffer across Next() calls: callers that cache
+// tuples must copy (same contract as other streaming iterators in the
+// codebase; StreamingRelation.RequiresCopy() returns true).
+type prefixingIterator struct {
+	inner   Iterator
+	prefix  []interface{}
+	bodyLen int
+	buf     Tuple
+}
+
+func (p *prefixingIterator) Next() bool {
+	if !p.inner.Next() {
+		return false
+	}
+	innerTuple := p.inner.Tuple()
+	if p.buf == nil {
+		p.buf = make(Tuple, len(p.prefix)+p.bodyLen)
+		copy(p.buf, p.prefix)
+	}
+	for i := 0; i < p.bodyLen; i++ {
+		if i < len(innerTuple) {
+			p.buf[len(p.prefix)+i] = innerTuple[i]
+		}
+	}
+	return true
+}
+
+func (p *prefixingIterator) Tuple() Tuple { return p.buf }
+
+func (p *prefixingIterator) Close() error { return p.inner.Close() }
+
+func (p *prefixingIterator) Error() error { return p.inner.Error() }
 
 // getBindingColumns returns the expected symbols for a binding form.
 // This is a pure function that computes output schema.
