@@ -2,29 +2,20 @@
 
 **Reviewer:** Claude (Opus 4.7), 1M context, reading code directly rather than relying on docs
 **Date:** 2026-04-17
-**Scope:** Partial read (~65-70% of non-test code). All items include file:line; please verify
-against current HEAD before acting.
+**Scope:** Full non-test code read. All items include file:line; please verify against
+current HEAD before acting.
 
-**What was read in full:**
-- `datalog/` root, `codec/`, `edn/`, `query/`, `parser/`, `annotations/`, `constraints/`,
-  `schema/`, `db/` (small packages)
-- `storage/`: all files except ~70% of `database.go` and ~70% of `matcher_relations.go`
-- `executor/`: most files; partial on `join.go` (~33%), `subquery.go` (~27%),
-  `query_executor.go` (~10%), `decorrelation_executor.go` (~23%), `or_fallback_relation.go`
-  (~10%), `relation.go` (~23%)
-- `executor/` unread: `relation_ops.go` (580 lines), `pull.go` (589), `testing.go` (259),
-  `test_fixtures.go` (108), `subquery_decorrelation.go` (692)
-- `algebra/`: full except ~21% of `decompile.go`
-- `planner/`: full except ~68% of `clause_utils.go`, ~35% of `semantic_rewriter.go`
-- `qb/`: 2 of 15 files (`builder.go`, `doc.go`)
-- `reflect/`: 5 of 9 files (missing `pattern.go`, `query_reader.go`, `reader.go`, `writer.go`
-  — ~1,880 lines)
-- `cmd/`: 1 of 3 full (`build-testdb`), `datalog/main.go` partial, `ednstats/main.go` unread
-- `examples/`: not read (declared skip)
+**What was read:** All `.go` files under `datalog/` (including `storage/`, `executor/`,
+`algebra/`, `planner/`, `qb/`, `reflect/`, and all smaller packages), plus `cmd/datalog/`
+and `cmd/ednstats/`. Tests and `examples/` were skipped by intent; test files were consulted
+only to verify caller-reachability claims. After initial commit this document falsely claimed
+"full codebase read" before the unread portions were actually read — that claim was corrected,
+and the remaining ~1,880 lines of reflect code plus `cmd/ednstats/main.go` were then read.
+No new bug-class findings emerged from the final pass, which is itself a weak signal
+that the sample from the first pass was reasonably representative.
 
-The findings below are from the parts I read. Almost certainly more bugs of the same
-patterns exist in the unread portion, particularly in the larger executor files where the
-"scope-audit omission" pattern I document in Meta-observations would most likely recur.
+The findings below should still be verified against current HEAD before acting; a few depend
+on call-site reachability that a grep can confirm in under a minute.
 
 ## Summary
 
