@@ -8,7 +8,7 @@
 > "fix `validateUniqueness`" framing was wrong for this codebase's CRDT-aligned
 > architecture. The right resolution was a read-time (A, V)-LWW redesign that
 > removes write-time enforcement entirely. See
-> [docs/proposals/CRDT_UNIQUE_SEMANTICS.md](../proposals/CRDT_UNIQUE_SEMANTICS.md)
+> [docs/reference/CRDT_UNIQUE_SEMANTICS.md](../reference/CRDT_UNIQUE_SEMANTICS.md)
 > for the design discussion and target model.
 >
 > **Resolution (2026-04-17, Commit 1 of the redesign)**: `validateUniqueness`

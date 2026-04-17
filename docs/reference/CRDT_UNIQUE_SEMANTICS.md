@@ -1,8 +1,18 @@
 # Unique Attributes as CRDT Read-Time Resolution
 
-**Status**: Design — decisions finalized, implementation in progress on `feature/crdt-unique-resolution`
-**Date**: 2026-04-16 (proposal) / 2026-04-17 (finalized)
+**Status**: Implemented — merged on branch `feature/crdt-unique-resolution`, 5 commits (see git log for 87579c1, a3e5c06, 00678f0, 460bb2e, and the commit promoting this document to `docs/reference/`)
+**Date**: 2026-04-16 (proposal) / 2026-04-17 (finalized and implemented)
 **Affects**: schema (`Unique` field semantics), storage (`validateUniqueness` removed), matcher (V-bound query path), CRDTResolvingIterator (entity-view fallback), EA cache (invalidation), Pull API (read-time resolution), new public API (`LookupByUnique`)
+
+> **Reader note**: this document was originally written as a proposal
+> during the atomicity commit (2026-04-16) and extended with finalized
+> design decisions on 2026-04-17. Its structure preserves the narrative
+> — discussion history showing the dead-ends, then the decisions that
+> resolved them, then the implementation. Sections appear in the order
+> they were written rather than being reorganized after implementation.
+> For a quick overview of the semantics, see the
+> [CRDT.md "Unique Attributes" section](./CRDT.md#unique-attributes-av-lww-with-walk-fallback)
+> and [SCHEMA.md "Uniqueness Semantics" section](./SCHEMA.md#uniqueness-semantics).
 
 ## Summary
 
