@@ -71,6 +71,18 @@ func (m *BadgerMatcher) crdtTxID() datalog.ElementID {
 	return datalog.ElementID{}
 }
 
+// cacheKey returns the cache key for (e, a) and whether this matcher mode may
+// use the cache at all. History mode returns ok=false — raw datoms are never
+// cached. Latest and concrete AsOf modes both return an (E, A) key; they live
+// in separate Cache instances (the Database's global latest cache vs. the AsOf
+// handle's private cache), so the key never crosses snapshots.
+func (m *BadgerMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
+	if m.isHistoryMode() {
+		return CacheKey{}, false
+	}
+	return CacheKey{E: e, A: a}, true
+}
+
 // NewBadgerMatcher creates a new pattern matcher for the BadgerStore
 func NewBadgerMatcher(store *BadgerStore) *BadgerMatcher {
 	return &BadgerMatcher{
@@ -804,12 +816,13 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 		}
 	}
 
-	// Try cache first for O(1) access (only for latest state, not as-of queries)
-	if m.cache != nil && m.txID == nil {
+	// Try cache first for O(1) access. Concrete AsOf matchers use
+	// transaction-scoped cache keys; History matchers bypass cache entirely.
+	if m.cache != nil && !m.isHistoryMode() {
 		eEntity := Entity(eBytes)
 		var aAttr Attribute
 		copy(aAttr[:], aStorage[:])
-		key := CacheKey{E: eEntity, A: aAttr}
+		key, _ := m.cacheKey(eEntity, aAttr)
 
 		entry := m.cache.GetOrResolve(key, m)
 		if entry != nil {
@@ -1020,12 +1033,13 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 	eBytes := entity.Bytes()
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
 
-	// Try cache first for O(1) access (only for latest state, not as-of queries)
-	if m.cache != nil && m.txID == nil {
+	// Try cache first for O(1) access. Concrete AsOf matchers use
+	// transaction-scoped cache keys; History matchers bypass cache entirely.
+	if m.cache != nil && !m.isHistoryMode() {
 		eEntity := Entity(eBytes)
 		var aAttr Attribute
 		copy(aAttr[:], aStorage[:])
-		key := CacheKey{E: eEntity, A: aAttr}
+		key, _ := m.cacheKey(eEntity, aAttr)
 
 		entry := m.cache.GetOrResolve(key, m)
 		if entry != nil {

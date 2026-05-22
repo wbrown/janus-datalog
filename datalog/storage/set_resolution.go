@@ -69,6 +69,9 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 		if err != nil {
 			continue
 		}
+		if m.shouldFilterTx(datom.Tx) {
+			continue
+		}
 
 		elemID := datom.Tx
 

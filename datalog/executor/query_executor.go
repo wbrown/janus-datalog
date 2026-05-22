@@ -57,11 +57,6 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		ctx.QueryComplete(0, 0, nil) // TODO: Add proper tuple count
 	}(0)
 
-	// Check if decorrelation path should be used
-	if e.options.EnableSubqueryDecorrelation && shouldDecorrelate(q.Where) {
-		return e.executeWithDecorrelation(ctx, q, inputs)
-	}
-
 	// Simple path: clause-by-clause execution
 	// Start with input relation groups (may be multiple disjoint groups)
 	groups := Relations(inputs)

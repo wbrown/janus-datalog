@@ -117,7 +117,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			},
 		})
 	}
-	if m.cache != nil && m.txID == nil {
+	if m.cache != nil && !m.isHistoryMode() {
 		if aResolved != nil {
 			// Phase 1: A has a single known value (from constant or single-tuple binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
@@ -289,9 +289,10 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 		}
 	}
 
-	// CACHE OPTIMIZATION: When E and A are bound and we're querying latest state,
-	// use the cache for O(1) access instead of storage scans.
-	if m.cache != nil && m.txID == nil && e != nil && a != nil {
+	// CACHE OPTIMIZATION: When E and A are bound, use the cache for O(1)
+	// access instead of storage scans. Concrete AsOf matchers use
+	// transaction-scoped cache keys; History matchers bypass cache.
+	if m.cache != nil && !m.isHistoryMode() && e != nil && a != nil {
 		if eIdent, ok := e.(datalog.Identity); ok {
 			if aKw, ok := a.(datalog.Keyword); ok {
 				cacheResult, handled := m.matchFromCache(pattern, symbols, eIdent, aKw, v, card, valueType)
@@ -1082,7 +1083,10 @@ func (m *BadgerMatcher) matchFromCache(
 	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
 	var aAttr Attribute
 	copy(aAttr[:], aStorage[:])
-	key := CacheKey{E: eBytes, A: aAttr}
+	key, ok := m.cacheKey(eBytes, aAttr)
+	if !ok {
+		return nil, false
+	}
 
 	// Get or resolve from cache
 	entry := m.cache.GetOrResolve(key, m)
@@ -1327,7 +1331,10 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 
 		// Build cache key
 		eBytes := Entity(eIdent.Hash())
-		key := CacheKey{E: eBytes, A: rowAAttr}
+		key, ok := m.cacheKey(eBytes, rowAAttr)
+		if !ok {
+			return nil, false
+		}
 
 		// Get from cache
 		entry := m.cache.GetOrResolve(key, m)

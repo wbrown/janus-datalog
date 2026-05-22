@@ -7,7 +7,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// CacheKey identifies a unique (Entity, Attribute) pair for caching
+// CacheKey identifies a unique (Entity, Attribute) pair for caching.
+//
+// A CacheKey space belongs to a single snapshot. The latest-state cache (one
+// per Database) and each AsOf handle's private cache are separate Cache
+// instances, so the same (E, A) never collides across snapshots and no
+// per-snapshot dimension is needed in the key.
 type CacheKey struct {
 	E Entity    // 20-byte entity hash
 	A Attribute // 32-byte attribute
@@ -57,8 +62,9 @@ func (e *CacheEntry) VectorIndex() []datalog.ElementID {
 
 // Cache provides O(1) access to resolved CRDT views
 //
-// The cache is the primary query resolution mechanism for current-value queries.
-// It stores resolved views (LWW value, add-wins set, RGA vector) for each (E, A) pair.
+// The cache is the primary query resolution mechanism for latest and concrete
+// AsOf queries. It stores resolved views (LWW value, add-wins set, RGA vector)
+// for each cache key.
 //
 // Freshness is tracked via maxVersions, updated atomically on every write.
 // This provides O(1) freshness checks without storage seeks.

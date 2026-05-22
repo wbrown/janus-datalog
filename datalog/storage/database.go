@@ -74,13 +74,13 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
-	Path              string                  // Path to the database directory
-	Schema            schema.SchemaProvider   // Optional schema for validation
-	AnnotationHandler annotations.Handler     // Optional handler for query tracing
-	ReplicaID         uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
-	DisableCache           bool                    // Disable EA cache; queries resolve directly from storage
-	PlannerOptions         *planner.PlannerOptions // Optional override for default planner options
-	CompressionThreshold   int                     // Compress string/[]byte values >= this size (default 256; -1 to disable)
+	Path                 string                  // Path to the database directory
+	Schema               schema.SchemaProvider   // Optional schema for validation
+	AnnotationHandler    annotations.Handler     // Optional handler for query tracing
+	ReplicaID            uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
+	DisableCache         bool                    // Disable EA cache; queries resolve directly from storage
+	PlannerOptions       *planner.PlannerOptions // Optional override for default planner options
+	CompressionThreshold int                     // Compress string/[]byte values >= this size (default 256; -1 to disable)
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -432,7 +432,11 @@ var _ executor.PatternMatcher = (*Database)(nil)
 // transaction. The returned handle uses CRDT resolution filtered to that point
 // in causal time.
 //
-// The temporal handle shares the parent's underlying store, cache, and schema.
+// The temporal handle shares the parent's underlying store and schema, but owns
+// a private EA cache scoped to the handle's lifetime. The snapshot is immutable,
+// so this cache fills lazily, never needs invalidation, and is freed when the
+// handle is garbage-collected — AsOf reads never accumulate in the parent's
+// global latest-state cache.
 // It supports reads (Query, NewExecutor, NewExecutorWithOptions, Matcher, Pull)
 // but not writes: NewTransaction will panic. Close is a no-op — the parent
 // owns the store lifetime.
@@ -442,7 +446,7 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 		schema:            d.schema,
 		annotationHandler: d.annotationHandler,
 		planCache:         d.planCache,
-		cache:             d.cache,
+		cache:             NewCache(),
 		clock:             d.clock,
 		replicaID:         d.replicaID,
 		temporalTxID:      &txID,
@@ -482,8 +486,8 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableAlgebraOptimizer:      true,  // Relational algebra IR clause rewriting (decorrelation via compile → optimize → decompile)
 		EnableScanSharing:           false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
 		EnableEntityPrefetch:        false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
-		EnableSubqueryDecorrelation: false, // Selinger's decorrelation (redundant: algebra optimizer handles decorrelation)
-		EnableParallelDecorrelation: true,  // Execute decorrelated merged queries in parallel
+		EnableSubqueryDecorrelation: false, // Deprecated no-op: legacy executor decorrelation is retired
+		EnableParallelDecorrelation: false, // Deprecated no-op
 		MaxPhases:                   10,
 		EnableFineGrainedPhases:     true, // Selectivity-based phase creation
 
@@ -2407,7 +2411,7 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	// requirement. When DisableCache is set, query the matcher directly for
 	// each attribute. The matcher applies CRDT resolution via
 	// CRDTResolvingIterator when no cache is set.
-	if d.cache == nil {
+	if d.cache == nil || matcher.isHistoryMode() {
 		for _, kw := range attrs {
 			card := schema.CardinalityOne
 			if d.schema != nil {
@@ -2439,7 +2443,10 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 
 		if cachedAttrs != nil && cachedAttrs[aBytes] {
 			// Already cached - GetOrResolve will do freshness check
-			key := CacheKey{E: eBytes, A: aBytes}
+			key, ok := matcher.cacheKey(eBytes, aBytes)
+			if !ok {
+				continue
+			}
 			if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
 				if val := entryToValue(entry, getValueType(kw)); val != nil {
 					result[kw] = val
@@ -2459,7 +2466,10 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 	for _, kw := range missing {
 		var aBytes Attribute
 		copy(aBytes[:], kw.String())
-		key := CacheKey{E: eBytes, A: aBytes}
+		key, ok := matcher.cacheKey(eBytes, aBytes)
+		if !ok {
+			continue
+		}
 		if entry := d.cache.GetOrResolve(key, matcher); entry != nil {
 			if val := entryToValue(entry, getValueType(kw)); val != nil {
 				result[kw] = val

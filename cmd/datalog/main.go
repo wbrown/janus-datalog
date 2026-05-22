@@ -37,7 +37,7 @@ func main() {
 	flag.BoolVar(&help, "h", false, "show help")
 	flag.BoolVar(&verbose, "verbose", false, "verbose mode (show query annotations)")
 	flag.StringVar(&queryStr, "query", "", "run a single query and exit")
-	flag.BoolVar(&enableDecorrelation, "decorrelate", true, "enable subquery decorrelation optimization (default: true)")
+	flag.BoolVar(&enableDecorrelation, "decorrelate", true, "deprecated no-op; legacy executor decorrelation has been retired")
 	flag.StringVar(&exportPath, "export", "", "export database to EDN file")
 	flag.BoolVar(&compressedExport, "compressed", false, "use #lzj compressed tagged literals in export")
 	flag.StringVar(&importPath, "import", "", "import database from EDN file")
@@ -204,7 +204,6 @@ func runDemo(db *storage.Database, handler annotations.Handler, enableDecorrelat
 
 	// Create executor with optimizations
 	opts := storage.DefaultPlannerOptions()
-	opts.EnableSubqueryDecorrelation = enableDecorrelation
 	exec := db.NewExecutorWithOptions(opts)
 
 	for _, queryStr := range queries {
@@ -246,7 +245,6 @@ func runInteractive(db *storage.Database, handler annotations.Handler, enableDec
 
 	scanner := bufio.NewScanner(os.Stdin)
 	opts := storage.DefaultPlannerOptions()
-	opts.EnableSubqueryDecorrelation = enableDecorrelation
 	exec := db.NewExecutorWithOptions(opts)
 
 	for {
@@ -483,7 +481,6 @@ func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr 
 		result, err = db.Query(q, goInputs...)
 	} else {
 		opts := storage.DefaultPlannerOptions()
-		opts.EnableSubqueryDecorrelation = enableDecorrelation
 		exec := db.NewExecutorWithOptions(opts)
 		if handler != nil {
 			ctx := executor.NewContext(handler)

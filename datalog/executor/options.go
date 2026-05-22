@@ -19,7 +19,7 @@ type ExecutorOptions struct {
 	MaxSubqueryWorkers       int
 
 	// Subquery optimization options
-	EnableSubqueryDecorrelation bool // If true, batch identical subqueries for efficiency
+	EnableSubqueryDecorrelation bool // Deprecated: legacy executor decorrelation is retired; no runtime effect
 	UseStreamingSubqueryUnion   bool // If true, use streaming union for subquery results (default: true)
 	UseComponentizedSubquery    bool // If true, use component-based subquery execution (strategy selector, batcher, worker pool)
 

@@ -403,8 +403,8 @@ type PlannerOptions struct {
 	EnablePredicatePushdown             bool // Early predicate filtering during pattern matching
 	EnableConditionalAggregateRewriting bool // DISABLED: Feature moved to experimental/
 	EnableAlgebraOptimizer              bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
-	EnableSubqueryDecorrelation         bool // Enable Selinger-style subquery decorrelation optimization
-	EnableParallelDecorrelation         bool // Execute decorrelated merged queries in parallel (requires EnableSubqueryDecorrelation)
+	EnableSubqueryDecorrelation         bool // Deprecated: legacy executor decorrelation is retired; use EnableAlgebraOptimizer
+	EnableParallelDecorrelation         bool // Deprecated: no effect without the retired legacy decorrelation path
 	EnableScanSharing                   bool // Share unbound scan results across subqueries via LazySeq
 	EnableEntityPrefetch                bool // Warm EA cache after first DataPattern via PrefetchEntities
 	UseStreamingSubqueryUnion           bool // Use streaming union for subquery results instead of materializing all (default: true)
