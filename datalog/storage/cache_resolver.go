@@ -71,17 +71,21 @@ func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementI
 	copy(prefix[1:21], e[:])
 	copy(prefix[21:53], a[:])
 
-	// Scan EATV for first entry (highest Tx due to descending sort)
+	// Scan EATV for the first entry visible in this matcher mode (highest
+	// non-filtered Tx due to descending sort).
 	iter, err := m.store.Scan(EATV, prefix, prefixEnd(prefix))
 	if err != nil {
 		return nil, datalog.ElementID{}, err
 	}
 	defer iter.Close()
 
-	if iter.Next() {
+	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
 			return nil, datalog.ElementID{}, err
+		}
+		if m.shouldFilterTx(datom.Tx) {
+			continue
 		}
 		// Check Op: if the latest operation is a tombstone, the attribute doesn't exist.
 		// Return nil value with the tombstone's ElementID for cache freshness tracking.

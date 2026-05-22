@@ -17,7 +17,7 @@ import (
 //
 // See ALGEBRA.md "Rule 6: Entity Prefetch into EA Cache" for design rationale.
 func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
-	if m.cache == nil || len(entities) == 0 {
+	if m.cache == nil || len(entities) == 0 || m.isHistoryMode() {
 		return
 	}
 
@@ -61,6 +61,9 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 			if err != nil {
 				break
 			}
+			if m.shouldFilterTx(d.Tx) {
+				continue
+			}
 
 			var aBytes Attribute
 			copy(aBytes[:], d.A.String())
@@ -68,8 +71,9 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 			if hasGroup && aBytes != currentAttr {
 				// Attribute boundary — resolve and cache the previous group
 				card := m.GetCardinality(currentAttr)
-				key := CacheKey{E: e, A: currentAttr}
-				m.cache.PopulateFromDatoms(key, card, currentDatoms)
+				if key, ok := m.cacheKey(e, currentAttr); ok {
+					m.cache.PopulateFromDatoms(key, card, currentDatoms)
+				}
 				currentDatoms = currentDatoms[:0]
 			}
 
@@ -80,8 +84,9 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 		// Flush last group
 		if hasGroup && len(currentDatoms) > 0 {
 			card := m.GetCardinality(currentAttr)
-			key := CacheKey{E: e, A: currentAttr}
-			m.cache.PopulateFromDatoms(key, card, currentDatoms)
+			if key, ok := m.cacheKey(e, currentAttr); ok {
+				m.cache.PopulateFromDatoms(key, card, currentDatoms)
+			}
 		}
 		iter.Close()
 	}

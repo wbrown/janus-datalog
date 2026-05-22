@@ -23,8 +23,8 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 	defaultOpts := planner.PlannerOptions{
 		EnableDynamicReordering:     true,
 		EnablePredicatePushdown:     true,
-		EnableSubqueryDecorrelation: true,
-		EnableParallelDecorrelation: true,
+		EnableSubqueryDecorrelation: false,
+		EnableParallelDecorrelation: false,
 		UseStreamingSubqueryUnion:   false,
 		MaxPhases:                   10,
 		EnableFineGrainedPhases:     true,
