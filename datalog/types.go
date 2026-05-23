@@ -51,6 +51,14 @@ type keyword struct {
 // Keyword is the exported pointer type, always interned.
 type Keyword = *keyword
 
+// MaxAttributeBytes is the maximum length, in bytes, of an attribute keyword's
+// string form that can be stored. The storage layer encodes an attribute into a
+// fixed-size key component (storage.Attribute, a [32]byte); longer names would
+// be silently truncated and alias each other, so writes and schema definitions
+// of longer attributes are rejected. Keep this in sync with len(storage.Attribute{})
+// (storage enforces the match with a compile-time assertion).
+const MaxAttributeBytes = 32
+
 // NewKeyword creates an interned keyword.
 // Accepts both ":foo/bar" and "foo/bar" formats (auto-prefixes colon).
 func NewKeyword(s string) Keyword {

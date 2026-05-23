@@ -9,44 +9,46 @@ import (
 
 // keywordInternCache provides keyword interning to avoid repeated allocations
 // Uses sync.Map for lock-free concurrent reads
-// Cache key is [32]byte (null-padded) to match storage format
+// Cache key is the full keyword string so distinct keywords never collide,
+// regardless of length. (The 32-byte storage form is a separate concern,
+// enforced by length validation on the write/schema paths.)
 type keywordInternCache struct {
-	cache sync.Map // map[[32]byte]Keyword
+	cache sync.Map // map[string]Keyword
 }
 
 // Global keyword intern instance
 var keywordIntern = &keywordInternCache{}
 
 // InternKeyword returns an interned keyword instance.
-// Pads the string to 32 bytes for cache key lookup.
+// Keyed by the full string, so two distinct keywords never share a pointer
+// even if their first 32 bytes match.
 func InternKeyword(s string) Keyword {
-	// Pad to 32 bytes for cache key (matches storage format)
-	var key [32]byte
-	copy(key[:], s)
-
 	// Fast path: load existing (lock-free)
-	if val, ok := keywordIntern.cache.Load(key); ok {
+	if val, ok := keywordIntern.cache.Load(s); ok {
 		return val.(Keyword)
 	}
 
 	// Slow path: create and store
 	kw := &keyword{value: s}
-	actual, _ := keywordIntern.cache.LoadOrStore(key, kw)
+	actual, _ := keywordIntern.cache.LoadOrStore(s, kw)
 	return actual.(Keyword)
 }
 
 // InternKeywordFromBytes returns an interned keyword from storage bytes.
-// Uses the 32-byte key directly without conversion.
+// The null padding is trimmed to recover the keyword string, which is the
+// cache key — so a keyword decoded from storage shares the same interned
+// pointer as one created via InternKeyword.
 func InternKeywordFromBytes(key [32]byte) Keyword {
+	str := strings.TrimRight(string(key[:]), "\x00")
+
 	// Fast path: load existing (lock-free)
-	if val, ok := keywordIntern.cache.Load(key); ok {
+	if val, ok := keywordIntern.cache.Load(str); ok {
 		return val.(Keyword)
 	}
 
-	// Slow path: trim null padding to get string, create and store
-	str := strings.TrimRight(string(key[:]), "\x00")
+	// Slow path: create and store
 	kw := &keyword{value: str}
-	actual, _ := keywordIntern.cache.LoadOrStore(key, kw)
+	actual, _ := keywordIntern.cache.LoadOrStore(str, kw)
 	return actual.(Keyword)
 }
 

@@ -1304,6 +1304,10 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("transaction is closed")
 	}
 
+	if err := validateAttributeStorable(a); err != nil {
+		return err
+	}
+
 	// Nil values are not allowed in relational algebra - absence of fact represents "no value"
 	if v == nil {
 		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
@@ -1428,6 +1432,10 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 
 	if t.closed {
 		return fmt.Errorf("transaction is closed")
+	}
+
+	if err := validateAttributeStorable(a); err != nil {
+		return err
 	}
 
 	// Nil values are not allowed
@@ -1567,6 +1575,33 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 // toAnySlice converts a typed slice (e.g. []string, []int64) to []interface{}
 // using reflection. Returns the converted slice and true, or nil and false if
 // the value is not a slice.
+// validateAttributeStorable rejects attribute keywords whose UTF-8 form is too
+// long to store. The storage Attribute is a fixed [32]byte; a longer name would
+// be silently truncated and alias other attributes sharing its first 32 bytes
+// (see datalog.MaxAttributeBytes). Rejecting at write/schema time turns that
+// silent corruption into a clear error.
+func validateAttributeStorable(a datalog.Keyword) error {
+	if a == nil {
+		return fmt.Errorf("nil attribute")
+	}
+	if n := len(a.String()); n > datalog.MaxAttributeBytes {
+		return fmt.Errorf("attribute %q is %d bytes, exceeds the %d-byte storage limit", a.String(), n, datalog.MaxAttributeBytes)
+	}
+	return nil
+}
+
+// memberKey derives a hashable map key for a cardinality-many set member:
+// a type tag plus the value's encoded bytes. []byte (and other non-comparable
+// values) cannot be used as Go map keys directly, so membership maps key by
+// this string and carry the original value separately. It is byte-for-byte the
+// same key resolveAddWinsSet uses internally, so the Set diff lines up with
+// stored membership. Note: this keys floats by raw bits, which differs from
+// datalog.ValuesEqual at float corner cases (±0.0, NaN) but matches the read
+// path — the property that matters here.
+func memberKey(v interface{}) string {
+	return string(append([]byte{byte(datalog.Type(v))}, datalog.ValueBytes(v)...))
+}
+
 func toAnySlice(v interface{}) ([]interface{}, bool) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Slice {
@@ -1593,6 +1628,10 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	if t.closed {
 		return fmt.Errorf("transaction is closed")
+	}
+
+	if err := validateAttributeStorable(a); err != nil {
+		return err
 	}
 
 	// Nil values are not allowed in relational algebra - absence of fact represents "no value"
@@ -1647,10 +1686,13 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Build set of new values for O(1) lookup
-		newSet := make(map[interface{}]bool, len(newSlice))
+		// Build set of new values for O(1) lookup, keyed by memberKey so
+		// non-comparable members like []byte can be map keys; the stored value
+		// is the original so emitted datoms keep their real type. Keying by
+		// content also dedups duplicate slice members.
+		newSet := make(map[string]interface{}, len(newSlice))
 		for _, val := range newSlice {
-			newSet[val] = true
+			newSet[memberKey(val)] = val
 		}
 
 		// Get current set membership from committed state
@@ -1663,61 +1705,57 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			return fmt.Errorf("failed to read current set membership: %w", err)
 		}
 
-		// Apply pending transaction operations to get effective current set
-		// This ensures Set() sees Add/Remove ops from earlier in the same transaction
-		effectiveSet := make(map[interface{}]bool)
-		for member := range currentResult.Members {
-			effectiveSet[member] = true
+		// Apply pending transaction operations to get effective current set.
+		// This ensures Set() sees Add/Remove ops from earlier in the same
+		// transaction. Keyed by memberKey; values are the original members.
+		effectiveSet := make(map[string]interface{})
+		for _, member := range currentResult.Members {
+			effectiveSet[memberKey(member)] = member
 		}
 
 		// Scan pending datoms for this (E, A) pair
-		pendingAdds := make(map[interface{}]datalog.ElementID)
-		pendingRemoves := make(map[interface{}]datalog.ElementID)
+		pendingAdds := make(map[string]datalog.ElementID)
+		pendingRemoves := make(map[string]datalog.ElementID)
+		pendingValues := make(map[string]interface{})
 		for _, datom := range t.datoms {
 			if datom.E.Hash() != eBytes || datom.A.String() != a.String() {
 				continue
 			}
+			k := memberKey(datom.V)
+			pendingValues[k] = datom.V
 			// NEW FORMAT: Op is a field on Datom, V is the raw value
 			if datom.Op == datalog.OpCRDTAdd {
-				pendingAdds[datom.V] = datom.Tx
+				pendingAdds[k] = datom.Tx
 			} else if datom.Op == datalog.OpCRDTRemove {
-				pendingRemoves[datom.V] = datom.Tx
+				pendingRemoves[k] = datom.Tx
 			}
 		}
 
-		// Apply pending ops using add-wins semantics
-		// For each value, compare highest pending add Lamport vs highest pending remove Lamport
-		allPendingValues := make(map[interface{}]bool)
-		for v := range pendingAdds {
-			allPendingValues[v] = true
-		}
-		for v := range pendingRemoves {
-			allPendingValues[v] = true
-		}
-
-		for val := range allPendingValues {
-			addTx, hasAdd := pendingAdds[val]
-			removeTx, hasRemove := pendingRemoves[val]
+		// Apply pending ops using add-wins semantics. For each value, compare
+		// highest pending add Lamport vs highest pending remove Lamport.
+		for k, val := range pendingValues {
+			addTx, hasAdd := pendingAdds[k]
+			removeTx, hasRemove := pendingRemoves[k]
 
 			if hasAdd && !hasRemove {
 				// Only add pending
-				effectiveSet[val] = true
+				effectiveSet[k] = val
 			} else if !hasAdd && hasRemove {
 				// Only remove pending
-				delete(effectiveSet, val)
+				delete(effectiveSet, k)
 			} else {
 				// Both add and remove pending - compare Lamport (add-wins at same Lamport)
 				if addTx.Lamport >= removeTx.Lamport {
-					effectiveSet[val] = true
+					effectiveSet[k] = val
 				} else {
-					delete(effectiveSet, val)
+					delete(effectiveSet, k)
 				}
 			}
 		}
 
 		// Remove members that are in effective set but not in new set
-		for member := range effectiveSet {
-			if !newSet[member] {
+		for k, member := range effectiveSet {
+			if _, ok := newSet[k]; !ok {
 				elemID := t.db.clock.Next()
 				// NEW FORMAT: Op is a field on Datom, V is the raw value
 				t.datoms = append(t.datoms, datalog.Datom{
@@ -1730,10 +1768,10 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			}
 		}
 
-		// Add members that are in new set but not in effective set
-		// Iterate newSet (deduplicated) to avoid duplicate writes for duplicate slice values
-		for val := range newSet {
-			if !effectiveSet[val] {
+		// Add members that are in new set but not in effective set.
+		// newSet is deduplicated by content, avoiding duplicate writes.
+		for k, val := range newSet {
+			if _, ok := effectiveSet[k]; !ok {
 				elemID := t.db.clock.Next()
 				// NEW FORMAT: Op is a field on Datom, V is the raw value
 				t.datoms = append(t.datoms, datalog.Datom{
@@ -1902,6 +1940,10 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 
 	if t.closed {
 		return fmt.Errorf("transaction is closed")
+	}
+
+	if err := validateAttributeStorable(a); err != nil {
+		return err
 	}
 
 	// Nil values are not allowed - must specify exact value to retract

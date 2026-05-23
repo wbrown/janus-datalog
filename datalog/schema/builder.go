@@ -124,6 +124,12 @@ func (ab *AttributeBuilder) Add() *Builder {
 		return ab.parent
 	}
 
+	// Reject attribute names too long to store without truncation/aliasing.
+	if n := len(ab.def.Ident.String()); n > datalog.MaxAttributeBytes {
+		ab.parent.errors = append(ab.parent.errors, fmt.Errorf("attribute %q is %d bytes, exceeds the %d-byte storage limit", ab.def.Ident.String(), n, datalog.MaxAttributeBytes))
+		return ab.parent
+	}
+
 	ab.parent.schema.Add(ab.def)
 	return ab.parent
 }
