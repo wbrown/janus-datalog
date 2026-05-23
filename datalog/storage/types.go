@@ -13,8 +13,15 @@ import (
 // Entity represents a unique identifier for an entity (20-byte SHA1 hash)
 type Entity [20]byte
 
-// Attribute represents an attribute name (stored directly if ≤32 bytes, SHA256 if longer)
+// Attribute represents an attribute name, stored directly as the keyword's
+// UTF-8 bytes. Names longer than the array are rejected at write and schema
+// time (see datalog.MaxAttributeBytes); they are never truncated.
 type Attribute [32]byte
+
+// Compile-time guarantee that the Attribute storage form matches the advertised
+// maximum attribute length. If Attribute is resized, datalog.MaxAttributeBytes
+// must change to match (or this assignment stops compiling).
+var _ [datalog.MaxAttributeBytes]byte = Attribute{}
 
 // Tx represents a transaction/CRDT identifier (16 bytes = ElementID)
 // Layout: Lamport (8 bytes big-endian) + ReplicaID (8 bytes big-endian)

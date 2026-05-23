@@ -818,8 +818,10 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		return false
 	}
 
-	// Check if winner's V matches our bound V
-	matches := winner.V == it.currentBoundV
+	// Check if winner's V matches our bound V. Use ValuesEqual (not raw ==)
+	// so byte-slice values compare by content instead of panicking on the
+	// uncomparable []byte dynamic type.
+	matches := datalog.ValuesEqual(winner.V, it.currentBoundV)
 
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{

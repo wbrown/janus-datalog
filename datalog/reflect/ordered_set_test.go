@@ -165,15 +165,15 @@ func (m *mockTransaction) LookupAllAttributes(entity datalog.Identity, attr data
 	return nil, nil
 }
 
-// CharacterWithPreferences tests OrderedSet[string] fields
-type CharacterWithPreferences struct {
+// CharacterPrefs tests OrderedSet[string] fields
+type CharacterPrefs struct {
 	ID    datalog.Identity           `datalog:"-,id"`
 	Name  string                     `datalog:"name"`
 	Prefs datalog.OrderedSet[string] `datalog:"prefs"`
 }
 
-// EntityWithOrderedRefs tests OrderedSet[datalog.Identity] fields
-type EntityWithOrderedRefs struct {
+// EntityOrderedRefs tests OrderedSet[datalog.Identity] fields
+type EntityOrderedRefs struct {
 	ID      datalog.Identity                     `datalog:"-,id"`
 	Name    string                               `datalog:"name"`
 	Follows datalog.OrderedSet[datalog.Identity] `datalog:"follows"`
@@ -182,24 +182,24 @@ type EntityWithOrderedRefs struct {
 // TestSchemaFromStruct_OrderedSet verifies that SchemaFromStruct correctly infers
 // CardinalityVector with UniqueElements for OrderedSet fields.
 func TestSchemaFromStruct_OrderedSet(t *testing.T) {
-	sch, err := dlreflect.SchemaFromStruct(CharacterWithPreferences{})
+	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
 	// Check name attribute (regular string)
-	nameAttr := sch.GetAttribute(datalog.NewKeyword(":character-with-preferences/name"))
+	nameAttr := sch.GetAttribute(datalog.NewKeyword(":character-prefs/name"))
 	if nameAttr == nil {
-		t.Fatal("expected :character-with-preferences/name attribute")
+		t.Fatal("expected :character-prefs/name attribute")
 	}
 	if nameAttr.Cardinality != schema.CardinalityOne {
 		t.Errorf("expected name cardinality=one, got %s", nameAttr.Cardinality)
 	}
 
 	// Check prefs attribute (OrderedSet)
-	prefsAttr := sch.GetAttribute(datalog.NewKeyword(":character-with-preferences/prefs"))
+	prefsAttr := sch.GetAttribute(datalog.NewKeyword(":character-prefs/prefs"))
 	if prefsAttr == nil {
-		t.Fatal("expected :character-with-preferences/prefs attribute")
+		t.Fatal("expected :character-prefs/prefs attribute")
 	}
 
 	t.Logf("Prefs attribute: cardinality=%s, uniqueElements=%v, type=%s",
@@ -218,14 +218,14 @@ func TestSchemaFromStruct_OrderedSet(t *testing.T) {
 
 // TestSchemaFromStruct_OrderedSetRef verifies ref types in OrderedSet
 func TestSchemaFromStruct_OrderedSetRef(t *testing.T) {
-	sch, err := dlreflect.SchemaFromStruct(EntityWithOrderedRefs{})
+	sch, err := dlreflect.SchemaFromStruct(EntityOrderedRefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	followsAttr := sch.GetAttribute(datalog.NewKeyword(":entity-with-ordered-refs/follows"))
+	followsAttr := sch.GetAttribute(datalog.NewKeyword(":entity-ordered-refs/follows"))
 	if followsAttr == nil {
-		t.Fatal("expected :entity-with-ordered-refs/follows attribute")
+		t.Fatal("expected :entity-ordered-refs/follows attribute")
 	}
 
 	t.Logf("Follows attribute: cardinality=%s, uniqueElements=%v, type=%s",
@@ -251,13 +251,13 @@ func TestSaveStruct_OrderedSet_SchemaVerify(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create schema from struct
-	sch, err := dlreflect.SchemaFromStruct(CharacterWithPreferences{})
+	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
 	// Verify attribute exists in schema
-	prefsKw := datalog.NewKeyword(":character-with-preferences/prefs")
+	prefsKw := datalog.NewKeyword(":character-prefs/prefs")
 	prefsAttr := sch.GetAttribute(prefsKw)
 	if prefsAttr == nil {
 		t.Fatalf("prefs attribute not found in schema")
@@ -301,7 +301,7 @@ func TestSaveStruct_OrderedSet_SchemaVerify(t *testing.T) {
 	// Note: Vectors return the entire ordered list as a single value (array)
 	// This is different from sets where each element is a separate tuple
 	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e :where [?e :character-with-preferences/prefs ?v]]`,
+		`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
 		entityID,
 	))
 	if err != nil {
@@ -333,7 +333,7 @@ func TestSaveStruct_OrderedSet(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create schema from struct
-	sch, err := dlreflect.SchemaFromStruct(CharacterWithPreferences{})
+	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestSaveStruct_OrderedSet(t *testing.T) {
 	prefs.Append("compact-view")
 	prefs.Append("notifications")
 
-	character := CharacterWithPreferences{
+	character := CharacterPrefs{
 		Name:  "Alice",
 		Prefs: *prefs,
 	}
@@ -369,7 +369,7 @@ func TestSaveStruct_OrderedSet(t *testing.T) {
 	// Query to verify values are stored
 	// Note: Vectors return entire ordered list as single array value
 	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e :where [?e :character-with-preferences/prefs ?v]]`,
+		`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
 		charID,
 	))
 	if err != nil {
@@ -399,7 +399,7 @@ func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sch, err := dlreflect.SchemaFromStruct(CharacterWithPreferences{})
+	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
 	prefs.Append("a")
 	prefs.Append("b")
 
-	character := CharacterWithPreferences{
+	character := CharacterPrefs{
 		Name:  "Bob",
 		Prefs: *prefs,
 	}
@@ -431,7 +431,7 @@ func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
 
 	// Try to add a duplicate via direct transaction
 	tx2 := db.NewTransaction()
-	kw := datalog.NewKeyword(":character-with-preferences/prefs")
+	kw := datalog.NewKeyword(":character-prefs/prefs")
 	// Adding "a" again should be a no-op due to UniqueElements enforcement
 	if err := tx2.Add(charID, kw, "a"); err != nil {
 		t.Fatalf("Add failed: %v", err)
@@ -442,7 +442,7 @@ func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
 
 	// Query to verify - vectors return as single array value
 	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e :where [?e :character-with-preferences/prefs ?v]]`,
+		`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
 		charID,
 	))
 	if err != nil {
@@ -473,7 +473,7 @@ func TestPullInto_OrderedSet(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sch, err := dlreflect.SchemaFromStruct(CharacterWithPreferences{})
+	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestPullInto_OrderedSet(t *testing.T) {
 	prefs.Append("compact-view")
 	prefs.Append("notifications")
 
-	character := CharacterWithPreferences{
+	character := CharacterPrefs{
 		Name:  "Alice",
 		Prefs: *prefs,
 	}
@@ -505,7 +505,7 @@ func TestPullInto_OrderedSet(t *testing.T) {
 	}
 
 	// Pull back into new struct
-	var loaded CharacterWithPreferences
+	var loaded CharacterPrefs
 	if err := db.PullInto(charID, &loaded); err != nil {
 		t.Fatalf("PullInto failed: %v", err)
 	}
@@ -541,7 +541,7 @@ func TestSaveStruct_OrderedSetUpdate(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sch, err := dlreflect.SchemaFromStruct(CharacterWithPreferences{})
+	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestSaveStruct_OrderedSetUpdate(t *testing.T) {
 	prefs.Append("b")
 	prefs.Append("c")
 
-	character := CharacterWithPreferences{
+	character := CharacterPrefs{
 		Name:  "Carol",
 		Prefs: *prefs,
 	}
@@ -589,7 +589,7 @@ func TestSaveStruct_OrderedSetUpdate(t *testing.T) {
 	}
 
 	// Pull back and verify
-	var loaded CharacterWithPreferences
+	var loaded CharacterPrefs
 	if err := db.PullInto(charID, &loaded); err != nil {
 		t.Fatalf("PullInto failed: %v", err)
 	}
@@ -677,7 +677,7 @@ func TestSaveStruct_OrderedSetEmpty(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sch, err := dlreflect.SchemaFromStruct(CharacterWithPreferences{})
+	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
@@ -689,7 +689,7 @@ func TestSaveStruct_OrderedSetEmpty(t *testing.T) {
 	defer db.Close()
 
 	// Create character with empty OrderedSet
-	character := CharacterWithPreferences{
+	character := CharacterPrefs{
 		Name:  "Eve",
 		Prefs: datalog.OrderedSet[string]{}, // zero value
 	}
@@ -704,7 +704,7 @@ func TestSaveStruct_OrderedSetEmpty(t *testing.T) {
 	}
 
 	// Pull back
-	var loaded CharacterWithPreferences
+	var loaded CharacterPrefs
 	if err := db.PullInto(charID, &loaded); err != nil {
 		t.Fatalf("PullInto failed: %v", err)
 	}
@@ -727,7 +727,7 @@ func TestSaveStruct_OrderedSetRefs(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	sch, err := dlreflect.SchemaFromStruct(EntityWithOrderedRefs{})
+	sch, err := dlreflect.SchemaFromStruct(EntityOrderedRefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
@@ -749,7 +749,7 @@ func TestSaveStruct_OrderedSetRefs(t *testing.T) {
 	follows.Append(id2)
 	follows.Append(id3)
 
-	entity := EntityWithOrderedRefs{
+	entity := EntityOrderedRefs{
 		Name:    "Dave",
 		Follows: *follows,
 	}
@@ -766,7 +766,7 @@ func TestSaveStruct_OrderedSetRefs(t *testing.T) {
 	// Query to verify refs are stored
 	// Note: Vectors return entire ordered list as single array value
 	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?f :in $ ?e :where [?e :entity-with-ordered-refs/follows ?f]]`,
+		`[:find ?f :in $ ?e :where [?e :entity-ordered-refs/follows ?f]]`,
 		entityID,
 	))
 	if err != nil {
@@ -788,7 +788,7 @@ func TestSaveStruct_OrderedSetRefs(t *testing.T) {
 	}
 
 	// Pull back and verify
-	var loaded EntityWithOrderedRefs
+	var loaded EntityOrderedRefs
 	if err := db.PullInto(entityID, &loaded); err != nil {
 		t.Fatalf("PullInto failed: %v", err)
 	}
