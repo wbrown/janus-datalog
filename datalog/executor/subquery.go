@@ -1004,7 +1004,7 @@ func (sc *subqueryContext) matchesWithRelation(datom datalog.Datom, pattern *que
 				// Compare values - handle Identity specially
 				if id1, ok1 := boundValue.(datalog.Identity); ok1 {
 					if id2, ok2 := elem.datomValue.(datalog.Identity); ok2 {
-						if id1.L85() != id2.L85() {
+						if !id1.Equal(id2) {
 							return false
 						}
 					} else {

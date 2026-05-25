@@ -607,6 +607,36 @@ This dual approach maintains backward compatibility while following "Datalog is 
 algebra optimizer (`EnableAlgebraOptimizer: true`); there is no
 `EnableConditionalAggregateRewriting` option (removed 2026-05).
 
+### 15. Interned-Pointer Index Keys & L85 Cache Removal (COMPLETE - May 2026)
+**Status**: ✅ In-memory indices and entity-dedup sets key on interned pointers; the `Identity.l85` cache was removed
+
+**What changed**:
+- The in-memory matcher's entity/EA indices and the BadgerMatcher entity-dedup set
+  keyed on `Identity.L85()` strings (`E.L85()`, `E.L85()+"|"+A.String()`). Since
+  identities and keywords are interned (pointer equality ⟺ value equality), these
+  now key on the interned pointers directly — `map[datalog.Identity][]int` and
+  `map[eaIndexKey][]int` (an `{Identity, Keyword}` pair). No Base85 encode, no
+  per-key string concatenation.
+- With no hot `L85()` callers left (only `String()`'s fallback and export), the
+  lazily-cached `l85` field on `identity` was removed; `Identity.L85()` now computes
+  on demand. This also fixed a data race — the lazy cache write mutated
+  globally-interned, shared identities without synchronization
+  (`BUG_IDENTITY_L85_LAZY_RACE`).
+
+**Benchmark** (`datalog/executor/index_key_bench_test.go`; (E,A) index build+lookup,
+1000 entities × 8 attrs; the string variant uses precomputed L85 to model the prior
+cache fairly):
+
+| key | ns/op | B/op | allocs/op |
+|-----|-------|------|-----------|
+| string (old) | 644,085 | 1,619,084 | 24,033 |
+| interned pointer (new) | 240,159 | 851,076 | 8,033 |
+
+~2.7× faster, ~47% less memory, and 1/3 the allocations on the index path — before
+counting the removed race and the per-identity L85 string.
+
+**Details**: See `docs/bugs/resolved/BUG_IDENTITY_L85_LAZY_RACE.md`
+
 ---
 
 ## Profiling Results (October 2025)

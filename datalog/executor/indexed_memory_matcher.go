@@ -15,10 +15,10 @@ type IndexedMemoryMatcher struct {
 
 	// Lazy-initialized indices (protected by buildMutex)
 	buildMutex     sync.Once
-	entityIndex    map[string][]int // E.L85() → datom positions
-	attributeIndex map[string][]int // A.String() → datom positions
-	valueIndex     map[uint64][]int // hash(V) → datom positions (NOTE: values are interface{}, indexed by hash; collisions filtered by exact match)
-	eavIndex       map[string][]int // E.L85()+"|"+A.String() → datom positions (all, for cardinality-many)
+	entityIndex    map[datalog.Identity][]int // E (interned pointer) → datom positions
+	attributeIndex map[string][]int           // A.String() → datom positions
+	valueIndex     map[uint64][]int           // hash(V) → datom positions (NOTE: values are interface{}, indexed by hash; collisions filtered by exact match)
+	eavIndex       map[eaIndexKey][]int        // (E, A) interned pointers → datom positions (all, for cardinality-many)
 
 	// Optional collector for annotations (protected by collectorMutex for concurrent access)
 	collectorMutex sync.RWMutex
@@ -27,6 +27,14 @@ type IndexedMemoryMatcher struct {
 	// ExecutorOptions for configuring relation behavior (protected by optionsMutex)
 	optionsMutex sync.RWMutex
 	options      ExecutorOptions
+}
+
+// eaIndexKey keys the (entity, attribute) index by the interned E and A pointers,
+// avoiding per-datom L85/string allocation. Interning makes pointer equality
+// equivalent to value equality, so the pointers are stable, comparable map keys.
+type eaIndexKey struct {
+	e datalog.Identity
+	a datalog.Keyword
 }
 
 // boundDatomIterator lazily matches bound patterns during iteration
@@ -98,15 +106,14 @@ func (m *IndexedMemoryMatcher) buildIndices() {
 			estimatedSize = 16
 		}
 
-		m.entityIndex = make(map[string][]int, estimatedSize)
+		m.entityIndex = make(map[datalog.Identity][]int, estimatedSize)
 		m.attributeIndex = make(map[string][]int, estimatedSize)
 		m.valueIndex = make(map[uint64][]int, estimatedSize)
-		m.eavIndex = make(map[string][]int, estimatedSize)
+		m.eavIndex = make(map[eaIndexKey][]int, estimatedSize)
 
 		for i, datom := range m.datoms {
 			// Entity index: E → [positions]
-			eKey := datom.E.L85()
-			m.entityIndex[eKey] = append(m.entityIndex[eKey], i)
+			m.entityIndex[datom.E] = append(m.entityIndex[datom.E], i)
 
 			// Attribute index: A → [positions]
 			aKey := datom.A.String()
@@ -121,7 +128,7 @@ func (m *IndexedMemoryMatcher) buildIndices() {
 
 			// EA index: (E, A) → [positions]
 			// Store all datoms for each (E, A) pair to support cardinality-many attributes
-			eaKey := eKey + "|" + aKey
+			eaKey := eaIndexKey{e: datom.E, a: datom.A}
 			m.eavIndex[eaKey] = append(m.eavIndex[eaKey], i)
 		}
 	})
@@ -357,13 +364,11 @@ func (m *IndexedMemoryMatcher) getCandidates(strategy matchStrategy) []int {
 	switch s := strategy.(type) {
 	case useEAIndex:
 		// O(1) lookup in EA index - returns all positions for cardinality-many
-		key := s.e.L85() + "|" + s.a.String()
-		return m.eavIndex[key]
+		return m.eavIndex[eaIndexKey{e: s.e, a: s.a}]
 
 	case useEntityIndex:
 		// O(1) lookup in entity index
-		key := s.e.L85()
-		return m.entityIndex[key]
+		return m.entityIndex[s.e]
 
 	case useAttributeIndex:
 		// O(1) lookup in attribute index

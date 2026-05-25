@@ -23,14 +23,12 @@ func TestIndexedMatcher_IndexBuilding(t *testing.T) {
 
 	// Verify entity index
 	e1 := datalog.NewIdentity("e1")
-	e1Key := e1.L85()
-	if positions := matcher.entityIndex[e1Key]; len(positions) != 2 {
+	if positions := matcher.entityIndex[e1]; len(positions) != 2 {
 		t.Errorf("Entity index for e1: expected 2 datoms, got %d", len(positions))
 	}
 
 	e2 := datalog.NewIdentity("e2")
-	e2Key := e2.L85()
-	if positions := matcher.entityIndex[e2Key]; len(positions) != 2 {
+	if positions := matcher.entityIndex[e2]; len(positions) != 2 {
 		t.Errorf("Entity index for e2: expected 2 datoms, got %d", len(positions))
 	}
 
@@ -48,8 +46,7 @@ func TestIndexedMatcher_IndexBuilding(t *testing.T) {
 	}
 
 	// Verify EA index
-	e1NameKey := e1Key + "|" + nameKey
-	if _, ok := matcher.eavIndex[e1NameKey]; !ok {
+	if _, ok := matcher.eavIndex[eaIndexKey{e: e1, a: nameKw}]; !ok {
 		t.Errorf("EA index missing entry for (e1, :name)")
 	}
 
