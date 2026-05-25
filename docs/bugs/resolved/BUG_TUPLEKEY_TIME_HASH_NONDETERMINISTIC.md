@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-25
 **Severity**: High — silently dropped rows / wrong results; platform-dependent, so it passes locally and fails in CI
-**Status**: Fix applied; CI verification pending
+**Status**: Resolved (2026-05-25) — CI green on linux/amd64 (PR #76)
 **Affected**: `datalog/executor/tuple_key.go` (`hashValue`), and every `TupleKeyMap` consumer — hash joins, join/union dedup, subquery input dedup
 
 ## Summary
@@ -132,6 +132,9 @@ non-deterministically. Tracked here for a decision.
 ## Verification
 
 `go build ./...`, `go vet ./...`, and `go test -count=1 ./...` green locally; the two new
-tests fail before the fix and pass after. Final confirmation that the
-`TestGetElseComplex_*` CI failures are resolved requires a green CI run on `linux/amd64`
-(the bug cannot be reproduced on `darwin/arm64`).
+tests fail before the fix and pass after.
+
+**Confirmed on CI**: the `TestGetElseComplex_*` and
+`TestCorrelatedSubqueryAlgebraOptimizerWithDefaults` failures are resolved on
+`linux/amd64` / Go 1.25 (PR #76 CI green) — the environment where the bug manifested and
+which cannot be reproduced on `darwin/arm64`.
