@@ -397,20 +397,12 @@ type PlannerOptions struct {
 	EnableSemanticRewriting bool       // Rewrite predicates for efficiency (e.g., year(t)=2025 → time range constraint)
 	Cache                   *PlanCache // Shared query plan cache (optional)
 
-	// Legacy options (kept for compatibility with tests and executor subquery decorrelation)
-	UseClauseBasedPlanner               bool // Deprecated: always true. Only one planner now.
-	EnableDynamicReordering             bool // Legacy option (ignored by clause-based planner)
-	EnablePredicatePushdown             bool // Early predicate filtering during pattern matching
-	EnableConditionalAggregateRewriting bool // DISABLED: Feature moved to experimental/
-	EnableAlgebraOptimizer              bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
-	EnableSubqueryDecorrelation         bool // Deprecated: legacy executor decorrelation is retired; use EnableAlgebraOptimizer
-	EnableParallelDecorrelation         bool // Deprecated: no effect without the retired legacy decorrelation path
-	EnableScanSharing                   bool // Share unbound scan results across subqueries via LazySeq
-	EnableEntityPrefetch                bool // Warm EA cache after first DataPattern via PrefetchEntities
-	UseStreamingSubqueryUnion           bool // Use streaming union for subquery results instead of materializing all (default: true)
-	UseComponentizedSubquery            bool // Use component-based subquery execution (strategy selector, batcher, worker pool)
-	MaxPhases                           int  // Legacy option (ignored by clause-based planner)
-	EnableFineGrainedPhases             bool // Legacy option (ignored by clause-based planner)
+	// Subquery / algebra optimization
+	EnableAlgebraOptimizer    bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
+	EnableScanSharing         bool // Share unbound scan results across subqueries via LazySeq (default: false)
+	EnableEntityPrefetch      bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
+	UseStreamingSubqueryUnion bool // Use streaming union for subquery results (default: false; opt-in)
+	UseComponentizedSubquery  bool // Use component-based subquery execution (default: false; opt-in)
 
 	// Executor streaming options - control memory vs performance tradeoffs
 	EnableIteratorComposition bool // Use composed iterators for lazy evaluation (default: true)

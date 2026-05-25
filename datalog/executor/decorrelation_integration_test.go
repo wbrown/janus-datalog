@@ -165,11 +165,7 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 	}
 
 	// Execute with decorrelation DISABLED first to verify test data
-	execNoDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-		EnableSubqueryDecorrelation: false,
-		EnableFineGrainedPhases:     true,
-		MaxPhases:                   10,
-	})
+	execNoDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 	startNoDecor := time.Now()
 	resultNoDecor, err := execNoDecor.Execute(q)
@@ -184,13 +180,8 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 		t.Logf("  Tuple %d: %v", i, resultNoDecor.Get(i))
 	}
 
-	// Execute with decorrelation ENABLED (with parallel execution)
-	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-		EnableSubqueryDecorrelation: true,
-		EnableParallelDecorrelation: true,
-		EnableFineGrainedPhases:     true,
-		MaxPhases:                   10,
-	})
+	// Execute with decorrelation ENABLED
+	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 	startWithDecor := time.Now()
 	resultWithDecor, err := execWithDecor.Execute(q)

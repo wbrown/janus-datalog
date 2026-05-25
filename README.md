@@ -923,7 +923,7 @@ See [docs/papers/README.md](docs/papers/README.md) for complete details.
 - **[docs/reference/MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Multi-source queries: cross-database joins, in-memory sources, Go slices
 - **[RELATIONAL_ALGEBRA_OVERVIEW.md](RELATIONAL_ALGEBRA_OVERVIEW.md)** - How queries become algebra
 - **[PERFORMANCE_STATUS.md](PERFORMANCE_STATUS.md)** - Measured performance and benchmarks
-- **[docs/reference/PLANNER_COMPARISON.md](docs/reference/PLANNER_COMPARISON.md)** - Phase-based vs clause-based planning
+- **[docs/reference/PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Planner/executor options: defaults, opt-in flags, and what each one does
 
 ### Development
 

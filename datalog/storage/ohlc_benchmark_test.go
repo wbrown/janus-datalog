@@ -105,10 +105,7 @@ func BenchmarkOHLCQuery(b *testing.B) {
 	// Benchmark without predicate pushdown
 	b.Run("WithoutPushdown", func(b *testing.B) {
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-			EnablePredicatePushdown: false,
-			EnableFineGrainedPhases: true,
-		})
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -127,10 +124,7 @@ func BenchmarkOHLCQuery(b *testing.B) {
 	// Benchmark with predicate pushdown
 	b.Run("WithPushdown", func(b *testing.B) {
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-			EnablePredicatePushdown: true,
-			EnableFineGrainedPhases: true,
-		})
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -150,9 +144,7 @@ func BenchmarkOHLCQuery(b *testing.B) {
 	b.Run("WithTimeRangeOpt", func(b *testing.B) {
 		matcher := NewBadgerMatcher(db.store)
 		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-			EnablePredicatePushdown: true,
 			EnableSemanticRewriting: true, // Enables time-range optimization
-			EnableFineGrainedPhases: true,
 		})
 
 		b.ResetTimer()
@@ -278,10 +270,7 @@ func BenchmarkOHLCQueryLargeDataset(b *testing.B) {
 
 	b.Run("WithoutPushdown", func(b *testing.B) {
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-			EnablePredicatePushdown: false,
-			EnableFineGrainedPhases: true,
-		})
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -299,10 +288,7 @@ func BenchmarkOHLCQueryLargeDataset(b *testing.B) {
 
 	b.Run("WithPushdown", func(b *testing.B) {
 		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-			EnablePredicatePushdown: true,
-			EnableFineGrainedPhases: true,
-		})
+		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

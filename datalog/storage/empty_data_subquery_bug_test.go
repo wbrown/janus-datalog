@@ -47,7 +47,7 @@ func TestEmptyDataSubqueryBug(t *testing.T) {
 	                    [?b :price/open ?o]]
 	            $ ?s ?year ?month ?day) [[?open-price]]]]`
 
-	// Execute with default options (EnableFineGrainedPhases=true)
+	// Execute with default options
 	results, err := executor.CollectTuples(db.Query(query, "AAPL"))
 
 	// Should succeed with empty results, NOT fail with projection error
@@ -155,7 +155,7 @@ func TestEmptyDataSubqueryBug_FullGopherStreetQuery(t *testing.T) {
 	                    [?b :price/volume ?v]]
 	            $ ?s ?year ?month ?day) [[?total-volume]]]]`
 
-	// Execute with default options (EnableFineGrainedPhases=true)
+	// Execute with default options
 	results, err := executor.CollectTuples(db.Query(query, "AAPL"))
 
 	if err != nil {
@@ -202,10 +202,9 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 	                    [?b :price/open ?o]]
 	            $ ?s ?year ?month ?day) [[?open-price]]]]`
 
-	// Test with EnableFineGrainedPhases=true (default)
-	t.Run("EnableFineGrainedPhases=true", func(t *testing.T) {
+	// Test with default options
+	t.Run("default options", func(t *testing.T) {
 		opts := DefaultPlannerOptions()
-		opts.EnableFineGrainedPhases = true
 
 		q, err := parser.ParseQuery(queryStr)
 		assert.NoError(t, err)
@@ -231,10 +230,9 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 		assert.Equal(t, 0, count, "Should have 0 results")
 	})
 
-	// Test with EnableFineGrainedPhases=false
-	t.Run("EnableFineGrainedPhases=false", func(t *testing.T) {
+	// Test with default options (second run)
+	t.Run("default options (second run)", func(t *testing.T) {
 		opts := DefaultPlannerOptions()
-		opts.EnableFineGrainedPhases = false
 
 		q, err := parser.ParseQuery(queryStr)
 		assert.NoError(t, err)
@@ -245,7 +243,7 @@ func TestEmptyDataSubqueryBug_WithOptions(t *testing.T) {
 		exec := db.NewExecutorWithOptions(opts)
 		result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
 
-		assert.NoError(t, err, "Should succeed regardless of EnableFineGrainedPhases setting")
+		assert.NoError(t, err, "Should succeed with empty results")
 
 		// Convert to tuples
 		it := result.Iterator()

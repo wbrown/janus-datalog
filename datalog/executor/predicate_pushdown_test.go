@@ -358,11 +358,7 @@ func TestExecutorWithCustomPlannerOptions(t *testing.T) {
 	})
 
 	t.Run("CustomOptions", func(t *testing.T) {
-		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-			EnablePredicatePushdown: false,
-			EnableFineGrainedPhases: true,
-			MaxPhases:               5,
-		})
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 		if exec == nil {
 			t.Fatal("Expected executor, got nil")
 		}

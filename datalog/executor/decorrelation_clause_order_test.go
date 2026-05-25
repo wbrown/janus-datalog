@@ -40,22 +40,14 @@ func TestLegacyDecorrelationPreservesInterleavedClauseDependencies(t *testing.T)
 
 	matcher := NewMemoryPatternMatcher(datoms)
 
-	baseline := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-		EnableSubqueryDecorrelation: false,
-		EnableFineGrainedPhases:     true,
-		MaxPhases:                   10,
-	})
+	baseline := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 	baselineResult, err := baseline.Execute(q)
 	require.NoError(t, err)
 	baselineTuples, err := CollectTuples(baselineResult, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{dept, int64(2)}}, baselineTuples)
 
-	withLegacyDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-		EnableSubqueryDecorrelation: true,
-		EnableFineGrainedPhases:     true,
-		MaxPhases:                   10,
-	})
+	withLegacyDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 	decorResult, err := withLegacyDecor.Execute(q)
 	require.NoError(t, err)
 	decorTuples, err := CollectTuples(decorResult, nil)

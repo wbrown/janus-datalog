@@ -113,7 +113,7 @@ If execution strategies can be expressed as pure clause transformations, the arc
 ## References
 
 - `docs/wip/PHASE_AS_QUERY_ARCHITECTURE.md` - Stage C architecture proposal
-- `docs/reference/PLANNER_COMPARISON.md` - Planner comparison (note: has some inaccuracies about defaults)
+- `docs/archive/completed/PLANNER_COMPARISON.md` - Planner comparison (archived; one planner now — see `docs/reference/PLANNER_OPTIONS.md`)
 - `datalog/planner/planner_clause_based.go:102-104` - TODOs for these optimizations
 - `datalog/planner/predicate_rewriter.go` - Current semantic rewriting implementation (old planner)
 - `datalog/planner/decorrelation.go` - Current decorrelation implementation (old planner)

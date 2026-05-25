@@ -75,7 +75,6 @@ func setupAlgebraTestDB(t testing.TB) (*Database, func()) {
 func queryWithAlgebra(db *Database, queryStr string) (executor.Relation, error) {
 	opts := DefaultPlannerOptions()
 	opts.EnableAlgebraOptimizer = true
-	opts.EnableSubqueryDecorrelation = false // Algebra optimizer handles decorrelation
 	return queryWithPlannerOptions(db, queryStr, opts)
 }
 
@@ -340,7 +339,6 @@ func TestAlgebraIntegration_PrefetchInDecorrelatedSubquery(t *testing.T) {
 
 	opts := DefaultPlannerOptions()
 	opts.EnableAlgebraOptimizer = true
-	opts.EnableSubqueryDecorrelation = false
 	rel, err := queryWithPlannerOptions(db, q, opts)
 	require.NoError(t, err)
 	results, err := executor.CollectTuples(rel, nil)

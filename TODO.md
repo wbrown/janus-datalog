@@ -26,7 +26,7 @@
 - **Multi-source queries: named sources, SourceRouter, cross-source joins**
 - **QueryInto API: typed query results via struct tag mapping**
 - **Database export/import: EDN format for backup and migration**
-- **Conditional aggregate rewriting (7.7× faster correlated aggregates)**
+- **Conditional aggregate rewriting** (folded into the default algebra optimizer; no separate flag — 7.7× in the original standalone benchmark)
 - **AETV index for A-primary CRDT resolution**
 - **Value elimination: ~50% storage reduction (keys-only storage)**
 
@@ -51,8 +51,8 @@ These items have been completed and are preserved for historical context:
 
 ### ✅ Conditional Aggregate Rewriting
 **Problem**: Cross-phase expression dependencies cause projection failures
-**Status**: ✅ COMPLETE (February 2026)
-**Result**: 7.7× faster correlated aggregates
+**Status**: ✅ COMPLETE (February 2026). Folded into the default algebra optimizer in 2026-05 — the standalone `EnableConditionalAggregateRewriting` flag was removed; the rewrite now runs unconditionally inside `EnableAlgebraOptimizer`.
+**Result**: 7.7× faster correlated aggregates (original standalone benchmark)
 
 ### ✅ NOT/OR Clauses
 **Status**: ✅ COMPLETE with Datomic-compatible semantics

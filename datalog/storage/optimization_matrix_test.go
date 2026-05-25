@@ -126,11 +126,6 @@ func TestOptimizationMatrix(t *testing.T) {
 			opts.EnableAlgebraOptimizer = cfg.algebra
 			opts.EnableScanSharing = cfg.scanSharing
 			opts.EnableEntityPrefetch = cfg.prefetch
-			if cfg.algebra {
-				opts.EnableSubqueryDecorrelation = false
-			} else {
-				opts.EnableSubqueryDecorrelation = cfg.decorrelate
-			}
 
 			start := time.Now()
 			rel, err := queryWithPlannerOptions(db, queryStr, opts)
