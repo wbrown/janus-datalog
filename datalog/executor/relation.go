@@ -1418,17 +1418,29 @@ func NewProductRelation(relations []Relation) *ProductRelation {
 		}
 	}
 
+	// The nested-loop ProductIterator consumes the leftmost operand once but
+	// rewinds every other operand (reopening its Iterator()) once per outer
+	// tuple. StreamingRelation is single-use, so make relations[1:] re-iterable
+	// via Materialize() — the existing CachingIterator lazily caches each on its
+	// first pass and replays on rewind. The leftmost still streams, and the
+	// product output still streams (only the rewound operands are cached).
+	reiterable := make([]Relation, len(relations))
+	reiterable[0] = relations[0]
+	for i := 1; i < len(relations); i++ {
+		reiterable[i] = relations[i].Materialize()
+	}
+
 	// Combine symbols from all relations
 	var allSymbols []query.Symbol
-	for _, rel := range relations {
+	for _, rel := range reiterable {
 		allSymbols = append(allSymbols, rel.Symbols()...)
 	}
 
 	// Extract options from first relation
-	opts := relations[0].Options()
+	opts := reiterable[0].Options()
 
 	return &ProductRelation{
-		relations: relations,
+		relations: reiterable,
 		symbols:   allSymbols,
 		options:   opts,
 	}
