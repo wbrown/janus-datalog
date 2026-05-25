@@ -129,7 +129,9 @@ type Relation interface {
 
 	// Sorted returns tuples sorted by the relation's symbols
 	// First symbol is primary sort key, second is secondary, etc.
-	Sorted() []Tuple
+	// Returns the source iterator's deferred error if iteration failed, so a
+	// failed sort source isn't laundered into clean sorted tuples.
+	Sorted() ([]Tuple, error)
 
 	// Project returns a new relation with only the specified symbols
 	// Returns an error if any requested symbol doesn't exist
@@ -606,7 +608,11 @@ func (r *MaterializedRelation) ProjectFromPattern(pattern *query.DataPattern) Re
 
 // Sorted returns tuples sorted by the relation's symbols
 // First symbol is primary sort key, second is secondary, etc.
-func (r *MaterializedRelation) Sorted() []Tuple {
+func (r *MaterializedRelation) Sorted() ([]Tuple, error) {
+	// Surface a deferred source error rather than returning sorted partial data.
+	if r.err != nil {
+		return nil, r.err
+	}
 	// Create a copy of tuples to sort (preserving immutability)
 	sorted := make([]Tuple, len(r.tuples))
 	copy(sorted, r.tuples)
@@ -624,7 +630,7 @@ func (r *MaterializedRelation) Sorted() []Tuple {
 		return len(sorted[i]) < len(sorted[j])
 	})
 
-	return sorted
+	return sorted, nil
 }
 
 // Project returns a new relation with only the specified symbols
@@ -1157,14 +1163,17 @@ func (r *StreamingRelation) ProjectFromPattern(pattern *query.DataPattern) Relat
 }
 
 // Sorted returns tuples sorted by the relation's symbols
-func (r *StreamingRelation) Sorted() []Tuple {
+func (r *StreamingRelation) Sorted() ([]Tuple, error) {
 	// Sorted() requires all data in memory
 	// Set shouldCache flag so iteration builds the cache
 	r.Materialize()
 
-	// Now consume iterator to build cache
+	// Now consume iterator to build cache; surface a deferred source error
+	// rather than returning sorted partial data.
 	var tuples []Tuple
-	collectTuplesInto(&tuples, r)
+	if err := collectTuplesInto(&tuples, r); err != nil {
+		return nil, err
+	}
 
 	// Sort tuples lexicographically by symbols
 	sort.Slice(tuples, func(i, j int) bool {
@@ -1179,7 +1188,7 @@ func (r *StreamingRelation) Sorted() []Tuple {
 		return len(tuples[i]) < len(tuples[j])
 	})
 
-	return tuples
+	return tuples, nil
 }
 
 // Project returns a new relation with only the specified symbols
@@ -1484,7 +1493,7 @@ func (p *ProductRelation) ProjectFromPattern(pattern *query.DataPattern) Relatio
 	return p.Materialize().ProjectFromPattern(pattern)
 }
 
-func (p *ProductRelation) Sorted() []Tuple {
+func (p *ProductRelation) Sorted() ([]Tuple, error) {
 	return p.Materialize().Sorted()
 }
 

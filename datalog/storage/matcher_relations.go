@@ -509,7 +509,10 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 	// Get sorted tuples - THIS IS CRITICAL!
 	// Without sorted tuples, we cannot use Seek() to jump forward in the iterator
 	// Sorted() will auto-materialize if needed
-	sortedTuples := bindingRel.Sorted()
+	sortedTuples, err := bindingRel.Sorted()
+	if err != nil {
+		return nil, err
+	}
 
 	// Create streaming iterator that will reuse storage iterator
 	iter := &reusingIterator{
@@ -558,7 +561,10 @@ func (m *BadgerMatcher) matchWithVValidation(
 		})
 	}
 	// Get sorted tuples for efficient iteration
-	sortedTuples := bindingRel.Sorted()
+	sortedTuples, err := bindingRel.Sorted()
+	if err != nil {
+		return nil, err
+	}
 
 	// Create validating iterator
 	iter := &validatingVBoundIterator{

@@ -107,8 +107,14 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 	}
 
 	// Sort both results by first symbol (hour) for deterministic comparison
-	baselineSorted := baselineResult.Sorted()
-	optimizedSorted := optimizedResult.Sorted()
+	baselineSorted, err := baselineResult.Sorted()
+	if err != nil {
+		t.Fatalf("baseline Sorted() failed: %v", err)
+	}
+	optimizedSorted, err := optimizedResult.Sorted()
+	if err != nil {
+		t.Fatalf("optimized Sorted() failed: %v", err)
+	}
 
 	// Verify actual values match
 	for i := 0; i < len(baselineSorted) && i < len(optimizedSorted); i++ {

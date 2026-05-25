@@ -914,11 +914,18 @@ func combineSubqueryResultsSimple(results []Relation) Relation {
 	symbols := results[0].Symbols()
 	var allTuples []Tuple
 
+	var collectErr error
 	for _, result := range results {
-		collectTuplesInto(&allTuples, result)
+		if err := collectTuplesInto(&allTuples, result); err != nil && collectErr == nil {
+			collectErr = err
+		}
 	}
 
-	return NewMaterializedRelation(symbols, allTuples)
+	mat := NewMaterializedRelation(symbols, allTuples)
+	if collectErr != nil {
+		mat.err = collectErr
+	}
+	return mat
 }
 
 // extractBindingSymbols extracts symbols from a binding form

@@ -250,8 +250,14 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 			}
 
 			// Compare contents (sort for comparison)
-			linearTuples := linearResult.Sorted()
-			indexedTuples := indexedResult.Sorted()
+			linearTuples, err := linearResult.Sorted()
+			if err != nil {
+				t.Fatalf("linear Sorted() failed: %v", err)
+			}
+			indexedTuples, err := indexedResult.Sorted()
+			if err != nil {
+				t.Fatalf("indexed Sorted() failed: %v", err)
+			}
 
 			if len(linearTuples) != len(indexedTuples) {
 				t.Fatalf("Tuple count mismatch: linear=%d, indexed=%d",

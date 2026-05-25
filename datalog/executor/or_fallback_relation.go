@@ -270,7 +270,7 @@ func (r *OrFallbackRelation) ProjectFromPattern(pattern *query.DataPattern) Rela
 	return r.Materialize().ProjectFromPattern(pattern)
 }
 
-func (r *OrFallbackRelation) Sorted() []Tuple {
+func (r *OrFallbackRelation) Sorted() ([]Tuple, error) {
 	return r.Materialize().Sorted()
 }
 
@@ -280,13 +280,17 @@ func (r *OrFallbackRelation) Project(symbols []query.Symbol) (Relation, error) {
 
 func (r *OrFallbackRelation) Materialize() Relation {
 	var tuples []Tuple
-	collectTuplesInto(&tuples, r)
+	err := collectTuplesInto(&tuples, r)
 
 	syms := r.symbols
 	if syms == nil {
 		syms = r.Symbols()
 	}
-	return NewMaterializedRelationWithOptions(syms, tuples, r.options)
+	mat := NewMaterializedRelationWithOptions(syms, tuples, r.options)
+	if err != nil {
+		mat.err = err
+	}
+	return mat
 }
 
 func (r *OrFallbackRelation) Sort(orderBy []query.OrderByClause) Relation {

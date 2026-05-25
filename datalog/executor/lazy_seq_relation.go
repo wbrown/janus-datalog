@@ -74,7 +74,7 @@ func (r *LazySeqRelation) String() string {
 }
 
 func (r *LazySeqRelation) Table() string                         { return r.Materialize().Table() }
-func (r *LazySeqRelation) Sorted() []Tuple                       { return r.Materialize().Sorted() }
+func (r *LazySeqRelation) Sorted() ([]Tuple, error)             { return r.Materialize().Sorted() }
 func (r *LazySeqRelation) Sort(o []query.OrderByClause) Relation { return r.Materialize().Sort(o) }
 func (r *LazySeqRelation) Filter(f Filter) Relation              { return FilterRelation(r, f) }
 func (r *LazySeqRelation) Select(pred func(Tuple) bool) Relation { return Select(r, pred) }

@@ -629,7 +629,7 @@ func (r *StreamingAggregateRelation) ProjectFromPattern(pattern *query.DataPatte
 }
 
 // Sorted returns tuples sorted by the relation's symbols
-func (r *StreamingAggregateRelation) Sorted() []Tuple {
+func (r *StreamingAggregateRelation) Sorted() ([]Tuple, error) {
 	r.Iterator()
 	return r.materialized.Sorted()
 }

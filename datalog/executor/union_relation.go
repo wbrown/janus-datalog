@@ -122,7 +122,7 @@ func (ur *UnionRelation) ProjectFromPattern(pattern *query.DataPattern) Relation
 }
 
 // Sorted returns sorted tuples (forces materialization)
-func (ur *UnionRelation) Sorted() []Tuple {
+func (ur *UnionRelation) Sorted() ([]Tuple, error) {
 	return ur.Materialize().Sorted()
 }
 

@@ -77,7 +77,11 @@ func TestIteratorReuseRegression(t *testing.T) {
 	if symbolResult.Size() > 0 {
 		// Check first few values
 		count := 0
-		for _, tuple := range symbolResult.Sorted() {
+		sortedSymbolTuples, err := symbolResult.Sorted()
+		if err != nil {
+			t.Fatalf("Sorted() failed: %v", err)
+		}
+		for _, tuple := range sortedSymbolTuples {
 			if count >= 3 {
 				break
 			}

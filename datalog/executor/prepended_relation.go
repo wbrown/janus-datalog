@@ -74,7 +74,7 @@ func (r *PrependedRelation) ProjectFromPattern(pattern *query.DataPattern) Relat
 	return r.Materialize().ProjectFromPattern(pattern)
 }
 
-func (r *PrependedRelation) Sorted() []Tuple {
+func (r *PrependedRelation) Sorted() ([]Tuple, error) {
 	return r.Materialize().Sorted()
 }
 
