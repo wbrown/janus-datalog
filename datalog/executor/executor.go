@@ -369,10 +369,15 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 				// Materialize first to avoid iterator consumption issues
 				// Collect all tuples to create a reusable relation
 				var tuples []Tuple
-				collectTuplesInto(&tuples, group)
+				// A non-last phase materializes each group to pass Keep symbols
+				// forward. Carry any deferred scan error onto the materialized
+				// relation so Project propagates it into the next phase instead of
+				// laundering a failed scan into an empty result.
+				keepErr := collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
 				materialized := NewMaterializedRelationWithOptions(group.Symbols(), tuples, opts)
+				materialized.err = keepErr
 
 				projected, err := materialized.Project(phase.Keep)
 				if err != nil {
@@ -667,10 +672,15 @@ func (e *Executor) executeRealizedNonIterating(
 			for i, group := range groups {
 				// Materialize first to avoid iterator consumption issues
 				var tuples []Tuple
-				collectTuplesInto(&tuples, group)
+				// A non-last phase materializes each group to pass Keep symbols
+				// forward. Carry any deferred scan error onto the materialized
+				// relation so Project propagates it into the next phase instead of
+				// laundering a failed scan into an empty result.
+				keepErr := collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
 				materialized := NewMaterializedRelationWithOptions(group.Symbols(), tuples, opts)
+				materialized.err = keepErr
 
 				projected, err := materialized.Project(phase.Keep)
 				if err != nil {
