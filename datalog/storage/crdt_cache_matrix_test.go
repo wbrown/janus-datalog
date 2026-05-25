@@ -1338,55 +1338,30 @@ func TestCacheMatrix_AsOfQuery(t *testing.T) {
 			personID := datalog.NewIdentity("person-1")
 			nameAttr := datalog.NewKeyword(":person/name")
 
-			// Write values
-			for _, name := range []string{"Alice", "Bob", "Charlie"} {
+			// Write values, capturing Alice's transaction (the first write)
+			// directly from Commit(). A latest query cannot be used to discover a
+			// historical transaction: CRDT resolution correctly returns only the
+			// current winner for a cardinality-one attribute.
+			var aliceTx datalog.ElementID
+			for i, name := range []string{"Alice", "Bob", "Charlie"} {
 				tx := db.NewTransaction()
-				tx.Set(personID, nameAttr, name)
-				tx.Commit()
-			}
-
-			// First, query all values with their tx times to find the Lamport values
-			allResults, err := executor.CollectTuples(db.Query(
-				`[:find ?v ?tx :in $ ?e ?a :where [?e ?a ?v ?tx]]`,
-				personID, nameAttr))
-			require.NoError(t, err)
-			t.Logf("[%s] All values with tx: %v", mode.name, allResults)
-
-			// Find the Lamport time for "Alice" (first write)
-			var aliceLamport uint64
-			for _, r := range allResults {
-				if r[0] == "Alice" {
-					// ElementID comes back as a pointer
-					switch v := r[1].(type) {
-					case datalog.ElementID:
-						aliceLamport = v.Lamport
-					case *datalog.ElementID:
-						aliceLamport = v.Lamport
-					default:
-						t.Logf("[%s] tx type for Alice: %T = %v", mode.name, r[1], r[1])
-					}
-					break
+				require.NoError(t, tx.Set(personID, nameAttr, name))
+				txID, err := tx.Commit()
+				require.NoError(t, err)
+				if i == 0 {
+					aliceTx = txID
 				}
 			}
 
-			if aliceLamport == 0 {
-				t.Skipf("[%s] Could not determine Lamport time for Alice", mode.name)
-			}
-
-			// Query as-of the first transaction - should return "Alice"
-			results, err := executor.CollectTuples(db.Query(
-				fmt.Sprintf(`[:find ?v :in $ ?e :where [?e :person/name ?v ?tx] [(as-of ?tx %d)]]`, aliceLamport),
+			// As-of Alice's transaction, the resolved value must be exactly "Alice".
+			// Uses the d.AsOf(elementID) view (the [(as-of ...)] query predicate was
+			// removed). This must hold with the cache ENABLED and DISABLED.
+			results, err := executor.CollectTuples(db.AsOf(aliceTx).Query(
+				`[:find ?v :in $ ?e :where [?e :person/name ?v]]`,
 				personID))
 			require.NoError(t, err)
-
-			// as-of should return only values at or before that Lamport time
-			// For aliceLamport, that should be just "Alice"
-			assert.Len(t, results, 1, "[%s] as-of first tx should return 1 result", mode.name)
-			if len(results) == 1 {
-				assert.Equal(t, "Alice", results[0][0], "[%s] as-of first tx should return Alice", mode.name)
-			}
-
-			t.Logf("[%s] as-of %d results: %v", mode.name, aliceLamport, results)
+			require.Len(t, results, 1, "[%s] as-of Alice's tx should return 1 result", mode.name)
+			assert.Equal(t, "Alice", results[0][0], "[%s] as-of Alice's tx should return Alice", mode.name)
 		})
 	}
 }

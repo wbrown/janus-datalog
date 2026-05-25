@@ -1,7 +1,7 @@
 # BUG: StreamingRelation Premature Materialization Without Tuple Copying
 
 **Date Discovered**: 2025-10-24
-**Status**: ACTIVE - Root cause identified
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Severity**: CRITICAL - Causes incorrect query results
 **Affects**: All queries with `EnableTrueStreaming=true` (default since October 2025)
 
@@ -378,3 +378,18 @@ All existing tests must pass after fixes are applied.
 - **2025-10-24**: Root cause identified (premature Iterator() call triggers fallback path)
 - **2025-10-24**: This document created
 - **Next**: Apply immediate fixes and create tests
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** The tuple-copying bug class is fixed by an explicit tuple-lifetime contract on the `Relation` interface — `RequiresCopy() bool` — rather than by per-site copies:
+
+- `StreamingRelation.RequiresCopy()` returns `true` (it wraps a buffer-reusing iterator); `MaterializedRelation` and `ProductRelation` return `false` (stable / freshly-allocated tuples).
+- The collectors (`collectTuplesInto`, and the equivalent collection paths) copy via `copyTuple()` only when `RequiresCopy()` is true.
+
+This is the documented contract that this report's "premature `Iterator()`" concern needed: it no longer matters *when* `Iterator()` is called, because any collector that retains tuples copies them when the source reuses buffers. `relation.go` has been substantially rewritten since this report — the cited line 864 fallback no longer exists.
+
+Verified: the full suite is green (this report claimed the bug "breaks all multi-pattern queries" — impossible if it were live), and `TestMatcherRelationsTupleCopyingBug` passes.
+
+This is the **same underlying bug** as `BUG_STREAMING_TUPLE_COPYING` (now also resolved) — both are the missing copy-on-collect contract.

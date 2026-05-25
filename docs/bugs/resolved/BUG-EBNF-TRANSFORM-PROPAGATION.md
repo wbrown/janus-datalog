@@ -1,5 +1,7 @@
 # BUG: EBNF TransformPreserveStructure Drops Rewrites in Deep Trees
 
+**Status**: Resolved (2026-05-25) — see Resolution below
+
 ## Summary
 
 `parse.TransformPreserveStructure` applies transform functions bottom-up but
@@ -78,3 +80,16 @@ child and returns unchanged.
 - `datalog/algebra/rewrite_decorrelate.go` — the decorrelation transforms
 - `ebnf/parse/transform.go` — `TransformPreserveStructure` implementation
 - `datalog/planner/algebra_bridge.go` — bridge with annotations
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** Caveat on attribution: the observable defect is fixed, but not by a change to the upstream ebnf library — `ebnf/parse/transform.go` at the pinned commit is unchanged from what this report describes as the insufficient/partial fix. The propagation is made correct in janus-datalog's own algebra code:
+
+- `rebuildWithChildren` (`datalog/algebra/rewrite_decorrelate.go`) re-attaches the (possibly rewritten) children on every non-decorrelating return path (Union guard, `shouldDecorrelate` false, missing inner node, decompile failure), instead of returning the bare original node.
+- `fromParseNode` (`datalog/algebra/adapter.go`) rebuilds each parent `*Node` from the freshly-recovered (rewritten) `pn.Children` rather than the original embedded children.
+
+Together these carry a rewritten subtree up through parents at any depth.
+
+Verified: `TestDecorrelation_ProductionStructure` (datalog/algebra) passes on a deep (>2) production tree — it decorrelates the aggregate LateralJoins (3 → 1) and asserts the optimized tree differs from the input, directly rebutting the "changed:false / identical tree" symptom. The end-to-end `TestCorrelatedSubqueryAlgebraOptimizerProductionStructure` (datalog/storage) also passes.

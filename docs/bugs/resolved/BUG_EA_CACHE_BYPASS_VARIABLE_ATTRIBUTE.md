@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-19
 **Severity**: Performance (Critical in write-heavy workloads)
-**Status**: Open
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Affected**: All queries where A comes from bindings rather than being a pattern constant
 
 ## Summary
@@ -254,3 +254,11 @@ These tests verify the cache path works correctly. The gap is that they never ex
 - **BUG_CACHE_CARDINALIY_ONE_TOMBSTONE.md**: That bug was about `ResolveLWW` not checking `datom.Op` for tombstones. Fixed. The cache path itself is correct; this bug is about the cache path not being *reached*.
 
 Both prior bugs were about the cache and storage paths producing different results. This bug is different: both paths produce the same results, but the fast path (cache) is not reached when it should be.
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** The cache is no longer bypassed when the attribute is a Variable bound from inputs/bindings. `MatchWithConstraints` resolves A from bindings via `resolveKeywordFromBindings` when `extractValue` returns nil, then routes through the cache: Phase 1 for a single known A (constant or single-tuple binding) and Phase 2 for per-tuple A from join results, both via `matchWithBindingsFromCache → GetOrResolve` (`matcher_relations.go`). As this report recommended, `extractValue` still returns nil for Variables — the binding resolution was added at the call site, not inside `extractValue`.
+
+Verified: `TestEACacheBypass_Reproduction` passes (it asserts the bypass-path annotation `storage/reuse-strategy` is *not* emitted, which only happens when the cache handles the query). `BenchmarkEACacheBypass` shows A-from-scalar-input at ~13µs/op (304 allocs) versus ~68µs/op (1,639 allocs) with the cache disabled — a ~5.2× speedup matching the A-as-constant path, proving the cache is genuinely reached rather than merely returning correct results via the scan.

@@ -2,7 +2,7 @@
 
 **Date**: 2026-04-16
 **Severity**: High - panic, accidental close of shared store, likely semantic drift on custom executor paths
-**Status**: Open (partly direct code-path issue, partly code review finding needing dedicated repro)
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Affected**: `storage.Database.AsOf()`, `storage.Database.History()`, `storage.Database.NewExecutorWithOptions()`
 
 ## Summary
@@ -282,3 +282,13 @@ That would at least unify:
 4. Add `TestHistory_NewExecutorWithOptionsUsesHistoryState`.
 5. Verify `Query()`, `NewExecutor()`, and `NewExecutorWithOptions()` agree on the
    same derived handle.
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved** via Options 2 and 3 above: the return type stays `*Database` (a dedicated read-only type, Option 1, was not adopted), but all three footguns are closed and covered by `datalog/storage/temporal_handle_test.go` (all passing):
+
+- **FM1 (write panic):** `NewTransaction()` now panics with a clear message — "NewTransaction called on a read-only temporal database handle (AsOf/History); use the parent handle for writes" (`database.go:365-367`) — instead of a nil-map crash. A temporal handle is explicitly write-prohibited. Covered by `TestTemporalHandle_NewTransaction_PanicsWithClearMessage` (AsOf and History).
+- **FM2 (Close closes shared store):** `Close()` is a no-op on a temporal handle — "Read-only view; parent owns the store" (`database.go:588-590`) — so closing a derived handle no longer invalidates the parent. Covered by `TestTemporalHandle_Close_DoesNotCloseParent`.
+- **FM3 (custom executor bypasses temporal):** `NewExecutorWithOptions()` routes through `matcherWithExecOptions()`, which applies schema, cache, annotation handler, and temporal mode (`matcher.AsOf(*d.temporalTxID)`) — `database.go:540, 550-575`. The custom-executor path now agrees with `Query()` / `NewExecutor()` on the derived view. Covered by `TestTemporalHandle_NewExecutorWithOptions_UsesTemporalMode`.

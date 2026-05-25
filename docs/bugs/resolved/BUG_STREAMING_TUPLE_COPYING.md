@@ -2,7 +2,7 @@
 
 **Date**: 2025-10-24
 **Severity**: CRITICAL - Data loss in query execution
-**Status**: Partially fixed (table formatter only)
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Impact**: Queries return empty results or incorrect data with streaming enabled
 
 ## Summary
@@ -214,3 +214,14 @@ func TestStreamingTupleCopying(t *testing.T) {
 3. **Test coverage gaps**: Need tests with streaming enabled and large datasets
 4. **Annotations are critical**: Only caught this via verbose query annotations
 5. **Tuple immutability**: Consider making tuples immutable to prevent this class of bugs
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** Same root cause and fix as `BUG_STREAMING_RELATION_PREMATURE_MATERIALIZATION` — these are one bug. The fix is an explicit tuple-lifetime contract on the `Relation` interface, `RequiresCopy() bool`: relations backed by buffer-reusing iterators (`StreamingRelation`) return `true`, and the collectors copy via `copyTuple()` when it's true. This is exactly the "document the `Iterator.Tuple()` lifetime contract" item from Lessons Learned above, applied systematically rather than as 18 per-site copies.
+
+Verified:
+- `matcher_relations.go` binding collection (the "CRITICAL blocker" this report flagged at line 241) — `TestMatcherRelationsTupleCopyingBug` passes.
+- Table formatter — `TestTableFormatterTupleCopying` passes.
+- Full suite green (multi-pattern queries, aggregations, subqueries, joins all work, contradicting this report's "broken" matrix).

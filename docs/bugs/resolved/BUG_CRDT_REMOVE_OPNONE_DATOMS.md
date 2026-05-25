@@ -2,7 +2,7 @@
 
 ## Status
 
-**Open.** Discovered 2026-03-26 during downstream test investigation.
+**Resolved (2026-05-25).** Originally discovered 2026-03-26. See Resolution at end.
 
 ## Summary
 
@@ -151,4 +151,12 @@ if !maxElementID.IsZero() {
 ```
 
 This is the same call made in `NewDatabase()` at database open time
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** Caveat: this report's title and original hypothesis (CRDT Remove failing to cancel `OpNone` datoms) were a misdiagnosis — the doc's own investigation section corrected it. EDN export writes CardinalityMany values as `:op/add`, not `:op/none`; the real defect was that `Database.Import()` wrote datoms with their original (high) Lamport values **without advancing the database's Lamport clock**, so a subsequent `Remove()` received a lower Lamport and lost under add-wins resolution.
+
+Fix: `Import()` (`export.go`) now scans `MaxElementID()` after importing and calls `clock.Restore(maxElementID)`, mirroring `NewDatabase()` at open time. Verified: `TestImport_ClockAdvancedAfterImport` passes — it imports a CardinalityMany value at Lamport 5000 via EDN (`:op/add`), confirms presence, calls `tx.Remove()`, and asserts the value is gone (the Remove now outranks the import).
 (database.go:139-145). Import just needs to repeat it after writing.

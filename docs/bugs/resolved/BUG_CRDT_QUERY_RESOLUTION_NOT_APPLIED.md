@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-05
 **Severity**: Critical
-**Status**: ⚠️ PARTIALLY FIXED - Works with cache, broken without cache
+**Status**: Resolved (2026-05-25) — see Resolution (2026-05-25) at end
 **Affected**: All query methods except Pull API
 
 ## Resolution Summary
@@ -1210,3 +1210,15 @@ The Pull API's correct behavior created false confidence. The "thorough audit" t
    - Variables bound via joins
 
 4. **Trace ALL code paths**: When a feature must apply universally, audit every path that could bypass it.
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** The "Phase 4: Verification ✅ COMPLETE" section above was the accurate part; the header ("PARTIALLY FIXED — broken without cache") was stale. CRDT resolution is applied at the storage scan level via `CRDTResolvingIterator` across all matcher paths, so correctness no longer depends on the cache.
+
+Verified on 2026-05-25: `TestCacheMatrix` passes all binding/cardinality patterns in **both** cache-enabled and cache-disabled modes — including `EAndABothFromCollections`, the one case this report still listed under "Remaining Issues."
+
+One case had been masked: `TestCacheMatrix_AsOfQuery/*` was `t.Skip`-ped ("could not determine Lamport time"). Investigation showed this was a **broken test**, not a product bug: it tried to discover a historical transaction with a *latest* query (which correctly resolves a cardinality-one attribute to only the current winner, so it never found the older write), and its as-of query used the long-removed `[(as-of ...)]` predicate. The test was rewritten to capture the transaction `ElementID` directly from `Commit()` and to use the supported `db.AsOf(elementID).Query(...)` view. It now passes in **both** cache modes — confirming as-of resolution works with the cache disabled.
+
+Net: the CRDT-resolution-not-applied bug is fully resolved across query entry points, binding shapes, cardinalities, and the cache-enabled/disabled axis.

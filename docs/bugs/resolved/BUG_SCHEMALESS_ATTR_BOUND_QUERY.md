@@ -1,6 +1,6 @@
 # BUG: Schemaless Attributes Invisible to Bound Queries When Schema Present
 
-**Status**: FIX IN PROGRESS
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Severity**: High — data written successfully but queries silently return no results
 **Date**: 2026-02-06
 
@@ -372,3 +372,13 @@ These verify that all query paths produce consistent results after removes.
 | `matcher_iterator_nonreusing.go` | Already done (8-site change) |
 | `simple_batch_scanner.go` | Already done (8-site change) |
 | `batch_iterator.go` | Already done (8-site change) |
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** The plan above was carried out. `CRDTResolvingIterator` routes `CardinalityUnknown` (schemaless / attribute not in schema) to CardinalityOne/LWW resolution: it emits the first (highest-Tx) entry, skips the group when that entry is `OpCRDTRemove`, and keeps no add-wins state (`crdt_resolving_iterator.go:236-245, 285-287`). The `m.schema != nil` guards were removed so resolution is always applied.
+
+Verified: the original reproduction `TestSchemalessAttrBoundQuery_BugRepro` (schema present, attribute unregistered, bound query) passes in **both** cache-enabled and cache-disabled modes, as do `TestSchemalessAttrUnboundQuery_BugRepro`, `TestSchemalessAttrMultipleWrites` (LWW: multiple writes return only the latest), and `TestSchemalessAttr_UnregisteredDefaultsToCardinalityOne`.
+
+This is the same "schemaless = CardinalityOne" treatment later applied to the V-bound validation gate — see `resolved/BUG_EMPTY_STRING_VALUE_MATCHES_AS_WILDCARD.md`.

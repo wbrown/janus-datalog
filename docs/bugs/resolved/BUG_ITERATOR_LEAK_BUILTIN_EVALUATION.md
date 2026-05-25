@@ -1,6 +1,6 @@
 # BUG: Iterator Leak in Builtin Database Function Evaluation
 
-**Status**: Open (reproduction test added)
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Severity**: Resource leak (256 MB WAL file per leaked query; blocks directory cleanup on Windows)
 **Discovered**: 2026-02-23, reported by colleague with Windows reproduction
 **Reproduction**: `TestIteratorLeak_BuiltinPatternDiscoveredEntity` in `datalog/storage/iterator_leak_test.go`
@@ -165,3 +165,11 @@ This matches the pattern already used by `projectToColumns` (line 338), `getUniq
 | `datalog/executor/relation.go:733-853` | `StreamingRelation` — wraps `BadgerIterator` via iterator chain |
 | `datalog/storage/badger_store.go:470-475` | `BadgerIterator.Close()` — closes iterator + discards transaction |
 | `datalog/storage/iterator_leak_test.go` | Reproduction test (asserts WAL file does not persist after `db.Close()`) |
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** Both builtin-evaluation functions now close their relation iterator: `filterWithPredicateAndLookup` (handles `missing?`) and `evaluateExpressionWithLookup` (handles `get-some`/`get-else`) each call `defer iter.Close()` immediately after `rel.Iterator()`. The code now lives in `datalog/executor/relation_ops.go` (renamed from `helpers.go` per the no-"helpers" rule); all five `.Iterator()` sites in that file are paired with a `Close()`. `BadgerIterator.Close()` performs the `txn.Discard()` that releases the leaked transaction/skiplist ref.
+
+Verified: the named reproduction `TestIteratorLeak_BuiltinPatternDiscoveredEntity` passes for `get-some` / `get-else` / `missing?` — it asserts no `.mem` WAL file persists on disk after `db.Close()`. Fix landed in commit `bf51270`.
