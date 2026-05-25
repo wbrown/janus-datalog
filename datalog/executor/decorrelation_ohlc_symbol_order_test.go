@@ -154,10 +154,7 @@ func TestOHLCColumnOrderBug(t *testing.T) {
 
 	t.Run("ParallelDecorrelation", func(t *testing.T) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-			EnableSubqueryDecorrelation: true,
-			EnableParallelDecorrelation: true,
-		})
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 		result, err := exec.Execute(parsedQuery)
 		if err != nil {
@@ -238,10 +235,7 @@ func TestOHLCColumnOrderBug(t *testing.T) {
 
 	t.Run("SequentialDecorrelation", func(t *testing.T) {
 		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-			EnableSubqueryDecorrelation: true,
-			EnableParallelDecorrelation: false,
-		})
+		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 		result, err := exec.Execute(parsedQuery)
 		if err != nil {

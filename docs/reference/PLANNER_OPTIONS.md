@@ -1,651 +1,250 @@
 # Planner Options Reference
 
-**Last Updated**: October 13, 2025
-**Version**: Post-streaming unification
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Unified Configuration](#unified-configuration)
-3. [Complete Options Reference](#complete-options-reference)
-4. [Performance Guidance](#performance-guidance)
-5. [Configuration Recipes](#configuration-recipes)
-6. [Migration Guide](#migration-guide)
-
----
+**Last Updated**: 2026-05-25
+**Status**: Current with the clause-based planner
 
 ## Overview
 
-Janus Datalog uses a single `PlannerOptions` struct to configure both query planning and execution behavior. This unified approach eliminates the need for separate ExecutorOptions and provides clean, centralized configuration.
-
-### Key Principles
-
-1. **Single Configuration Point**: All options flow through `PlannerOptions`
-2. **Sensible Defaults**: Optimizations enabled based on production validation
-3. **No Global State**: Configuration belongs to instances, not globals
-4. **Options Propagation**: Settings flow through entire execution pipeline
-
-### Public API vs Advanced Configuration
-
-Most users should use the `db.Open` API, which applies sensible defaults automatically:
+Janus Datalog uses a single `planner.PlannerOptions` struct to configure both
+query planning and execution. The public `db.Open` API applies sensible defaults
+automatically — most users never touch these options:
 
 ```go
 d, _ := db.Open("path/to/db")
 d.Query(`[:find ?name :where [?p :person/name ?name]]`)
 ```
 
-The planner options documented below are for **advanced usage** -- tuning non-default planner behavior. To access the internal executor/planner for custom configuration, use `d.Unwrap()` or construct via the `storage` and `executor` packages directly.
+The options below are for **advanced tuning** via the `storage`/`executor`
+packages (e.g. `storage.DefaultPlannerOptions()` + `NewExecutorWithOptions`).
+
+Every option is labeled **Default-active** (turned on by `DefaultPlannerOptions()`)
+or **Opt-in** (off by default; you must set it). This labeling is the contract:
+if a doc says an option is default-active, `DefaultPlannerOptions()` sets it, and
+`TestDefaultPlannerOptions_MatchesDocumentedDefaults` enforces that they agree.
 
 ---
 
-## Unified Configuration
-
-### The Combined Structure
+## The struct
 
 ```go
 type PlannerOptions struct {
-    // Query Planning Options
-    EnableDynamicReordering     bool
-    EnablePredicatePushdown     bool
-    EnableSubqueryDecorrelation bool
-    EnableParallelDecorrelation bool
-    EnableCSE                   bool
-    EnableSemanticRewriting     bool
-    MaxPhases                   int
-    EnableFineGrainedPhases     bool
-    Cache                       *PlanCache
+    EnableSemanticRewriting bool       // opt-in
+    Cache                   *PlanCache // set by the Database
 
-    // Executor Streaming Options
-    EnableIteratorComposition   bool  // Lazy evaluation
-    EnableTrueStreaming        bool  // No auto-materialization
-    EnableSymmetricHashJoin    bool  // Stream-to-stream joins
+    EnableAlgebraOptimizer    bool // default-active
+    EnableScanSharing         bool // opt-in
+    EnableEntityPrefetch      bool // opt-in
+    UseStreamingSubqueryUnion bool // opt-in
+    UseComponentizedSubquery  bool // opt-in
 
-    // Executor Parallel Options
-    EnableParallelSubqueries bool  // Parallel subquery execution
-    MaxSubqueryWorkers      int   // Worker pool size (0 = NumCPU)
+    EnableIteratorComposition bool // default-active
+    EnableTrueStreaming       bool // default-active
+    EnableSymmetricHashJoin   bool // opt-in
 
-    // Executor Join/Aggregation Options
-    EnableStreamingJoins            bool
-    EnableStreamingAggregation      bool
-    EnableStreamingAggregationDebug bool
-    EnableDebugLogging              bool
+    EnableParallelSubqueries bool // default-active
+    MaxSubqueryWorkers       int  // 0 = runtime.NumCPU()
+
+    EnableStreamingJoins            bool // opt-in
+    EnableStreamingAggregation      bool // default-active
+    EnableStreamingAggregationDebug bool // opt-in
+    EnableDebugLogging              bool // opt-in
+
+    IndexNestedLoopThreshold int // default 0
 }
 ```
 
-### Default Configuration
+## Default configuration
+
+`storage.DefaultPlannerOptions()` sets exactly these (everything else is the Go
+zero value — i.e. off / nil / 0):
 
 ```go
-func DefaultPlannerOptions() planner.PlannerOptions {
-    return planner.PlannerOptions{
-        // Query planning
-        EnableDynamicReordering:     true,
-        EnablePredicatePushdown:     true,
-        EnableSubqueryDecorrelation: true,
-        EnableParallelDecorrelation: true,
-        MaxPhases:                   10,
-        EnableFineGrainedPhases:     true,
-
-        // Streaming (enabled by default)
-        EnableIteratorComposition: true,
-        EnableTrueStreaming:      true,
-        EnableSymmetricHashJoin:  false,  // Conservative
-
-        // Parallel execution
-        EnableParallelSubqueries: true,
-        MaxSubqueryWorkers:      0,  // Use all cores
-
-        // Other optimizations
-        EnableCSE:               false,  // Minimal benefit with parallel
-        EnableSemanticRewriting: true,   // 2-6× on time queries
-        EnableDebugLogging:      false,
-    }
-}
+EnableAlgebraOptimizer:     true
+EnableScanSharing:          false
+EnableEntityPrefetch:       false
+EnableIteratorComposition:  true
+EnableTrueStreaming:        true
+EnableSymmetricHashJoin:    false
+EnableParallelSubqueries:   true
+MaxSubqueryWorkers:         0      // runtime.NumCPU()
+EnableStreamingJoins:       false
+EnableStreamingAggregation: true
+EnableDebugLogging:         false
+IndexNestedLoopThreshold:   0      // always HashJoinScan
 ```
 
-### How It Works
-
-The `db.Open` API handles all of this automatically with sensible defaults. Internally:
-
-```go
-// 1. Database creates executor with default options
-func (d *Database) NewExecutor() *executor.Executor {
-    opts := DefaultPlannerOptions()
-    opts.Cache = d.planCache
-    return executor.NewExecutorWithOptions(d.Matcher(), opts)
-}
-
-// 2. Executor configures itself from options
-func NewExecutorWithOptions(matcher PatternMatcher, opts planner.PlannerOptions) *Executor {
-    return &Executor{
-        matcher: matcher,
-        planner: planner.NewPlanner(nil, opts),
-        options: convertToExecutorOptions(opts),
-        // ... streaming and parallel settings from opts
-    }
-}
-```
-
-**Benefits**:
-- Single configuration to manage
-- Streaming enabled by default
-- Clean architecture with no breaking changes
-- `db.Open` applies all defaults; advanced users can override via internal packages
+So, off by default (opt-in): `EnableSemanticRewriting`, `UseStreamingSubqueryUnion`,
+`UseComponentizedSubquery`, `EnableScanSharing`, `EnableEntityPrefetch`,
+`EnableSymmetricHashJoin`, `EnableStreamingJoins`, `EnableStreamingAggregationDebug`.
 
 ---
 
-## Complete Options Reference
+## Options reference
 
-### Planning Options
+### Algebra / subquery optimization
 
-#### EnableDynamicReordering
-**Default**: `true`
-**Performance**: 1-3µs overhead, prevents 10-1000× slowdowns
-**When to Enable**: Complex queries with many joins
-**When to Disable**: Simple queries (< 10 patterns)
+#### EnableAlgebraOptimizer — **default-active**
+Relational-algebra IR optimization: the query is compiled to an algebra tree,
+optimized (subquery decorrelation, predicate pushdown), and decompiled back to
+clauses. This is where decorrelation and pushdown actually happen — there are no
+separate knobs for them. Consumed in `planner/planner_clause_based.go`.
 
-**What it does**: Reorders query phases to maximize symbol connectivity using an "information flow" algorithm.
+#### EnableSemanticRewriting — **opt-in** (default false)
+Rewrites time-extraction predicates into range constraints, e.g.
+`[(year ?t) ?y] [(= ?y 2025)]` → `[(>= ?t 2025-01-01)] [(< ?t 2026-01-01)]`.
+Off by default — set it explicitly if you want this folding. Consumed in
+`planner/semantic_rewriter.go`.
 
-**Why it's enabled**: Prevents catastrophic cross-products in complex queries. The microsecond overhead is negligible compared to preventing disasters.
+#### EnableScanSharing — **opt-in** (default false)
+Deduplicates identical unbound scans across subqueries via a shared lazy sequence.
+Benchmarked performance-neutral, hence off. Consumed in `executor/executor.go`.
 
-**Trade-offs**:
-- ✅ Prevents accidental Cartesian products
-- ✅ Optimizes complex join orders
-- ⚠️ 30% overhead on very simple queries (see Performance Guidance)
+#### EnableEntityPrefetch — **opt-in** (default false)
+Warms the EA cache after the first data pattern via `PrefetchEntities`.
+Benchmarked performance-neutral, hence off. Consumed in `executor/query_executor.go`.
 
-**Related Code**:
-- `datalog/planner/phase_reordering.go`
-- Algorithm: Information flow with symbol connectivity scoring
+#### UseStreamingSubqueryUnion — **opt-in** (default false)
+Streams subquery-union results instead of materializing them. Consumed in
+`executor/streaming_union.go` and `executor/subquery.go`.
 
-#### EnablePredicatePushdown
-**Default**: `true`
-**Performance**: Small improvement, negligible overhead
-**When to Enable**: Always
-**When to Disable**: Never
+#### UseComponentizedSubquery — **opt-in** (default false)
+Routes subquery execution through the component-based path (strategy selector,
+batcher, worker pool). Consumed in `executor/query_executor.go`.
 
-**What it does**: Applies predicates as soon as their required symbols are available, reducing intermediate result sizes.
+### Streaming
 
-**Why it's enabled**: Universally beneficial optimization with minimal cost.
+#### EnableIteratorComposition — **default-active**
+Lazy evaluation through composed iterators (filter/project/etc.) instead of
+materializing intermediates. Consumed in `executor/relation.go`.
 
-**Example**:
-```datalog
-[?e :event/value ?v]
-[(> ?v 100)]  ; Applied immediately after ?v available
-```
+#### EnableTrueStreaming — **default-active**
+Avoids auto-materialization of `StreamingRelation` (`Size()` returns -1 rather
+than consuming the iterator). Consumed in `executor/relation.go`.
 
-**Related Code**:
-- `datalog/executor/predicate_classifier.go`
-- `datalog/executor/join_conditions.go`
+#### EnableSymmetricHashJoin — **opt-in** (default false)
+Dual-hash-table join for stream-to-stream joins without materializing either
+side. Standard hash join is faster when one side can be materialized, so this is
+off by default. Consumed in `executor/join.go`.
 
-#### EnableSubqueryDecorrelation
-**Default**: `true`
-**Performance**: 10-100× speedup, no overhead
-**When to Enable**: Always
-**When to Disable**: Never
+### Parallel execution
 
-**What it does**: Merges correlated subqueries with identical signatures using Selinger's decorrelation algorithm (1979).
+#### EnableParallelSubqueries — **default-active**
+Executes subquery iterations in parallel via a bounded worker pool. Consumed in
+`executor/subquery_strategy.go`.
 
-**Why it's enabled**: Massive performance improvement with zero downside.
+#### MaxSubqueryWorkers — **default 0**
+Worker-pool size for parallel subqueries; `0` means `runtime.NumCPU()`. Consumed
+in `executor/query_executor.go`.
 
-**Example**:
-```datalog
-; User writes 4 separate subqueries
-[(q [:find (max ?o) ...] $ ?s) [[?open]]]
-[(q [:find (max ?h) ...] $ ?s) [[?high]]]
-[(q [:find (max ?l) ...] $ ?s) [[?low]]]
-[(q [:find (max ?c) ...] $ ?s) [[?close]]]
+### Joins / aggregation
 
-; Janus executes as single merged query
-SELECT ?s, MAX(?o), MAX(?h), MAX(?l), MAX(?c)
-FROM ... GROUP BY ?s
-```
+#### EnableStreamingJoins — **opt-in** (default false)
+Returns a `StreamingRelation` from joins instead of materializing the result.
+Consumed in `executor/join.go`.
 
-**Real-world impact**: Gopher-street queries improved 8.3× (see SUBQUERY_PERFORMANCE_ANALYSIS.md).
+#### EnableStreamingAggregation — **default-active**
+Streaming aggregation (no full materialization of the input). Consumed in
+`executor/aggregation.go`.
 
-**Related Code**:
-- `datalog/planner/decorrelation.go`
-- Based on: Selinger et al. "Access Path Selection in a Relational Database" (1979)
+#### EnableStreamingAggregationDebug — **opt-in** (default false)
+Debug logging for the streaming aggregation path. Consumed in
+`executor/aggregation.go`.
 
-#### EnableParallelDecorrelation
-**Default**: `true`
-**Performance**: 1.2-1.8× additional speedup on multi-core
-**When to Enable**: Multi-core systems, complex queries
-**When to Disable**: Single-core systems
+#### EnableDebugLogging — **opt-in** (default false)
+Debug logging for joins and related execution. Consumed in `executor/join.go`,
+`executor/relation.go`.
 
-**What it does**: Executes decorrelated merged queries in parallel using worker pools.
+### Storage join strategy
 
-**Why it's enabled**: Significant benefit on modern multi-core systems with negligible overhead.
+#### IndexNestedLoopThreshold — **default 0**
+For binding sets of size ≤ threshold the matcher uses index-nested-loop (iterator
+reuse with seeks); above it, HashJoinScan. Default `0` means always HashJoinScan
+(benchmarks show it wins even at size 1). Consumed in
+`storage/hash_join_matcher.go`.
 
-**How it works**:
-- Uses `runtime.NumCPU()` workers by default
-- Round-robin work distribution
-- Channel-based coordination
-- Deterministic ordering preserved
+### Plan cache
 
-**Concurrency safety**: All race conditions fixed as of October 2025.
-
-**Related Code**:
-- `datalog/executor/parallel_decorrelation.go`
-- `datalog/executor/worker_pool.go`
-
-#### EnableCSE
-**Default**: `false`
-**Performance**: 1-3% improvement sequential, -1% with parallel
-**When to Enable**: Single-threaded environments, expensive predicates
-**When to Disable**: Parallel execution (default)
-
-**What it does**: Common Subexpression Elimination - merges filter groups with identical structure.
-
-**Why it's disabled**: Parallel execution removes parallelism opportunity. The 1% improvement isn't worth losing concurrency.
-
-**When useful**:
-- Expensive predicates evaluated multiple times
-- Single-threaded execution
-- Memory-constrained environments
-
-**Related Code**:
-- `datalog/planner/cse.go`
-- See: `docs/archive/2025-10/CSE_FINDINGS.md`
-
-#### EnableSemanticRewriting
-**Default**: `true`
-**Performance**: 2.6-5.8× speedup on time-filtered queries
-**When to Enable**: Temporal queries with time extraction
-**When to Disable**: Non-temporal queries (neutral impact)
-
-**What it does**: Transforms expensive time extraction expressions into cheaper range constraints.
-
-**Example transformation**:
-```datalog
-; Before: Extract year for every tuple, then filter
-[(year ?time) ?y]
-[(= ?y 2025)]
-
-; After: Range constraint (much faster)
-[(>= ?time #inst "2025-01-01")]
-[(< ?time #inst "2026-01-01")]
-```
-
-**Benchmarks**:
-- Year filter (33% selective): 2.6× faster
-- Day filter (12.5% selective): 4.1× faster
-- Hour filter (1.4% selective): 5.8× faster
-
-**Note**: With decorrelation enabled, shows no additional speedup (both optimize same bottleneck). Still valuable for standalone queries.
-
-**Related Code**:
-- `datalog/planner/semantic_rewriting.go`
-- See: `docs/archive/2025-10/SEMANTIC_REWRITING_FINDINGS.md`
-
-#### MaxPhases
-**Default**: `10`
-**Performance**: Balances planning vs execution
-**When to Increase**: Very complex queries with many patterns
-**When to Decrease**: Simpler queries
-
-**What it does**: Limits maximum number of phases in query plan.
-
-**Why 10**: Empirically determined balance point between flexibility and overhead.
-
-#### EnableFineGrainedPhases
-**Default**: `true`
-**Performance**: Prevents OOM, 5-10% overhead on simple queries
-**When to Enable**: Complex queries, large intermediate results
-**When to Disable**: Simple queries with few patterns
-
-**What it does**: Creates selectivity-based phases to prevent memory exhaustion.
-
-**Why it's enabled**: Insurance against OOM failures outweighs overhead.
-
-**Trade-offs**:
-- ✅ Prevents out-of-memory failures
-- ⚠️ 5-10% overhead on simple queries
-
-### Streaming Options
-
-#### EnableIteratorComposition
-**Default**: `true`
-**Performance**: 1.5-2.5× faster, 50-99% less memory
-**When to Enable**: Always
-**When to Disable**: Debugging materialization issues
-
-**What it does**: Enables lazy evaluation through composed iterators (FilterIterator, ProjectIterator, etc.).
-
-**Why it's enabled**: Massive performance and memory improvements with full correctness.
-
-**Architecture**:
-```
-Source → FilterIterator → ProjectIterator → Result
-         ↑                ↑
-         No materialization, pure iteration
-```
-
-**Related Code**:
-- `datalog/executor/iterator_composition.go`
-- See: `docs/archive/2025-10/STREAMING_ARCHITECTURE_COMPLETE.md`
-
-#### EnableTrueStreaming
-**Default**: `true`
-**Performance**: 50-99% memory reduction for selective queries
-**When to Enable**: Always
-**When to Disable**: Debugging size calculations
-
-**What it does**: Prevents auto-materialization in StreamingRelation, returns `-1` for unknown sizes.
-
-**Why it's enabled**: True streaming semantics with dramatic memory savings.
-
-**How it works**:
-- `Size()` returns `-1` without consuming iterator
-- `IsEmpty()` uses BufferedIterator for efficient check
-- Only materializes when explicitly requested
-
-#### EnableSymmetricHashJoin
-**Default**: `false`
-**Performance**: Enables stream-to-stream joins, slightly slower than standard
-**When to Enable**: Full pipeline streaming, memory-constrained
-**When to Disable**: Performance-critical joins (default)
-
-**What it does**: Dual hash table architecture for incremental join processing without full materialization.
-
-**Why it's disabled**: Conservative default. Standard hash join is faster when one side can be materialized.
-
-**When useful**:
-- Both join inputs are large streams
-- Memory constraints prevent materialization
-- True end-to-end streaming required
-
-### Parallel Execution Options
-
-#### EnableParallelSubqueries
-**Default**: `true`
-**Performance**: 6.9× speedup with in-memory storage
-**When to Enable**: Multi-core systems
-**When to Disable**: Single-core or debugging
-
-**What it does**: Worker pool with bounded parallelism for subquery execution.
-
-**Implementation**:
-- Uses `runtime.NumCPU()` workers by default
-- Query plan reuse across iterations
-- Thread-safe result aggregation
-
-#### MaxSubqueryWorkers
-**Default**: `0` (unlimited, uses `runtime.NumCPU()`)
-**When to Change**: Resource-constrained environments
-
-**What it does**: Limits concurrent worker goroutines for subquery execution.
+#### Cache *PlanCache
+Shared query-plan cache. Set automatically by the `Database`; you normally don't
+set this by hand.
 
 ---
 
-## Performance Guidance
+## Removed options (historical)
 
-### Understanding the Trade-offs
+These knobs existed in earlier versions and were **removed in 2026-05** because
+they were inert no-ops under the clause-based planner — setting them changed
+nothing:
 
-The October 2025 defaults are optimized for **complex queries** and **safety**. For simple queries, some optimizations add overhead:
+| Removed option | Why |
+|----------------|-----|
+| `UseClauseBasedPlanner` | There is only one planner now; it is always used. |
+| `EnableDynamicReordering` | Phase reordering knob; ignored by the clause-based planner. |
+| `EnablePredicatePushdown` | Pushdown now happens unconditionally inside `EnableAlgebraOptimizer`. |
+| `EnableFineGrainedPhases` | Phase-granularity knob; ignored by the clause-based planner. |
+| `MaxPhases` | Phase-count cap; ignored by the clause-based planner. |
+| `EnableSubqueryDecorrelation` | Decorrelation now happens inside `EnableAlgebraOptimizer`. |
+| `EnableParallelDecorrelation` | Gated only the retired legacy decorrelation path (deleted). |
+| `EnableConditionalAggregateRewriting` | The rewrite now runs unconditionally inside `EnableAlgebraOptimizer`; the standalone flag was inert. |
+| `EnableCSE` | Never shipped in `PlannerOptions`. |
 
-#### Overhead Analysis (from Gopher-Street Benchmarks)
-
-| Optimization | Simple Query Overhead | Complex Query Benefit |
-|--------------|----------------------|----------------------|
-| EnableDynamicReordering | 25-30% | Prevents 10-1000× slowdowns |
-| EnableFineGrainedPhases | 5-10% | Prevents OOM failures |
-| **Combined** | **30-40%** | **Safety against disasters** |
-
-**Dataset**: 79-19,750 price bars, simple OHLC extraction queries
-
-### When Defaults Are Perfect
-
-✅ **Enable all defaults when**:
-- Queries have > 10 patterns
-- Risk of cross-products
-- Complex join graphs
-- Unknown query patterns (exploratory)
-- Production safety is priority
-
-### When to Optimize for Speed
-
-⚠️ **Consider disabling reordering/fine-grained when**:
-- Queries are simple (< 10 patterns)
-- Hand-optimized queries
-- Performance-critical path
-- Queries are well-constrained
-
-**Custom configuration for simple queries** (requires internal packages):
-```go
-opts := storage.DefaultPlannerOptions()
-opts.EnableDynamicReordering = false
-opts.EnableFineGrainedPhases = false
-exec := database.NewExecutorWithOptions(opts)
-```
-
-**Measured improvement**: 20-40% faster on simple queries (see DEFAULT_PLANNER_OPTIONS_FEEDBACK.md)
-
-### Adaptive Optimization (Future)
-
-**Proposed**: Automatically enable optimizations based on query complexity.
-
-**Heuristics for "needs reordering"**:
-1. Pattern count > 10
-2. Disconnected components detected
-3. High-degree join nodes
-4. Nested aggregates or complex subqueries
-
-**Implementation status**: Under consideration (see DEFAULT_PLANNER_OPTIONS_FEEDBACK.md)
+If your code sets any of these, delete the lines — the fields no longer exist.
 
 ---
 
-## Configuration Recipes
+## Recipes
 
-### Maximum Performance (Simple Queries)
+All recipes start from `storage.DefaultPlannerOptions()` and override only what
+they need.
 
-```go
-opts := planner.PlannerOptions{
-    // Disable overhead-inducing optimizations
-    EnableDynamicReordering: false,
-    EnableFineGrainedPhases: false,
-
-    // Keep critical optimizations
-    EnablePredicatePushdown:     true,
-    EnableSubqueryDecorrelation: true,
-    EnableParallelDecorrelation: true,
-    EnableSemanticRewriting:     true,
-
-    // Streaming enabled
-    EnableIteratorComposition: true,
-    EnableTrueStreaming:      true,
-
-    // Parallel execution
-    EnableParallelSubqueries: true,
-    MaxSubqueryWorkers:      0,
-}
-```
-
-**Use when**: Simple, hand-optimized queries with < 10 patterns.
-
-### Maximum Safety (Complex Queries)
+### Default (recommended)
 
 ```go
 opts := storage.DefaultPlannerOptions()
-// Already optimized for safety - use as-is
+// Already tuned: algebra optimizer + streaming + parallel subqueries on.
 ```
 
-**Use when**: Complex queries, exploratory analytics, unknown patterns.
-
-### Memory-Constrained Environment
-
-```go
-opts := planner.PlannerOptions{
-    // Enable all streaming
-    EnableIteratorComposition: true,
-    EnableTrueStreaming:      true,
-    EnableSymmetricHashJoin:  true,  // Full pipeline streaming
-
-    // Disable parallelism to save memory
-    EnableParallelDecorrelation: false,
-    EnableParallelSubqueries:   false,
-
-    // Other defaults
-    EnablePredicatePushdown:     true,
-    EnableSubqueryDecorrelation: true,
-}
-```
-
-**Use when**: Limited memory, single-core systems.
-
-### Debug Configuration
-
-```go
-opts := planner.PlannerOptions{
-    // Disable optimizations for clarity
-    EnableDynamicReordering:     false,
-    EnableSubqueryDecorrelation: false,
-    EnableSemanticRewriting:     false,
-
-    // Disable streaming for visibility
-    EnableIteratorComposition: false,
-    EnableTrueStreaming:      false,
-
-    // Enable debug output
-    EnableDebugLogging:              true,
-    EnableStreamingAggregationDebug: true,
-}
-```
-
-**Use when**: Debugging query behavior, understanding execution.
-
-### Temporal Query Optimization
+### Time-folding for temporal queries
 
 ```go
 opts := storage.DefaultPlannerOptions()
-opts.EnableSemanticRewriting = true  // Already true, but emphasis
-opts.EnableSubqueryDecorrelation = true
-opts.EnableParallelDecorrelation = true
+opts.EnableSemanticRewriting = true // fold year(?t)=2025 into a time range
 ```
 
-**Use when**: Time-based queries with year/month/day extraction.
+### Debugging execution
 
-**Expected**: 2-6× speedup on time-filtered queries.
-
----
-
-## Migration Guide
-
-### From Global Variables (Old)
-
-**❌ OLD CODE** (no longer works):
-```go
-executor.EnableIteratorComposition = true
-executor.EnableTrueStreaming = true
-exec := executor.NewExecutor(matcher)
-```
-
-**✅ NEW CODE** (simplest -- uses all defaults):
-```go
-d, _ := db.Open("path/to/db")
-d.Query(queryStr)
-```
-
-**✅ NEW CODE** (advanced -- custom planner options):
 ```go
 opts := storage.DefaultPlannerOptions()
-opts.EnableIteratorComposition = true
-opts.EnableTrueStreaming = true
-exec := database.NewExecutorWithOptions(opts)
+opts.EnableDebugLogging = true
+opts.EnableStreamingAggregationDebug = true
 ```
 
-### From Separate ExecutorOptions (Old)
+### Force index-nested-loop (testing)
 
-**❌ OLD CODE**:
-```go
-execOpts := executor.ExecutorOptions{...}
-plannerOpts := planner.PlannerOptions{...}
-// Duplicated configuration
-```
-
-**✅ NEW CODE** (simplest):
-```go
-d, _ := db.Open("path/to/db")  // uses sensible defaults
-```
-
-**✅ NEW CODE** (advanced -- custom planner options):
 ```go
 opts := storage.DefaultPlannerOptions()
-// Single configuration point
+opts.IndexNestedLoopThreshold = 999999 // use IndexNestedLoop for all binding sizes
 ```
-
-### Migration Checklist
-
-1. ✅ Remove global variable assignments (`executor.EnableXYZ = true`)
-2. ✅ Use `DefaultPlannerOptions()` as starting point
-3. ✅ Customize as needed for workload
-4. ✅ Use `NewExecutorWithOptions()` with combined options
-5. ✅ Verify tests pass with new pattern
-
-### Why This Change
-
-1. **Concurrency safety**: Global variables break concurrent executor usage
-2. **Proper architecture**: Configuration belongs to instances
-3. **Simpler API**: Single options struct vs multiple
-4. **Options propagation**: Matcher and executor settings stay in sync
 
 ---
 
-## Performance Monitoring
+## Performance monitoring
 
-### Key Metrics to Track
-
-1. **Query Latency**: Monitor p50, p95, p99
-2. **Memory Usage**: Peak and average per query
-3. **Planning Time**: Time spent in planner vs executor
-4. **Worker Utilization**: Parallel execution efficiency
-
-### Annotation System
-
-Enable detailed performance metrics:
+Attach an annotation handler (zero overhead when nil):
 
 ```go
-handler := func(event annotations.Event) {
-    log.Printf("%s: %v", event.Name, event.Data)
-}
-
-ctx := executor.NewContext(handler)
-result, err := exec.ExecuteWithContext(ctx, query)
+d, _ := db.Open("path/to/db", db.WithAnnotationHandler(func(e annotations.Event) {
+    log.Printf("%s: %v", e.Name, e.Data)
+}))
 ```
 
-**Event types**:
-- `phase/complete` - Phase timing and tuple counts
-- `join/hash` - Join sizes and reduction ratios
-- `aggregation/executed` - Grouping and result counts
-- `decorrelation/merged` - Subquery merging decisions
+Useful event names: `phase/complete`, `join/hash`, `aggregation/executed`.
 
-### Profiling
-
-For deep performance analysis:
-
-```bash
-go test -bench=. -cpuprofile=cpu.prof -memprofile=mem.prof
-go tool pprof cpu.prof
-go tool pprof mem.prof
-```
-
-See `docs/archive/optimization-attempts/PROFILING_GUIDE.md` for details.
+For deep analysis: `go test -bench=. -cpuprofile=cpu.prof` then `go tool pprof`.
 
 ---
 
-## Related Documentation
+## Related documentation
 
-- **Architecture**: `ARCHITECTURE.md` - System architecture overview
-- **Performance Status**: `PERFORMANCE_STATUS.md` - Current performance state
-- **Streaming**: `docs/archive/2025-10/STREAMING_ARCHITECTURE_COMPLETE.md`
-- **Subquery Performance**: `docs/archive/2025-10/SUBQUERY_PERFORMANCE_ANALYSIS.md`
-- **Gopher-Street Feedback**: Archive of real-world performance analysis
-
----
-
-## Source Documents
-
-This reference consolidates:
-- `PLANNER_OPTIONS_REFERENCE.md` - Original comprehensive guide
-- `PLANNER_OPTIONS_UNIFIED.md` - Unification documentation
-- `DEFAULT_PLANNER_OPTIONS_FEEDBACK.md` - Performance analysis from gopher-street
-
-**All source documents can be removed from repository root.**
+- `ARCHITECTURE.md` — system architecture overview
+- `PERFORMANCE_STATUS.md` — current performance state and benchmarks

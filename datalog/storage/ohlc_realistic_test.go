@@ -85,10 +85,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 
 	// Create executor
 	matcher := NewBadgerMatcher(db.store)
-	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-		EnablePredicatePushdown: true,
-		EnableFineGrainedPhases: true,
-	})
+	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
 
 	t.Run("Test1_CountTotalDatoms", func(t *testing.T) {
 		// Query: [:find (count ?e) :where [?e ?a ?v]]

@@ -51,11 +51,7 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 	}
 
 	// Test WITHOUT decorrelation
-	execNoDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-		EnableSubqueryDecorrelation: false,
-		EnableFineGrainedPhases:     true,
-		MaxPhases:                   10,
-	})
+	execNoDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 	startNo := time.Now()
 	resultNo, err := execNoDecor.Execute(q)
@@ -64,13 +60,8 @@ func TestDecorrelationActuallyWorks(t *testing.T) {
 		t.Fatalf("No decorrelation failed: %v", err)
 	}
 
-	// Test WITH decorrelation (parallel by default)
-	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-		EnableSubqueryDecorrelation: true,
-		EnableParallelDecorrelation: true,
-		EnableFineGrainedPhases:     true,
-		MaxPhases:                   10,
-	})
+	// Test WITH decorrelation
+	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 	startWith := time.Now()
 	resultWith, err := execWithDecor.Execute(q)
@@ -143,12 +134,7 @@ func TestDecorrelationAnnotations(t *testing.T) {
 	}
 
 	// Execute WITH decorrelation and capture annotations
-	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-		EnableSubqueryDecorrelation: true,
-		EnableParallelDecorrelation: true,
-		EnableFineGrainedPhases:     true,
-		MaxPhases:                   10,
-	})
+	execWithDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 	var capturedEvents []annotations.Event
 	var eventsMu sync.Mutex

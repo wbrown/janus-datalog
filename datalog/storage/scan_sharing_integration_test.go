@@ -68,7 +68,6 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 	db.ClearPlanCache()
 	baselineOpts := DefaultPlannerOptions()
 	baselineOpts.EnableAlgebraOptimizer = true
-	baselineOpts.EnableSubqueryDecorrelation = false
 	baselineOpts.EnableScanSharing = false
 	baselineRel, err := queryWithPlannerOptions(db, q, baselineOpts)
 	require.NoError(t, err)
@@ -86,7 +85,6 @@ func TestScanSharing_DecorrelatedSubqueries(t *testing.T) {
 	})
 	sharingOpts := DefaultPlannerOptions()
 	sharingOpts.EnableAlgebraOptimizer = true
-	sharingOpts.EnableSubqueryDecorrelation = false
 	sharingOpts.EnableScanSharing = true
 	sharingRel, err := queryWithPlannerOptions(db, q, sharingOpts)
 	require.NoError(t, err)
@@ -122,7 +120,6 @@ func TestScanSharing_CorrectnessDifferential(t *testing.T) {
 	db.ClearPlanCache()
 	offOpts := DefaultPlannerOptions()
 	offOpts.EnableAlgebraOptimizer = true
-	offOpts.EnableSubqueryDecorrelation = false
 	offOpts.EnableScanSharing = false
 	offRel, err := queryWithPlannerOptions(db, q, offOpts)
 	require.NoError(t, err)
@@ -132,7 +129,6 @@ func TestScanSharing_CorrectnessDifferential(t *testing.T) {
 	db.ClearPlanCache()
 	onOpts := DefaultPlannerOptions()
 	onOpts.EnableAlgebraOptimizer = true
-	onOpts.EnableSubqueryDecorrelation = false
 	onOpts.EnableScanSharing = true
 	onRel, err := queryWithPlannerOptions(db, q, onOpts)
 	require.NoError(t, err)
@@ -174,7 +170,6 @@ func TestScanSharing_DisabledByDefault(t *testing.T) {
 	db.ClearPlanCache()
 	opts := DefaultPlannerOptions()
 	opts.EnableAlgebraOptimizer = true
-	opts.EnableSubqueryDecorrelation = false
 	opts.EnableScanSharing = false
 	rel, err := queryWithPlannerOptions(db, q, opts)
 	require.NoError(t, err)

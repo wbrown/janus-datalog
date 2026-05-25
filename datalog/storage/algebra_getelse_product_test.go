@@ -512,7 +512,6 @@ func TestGetElseComplex_OrSemantics(t *testing.T) {
 	db.ClearPlanCache()
 	opts2 := DefaultPlannerOptions()
 	opts2.EnableAlgebraOptimizer = true
-	opts2.EnableSubqueryDecorrelation = false
 	exec2 := executor.NewExecutorWithOptions(router, db, opts2)
 	optimizedRel, err := exec2.ExecuteWithRelations(executor.NewContext(nil), q, nil)
 	require.NoError(t, err, "optimized should not error")

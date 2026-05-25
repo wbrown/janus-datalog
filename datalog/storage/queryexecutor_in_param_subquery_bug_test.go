@@ -106,10 +106,8 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
 	assert.NoError(t, err)
 
-	// Execute with GOPHER-STREET options (EnableFineGrainedPhases = FALSE)
+	// Execute with GOPHER-STREET options
 	gopherStreetOpts := DefaultPlannerOptions()
-	gopherStreetOpts.EnableFineGrainedPhases = false // THIS TRIGGERS THE BUG
-	gopherStreetOpts.EnableDynamicReordering = false
 
 	// Execute (like ExecuteQueryWithInputs but with custom options)
 	exec := db.NewExecutorWithOptions(gopherStreetOpts)
@@ -117,7 +115,7 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 
 	if err != nil {
 		t.Logf("BUG REPRODUCED! Error: %v", err)
-		t.Logf("With EnableFineGrainedPhases=false, QueryExecutor fails with :in + correlated subqueries")
+		t.Logf("QueryExecutor fails with :in + correlated subqueries")
 		t.Fatalf("BUG: %v", err)
 	}
 

@@ -21,21 +21,15 @@ type Executor struct {
 // NewExecutor creates a new query executor with default options
 func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 	defaultOpts := planner.PlannerOptions{
-		EnableDynamicReordering:     true,
-		EnablePredicatePushdown:     true,
-		EnableSubqueryDecorrelation: false,
-		EnableParallelDecorrelation: false,
-		UseStreamingSubqueryUnion:   false,
-		MaxPhases:                   10,
-		EnableFineGrainedPhases:     true,
-		EnableIteratorComposition:   true,
-		EnableTrueStreaming:         true,
-		EnableSymmetricHashJoin:     false,
-		EnableParallelSubqueries:    true,
-		MaxSubqueryWorkers:          0,
-		EnableStreamingJoins:        false,
-		EnableStreamingAggregation:  true,
-		EnableDebugLogging:          false,
+		UseStreamingSubqueryUnion:  false,
+		EnableIteratorComposition:  true,
+		EnableTrueStreaming:        true,
+		EnableSymmetricHashJoin:    false,
+		EnableParallelSubqueries:   true,
+		MaxSubqueryWorkers:         0,
+		EnableStreamingJoins:       false,
+		EnableStreamingAggregation: true,
+		EnableDebugLogging:         false,
 	}
 	return NewExecutorWithOptions(matcher, resolver, defaultOpts)
 }
@@ -71,7 +65,6 @@ func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
 		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
 		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
 		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
-		EnableSubqueryDecorrelation:     opts.EnableSubqueryDecorrelation,
 		UseStreamingSubqueryUnion:       opts.UseStreamingSubqueryUnion,
 		UseComponentizedSubquery:        opts.UseComponentizedSubquery,
 		EnableStreamingJoins:            opts.EnableStreamingJoins,

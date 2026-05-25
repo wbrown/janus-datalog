@@ -152,12 +152,7 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 	// Test 1: Sequential decorrelation
 	t.Run("Sequential", func(t *testing.T) {
-		execSeq := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-			EnableSubqueryDecorrelation: true,
-			EnableParallelDecorrelation: false, // Sequential
-			EnableFineGrainedPhases:     true,
-			MaxPhases:                   10,
-		})
+		execSeq := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 		start := time.Now()
 		result, err := execSeq.Execute(q)
@@ -177,12 +172,7 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 	// Test 2: Parallel decorrelation
 	t.Run("Parallel", func(t *testing.T) {
-		execPar := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-			EnableSubqueryDecorrelation: true,
-			EnableParallelDecorrelation: true, // Parallel
-			EnableFineGrainedPhases:     true,
-			MaxPhases:                   10,
-		})
+		execPar := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 		start := time.Now()
 		result, err := execPar.Execute(q)
@@ -201,19 +191,9 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 	// Test 3: Verify results are identical
 	t.Run("ResultsMatch", func(t *testing.T) {
-		execSeq := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-			EnableSubqueryDecorrelation: true,
-			EnableParallelDecorrelation: false,
-			EnableFineGrainedPhases:     true,
-			MaxPhases:                   10,
-		})
+		execSeq := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
-		execPar := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-			EnableSubqueryDecorrelation: true,
-			EnableParallelDecorrelation: true,
-			EnableFineGrainedPhases:     true,
-			MaxPhases:                   10,
-		})
+		execPar := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 		resultSeq, err := execSeq.Execute(q)
 		if err != nil {

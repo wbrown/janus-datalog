@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-24
 **Severity**: Medium - users can enable stale options or trust performance claims that are no longer wired to defaults
-**Status**: Open (documentation/API consistency issue)
+**Status**: Resolved (2026-05-25) — see Resolution at the end
 **Affected**: `TODO.md`, `PERFORMANCE_STATUS.md`, `DATOMIC_COMPATIBILITY.md`, `storage.DefaultPlannerOptions`, `planner.PlannerOptions`
 
 ## Summary
@@ -289,3 +289,62 @@ go test ./...
   labeling of current defaults versus historical/opt-in paths.
 - `TODO.md` currently mixes roadmap, marketing summary, and historical status in
   one file; that makes drift more likely.
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** Fixed by removing the inert options outright (chosen over
+deprecation) and rewriting the docs to current truth, with a drift guard test.
+
+### Code
+
+Removed 8 inert `PlannerOptions` fields that the clause-based planner ignored:
+`UseClauseBasedPlanner`, `EnableDynamicReordering`, `EnablePredicatePushdown`,
+`EnableFineGrainedPhases`, `MaxPhases`, `EnableSubqueryDecorrelation`,
+`EnableParallelDecorrelation`, `EnableConditionalAggregateRewriting`.
+(`EnableCSE` never existed in `PlannerOptions`.) Predicate pushdown and
+decorrelation already run unconditionally inside `EnableAlgebraOptimizer`, and
+there is only one planner, so the phase-reordering / phase-count / fine-grained
+knobs had no consumer.
+
+- `datalog/planner/types.go` — struct trimmed to the live fields.
+- `datalog/storage/database.go` — `DefaultPlannerOptions()` trimmed to match.
+- `datalog/executor/{executor.go,options.go}` — removed the mirrored fields and
+  the `EnableSubqueryDecorrelation` pass-through.
+- Extracted the still-live `TimeRange` / `extractTimeRanges` into
+  `datalog/executor/time_range.go`, then deleted the now-dead
+  `datalog/executor/subquery_decorrelation.go`.
+- Swept ~27 test files that set the removed fields.
+
+### Docs
+
+- Rewrote `docs/reference/PLANNER_OPTIONS.md` to current truth: every option is
+  labeled default-active or opt-in, defaults match `DefaultPlannerOptions()`, and
+  a "Removed options" table records what went away. Dropped the never-existing
+  `EnableCSE` and all dead-file references.
+- Archived `docs/reference/PLANNER_COMPARISON.md` → `docs/archive/completed/` (it
+  compared two planners; only one exists now). Fixed the links in `README.md`,
+  `PERFORMANCE_STATUS.md`, and `docs/wip/EXECUTION_STRATEGIES_AS_DATALOG.md`.
+- `PERFORMANCE_STATUS.md` / `TODO.md`: fixed config examples that set deleted
+  fields (they no longer compile), labeled `EnableSemanticRewriting` as opt-in,
+  and reframed conditional-aggregate rewriting (folded into the default algebra
+  optimizer; the standalone flag was inert; 7.7× is the original benchmark).
+
+### Test
+
+- `datalog/storage/planner_options_drift_test.go` —
+  `TestDefaultPlannerOptions_MatchesDocumentedDefaults` pins the
+  default-active / opt-in contract so the docs and `DefaultPlannerOptions()`
+  cannot drift apart again.
+
+### Correction to this report
+
+This report claimed conditional-aggregate rewriting was "moved to `experimental/`"
+and "never wired." Neither is accurate: there is no `experimental/` directory, and
+the rewrite is performed by the algebra optimizer (which emits a `FindAggregate`
+carrying a predicate). What was inert was the standalone *flag* — now removed.
+
+### Verification
+
+`go build ./...`, `go vet ./...`, and `go test -count=1 ./...` all green.

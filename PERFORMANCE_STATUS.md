@@ -53,13 +53,11 @@ d, _ := db.Open("path/to/db")
 d.Query(`[:find ?e ?v :where [?e :price/close ?v]]`)
 
 // Advanced: direct executor construction for non-default options
-exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
-    UseClauseBasedPlanner: true,  // Default
-})
-exec.SetUseQueryExecutor(true)    // Use QueryExecutor
+opts := storage.DefaultPlannerOptions()
+exec := executor.NewExecutorWithOptions(matcher, opts)
 ```
 
-**Details**: See `docs/reference/PLANNER_COMPARISON.md`
+**Details**: See `docs/archive/completed/PLANNER_COMPARISON.md` (archived: one planner now)
 
 ### 1. Query Plan Caching (ACTIVE)
 **Status**: ✅ Implemented and enabled by default
@@ -204,7 +202,7 @@ During development, benchmarks showed dramatic speedups (49-4802×) comparing li
 
 **Note**: With decorrelation enabled, semantic rewriting shows no additional speedup (1.00×) because both optimize the same bottleneck (time extraction overhead). Decorrelation eliminates 97% of evaluations, leaving nothing for semantic rewriting to optimize. Still valuable for standalone queries (1.64× speedup) and future BadgerDB integration.
 
-**Recommended**: `EnableSemanticRewriting: true`
+**Recommended for time-heavy queries** (opt-in; off by default): `EnableSemanticRewriting: true`
 **Details**: See `docs/archive/2025-10/SEMANTIC_REWRITING_FINDINGS.md`
 
 ### 5. Common Subexpression Elimination - CSE (REMOVED)
@@ -605,12 +603,9 @@ This dual approach maintains backward compatibility while following "Datalog is 
 - Pattern: "For each X, find aggregate of Y where Y relates to X"
 - Examples: max value per user per day, latest price per ticker, totals per category
 
-**Configuration**:
-```go
-PlannerOptions{
-    EnableConditionalAggregateRewriting: true,  // ✅ Recommended
-}
-```
+**Configuration**: No separate flag. The rewrite is performed by the default-active
+algebra optimizer (`EnableAlgebraOptimizer: true`); there is no
+`EnableConditionalAggregateRewriting` option (removed 2026-05).
 
 ---
 
@@ -671,7 +666,7 @@ PlannerOptions{
 
 **Key Finding**: The 2× improvement comes from QueryExecutor's clause-by-clause streaming execution model, not from planner differences. Both planners produce equivalent-quality plans when using the same executor.
 
-**Details**: See `docs/reference/PLANNER_COMPARISON.md`
+**Details**: See `docs/archive/completed/PLANNER_COMPARISON.md` (archived: one planner now)
 
 ### Time Range Optimization (2025-10-08)
 **Hourly OHLC (260 hours)**:
@@ -775,27 +770,18 @@ d.Query(`[:find ?e ?v :where [?e :price/close ?v]]`)
 d, _ := db.Open("path/to/db", db.WithSchema(s))
 
 // For advanced planner tuning, use the internal packages directly:
-exec := executor.NewExecutorWithOptions(matcher, planner.PlannerOptions{
-    UseClauseBasedPlanner: true,  // ✅ DEFAULT - works with QueryExecutor
-})
-exec.SetUseQueryExecutor(true)    // ✅ Use QueryExecutor (DEFAULT - clause-by-clause streaming)
+// Advanced tuning starts from the defaults — these ARE the db.Open defaults:
+opts := storage.DefaultPlannerOptions()
+// opts.EnableAlgebraOptimizer     == true   // decorrelation + predicate pushdown
+// opts.EnableIteratorComposition  == true   // lazy evaluation
+// opts.EnableTrueStreaming        == true   // streaming, no auto-materialization
+// opts.EnableParallelSubqueries   == true   // parallel subquery execution
+// opts.EnableStreamingAggregation == true   // streaming aggregation
 
-// Recommended planner options (these are the db.Open defaults)
-PlannerOptions{
-    UseClauseBasedPlanner:        true,  // ✅ DEFAULT - required for QueryExecutor
-    EnablePredicatePushdown:      true,  // ✅ DEFAULT - early filtering
-    EnableSemanticRewriting:      true,  // ✅ 2-6× on time queries
-    EnableSubqueryDecorrelation:  true,  // ✅ Batch identical subqueries
-    EnableParallelDecorrelation:  true,  // ✅ 6.9× speedup in-memory
-    // CSE removed in v0.10.2 — Selinger-style implementation was dead code
-}
+// Opt-in (off by default) — enable explicitly if you want them:
+opts.EnableSemanticRewriting = true   // fold year(?t)=2025 into a time range
 
-// Recommended executor options
-ExecutorOptions{
-    EnableIteratorComposition:    true,  // ✅ DEFAULT - lazy evaluation (4.2× speedup)
-    EnableTrueStreaming:          true,  // ✅ DEFAULT - streaming (1.9× on low-selectivity)
-    EnableSubqueryDecorrelation:  true,  // ✅ Batch identical subqueries
-}
+exec := executor.NewExecutorWithOptions(matcher, opts)
 ```
 
 **Key Changes from Previous Versions**:
@@ -861,7 +847,7 @@ All metrics below are **measured** from actual benchmarks, not estimates.
 
 ### Active Documentation (Root)
 - `PERFORMANCE_STATUS.md` - **This file** (consolidated performance overview)
-- `docs/reference/PLANNER_COMPARISON.md` - **NEW** Planner/executor architecture comparison
+- `docs/reference/PLANNER_OPTIONS.md` - Planner/executor options reference (defaults + opt-in flags)
 
 ### Supporting Documentation
 - `TIME_RANGE_OPTIMIZATION_STATUS.md` - Time range extraction and optimization

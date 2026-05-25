@@ -479,19 +479,10 @@ func (d *Database) History() *Database {
 // DefaultPlannerOptions returns the default planner and executor options for the database
 func DefaultPlannerOptions() planner.PlannerOptions {
 	return planner.PlannerOptions{
-		// Planner architecture selection
-		UseClauseBasedPlanner: true, // Use new clause-based planner (greedy phasing, pure clause transformations)
-
-		// Planner options (for old planner - kept for compatibility when UseClauseBasedPlanner: false)
-		EnableDynamicReordering:     true,  // Phase reordering by symbol connectivity
-		EnablePredicatePushdown:     true,  // Early predicate filtering (not storage-level)
-		EnableAlgebraOptimizer:      true,  // Relational algebra IR clause rewriting (decorrelation via compile → optimize → decompile)
-		EnableScanSharing:           false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
-		EnableEntityPrefetch:        false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
-		EnableSubqueryDecorrelation: false, // Deprecated no-op: legacy executor decorrelation is retired
-		EnableParallelDecorrelation: false, // Deprecated no-op
-		MaxPhases:                   10,
-		EnableFineGrainedPhases:     true, // Selectivity-based phase creation
+		// Planner / algebra optimization
+		EnableAlgebraOptimizer: true,  // Relational algebra IR clause rewriting (decorrelation via compile → optimize → decompile)
+		EnableScanSharing:      false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
+		EnableEntityPrefetch:   false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
 
 		// Executor streaming options (NEW: enabled by default for performance)
 		EnableIteratorComposition: true,  // Lazy evaluation throughout pipeline

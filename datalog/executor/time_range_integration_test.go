@@ -56,10 +56,7 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 	// Setup matcher and executor
 	matcher := NewMemoryPatternMatcher(datoms)
 
-	plannerOpts := planner.PlannerOptions{
-		EnableSubqueryDecorrelation: true,
-		EnableParallelDecorrelation: false, // Disable for deterministic testing
-	}
+	plannerOpts := planner.PlannerOptions{}
 	exec := NewExecutorWithOptions(matcher, nil, plannerOpts)
 
 	// Query: Hourly OHLC for hours 9 and 10 only (not 11)
@@ -85,9 +82,7 @@ func TestTimeRangeMetadataFlow(t *testing.T) {
 	}
 
 	// Execute without decorrelation (baseline)
-	execNoDecorr := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{
-		EnableSubqueryDecorrelation: false,
-	})
+	execNoDecorr := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
 
 	baselineResult, err := execNoDecorr.Execute(q)
 	if err != nil {
@@ -164,10 +159,7 @@ func TestTimeRangeOptimizationCorrectness(t *testing.T) {
 
 	matcher := NewMemoryPatternMatcher(datoms)
 
-	plannerOpts := planner.PlannerOptions{
-		EnableSubqueryDecorrelation: true,
-		EnableParallelDecorrelation: false,
-	}
+	plannerOpts := planner.PlannerOptions{}
 	exec := NewExecutorWithOptions(matcher, nil, plannerOpts)
 
 	// Query with decorrelated subquery (like OHLC pattern)

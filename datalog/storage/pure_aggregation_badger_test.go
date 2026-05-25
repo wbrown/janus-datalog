@@ -65,20 +65,14 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 	}
 	matcher := NewBadgerMatcherWithOptions(db.Store(), execOpts)
 	opts := planner.PlannerOptions{
-		EnableDynamicReordering:     true,
-		EnablePredicatePushdown:     true,
-		EnableSubqueryDecorrelation: true,
-		EnableParallelDecorrelation: true,
-		MaxPhases:                   10,
-		EnableFineGrainedPhases:     true,
-		EnableIteratorComposition:   execOpts.EnableIteratorComposition,
-		EnableTrueStreaming:         execOpts.EnableTrueStreaming,
-		EnableSymmetricHashJoin:     execOpts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:    execOpts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:          execOpts.MaxSubqueryWorkers,
-		EnableStreamingJoins:        execOpts.EnableStreamingJoins,
-		EnableStreamingAggregation:  execOpts.EnableStreamingAggregation,
-		EnableDebugLogging:          execOpts.EnableDebugLogging,
+		EnableIteratorComposition:  execOpts.EnableIteratorComposition,
+		EnableTrueStreaming:        execOpts.EnableTrueStreaming,
+		EnableSymmetricHashJoin:    execOpts.EnableSymmetricHashJoin,
+		EnableParallelSubqueries:   execOpts.EnableParallelSubqueries,
+		MaxSubqueryWorkers:         execOpts.MaxSubqueryWorkers,
+		EnableStreamingJoins:       execOpts.EnableStreamingJoins,
+		EnableStreamingAggregation: execOpts.EnableStreamingAggregation,
+		EnableDebugLogging:         execOpts.EnableDebugLogging,
 	}
 	exec := executor.NewExecutorWithOptions(matcher, db, opts)
 

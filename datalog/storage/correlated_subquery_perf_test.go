@@ -408,7 +408,6 @@ func TestCorrelatedSubqueryAlgebraOptimizer(t *testing.T) {
 		t.Logf("annotation handler nil: %v", db.AnnotationHandler() == nil)
 		opts := DefaultPlannerOptions()
 		opts.EnableAlgebraOptimizer = true
-		opts.EnableSubqueryDecorrelation = false // Algebra optimizer handles decorrelation
 		db.ClearPlanCache()
 
 		// Log the rewritten clauses
@@ -580,7 +579,6 @@ func TestCorrelatedSubqueryAlgebraOptimizerWithDefaults(t *testing.T) {
 	t.Run("algebra_optimizer", func(t *testing.T) {
 		opts := DefaultPlannerOptions()
 		opts.EnableAlgebraOptimizer = true
-		opts.EnableSubqueryDecorrelation = false
 		db.ClearPlanCache()
 
 		start := time.Now()
@@ -771,7 +769,6 @@ func TestCorrelatedSubqueryAlgebraOptimizerProductionStructure(t *testing.T) {
 	t.Run("algebra_optimizer", func(t *testing.T) {
 		opts := DefaultPlannerOptions()
 		opts.EnableAlgebraOptimizer = true
-		opts.EnableSubqueryDecorrelation = false
 		db.ClearPlanCache()
 
 		start := time.Now()
