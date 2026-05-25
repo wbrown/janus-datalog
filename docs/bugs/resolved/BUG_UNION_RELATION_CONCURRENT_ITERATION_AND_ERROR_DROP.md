@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-24
 **Severity**: Medium-High - streaming union can race, duplicate consumption, or hide worker/inner iterator failures
-**Status**: Open (code review finding; needs focused reproducer)
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Affected**: `executor.UnionRelation`, `executor.UnionIterator`, streaming subquery union paths
 
 ## Summary
@@ -263,3 +263,29 @@ Add focused unit tests:
 - `docs/bugs/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md`
 - `docs/bugs/BUG_STREAMING_TUPLE_COPYING.md`
 - `docs/bugs/BUG_ITERATOR_LEAK_BUILTIN_EVALUATION.md`
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** All three failure modes are addressed.
+
+### Failure Mode 1 — split channel consumption / cache race (fixed in this change)
+
+`UnionRelation.Iterator()` is now a three-way state machine under `cacheMutex`:
+
+- **built**: replay the final cache via a slice iterator that carries any build error.
+- **building**: a concurrent caller gets a `unionReplayWaitIterator` that blocks on a completion channel (`buildDone`) and then replays the complete cache. It never touches the source channel.
+- **not started**: the first caller becomes the sole builder. It streams the channel, dedups, and builds the cache locally, then publishes it via `finishBuild` (sets the cache, records the first error, closes `buildDone`). `Close()` on an abandoned builder drains the remainder into the cache so the published cache is always complete.
+
+This guarantees exactly one channel consumer and that every `Iterator()` sees the complete union. Verified by `TestUnionRelation_ConcurrentIteratorWhileBuilding` (previously a 277/500 channel split plus a data race on the cache append; now both iterators see all 500 and `-race` is clean) and `TestUnionRelation_OnlyOneChannelConsumer` (the builder iterates each source relation exactly once; the replay call re-consumes nothing).
+
+The blocking-replay design has one internal-only hazard: a single goroutine that holds both the builder and a replay iterator and drives the replay one *before* completing the builder would self-deadlock. The executor never does this — it drives one iterator to completion before obtaining another (the later call then sees `built` and replays without blocking), and genuine concurrent callers are on separate goroutines — so it cannot arise in current usage.
+
+### Failure Mode 2 — inner iterator error dropped (fixed earlier this session)
+
+`UnionIterator.Next()` now captures an exhausted inner iterator's `Error()` into `firstError` before closing and discarding it. Covered by `TestUnionIterator_InnerIteratorErrorPropagates`.
+
+### Failure Mode 3 — worker error masked at the public boundary
+
+`UnionIterator` still continues past a worker `item.err` (recording the first one), which is correct only if the final `Error()` is checked. The public boundaries now do check it — `CollectTuples`, `QueryInto`, and `QueryOneInto` all surface iterator errors (see `resolved/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md`) — so a worker error can no longer be silently swallowed into a plausible partial result.

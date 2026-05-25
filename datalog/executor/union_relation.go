@@ -19,9 +19,12 @@ type UnionRelation struct {
 	source     <-chan relationItem
 	symbols    []query.Symbol
 	opts       ExecutorOptions
-	cached     []Tuple    // Cache for reuse after first iteration
-	cacheBuilt bool       // Has cache been built?
-	cacheMutex sync.Mutex // Protect cache building
+	cached     []Tuple       // Final cache, published once cacheBuilt; immutable after
+	cacheBuilt bool          // Build complete: cached is final
+	building   bool          // A build is in progress (one builder owns the channel)
+	buildDone  chan struct{} // Closed when the build completes; created when building starts
+	buildErr   error         // First error from the build, surfaced to replay iterators
+	cacheMutex sync.Mutex    // Guards building/cacheBuilt/cached/buildErr transitions
 }
 
 // relationItem holds either a relation or an error from subquery execution
@@ -49,18 +52,40 @@ func (ur *UnionRelation) Iterator() Iterator {
 	ur.cacheMutex.Lock()
 	defer ur.cacheMutex.Unlock()
 
-	// If cache is already built, return a simple slice iterator over cached tuples
+	// Build complete: replay the final cache. The slice iterator carries any
+	// build error so Error() surfaces it on every replay.
 	if ur.cacheBuilt {
-		return &sliceIterator{
-			tuples: ur.cached,
-			pos:    -1,
-		}
+		return &sliceIterator{tuples: ur.cached, pos: -1, err: ur.buildErr}
 	}
 
-	// First call - need to consume channel and build cache
+	// A build is already in progress: this is a concurrent caller. It must NOT
+	// touch the one-shot channel — only the sole builder consumes it. Return a
+	// replay iterator that blocks until the build completes, then replays the
+	// complete cache.
+	if ur.building {
+		return &unionReplayWaitIterator{done: ur.buildDone, ur: ur}
+	}
 
-	// Create iterator that will build cache as a side effect
-	return NewUnionIteratorWithCache(ur.source, &ur.cached, &ur.cacheBuilt)
+	// First caller becomes the sole builder: it streams the channel, dedups, and
+	// builds the cache, then publishes it via finishBuild.
+	ur.building = true
+	ur.buildDone = make(chan struct{})
+	return newUnionBuildIterator(ur.source, ur)
+}
+
+// finishBuild publishes the completed cache and wakes any waiting replay
+// iterators. Idempotent: only the first call (builder exhaustion or Close)
+// publishes the cache and closes buildDone.
+func (ur *UnionRelation) finishBuild(cache []Tuple, buildErr error) {
+	ur.cacheMutex.Lock()
+	if !ur.cacheBuilt {
+		ur.cached = cache
+		ur.buildErr = buildErr
+		ur.cacheBuilt = true
+		ur.building = false
+		close(ur.buildDone)
+	}
+	ur.cacheMutex.Unlock()
 }
 
 // Size forces materialization to count tuples (expensive!)
@@ -188,19 +213,19 @@ type UnionIterator struct {
 	seen            *TupleKeyMap // Deduplication without materialization
 	currentTuple    Tuple
 	exhausted       bool
-	firstError      error    // Track first error encountered
-	cache           *[]Tuple // Pointer to cache to build
-	cacheBuilt      *bool    // Pointer to flag
+	firstError      error          // Track first error encountered
+	ur              *UnionRelation // Owner; receives the published cache on completion
+	cache           []Tuple        // Cache built locally; published via ur.finishBuild
 }
 
-// NewUnionIteratorWithCache creates a new union iterator that builds cache as it iterates
-func NewUnionIteratorWithCache(source <-chan relationItem, cache *[]Tuple, cacheBuilt *bool) *UnionIterator {
+// newUnionBuildIterator creates the sole builder iterator: it consumes the
+// channel, dedups, builds the cache locally, and publishes it to ur on
+// completion (channel exhaustion or Close).
+func newUnionBuildIterator(source <-chan relationItem, ur *UnionRelation) *UnionIterator {
 	return &UnionIterator{
-		source:     source,
-		seen:       NewTupleKeyMap(),
-		exhausted:  false,
-		cache:      cache,
-		cacheBuilt: cacheBuilt,
+		source: source,
+		seen:   NewTupleKeyMap(),
+		ur:     ur,
 	}
 }
 
@@ -227,10 +252,8 @@ func (it *UnionIterator) Next() bool {
 				it.seen.Put(key, true)
 				it.currentTuple = tuple
 
-				// Add to cache if we're building it
-				if it.cache != nil {
-					*it.cache = append(*it.cache, tuple)
-				}
+				// Accumulate into the local cache; published on completion.
+				it.cache = append(it.cache, tuple)
 
 				return true
 			}
@@ -253,14 +276,10 @@ func (it *UnionIterator) Next() bool {
 		// Read next relation from channel
 		item, ok := <-it.source
 		if !ok {
-			// Channel closed - all relations consumed
+			// Channel closed - all relations consumed. Publish the cache and
+			// wake any replay iterators waiting on the build.
 			it.exhausted = true
-
-			// Mark cache as built
-			if it.cacheBuilt != nil {
-				*it.cacheBuilt = true
-			}
-
+			it.ur.finishBuild(it.cache, it.firstError)
 			return false
 		}
 
@@ -292,14 +311,20 @@ func (it *UnionIterator) Tuple() Tuple {
 	return it.currentTuple
 }
 
-// Close releases resources
+// Close releases resources. If the builder is abandoned before the channel is
+// exhausted, it drains the remainder INTO the cache (by running Next to
+// completion) so the published cache is complete for replay/reuse and any
+// waiting replay iterators do not block forever. Draining also unblocks
+// producers still sending on the channel.
 func (it *UnionIterator) Close() error {
+	if !it.exhausted {
+		for it.Next() {
+			// Finish building the cache; the exhaustion path publishes it.
+		}
+	}
 	if it.currentIter != nil {
 		it.currentIter.Close()
-	}
-	// Drain remaining items from channel to unblock producers
-	for range it.source {
-		// Discard remaining items
+		it.currentIter = nil
 	}
 	return it.firstError
 }
@@ -310,6 +335,48 @@ func (it *UnionIterator) Error() error {
 	}
 	if it.currentIter != nil {
 		return it.currentIter.Error()
+	}
+	return nil
+}
+
+// unionReplayWaitIterator is returned to a concurrent caller that arrives while
+// the sole builder is still streaming the channel. On first use it blocks until
+// the build completes, then replays the complete published cache. It never
+// touches the channel, so the channel has exactly one consumer (the builder).
+type unionReplayWaitIterator struct {
+	done <-chan struct{}
+	ur   *UnionRelation
+	iter *sliceIterator // set once the build completes
+}
+
+func (it *unionReplayWaitIterator) ensure() {
+	if it.iter == nil {
+		<-it.done // wait for the builder to publish the cache
+		it.ur.cacheMutex.Lock()
+		it.iter = &sliceIterator{tuples: it.ur.cached, pos: -1, err: it.ur.buildErr}
+		it.ur.cacheMutex.Unlock()
+	}
+}
+
+func (it *unionReplayWaitIterator) Next() bool {
+	it.ensure()
+	return it.iter.Next()
+}
+
+func (it *unionReplayWaitIterator) Tuple() Tuple {
+	return it.iter.Tuple()
+}
+
+func (it *unionReplayWaitIterator) Close() error {
+	if it.iter != nil {
+		return it.iter.Close()
+	}
+	return nil
+}
+
+func (it *unionReplayWaitIterator) Error() error {
+	if it.iter != nil {
+		return it.iter.Error()
 	}
 	return nil
 }
