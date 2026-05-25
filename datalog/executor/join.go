@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -271,8 +270,10 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 	}
 
-	// Build phase - create hash table using efficient TupleKeyMap
-	// For temporal data, we need to deduplicate by keeping only the latest version
+	// Build phase - create hash table using efficient TupleKeyMap.
+	// This is a pure relational join: every build row is preserved. CRDT/temporal
+	// resolution is the storage layer's responsibility (EATV ordering), never
+	// inferred here from a column's name.
 	// Pre-size based on build relation size to avoid map growth
 	buildSize := buildRel.Size()
 	if buildSize < 0 {
@@ -288,20 +289,6 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 
 	if opts.EnableDebugLogging {
 		fmt.Printf("[HashJoin] Building hash table from relation with Size()=%d\n", buildRel.Size())
-	}
-
-	// Check if any symbol name matches transaction ID patterns
-	// We'll verify the actual type on the first tuple during iteration
-	txIndex := -1
-	for i, sym := range buildRel.Symbols() {
-		if sym == datalog.NewSymbol("?tx") || sym == datalog.NewSymbol("?t") ||
-			sym == datalog.NewSymbol("?txid") || sym == datalog.NewSymbol("?transaction") {
-			txIndex = i
-			if opts.EnableDebugLogging {
-				fmt.Printf("[HashJoin] Found potential tx symbol %s at index %d\n", sym, i)
-			}
-			break
-		}
 	}
 
 	// CRITICAL: Check if build relation was already consumed
@@ -337,183 +324,34 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		return t
 	}
 
-	// Check first tuple to determine if we have a valid tx symbol
-	if txIndex >= 0 {
-		// Potential tx symbol found - check first tuple's type
-		if !buildIt.Next() {
-			// Empty relation - hash table stays empty
-			if opts.EnableDebugLogging {
-				fmt.Printf("[HashJoin] Build relation is empty\n")
-			}
+	// Pure relational build: group every build tuple by its join key. All rows
+	// are preserved; identical output tuples are deduplicated downstream by set
+	// semantics, not here. CRDT/temporal "latest transaction wins" resolution is
+	// handled by the storage layer (EATV index ordering), never inferred from a
+	// column's name.
+	buildCount := 0
+	var firstBuildKey *TupleKey
+	var firstBuildTuple Tuple
+	for buildIt.Next() {
+		tuple := buildIt.Tuple()
+		key := NewTupleKey(tuple, buildIndices)
+		if buildCount == 0 && opts.EnableDebugLogging {
+			firstBuildKey = &key
+			firstBuildTuple = tuple
+		}
+		if existing, ok := hashTable.Get(key); ok {
+			hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
 		} else {
-			firstTuple := buildIt.Tuple()
-			hasTxColumn := false
-			if txIndex < len(firstTuple) {
-				switch firstTuple[txIndex].(type) {
-				case uint64, int64, int, datalog.ElementID, *datalog.ElementID:
-					hasTxColumn = true
-					if opts.EnableDebugLogging {
-						fmt.Printf("[HashJoin] Confirmed tx symbol at index %d with type %T\n", txIndex, firstTuple[txIndex])
-					}
-				default:
-					if opts.EnableDebugLogging {
-						fmt.Printf("[HashJoin] Symbol at index %d is not a tx ID (type %T), using normal path\n", txIndex, firstTuple[txIndex])
-					}
-				}
-			}
-
-			// Process first tuple in the appropriate path
-			if hasTxColumn {
-				if opts.EnableDebugLogging {
-					fmt.Printf("[HashJoin] Using tx deduplication path (txIndex=%d, buildRel.Size()=%d)\n", txIndex, buildRel.Size())
-				}
-				// Deduplicate by keeping only the latest transaction
-				// Pre-size based on build relation size
-				latestTuples := NewTupleKeyMapWithCapacity(buildRel.Size())
-				latestTx := NewTupleKeyMapWithCapacity(buildRel.Size())
-
-				// Process first tuple
-				tuple := firstTuple
-				key := NewTupleKey(tuple, buildIndices)
-
-				// Extract transaction ID
-				var txID uint64
-				switch v := tuple[txIndex].(type) {
-				case uint64:
-					txID = v
-				case int64:
-					txID = uint64(v)
-				case int:
-					txID = uint64(v)
-				case datalog.ElementID:
-					txID = v.Lamport
-				case *datalog.ElementID:
-					if v != nil {
-						txID = v.Lamport
-					}
-				}
-
-				// Keep only if this is newer than what we have
-				if existingTxVal, exists := latestTx.Get(key); !exists || txID > existingTxVal.(uint64) {
-					latestTuples.Put(key, maybeCopy(tuple))
-					latestTx.Put(key, txID)
-				}
-
-				// Process remaining tuples
-				buildIterCount := 1
-				for buildIt.Next() {
-					buildIterCount++
-					tuple := buildIt.Tuple()
-					key := NewTupleKey(tuple, buildIndices)
-
-					// Extract transaction ID
-					switch v := tuple[txIndex].(type) {
-					case uint64:
-						txID = v
-					case int64:
-						txID = uint64(v)
-					case int:
-						txID = uint64(v)
-					case datalog.ElementID:
-						txID = v.Lamport
-					case *datalog.ElementID:
-						if v != nil {
-							txID = v.Lamport
-						}
-					}
-
-					// Keep only if this is newer than what we have
-					if existingTxVal, exists := latestTx.Get(key); !exists || txID > existingTxVal.(uint64) {
-						latestTuples.Put(key, maybeCopy(tuple))
-						latestTx.Put(key, txID)
-					}
-				}
-				if opts.EnableDebugLogging {
-					fmt.Printf("[HashJoin] Build iterator produced %d tuples, latestTuples has %d entries\n",
-						buildIterCount, len(latestTuples.m))
-				}
-
-				// Convert to the expected format
-				txDedupCount := 0
-				for _, entries := range latestTuples.m {
-					for _, entry := range entries {
-						// BUG FIX: Use the join key, not full tuple key!
-						// We need to hash by buildIndices, not all symbols
-						tuple := entry.value.(Tuple)
-						key := NewTupleKey(tuple, buildIndices)
-						hashTable.Put(key, []Tuple{tuple})
-						txDedupCount++
-					}
-				}
-				if opts.EnableDebugLogging {
-					fmt.Printf("[HashJoin] Built hash table with %d tuples after tx deduplication\n", txDedupCount)
-				}
-			} else {
-				// No transaction symbol or not a valid tx type, use normal path
-				// Process first tuple
-				tuple := firstTuple
-				key := NewTupleKey(tuple, buildIndices)
-				if existing, ok := hashTable.Get(key); ok {
-					hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
-				} else {
-					hashTable.Put(key, []Tuple{maybeCopy(tuple)})
-				}
-
-				buildCount := 1
-				var firstBuildKey *TupleKey
-				var firstBuildTuple Tuple
-				if opts.EnableDebugLogging {
-					firstBuildKey = &key
-					firstBuildTuple = tuple
-				}
-
-				// Process remaining tuples
-				for buildIt.Next() {
-					tuple := buildIt.Tuple()
-					key := NewTupleKey(tuple, buildIndices)
-					if existing, ok := hashTable.Get(key); ok {
-						hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
-					} else {
-						hashTable.Put(key, []Tuple{maybeCopy(tuple)})
-					}
-					buildCount++
-				}
-				if opts.EnableDebugLogging {
-					if firstBuildKey != nil {
-						fmt.Printf("[HashJoin] Built hash table with %d tuples, first key: %v, first tuple: %v\n",
-							buildCount, firstBuildKey, firstBuildTuple)
-					} else {
-						fmt.Printf("[HashJoin] Built hash table with %d tuples from iterator\n", buildCount)
-					}
-				}
-			}
+			hashTable.Put(key, []Tuple{maybeCopy(tuple)})
 		}
-	} else {
-		// No potential tx symbol - use normal path for all tuples
-		buildCount := 0
-		var firstBuildKey *TupleKey
-		var firstBuildTuple Tuple
-		for buildIt.Next() {
-			tuple := buildIt.Tuple()
-			key := NewTupleKey(tuple, buildIndices)
-			if buildCount == 0 && opts.EnableDebugLogging {
-				firstBuildKey = &key
-				firstBuildTuple = tuple
-			}
-			if existing, ok := hashTable.Get(key); ok {
-				hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
-			} else {
-				hashTable.Put(key, []Tuple{maybeCopy(tuple)})
-			}
-			buildCount++
-		}
-		if opts.EnableDebugLogging {
-			if firstBuildKey != nil {
-				fmt.Printf("[HashJoin] Built hash table with %d tuples, first key: %v, first tuple: %v\n",
-					buildCount, firstBuildKey, firstBuildTuple)
-			} else {
-				fmt.Printf("[HashJoin] Built hash table with %d tuples from iterator\n", buildCount)
-			}
+		buildCount++
+	}
+	if opts.EnableDebugLogging {
+		if firstBuildKey != nil {
+			fmt.Printf("[HashJoin] Built hash table with %d tuples, first key: %v, first tuple: %v\n",
+				buildCount, firstBuildKey, firstBuildTuple)
+		} else {
+			fmt.Printf("[HashJoin] Built hash table with %d tuples from iterator\n", buildCount)
 		}
 	}
 
