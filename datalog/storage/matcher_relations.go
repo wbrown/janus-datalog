@@ -654,7 +654,13 @@ func (it *validatingVBoundIterator) Next() bool {
 				// Only CardinalityOne needs post-validation because the
 				// LWW winner may have a different V than our bound V.
 				card := it.getCardinalityEnum(datom.A)
-				if card == schema.CardinalityOne {
+				// Schemaless attributes are treated as cardinality-one (LWW)
+				// everywhere else in the engine (planner routing, cache OneValue),
+				// so they must validate the candidate against the current winner
+				// too. Without this, the V-prefix candidate scan leaks over-matches:
+				// an empty bound value matches every value of the type, and a
+				// non-empty value prefix-matches. Validation enforces exact equality.
+				if card == schema.CardinalityOne || card == schema.CardinalityUnknown {
 					if !it.validateCandidate(datom.E, datom.A) {
 						// Stale candidate - LWW winner has different V
 						continue
