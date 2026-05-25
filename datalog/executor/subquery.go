@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
-	"strings"
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -76,7 +75,11 @@ func executeSubquerySequentialStreaming(ctx Context, parentExec *Executor, subqP
 
 		for _, inputValues := range inputCombinations {
 			// Create input relations from the input values
-			inputRelations := createInputRelationsFromPattern(subqPlan.Subquery, inputValues)
+			inputRelations, err := createInputRelationsFromPattern(subqPlan.Subquery, inputValues)
+			if err != nil {
+				unionChan <- relationItem{err: fmt.Errorf("subquery input binding failed: %w", err)}
+				continue
+			}
 
 			// Execute the nested query with input relations
 			result, err := executePhasesWithInputs(ctx, parentExec, subqPlan.NestedPlan, inputRelations)
@@ -132,7 +135,10 @@ func executeSubquerySequentialMaterialized(ctx Context, parentExec *Executor, su
 
 	for _, inputValues := range inputCombinations {
 		// Create input relations from the input values
-		inputRelations := createInputRelationsFromPattern(subqPlan.Subquery, inputValues)
+		inputRelations, err := createInputRelationsFromPattern(subqPlan.Subquery, inputValues)
+		if err != nil {
+			return nil, fmt.Errorf("subquery input binding failed: %w", err)
+		}
 
 		// Execute the nested query with input relations using the parent executor
 		// This ensures all optimizations are inherited
@@ -205,7 +211,11 @@ func executeSubqueryParallelStreaming(ctx Context, parentExec *Executor, subqPla
 				}
 
 				// Create input relations from the input values
-				inputRelations := createInputRelationsFromPattern(subqPlan.Subquery, work.inputValues)
+				inputRelations, err := createInputRelationsFromPattern(subqPlan.Subquery, work.inputValues)
+				if err != nil {
+					unionChan <- relationItem{err: fmt.Errorf("subquery input binding failed: %w", err)}
+					continue
+				}
 
 				// Execute the nested query with input relations
 				result, err := executePhasesWithInputs(workerCtx, parentExec, subqPlan.NestedPlan, inputRelations)
@@ -318,7 +328,12 @@ func executeSubqueryParallelMaterialized(ctx Context, parentExec *Executor, subq
 				}
 
 				// Create input relations from the input values
-				inputRelations := createInputRelationsFromPattern(subqPlan.Subquery, work.inputValues)
+				inputRelations, err := createInputRelationsFromPattern(subqPlan.Subquery, work.inputValues)
+				if err != nil {
+					resultChan <- resultItem{index: work.index, err: fmt.Errorf("subquery input binding failed: %w", err)}
+					cancel() // Cancel other workers
+					continue
+				}
 
 				// Execute the nested query with input relations using worker's own context
 				result, err := executePhasesWithInputs(workerCtx, parentExec, subqPlan.NestedPlan, inputRelations)
@@ -429,8 +444,13 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) ([]ma
 		}
 	}
 
-	// Collect unique combinations
-	seen := make(map[string]bool)
+	// Collect unique combinations. Dedup by typed value identity via TupleKeyMap
+	// (which compares values with datalog.ValuesEqual on hash collision), never by
+	// string rendering — fmt.Sprintf("%v")+"|" is not injective and collapses
+	// distinct combinations (e.g. int64(5) vs "5", or "a|b"+"c" vs "a"+"b|c").
+	// Source markers are constant execution context, identical on every tuple, so
+	// they are excluded from the dedup key.
+	seen := NewTupleKeyMap()
 	var combinations []map[query.Symbol]interface{}
 
 	it := rel.Iterator()
@@ -439,28 +459,26 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) ([]ma
 	for it.Next() {
 		tuple := it.Tuple()
 
-		// Extract input values
+		// Extract input values; build the dedup key from data values only.
 		values := make(map[query.Symbol]interface{})
-		keyParts := make([]string, len(inputSymbols))
+		var keyValues Tuple
 
 		for i, sym := range inputSymbols {
 			if sym.IsSource() {
-				// Source marker - pass it through as-is
+				// Source marker - pass it through as-is; not part of the key.
 				values[sym] = sym
-				keyParts[i] = sym.String()
 			} else {
 				idx := indices[i]
 				if idx < len(tuple) {
 					values[sym] = tuple[idx]
-					// Create unique key for this combination
-					keyParts[i] = fmt.Sprintf("%v", tuple[idx])
+					keyValues = append(keyValues, tuple[idx])
 				}
 			}
 		}
 
-		key := strings.Join(keyParts, "|")
-		if !seen[key] {
-			seen[key] = true
+		key := NewTupleKeyFull(keyValues)
+		if !seen.Exists(key) {
+			seen.Put(key, struct{}{})
 			combinations = append(combinations, values)
 		}
 	}
@@ -470,11 +488,11 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) ([]ma
 
 // createInputRelationsFromPattern creates relations from a subquery pattern's inputs.
 // This handles ALL inputs including constants, not just variables from the outer query.
-func createInputRelationsFromPattern(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}) []Relation {
+func createInputRelationsFromPattern(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}) ([]Relation, error) {
 	return createInputRelationsFromPatternWithOptions(subq, outerValues, ExecutorOptions{})
 }
 
-func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) []Relation {
+func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) ([]Relation, error) {
 	// Process the subquery's actual inputs in order
 	var orderedValues []interface{}
 	for _, input := range subq.Inputs {
@@ -503,22 +521,25 @@ func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, out
 	}
 
 	// Now create relations based on the :in clause
-	relations := createInputRelationsFromValuesWithOptions(subq.Query, orderedValues, opts)
-	return relations
-}
-
-// createInputRelationsFromValues creates relations from ordered input values.
-func createInputRelationsFromValues(q *query.Query, orderedValues []interface{}) []Relation {
-	return createInputRelationsFromValuesWithOptions(q, orderedValues, ExecutorOptions{})
+	return createInputRelationsFromValuesWithOptions(subq.Query, orderedValues, opts)
 }
 
 // createInputRelationsFromValuesWithOptions creates relations from ordered input values with options.
-func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []interface{}, opts ExecutorOptions) []Relation {
+func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []interface{}, opts ExecutorOptions) ([]Relation, error) {
 	var relations []Relation
+
+	// Datomic semantics: an omitted :in defaults to [$] (the default database
+	// source), not zero inputs. Apply that default before validating arity so a
+	// subquery whose nested query has no :in still accepts the supplied source
+	// marker instead of being rejected as an over-supply.
+	inputs := q.In
+	if len(inputs) == 0 {
+		inputs = []query.InputSpec{query.DatabaseInput{Name: datalog.NewSymbol("$")}}
+	}
 
 	// Check if we have the correct number of inputs
 	expectedInputs := 0
-	for _, input := range q.In {
+	for _, input := range inputs {
 		switch inp := input.(type) {
 		case query.DatabaseInput:
 			expectedInputs++ // Database REQUIRES explicit $
@@ -534,12 +555,13 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 	}
 
 	if len(orderedValues) != expectedInputs {
-		return nil // Wrong number of inputs - this is an error
+		return nil, fmt.Errorf("subquery input arity mismatch: nested query :in declares %d required value(s) (%v) "+
+			"but the call supplied %d (%v)", expectedInputs, inputs, len(orderedValues), orderedValues)
 	}
 
 	// Process :in clause to create appropriate relations
 	valueIndex := 0
-	for _, input := range q.In {
+	for _, input := range inputs {
 		switch inp := input.(type) {
 		case query.DatabaseInput:
 			// Expect an explicit $ symbol at this position
@@ -549,8 +571,8 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 					// Source marker present - skip it
 					valueIndex++
 				} else {
-					// Not a database marker - this is an error
-					return nil
+					return nil, fmt.Errorf("subquery input: expected a database source ($) at position %d "+
+						"of nested :in (%v), got %v", valueIndex, inputs, orderedValues[valueIndex])
 				}
 			}
 
@@ -620,7 +642,7 @@ func createInputRelationsFromValuesWithOptions(q *query.Query, orderedValues []i
 		}
 	}
 
-	return relations
+	return relations, nil
 }
 
 // createSubqueryContext creates a context with input bindings for subquery execution.
