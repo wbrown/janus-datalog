@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"time"
 	"unsafe"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -117,6 +118,15 @@ func hashValue(v interface{}) uint64 {
 		// TupleKeyMap — breaking joins and dedup on byte-valued attributes.
 		return hashBytes(val)
 
+	case time.Time:
+		// Hash by the absolute instant. Without this case, time.Time falls
+		// through to the address-based default below, so equal times hash
+		// differently across call sites and never match in a TupleKeyMap —
+		// breaking joins and dedup on time-valued attributes (e.g. :created-at)
+		// nondeterministically by platform/stack layout. Consistent with
+		// datalog.ValuesEqual, which compares time.Time by instant (Equal).
+		return hashTime(val)
+
 	case int:
 		return uint64(val)
 
@@ -164,6 +174,20 @@ func hashBytes(b []byte) uint64 {
 		hash *= prime
 	}
 
+	return hash
+}
+
+// hashTime hashes a time.Time by its absolute instant (seconds + nanoseconds),
+// consistent with datalog.ValuesEqual's instant-based comparison: two times that
+// compare Equal hash identically. Uses Unix()+Nanosecond() rather than UnixNano()
+// to avoid int64 overflow for out-of-range times (e.g. the 0001-01-01 default).
+func hashTime(t time.Time) uint64 {
+	const prime = 1099511628211
+	hash := uint64(14695981039346656037)
+	hash ^= uint64(t.Unix())
+	hash *= prime
+	hash ^= uint64(t.Nanosecond())
+	hash *= prime
 	return hash
 }
 
