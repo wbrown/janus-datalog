@@ -799,7 +799,10 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 			return nil, fmt.Errorf("no input groups for subquery with variable inputs")
 		}
 		// No variable inputs - execute subquery once with empty input combination
-		inputRelations := createInputRelationsForSubqueryWithOptions(subq, make(map[query.Symbol]interface{}), e.options)
+		inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, make(map[query.Symbol]interface{}), e.options)
+		if err != nil {
+			return nil, fmt.Errorf("subquery input binding failed: %w", err)
+		}
 		nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
 		if err != nil {
 			return nil, fmt.Errorf("nested query execution failed: %w", err)
@@ -838,7 +841,10 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 
 	for _, inputValues := range inputCombinations {
 		// Create input relations for this combination
-		inputRelations := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+		inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+		if err != nil {
+			return nil, fmt.Errorf("subquery input binding failed: %w", err)
+		}
 
 		// DEBUG: Log input relations
 		if collector := ctx.Collector(); collector != nil {
@@ -891,12 +897,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 	return combineSubqueryResultsSimple(allResults), nil
 }
 
-// createInputRelationsForSubquery creates input relations from subquery inputs and outer values
-func createInputRelationsForSubquery(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}) []Relation {
-	return createInputRelationsFromPattern(subq, outerValues)
-}
-
-func createInputRelationsForSubqueryWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) []Relation {
+func createInputRelationsForSubqueryWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) ([]Relation, error) {
 	return createInputRelationsFromPatternWithOptions(subq, outerValues, opts)
 }
 
@@ -1056,7 +1057,10 @@ func (e *DefaultQueryExecutor) executeSubqueryParallel(
 			inputValues := input.(map[query.Symbol]interface{})
 
 			// Create input relations and execute
-			inputRelations := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+			inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+			if err != nil {
+				return nil, fmt.Errorf("subquery input binding failed: %w", err)
+			}
 			nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
 			if err != nil {
 				return nil, err
@@ -1105,7 +1109,10 @@ func (e *DefaultQueryExecutor) executeSubquerySequential(
 
 	for _, inputValues := range combinations {
 		// Create input relations and execute
-		inputRelations := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+		inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
+		if err != nil {
+			return nil, fmt.Errorf("subquery input binding failed: %w", err)
+		}
 		nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
 		if err != nil {
 			return nil, fmt.Errorf("sequential subquery execution failed: %w", err)
