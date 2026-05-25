@@ -62,6 +62,29 @@ func NewContext(handler annotations.Handler) Context {
 	}
 }
 
+// forkContext returns an independent Context for a concurrent worker. A Context
+// carries per-query mutable state — AnnotatedContext.queryStart and the lazily
+// created BaseContext.metadata map / scanRegistry — none of which is safe for
+// concurrent use. Parallel workers must therefore each get their own context.
+// The annotation collector is shared (it is internally synchronized), so events
+// still aggregate into one place.
+func forkContext(ctx Context) Context {
+	switch c := ctx.(type) {
+	case *AnnotatedContext:
+		return &AnnotatedContext{collector: c.collector}
+	case *BaseContext:
+		return &BaseContext{}
+	case *subqueryContext:
+		return &subqueryContext{
+			parent:      forkContext(c.parent),
+			inputValues: c.inputValues, // read-only during execution
+			inputs:      c.inputs,
+		}
+	default:
+		return ctx
+	}
+}
+
 // BaseContext implementations - all are simple pass-throughs
 
 func (c *BaseContext) QueryBegin(query string) {}

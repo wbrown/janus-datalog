@@ -66,6 +66,18 @@ All of these are decisions for the user, not you.
 **Wrong**: "The cache tests are failing, so I'll add a new cache type to make them pass."
 **Right**: "The cache tests are failing because ClauseBasedPlanner doesn't integrate with the cache the same way. How do you want to handle this?"
 
+## The Baseline Is Green — Never Blame Pre-Existing Conditions
+
+**Every test passes before any work session starts. This is an invariant, not something to verify.** The repository is always green at the start of your work (`go test -count=1 ./...` passes; the pre-push hook enforces it). Internalize this and reason from it.
+
+It has one unavoidable consequence: **any test that fails during or after your work was caused by your work** — either by a change you made, or by a stricter gate you chose to run (e.g. `-race`) that the standard suite does not. There is no third possibility. Therefore:
+
+- **NEVER attribute a test failure to "pre-existing conditions."** Not in your reasoning, not in your reporting. The phrasing "this is pre-existing / not my change / not part of this work / I didn't touch that code" is **forbidden** — it is blame-deflection (CYA), and against a green baseline it is also false by construction. Catch yourself before you emit it.
+- **NEVER run experiments to "prove" a failure is pre-existing.** No `git stash`, no `git checkout -- <file>`, no revert-and-rerun to A/B the baseline. You already know the baseline was green and you already have your own diff; causation is determined by **reading the diff and the failure**, never by mutating the working tree. (`git stash` is banned outright — it has silently buried uncommitted work in this repo. Never run it for any reason.)
+- **Do NOT invent gates the project does not use** (e.g. `-race`, extra linters) and then go chasing what they surface as if it were someone else's problem. The standard gate is `go test -count=1 ./...`. If you choose to run a stricter check, anything it finds is yours to fully resolve or you should not have run it.
+
+When a test is red there is exactly one fork: **fix it, or report it and ask** (per "When Tests Fail" above). There is no "investigate whose fault it is" step. Ownership is the default; the baseline guarantees it.
+
 ## When Asked to Revert
 
 **Revert IMMEDIATELY. Do not defer.**

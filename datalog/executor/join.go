@@ -20,6 +20,7 @@ import (
 type hashJoinIterator struct {
 	hashTable    *TupleKeyMap
 	probeIt      Iterator
+	buildErr     error // deferred error captured from the (eagerly consumed) build relation
 	seen         *TupleKeyMap
 	buildIsLeft  bool
 	joinSyms     []query.Symbol
@@ -125,6 +126,9 @@ func (it *hashJoinIterator) Close() error {
 }
 
 func (it *hashJoinIterator) Error() error {
+	if it.buildErr != nil {
+		return it.buildErr
+	}
 	if it.probeIt != nil {
 		return it.probeIt.Error()
 	}
@@ -513,6 +517,10 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 	}
 
+	// Capture any deferred error from the build scan before closing it, so a
+	// build-side failure isn't lost (it propagates onto the join result).
+	buildErr := buildIt.Error()
+
 	// Close build iterator BEFORE probe phase begins.
 	// The build relation may share underlying iterators with the probe relation
 	// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
@@ -563,6 +571,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		iter := &hashJoinIterator{
 			hashTable:    hashTable,
 			probeIt:      probeRel.Iterator(),
+			buildErr:     buildErr,
 			seen:         NewTupleKeyMapWithCapacity(expectedResults),
 			buildIsLeft:  buildIsLeft,
 			joinSyms:     joinSyms,
@@ -658,8 +667,16 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			probeCount, matchCount, len(results))
 	}
 
-	// We already deduplicated with 'seen', no need to do it again
-	return NewMaterializedRelationNoDedupeWithOptions(outputSyms, results, opts)
+	// We already deduplicated with 'seen', no need to do it again.
+	// Carry any deferred build/probe error onto the result so a failed scan
+	// isn't laundered into an empty/partial join.
+	result := NewMaterializedRelationNoDedupeWithOptions(outputSyms, results, opts)
+	if buildErr != nil {
+		result.err = buildErr
+	} else if pe := probeIt.Error(); pe != nil {
+		result.err = pe
+	}
+	return result
 }
 
 // SemiJoin returns tuples from left that have matches in right

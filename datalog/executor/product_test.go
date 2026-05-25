@@ -43,3 +43,26 @@ func TestProductPreservesDisjointSymbols(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, combos, 1, "should find 1 unique ?config value")
 }
+
+// TestProductMaterializeSurfacesSourceError verifies that materializing a
+// Product() of disjoint relations surfaces a constituent relation's deferred
+// iterator error rather than laundering it into an empty result. This is the
+// "product path" of docs/bugs/BUG_ITERATOR_ERRORS_DROPPED_AT_PUBLIC_BOUNDARIES.md;
+// it is reached in production where a subquery's input groups are disjoint and
+// the combined relation is materialized (query_executor.go input combination).
+func TestProductMaterializeSurfacesSourceError(t *testing.T) {
+	// failAfter 0 → yields no tuples and reports its failure via Error(), exactly
+	// like a storage scan whose value fails to decode (e.g. a missing Tier-3 blob).
+	failing := newFailingRelation(0, Tuple{int64(1)})
+	other := NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?config")},
+		[]Tuple{{"config-1"}},
+	)
+
+	product := Relations{failing, other}.Product()
+	require.IsType(t, &ProductRelation{}, product, "two disjoint relations must form a ProductRelation")
+
+	mat := product.Materialize()
+	require.ErrorIs(t, driveErr(mat), errInjectedIterator,
+		"materializing a product must surface a constituent's deferred error, not drop it")
+}

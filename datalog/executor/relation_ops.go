@@ -460,6 +460,7 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 
 	seen := NewTupleKeyMap()
 	var allTuples []Tuple
+	var firstErr error
 
 	for _, rel := range relations {
 		// Build symbol index mapping
@@ -498,10 +499,16 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 				allTuples = append(allTuples, projected)
 			}
 		}
+		// Capture a branch's deferred scan error so the union doesn't drop it.
+		if e := iter.Error(); e != nil && firstErr == nil {
+			firstErr = e
+		}
 		iter.Close()
 	}
 
-	return NewMaterializedRelationWithOptions(syms, allTuples, opts)
+	result := NewMaterializedRelationWithOptions(syms, allTuples, opts)
+	result.err = firstErr
+	return result
 }
 
 // convertPlannerConstraints converts planner-level storage constraints to executor-level constraints

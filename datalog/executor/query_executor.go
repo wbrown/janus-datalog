@@ -1504,42 +1504,6 @@ func extractKeyFromTuple(tuple Tuple, syms []query.Symbol, symbols []query.Symbo
 	return key
 }
 
-// crossJoinWithOuter produces the cross product of outer tuples with branch result tuples
-// Used when a fallback branch (like ground expression) doesn't include outer context
-func crossJoinWithOuter(outer, branch Relation, opts ExecutorOptions) Relation {
-	if outer == nil || branch == nil {
-		return branch
-	}
-
-	outerSyms := outer.Symbols()
-	branchSyms := branch.Symbols()
-
-	// Combined symbols: outer symbols + branch symbols
-	combinedSyms := make([]query.Symbol, 0, len(outerSyms)+len(branchSyms))
-	combinedSyms = append(combinedSyms, outerSyms...)
-	combinedSyms = append(combinedSyms, branchSyms...)
-
-	// Materialize branch result (usually small, like a single ground value)
-	var branchTuples []Tuple
-	collectTuplesInto(&branchTuples, branch)
-
-	// Cross join: for each outer tuple, combine with each branch tuple
-	var resultTuples []Tuple
-	outerIter := outer.Iterator()
-	for outerIter.Next() {
-		outerTuple := outerIter.Tuple()
-		for _, branchTuple := range branchTuples {
-			combined := make(Tuple, len(outerTuple)+len(branchTuple))
-			copy(combined, outerTuple)
-			copy(combined[len(outerTuple):], branchTuple)
-			resultTuples = append(resultTuples, combined)
-		}
-	}
-	outerIter.Close()
-
-	return NewMaterializedRelationWithOptions(combinedSyms, resultTuples, opts)
-}
-
 // executeOrClauseUnion implements standard Datalog union semantics
 func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
 	collector := ctx.Collector()
@@ -1950,7 +1914,19 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 			return nil, fmt.Errorf("NOT-JOIN inner clause execution failed: %w", err)
 		}
 
-		if innerResult != nil && innerResult.Size() > 0 {
+		// Count inner results via ForEach so a failed inner scan surfaces as an
+		// error rather than looking like "no match" — which would wrongly
+		// un-exclude this combo and silently corrupt the NOT-JOIN result.
+		matched := false
+		if innerResult != nil {
+			count := 0
+			if ferr := ForEach(innerResult, func(Tuple) error { count++; return nil }); ferr != nil {
+				return nil, fmt.Errorf("NOT-JOIN inner clause execution failed: %w", ferr)
+			}
+			matched = count > 0
+		}
+
+		if matched {
 			key := NewTupleKeyFull(combo)
 			matchedKeys.Put(key, struct{}{})
 		}

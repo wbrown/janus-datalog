@@ -797,6 +797,12 @@ func (it *hashJoinIterator) Next() bool {
 			}
 		}
 	}
+	// Inner iterator exhausted — propagate any deferred error (e.g. a
+	// CRDTResolvingIterator decode/blob failure that made Next() return false
+	// rather than erroring in Datom()).
+	if srcErr := it.iter.Error(); srcErr != nil && it.err == nil {
+		it.err = srcErr
+	}
 	return false
 }
 
