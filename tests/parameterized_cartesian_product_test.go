@@ -114,7 +114,7 @@ func TestParameterizedQueryCartesianProduct(t *testing.T) {
 		}
 
 		// Debug: Check what plan is created
-		plan, err := exec.GetPlanner().PlanQuery(q)
+		plan, err := exec.GetPlanner().PlanQuery(q, nil)
 		if err != nil {
 			t.Fatalf("Failed to create plan: %v", err)
 		}

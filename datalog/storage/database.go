@@ -720,9 +720,10 @@ func (d *Database) Explain(queryInput interface{}, inputs ...interface{}) (*plan
 	// Create executor to get its planner (ensures same options as execution)
 	exec := d.NewExecutor()
 
-	// Get the query plan from the executor's planner
+	// Get the query plan from the executor's planner (planning is not annotated
+	// on this plan-only path).
 	queryPlanner := exec.GetPlanner()
-	return queryPlanner.PlanQuery(q)
+	return queryPlanner.PlanQuery(q, nil)
 }
 
 // AnalyzeResult contains the query plan and execution statistics from Analyze().
@@ -847,9 +848,11 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 	// Create executor (this also creates the planner with proper options)
 	exec := d.NewExecutor()
 
-	// Get the query plan from the executor's planner
+	// Get the query plan from the executor's planner. The Analyze collector below
+	// captures execution annotations; planning here is not annotated (matching
+	// prior behavior).
 	queryPlanner := exec.GetPlanner()
-	plan, err := queryPlanner.PlanQuery(q)
+	plan, err := queryPlanner.PlanQuery(q, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to plan query: %w", err)
 	}

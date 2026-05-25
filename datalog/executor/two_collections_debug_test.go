@@ -28,7 +28,7 @@ func TestTwoCollections_PlanAndBind(t *testing.T) {
 
 	// Create planner and get plan
 	p := planner.NewClauseBasedPlanner(nil, planner.PlannerOptions{})
-	plan, err := p.PlanQueryWithBindings(q, initialBindings)
+	plan, err := p.PlanQueryWithBindings(q, initialBindings, nil)
 	require.NoError(t, err)
 
 	t.Logf("Plan:\n%s", plan.String())

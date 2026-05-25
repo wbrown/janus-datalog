@@ -18,7 +18,7 @@ func BenchmarkPlannerWithoutCache(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := planner.Plan(q)
+		_, err := planner.Plan(q, nil)
 		if err != nil {
 			b.Fatalf("Failed to plan query: %v", err)
 		}
@@ -37,7 +37,7 @@ func BenchmarkPlannerWithCache(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := planner.Plan(q)
+		_, err := planner.Plan(q, nil)
 		if err != nil {
 			b.Fatalf("Failed to plan query: %v", err)
 		}
@@ -73,7 +73,7 @@ func BenchmarkPlannerCacheMissOverhead(b *testing.B) {
 			},
 		}
 
-		_, err := planner.Plan(q)
+		_, err := planner.Plan(q, nil)
 		if err != nil {
 			b.Fatalf("Failed to plan query: %v", err)
 		}

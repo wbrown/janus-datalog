@@ -223,7 +223,7 @@ func TestPlannerWithCache(t *testing.T) {
 	}
 
 	// First plan should be a miss
-	_, err := planner.Plan(q)
+	_, err := planner.Plan(q, nil)
 	if err != nil {
 		t.Fatalf("Failed to plan query: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestPlannerWithCache(t *testing.T) {
 	}
 
 	// Second plan should be a hit
-	_, err = planner.Plan(q)
+	_, err = planner.Plan(q, nil)
 	if err != nil {
 		t.Fatalf("Failed to plan query: %v", err)
 	}
