@@ -237,6 +237,10 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 		}
 	}
 
+	// Capture any deferred error from the input scan: a failed scan must not be
+	// silently aggregated into an empty/zero result.
+	aggErr := it.Error()
+
 	// Compute aggregates
 	results := make(Tuple, len(aggregates))
 	hasAnyValues := false
@@ -259,10 +263,14 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 	// return empty result set instead of a tuple with nil values
 	opts := rel.Options()
 	if !hasAnyValues {
-		return NewMaterializedRelationWithOptions(resultColumns, []Tuple{}, opts)
+		empty := NewMaterializedRelationWithOptions(resultColumns, []Tuple{}, opts)
+		empty.err = aggErr
+		return empty
 	}
 
-	return NewMaterializedRelationWithOptions(resultColumns, []Tuple{results}, opts)
+	result := NewMaterializedRelationWithOptions(resultColumns, []Tuple{results}, opts)
+	result.err = aggErr
+	return result
 }
 
 // executeGroupedAggregation performs aggregation with grouping
@@ -399,7 +407,11 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	}
 
 	opts := rel.Options()
-	return NewMaterializedRelationWithOptions(resultColumns, resultTuples, opts)
+	result := NewMaterializedRelationWithOptions(resultColumns, resultTuples, opts)
+	// Carry any deferred error from the grouped input scan so a failed scan
+	// isn't laundered into a partial/empty grouped result.
+	result.err = it.Error()
+	return result
 }
 
 // computeAggregateValues is already defined in executor.go

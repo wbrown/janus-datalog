@@ -96,6 +96,24 @@ type Event struct {
 // Handler processes annotation events as they occur.
 type Handler func(event Event)
 
+// Synchronized wraps a Handler so its invocations are serialized through a
+// mutex, making it safe to call from multiple goroutines. The query engine
+// emits annotations from parallel workers (and from several collectors plus the
+// storage matcher, all sharing one handler), so a handler installed on a
+// Database is wrapped with this — handler authors don't need their own locking.
+// Returns nil for a nil handler.
+func Synchronized(h Handler) Handler {
+	if h == nil {
+		return nil
+	}
+	var mu sync.Mutex
+	return func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		h(e)
+	}
+}
+
 // Collector accumulates events during query execution.
 type Collector struct {
 	enabled bool

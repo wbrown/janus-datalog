@@ -170,7 +170,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		planCache:         planner.NewPlanCache(1000, 0),
 		parseCache:        NewParseCache(1000),
 		schema:            opts.Schema,
-		annotationHandler: opts.AnnotationHandler,
+		annotationHandler: annotations.Synchronized(opts.AnnotationHandler),
 		plannerOptions:    opts.PlannerOptions,
 		clock:             clock,
 		replicaID:         replicaID,
@@ -351,7 +351,9 @@ func (d *Database) AnnotationHandler() annotations.Handler {
 func (d *Database) SetAnnotationHandler(handler annotations.Handler) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.annotationHandler = handler
+	// Serialize: the engine emits annotations from parallel workers, so the
+	// handler must be safe to call concurrently.
+	d.annotationHandler = annotations.Synchronized(handler)
 }
 
 // NewTransaction starts a new write transaction.
@@ -943,9 +945,6 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	if err != nil {
 		return err
 	}
-	iter := rel.Iterator()
-	defer iter.Close()
-
 	// Check if element type is a struct or scalar
 	// time.Time and Keyword are structs but treated as scalars
 	// Identity is a pointer type alias and goes through scalar path automatically
@@ -958,12 +957,17 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		}
 
 		newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
-		for iter.Next() {
+		// ForEach surfaces iterator errors (decode/blob/CRDT failures deferred
+		// to Error()) instead of letting them look like a complete result.
+		if ferr := executor.ForEach(rel, func(t executor.Tuple) error {
 			elem := reflect.New(elemType).Elem()
-			if err := mapper.MapTuple(iter.Tuple(), elem); err != nil {
+			if err := mapper.MapTuple(t, elem); err != nil {
 				return err
 			}
 			newSlice = reflect.Append(newSlice, elem)
+			return nil
+		}); ferr != nil {
+			return ferr
 		}
 		sliceVal.Set(newSlice)
 		return nil
@@ -975,23 +979,14 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 	}
 
 	newSlice := reflect.MakeSlice(sliceVal.Type(), 0, 0)
-	for iter.Next() {
-		tuple := iter.Tuple()
+	if ferr := executor.ForEach(rel, func(tuple executor.Tuple) error {
 		if len(tuple) == 0 {
-			continue
+			return nil
 		}
-
-		var elemVal reflect.Value
-		if elemIsPtr {
-			elemVal = reflect.New(elemType).Elem()
-		} else {
-			elemVal = reflect.New(elemType).Elem()
-		}
-
+		elemVal := reflect.New(elemType).Elem()
 		if err := setScalarValue(elemVal, tuple[0]); err != nil {
 			return err
 		}
-
 		if elemIsPtr {
 			ptr := reflect.New(elemType)
 			ptr.Elem().Set(elemVal)
@@ -999,6 +994,9 @@ func (d *Database) QueryInto(dest interface{}, queryInput interface{}, inputs ..
 		} else {
 			newSlice = reflect.Append(newSlice, elemVal)
 		}
+		return nil
+	}); ferr != nil {
+		return ferr
 	}
 	sliceVal.Set(newSlice)
 	return nil
@@ -1043,16 +1041,24 @@ func (d *Database) QueryOneInto(dest interface{}, queryInput interface{}, inputs
 	iter := rel.Iterator()
 	defer iter.Close()
 
-	// Read first tuple
+	// Read first tuple. A false Next() can mean empty OR a deferred iterator
+	// failure — check Error() so a failure isn't reported as "not found".
 	if !iter.Next() {
+		if e := iter.Error(); e != nil {
+			return false, e
+		}
 		return false, nil
 	}
 	firstTuple := make([]interface{}, len(iter.Tuple()))
 	copy(firstTuple, iter.Tuple())
 
-	// Check for multiple results
+	// Check for multiple results. A false Next() here can also be a failure;
+	// don't let it look like "exactly one result".
 	if iter.Next() {
 		return false, dlreflect.ErrMultipleResults
+	}
+	if e := iter.Error(); e != nil {
+		return false, e
 	}
 
 	// Check if destination is a struct (but not time.Time, Identity, Keyword which are scalars)

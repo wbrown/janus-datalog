@@ -210,6 +210,12 @@ func (it *reusingIterator) Next() bool {
 		it.currentIdx++
 		if it.currentIdx >= len(it.tuples) {
 			if it.storageIter != nil {
+				// Propagate any deferred error before discarding the inner
+				// iterator (e.g., a CRDTResolvingIterator decode/blob failure
+				// that made Next() return false rather than erroring in Datom()).
+				if srcErr := it.storageIter.Error(); srcErr != nil && it.err == nil {
+					it.err = srcErr
+				}
 				it.storageIter.Close()
 			}
 			return false

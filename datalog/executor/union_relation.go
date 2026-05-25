@@ -111,8 +111,10 @@ func (ur *UnionRelation) Project(symbols []query.Symbol) (Relation, error) {
 // Errors from Close() are silently dropped (limitation of Relation interface)
 func (ur *UnionRelation) Materialize() Relation {
 	var allTuples []Tuple
-	collectTuplesInto(&allTuples, ur)
-	return NewMaterializedRelation(ur.symbols, allTuples)
+	err := collectTuplesInto(&allTuples, ur)
+	mat := NewMaterializedRelation(ur.symbols, allTuples)
+	mat.err = err
+	return mat
 }
 
 // Sort returns a sorted relation (forces materialization)
@@ -236,8 +238,13 @@ func (it *UnionIterator) Next() bool {
 			continue
 		}
 
-		// Current iterator exhausted - close it and get next relation
+		// Current iterator exhausted - capture any deferred error before
+		// discarding it (otherwise UnionIterator.Error() loses it once
+		// currentIter is nil), then close and get the next relation.
 		if it.currentIter != nil {
+			if e := it.currentIter.Error(); e != nil && it.firstError == nil {
+				it.firstError = e
+			}
 			it.currentIter.Close()
 			it.currentIter = nil
 			it.currentRelation = nil

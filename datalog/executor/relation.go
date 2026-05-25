@@ -25,7 +25,12 @@ func copyTuple(t Tuple) Tuple {
 // collectTuplesInto appends all tuples from a relation into the destination slice.
 // It checks RequiresCopy() to avoid unnecessary copying when the relation
 // guarantees stable tuple references (e.g., MaterializedRelation).
-func collectTuplesInto(dest *[]Tuple, rel Relation) {
+// collectTuplesInto appends all tuples from rel into dest and returns any error
+// the source iterator deferred to Error() (per the Iterator contract), plus a
+// Close() error if iteration was otherwise clean. Callers that build a cached
+// relation from the result must carry this error onto that relation so the
+// failure isn't laundered by materialization.
+func collectTuplesInto(dest *[]Tuple, rel Relation) error {
 	needsCopy := rel.RequiresCopy()
 	it := rel.Iterator()
 	for it.Next() {
@@ -35,7 +40,40 @@ func collectTuplesInto(dest *[]Tuple, rel Relation) {
 		}
 		*dest = append(*dest, tuple)
 	}
-	it.Close()
+	err := it.Error()
+	if cerr := it.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// ForEach drives rel's iterator per the documented Iterator contract: it yields
+// each tuple to fn, then resolves the outcome whether the loop ended by
+// exhaustion, an fn error, or an iterator failure. It returns, in priority
+// order: fn's error (iteration stops on the first), then it.Error() (iteration
+// aborted), then any Close() error. An iteration or fn error always wins over a
+// Close() error so a cleanup failure cannot mask the real cause.
+//
+// fn must copy the tuple if it retains it: streaming iterators may reuse the
+// tuple's backing memory across calls.
+func ForEach(rel Relation, fn func(Tuple) error) (err error) {
+	it := rel.Iterator()
+	// Close() is deferred (panic-safe) and is a separate signal: it only
+	// surfaces when nothing else failed, so a cleanup error can't mask the
+	// real iteration/fn error.
+	defer func() {
+		if cerr := it.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	for it.Next() {
+		if e := fn(it.Tuple()); e != nil {
+			// fn error is the more specific cause; return it without consulting
+			// the iterator's deferred Error().
+			return e
+		}
+	}
+	return it.Error()
 }
 
 // CollectTuples materializes a Relation into [][]interface{}.
@@ -49,17 +87,14 @@ func CollectTuples(rel Relation, err error) ([][]interface{}, error) {
 	if rel == nil {
 		return [][]interface{}{}, nil
 	}
-	var tuples [][]interface{}
-	it := rel.Iterator()
-	defer it.Close()
-	for it.Next() {
-		src := it.Tuple()
+	tuples := [][]interface{}{}
+	if ferr := ForEach(rel, func(src Tuple) error {
 		t := make([]interface{}, len(src))
 		copy(t, src)
 		tuples = append(tuples, t)
-	}
-	if tuples == nil {
-		tuples = [][]interface{}{}
+		return nil
+	}); ferr != nil {
+		return nil, ferr
 	}
 	return tuples, nil
 }
@@ -217,6 +252,7 @@ func (i *CountingIterator) IsDone() bool {
 type CachingIterator struct {
 	inner             Iterator
 	cache             *[]Tuple      // Pointer to cache in StreamingRelation
+	errPtr            *error        // Pointer to err in StreamingRelation (captured on completion)
 	cacheComplete     chan struct{} // Closed when caching finishes
 	cachingInProgress *bool         // Pointer to flag in StreamingRelation
 	cacheReady        *bool         // Pointer to ready flag in StreamingRelation
@@ -226,11 +262,12 @@ type CachingIterator struct {
 }
 
 // NewCachingIterator creates a caching iterator that builds a cache as it iterates
-func NewCachingIterator(inner Iterator, cachePtr *[]Tuple, completeChan chan struct{},
+func NewCachingIterator(inner Iterator, cachePtr *[]Tuple, errPtr *error, completeChan chan struct{},
 	cachingInProgress *bool, cacheReady *bool, mu *sync.Mutex) *CachingIterator {
 	return &CachingIterator{
 		inner:             inner,
 		cache:             cachePtr,
+		errPtr:            errPtr,
 		cacheComplete:     completeChan,
 		cachingInProgress: cachingInProgress,
 		cacheReady:        cacheReady,
@@ -262,8 +299,14 @@ func (ci *CachingIterator) Next() bool {
 		return true
 	}
 
-	// Iteration complete - signal waiting goroutines
+	// Iteration complete - capture any deferred source error for cache replay,
+	// then signal waiting goroutines.
 	ci.done = true
+	if ci.errPtr != nil {
+		ci.mu.Lock()
+		*ci.errPtr = ci.inner.Error()
+		ci.mu.Unlock()
+	}
 	ci.signalComplete()
 	return false
 }
@@ -312,6 +355,11 @@ type MaterializedRelation struct {
 	symbols []query.Symbol
 	tuples  []Tuple
 	options ExecutorOptions
+	// err is the deferred error from the source iteration that produced these
+	// tuples (e.g., a stream that failed partway while being cached). It is
+	// replayed by Iterator().Error() so a failure isn't laundered by
+	// materialization. nil when the source iterated cleanly.
+	err error
 }
 
 func NewMaterializedRelation(symbols []query.Symbol, tuples []Tuple) *MaterializedRelation {
@@ -396,7 +444,21 @@ func (r *MaterializedRelation) Iterator() Iterator {
 	return &sliceIterator{
 		tuples: r.tuples,
 		pos:    -1,
+		err:    r.err,
 	}
+}
+
+// carryErr propagates this relation's deferred (taint) error onto a relation
+// derived from it, so a transform of incomplete data stays marked incomplete.
+// Used by the unary transforms, which build a new relation from r's tuples.
+func (r *MaterializedRelation) carryErr(derived Relation) Relation {
+	if r.err == nil {
+		return derived
+	}
+	if m, ok := derived.(*MaterializedRelation); ok && m.err == nil {
+		m.err = r.err
+	}
+	return derived
 }
 
 func (r *MaterializedRelation) Size() int {
@@ -599,7 +661,9 @@ func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error)
 		projected[i] = projTuple
 	}
 
-	return NewMaterializedRelationWithOptions(symbols, projected, r.options), nil
+	result := NewMaterializedRelationWithOptions(symbols, projected, r.options)
+	result.err = r.err // a projection of tainted data is still tainted
+	return result, nil
 }
 
 // Materialize returns self since MaterializedRelation is already materialized
@@ -610,7 +674,7 @@ func (r *MaterializedRelation) Materialize() Relation {
 // Sort returns a new relation sorted by the specified order-by clauses
 func (r *MaterializedRelation) Sort(orderBy []query.OrderByClause) Relation {
 	// Use the SortRelation function we created
-	return SortRelation(r, orderBy)
+	return r.carryErr(SortRelation(r, orderBy))
 }
 
 // Filter returns a new relation with only tuples that satisfy the filter
@@ -739,6 +803,9 @@ func contains(symbols []query.Symbol, sym query.Symbol) bool {
 type sliceIterator struct {
 	tuples []Tuple
 	pos    int
+	// err is the deferred error replayed by a cached/materialized relation that
+	// was built from a source whose iteration failed. nil for clean caches.
+	err error
 }
 
 func (it *sliceIterator) Next() bool {
@@ -757,7 +824,7 @@ func (it *sliceIterator) Close() error {
 	return nil
 }
 
-func (it *sliceIterator) Error() error { return nil }
+func (it *sliceIterator) Error() error { return it.err }
 
 // StreamingRelation wraps an iterator as a relation
 type StreamingRelation struct {
@@ -785,6 +852,11 @@ type StreamingRelation struct {
 	// Lightweight size tracking: count tuples without buffering data
 	counter        *CountingIterator // For tracking tuple count during iteration
 	iteratorCalled bool              // Track if Iterator() was already called (for single-use enforcement)
+
+	// err holds the source iterator's deferred error, captured when the cache
+	// finishes building. Replayed by cache-replay iterators so a failure during
+	// the first (caching) pass isn't lost on subsequent iterations.
+	err error
 }
 
 func NewStreamingRelation(symbols []query.Symbol, iterator Iterator) *StreamingRelation {
@@ -815,10 +887,12 @@ func (r *StreamingRelation) Iterator() Iterator {
 
 	// Fast path: If we have a complete cache, return reusable iterator
 	if r.cacheReady {
+		err := r.err
 		r.mu.Unlock()
 		return &sliceIterator{
 			tuples: r.cache,
 			pos:    -1,
+			err:    err, // replay the source failure captured during cache build
 		}
 	}
 
@@ -831,9 +905,13 @@ func (r *StreamingRelation) Iterator() Iterator {
 		<-completeChan
 
 		// Cache is now ready, return iterator over cached data
+		r.mu.Lock()
+		err := r.err
+		r.mu.Unlock()
 		return &sliceIterator{
 			tuples: r.cache,
 			pos:    -1,
+			err:    err,
 		}
 	}
 
@@ -870,7 +948,7 @@ func (r *StreamingRelation) Iterator() Iterator {
 
 	// If caching enabled, wrap with CachingIterator
 	if r.shouldCache {
-		return NewCachingIterator(baseIter, &r.cache, r.cacheComplete, &r.cachingInProgress, &r.cacheReady, &r.mu)
+		return NewCachingIterator(baseIter, &r.cache, &r.err, r.cacheComplete, &r.cachingInProgress, &r.cacheReady, &r.mu)
 	}
 
 	// Pure streaming - single use
@@ -1170,10 +1248,15 @@ func (r *StreamingRelation) Materialize() Relation {
 func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	// Collect all tuples (can't sort without materializing)
 	var tuples []Tuple
-	collectTuplesInto(&tuples, r)
+	err := collectTuplesInto(&tuples, r)
 
-	// Create MaterializedRelation and delegate to its Sort
 	mat := NewMaterializedRelationWithOptions(r.symbols, tuples, r.options)
+	if err != nil {
+		// Source failed mid-iteration: carry the error so the boundary sees it
+		// and discards the (incomplete) data. Sorting tainted data is moot.
+		mat.err = err
+		return mat
+	}
 	return mat.Sort(orderBy)
 }
 
@@ -1433,7 +1516,7 @@ func (p *ProductRelation) Project(symbols []query.Symbol) (Relation, error) {
 
 func (p *ProductRelation) Materialize() Relation {
 	var tuples []Tuple
-	collectTuplesInto(&tuples, p)
+	_ = collectTuplesInto(&tuples, p)
 	return NewMaterializedRelationWithOptions(p.symbols, tuples, p.options)
 }
 

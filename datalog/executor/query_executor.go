@@ -1950,7 +1950,19 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 			return nil, fmt.Errorf("NOT-JOIN inner clause execution failed: %w", err)
 		}
 
-		if innerResult != nil && innerResult.Size() > 0 {
+		// Count inner results via ForEach so a failed inner scan surfaces as an
+		// error rather than looking like "no match" — which would wrongly
+		// un-exclude this combo and silently corrupt the NOT-JOIN result.
+		matched := false
+		if innerResult != nil {
+			count := 0
+			if ferr := ForEach(innerResult, func(Tuple) error { count++; return nil }); ferr != nil {
+				return nil, fmt.Errorf("NOT-JOIN inner clause execution failed: %w", ferr)
+			}
+			matched = count > 0
+		}
+
+		if matched {
 			key := NewTupleKeyFull(combo)
 			matchedKeys.Put(key, struct{}{})
 		}

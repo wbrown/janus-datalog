@@ -570,8 +570,10 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 				}
 			}
 
-			// Execute the plan with these scalar inputs
-			result, err := e.executeRealizedNonIterating(ctx, plan, tupleInputRelations, relationInput)
+			// Execute the plan with these scalar inputs. Each worker gets its
+			// own forked context: a Context's per-query state (queryStart,
+			// metadata, scanRegistry) is not safe for concurrent mutation.
+			result, err := e.executeRealizedNonIterating(forkContext(ctx), plan, tupleInputRelations, relationInput)
 			results[idx] = iterationResult{result: result, err: err}
 		}(tupleIdx, tuple)
 	}
