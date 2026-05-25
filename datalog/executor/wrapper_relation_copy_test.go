@@ -35,7 +35,7 @@ func (r *mockUnsafeRelation) Get(i int) Tuple                                   
 func (r *mockUnsafeRelation) String() string                                         { return "mockUnsafeRelation" }
 func (r *mockUnsafeRelation) Table() string                                          { return "" }
 func (r *mockUnsafeRelation) ProjectFromPattern(*query.DataPattern) Relation         { return nil }
-func (r *mockUnsafeRelation) Sorted() []Tuple                                        { return nil }
+func (r *mockUnsafeRelation) Sorted() ([]Tuple, error)                               { return nil, nil }
 func (r *mockUnsafeRelation) Project([]query.Symbol) (Relation, error)               { return nil, nil }
 func (r *mockUnsafeRelation) Materialize() Relation                                  { return r }
 func (r *mockUnsafeRelation) Sort([]query.OrderByClause) Relation                    { return nil }

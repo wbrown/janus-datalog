@@ -80,7 +80,7 @@ func extractFindSymbols(findElements []query.FindElement) []query.Symbol {
 // This is a pure function that collects all tuples from the iterator into memory.
 func MaterializeResult(rel Relation, symbols []query.Symbol) Relation {
 	var tuples []Tuple
-	collectTuplesInto(&tuples, rel)
+	err := collectTuplesInto(&tuples, rel)
 
 	// Note: an earlier debug assertion here panicked with
 	// "BUG DETECTED" when the first and last tuples were
@@ -94,7 +94,12 @@ func MaterializeResult(rel Relation, symbols []query.Symbol) Relation {
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	return NewMaterializedRelationWithOptions(symbols, tuples, opts)
+	mat := NewMaterializedRelationWithOptions(symbols, tuples, opts)
+	if err != nil {
+		// Carry a deferred source error so it isn't laundered by materialization.
+		mat.err = err
+	}
+	return mat
 }
 
 // Result is deprecated - use Relation instead.
@@ -107,7 +112,7 @@ type Result = MaterializedRelation
 func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	// Materialize if not already materialized
 	var tuples []Tuple
-	collectTuplesInto(&tuples, rel)
+	err := collectTuplesInto(&tuples, rel)
 
 	// Get symbol indices for sort variables
 	symbols := rel.Symbols()
@@ -147,7 +152,12 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	})
 
 	opts := rel.Options()
-	return NewMaterializedRelationWithOptions(symbols, tuples, opts)
+	mat := NewMaterializedRelationWithOptions(symbols, tuples, opts)
+	if err != nil {
+		// Carry a deferred source error so it isn't laundered by materialization.
+		mat.err = err
+	}
+	return mat
 }
 
 // computeAggregate computes an aggregate over all values in a symbol
@@ -307,10 +317,14 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 				if rel.Size() > 0 && len(inp.Symbols) == len(rel.Symbols()) {
 					// Create a new relation with the input variables as symbol names
 					tuples := make([]Tuple, 0, rel.Size())
-					collectTuplesInto(&tuples, rel)
+					err := collectTuplesInto(&tuples, rel)
 
 					opts := rel.Options()
-					boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(inp.Symbols, tuples, opts))
+					bound := NewMaterializedRelationWithOptions(inp.Symbols, tuples, opts)
+					if err != nil {
+						bound.err = err
+					}
+					boundRelations = append(boundRelations, bound)
 				}
 				relationIndex++
 			}

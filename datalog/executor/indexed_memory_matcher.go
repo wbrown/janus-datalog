@@ -196,12 +196,16 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 		relOpts = opts
 	}
 
+	sorted, err := bindingRel.Sorted()
+	if err != nil {
+		return nil, err
+	}
 	iterator := &boundDatomIterator{
 		matcher:     m,
 		pattern:     pattern,
 		symbols:     symbols,
 		constraints: constraints,
-		boundTuples: bindingRel.Sorted(),
+		boundTuples: sorted,
 		bindingRel:  bindingRel,
 		boundIdx:    -1,
 		datomIdx:    0,

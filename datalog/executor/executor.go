@@ -533,7 +533,9 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 
 	// Collect all tuples first (needed for worker pool)
 	var tuples []Tuple
-	collectTuplesInto(&tuples, iterationRelation)
+	if err := collectTuplesInto(&tuples, iterationRelation); err != nil {
+		return nil, err
+	}
 
 	if len(tuples) == 0 {
 		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil

@@ -37,7 +37,9 @@ func (tf *TableFormatter) FormatRelation(rel Relation) string {
 
 	// Collect all tuples
 	var tuples []Tuple
-	collectTuplesInto(&tuples, rel)
+	if err := collectTuplesInto(&tuples, rel); err != nil {
+		return fmt.Sprintf("_error reading relation: %v_", err)
+	}
 
 	symbols := rel.Symbols()
 	return tf.formatTable(symbols, tuples)

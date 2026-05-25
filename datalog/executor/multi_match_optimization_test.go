@@ -42,7 +42,11 @@ func (m *MockPatternMatcherWithStats) MatchWithRelation(pattern *query.DataPatte
 	seen := make(map[string]bool)
 
 	// Process each tuple in one go
-	for _, tuple := range projected.Sorted() {
+	sortedProjected, err := projected.Sorted()
+	if err != nil {
+		return nil, err
+	}
+	for _, tuple := range sortedProjected {
 		// Simulate matching with this tuple's bindings
 		for _, d := range m.datoms {
 			if m.matchesWithTuple(d, pattern, tuple, projected) {

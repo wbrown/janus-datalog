@@ -59,11 +59,20 @@ func (s *StreamingUnionBuilder) unionMaterialized(relations []Relation) Relation
 	symbols := relations[0].Symbols()
 	var allTuples []Tuple
 
+	var collectErr error
 	for _, rel := range relations {
-		collectTuplesInto(&allTuples, rel)
+		if err := collectTuplesInto(&allTuples, rel); err != nil && collectErr == nil {
+			collectErr = err
+		}
 	}
 
-	return NewMaterializedRelation(symbols, allTuples)
+	mat := NewMaterializedRelation(symbols, allTuples)
+	if collectErr != nil {
+		// A branch failed mid-iteration: carry the error rather than returning
+		// the other branches as a clean union.
+		mat.err = collectErr
+	}
+	return mat
 }
 
 // UnionWithColumns combines relations and ensures specific symbol schema

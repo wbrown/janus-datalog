@@ -565,7 +565,10 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 ) (executor.Relation, error) {
 	// PHASE 1: Sort binding relation by join key
 	// Sorted() will auto-materialize if needed
-	sortedTuples := bindingRel.Sorted()
+	sortedTuples, err := bindingRel.Sorted()
+	if err != nil {
+		return nil, err
+	}
 
 	if len(sortedTuples) == 0 {
 		// No bindings - return empty result

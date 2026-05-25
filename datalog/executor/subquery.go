@@ -409,7 +409,9 @@ func combineSubqueryResults(allResults []Relation, subqPlan planner.SubqueryPlan
 	symbols := validResults[0].Symbols()
 
 	for _, rel := range validResults {
-		collectTuplesInto(&allTuples, rel)
+		if err := collectTuplesInto(&allTuples, rel); err != nil {
+			return nil, fmt.Errorf("subquery result union failed: %w", err)
+		}
 	}
 
 	result := NewMaterializedRelation(symbols, allTuples)
