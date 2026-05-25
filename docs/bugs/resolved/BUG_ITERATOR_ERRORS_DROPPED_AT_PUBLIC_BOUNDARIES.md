@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-24
 **Severity**: High - storage/decode/subquery failures can become successful partial results
-**Status**: Open (code review finding; needs dedicated repro tests)
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Affected**: `executor.CollectTuples`, `storage.Database.QueryInto`, `storage.Database.QueryOneInto`, tuple collection paths that cannot return errors
 
 ## Summary
@@ -244,3 +244,53 @@ Also add one storage-backed test if practical:
 - `docs/bugs/BUG_ITERATOR_LEAK_BUILTIN_EVALUATION.md` is another example where
   iterator lifecycle obligations were correct in the interface but not
   consistently observed by consumers.
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** Iterator-error propagation was threaded through the entire result pipeline, not only the three named public boundaries. All four verification-plan tests are in place, along with storage-backed reproductions and tests for the internal laundering sites discovered along the way.
+
+### Decisions
+
+- **Scope: the whole pipeline, not just the boundaries.** Fixing only `CollectTuples`/`QueryInto`/`QueryOneInto` would have left the error droppable at every internal materialization between the failing scan and the boundary. Error propagation was instead made a property of the relation/iterator plumbing, so any consumer inherits it.
+- **Keep the Go-standard `Next()` + `Error()` contract.** Changing the `Iterator` interface (e.g. folding the error into `Next()`'s return) was explicitly rejected. The deferred-error contract is deliberate and documented; the fix makes consumers honor it rather than altering the interface.
+- **One canonical consumer.** `executor.ForEach(rel, fn) error` drives `Next()`, checks `Error()`, and `Close()`s without masking the iteration error; `collectTuplesInto` now returns the iterator error. `MaterializedRelation`/`StreamingRelation` carry an `err` field that survives `Project`/`Sort`/materialize (`carryErr`), so a tainted relation stays tainted through derived relations.
+
+### Public boundaries
+
+- `CollectTuples` returns `it.Error()` after the loop.
+- `QueryInto` (struct and scalar paths) consumes via `ForEach` and returns before installing the destination slice, so a truncated iteration cannot leave a partial-but-"successful" result.
+- `QueryOneInto` checks `Error()` after both the first and the second `Next()`, so neither an empty-looking failure nor a second-row failure is misreported as "not found" or "exactly one result."
+
+### Internal laundering sites
+
+Error capture/propagation was added to: executor `HashJoin` build/probe; `unionRelations` and `UnionIterator`; single and grouped aggregation; the storage scan iterators (`unboundIterator`, `reusingIterator`, `hashJoinIterator`); the not-join inner consumer; the relation-input iteration (sequential and parallel); `ProductRelation.Materialize`; and the non-last-phase `Keep` projection.
+
+### The three "remaining laundering site" investigation
+
+Three suspected internal drops were enumerated and each judged on its merits rather than blanket-patched:
+
+- **`crossJoinWithOuter` — dead code.** No callers; it was deleted rather than "fixed."
+- **`ProductRelation.Materialize` — real, fixed.** `Relations.Product()` builds it for disjoint groups (reached in production at the subquery input-combination path). `ProductIterator.Error()` already aggregated its sub-iterators' errors — the drop was purely `Materialize` discarding it. It now carries the error onto the materialized result.
+- **Non-last-phase `Keep` projection — fixed defensively.** Key finding: the greedy phaser (`createPhasesGreedy`) collapses every satisfiable query into exactly one phase. This was confirmed empirically across nine query shapes and by argument: a selected clause's `Provides` become available within the same phase, so any clause satisfiable in a later phase is already satisfiable now (leftovers are unsatisfiable and would error, not form a clean phase 2). The non-last-phase block is therefore unreachable by any planned query today. **This single-phase collapse is unintentional**, so it was deliberately *not* pinned as an invariant — an early "always one phase" test was deleted precisely because it would have enshrined accidental behavior. Per decision, the Keep projection was still fixed and verified with a synthetic two-phase `RealizedPlan` fed straight to the executor, so it is correct once the phaser is fixed to emit real multi-phase plans. The phase boundary itself needed no new code: a failing (empty) group joins the next phase on the `Keep` symbol, and the `HashJoin` error capture carries it through `Collapse`.
+
+### Concurrency
+
+Running the suite under `-race` (not the standard gate) surfaced a genuine data race in parallel-subquery annotation handling: multiple workers shared one per-query context and one handler. Fixed with `forkContext` (a per-worker context) and `annotations.Synchronized` (serializes handler invocations at the install points, since the handler is also called from the storage matcher).
+
+### Issues encountered
+
+- **Test doubles must mirror real relation behavior.** A `failingRelation` that embeds a `MaterializedRelation` inherits its `Project`, which drops the error — unlike a real streaming scan whose `Project` composes iterators and carries it. The phase-boundary test had to use a `StreamingRelation`-backed failing source to be representative; an embedded-materialized double would have made the executor look correct when it was not.
+- **Weak assertions hide false greens.** `require.Error` passes on *any* error; assertions were tightened to `require.ErrorContains(..., "blob")` / `require.ErrorIs(..., errInjectedIterator)` so a test can only pass on the *expected* failure.
+- **A passing test does not prove the intended branch ran.** The two final boundary tests pass under either scan order, but only exercise the truncation / second-`Next()` branches if the valid row is scanned first. `TestScan_YieldsValidRowThenFails` pins that precondition (one row yielded, then error) so the coverage cannot silently degrade to the already-covered first-`Next()` path. The valid-first ordering is guaranteed, not hoped for: the attr-bound, E/V-unbound scan is E-primary (AETV/AEVT), `Identity.L85()` is sort-order-preserving and *is* the E key component, so the lower-L85 entity is scanned first and is given the valid inline value.
+
+### Tests
+
+- `datalog/executor/{foreach_test.go, iterator_error_boundary_test.go, caching_error_replay_test.go, union_relation_error_test.go, product_test.go, phase_boundary_error_test.go}`
+- `datalog/storage/query_boundary_error_test.go` — storage-backed reproductions using a corrupted Tier-3 blob, covering `CollectTuples`/`QueryInto`/`QueryOneInto`, order-by, aggregation, grouped aggregation, not, index-nested-loop, relation-input, subquery, or, multi-phase, plus the truncation and second-`Next()` cases.
+
+### Related / residual
+
+- `BUG_VBOUND_BYTES_WRONG_RESULTS_UNDER_RACE.md` was discovered while running `-race` and is documented separately (open; a wrong-result, not a data race the detector reports).
+- `BUG_UNION_RELATION_CONCURRENT_ITERATION_AND_ERROR_DROP.md`: its error-drop half is resolved here (UnionIterator inner-error capture); its concurrent cache-build race (Failure Mode 1) is a separate concern and is not addressed by this work.
