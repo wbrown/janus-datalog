@@ -533,23 +533,30 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		opts = right.Options()
 	}
 
-	// Build set of keys from right relation using efficient TupleKeyMap
-	// Pre-size based on right relation size
+	// Build set of keys from right relation using efficient TupleKeyMap.
+	// If the right side fails, the key set is incomplete — every filter decision
+	// becomes untrustworthy (semi-join would drop real matches), so surface the
+	// error and trust no result rows.
 	rightKeys := NewTupleKeyMapWithCapacity(right.Size())
 	rightIt := right.Iterator()
-	defer rightIt.Close()
-
 	for rightIt.Next() {
 		tuple := rightIt.Tuple()
 		key := NewTupleKey(tuple, rightIndices)
 		rightKeys.Put(key, true)
 	}
+	rerr := rightIt.Error()
+	if cerr := rightIt.Close(); rerr == nil {
+		rerr = cerr
+	}
+	if rerr != nil {
+		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		res.err = rerr
+		return res
+	}
 
 	// Filter left relation
 	var results []Tuple
 	leftIt := left.Iterator()
-	defer leftIt.Close()
-
 	for leftIt.Next() {
 		tuple := leftIt.Tuple()
 		key := NewTupleKey(tuple, leftIndices)
@@ -557,8 +564,14 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 			results = append(results, tuple)
 		}
 	}
+	lerr := leftIt.Error()
+	if cerr := leftIt.Close(); lerr == nil {
+		lerr = cerr
+	}
 
-	return NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
+	res := NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
+	res.err = lerr
+	return res
 }
 
 // AntiJoin returns tuples from left that have no matches in right
@@ -577,23 +590,31 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		opts = right.Options()
 	}
 
-	// Build set of keys from right relation using efficient TupleKeyMap
-	// Pre-size based on right relation size
+	// Build set of keys from right relation using efficient TupleKeyMap.
+	// If the right side fails, the key set is incomplete — an anti-join would then
+	// report false "no match" rows (a missing key from a decode failure is
+	// indistinguishable from a real absence), so surface the error and trust no
+	// result rows.
 	rightKeys := NewTupleKeyMapWithCapacity(right.Size())
 	rightIt := right.Iterator()
-	defer rightIt.Close()
-
 	for rightIt.Next() {
 		tuple := rightIt.Tuple()
 		key := NewTupleKey(tuple, rightIndices)
 		rightKeys.Put(key, true)
 	}
+	rerr := rightIt.Error()
+	if cerr := rightIt.Close(); rerr == nil {
+		rerr = cerr
+	}
+	if rerr != nil {
+		res := NewMaterializedRelationWithOptions(left.Symbols(), nil, opts)
+		res.err = rerr
+		return res
+	}
 
 	// Filter left relation
 	var results []Tuple
 	leftIt := left.Iterator()
-	defer leftIt.Close()
-
 	for leftIt.Next() {
 		tuple := leftIt.Tuple()
 		key := NewTupleKey(tuple, leftIndices)
@@ -601,8 +622,14 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 			results = append(results, tuple)
 		}
 	}
+	lerr := leftIt.Error()
+	if cerr := leftIt.Close(); lerr == nil {
+		lerr = cerr
+	}
 
-	return NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
+	res := NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
+	res.err = lerr
+	return res
 }
 
 // Join utility functions
