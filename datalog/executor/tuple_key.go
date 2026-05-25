@@ -110,6 +110,13 @@ func hashValue(v interface{}) uint64 {
 	case string:
 		return hashString(val)
 
+	case []byte:
+		// Hash by content. Without this case, []byte falls through to the
+		// default pointer-address hash below, so two equal byte slices get
+		// different (nondeterministic) hashes and never collide in a
+		// TupleKeyMap — breaking joins and dedup on byte-valued attributes.
+		return hashBytes(val)
+
 	case int:
 		return uint64(val)
 
