@@ -134,12 +134,6 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 
 	ctx.QueryBegin(q.String())
 
-	// Pass annotation handler to planner for algebra bridge observability
-	if collector := ctx.Collector(); collector != nil {
-		executor.planner.SetHandler(collector.Handler())
-		defer executor.planner.SetHandler(nil)
-	}
-
 	// Build initial bindings from input relations
 	initialBindings := make(map[query.Symbol]bool)
 
@@ -181,13 +175,20 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 		}
 	}
 
-	// Execute using QueryExecutor (Stage B) with RealizedPlan
+	// Execute using QueryExecutor (Stage B) with RealizedPlan. The annotation
+	// handler is threaded per-query into planning (not stored on the shared
+	// planner), so concurrent annotated queries neither race on it nor
+	// cross-route algebra-bridge events.
+	var planHandler annotations.Handler
+	if collector := ctx.Collector(); collector != nil {
+		planHandler = collector.Handler()
+	}
 	var realizedPlan *planner.RealizedPlan
 	var err error
 	if len(initialBindings) == 0 {
-		realizedPlan, err = executor.planner.PlanQuery(q)
+		realizedPlan, err = executor.planner.PlanQuery(q, planHandler)
 	} else {
-		realizedPlan, err = executor.planner.PlanQueryWithBindings(q, initialBindings)
+		realizedPlan, err = executor.planner.PlanQueryWithBindings(q, initialBindings, planHandler)
 	}
 	if err != nil {
 		ctx.QueryComplete(0, 0, err)

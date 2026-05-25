@@ -14,7 +14,6 @@ type ClauseBasedPlanner struct {
 	stats   *Statistics
 	options PlannerOptions
 	cache   *PlanCache
-	handler annotations.Handler // Set per-query for algebra bridge annotations
 }
 
 // NewClauseBasedPlanner creates a new clause-based planner
@@ -32,8 +31,11 @@ func NewClauseBasedPlanner(stats *Statistics, options PlannerOptions) *ClauseBas
 	}
 }
 
-// Plan creates an optimized query plan using the clause-based approach
-func (p *ClauseBasedPlanner) Plan(q *query.Query) (*RealizedPlan, error) {
+// Plan creates an optimized query plan using the clause-based approach. The
+// handler (may be nil) is request-scoped annotation state, threaded through
+// planning rather than stored on the planner, so concurrent queries through a
+// shared planner do not race on it.
+func (p *ClauseBasedPlanner) Plan(q *query.Query, handler annotations.Handler) (*RealizedPlan, error) {
 	// Check cache first
 	if p.cache != nil {
 		if cached, ok := p.cache.GetWithOptions(q, p.options); ok {
@@ -42,7 +44,7 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query) (*RealizedPlan, error) {
 	}
 
 	// Plan with no initial bindings
-	plan, err := p.PlanWithBindings(q, nil)
+	plan, err := p.PlanWithBindings(q, nil, handler)
 	if err != nil {
 		return nil, err
 	}
@@ -55,8 +57,10 @@ func (p *ClauseBasedPlanner) Plan(q *query.Query) (*RealizedPlan, error) {
 	return plan, nil
 }
 
-// PlanWithBindings creates an optimized query plan with initial bindings
-func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings map[query.Symbol]bool) (*RealizedPlan, error) {
+// PlanWithBindings creates an optimized query plan with initial bindings. The
+// handler (may be nil) is passed through to the algebra bridge rather than read
+// from shared planner state.
+func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings map[query.Symbol]bool, handler annotations.Handler) (*RealizedPlan, error) {
 	// Extract input symbols from :in clause, tracking scalar inputs separately
 	inputSymbols := make(map[query.Symbol]bool)
 	var scalarInputs []query.Symbol
@@ -115,7 +119,7 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 
 	// Algebraic optimization: clauses → algebra IR → transform passes → clauses
 	if p.options.EnableAlgebraOptimizer {
-		optimized, err := optimizeViaAlgebra(clauses, p.handler)
+		optimized, err := optimizeViaAlgebra(clauses, handler)
 		if err != nil {
 			return nil, fmt.Errorf("algebra optimization failed: %w", err)
 		}
