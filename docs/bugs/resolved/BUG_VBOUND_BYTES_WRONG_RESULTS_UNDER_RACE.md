@@ -1,8 +1,8 @@
 # BUG: V-bound cardinality-one byte queries return empty under `-race`
 
 **Date**: 2026-05-24
-**Severity**: Unknown — potentially High (wrong query results), pending root-cause
-**Status**: Open (observed, root cause not yet determined)
+**Severity**: High — silent wrong results for hash joins / dedup on byte-valued keys
+**Status**: Resolved (2026-05-25) — see Resolution below
 **Affected**: V-bound cardinality-one `TypeBytes` queries via the candidate+validate path (`validatingVBoundIterator`, AVET/VAET candidate scan + EATV validation). Observed in `datalog/storage/vbound_bytes_validation_test.go`.
 
 ## Summary
@@ -72,3 +72,44 @@ Determining which requires dedicated investigation (e.g., narrowing to a single 
 
 - `docs/bugs/resolved/BUG_VBOUND_BYTES_VALIDATION_PANIC.md` — the original V-bound `[]byte` `==` panic (fixed in v0.11.4). Same code path; this is a different, result-correctness symptom.
 - `datalog/storage/vbound_bytes_validation_test.go` — the tests that surface this.
+
+---
+
+## Resolution (2026-05-25)
+
+**Resolved.** The hypotheses in this report (candidate scan / EATV validation timing) were wrong — that path is correct. The actual cause is a missing type case in the join/dedup hash function.
+
+### Corrected root cause
+
+`hashValue` in `datalog/executor/tuple_key.go` had cases for `string`, `int`, `Identity`, `Keyword`, etc., but **no case for `[]byte`**. A byte slice fell through to the default:
+
+```go
+default:
+    return uint64(uintptr(unsafe.Pointer(&v))) // address of a local — not the content
+```
+
+That hashes the address of a local interface variable, not the byte content, so two equal `[]byte` values produce different, nondeterministic hashes. In a `TupleKeyMap` (the hash table behind joins and dedup) they land in different buckets and never meet — the `datalog.ValuesEqual` fallback only resolves collisions *within* a bucket, so it never runs across buckets.
+
+The V-bound byte query joins the pattern result against the `:in ?v` input on `?v` (`[]byte`). The probe key hashes to a different bucket than the build key, the lookup misses, and the row is dropped → empty result. Without `-race`, the bogus addresses happened to collide (so the join accidentally matched); `-race` perturbs stack/heap layout so they differ → reliable miss. That is exactly the observed signature: `[]byte`-specific, `-race`-only, **no** data race reported (it is a single-goroutine logic bug, not a memory race), and biased toward returning empty (a missed lookup never produces a spurious extra row).
+
+The matcher itself is correct: driving `Match` directly (bypassing the executor join) returns the entity under `-race`. The drop is purely in the join's hash bucketing.
+
+### Scope
+
+Broader than V-bound queries: this fixes correctness for **any hash join or dedup keyed on a byte-valued attribute**. V-bound byte queries were just the most visible and reliably reproducible path.
+
+### Fix
+
+One missing case in `hashValue`, so byte values hash by content like every other type (`hashBytes` already existed):
+
+```go
+case []byte:
+    return hashBytes(val)
+```
+
+### Tests
+
+- `datalog/storage/vbound_bytes_validation_test.go` — the five original repro tests now pass under `-race`; added `TestVBoundCardinalityOneBytes_DirectMatcher` (matcher in isolation, no join) and `TestVBoundCardinalityOneBytes_ValidationTrail` (asserts the match and captures the validation/join annotation trail).
+- `datalog/executor/tuple_key_collision_test.go` — strengthened `TestTupleKeyMap_BytesAreDistinguishedByContent` to assert equal byte content hashes equally; its prior comment had rationalized the buggy address-hash behavior.
+
+Full `go test -count=1 ./...` is green, and the byte-valued tests pass under `-race`.

@@ -133,16 +133,19 @@ func TestTupleKeyMap_DistinguishesAdversarialPairs(t *testing.T) {
 	}
 }
 
-// TestTupleKeyMap_BytesAreDistinguishedByContent verifies that []byte values
-// are correctly distinguished by content (via the ValuesEqual fallback in
-// TupleKeyMap), even though hashValue's default case may put each []byte
-// instance into a different hash bucket. This is a correctness baseline,
-// not a performance assertion.
+// TestTupleKeyMap_BytesAreDistinguishedByContent verifies that []byte values are
+// keyed by content in a TupleKeyMap: equal content hashes equally (so it lands in
+// the same bucket and is found), and different content does not match. hashValue
+// has a dedicated []byte case that hashes by content (hashBytes). Without it,
+// []byte fell through to a pointer-address hash, so equal slices landed in
+// DIFFERENT buckets and the ValuesEqual fallback — which only resolves collisions
+// WITHIN a bucket — never ran. That made byte-valued joins/dedup miss; it surfaced
+// as resolved/BUG_VBOUND_BYTES_WRONG_RESULTS_UNDER_RACE (a join on a byte key
+// dropped rows, only reliably under -race because the bogus address hash happened
+// to collide otherwise).
 //
-// Exercises: tuple_key.go TupleKey, TupleKeyMap with []byte values
+// Exercises: tuple_key.go hashValue/TupleKey/TupleKeyMap with []byte values
 func TestTupleKeyMap_BytesAreDistinguishedByContent(t *testing.T) {
-	m := NewTupleKeyMap()
-
 	a := []byte{1, 2, 3}
 	bSameContent := []byte{1, 2, 3} // distinct slice, equal content
 	cDifferent := []byte{1, 2, 4}
@@ -151,13 +154,19 @@ func TestTupleKeyMap_BytesAreDistinguishedByContent(t *testing.T) {
 	kb := NewTupleKeyFull(Tuple{bSameContent})
 	kc := NewTupleKeyFull(Tuple{cDifferent})
 
-	m.Put(ka, struct{}{})
+	// Equal content must hash equally — landing in the same bucket by design,
+	// not by an accidental pointer-address collision.
+	if ka.hash != kb.hash {
+		t.Fatalf("equal []byte content must hash equally: got %d != %d", ka.hash, kb.hash)
+	}
 
+	m := NewTupleKeyMap()
+	m.Put(ka, struct{}{})
 	if !m.Exists(kb) {
-		t.Error("equal-content []byte should be found via ValuesEqual fallback")
+		t.Error("equal-content []byte must be found")
 	}
 	if m.Exists(kc) {
-		t.Error("different-content []byte should not match")
+		t.Error("different-content []byte must not match")
 	}
 }
 

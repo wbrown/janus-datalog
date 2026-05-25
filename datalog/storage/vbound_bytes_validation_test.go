@@ -1,11 +1,17 @@
 package storage
 
 import (
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -179,4 +185,78 @@ func TestVBoundCardinalityOneBytes_AfterRemove(t *testing.T) {
 	}()
 
 	require.Empty(t, queryByHash(t, db, v), "removed value must not match")
+}
+
+// TestVBoundCardinalityOneBytes_ValidationTrail captures the v-validation
+// annotation trail so the failure under -race can be diagnosed: it shows whether
+// the candidate scan found a candidate and what the EATV winner comparison saw.
+func TestVBoundCardinalityOneBytes_ValidationTrail(t *testing.T) {
+	db, e, a := newBytesOneDB(t)
+	defer db.Close()
+
+	var mu sync.Mutex
+	var trail []string
+	db.SetAnnotationHandler(func(ev annotations.Event) {
+		if strings.HasPrefix(ev.Name, "v-validation/") ||
+			strings.Contains(ev.Name, "join") ||
+			strings.Contains(ev.Name, "collapse") ||
+			strings.Contains(ev.Name, "phase") ||
+			strings.Contains(ev.Name, "pattern") {
+			mu.Lock()
+			trail = append(trail, fmt.Sprintf("%s %v", ev.Name, ev.Data))
+			mu.Unlock()
+		}
+	})
+
+	v := []byte{0xde, 0xad, 0xbe, 0xef}
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(e, a, v))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	rows, err := executor.CollectTuples(db.Query(`[:find ?e :in $ ?v :where [?e :doc/hash ?v]]`, v))
+	require.NoError(t, err)
+
+	mu.Lock()
+	for _, s := range trail {
+		t.Log(s)
+	}
+	mu.Unlock()
+
+	require.Len(t, rows, 1)
+}
+
+// TestVBoundCardinalityOneBytes_DirectMatcher drives the matcher directly with
+// ?v bound, bypassing the executor's join of the pattern result with the :in
+// input. This isolates matcher behaviour from the join: if this returns the
+// entity under -race but the full query does not, the join is the culprit.
+func TestVBoundCardinalityOneBytes_DirectMatcher(t *testing.T) {
+	db, e, a := newBytesOneDB(t)
+	defer db.Close()
+
+	v := []byte{0xde, 0xad, 0xbe, 0xef}
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(e, a, v))
+	_, err := tx.Commit()
+	require.NoError(t, err)
+
+	q, err := parser.ParseQuery(`[:find ?e :in $ ?v :where [?e :doc/hash ?v]]`)
+	require.NoError(t, err)
+	pattern := q.Where[0].(*query.DataPattern)
+
+	bindingRel := executor.NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?v")},
+		[]executor.Tuple{{v}},
+	)
+	result, err := db.Matcher().Match(pattern, executor.Relations{bindingRel})
+	require.NoError(t, err)
+
+	it := result.Iterator()
+	count := 0
+	for it.Next() {
+		count++
+	}
+	require.NoError(t, it.Error())
+	it.Close()
+	require.Equal(t, 1, count, "matcher must return the matching entity (independent of the executor join)")
 }
