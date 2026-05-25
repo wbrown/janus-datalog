@@ -3,8 +3,6 @@ package datalog
 import (
 	"strings"
 	"sync"
-
-	"github.com/wbrown/janus-datalog/datalog/codec"
 )
 
 // keywordInternCache provides keyword interning to avoid repeated allocations
@@ -109,14 +107,12 @@ func InternIdentityFromHash(hash [20]byte) Identity {
 		return val.(Identity)
 	}
 
-	// Slow path: create and store
-	// CRITICAL: Compute L85 eagerly so String() returns it correctly
-	// Identities from storage have empty str field, so we use L85 representation
+	// Slow path: create and store. Identities from storage have an empty str
+	// field, so String() falls back to L85() (a pure function of the hash,
+	// computed on demand).
 	id := &identity{
-		value:       hash,
-		l85:         codec.EncodeL85(hash[:]),
-		str:         "", // Unknown - use L85 representation
-		l85Computed: true,
+		value: hash,
+		str:   "", // Unknown - String() uses L85() (computed on demand)
 	}
 	actual, _ := identityIntern.cache.LoadOrStore(hash, id)
 	return actual.(Identity)

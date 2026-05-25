@@ -450,7 +450,7 @@ func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetTx datalog.E
 // scanTimeRanges performs multi-range scanning on AVET index for time optimization
 func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]datalog.Datom, error) {
 	// Use map to deduplicate by entity ID (entities might appear in multiple ranges)
-	seen := make(map[string]bool)
+	seen := make(map[datalog.Identity]bool)
 	var results []datalog.Datom
 
 	encoder := m.store.encoder
@@ -518,10 +518,9 @@ func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]
 				}
 			}
 
-			// Deduplicate by entity ID
-			eKey := datom.E.L85()
-			if !seen[eKey] {
-				seen[eKey] = true
+			// Deduplicate by entity (interned pointer is a stable, comparable key)
+			if !seen[datom.E] {
+				seen[datom.E] = true
 				results = append(results, *datom)
 			}
 		}

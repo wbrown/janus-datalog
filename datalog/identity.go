@@ -9,10 +9,8 @@ import (
 
 // identity is the unexported base type for entity identifiers.
 type identity struct {
-	value       [20]byte // SHA1 hash
-	l85         string   // Lazily computed L85 encoding
-	str         string   // Original string (if known)
-	l85Computed bool     // Whether l85 has been computed
+	value [20]byte // SHA1 hash
+	str   string   // Original string (if known)
 }
 
 // Identity is the exported pointer type, always interned.
@@ -28,7 +26,9 @@ func NewIdentity(s string) Identity {
 		return val.(Identity)
 	}
 
-	// Slow path: allocate and intern
+	// Slow path: allocate and intern. The identity is immutable; L85 is a pure
+	// function of value computed on demand, so there is no cached field to race
+	// on (nor one kept resident for identities that never need it).
 	id := &identity{
 		value: hash,
 		str:   s,
@@ -56,11 +56,11 @@ func (i Identity) L85() string {
 	if i == nil {
 		return ""
 	}
-	if !i.l85Computed {
-		i.l85 = codec.EncodeL85(i.value[:])
-		i.l85Computed = true
-	}
-	return i.l85
+	// Pure function of the immutable hash, computed on demand. Not cached: L85 is
+	// no longer used on hot paths (joins, dedup, and the in-memory indices key on
+	// the interned identity/keyword pointers), so a cache would only add memory
+	// and a field to race on.
+	return codec.EncodeL85(i.value[:])
 }
 
 // String returns a string representation
