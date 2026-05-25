@@ -177,3 +177,56 @@ func TestQueryGroupedAggregate_SurfacesBlobDecodeError(t *testing.T) {
 	_, err := executor.CollectTuples(db.Query(`[:find ?e (count ?v) :in $ ?e :where [?e :doc/blob ?v]]`, e))
 	require.ErrorContains(t, err, "blob", "grouped aggregate over a missing blob must surface the error")
 }
+
+// TestQueryRelationInput_SurfacesBlobDecodeError: a RelationInput query
+// (:in $ [[?e] ...]) iterates per input tuple and collects the per-tuple results;
+// that collection must propagate a failing scan's error, not drop it.
+func TestQueryRelationInput_SurfacesBlobDecodeError(t *testing.T) {
+	db, e, _ := writeTier3ValueThenCorruptBlob(t)
+	defer db.Close()
+
+	_, err := executor.CollectTuples(db.Query(
+		`[:find ?v :in $ [[?e] ...] :where [?e :doc/blob ?v]]`,
+		[][]any{{e}}))
+	require.ErrorContains(t, err, "blob", "relation-input iteration over a missing blob must surface the error")
+}
+
+// TestQuerySubquery_SurfacesBlobDecodeError: a subquery whose inner scan decodes
+// the corrupted blob must surface the error through subquery result combination.
+func TestQuerySubquery_SurfacesBlobDecodeError(t *testing.T) {
+	db, e, _ := writeTier3ValueThenCorruptBlob(t)
+	defer db.Close()
+
+	_, err := executor.CollectTuples(db.Query(
+		`[:find ?v :in $ ?e
+		  :where [(q [:find ?bv :in $ ?e2 :where [?e2 :doc/blob ?bv]] $ ?e) [[?v]]]]`,
+		e))
+	require.ErrorContains(t, err, "blob", "subquery over a missing blob must surface the error")
+}
+
+// TestQueryOr_SurfacesBlobDecodeError: an (or ...) branch that scans the
+// corrupted blob must surface the error through union of branch results.
+func TestQueryOr_SurfacesBlobDecodeError(t *testing.T) {
+	db, e, _ := writeTier3ValueThenCorruptBlob(t)
+	defer db.Close()
+
+	_, err := executor.CollectTuples(db.Query(
+		`[:find ?v :in $ ?e :where (or [?e :doc/blob ?v] [?e :doc/missing ?v])]`,
+		e))
+	require.ErrorContains(t, err, "blob", "OR branch over a missing blob must surface the error")
+}
+
+// TestQueryMultiPhase_SurfacesBlobDecodeError: a two-pattern join over the
+// corrupted value must surface the error rather than return empty. NOTE: this
+// propagates via the collapsed/streaming join path; it does NOT force the failing
+// scan into a non-last phase's Keep projection in executor.go — that laundering
+// site (Site 1) is not yet triggered and remains open.
+func TestQueryMultiPhase_SurfacesBlobDecodeError(t *testing.T) {
+	db, e, _ := writeTier3ValueThenCorruptBlob(t)
+	defer db.Close()
+
+	_, err := executor.CollectTuples(db.Query(
+		`[:find ?e2 :in $ ?e :where [?e :doc/blob ?v] [?e2 :doc/blob ?v]]`,
+		e))
+	require.ErrorContains(t, err, "blob", "multi-phase join over a missing blob must surface the error")
+}

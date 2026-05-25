@@ -494,7 +494,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 			return nil, fmt.Errorf("iteration execution failed: %w", err)
 		}
 
-		if result != nil && result.Size() > 0 {
+		if result != nil {
 			allResults = append(allResults, result)
 		}
 	}
@@ -504,12 +504,15 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
 	}
 
-	// Union all results
+	// Union all results, propagating any per-tuple scan error rather than
+	// dropping it (a failed iteration must not look like an empty result).
 	var allTuples []Tuple
 	symbols := allResults[0].Symbols()
 
 	for _, rel := range allResults {
-		collectTuplesInto(&allTuples, rel)
+		if err := collectTuplesInto(&allTuples, rel); err != nil {
+			return nil, fmt.Errorf("iteration execution failed: %w", err)
+		}
 	}
 
 	return NewMaterializedRelation(symbols, allTuples), nil
@@ -583,28 +586,29 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 		<-done
 	}
 
-	// Check for errors and collect results
-	var allResults []Relation
+	// Check for errors and collect results. Consume each per-worker result via
+	// collectTuplesInto so a failed scan's deferred error is propagated rather
+	// than silently dropped by Size() materialization.
+	var allTuples []Tuple
+	var symbols []query.Symbol
 	for _, r := range results {
 		if r.err != nil {
 			return nil, fmt.Errorf("parallel iteration execution failed: %w", r.err)
 		}
-		if r.result != nil && r.result.Size() > 0 {
-			allResults = append(allResults, r.result)
+		if r.result == nil {
+			continue
+		}
+		if symbols == nil {
+			symbols = r.result.Symbols()
+		}
+		if err := collectTuplesInto(&allTuples, r.result); err != nil {
+			return nil, fmt.Errorf("parallel iteration execution failed: %w", err)
 		}
 	}
 
 	// Combine all results
-	if len(allResults) == 0 {
+	if symbols == nil {
 		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
-	}
-
-	// Union all results
-	var allTuples []Tuple
-	symbols := allResults[0].Symbols()
-
-	for _, rel := range allResults {
-		collectTuplesInto(&allTuples, rel)
 	}
 
 	return NewMaterializedRelation(symbols, allTuples), nil

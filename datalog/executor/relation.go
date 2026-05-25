@@ -1516,8 +1516,10 @@ func (p *ProductRelation) Project(symbols []query.Symbol) (Relation, error) {
 
 func (p *ProductRelation) Materialize() Relation {
 	var tuples []Tuple
-	_ = collectTuplesInto(&tuples, p)
-	return NewMaterializedRelationWithOptions(p.symbols, tuples, p.options)
+	err := collectTuplesInto(&tuples, p)
+	result := NewMaterializedRelationWithOptions(p.symbols, tuples, p.options)
+	result.err = err
+	return result
 }
 
 func (p *ProductRelation) Sort(orderBy []query.OrderByClause) Relation {
