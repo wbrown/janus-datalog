@@ -248,13 +248,14 @@ For every index, place all sort-relevant components first, then optional
 
 $$K = [\text{IndexPrefix}][\text{GroupComponents}][T{\downarrow}][\text{OtherComponents}][\text{AfterRef?}][\text{Op}]$$
 
-All 7 indices in this system:
+All 8 indices in this system:
 
 ```
 EAVT: [prefix][E][A][V][T↓][AfterRef?][Op]
 EATV: [prefix][E][A][T↓][V][AfterRef?][Op]
 AEVT: [prefix][A][E][V][T↓][AfterRef?][Op]
 AETV: [prefix][A][E][T↓][V][AfterRef?][Op]
+ATEV: [prefix][A][T↓][E][V][AfterRef?][Op]
 AVET: [prefix][A][V][E][T↓][AfterRef?][Op]
 VAET: [prefix][V][A][E][T↓][AfterRef?][Op]
 TAEV: [prefix][T↓][A][E][V][AfterRef?][Op]

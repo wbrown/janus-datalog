@@ -1,6 +1,6 @@
 # Janus Datalog Architecture
 
-**Last Updated**: February 2026
+**Last Updated**: May 2026 (v0.12.0)
 
 ## Overview
 
@@ -347,10 +347,31 @@ type Iterator interface {
     Next() bool
     Tuple() Tuple
     Close() error
+
+    // Error returns any error encountered during iteration. Callers MUST
+    // check Error() after Next() returns false to distinguish normal
+    // exhaustion from execution failure (e.g. Tier-3 blob decode failure
+    // surfacing only after the iterator has yielded a prefix of tuples).
+    Error() error
 }
 ```
 
 Composable lazy evaluation. Iterator implementations chain: `StorageScan → FilterIterator → ProjectIterator → DedupIterator`. Nothing materializes until `Next()` is called.
+
+**Iterator-error contract.** Storage errors can be deferred — a scan may
+yield several clean tuples before the underlying decode fails. Every
+intermediate operator (filter, project, dedup, hash-join probe side,
+union, anti-join, sort, materialization, projection-after-pattern) is
+required to propagate that deferred error: either through its own
+`Error()` after `Next()` returns false, or by attaching it to the result
+relation so the next public boundary observes it. A static guard test
+fails the build if any `collectTuplesInto` call site drops its error,
+and `Relation.Sorted()` returns `([]Tuple, error)` instead of just
+`[]Tuple` so that pre-sort materialization can surface deferred errors.
+The contract exists because partial tuples from a failed stream must
+never be reported as clean success — that pattern is how Tier-3 blob
+decode failures used to silently look like "predicate filtered all the
+rows out."
 
 ### QueryExecutor — Phase Execution
 
@@ -412,6 +433,18 @@ Returns all attributes for an entity with CRDT conflict resolution applied. Used
 - **Add-Wins Sets** (cardinality-many): Tracks add/remove operations; adds win over concurrent removes
 - **RGA** (cardinality-vector): Positional inserts with AfterRef chain; tombstones for deletes
 - **ElementID**: 16-byte transaction ID (8-byte Lamport clock + 8-byte ReplicaID) for causal ordering
+
+**LZ77+FSE compression with Tier-3 blob store.** Values above a size threshold
+are compressed with a custom LZ77+FSE codec (`datalog/codec/{compress,lz77,fse,sequences}.go`)
+and stored out-of-line in a content-addressed blob store
+(`datalog/storage/blob_store.go`); the index keys reference them by hash, so
+identical large values deduplicate automatically. The codec is deterministic
+(a hard correctness requirement when blobs are content-keyed), achieves
+3.6× compression on English prose and 10–13× on structured / repetitive data,
+and decompresses at 2.1–2.4 GB/s on Apple M5 Max. The whole pipeline is
+transparent at the storage layer — query execution sees the decompressed
+value as if it had been stored inline — and the `#lzj` EDN tagged literal
+preserves compressed form through export / import.
 
 ### Type System (`datalog/`)
 
@@ -496,9 +529,9 @@ EDN parsing (Clojure-style syntax) and query transformation. Supports: patterns,
 ### Other Packages
 
 - **`datalog/constraints/`** — Time range constraints for predicate pushdown
-- **`datalog/codec/`** — L85 encoding (sort-preserving Base85)
+- **`datalog/codec/`** — L85 encoding (sort-preserving Base85) and the LZ77+FSE compression codec (`compress.go`, `lz77.go`, `fse.go`, `sequences.go`)
 - **`datalog/edn/`** — EDN lexer/parser
-- **`datalog/experimental/`** — Disabled optimization experiments (decorrelation, subquery rewriting)
+- **`datalog/experimental/`** — Retired Selinger-style decorrelation path; production decorrelation now lives in the algebra optimizer (active by default inside `EnableAlgebraOptimizer`)
 
 ## Complexity Analysis
 

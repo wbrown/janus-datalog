@@ -16,7 +16,7 @@ An index defines a sort order for datoms. Each index name describes its key orde
 
 All indices use Tx↓ (descending via bitwise NOT). The CRDT-correctness distinction comes from **position**, not direction.
 
-**Available indices** (7 total): EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV
+**Available indices** (8 total): EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV
 
 **Removed**: VTEA (V → Tx↓ → E → A) — With V bound, effective sort is Tx↓ → E → A, making (E, A) groups non-contiguous. Same problem as T-unbound TAEV. VAET provides equivalent candidate discovery with correct (E, A) grouping.
 
@@ -146,13 +146,14 @@ Since Tx↓ sorts by the full 16-byte ElementID, ties are impossible. ∎
 | EATV  | E → A → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (E, A) — Thm 1(a)           |
 | AEVT  | A → E → V → Tx↓   | ✗ No           | ✓ Yes           | V before Tx breaks card-one           |
 | AETV  | A → E → Tx↓ → V   | ✓ Yes          | ✓ Yes           | Tx↓ after (A, E) — Thm 1(a)           |
+| ATEV  | A → Tx↓ → E → V   | T-or-A only    | T-or-A only     | Tx↓ before E breaks (E, A) grouping for plain A-scans; CRDT-correct when T is bound (Thm 1(b)) or when used for AsOf-bounded A-scans where the Tx↓ prefix gates entries before (E, A) grouping. Primary use is the O(1) attribute high-water-mark seek (first entry under `[A]` is the global max-Tx datom for A). |
 | AVET  | A → V → E → Tx↓   | ✗ No           | ✓ Yes           | V-bound hides other V (card-one only) |
 | VAET  | V → A → E → Tx↓   | ✗ No           | ✓ Yes           | V-bound hides other V (card-one only) |
 | TAEV  | Tx↓ → A → E → V   | T-bound only   | T-bound only    | Tx↓ primary — Thm 1(b)                |
 
 **Summary**:
-- Cardinality-one: EATV, AETV always correct; TAEV when T is bound
-- Cardinality-many: All 7 indices correct with CRDTResolvingIterator
+- Cardinality-one: EATV, AETV always correct; TAEV when T is bound; ATEV when T is bound or used for the bounded-Tx high-water seek
+- Cardinality-many: EAVT, EATV, AEVT, AETV, AVET, VAET correct with CRDTResolvingIterator; TAEV and ATEV require T binding (or, for ATEV, the high-water-seek usage pattern)
 
 ## Theorem 5: Candidate + Validate (Semi-Join Pattern)
 
@@ -313,12 +314,13 @@ func validateVBoundCandidate(store *Store, e, a, boundV interface{}) bool {
 
 ## Index Utility Analysis
 
-All 7 indices serve a purpose:
+All 8 indices serve a purpose:
 
 | Index  | Purpose                                                                            |
 |--------|------------------------------------------------------------------------------------|
 | EATV   | E-primary CRDT resolution, validation lookups                                      |
 | AETV   | A-primary CRDT resolution                                                          |
+| ATEV   | O(1) attribute high-water mark (first entry under `[A]` is global max-Tx for A); AsOf-by-attribute scans |
 | TAEV   | T-primary queries (time-travel, single transaction)                                |
 | AVET   | V-bound with A constant: card-many/vector resolution, card-one candidate discovery |
 | VAET   | V-bound with A variable: per-datom cardinality resolution                          |
@@ -333,9 +335,10 @@ All 7 indices serve a purpose:
 |----------------------|--------------------------------------------|------------------------------------|
 | V-bound direct       | ✗ Broken (LWW winner may have different V) | ✓ Works with CRDTResolvingIterator |
 | V-bound solution     | CRDTResolvingIterator + post-validate      | CRDTResolvingIterator directly     |
-| CRDT-correct indices | EATV, AETV, TAEV*                          | All 7                              |
+| CRDT-correct indices | EATV, AETV, TAEV*, ATEV†                   | EAVT, EATV, AEVT, AETV, AVET, VAET; TAEV* and ATEV† |
 
 *TAEV only when T is bound
+†ATEV is CRDT-correct when T is bound or used for the bounded-Tx high-water seek (first entry under `[A]`)
 
 **Key insights**:
 

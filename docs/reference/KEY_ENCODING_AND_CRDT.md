@@ -9,7 +9,7 @@ This document provides a comprehensive analysis of how Janus Datalog's key encod
 3. [Key Structure](#key-structure)
 4. [The Key IS the Value](#the-key-is-the-value)
 5. [The Bitwise NOT Trick](#the-bitwise-not-trick)
-6. [Seven Indices for CRDT Semantics](#seven-indices-for-crdt-semantics)
+6. [Eight Indices for CRDT Semantics](#eight-indices-for-crdt-semantics)
 7. [Unified Current and History](#unified-current-and-history)
 8. [L85 Encoding: Representation Only](#l85-encoding-representation-only)
 9. [Comparison with Other CRDT Systems](#comparison-with-other-crdt-systems)
@@ -194,23 +194,23 @@ This is why CRDT resolution can be truly O(1):
 
 There's no step 2-3. The key's sort order IS the resolution, and the key contains the value.
 
-### The "6× Indexing Overhead" Reframe
+### The "8× Indexing Overhead" Reframe
 
-The seven indices aren't "7× overhead pointing to data stored elsewhere."
+The eight indices aren't "8× overhead pointing to data stored elsewhere."
 
 Each index IS a complete copy of the data in a different sort order. There's no separate "tuple store" being indexed. The storage cost is:
 
 ```
-7 indices × datom size = total storage
+8 indices × datom size = total storage
 ```
 
 Not:
 
 ```
-1 tuple store + 6 indices pointing to it = total storage
+1 tuple store + 8 indices pointing to it = total storage
 ```
 
-This is more like 7 different sort orders of the same data than 7 indices plus a base table. The mental model from relational databases ("indices are overhead on top of tables") doesn't apply.
+This is more like 8 different sort orders of the same data than 8 indices plus a base table. The mental model from relational databases ("indices are overhead on top of tables") doesn't apply.
 
 ### What This Enables
 
@@ -258,9 +258,9 @@ Forward scan: encounters L200 first (the current value)
 
 ---
 
-## Seven Indices for CRDT Semantics
+## Eight Indices for CRDT Semantics
 
-The system maintains seven different index orderings, each optimized for specific CRDT operations:
+The system maintains eight different index orderings, each optimized for specific CRDT operations:
 
 | Index | Order | CRDT Use | When Selected |
 |-------|-------|----------|---------------|
@@ -268,6 +268,7 @@ The system maintains seven different index orderings, each optimized for specifi
 | **EAVT** | E→A→V→Tx↓ | Cardinality-Many (add-wins) | E+A bound, cardinality=many |
 | **AETV** | A→E→Tx↓→V | Cardinality-One (LWW), A-primary | A bound, E from input, cardinality=one |
 | **AEVT** | A→E→V→Tx↓ | Attribute scans (no CRDT resolution) | A bound, E unbound, cardinality=many |
+| **ATEV** | A→Tx↓→E→V | O(1) attribute high-water mark; AsOf-by-attribute | Cache freshness gate; A+Tx-bound, V-unbound |
 | **AVET** | A→V→E→Tx↓ | Value lookups | A+V bound |
 | **VAET** | V→A→E→Tx↓ | Reverse reference lookup | V bound (for refs) |
 | **TAEV** | Tx↓→A→E→V | Transaction log / time-travel | Time-based queries |
@@ -286,6 +287,7 @@ EAVT: [prefix][E][A][type+value][Tx↓][Op][AfterRef?]  - groups by value for ad
 EATV: [prefix][E][A][Tx↓][type+value][Op][AfterRef?]  - first entry is current (LWW), E-primary
 AETV: [prefix][A][E][Tx↓][type+value][Op][AfterRef?]  - first entry is current (LWW), A-primary
 AEVT: [prefix][A][E][type+value][Tx↓][Op][AfterRef?]  - by attribute (Tx ascending)
+ATEV: [prefix][A][Tx↓][E][type+value][Op][AfterRef?]  - first entry under [A] is global max-Tx for A
 AVET: [prefix][A][type+value][E][Tx↓][Op][AfterRef?]  - value lookup
 VAET: [prefix][type+value][A][E][Tx↓][Op][AfterRef?]  - reverse refs (V first!)
 TAEV: [prefix][Tx↓][A][E][type+value][Op][AfterRef?]  - transaction log
@@ -327,12 +329,12 @@ This means Datomic effectively maintains **8 index structures** (4 current + 4 h
 Janus stores ALL datoms (current and historical) in the SAME indices:
 
 ```
-Single Index Set: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV (7 indices)
+Single Index Set: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (8 indices)
     Contains: All datoms, all time, one structure
 ```
 
 **On every write:**
-1. Write new datom with new ElementID (7 index updates)
+1. Write new datom with new ElementID (8 index updates)
 2. That's it. No data movement.
 
 **To query current state:** Seek to (E,A), read first entry (bitwise NOT makes newest sort first)
@@ -342,7 +344,7 @@ Single Index Set: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV (7 indices)
 
 | Aspect | Datomic | Janus |
 |--------|---------|-------|
-| Index structures | 4 current + 4 history = 8 | 6 unified |
+| Index structures | 4 current + 4 history = 8 | 8 unified |
 | On write | Update current + move old to history | Write once |
 | Data movement | Yes (current → history) | None |
 | Current lookup | Query current segment | First entry in EATV |
@@ -366,9 +368,9 @@ Single Index Set: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV (7 indices)
 | System | What You Get | Actual Index Structures |
 |--------|--------------|------------------------|
 | Datomic | Current + History | 8 (4 per segment) |
-| Janus | Current + History + CRDT Resolution | 7 (unified) |
+| Janus | Current + History + CRDT Resolution + O(1) attribute high-water mark | 8 (unified) |
 
-Janus provides MORE functionality (CRDT semantics, time-travel via TAEV) with FEWER index structures because the unified design with bitwise NOT eliminates the need for segmentation.
+Janus provides MORE functionality (CRDT semantics, time-travel via TAEV, O(1) attribute-level freshness via ATEV) with the **same** number of index structures Datomic uses across its current+history segments, because the unified design with bitwise NOT eliminates the need for segmentation — and frees up an index slot to add ATEV for cache-freshness gating.
 
 ---
 
@@ -427,7 +429,7 @@ Not from encoding format.
 
 | System | Primary CRDT Mechanism | Ordering Primitive | Storage Model |
 |--------|----------------------|-------------------|---------------|
-| **Janus** | Key structure + indices | ElementID (Lamport + ReplicaID) | LSM-tree with 7 indices |
+| **Janus** | Key structure + indices | ElementID (Lamport + ReplicaID) | LSM-tree with 8 indices |
 | **Automerge** | Operation log + columnar encoding | OpID (Actor + Counter) | Compressed chunks |
 | **Yjs** | YATA algorithm | Vector clocks per document | Binary deltas |
 | **Riak** | Dotted Version Vectors | DVV (dot + vector clock) | Bitcask/LevelDB per vnode |
@@ -548,8 +550,16 @@ type Cache struct {
     // Per-(E,A) resolved views
     entries sync.Map // map[CacheKey]*CacheEntry
 
-    // Per-(E,A) max ElementID tracking - updated on every write
+    // Per-(E,A) max ElementID — updated atomically on every write.
+    // Drives per-(E,A) freshness without touching storage.
     maxVersions sync.Map // map[CacheKey]ElementID
+
+    // Per-attribute max ElementID — populated lazily via the storage-side
+    // O(1) ATEV seek. Used to decide whether to even start resolving any
+    // (E, A) pair for an A-bound query: if the attribute is unchanged
+    // since we cached it, all per-(E,A) entries under that A are also
+    // unchanged.
+    attrVersions sync.Map // map[Attribute]ElementID
 }
 
 type CacheEntry struct {
@@ -565,6 +575,9 @@ type CacheEntry struct {
 ```
 
 **Key insight:** The cache stores **resolved views**, not operation history.
+Freshness lives at **two granularities**: per-(E,A) for point lookups, and
+per-attribute for A-bound bulk scans. Per-(E,A) freshness is write-tracked
+in memory; per-attribute freshness is a single ATEV seek away.
 
 ### Cache Lifecycle
 
@@ -572,32 +585,49 @@ type CacheEntry struct {
 WRITE PATH (Transaction.Commit):
 ┌─────────────────────────────────────────────────────────────┐
 │ for each datom:                                             │
-│   1. Write to BadgerDB (all 7 indices)                      │
-│   2. cache.UpdateMaxVersion(key, elemID)  ← Track newest    │
+│   1. Write to BadgerDB (all 8 indices, ATEV included)       │
+│   2. cache.UpdateMaxVersion(key, elemID)  ← per-(E,A)       │
 │                                                             │
 │ After all writes:                                           │
-│   3. cache.Invalidate(touched)  ← Remove stale entries      │
+│   3. cache.Invalidate(touched)  ← remove stale per-(E,A)    │
+│      attrVersions is NOT updated here; it's reconciled on   │
+│      next IsAttributeFresh() call via an ATEV seek.         │
 └─────────────────────────────────────────────────────────────┘
 
-READ PATH (with cache):
+READ PATH — per-(E,A) (cache.GetOrResolve):
 ┌─────────────────────────────────────────────────────────────┐
-│ cache.GetOrResolve(key, resolver):                          │
-│   1. Load entry from cache                                  │
-│   2. Check: entry.version == maxVersions[key]?              │
-│      YES → Return cached (O(1))                             │
-│      NO  → Rebuild from storage, store in cache             │
+│ 1. Load entry from cache                                    │
+│ 2. Compare entry.version to maxVersions[key] (O(1) map)     │
+│    EQUAL → Return cached (O(1))                             │
+│    LESS  → Rebuild from storage, store in cache             │
 └─────────────────────────────────────────────────────────────┘
 
-READ PATH (without cache - direct storage):
+READ PATH — per-attribute (cache.IsAttributeFresh):
 ┌─────────────────────────────────────────────────────────────┐
-│ Direct storage scan:                                        │
-│   LWW: Seek EATV(E,A) → read first entry → done            │
-│   Set: Scan AEVT(A,E) → add-wins resolution                │
-│   Vector: Scan EATV(E,A) → RGA reconstruction              │
+│ 1. Load cached attrVersions[A]                              │
+│    MISS → store.MaxElementIDForAttribute(A)                 │
+│             (single forward Seek on ATEV [A] prefix; O(1)   │
+│             constant ≈ 1µs regardless of attribute size)    │
+│           → store it, return "must resolve"                 │
+│ 2. Compare to a fresh MaxElementIDForAttribute(A)           │
+│    EQUAL → All (E,A) entries under this A are fresh; skip   │
+│            any further per-(E,A) work for this attribute.   │
+│    LESS  → Attribute has changed; fall through to per-(E,A) │
+│            freshness checks per entity.                     │
+└─────────────────────────────────────────────────────────────┘
+
+READ PATH — bypass (no cache, direct storage):
+┌─────────────────────────────────────────────────────────────┐
+│ LWW:    Seek EATV(E,A)        → first entry                 │
+│ Set:    Scan AEVT(A,E) or EAVT → add-wins resolution        │
+│ Vector: Scan EATV(E,A)        → RGA reconstruction          │
+│ Attr-MaxTx: Seek ATEV(A)      → first entry (O(1))          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### The Freshness Check (O(1))
+### Two Freshness Checks at Two Granularities
+
+**Per-(E,A) — write-tracked, no I/O.**
 
 ```go
 // On every write:
@@ -605,12 +635,61 @@ cache.UpdateMaxVersion(key, elemID)  // O(1) map update
 
 // On every read:
 if entry.version == maxVersions[key] {
-    return entry  // Fresh!
+    return entry  // Fresh.
 }
-// Stale - rebuild from storage
+// Stale — rebuild from storage.
 ```
 
-No storage seek needed to check freshness. The `maxVersions` map is updated atomically on commit.
+The `maxVersions` map is updated atomically on commit, so per-(E,A)
+freshness never touches storage on the read path.
+
+**Per-attribute — storage-tracked via ATEV, O(1) seek.**
+
+```go
+// On the read path of an A-bound query:
+func (c *Cache) IsAttributeFresh(a Attribute, store Store) bool {
+    val, ok := c.attrVersions.Load(a)
+    if !ok {
+        // Not in the in-memory cache yet — populate from storage.
+        storeMax, _ := store.MaxElementIDForAttribute(a[:])
+        c.attrVersions.Store(a, storeMax)
+        return false  // "must resolve at least once"
+    }
+    storeMax, _ := store.MaxElementIDForAttribute(a[:])
+    return val.(ElementID) == storeMax
+}
+```
+
+`MaxElementIDForAttribute` is a **single forward Seek on the ATEV `[A]`
+prefix** — the first key under that prefix is the global max-Tx datom for A,
+because ATEV's `[A][Tx↓][E][V]` layout sorts highest Tx first. Constant time
+regardless of how many datoms exist for that attribute.
+
+Per-attribute freshness is **the gate**: if the attribute is unchanged
+since the last bulk scan, the executor skips the per-(E,A) path entirely
+for every entity under that A. For A-bound queries over large attributes,
+this is the difference between "scan every (E,A) in the cache" and "one
+ATEV seek and we're done."
+
+### Why the Cache Is Invalidated, Not Maintained, on Writes
+
+`UpdateMaxVersion` tracks the newest version without touching the
+resolved view. The view itself is only **invalidated** — actual
+resolution happens lazily on next read. `attrVersions` is updated even
+more lazily: writes don't touch it at all; the next `IsAttributeFresh`
+call re-fetches the ATEV high-water mark and reconciles.
+
+This separation matters because:
+
+1. Writes shouldn't pay the cost of re-resolving CRDTs on every commit
+   (especially for add-wins sets and RGA vectors, where resolution is
+   O(n)).
+2. ATEV's O(1) seek makes per-attribute reconciliation cheap enough to
+   happen on demand — no need to keep `attrVersions` write-current.
+3. Per-(E,A) freshness is the "hot" check (every point read does it), so
+   it pays the small in-memory update cost on writes. Per-attribute
+   freshness is the "warm" check (gates bulk scans), so it can afford a
+   1µs ATEV seek per check.
 
 ### Why the Cache Exists (Asymmetric by Cardinality)
 
@@ -810,7 +889,7 @@ There's no incremental update for RGA that's cheaper than rebuild.
 | **Automerge** | Mutate field | Memory only | ~1-10µs | Append op to in-memory log |
 | **Yjs** | Insert/delete | Memory only | ~1-5µs | YATA insertion in memory |
 | **Riak** | Write | Durable (replicated) | ~1-10ms | Vnode write, DVV update, replication |
-| **Janus** | Write (any) | Durable (WAL) | **~25-35µs** | WAL append + memtable insert × 7 indices |
+| **Janus** | Write (any) | Durable (WAL) | **~25-35µs** | WAL append + memtable insert × 8 indices |
 
 **Note on Janus write performance:**
 - Writes go to WAL (Write-Ahead Log) first - this is fast sequential I/O
@@ -894,8 +973,8 @@ There's no incremental update for RGA that's cheaper than rebuild.
 | **The key IS the value** | No pointer chasing, every index is covering, O(1) data access |
 | **Fixed 16-byte ElementID** | O(1) size regardless of replica count |
 | **Bitwise NOT on Tx** | Forward scan = newest first = O(1) current value |
-| **Unified current/history** | 7 indices vs Datomic's 8, no data movement on writes |
-| **Seven indices** | Cardinality-aware access patterns |
+| **Unified current/history** | 8 unified indices vs Datomic's 4+4 segmented, no data movement on writes |
+| **Eight indices** | Cardinality-aware access patterns; ATEV adds O(1) attribute high-water mark |
 | **LSM-tree (BadgerDB)** | Natural append-only for CRDT history |
 | **Value types for hot paths** | No heap allocation in decode/encode |
 | **No separate CRDT layer** | Resolution IS the index access |
@@ -923,7 +1002,7 @@ Most CRDT systems require loading and reconstructing documents to access data. J
 - **LWW**: Seek + read first key = current value is IN the key (O(1) in practice)
 - **Sets**: Scan keys grouped by value + add-wins comparison
 - **Vectors**: Load keys + RGA graph traversal
-- **Unified storage**: Current and historical values in same indices (vs Datomic's 8 index structures, Janus uses 7)
+- **Unified storage**: Current and historical values in same indices (Datomic uses 4+4 segmented; Janus uses 8 unified, with ATEV added for O(1) attribute high-water mark)
 
 The cache is optional for LWW, essential for repeated set/vector access, and uses invalidation (not write-through) because it stores resolved views rather than operations.
 

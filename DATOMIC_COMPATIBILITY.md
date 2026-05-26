@@ -23,7 +23,7 @@ Janus-datalog implements most of Datomic's Datalog query language. The core quer
 - ✅ Query Builder (qb): compile-time safe query construction with IDE support
 
 **Storage:**
-- ✅ BadgerDB persistent storage with CRDT model and 7 indices (EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV)
+- ✅ BadgerDB persistent storage with CRDT model and 8 indices (EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV)
 - ✅ Export/Import to EDN format for backup and migration
 
 **Not Implemented:**
@@ -304,7 +304,7 @@ Every datom includes a full ElementID (Lamport + ReplicaID) for temporal orderin
 ### 10. Storage Model
 
 - **EAVT model** with Entity-Attribute-Value-Transaction tuples
-- **Seven indices**: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution)
+- **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution; ATEV gives O(1) attribute high-water mark and AsOf-by-attribute access)
 - **BadgerDB backend** for persistence
 - **L85 encoding** for sortable, efficient keys
 - **Export/Import** to EDN format for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md))
@@ -727,7 +727,7 @@ No advanced database operations:
 - Uses BadgerDB instead of Datomic's segmented storage
 - L85 encoding (custom Base85) for sortable keys
 - Fixed 69-byte keys: E(20) + A(32) + Tx(16) + Op(1)
-- Seven indices: EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV
+- Eight indices: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV
 
 ### 2. Transaction Model
 - ElementID-based transactions (Lamport clock + ReplicaID)

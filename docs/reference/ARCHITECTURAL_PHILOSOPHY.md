@@ -520,7 +520,7 @@ db.DefineAttribute(":name", TypeString, CardinalityOne)  // Add validation later
 | LWW resolution | 965ns (O(1) from key encoding) |
 | CRDT overhead | Negative (1.9× faster than pre-CRDT) |
 | Streaming speedup | 2.22× with 52% memory reduction |
-| Index count vs Datomic | 6 unified vs 8 segmented |
+| Index count vs Datomic | 8 unified vs 4+4 segmented |
 | Production readiness | ~85% with simple foundation |
 
 ### The Philosophy in One Line

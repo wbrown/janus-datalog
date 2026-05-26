@@ -18,11 +18,11 @@ You want to query these efficiently:
 
 **Problem**: Different queries need different orderings. There's no single sort that's optimal for everything.
 
-**Solution**: Store the same data sorted 7 different ways. Pick the best one per query.
+**Solution**: Store the same data sorted 8 different ways. Pick the best one per query.
 
 ---
 
-## The 7 Indices (Think: 7 Different Acceleration Structures)
+## The 8 Indices (Think: 8 Different Acceleration Structures)
 
 | Index | Sort Order | Game Engine Analogy |
 |-------|------------|---------------------|
@@ -30,11 +30,14 @@ You want to query these efficiently:
 | **EATV** | Entity → Attr → Tx↓ → Val | LWW lookup: "Get current value" (E-primary CRDT) |
 | **AEVT** | Attr → Entity → Val → Tx | Component array: "Give me all Health components" |
 | **AETV** | Attr → Entity → Tx↓ → Val | LWW lookup: "Get current value" (A-primary CRDT) |
+| **ATEV** | Attr → Tx↓ → Entity → Val | "What's the newest write to this component, anywhere?" — O(1) high-water mark, AsOf-by-attribute |
 | **AVET** | Attr → Val → Entity → Tx | Inverted index: "Find all entities with Health=100" |
 | **VAET** | Val → Attr → Entity → Tx | Reverse refs: "Who's referencing this entity?" |
 | **TAEV** | Tx → Attr → Entity → Val | Timeline: "What changed this frame/tick?" |
 
 **EATV/AETV note**: These indices store Tx with bitwise NOT for descending order, so the first entry is always the newest (LWW winner). They enable O(1) current-value lookup for CRDT resolution.
+
+**ATEV note**: Same Tx↓ trick, but Tx sorts immediately after the attribute. The first key under `[A]` is the global max-Tx datom for that attribute — used for O(1) attribute-level cache freshness checks ("has anyone written to `:health` since the last time I looked?") and AsOf-by-attribute scans bounded to a transaction.
 
 **Key insight**: This is like having both an octree AND a BVH AND a grid AND a kd-tree. Each structure is optimal for certain queries. You don't traverse all of them—you pick the right one.
 
@@ -42,16 +45,23 @@ You want to query these efficiently:
 
 ## Fixed-Size Keys (Think: Vertex Buffer Stride)
 
-Every index key is **72 bytes fixed**, laid out like a vertex buffer:
+Every index key is **69 bytes fixed** (plus variable-size V and an optional
+16-byte AfterRef for RGA ops), laid out like a vertex buffer:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ E: 20 bytes │ A: 32 bytes │ V: variable │ Tx: 20 bytes │
-└─────────────────────────────────────────────────────────┘
-     ↑              ↑              ↑            ↑
-   Entity ID    Attribute      Value      Transaction
-  (SHA1 hash)   (keyword)     (any type)    (timestamp)
+┌──────────────────────────────────────────────────────────────────────────┐
+│ E: 20 bytes │ A: 32 bytes │ Tx: 16 bytes │ V: variable │ Op: 1 │ AfRef?  │
+└──────────────────────────────────────────────────────────────────────────┘
+     ↑              ↑              ↑             ↑          ↑       ↑
+  Entity ID     Attribute     Transaction      Value     CRDT op   RGA-only
+ (SHA1 hash)    (keyword)   (Lamport+Repl.)  (any type)            (16 bytes
+                                                                    if Op ∈ {3,4})
 ```
+
+Component order shown above is logical — actual byte order **varies per index**
+(EAVT puts V between A and Tx; EATV puts Tx between A and V; ATEV puts Tx
+right after A; etc.). Op is always last so AfterRef presence can be decoded
+without parsing V.
 
 **Why this matters**:
 - Like GPU vertex attributes at fixed offsets
@@ -124,23 +134,25 @@ Pattern `[?e :assigned-to weapon_7]`:
 
 | Optimization | Game Equivalent |
 |--------------|-----------------|
-| 7 pre-sorted indices | Multiple acceleration structures |
-| Fixed 72-byte keys | Fixed stride vertex buffers |
+| 8 pre-sorted indices | Multiple acceleration structures |
+| Fixed 69-byte keys (+ variable V) | Fixed stride vertex buffers |
 | L85 sort-preserving encoding | Normalized coords that compare correctly |
 | Prefix range scans | Frustum culling on sorted data |
 | Key-only iteration | No fetching—data IS the index |
 | Index auto-selection | Picking octree vs BVH per query |
+| LZ77+FSE compression for large values | Texture compression — same data, smaller footprint |
 
 ---
 
 ## Quick Reference: Which Index for Which Query
 
 ```
-"Get all of entity X"           → EAVT (Entity first)
-"Get all :health values"        → AEVT (Attribute first)
-"Find entities where :hp = 100" → AVET (Attr+Value first)
-"Who references entity Y?"      → VAET (Value first)
-"What changed in transaction T?"→ TAEV (Transaction first)
+"Get all of entity X"             → EAVT (Entity first)
+"Get all :health values"          → AEVT (Attribute first)
+"Find entities where :hp = 100"   → AVET (Attr+Value first)
+"Who references entity Y?"        → VAET (Value first)
+"What changed in transaction T?"  → TAEV (Transaction first)
+"When was :health last touched?"  → ATEV (Attr → newest-Tx first)
 ```
 
 ---

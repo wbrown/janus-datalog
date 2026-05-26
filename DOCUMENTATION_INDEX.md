@@ -17,11 +17,29 @@
 
 ## Reference Documentation
 
-Configuration and optimization guides in `docs/reference/`:
-- **[SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
+Configuration, semantics, and proofs in `docs/reference/`:
+
+**Storage and CRDT:**
 - **[CRDT.md](docs/reference/CRDT.md)** - CRDT storage semantics: LWW, add-wins sets, RGA vectors, EA cache
-- **[PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
+- **[CRDT_UNIQUE_SEMANTICS.md](docs/reference/CRDT_UNIQUE_SEMANTICS.md)** - Uniqueness resolution under CRDT writes
+- **[CRDT_STREAMING_RESOLUTION.md](docs/reference/CRDT_STREAMING_RESOLUTION.md)** - The streaming CRDT iterator design
+- **[KEY_ENCODING_AND_CRDT.md](docs/reference/KEY_ENCODING_AND_CRDT.md)** - Key layout, bitwise-NOT Tx, the eight indices, LZ77+FSE compression, Tier-3 blob store
+- **[INDEX_SELECTION_PROOF.md](docs/reference/INDEX_SELECTION_PROOF.md)** - Proof of CRDT-correct index selection by binding pattern
+- **[OP_POSITION_PROOF.md](docs/reference/OP_POSITION_PROOF.md)** - Why the Op byte goes last (key-decoding correctness)
+- **[SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
 - **[EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md)** - Database export/import to EDN format for backup and migration
+
+**Query system:**
+- **[PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
+- **[QUERY_BUILDER.md](docs/reference/QUERY_BUILDER.md)** - Type-safe Go query builder (qb package)
+- **[QUERY_INTO.md](docs/reference/QUERY_INTO.md)** - Typed query results into Go structs
+- **[REFLECT.md](docs/reference/REFLECT.md)** - Struct ↔ datom reflection API
+- **[MULTI_SOURCE.md](docs/reference/MULTI_SOURCE.md)** - Cross-source joins, in-memory sources, `SliceSource[T]`, custom matchers
+- **[OR_FALLBACK_SEMANTICS.md](docs/reference/OR_FALLBACK_SEMANTICS.md)** - `or` (union) vs `or-default` (fallback) semantics
+- **[TUPLE_GROUND.md](docs/reference/TUPLE_GROUND.md)** - Multi-variable `(ground …)` binding
+
+**Philosophy:**
+- **[ARCHITECTURAL_PHILOSOPHY.md](docs/reference/ARCHITECTURAL_PHILOSOPHY.md)** - The "why" behind the architecture choices
 
 ## Current Work in Progress
 

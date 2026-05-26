@@ -806,16 +806,18 @@ Analyzing stock option positions required:
 
 ```go
 type Datom struct {
-    E  Identity  // Entity (SHA1 hash + L85 encoding)
-    A  Keyword   // Attribute (e.g., :user/name)
-    V  Value     // Any value (interface{})
-    Tx uint64    // Transaction ID / timestamp
+    E        Identity   // Entity (SHA1 hash + L85 encoding)
+    A        Keyword    // Attribute (e.g., :user/name)
+    V        Value      // Any value (interface{})
+    Tx       ElementID  // 16-byte (Lamport, ReplicaID) for CRDT causal ordering
+    Op       CRDTOp     // None / Add / Remove / RGA-Insert / RGA-Tombstone
+    AfterRef ElementID  // RGA position reference (only set when Op.HasAfterRef())
 }
 ```
 
 Every fact is a datom. The entire database is just a collection of datoms with multiple indices.
 
-### Seven Indices for Fast Queries
+### Eight Indices for Fast Queries
 
 | Index | Primary Use Case |
 |-------|-----------------|
@@ -823,11 +825,12 @@ Every fact is a datom. The entire database is just a collection of datoms with m
 | **EATV** | Current value for entity+attribute (cardinality-one LWW) |
 | **AEVT** | Find all entities with an attribute |
 | **AETV** | A-primary CRDT queries (cardinality-one LWW) |
+| **ATEV** | O(1) attribute high-water mark; AsOf-by-attribute scans |
 | **AVET** | Find entities by attribute value |
 | **VAET** | Reverse lookup (who references this entity?) |
 | **TAEV** | Time-based queries |
 
-The EATV and AETV indices store Tx with bitwise NOT for descending order, enabling O(1) current-value lookup (first entry = highest Tx = LWW winner). The query planner picks the best index based on which values are bound in your pattern.
+The EATV, AETV, and ATEV indices store Tx with bitwise NOT for descending order, enabling O(1) current-value lookup (first entry = highest Tx = LWW winner). ATEV's `[A][Tx↓][E][V]` ordering also gives an O(1) "newest Tx anywhere for this attribute" seek — used as a cache-freshness gate. The query planner picks the best index based on which values are bound in your pattern.
 
 ### Type System: Direct Go Types
 

@@ -28,20 +28,23 @@ The vector length must match the number of binding variables.
 [(ground [:none 0]) [?status ?count]]
 ```
 
-## Primary Use Case: OR Fallback
+## Primary Use Case: or-default Fallback
 
-When a subquery returns multiple values, provide defaults in the fallback branch:
+When a subquery returns multiple values, provide defaults in the fallback branch.
+This is `or-default`, not `or` — `or` is pure Datomic union semantics (all branches
+contribute), `or-default` short-circuits to the first non-empty branch:
 
 ```datalog
 [:find ?scenario ?taskCount ?totalTokens ?totalDuration
  :where [?scenario :scenario/name ?name]
-        (or [(q [:find (count ?t) (sum ?tok) (sum ?dur)
-                 :in $ ?s
-                 :where [?t :task/scenario ?s]
-                        [?t :task/tokens ?tok]
-                        [?t :task/duration ?dur]]
-               $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
-            [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])]
+        (or-default
+          [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+               :in $ ?s
+               :where [?t :task/scenario ?s]
+                      [?t :task/tokens ?tok]
+                      [?t :task/duration ?dur]]
+             $ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
+          [(ground [0 0 0]) [?taskCount ?totalTokens ?totalDuration]])]
 ```
 
 Without tuple ground, the fallback requires N separate expressions:
@@ -57,7 +60,7 @@ Without tuple ground, the fallback requires N separate expressions:
 ```go
 count, tokens, duration := qb.NewVar("count"), qb.NewVar("tokens"), qb.NewVar("duration")
 
-qb.Or().
+qb.OrDefault().
     Branch(/* subquery branch */).
     Branch(qb.TupleGround(0, 0, 0).As(count, tokens, duration))
 ```
