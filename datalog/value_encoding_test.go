@@ -267,7 +267,7 @@ func TestEncodeValue_SafetyNet(t *testing.T) {
 	// High-entropy data that won't compress
 	input := make([]byte, 300)
 	for i := range input {
-		input[i] = byte((i * 137 + 43) % 256) // pseudo-random, high entropy
+		input[i] = byte((i*137 + 43) % 256) // pseudo-random, high entropy
 	}
 	str := string(input)
 

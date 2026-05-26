@@ -15,11 +15,11 @@ import (
 
 // Attribute definition map keys.
 var (
-	kwDBValueType       = datalog.NewKeyword(":db/valueType")
-	kwDBCardinality     = datalog.NewKeyword(":db/cardinality")
-	kwDBUnique          = datalog.NewKeyword(":db/unique")
-	kwDBDoc             = datalog.NewKeyword(":db/doc")
-	kwDBUniqueElements  = datalog.NewKeyword(":db/unique-elements")
+	kwDBValueType      = datalog.NewKeyword(":db/valueType")
+	kwDBCardinality    = datalog.NewKeyword(":db/cardinality")
+	kwDBUnique         = datalog.NewKeyword(":db/unique")
+	kwDBDoc            = datalog.NewKeyword(":db/doc")
+	kwDBUniqueElements = datalog.NewKeyword(":db/unique-elements")
 )
 
 // Value-type keywords.

@@ -221,4 +221,3 @@ func Reconstruct(sb *SequenceBlock) []byte {
 
 	return out
 }
-

@@ -44,4 +44,3 @@ func getBlob(db *badger.DB, hash [20]byte) ([]byte, error) {
 	}
 	return result, nil
 }
-

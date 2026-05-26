@@ -165,7 +165,7 @@ func TestCompressedKey_AVET_DifferentValues(t *testing.T) {
 func TestCompressedKey_MixedTiers(t *testing.T) {
 	enc := compressedEncoder()
 
-	shortStr := "short" // Tier 1: raw
+	shortStr := "short"                                                     // Tier 1: raw
 	longStr := strings.Repeat("This is a longer compressible string. ", 20) // Tier 2: compressed
 
 	d1 := makeCompressDatom(shortStr)

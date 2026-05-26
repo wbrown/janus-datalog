@@ -204,8 +204,8 @@ func BenchmarkUniqueRead_DeepFallback(b *testing.B) {
 	defer db.Close()
 
 	email := datalog.NewKeyword(":user/email")
-	const n = 200           // entities
-	const historyDepth = 5  // assertions per user (each superseded)
+	const n = 200          // entities
+	const historyDepth = 5 // assertions per user (each superseded)
 
 	users := make([]datalog.Identity, n)
 	for u := 0; u < n; u++ {

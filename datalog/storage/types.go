@@ -245,4 +245,3 @@ func toStorageValue(v interface{}) datalog.Value {
 		return datalog.String(fmt.Sprintf("%v", v))
 	}
 }
-

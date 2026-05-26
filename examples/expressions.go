@@ -113,7 +113,7 @@ func main() {
 			qb.Pat(e, qb.Kw(":person/name"), name),
 			qb.Pat(e, qb.Kw(":person/salary"), salary),
 			qb.Ground(0.30).As(taxRate),
-			qb.Mul(salary, taxRate).As(afterTax), // this computes salary * tax_rate, not after-tax
+			qb.Mul(salary, taxRate).As(afterTax),  // this computes salary * tax_rate, not after-tax
 			qb.Sub(salary, afterTax).As(afterTax), // net pay
 		).
 		OrderBy(qb.Desc(salary)).

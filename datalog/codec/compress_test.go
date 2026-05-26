@@ -382,10 +382,10 @@ func TestCompress_Ratio_SourceCode(t *testing.T) {
 
 // goldenTest defines a golden test case.
 type goldenTest struct {
-	name           string
-	input          []byte
-	expectedHex    string // hex-encoded expected compressed output (empty = not yet recorded)
-	minRatio       float64
+	name        string
+	input       []byte
+	expectedHex string // hex-encoded expected compressed output (empty = not yet recorded)
+	minRatio    float64
 }
 
 // Golden tests: frozen compressed outputs. If ANY of these change, the codec

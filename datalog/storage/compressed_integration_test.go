@@ -397,10 +397,10 @@ func TestCompressedIntegration_MixedValues(t *testing.T) {
 
 	// Write a mix of short (raw) and long (compressed) values
 	tx := db.NewTransaction()
-	tx.Add(entity, datalog.NewKeyword(":test/name"), "Alice")                     // Tier 1
+	tx.Add(entity, datalog.NewKeyword(":test/name"), "Alice")                       // Tier 1
 	tx.Add(entity, datalog.NewKeyword(":test/content"), longString("content", 500)) // Tier 2
-	tx.Add(entity, datalog.NewKeyword(":test/age"), int64(30))                     // non-string
-	tx.Add(entity, datalog.NewKeyword(":test/active"), true)                       // non-string
+	tx.Add(entity, datalog.NewKeyword(":test/age"), int64(30))                      // non-string
+	tx.Add(entity, datalog.NewKeyword(":test/active"), true)                        // non-string
 	_, err := tx.Commit()
 	require.NoError(t, err)
 

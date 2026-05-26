@@ -758,9 +758,9 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		// Stream: wrap the subquery's iterator and emit prefix++row per
 		// Next(). No buffering.
 		wrapped := &prefixingIterator{
-			inner:    result.Iterator(),
-			prefix:   prefix,
-			bodyLen:  len(b.Variables),
+			inner:   result.Iterator(),
+			prefix:  prefix,
+			bodyLen: len(b.Variables),
 		}
 		return NewStreamingRelationWithOptions(outSymbols, wrapped, result.Options()), nil
 

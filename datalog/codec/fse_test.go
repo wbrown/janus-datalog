@@ -826,4 +826,3 @@ func TestFSE_Decompress_Truncated(t *testing.T) {
 		assert.Error(t, err, "cutoff=%d should error", cutoff)
 	}
 }
-

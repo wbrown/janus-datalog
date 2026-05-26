@@ -205,7 +205,7 @@ func main() {
 	post1 := datalog.NewIdentity("post:alice:1")
 
 	tx = d.NewTransaction()
-	tx.Add(alice, follows, bob) // reference: alice -> bob
+	tx.Add(alice, follows, bob)      // reference: alice -> bob
 	tx.Add(post1, postAuthor, alice) // reference: post -> alice
 	tx.Add(post1, postContent, "Hello Datalog!")
 	if _, err := tx.Commit(); err != nil {

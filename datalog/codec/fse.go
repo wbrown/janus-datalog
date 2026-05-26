@@ -19,10 +19,10 @@ import (
 
 // FSE constants
 const (
-	fseMaxTableLog    = 12
-	fseMinTableLog    = 5
+	fseMaxTableLog     = 12
+	fseMinTableLog     = 5
 	fseDefaultTableLog = 8 // good default for byte-alphabet data
-	fseMaxSymbolValue = 255
+	fseMaxSymbolValue  = 255
 )
 
 // ---- Bit I/O ----
@@ -227,9 +227,9 @@ type symbolTransform struct {
 type fseTable struct {
 	tableLog    int
 	maxSymbol   int
-	normCounts  []int16          // normalized counts per symbol
-	decodeTable []fseDecodeEntry // indexed by state [0, tableSize)
-	stateTable  []uint16         // encode: maps reduced state + offset → full state
+	normCounts  []int16           // normalized counts per symbol
+	decodeTable []fseDecodeEntry  // indexed by state [0, tableSize)
+	stateTable  []uint16          // encode: maps reduced state + offset → full state
 	symbolTT    []symbolTransform // encode: per-symbol transform parameters
 }
 

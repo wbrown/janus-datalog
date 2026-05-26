@@ -273,7 +273,7 @@ func (e *BinaryKeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]by
 		}
 		copy(attr[:], key[0:attrSize])
 		tx = txFromDescending(key[attrSize : attrSize+txSize])
-		copy(entity[:], key[attrSize+txSize : attrSize+txSize+entitySize])
+		copy(entity[:], key[attrSize+txSize:attrSize+txSize+entitySize])
 		vStart := attrSize + txSize + entitySize
 		value = key[vStart : len(key)-tailSize]
 

@@ -35,7 +35,7 @@ type Person struct {
 	Email      string           `datalog:"person/email"`
 	City       string           `datalog:"person/city"`
 	Active     bool             `datalog:"person/active"`
-	Tags       []string         `datalog:"person/tags"`     // cardinality-many
+	Tags       []string         `datalog:"person/tags"`       // cardinality-many
 	Department *Department      `datalog:"person/department"` // ref -> nested pull
 }
 

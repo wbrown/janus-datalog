@@ -75,9 +75,10 @@ func TestWildcardPull_UniqueFallback(t *testing.T) {
 // applies walk-based resolution through the ResolveLWW cache path.
 //
 // Expected behavior: not fully specified. Reasonable interpretations:
-//   (a) Return alice's latest raw Set (ignoring supersession by bob)
-//   (b) Return nil/fail (history-mode semantics don't define a single
-//       current value)
+//
+//	(a) Return alice's latest raw Set (ignoring supersession by bob)
+//	(b) Return nil/fail (history-mode semantics don't define a single
+//	    current value)
 //
 // Current behavior: likely applies the walk via ResolveLWW, returning
 // the fallback value. That's arguably incorrect — history mode should

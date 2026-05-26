@@ -18,7 +18,7 @@ type IndexedMemoryMatcher struct {
 	entityIndex    map[datalog.Identity][]int // E (interned pointer) → datom positions
 	attributeIndex map[string][]int           // A.String() → datom positions
 	valueIndex     map[uint64][]int           // hash(V) → datom positions (NOTE: values are interface{}, indexed by hash; collisions filtered by exact match)
-	eavIndex       map[eaIndexKey][]int        // (E, A) interned pointers → datom positions (all, for cardinality-many)
+	eavIndex       map[eaIndexKey][]int       // (E, A) interned pointers → datom positions (all, for cardinality-many)
 
 	// Optional collector for annotations (protected by collectorMutex for concurrent access)
 	collectorMutex sync.RWMutex

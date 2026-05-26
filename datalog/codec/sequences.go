@@ -19,12 +19,12 @@ var litLenTable = []struct {
 	maxVal    int
 	extraBits int
 }{
-	{0, 0}, {1, 0}, {2, 0}, {3, 0},     // codes 0-3
-	{4, 0}, {5, 0}, {6, 0}, {7, 0},     // codes 4-7
-	{8, 0}, {9, 0}, {10, 0}, {11, 0},   // codes 8-11
+	{0, 0}, {1, 0}, {2, 0}, {3, 0}, // codes 0-3
+	{4, 0}, {5, 0}, {6, 0}, {7, 0}, // codes 4-7
+	{8, 0}, {9, 0}, {10, 0}, {11, 0}, // codes 8-11
 	{12, 0}, {13, 0}, {14, 0}, {15, 0}, // codes 12-15
 	{17, 1}, {19, 1}, {23, 2}, {31, 3}, // codes 16-19
-	{47, 4}, {79, 5}, {143, 6}, {271, 7},       // codes 20-23
+	{47, 4}, {79, 5}, {143, 6}, {271, 7}, // codes 20-23
 	{527, 8}, {1039, 9}, {2063, 10}, {4111, 11}, // codes 24-27
 	{8207, 12}, {16399, 13}, {32783, 14}, {65551, 15}, // codes 28-31
 	{131087, 16}, {262159, 17}, {524303, 18}, {1048591, 19}, // codes 32-35
@@ -36,9 +36,9 @@ var matchLenTable = []struct {
 	maxVal    int
 	extraBits int
 }{
-	{0, 0}, {1, 0}, {2, 0}, {3, 0},     // codes 0-3 (lengths 3-6)
-	{4, 0}, {5, 0}, {6, 0}, {7, 0},     // codes 4-7 (lengths 7-10)
-	{8, 0}, {9, 0}, {10, 0}, {11, 0},   // codes 8-11 (lengths 11-14)
+	{0, 0}, {1, 0}, {2, 0}, {3, 0}, // codes 0-3 (lengths 3-6)
+	{4, 0}, {5, 0}, {6, 0}, {7, 0}, // codes 4-7 (lengths 7-10)
+	{8, 0}, {9, 0}, {10, 0}, {11, 0}, // codes 8-11 (lengths 11-14)
 	{12, 0}, {13, 0}, {14, 0}, {15, 0}, // codes 12-15 (lengths 15-18)
 	{17, 1}, {19, 1}, {23, 2}, {31, 3}, // codes 16-19
 	{47, 4}, {79, 5}, {143, 6}, {271, 7}, // codes 20-23
@@ -52,17 +52,17 @@ var matchLenTable = []struct {
 // EncodedStreams holds the three parallel streams produced from sequences,
 // ready for FSE compression.
 type EncodedStreams struct {
-	LitLenCodes  []byte   // FSE-compressible codes for literal lengths
-	LitLenExtra  []uint32 // extra bits values for literal lengths
-	LitLenBits   []int    // number of extra bits per literal length
+	LitLenCodes []byte   // FSE-compressible codes for literal lengths
+	LitLenExtra []uint32 // extra bits values for literal lengths
+	LitLenBits  []int    // number of extra bits per literal length
 
 	MatchLenCodes []byte   // FSE-compressible codes for match lengths
 	MatchLenExtra []uint32 // extra bits values for match lengths
 	MatchLenBits  []int    // number of extra bits per match length
 
-	OffsetCodes  []byte   // FSE-compressible codes for offsets
-	OffsetExtra  []uint32 // extra bits values for offsets
-	OffsetBits   []int    // number of extra bits per offset
+	OffsetCodes []byte   // FSE-compressible codes for offsets
+	OffsetExtra []uint32 // extra bits values for offsets
+	OffsetBits  []int    // number of extra bits per offset
 }
 
 // EncodeSequences converts a slice of Sequences into three parallel streams.

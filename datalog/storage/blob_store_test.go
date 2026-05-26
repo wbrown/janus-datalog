@@ -534,9 +534,9 @@ func TestTier3_EntityScan_MixedTiers(t *testing.T) {
 	defer cleanup()
 
 	entity := datalog.NewIdentity("mixed-tier-entity")
-	smallValue := "short name"                                          // Tier 1
-	medValue := strings.Repeat("medium content for tier two. ", 20)     // Tier 2
-	bigValue := makeTier3Data(100000)                                   // Tier 3
+	smallValue := "short name"                                      // Tier 1
+	medValue := strings.Repeat("medium content for tier two. ", 20) // Tier 2
+	bigValue := makeTier3Data(100000)                               // Tier 3
 	skipIfNotTier3Bytes(t, bigValue)
 
 	tx := db.NewTransaction()

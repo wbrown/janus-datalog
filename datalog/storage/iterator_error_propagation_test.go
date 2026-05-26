@@ -51,10 +51,10 @@ func (it *failingIterator) Datom() (*datalog.Datom, error) {
 	return &d, nil
 }
 
-func (it *failingIterator) Close() error               { return nil }
-func (it *failingIterator) Seek(key []byte)            {}
+func (it *failingIterator) Close() error                 { return nil }
+func (it *failingIterator) Seek(key []byte)              {}
 func (it *failingIterator) ElementID() datalog.ElementID { return datalog.ElementID{} }
-func (it *failingIterator) Error() error               { return it.err }
+func (it *failingIterator) Error() error                 { return it.err }
 
 // TestIterator_ErrorPropagationContract locks in the Iterator interface
 // contract: Error() returns the first error encountered. Implementations

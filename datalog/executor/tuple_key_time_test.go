@@ -49,7 +49,7 @@ func TestTupleKeyMap_TimeValuedTuplesRoundTrip(t *testing.T) {
 	lookupTime := time.Date(2026, 5, 24, 9, 30, 0, 0, time.UTC)
 	key := tupleKeyAtDepth(Tuple{id, lookupTime}, 32)
 	if _, ok := m.Get(key); !ok {
-		t.Fatalf("TupleKeyMap lost a time-valued tuple: Get missed an equal key "+
+		t.Fatalf("TupleKeyMap lost a time-valued tuple: Get missed an equal key " +
 			"(time.Time hashed nondeterministically)")
 	}
 }
