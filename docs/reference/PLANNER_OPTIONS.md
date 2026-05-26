@@ -28,8 +28,7 @@ if a doc says an option is default-active, `DefaultPlannerOptions()` sets it, an
 
 ```go
 type PlannerOptions struct {
-    EnableSemanticRewriting bool       // opt-in
-    Cache                   *PlanCache // set by the Database
+    Cache *PlanCache // set by the Database
 
     EnableAlgebraOptimizer    bool // default-active
     EnableScanSharing         bool // opt-in
@@ -73,7 +72,7 @@ EnableDebugLogging:         false
 IndexNestedLoopThreshold:   0      // always HashJoinScan
 ```
 
-So, off by default (opt-in): `EnableSemanticRewriting`, `UseStreamingSubqueryUnion`,
+So, off by default (opt-in): `UseStreamingSubqueryUnion`,
 `UseComponentizedSubquery`, `EnableScanSharing`, `EnableEntityPrefetch`,
 `EnableSymmetricHashJoin`, `EnableStreamingJoins`, `EnableStreamingAggregationDebug`.
 
@@ -88,12 +87,6 @@ Relational-algebra IR optimization: the query is compiled to an algebra tree,
 optimized (subquery decorrelation, predicate pushdown), and decompiled back to
 clauses. This is where decorrelation and pushdown actually happen — there are no
 separate knobs for them. Consumed in `planner/planner_clause_based.go`.
-
-#### EnableSemanticRewriting — **opt-in** (default false)
-Rewrites time-extraction predicates into range constraints, e.g.
-`[(year ?t) ?y] [(= ?y 2025)]` → `[(>= ?t 2025-01-01)] [(< ?t 2026-01-01)]`.
-Off by default — set it explicitly if you want this folding. Consumed in
-`planner/semantic_rewriter.go`.
 
 #### EnableScanSharing — **opt-in** (default false)
 Deduplicates identical unbound scans across subqueries via a shared lazy sequence.
@@ -186,6 +179,7 @@ nothing:
 | `EnableSubqueryDecorrelation` | Decorrelation now happens inside `EnableAlgebraOptimizer`. |
 | `EnableParallelDecorrelation` | Gated only the retired legacy decorrelation path (deleted). |
 | `EnableConditionalAggregateRewriting` | The rewrite now runs unconditionally inside `EnableAlgebraOptimizer`; the standalone flag was inert. |
+| `EnableSemanticRewriting` | Removed in 2026-05. Folded `[(year ?t) ?y] [(= ?y N)]` into range predicates, but only worked when the bound time components formed a contiguous suffix from `year` (silently produced wrong results otherwise — e.g. `day(?t) = 5` alone became `1970-01-05`). Redundant in the default configuration because `EnableAlgebraOptimizer`'s decorrelation handles the same bottleneck. Write the range predicate directly if you need it: `[(>= ?t #inst "2025-01-01")] [(< ?t #inst "2026-01-01")]`. |
 | `EnableCSE` | Never shipped in `PlannerOptions`. |
 
 If your code sets any of these, delete the lines — the fields no longer exist.
@@ -202,13 +196,6 @@ they need.
 ```go
 opts := storage.DefaultPlannerOptions()
 // Already tuned: algebra optimizer + streaming + parallel subqueries on.
-```
-
-### Time-folding for temporal queries
-
-```go
-opts := storage.DefaultPlannerOptions()
-opts.EnableSemanticRewriting = true // fold year(?t)=2025 into a time range
 ```
 
 ### Debugging execution

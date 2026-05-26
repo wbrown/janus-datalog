@@ -140,26 +140,6 @@ func BenchmarkOHLCQuery(b *testing.B) {
 		}
 	})
 
-	// Benchmark with time-range optimization (semantic rewriting)
-	b.Run("WithTimeRangeOpt", func(b *testing.B) {
-		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
-			EnableSemanticRewriting: true, // Enables time-range optimization
-		})
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			result, err := exec.Execute(q)
-			if err != nil {
-				b.Fatalf("Query failed: %v", err)
-			}
-
-			// Should get 390 bars for day 5
-			if result.Size() != 390 {
-				b.Errorf("Expected 390 results, got %d", result.Size())
-			}
-		}
-	})
 }
 
 // BenchmarkOHLCQueryLargeDataset tests with even more data

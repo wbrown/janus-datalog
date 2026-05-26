@@ -14,7 +14,6 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Iterator composition**: **4.06× speedup** (1,259μs → 310μs, 89% memory reduction) (verified 2025-10-25)
 - ✅ **Streaming execution**: **2.22× faster** with low-selectivity filters (1,720ms → 774ms), 52% memory reduction (verified 2025-10-25)
 - ✅ **Parallel subquery execution**: **2.06× speedup** with 8 workers on M3 Max (730ms → 355ms) (verified 2025-10-25)
-- ✅ **Time-based queries**: 2-6× faster with semantic rewriting (verified)
 - ✅ **Predicate pushdown**: **1.58-2.78× faster** depending on dataset size, up to 91.5% memory reduction (verified 2025-10-25)
 - ✅ **Intern cache optimization**: 6.26× speedup on BadgerDB queries (verified)
 - ✅ **Time range optimization**: 4× speedup on large datasets (verified - 1.5× on small, 4× on 260-hour dataset)
@@ -185,26 +184,30 @@ During development, benchmarks showed dramatic speedups (49-4802×) comparing li
 
 **Details**: See `HASH_JOIN_PRESIZING_SUMMARY.md`
 
-### 4. Semantic Rewriting with Expression Elimination (COMPLETE)
-**Status**: ✅ Production-ready with predicate transformation
-**Performance**: 2.6-5.8× speedup on time-filtered queries
-**Commits**: Multiple in Oct 2025
+### 4. Semantic Rewriting / `EnableSemanticRewriting` (REMOVED)
+**Status**: ❌ Removed in 2026-05. Rewrote `[(year ?t) ?y] [(= ?y N)]` patterns
+into range predicates. Two reasons for removal:
 
-**What Works**:
-- ✅ Time extraction → range constraint transformation
-- ✅ Expression/predicate elimination (skip optimized-away code)
-- ✅ Multi-component constraint composition (year+month+day+hour)
-- ✅ MemoryPatternMatcher integration
+1. **Silently wrong for modular time constraints**: only correct when the
+   bound time components formed a contiguous suffix from `year` downward.
+   `day(?t) = 5` alone became `?t >= 1970-01-05 AND ?t < 1970-01-06`,
+   matching nothing on real datasets. Discovered when the OHLC benchmark's
+   `WithTimeRangeOpt` sub-benchmark started returning zero rows.
+2. **Redundant in the default configuration**: with `EnableAlgebraOptimizer`
+   on (default-active), decorrelation handles the same bottleneck. The
+   2.6-5.8× standalone speedups collapsed to 1.00× whenever decorrelation
+   was also enabled (~97% of time-extraction evaluations were eliminated by
+   decorrelation alone, leaving nothing for the rewriter to optimize).
 
-**Benchmarks**:
-- Year filter (33% selective): 2.6× faster
-- Day filter (12.5% selective): 4.1× faster
-- Hour filter (1.4% selective): 5.8× faster
+The framework was 285 LOC + ~810 LOC of tests for a default-off
+optimization that the active optimizer already covered. Net: ~1,250 LOC
+removed including the never-called `TxRangeRewriter` collateral.
 
-**Note**: With decorrelation enabled, semantic rewriting shows no additional speedup (1.00×) because both optimize the same bottleneck (time extraction overhead). Decorrelation eliminates 97% of evaluations, leaving nothing for semantic rewriting to optimize. Still valuable for standalone queries (1.64× speedup) and future BadgerDB integration.
+If you need this manually: write the range predicate directly:
+`[(>= ?t #inst "2025-01-01")] [(< ?t #inst "2026-01-01")]`.
 
-**Recommended for time-heavy queries** (opt-in; off by default): `EnableSemanticRewriting: true`
-**Details**: See `docs/archive/2025-10/SEMANTIC_REWRITING_FINDINGS.md`
+**Historical benchmarks** (kept for the record, pre-decorrelation, in
+isolation): year filter 2.6×, day filter 4.1×, hour filter 5.8×.
 
 ### 5. Common Subexpression Elimination - CSE (REMOVED)
 **Status**: ❌ Removed in v0.10.2. The Selinger-style implementation operated on
@@ -878,9 +881,6 @@ opts := storage.DefaultPlannerOptions()
 // opts.EnableParallelSubqueries   == true   // parallel subquery execution
 // opts.EnableStreamingAggregation == true   // streaming aggregation
 
-// Opt-in (off by default) — enable explicitly if you want them:
-opts.EnableSemanticRewriting = true   // fold year(?t)=2025 into a time range
-
 exec := executor.NewExecutorWithOptions(matcher, opts)
 ```
 
@@ -931,7 +931,6 @@ All metrics below are **measured** from actual benchmarks, not estimates.
 - Parallel subquery execution: **2.06× speedup** with 8 workers (730ms → 355ms) ✅
 - Predicate pushdown (small): **1.58× faster** (33.6ms → 21.3ms), **49% memory reduction** ✅
 - Predicate pushdown (large): **2.78× faster** (1,043ms → 375ms), **91.5% memory reduction** ✅
-- Time-filtered queries: **2-6× faster** (semantic rewriting) ✅
 - Hourly OHLC (large dataset): **10.2s** (4× speedup from time ranges) ✅
 - Parallel BadgerDB: **6.26× speedup** (intern cache optimization) ✅
 - Hash join pre-sizing: **24-32% faster, 24-30% less memory** ✅
