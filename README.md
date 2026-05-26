@@ -639,6 +639,59 @@ Inspired by Clojure's lazy sequences, but with relational algebra semantics.
 
 See [docs/papers/PAPER_PROPOSAL_3_FUNCTIONAL_STREAMING.md](docs/papers/PAPER_PROPOSAL_3_FUNCTIONAL_STREAMING.md) for the research proposal.
 
+### Custom Storage Compression
+
+Janus ships its own **LZ77+FSE compression codec** for value storage —
+written from scratch, not a vendored library. Values get compressed
+transparently; queries see decompressed data.
+
+**Verified ratios:**
+
+| Data shape | Ratio |
+|------------|-------|
+| English prose (1KB) | 3.6× |
+| Source code | 10.6× |
+| EDN structured data | 12.9× |
+| Repetitive binary | 12.7× |
+| Repeated text (50KB) | 110× |
+
+**Throughput on Apple M5 Max:** 2.1–2.4 GB/s decompression (6–7
+allocations per 1KB value); 24–37 µs per 1KB–4KB compression.
+
+**Why custom:** the codec has to be **deterministic** — identical input
+must produce identical bytes — because compressed values land in the
+content-addressed Tier-3 blob store and dedup correctness depends on it.
+Off-the-shelf compressors don't promise this; janus's does (verified by
+1000× repeated-compression tests and a concurrent-goroutine stress
+test). The `#lzj` EDN tagged literal preserves compressed form through
+export and import.
+
+### Eight Indices, No Separate Value Storage
+
+Every datom is stored as a fixed-layout key — the **key contains every
+field**: entity, attribute, value, transaction ID, CRDT op, and (for
+RGA vectors) the AfterRef pointer. The BadgerDB "value" slot is empty.
+
+Three consequences:
+
+- **No covering-index special case.** All eight indices are covering
+  indices by construction. Range scans return complete datoms without a
+  separate fetch — no pointer chase, no tuple-store lookup.
+- **~50% less storage** than the "index keys + separate value table"
+  layout most databases use. The values aren't elsewhere; they're in
+  the key.
+- **CRDT resolution is index ordering.** EATV stores Tx with bitwise
+  NOT so the first key under each `(E, A)` prefix is the LWW winner.
+  Reading the current value of an attribute is a single forward seek.
+
+The eighth index — **ATEV** (`[A][Tx↓][E][V]`) — exists for one job:
+the first key under any `[A]` prefix is the **global max-Tx datom for
+that attribute**. That gives O(1) (~1 µs) attribute-level cache
+freshness regardless of how many datoms exist under A — **555× faster
+than the prior approach at 10,000 datoms per attribute**. "Has this
+attribute been touched since I last looked?" is now a single seek
+instead of a scan.
+
 ### Explicit Error Handling
 
 Many Datalog engines will happily create Cartesian products that explode your memory. Janus **detects and rejects** them:
@@ -704,32 +757,50 @@ This is the same class of algorithms used by Automerge, Riak, and CockroachDB - 
 
 **Summary:** Production-ready performance for 100K-100M+ datoms. All numbers are **measured** from actual benchmarks.
 
-### CRDT Storage Performance
+### A Real Workload Against Persistent Storage
 
-Full CRDT semantics - LWW, add-wins sets, RGA vectors, time-travel - with optimized hot paths.
-
-**Benchmark query** - 7-pattern join across 11,700 OHLC bars, filtering to 390 results:
+The benchmark below isn't a synthetic micro-test — it's the shape of a
+real financial-analysis query against the BadgerDB-backed store:
 
 ```clojure
 [:find ?bar ?time ?high ?low ?close ?volume
- :where [?s :symbol/ticker "CRWV"]
-        [?bar :price/symbol ?s]
-        [?bar :price/time ?time]
-        [?bar :price/high ?high]
-        [?bar :price/low ?low]
-        [?bar :price/close ?close]
-        [?bar :price/volume ?volume]
-        [(day ?time) ?d]
-        [(= ?d 5)]]
+ :where [?s :symbol/ticker "CRWV"]   ; bind one symbol (1 of 3)
+        [?bar :price/symbol ?s]       ; 3,900 bars under it
+        [?bar :price/time ?time]      ; ← 6 self-joins on ?bar:
+        [?bar :price/high ?high]      ;   each attribute is a separate
+        [?bar :price/low ?low]        ;   datom; result rows are
+        [?bar :price/close ?close]    ;   assembled by joining them
+        [?bar :price/volume ?volume]  ;   onto the same bar entity
+        [(day ?time) ?d]              ; per-tuple time extraction
+        [(= ?d 5)]]                   ; filter to day 5 → 390 bars
 ```
+
+**What this exercises:**
+
+- 7-pattern join across ~82,000 persistent datoms (11,700 OHLC bars ×
+  7 attributes + 3 symbols), all on disk via BadgerDB
+- 6-way self-join on `?bar` — every result row is assembled by
+  rendezvousing six separate attribute datoms on the same entity. This
+  is exactly the join-ordering shape that historically OOMs naive
+  Datalog engines if the planner picks badly
+- A `(day ?t)` time-extraction expression in the hot path — the
+  executor can't push the whole query to storage, it has to evaluate
+  per candidate
+- 0.5% terminal selectivity: 390 result rows out of 81,903 datoms in
+  the working set
+
+**Measured (Apple M5, current main):**
 
 | Result | Value |
 |--------|-------|
-| Time (M4 Max) | 30ms |
-| Memory | 30MB |
-| Allocations | 405K |
+| Time | 27ms |
+| Memory | 32MB |
+| Allocations | ~503K |
 
-CRDT features don't cost performance. The storage layer is designed for both.
+That's roughly 70 µs end-to-end per result tuple — including the six
+attribute joins, the time-function expression, and the day filter —
+over persistent storage, not in-memory. CRDT features add nothing to
+this number; the storage layer is designed for both.
 
 ### Key Results
 
@@ -737,8 +808,10 @@ CRDT features don't cost performance. The storage layer is designed for both.
 - **4.06× faster** iterator composition with 89% memory reduction
 - **2.22× faster** streaming execution with 52% memory reduction
 - **2.06× faster** parallel subquery execution (8 workers)
-- **10-50ms** for simple queries (1-3 patterns, 1M datoms)
-- **2-4 seconds** for complex queries (5-10 patterns with subqueries)
+- **555× faster** attribute-level cache freshness (ATEV index, 10K datoms/attr)
+- **44 µs** for simple queries (e.g. attribute lookup, 1–3 patterns)
+- **21–27 ms** for complex 7-pattern queries with predicate pushdown (OHLC shape, persistent storage)
+- **2–4 s** for OHLC monthly-aggregation queries with 4 parallel subqueries
 
 ### Architectural Wins
 
@@ -747,9 +820,14 @@ CRDT features don't cost performance. The storage layer is designed for both.
 | CRDT + allocation optimization | 1.9× | Hot path allocation elimination |
 | Iterator composition | 4.06× | Lazy evaluation without materialization |
 | Streaming execution | 2.22× | Avoid intermediate result materialization |
-| Predicate pushdown | 1.58-2.78× | Filter at storage layer (scales with dataset size) |
+| Predicate pushdown | 1.58–2.78× | Filter at storage layer (scales with dataset size) |
 | Time-range scanning | 4× | Multi-range queries for OHLC data |
 | Parallel subqueries | 2.06× | Worker pool for concurrent execution |
+| ATEV attribute-freshness seek | 2.2× – 555× | O(1) cache-freshness gate; replaces an O(datoms-for-A) scan |
+| Conditional aggregate rewriting | 7.7× | Correlated aggregate subqueries — folded into the algebra optimizer |
+| Identity & Keyword interning | 6.26× | Pointer-equality joins; lock-free intern caches |
+| Value elimination (keys-only) | ~50% storage | Every datom field lives in the key; the value slot is empty |
+| LZ77+FSE compression | 3.6–13× ratio | Custom-owned codec, 2.1–2.4 GB/s decompression, deterministic |
 
 ### Scale Characteristics
 
