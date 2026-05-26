@@ -22,7 +22,6 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 	require.True(t, opts.EnableStreamingAggregation, "EnableStreamingAggregation is documented default-active")
 
 	// Opt-in: documented as off by default (must be set explicitly).
-	require.False(t, opts.EnableSemanticRewriting, "EnableSemanticRewriting is documented opt-in (off by default)")
 	require.False(t, opts.EnableScanSharing, "EnableScanSharing is documented opt-in")
 	require.False(t, opts.EnableEntityPrefetch, "EnableEntityPrefetch is documented opt-in")
 	require.False(t, opts.UseStreamingSubqueryUnion, "UseStreamingSubqueryUnion is documented opt-in")

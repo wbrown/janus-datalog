@@ -113,10 +113,6 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	clauses := q.Where
 
 	// Step 2: Apply optimizations as pure clause transformations
-	// Semantic rewriting: [(year ?t) ?py] + [(= ?py 2025)] -> [(>= ?t start)] + [(< ?t end)]
-	rewriter := NewSemanticRewriter(p.options)
-	clauses = rewriter.Rewrite(clauses)
-
 	// Algebraic optimization: clauses → algebra IR → transform passes → clauses
 	if p.options.EnableAlgebraOptimizer {
 		optimized, err := optimizeViaAlgebra(clauses, handler)

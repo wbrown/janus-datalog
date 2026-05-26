@@ -394,8 +394,7 @@ type Statistics struct {
 // PlannerOptions configures both the query planner and executor
 type PlannerOptions struct {
 	// Planner options
-	EnableSemanticRewriting bool       // Rewrite predicates for efficiency (e.g., year(t)=2025 → time range constraint)
-	Cache                   *PlanCache // Shared query plan cache (optional)
+	Cache *PlanCache // Shared query plan cache (optional)
 
 	// Subquery / algebra optimization
 	EnableAlgebraOptimizer    bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)

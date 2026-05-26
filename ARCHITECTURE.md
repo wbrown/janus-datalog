@@ -125,9 +125,7 @@ The planner is the bridge between a declarative query (an unordered set of claus
 
 **Clause rewriting (optimize first).** Before any ordering happens, the planner rewrites clauses to enable more efficient execution:
 
-- **Time extraction folding**: `[(year ?t) ?y] + [(= ?y 2025)]` is rewritten to `[(>= ?t 2025-01-01T00:00:00Z)] + [(< ?t 2026-01-01T00:00:00Z)]`. This eliminates the per-tuple expression evaluation and replaces it with range predicates that can push down to storage index scans. Works for any combination of `year`, `month`, `day`, `hour`, `minute`, `second` — components compose into a single time range.
-
-- **Tx range inversion**: Transaction IDs use bitwise-NOT encoding in storage (highest Lamport sorts first for LWW). User-facing range queries like `[(tx-between ?tx 1000 2000)]` get their bounds inverted so BadgerDB scans in the correct direction.
+- **Algebra IR optimization** (`EnableAlgebraOptimizer`, default-active): clauses are compiled to a relational-algebra tree, passed through transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, scan rewrites for `get-else` with vector defaults), and decompiled back to clauses. This is where the real optimization happens.
 
 - **Constant-bindable scalar detection**: Scalar inputs that only appear in predicates/expressions (not data patterns) are flagged in phase metadata. The executor resolves these as constants rather than creating separate relation groups, avoiding unnecessary joins.
 
@@ -460,7 +458,7 @@ Core types in the top-level package:
 
 Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` (unordered clauses) into a `RealizedPlan` (ordered phases with symbol flow contracts). Architecture: **optimize first, phase once** — clause rewrites happen before phasing, so the greedy algorithm works on an already-optimized clause list.
 
-**Clause rewriting** (`semantic_rewriter.go`, `tx_range_rewriter.go`): Time extraction + equality patterns folded into range predicates. Tx range bounds inverted for storage encoding. Constant-bindable scalar inputs detected and flagged.
+**Clause rewriting**: The default optimizer is the algebra bridge (`EnableAlgebraOptimizer`, on by default): clauses → algebra IR → transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, `get-else` scan rewrites with vector defaults) → clauses. Constant-bindable scalar inputs are detected and flagged in a separate pass.
 
 **Core algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
 1. Start with input symbols as available
