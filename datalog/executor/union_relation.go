@@ -131,9 +131,12 @@ func (ur *UnionRelation) Project(symbols []query.Symbol) (Relation, error) {
 	return ur.Materialize().Project(symbols)
 }
 
-// Materialize forces consumption of all relations and returns a materialized result
-// Note: This doesn't return errors because Relation.Materialize() doesn't have error return
-// Errors from Close() are silently dropped (limitation of Relation interface)
+// Materialize forces consumption of all relations and returns a materialized result.
+// collectTuplesInto captures both deferred iteration errors and the Close() error
+// of the union iterator, and the first non-nil one is attached to the returned
+// relation as mat.err so it replays via Iterator().Error() at the next public
+// boundary. The Relation interface's lack of an (error) return doesn't drop
+// errors — they ride the result.
 func (ur *UnionRelation) Materialize() Relation {
 	var allTuples []Tuple
 	err := collectTuplesInto(&allTuples, ur)

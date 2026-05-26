@@ -150,10 +150,15 @@ type GetSomeFunction struct {
 	Attrs  []datalog.Keyword // Attributes to try, in order
 }
 
-// GetSomeResult holds the result of a get-some evaluation
+// GetSomeResult holds the result of a get-some evaluation.
+// Found=false signals "no attribute matched" and is the canonical way for
+// consumers to drop the tuple — get-some no longer uses error-as-signal
+// for this (which conflated soft "no match" with real eval failures and
+// forced upstream loops to swallow every eval error to make it work).
 type GetSomeResult struct {
 	Attr  datalog.Keyword
 	Value interface{}
+	Found bool
 }
 
 func (gs *GetSomeFunction) RequiredSymbols() []Symbol {
@@ -183,12 +188,13 @@ func (gs *GetSomeFunction) EvalWithLookup(bindings map[Symbol]interface{}, looku
 	// Try each attribute in order
 	for _, attr := range gs.Attrs {
 		if value, found := lookup.LookupAttribute(entity, attr); found {
-			return &GetSomeResult{Attr: attr, Value: value}, nil
+			return &GetSomeResult{Attr: attr, Value: value, Found: true}, nil
 		}
 	}
 
-	// No attribute found - return nil (will cause tuple to be filtered out)
-	return nil, fmt.Errorf("get-some: no attribute found for entity")
+	// No attribute found — return Found=false so the caller can drop the
+	// tuple without abusing error as a soft signal.
+	return &GetSomeResult{Found: false}, nil
 }
 
 func (gs *GetSomeFunction) ReturnType() string {

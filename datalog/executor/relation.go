@@ -599,10 +599,14 @@ func (r *MaterializedRelation) ProjectFromPattern(pattern *query.DataPattern) Re
 		return NewMaterializedRelationWithOptions([]query.Symbol{}, []Tuple{}, r.options)
 	}
 
-	// Project to needed symbols using method (preserves materialized state)
-	result, _ := r.Project(neededSymbols)
-	// Ignore error as neededSymbols are derived from the pattern elements
-	// which must exist if we got this far
+	// Project to needed symbols. neededSymbols are derived from the pattern
+	// elements above and intersected with `symbolIndices`, so they must exist
+	// in the relation. If Project errors anyway, that's a contract violation —
+	// surface it loudly instead of silently returning a half-broken result.
+	result, err := r.Project(neededSymbols)
+	if err != nil {
+		panic(fmt.Sprintf("ProjectFromPattern: Project of derived symbols failed: %v", err))
+	}
 	return result
 }
 
@@ -771,8 +775,11 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 	// Add the output symbol
 	newSymbols := append(r.symbols, outputSymbol)
 
-	// Process each tuple
+	// Process each tuple. Fail-fast on eval errors and propagate them via
+	// result.err — silently `continue`ing past a failed Eval would launder
+	// real errors into a clean (truncated) materialized relation.
 	var newTuples []Tuple
+	var evalErr error
 	for _, tuple := range r.tuples {
 		// Create bindings from tuple
 		bindings := make(map[query.Symbol]interface{})
@@ -783,8 +790,17 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 		// Evaluate the function
 		result, err := fn.Eval(bindings)
 		if err != nil {
-			// Skip tuples where function evaluation fails
-			continue
+			evalErr = err
+			break
+		}
+
+		// get-some signals "no attribute matched" via Found=false (not via
+		// error). Skip the tuple in that case, not the eval-error path.
+		if gsr, ok := result.(*query.GetSomeResult); ok {
+			if !gsr.Found {
+				continue
+			}
+			result = gsr.Value
 		}
 
 		// Create new tuple with function result
@@ -792,7 +808,14 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 		newTuples = append(newTuples, newTuple)
 	}
 
-	return NewMaterializedRelation(newSymbols, newTuples)
+	mat := NewMaterializedRelation(newSymbols, newTuples)
+	if evalErr != nil {
+		mat.err = evalErr
+	} else if r.err != nil {
+		// Inherit the source relation's deferred error.
+		mat.err = r.err
+	}
+	return mat
 }
 
 // contains checks if a symbol is in a slice
@@ -1154,11 +1177,15 @@ func (r *StreamingRelation) ProjectFromPattern(pattern *query.DataPattern) Relat
 		return NewMaterializedRelationWithOptions([]query.Symbol{}, []Tuple{}, r.options)
 	}
 
-	// Use the StreamingRelation's Project method which creates a streaming projection iterator
-	// instead of the global Project() function which materializes
-	result, _ := r.Project(neededSymbols)
-	// Ignore error as neededSymbols are derived from the pattern elements
-	// which must exist if we got this far
+	// Use the StreamingRelation's Project method which creates a streaming
+	// projection iterator instead of the global Project() function which
+	// materializes. neededSymbols are derived from pattern elements above and
+	// intersected with the relation's symbols, so they must exist. A Project
+	// error here is a contract violation — surface it loudly.
+	result, err := r.Project(neededSymbols)
+	if err != nil {
+		panic(fmt.Sprintf("ProjectFromPattern: Project of derived symbols failed: %v", err))
+	}
 	return result
 }
 
