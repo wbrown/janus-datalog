@@ -67,6 +67,118 @@ func TestExecuteQuery(t *testing.T) {
 	}
 }
 
+// TestRelationInput_RefAndKeywordColumns isolates whether a relation-input join
+// [[?a ?b] ...] matches when a join column is an entity REF (datalog.Identity value) or a
+// KEYWORD value — vs the canonical string/int64 columns. A scalar binding of the same
+// values matches (control), so a relation miss here pins exactly which value type the
+// multi-column relation join fails to compare. Repro for a narrative-generators batch
+// content query returning 0 rows on [[?key ?subject] ...].
+func TestRelationInput_RefAndKeywordColumns(t *testing.T) {
+	dir, err := os.MkdirTemp("", "query-relinput-ref-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	defer db.Close()
+
+	a := datalog.NewIdentity("a")
+	b := datalog.NewIdentity("b")
+	ownerX := datalog.NewIdentity("owner-x")
+	ownerY := datalog.NewIdentity("owner-y")
+
+	tx := db.NewTransaction()
+	tx.Add(a, datalog.NewKeyword(":t/name"), "A")
+	tx.Add(a, datalog.NewKeyword(":t/owner"), ownerX)
+	tx.Add(a, datalog.NewKeyword(":t/tag"), datalog.NewKeyword(":tag/red"))
+	tx.Add(b, datalog.NewKeyword(":t/name"), "B")
+	tx.Add(b, datalog.NewKeyword(":t/owner"), ownerY)
+	tx.Add(b, datalog.NewKeyword(":t/tag"), datalog.NewKeyword(":tag/blue"))
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// Control: scalar identity input matches a ref-valued attribute.
+	scalarRef, err := executor.CollectTuples(db.Query(
+		`[:find ?e :in $ ?owner :where [?e :t/owner ?owner]]`, ownerX))
+	if err != nil {
+		t.Fatalf("scalar ref query: %v", err)
+	}
+	if len(scalarRef) != 1 {
+		t.Errorf("scalar identity input: expected 1, got %d", len(scalarRef))
+	}
+
+	// Relation with a string + IDENTITY column.
+	relRef, err := executor.CollectTuples(db.Query(
+		`[:find ?e :in $ [[?name ?owner] ...] :where [?e :t/name ?name] [?e :t/owner ?owner]]`,
+		[][]any{{"A", ownerX}}))
+	if err != nil {
+		t.Fatalf("relation ref query: %v", err)
+	}
+	if len(relRef) != 1 {
+		t.Errorf("relation with identity column: expected 1, got %d", len(relRef))
+	}
+
+	// Relation with a string + KEYWORD column.
+	relKw, err := executor.CollectTuples(db.Query(
+		`[:find ?e :in $ [[?name ?tag] ...] :where [?e :t/name ?name] [?e :t/tag ?tag]]`,
+		[][]any{{"A", datalog.NewKeyword(":tag/red")}}))
+	if err != nil {
+		t.Fatalf("relation kw query: %v", err)
+	}
+	if len(relKw) != 1 {
+		t.Errorf("relation with keyword column: expected 1, got %d", len(relKw))
+	}
+
+	// Bisect toward the failing narrative-generators query shape: a SCALAR input before
+	// the relation, finding the input-relation vars, plus wildcard / (not ...) clauses.
+	tx2 := db.NewTransaction()
+	grp := datalog.NewIdentity("grp-1")
+	tx2.Add(a, datalog.NewKeyword(":t/grp"), grp)
+	tx2.Add(b, datalog.NewKeyword(":t/grp"), grp)
+	tx2.Add(a, datalog.NewKeyword(":t/x"), int64(1))
+	tx2.Add(b, datalog.NewKeyword(":t/x"), int64(1))
+	if _, err := tx2.Commit(); err != nil {
+		t.Fatalf("commit2: %v", err)
+	}
+
+	check := func(label, q string, want int, args ...any) {
+		got, err := executor.CollectTuples(db.Query(q, args...))
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if len(got) != want {
+			t.Errorf("%s: expected %d, got %d", label, want, len(got))
+		}
+	}
+
+	check("scalar+relation find ?e",
+		`[:find ?e :in $ ?grp [[?name ?owner] ...] :where [?e :t/grp ?grp] [?e :t/name ?name] [?e :t/owner ?owner]]`,
+		1, grp, [][]any{{"A", ownerX}})
+	check("find input vars",
+		`[:find ?name ?owner :in $ ?grp [[?name ?owner] ...] :where [?e :t/grp ?grp] [?e :t/name ?name] [?e :t/owner ?owner]]`,
+		1, grp, [][]any{{"A", ownerX}})
+	check("wildcard clause",
+		`[:find ?name ?owner :in $ ?grp [[?name ?owner] ...] :where [?e :t/grp ?grp] [?e :t/name ?name] [?e :t/owner ?owner] [?e :t/x _]]`,
+		1, grp, [][]any{{"A", ownerX}})
+	check("not clause",
+		`[:find ?name ?owner :in $ ?grp [[?name ?owner] ...] :where [?e :t/grp ?grp] [?e :t/name ?name] [?e :t/owner ?owner] (not [?e :t/del true])]`,
+		1, grp, [][]any{{"A", ownerX}})
+
+	// Order independence: scalar AFTER the relation.
+	check("relation+scalar",
+		`[:find ?name :in $ [[?name ?owner] ...] ?grp :where [?e :t/grp ?grp] [?e :t/name ?name] [?e :t/owner ?owner]]`,
+		1, [][]any{{"A", ownerX}}, grp)
+	// A collection input (not scalar) preceding the relation must also survive.
+	check("collection+relation",
+		`[:find ?name :in $ [?g ...] [[?name ?owner] ...] :where [?e :t/grp ?g] [?e :t/name ?name] [?e :t/owner ?owner]]`,
+		1, []datalog.Identity{grp}, [][]any{{"A", ownerX}})
+}
+
 // TestExecuteQueryWithScalarInput tests single scalar input parameter
 func TestExecuteQueryWithScalarInput(t *testing.T) {
 	dir, err := os.MkdirTemp("", "query-scalar-test-*")

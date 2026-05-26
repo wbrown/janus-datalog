@@ -8,6 +8,36 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+// TestJoin_NoSharedColumns_CrossProduct isolates whether Join cross-products two
+// relations that share no variables (the scalar-input + relation-input case:
+// rel(?grp) ⋈ rel(?name ?owner)). If this returns 0, crossProduct/Join is the bug;
+// if it returns 1, the bug is upstream in how :in inputs are seeded/combined.
+func TestJoin_NoSharedColumns_CrossProduct(t *testing.T) {
+	grp := datalog.NewIdentity("grp")
+	ownerX := datalog.NewIdentity("owner-x")
+
+	left := NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?grp")},
+		[]Tuple{{grp}},
+	)
+	right := NewMaterializedRelation(
+		[]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?owner")},
+		[]Tuple{{"A", ownerX}},
+	)
+
+	result := left.Join(right)
+	count := 0
+	it := result.Iterator()
+	for it.Next() {
+		count++
+	}
+	it.Close()
+	assert.Equal(t, 1, count, "no-shared-column Join must cross-product (1×1 = 1 row)")
+	assert.ElementsMatch(t,
+		[]query.Symbol{datalog.NewSymbol("?grp"), datalog.NewSymbol("?name"), datalog.NewSymbol("?owner")},
+		result.Symbols())
+}
+
 func TestMultiRowRelationBinding(t *testing.T) {
 	// Create test data: multiple entities with ages
 	alice := datalog.NewIdentity("user:alice")
