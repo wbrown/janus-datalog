@@ -57,7 +57,7 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 
 // filterWithPredicateAndLookup filters a relation using a predicate with optional database lookup.
 // constantBindings are pre-resolved scalar values that are not present as relation symbols.
-func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) Relation {
+func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation) {
 	symbols := rel.Symbols()
 	needsCopy := rel.RequiresCopy()
 
@@ -75,8 +75,25 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	// Check if this is a DatabaseFunctionPredicate that needs lookup
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
 
+	// Failed iteration or evaluation surfaces via result.err — replayed at the
+	// next public boundary by Iterator().Error(). Named return + closure so the
+	// deferred Close() also runs on panic (predicate Eval is user-supplied code
+	// and can panic), without losing the Close error.
+	var iterErr error
 	iter := rel.Iterator()
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
+			iterErr = closeErr
+		}
+		// Panic path: result is nil; iter.Close above still ran.
+		if iterErr == nil || result == nil {
+			return
+		}
+		if m, ok := result.(*MaterializedRelation); ok && m.err == nil {
+			m.err = iterErr
+		}
+	}()
+
 	for iter.Next() {
 		tuple := iter.Tuple()
 
@@ -101,8 +118,11 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 			passes, err = pred.Eval(bindings)
 		}
 		if err != nil {
-			// Log error but continue processing
-			continue
+			// Fail fast — predicate eval errors are real errors, not
+			// "treat as false." Surface to the consumer; do not silently
+			// drop the tuple as if the predicate had said no.
+			iterErr = err
+			break
 		}
 
 		if passes {
@@ -112,17 +132,21 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 			filtered = append(filtered, tuple)
 		}
 	}
+	if iterErr == nil {
+		iterErr = iter.Error()
+	}
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	return NewMaterializedRelationWithOptions(symbols, filtered, opts)
+	result = NewMaterializedRelationWithOptions(symbols, filtered, opts)
+	return
 }
 
 // evaluateExpressionWithLookup evaluates an expression with optional database lookup support.
 // If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
 // Otherwise, it falls back to the standard Eval method.
 // constantBindings are pre-resolved scalar values that are not present as relation symbols.
-func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) Relation {
+func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation) {
 	symbols := rel.Symbols()
 
 	// Determine binding symbols and whether they already exist
@@ -174,8 +198,24 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		}
 	}
 
+	// Failed iteration or evaluation surfaces via result.err — replayed at the
+	// next public boundary by Iterator().Error(). Named return + closure so the
+	// deferred Close() also runs on panic (expression Function.Eval is
+	// user-supplied code and can panic), without losing the Close error.
+	var iterErr error
 	iter := rel.Iterator()
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
+			iterErr = closeErr
+		}
+		if iterErr == nil || result == nil {
+			return
+		}
+		if m, ok := result.(*MaterializedRelation); ok && m.err == nil {
+			m.err = iterErr
+		}
+	}()
+
 	for iter.Next() {
 		tuple := iter.Tuple()
 
@@ -193,26 +233,33 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 
 		// Evaluate the expression
 		// Check if this is a database function that needs lookup access
-		var result interface{}
+		var evalResult interface{}
 		var err error
 		if dbFunc, ok := expr.Function.(query.DatabaseFunction); ok && lookup != nil {
-			result, err = dbFunc.EvalWithLookup(bindings, lookup)
+			evalResult, err = dbFunc.EvalWithLookup(bindings, lookup)
 		} else {
-			result, err = expr.Function.Eval(bindings)
+			evalResult, err = expr.Function.Eval(bindings)
 		}
 		if err != nil {
-			// Skip tuples where expression fails
-			continue
+			// Fail fast — expression eval errors are real errors. Surface
+			// to the consumer; do not silently drop the tuple.
+			iterErr = err
+			break
 		}
 
 		// Extract value from GetSomeResult if needed
-		// get-some returns a struct with Attr and Value; we just want the Value for binding
-		if gsr, ok := result.(*query.GetSomeResult); ok {
-			result = gsr.Value
+		// get-some returns a struct with Attr, Value, and Found; we just want
+		// the Value for binding. Found=false signals "no attribute matched":
+		// drop this tuple without surfacing an error.
+		if gsr, ok := evalResult.(*query.GetSomeResult); ok {
+			if !gsr.Found {
+				continue
+			}
+			evalResult = gsr.Value
 		}
 
 		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
-		if multiRows, ok := result.([][]interface{}); ok {
+		if multiRows, ok := evalResult.([][]interface{}); ok {
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
 				for _, subTuple := range multiRows {
 					if len(subTuple) != len(tb.Variables) {
@@ -253,9 +300,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			// Update existing symbols
 			newTuple := make(Tuple, len(tuple))
 			copy(newTuple, tuple)
-			// Handle tuple binding - result should be []interface{}
+			// Handle tuple binding - evalResult should be []interface{}
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
-				values, ok := result.([]interface{})
+				values, ok := evalResult.([]interface{})
 				if ok && len(values) == len(tb.Variables) {
 					for i, bindSym := range tb.Variables {
 						if idx, exists := existingBindingIndices[bindSym]; exists {
@@ -267,7 +314,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 				// Scalar binding
 				for i, sym := range symbols {
 					if bindSym, ok := expr.Binding.(query.Symbol); ok && sym == bindSym {
-						newTuple[i] = result
+						newTuple[i] = evalResult
 						break
 					}
 				}
@@ -277,9 +324,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			// Add new symbols
 			newTuple := make(Tuple, len(newColumns))
 			copy(newTuple, tuple)
-			// Handle tuple binding - result should be []interface{}
+			// Handle tuple binding - evalResult should be []interface{}
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
-				values, ok := result.([]interface{})
+				values, ok := evalResult.([]interface{})
 				if ok && len(values) == len(tb.Variables) {
 					for i, bindSym := range tb.Variables {
 						// Find position of this symbol in newColumns
@@ -293,19 +340,23 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 				}
 			} else {
 				// Scalar binding - add to end
-				newTuple[len(tuple)] = result
+				newTuple[len(tuple)] = evalResult
 			}
 			newTuples = append(newTuples, newTuple)
 		}
 	}
+	if iterErr == nil {
+		iterErr = iter.Error()
+	}
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	return NewMaterializedRelationWithOptions(newColumns, newTuples, opts)
+	result = NewMaterializedRelationWithOptions(newColumns, newTuples, opts)
+	return
 }
 
 // projectToSymbols projects a relation to the specified symbols
-func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) Relation {
+func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) (result Relation) {
 	relSyms := rel.Symbols()
 
 	// Build symbol index mapping
@@ -325,8 +376,24 @@ func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) R
 		}
 	}
 
+	// Failed iteration surfaces via result.err — replayed at the next public
+	// boundary by Iterator().Error(). Named return + closure so iter.Close runs
+	// on panic without losing the Close error.
+	var iterErr error
 	var projected []Tuple
 	iter := rel.Iterator()
+	defer func() {
+		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
+			iterErr = closeErr
+		}
+		if iterErr == nil || result == nil {
+			return
+		}
+		if m, ok := result.(*MaterializedRelation); ok && m.err == nil {
+			m.err = iterErr
+		}
+	}()
+
 	for iter.Next() {
 		tuple := iter.Tuple()
 		newTuple := make(Tuple, len(syms))
@@ -335,9 +402,10 @@ func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) R
 		}
 		projected = append(projected, newTuple)
 	}
-	iter.Close()
+	iterErr = iter.Error()
 
-	return NewMaterializedRelationWithOptions(syms, projected, opts)
+	result = NewMaterializedRelationWithOptions(syms, projected, opts)
+	return
 }
 
 // collectInnerVars collects all variables from inner clauses

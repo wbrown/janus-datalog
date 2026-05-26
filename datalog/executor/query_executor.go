@@ -605,13 +605,15 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				result, err = expr.Function.Eval(evalBindings)
 			}
 			if err != nil {
-				// Expression evaluation failed (e.g., entity doesn't have requested attrs)
-				// Return empty result, not an error
-				return []Relation{}, nil
+				return nil, err
 			}
 
-			// Handle get-some result type (extracts Value from GetSomeResult)
+			// Handle get-some result type. Found=false signals "no attribute
+			// matched"; emit an empty relation rather than a tuple.
 			if gsr, ok := result.(*query.GetSomeResult); ok {
+				if !gsr.Found {
+					return []Relation{}, nil
+				}
 				result = gsr.Value
 			}
 

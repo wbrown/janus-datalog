@@ -289,7 +289,8 @@ type FunctionEvaluatorIterator struct {
 	symbols      []query.Symbol // Original symbols
 	newSymbols   []query.Symbol // Symbols after adding function output (or same if unifying)
 	current      Tuple
-	existingIdx  int // >=0 if outputSymbol already in symbols (unification mode)
+	existingIdx  int   // >=0 if outputSymbol already in symbols (unification mode)
+	err          error // First eval error; replayed via Error() at iteration end
 }
 
 // NewFunctionEvaluatorIterator creates an iterator that adds a symbol via function evaluation.
@@ -326,6 +327,9 @@ func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, funct
 
 // Next advances to the next tuple and evaluates the function
 func (it *FunctionEvaluatorIterator) Next() bool {
+	if it.err != nil {
+		return false
+	}
 	for it.source.Next() {
 		sourceTuple := it.source.Tuple()
 
@@ -337,11 +341,24 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 			}
 		}
 
-		// Evaluate function
+		// Evaluate function. Fail-fast on eval errors — store the deferred
+		// error so Error() returns it after Next() reports exhaustion.
+		// Silently `continue`ing here laundered real Eval failures into a
+		// clean iteration end indistinguishable from "no more tuples."
 		result, err := it.function.Eval(bindings)
 		if err != nil {
-			// Skip tuples where function evaluation fails
-			continue
+			it.err = err
+			return false
+		}
+
+		// get-some signals "no attribute matched" via Found=false (not via
+		// error). Skip the tuple in that case — that's a soft no-match, not
+		// the error-as-signal misuse the swallowing loop existed to absorb.
+		if gsr, ok := result.(*query.GetSomeResult); ok {
+			if !gsr.Found {
+				continue
+			}
+			result = gsr.Value
 		}
 
 		if it.existingIdx >= 0 {
@@ -373,7 +390,12 @@ func (it *FunctionEvaluatorIterator) Close() error {
 	return it.source.Close()
 }
 
-func (it *FunctionEvaluatorIterator) Error() error { return it.source.Error() }
+func (it *FunctionEvaluatorIterator) Error() error {
+	if it.err != nil {
+		return it.err
+	}
+	return it.source.Error()
+}
 
 // DedupIterator removes duplicate tuples based on full tuple equality
 type DedupIterator struct {
