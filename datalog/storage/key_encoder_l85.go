@@ -50,6 +50,9 @@ func (e *L85KeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 	case AETV:
 		// [A][E][Tx][V][Op]
 		return concatBytes(prefix, []byte(aL85), []byte(eL85), []byte(txL85), vBytes, opByte)
+	case ATEV:
+		// [A][Tx][E][V][Op]
+		return concatBytes(prefix, []byte(aL85), []byte(txL85), []byte(eL85), vBytes, opByte)
 	case AVET:
 		// [A][V][E][Tx][Op]
 		return concatBytes(prefix, []byte(aL85), vBytes, []byte(eL85), []byte(txL85), opByte)
@@ -76,6 +79,7 @@ func (e *L85KeyEncoder) EncodeKey(index IndexType, d *datalog.Datom) []byte {
 //	EATV: [prefix][E][A][Tx][V][Op]
 //	AEVT: [prefix][A][E][V][Tx][Op]
 //	AETV: [prefix][A][E][Tx][V][Op]
+//	ATEV: [prefix][A][Tx][E][V][Op]
 //	AVET: [prefix][A][V][E][Tx][Op]
 //	VAET: [prefix][V][A][E][Tx][Op]
 //	TAEV: [prefix][Tx][A][E][V][Op]
@@ -187,6 +191,28 @@ func (e *L85KeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]byte,
 			value = valueBytes
 		}
 
+	case ATEV:
+		// [A][Tx][E][V][Op]
+		minSize := l85SizeAttr + l85Size16 + l85Size20 + opSize
+		if len(key) < minSize {
+			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("ATEV key too short")
+		}
+		attr, _ = codec.DecodeFixed32(string(key[0:l85SizeAttr]))
+		tx, _ = codec.DecodeFixed16(string(key[l85SizeAttr : l85SizeAttr+l85Size16]))
+		entity, _ = codec.DecodeFixed20(string(key[l85SizeAttr+l85Size16 : l85SizeAttr+l85Size16+l85Size20]))
+		// V is between E and Op
+		vStart := l85SizeAttr + l85Size16 + l85Size20
+		valueBytes := key[vStart : len(key)-opSize]
+		if len(valueBytes) == l85Size20 {
+			if decoded, decErr := codec.DecodeFixed20(string(valueBytes)); decErr == nil {
+				value = decoded[:]
+			} else {
+				value = valueBytes
+			}
+		} else {
+			value = valueBytes
+		}
+
 	case AVET:
 		// [A][V][E][Tx][Op]
 		if len(key) < l85SizeAttr+l85Size20+l85Size16+opSize {
@@ -276,6 +302,10 @@ func (e *L85KeyEncoder) EncodePrefix(index IndexType, parts ...[]byte) []byte {
 		case AEVT:
 			shouldEncode = (i == 0 || i == 1 || i == 3)
 			isValuePosition = (i == 2)
+		case ATEV:
+			// [A][Tx][E][V] — positions 0,1,2 are fixed-size; position 3 is value
+			shouldEncode = (i == 0 || i == 1 || i == 2)
+			isValuePosition = (i == 3)
 		case AVET:
 			shouldEncode = (i == 0 || i == 2 || i == 3)
 			isValuePosition = (i == 1)

@@ -62,16 +62,6 @@ func NewTxFromTime(t time.Time) Tx {
 	return tx
 }
 
-// NewTxFromUint creates a transaction ID from a uint64
-// Useful for sequential transaction numbers (Lamport-like)
-// ReplicaID is set to 0
-func NewTxFromUint(n uint64) Tx {
-	var tx Tx
-	binary.BigEndian.PutUint64(tx[0:8], n)
-	// ReplicaID (bytes 8-16) remains zero
-	return tx
-}
-
 // String returns the entity as hex string (first 8 bytes)
 func (e Entity) String() string {
 	return fmt.Sprintf("e:%x", e[:8])
@@ -256,7 +246,3 @@ func toStorageValue(v interface{}) datalog.Value {
 	}
 }
 
-// toStorageTx converts user transaction ID to storage format
-func toStorageTx(tx uint64) Tx {
-	return NewTxFromUint(tx)
-}

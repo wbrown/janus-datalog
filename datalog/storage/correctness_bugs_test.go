@@ -200,7 +200,7 @@ func TestSimpleBatchScanner_BuildKey_AETV(t *testing.T) {
 	var aBytes Attribute
 	copy(aBytes[:], name.String())
 
-	got := scanner.buildKey(alice, aBytes[:])
+	got := scanner.buildKey(alice, aBytes[:], nil)
 	require.NotNil(t, got, "buildKey must not return nil for AETV with E-bound + A-constant")
 
 	// The expected prefix for AETV with E+A bound is [prefix][A][E].
@@ -231,19 +231,26 @@ func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
 	// combination its signature admits — silent nil returns cause
 	// silent zero-result scans, the exact failure mode the external
 	// review flagged for this function.
+	// Tx constant used by the ATEV case below; the value chosen doesn't
+	// matter so long as it encodes to a non-empty constT.
+	constTBytes := matcher.store.encoder.EncodeTxForPrefix(
+		NewTxFromElementID(datalog.ElementID{Lamport: 1, ReplicaID: 1}),
+	)
 	for _, tc := range []struct {
 		name     string
 		index    IndexType
 		position int
 		value    interface{}
 		constA   []byte
+		constT   []byte
 	}{
-		{"EAVT_Ebound", EAVT, 0, alice, aBytes[:]},
-		{"EATV_Ebound", EATV, 0, alice, aBytes[:]},
-		{"AEVT_Ebound", AEVT, 0, alice, aBytes[:]},
-		{"AETV_Ebound", AETV, 0, alice, aBytes[:]},
-		{"AVET_Abound", AVET, 1, name, nil},
-		{"VAET_Vbound", VAET, 0, "some-value", nil},
+		{"EAVT_Ebound", EAVT, 0, alice, aBytes[:], nil},
+		{"EATV_Ebound", EATV, 0, alice, aBytes[:], nil},
+		{"AEVT_Ebound", AEVT, 0, alice, aBytes[:], nil},
+		{"AETV_Ebound", AETV, 0, alice, aBytes[:], nil},
+		{"ATEV_Ebound", ATEV, 0, alice, aBytes[:], constTBytes},
+		{"AVET_Abound", AVET, 1, name, nil, nil},
+		{"VAET_Vbound", VAET, 0, "some-value", nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scanner := &simpleBatchScanner{
@@ -251,7 +258,7 @@ func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
 				index:    tc.index,
 				position: tc.position,
 			}
-			got := scanner.buildKey(tc.value, tc.constA)
+			got := scanner.buildKey(tc.value, tc.constA, tc.constT)
 			require.NotNil(t, got,
 				"buildKey returned nil for index %s, position %d — scanner would silently produce no results",
 				indexName(tc.index), tc.position)
@@ -282,7 +289,7 @@ func TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics(t *testing.T) {
 	// Case 1: A varies across bindings (position=1, value is a Keyword).
 	// Scan range: [A] prefix over AVET.
 	scanner := &simpleBatchScanner{matcher: matcher, index: AVET, position: 1}
-	got := scanner.buildKey(emailKw, nil)
+	got := scanner.buildKey(emailKw, nil, nil)
 
 	expected := matcher.store.encoder.EncodePrefix(AVET, aBytes[:])
 	require.NotNil(t, got,
@@ -299,7 +306,7 @@ func TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics(t *testing.T) {
 	// key range rather than nil.
 	alice := datalog.NewIdentity("alice")
 	scanner = &simpleBatchScanner{matcher: matcher, index: AVET, position: 0}
-	got = scanner.buildKey(alice, aBytes[:])
+	got = scanner.buildKey(alice, aBytes[:], nil)
 	require.NotNil(t, got,
 		"AVET position=0 with Identity value: buildKey returned nil")
 }

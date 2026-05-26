@@ -12,13 +12,14 @@ const (
 	EATV                  // Entity-Attribute-Tx-Value (for cardinality-one: first = current)
 	AEVT                  // Attribute-Entity-Value-Tx
 	AETV                  // Attribute-Entity-Tx-Value (for A-primary CRDT: first = current)
+	ATEV                  // Attribute-Tx-Entity-Value (for O(1) attribute high-water mark + AsOf-by-attribute)
 	AVET                  // Attribute-Value-Entity-Tx
 	VAET                  // Value-Attribute-Entity-Tx
 	TAEV                  // Tx-Attribute-Entity-Value (for clock recovery, audit log)
 )
 
 // Indices lists all indices used for queries
-var Indices = []IndexType{EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV}
+var Indices = []IndexType{EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV}
 
 // Store is the interface for datom storage
 type Store interface {
@@ -37,7 +38,8 @@ type Store interface {
 
 	// MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
 	// Used for fast cache freshness checks on A-bound queries.
-	// Performs an O(1) reverse seek on the AEVT index.
+	// Performs an O(1) forward seek on the ATEV index — first entry under [A]
+	// is the global max-Tx datom because ATEV orders A → Tx↓ → E → V.
 	// Returns zero ElementID if no data exists for this attribute.
 	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
 

@@ -44,6 +44,7 @@ func txFromDescending(encoded []byte) [16]byte {
 //	EATV: [prefix][E][A][Tx↓][type][value][AfterRef?][Op]  - first entry is current (E-primary CRDT)
 //	AEVT: [prefix][A][E][type][value][Tx↓][AfterRef?][Op]  - by attribute (V before Tx)
 //	AETV: [prefix][A][E][Tx↓][type][value][AfterRef?][Op]  - first entry is current (A-primary CRDT)
+//	ATEV: [prefix][A][Tx↓][E][type][value][AfterRef?][Op]  - first entry is global max Tx for A (O(1) freshness + AsOf-by-attribute)
 //	AVET: [prefix][A][type][value][E][Tx↓][AfterRef?][Op]  - value lookup
 //	VAET: [prefix][type][value][A][E][Tx↓][AfterRef?][Op]  - reverse refs
 //	TAEV: [prefix][Tx↓][A][E][type][value][AfterRef?][Op]  - transaction log
@@ -129,6 +130,15 @@ func (e *BinaryKeyEncoder) encodeKeyWithParts(index IndexType, sd *StorageDatom,
 		}
 		key = append(key, byte(sd.Op))
 		return key
+	case ATEV:
+		// [A][Tx↓][E][V][AfterRef?][Op]
+		key := concatBytes(prefix, sd.A[:], txDesc[:], sd.E[:], vBytes)
+		if sd.Op.HasAfterRef() {
+			afterRefDesc := txToDescending(sd.AfterRef)
+			key = append(key, afterRefDesc[:]...)
+		}
+		key = append(key, byte(sd.Op))
+		return key
 	case AVET:
 		// [A][V][E][Tx↓][AfterRef?][Op]
 		key := concatBytes(prefix, sd.A[:], vBytes, sd.E[:], txDesc[:])
@@ -174,6 +184,7 @@ func (e *BinaryKeyEncoder) encodeKeyWithParts(index IndexType, sd *StorageDatom,
 //	EATV: [prefix][E][A][Tx↓][type][value][AfterRef?][Op]
 //	AEVT: [prefix][A][E][type][value][Tx↓][AfterRef?][Op]
 //	AETV: [prefix][A][E][Tx↓][type][value][AfterRef?][Op]
+//	ATEV: [prefix][A][Tx↓][E][type][value][AfterRef?][Op]
 //	AVET: [prefix][A][type][value][E][Tx↓][AfterRef?][Op]
 //	VAET: [prefix][type][value][A][E][Tx↓][AfterRef?][Op]
 //	TAEV: [prefix][Tx↓][A][E][type][value][AfterRef?][Op]
@@ -252,6 +263,18 @@ func (e *BinaryKeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]by
 		copy(entity[:], key[attrSize:attrSize+entitySize])
 		tx = txFromDescending(key[attrSize+entitySize : attrSize+entitySize+txSize])
 		vStart := attrSize + entitySize + txSize
+		value = key[vStart : len(key)-tailSize]
+
+	case ATEV:
+		// [A][Tx↓][E][V][AfterRef?][Op]
+		minSize := attrSize + txSize + entitySize + tailSize
+		if len(key) < minSize {
+			return entity, attr, nil, tx, 0, afterRef, fmt.Errorf("ATEV key too short")
+		}
+		copy(attr[:], key[0:attrSize])
+		tx = txFromDescending(key[attrSize : attrSize+txSize])
+		copy(entity[:], key[attrSize+txSize : attrSize+txSize+entitySize])
+		vStart := attrSize + txSize + entitySize
 		value = key[vStart : len(key)-tailSize]
 
 	case AVET:

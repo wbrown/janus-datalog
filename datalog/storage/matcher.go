@@ -627,6 +627,19 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 			aPtr := datalog.NewKeyword(aKw.String())
 			aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
 
+			// A and Tx bound (V unbound) — ATEV gives a direct [A][Tx↓] prefix scan,
+			// landing on the exact (or nearest-descending) Tx for the attribute. The
+			// equivalent on AETV would scan every entity, on AEVT every value.
+			if tx != nil && v == nil {
+				eid, ok := datalog.DerefElementID(tx)
+				if !ok {
+					panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
+				}
+				encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
+				start, end := encoder.EncodePrefixRange(ATEV, aStorage[:], encTx)
+				return ATEV, start, end
+			}
+
 			if v != nil {
 				// A and V bound - use AVET index
 				valueBytes := encodeValueForSearch(v, encoder)
@@ -660,18 +673,14 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 		start, end := encoder.EncodePrefixRange(VAET, valueBytes)
 		return VAET, start, end
 	} else if tx != nil {
-		// Use TAEV index
-		var storageTx Tx
-		if txID, ok := tx.(uint64); ok {
-			storageTx = NewTxFromUint(txID)
-		} else if eid, ok := datalog.DerefElementID(tx); ok {
-			storageTx = NewTxFromElementID(eid)
+		// Use TAEV index. Tx is always an ElementID by contract.
+		eid, ok := datalog.DerefElementID(tx)
+		if !ok {
+			panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
 		}
-		if storageTx != (Tx{}) {
-			encTx := encoder.EncodeTxForPrefix(storageTx)
-			start, end := encoder.EncodePrefixRange(TAEV, encTx)
-			return TAEV, start, end
-		}
+		encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
+		start, end := encoder.EncodePrefixRange(TAEV, encTx)
+		return TAEV, start, end
 	}
 
 	// Full scan on EATV for CRDT resolution
@@ -776,6 +785,8 @@ func indexName(idx IndexType) string {
 		return "AEVT"
 	case AETV:
 		return "AETV"
+	case ATEV:
+		return "ATEV"
 	case AVET:
 		return "AVET"
 	case VAET:

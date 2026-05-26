@@ -347,6 +347,29 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 			}
 		}
 
+	case ATEV: // A → Tx↓ → E → V — chosen by chooseIndex when both A and Tx
+		// are bound. Contract: a is a Keyword, tx is an ElementID,
+		// e (if set) is an Identity. Type assertions surface a planner bug
+		// loudly rather than degrading to a full scan.
+		var attr Attribute
+		copy(attr[:], a.(datalog.Keyword).String())
+		startParts = append(startParts, attr[:])
+		endParts = append(endParts, attr[:])
+
+		eid, ok := datalog.DerefElementID(tx)
+		if !ok {
+			panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
+		}
+		encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
+		startParts = append(startParts, encTx)
+		endParts = append(endParts, encTx)
+
+		if e != nil {
+			hash := e.(datalog.Identity).Hash()
+			startParts = append(startParts, hash[:])
+			endParts = append(endParts, hash[:])
+		}
+
 	case AVET:
 		if a != nil {
 			if kw, ok := a.(datalog.Keyword); ok {
@@ -395,20 +418,17 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 		}
 
 	case TAEV:
-		// TAEV: Transaction-Attribute-Entity-Value
-		// Tx must be encoded with bitwise-NOT for descending sort order
+		// TAEV: Transaction-Attribute-Entity-Value.
+		// Tx is always an ElementID by contract; encode with bitwise-NOT for
+		// descending sort order.
 		if tx != nil {
-			if txID, ok := tx.(uint64); ok {
-				storageTx := NewTxFromUint(txID)
-				encTx := encoder.EncodeTxForPrefix(storageTx)
-				startParts = append(startParts, encTx)
-				endParts = append(endParts, encTx)
-			} else if eid, ok := datalog.DerefElementID(tx); ok {
-				storageTx := NewTxFromElementID(eid)
-				encTx := encoder.EncodeTxForPrefix(storageTx)
-				startParts = append(startParts, encTx)
-				endParts = append(endParts, encTx)
+			eid, ok := datalog.DerefElementID(tx)
+			if !ok {
+				panic(fmt.Sprintf("Tx must be ElementID, got %T", tx))
 			}
+			encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
+			startParts = append(startParts, encTx)
+			endParts = append(endParts, encTx)
 		}
 	}
 

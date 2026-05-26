@@ -25,6 +25,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **CRDT allocation optimization**: **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main branch while adding full CRDT semantics (verified 2026-02-02)
 - ✅ **AETV index & value elimination**: **5% faster**, **19% less memory**, **17% fewer allocations** (geomean); complex queries see **35% memory reduction** (verified 2026-02-06)
 - ✅ **LZ77+FSE compression codec**: **2.1-2.4 GB/s decompression** (7 allocs), **3.6x on prose**, **10-13x on structured/repetitive** data (verified 2026-03-28)
+- ✅ **ATEV index & attribute high-water mark**: `MaxElementIDForAttribute` and every `Cache.IsAttributeFresh` call become **O(1) (~1 µs)** instead of O(datoms-for-A); **2.2× → 555× faster** at 10–10,000 datoms-per-attribute (verified 2026-05-25). Costs ~14% more write work per commit (1 of 8 indices).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -636,6 +637,75 @@ cache fairly):
 counting the removed race and the per-identity L85 string.
 
 **Details**: See `docs/bugs/resolved/BUG_IDENTITY_L85_LAZY_RACE.md`
+
+### 16. ATEV Index — O(1) Attribute High-Water Mark (COMPLETE - May 2026)
+**Status**: ✅ New `[A][Tx↓][E][V]` index; `MaxElementIDForAttribute` and every
+`Cache.IsAttributeFresh` call are now a single forward seek
+
+**What changed**:
+- Added an 8th index, **ATEV** (`[prefix][A][Tx↓][E][type][V][AfterRef?][Op]`),
+  positioned so that under a `[A]` prefix the entries sort by `Tx` descending
+  across all entities for that attribute. The first entry is therefore the global
+  max-Tx datom for the attribute.
+- `BadgerStore.MaxElementIDForAttribute` is now a single `Seek([ATEV][A])` plus
+  a Tx decode — O(1), where previously it forward-scanned every datom for the
+  attribute on AEVT (O(datoms-for-A)) while documentation claimed "O(1) reverse seek."
+- **Cache freshness inherits this directly.** `Cache.IsAttributeFresh` always calls
+  `MaxElementIDForAttribute` to compute the current store max for comparison
+  against `attrVersions`, so every A-bound cached query path (the gate in front
+  of attribute-resolved CRDT lookups) is now constant-time, not linear in the
+  attribute's datom count.
+- `BadgerMatcher.chooseIndex` routes A-bound + Tx-bound + V-unbound patterns to
+  ATEV. `hash_join_matcher.chooseIndexForValues` and `simple_batch_scanner.buildKey`
+  both learned the ATEV layout so joined/batched scans through ATEV produce a
+  tight `[A][Tx↓][E]` prefix instead of degrading to a full-attribute scan.
+
+**Read-side measurement** (`atev_index_bench_test.go`,
+`BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan`, Apple M5, Badger v4):
+
+| N (datoms-for-A) | ATEV seek | AEVT scan | Speedup |
+|------------------|-----------|-----------|---------|
+| 10               | 876 ns    | 1,943 ns  | 2.2×    |
+| 100              | 995 ns    | 8,505 ns  | 8.5×    |
+| 1,000            | 1,045 ns  | 70 µs     | 67×     |
+| 10,000           | 1,121 ns  | 622 µs    | **555×**|
+
+ATEV is flat across four orders of magnitude (876 ns → 1,121 ns — true O(1)); the
+AEVT scan it replaces grows linearly (10× per decade). At narrative-generators-scale
+(`:task/status` across thousands of tasks), every freshness gate that fronted an
+A-bound cache lookup was previously paying tens to hundreds of microseconds and
+now pays ~1 µs.
+
+**Write-side measurement** (`BenchmarkAssert_WriteCost`, same hardware):
+
+| Batch size | ns/op  | Per-datom |
+|------------|--------|-----------|
+| 100        | 627 µs | ~6.3 µs   |
+| 1,000      | 6.7 ms | ~6.7 µs   |
+
+ATEV adds 1 of 8 indices, so its share of the per-datom write cost is roughly
+~0.8 µs (~14% more than a 7-index baseline) — an estimate from the index ratio,
+not a direct 7-vs-8 measurement. The marginal cost is dominated by Badger's
+`Set` and the per-index key construction, not value encoding (which is amortized
+once per datom across all indices via `EncodeKeyWithValueBytes`).
+
+**Crossover** (writes to amortize one saved freshness check at N=10K): saved
+~621 µs ÷ added ~0.8 µs/datom ≈ 775 datoms. Any commit smaller than that into a
+10K-cardinality attribute is "paid for" by a single subsequent freshness check
+that would have scanned. Read-mostly workloads (the narrative-generators shape)
+win convincingly; bulk-import-then-never-query workloads pay the ~14% tax with
+no read recovery.
+
+**Migration**: None required. ATEV is populated by every commit; the freshness
+seek finds nothing (zero ElementID, treated as "no data") on attributes that have
+no writes since the index was added.
+
+**Defensive-code cleanup that came with it**: `extractElementIDFromKey` now
+panics on an unknown index type (it previously returned `ElementID{}` silently,
+which is how a missing ATEV case slipped past the first test run). Five
+historical `case` blocks that branched on `tx.(uint64)` for legacy Lamport-only
+Tx values were removed along with `NewTxFromUint`/`toStorageTx` — Tx is always
+an `ElementID` now, and the previously dead branch is gone.
 
 ---
 
