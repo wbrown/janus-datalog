@@ -4,7 +4,7 @@
 
 ### What's Working Well ✅
 - Complete Datalog query engine with EAVT storage
-- BadgerDB persistent storage with **7 indices** (EAVT, EATV, AEVT, AETV, AVET, VAET, TAEV)
+- BadgerDB persistent storage with **8 indices** (EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV)
 - Pattern matching, joins, and predicates
 - Expression clauses with arithmetic and string operations
 - Aggregations (sum, count, avg, min, max)
@@ -28,7 +28,11 @@
 - **Database export/import: EDN format for backup and migration**
 - **Conditional aggregate rewriting** (folded into the default algebra optimizer; no separate flag — 7.7× in the original standalone benchmark)
 - **AETV index for A-primary CRDT resolution**
+- **ATEV index for O(1) attribute high-water mark** (cache freshness gate; 555× faster than the prior AEVT scan at 10K datoms-per-attribute)
 - **Value elimination: ~50% storage reduction (keys-only storage)**
+- **LZ77+FSE compression codec** (3.6× on prose, 10-13× on structured/repetitive; 2.1-2.4 GB/s decompression; deterministic; Tier-3 blob store for large values)
+- **Iterator-error contract enforced across executor + storage**: deferred storage errors (Tier-3 blob decode, etc.) ride through every materialization, join, sort, projection, union, and subquery boundary instead of being laundered into clean partial results
+- **Collection binding `[?x ...]`** for set inputs (parser + executor wired through subqueries, OR fallback, and input handling)
 
 ### Production Readiness: ✅ Ready
 
@@ -64,11 +68,30 @@ These items have been completed and are preserved for historical context:
 **Status**: ✅ COMPLETE (February 2026)
 **Result**: Proper A-primary CRDT resolution, ~50% storage reduction
 
+### ✅ LZ77+FSE Compression Codec
+**Status**: ✅ COMPLETE (March 2026, v0.11.0)
+**Result**: 3.6× on prose, 10-13× on structured data; 2.1-2.4 GB/s decompression; Tier-3 blob store with content-hash deduplication
+
+### ✅ Iterator-Error Propagation Contract
+**Status**: ✅ COMPLETE (v0.11.x + v0.12.0)
+**Result**: Deferred iterator errors (e.g., Tier-3 blob decode failures surfacing via Error() after Next() returns false) propagate through every materialization, join, sort, projection, union, and subquery path. Five PRs (#68, #77, #78, #79, #83) brought every observed path under the contract. Relation.Sorted() signature changed to `([]Tuple, error)`. Static guard test now fails the build if any collectTuplesInto call drops its error.
+
+### ✅ ATEV Index — O(1) Attribute High-Water Mark
+**Status**: ✅ COMPLETE (May 2026, v0.12.0)
+**Result**: 8th index added; Cache.IsAttributeFresh and MaxElementIDForAttribute become constant-time. 2.2× → 555× faster than the prior AEVT scan at 10–10,000 datoms-per-attribute. Costs ~14% more write work per commit.
+
+### ✅ Concurrency Hardening (v0.12.0)
+**Status**: ✅ COMPLETE
+**Result**: Four races fixed — UnionRelation iterator/cache (PR #70), planner handler shared state (PR #74), TupleKey time.Time hash nondeterminism (PR #76, was silently flaking CI), Identity L85 lazy cache (PR #80, cache removed in favour of interned-pointer keys: ~2.7× faster index path).
+
+### ✅ Collection Binding `[?x ...]`
+**Status**: ✅ COMPLETE
+**Result**: Parser and executor wired through subqueries, OR fallback, and `:in` input handling.
+
 ## Medium Term (1-2 Months)
 
 ### Query Engine Enhancements
-1. **Collection Binding**: `[?x ...]` for set inputs
-2. **Distinct Aggregation**: `(count-distinct ?x)`
+1. **Distinct Aggregation**: `(count-distinct ?x)` and a `distinct` modifier on existing aggregates
 
 ### Performance Optimizations
 1. **Parallel Pattern Execution**: For independent patterns (complex dependency analysis)
@@ -110,7 +133,7 @@ These were originally listed as "out of scope" but got implemented anyway:
 | OHLC aggregations | <5s/month | **2-4s** | **~2× faster** |
 | Memory usage | <100MB | **30MB** | **3× less** |
 
-*Benchmarked on Apple M4 Max. See PERFORMANCE_STATUS.md for methodology.*
+*Benchmarked on Apple M5 / M5 Max. See PERFORMANCE_STATUS.md for methodology and per-optimization measurements (16 entries through v0.12.0).*
 
 ### Code Quality
 - Test coverage: >80%
@@ -135,16 +158,18 @@ These were originally listed as "out of scope" but got implemented anyway:
 ## Technical Debt to Address
 
 ### High Priority
-- [x] Consolidate performance documentation → `PERFORMANCE_STATUS.md` created
 - [ ] Archive historical optimization docs → Move to `docs/archive/`
-- [ ] Fix examples/ package conflicts → 37 programs can't run via `go test`
 
 ### Medium Priority
-- [ ] Remove experimental key_mask_iterator_v2.go → Not integrated, benchmarked slower
-- [ ] Improve error messages → Add context to query failures
-- [ ] Add query explain plan → Show execution strategy
-- [ ] Profile memory allocations → Identify hot paths
+- [ ] Improve error messages → Add context to query failures (the iterator-error contract surfaces the right error now, but the wording at user-facing boundaries could carry more context)
+- [ ] Add query explain plan → Show execution strategy (annotations system already exposes per-phase events; a packaged `Explain()` API on top would be the user-facing surface)
 
 ### Low Priority
-- [ ] Add integration test suite → End-to-end query scenarios
-- [ ] Add query metrics/telemetry → Production observability
+- [ ] Add query metrics/telemetry → Production observability beyond what `annotations.Handler` already provides
+
+### Resolved (historical reference)
+- [x] Consolidate performance documentation → `PERFORMANCE_STATUS.md` created
+- [x] Fix examples/ package conflicts → v0.11.0 overhauled examples; 14 working programs, no internal-package imports except the escape-hatch example
+- [x] Remove experimental key_mask_iterator_v2.go → File removed
+- [x] Profile memory allocations → PERFORMANCE_STATUS.md entries through #16 include per-allocation breakdowns
+- [x] Add integration test suite → `tests/` directory holds end-to-end scenarios
