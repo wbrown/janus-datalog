@@ -424,9 +424,14 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 // executeRealizedWithRelationInputIteration handles RelationInput iteration for QueryExecutor path
 // This iterates over each tuple in the RelationInput and executes the plan once per tuple.
 func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
-	// Find the RelationInput and its corresponding relation
+	// Find the RelationInput, its corresponding relation, and that relation's index
+	// within inputRelations. The index lets each per-tuple execution forward the
+	// OTHER input relations (scalars, collections) in their original positions
+	// rather than dropping them
+	// (see docs/bugs/resolved/BUG_SCALAR_PLUS_RELATION_INPUT_DROPS_OTHER_INPUTS.md).
 	var relationInput query.RelationInput
 	var iterationRelation Relation
+	iterationIndex := -1
 	relationIndex := 0
 
 	for _, input := range plan.Query.In {
@@ -437,6 +442,7 @@ func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *
 			relationInput = inp
 			if relationIndex < len(inputRelations) {
 				iterationRelation = inputRelations[relationIndex]
+				iterationIndex = relationIndex
 			}
 			relationIndex++
 		case query.ScalarInput, query.TupleInput, query.CollectionInput:
@@ -452,9 +458,33 @@ func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *
 
 	// Dispatch to parallel or sequential implementation
 	if e.enableParallelSubqueries {
-		return e.executeRealizedWithRelationInputIterationParallel(ctx, plan, inputRelations, relationInput, iterationRelation)
+		return e.executeRealizedWithRelationInputIterationParallel(ctx, plan, inputRelations, relationInput, iterationRelation, iterationIndex)
 	}
-	return e.executeRealizedWithRelationInputIterationSequential(ctx, plan, inputRelations, relationInput, iterationRelation)
+	return e.executeRealizedWithRelationInputIterationSequential(ctx, plan, inputRelations, relationInput, iterationRelation, iterationIndex)
+}
+
+// perTupleInputRelations builds the full ordered input-relation list for one
+// iteration of a RelationInput: every original input relation is forwarded in its
+// original position, except the iteration relation (at iterationIndex), which is
+// replaced by one single-value relation per RelationInput symbol drawn from this
+// tuple. Forwarding the non-iteration inputs (scalars, collections) in place keeps
+// them aligned with executeRealizedNonIterating's in-place :in rewrite; without it
+// they are dropped and BindQueryInputs binds the wrong values
+// (see docs/bugs/resolved/BUG_SCALAR_PLUS_RELATION_INPUT_DROPS_OTHER_INPUTS.md).
+func perTupleInputRelations(inputRelations []Relation, iterationIndex int, relationInput query.RelationInput, tuple Tuple) []Relation {
+	out := make([]Relation, 0, len(inputRelations)+len(relationInput.Symbols))
+	for j, rel := range inputRelations {
+		if j == iterationIndex {
+			for i, sym := range relationInput.Symbols {
+				if i < len(tuple) {
+					out = append(out, NewMaterializedRelation([]query.Symbol{sym}, []Tuple{{tuple[i]}}))
+				}
+			}
+			continue
+		}
+		out = append(out, rel)
+	}
+	return out
 }
 
 // executeRealizedWithRelationInputIterationSequential executes QueryExecutor path sequentially for RelationInput
@@ -464,6 +494,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	inputRelations []Relation,
 	relationInput query.RelationInput,
 	iterationRelation Relation,
+	iterationIndex int,
 ) (Relation, error) {
 	// Collect results from each tuple iteration
 	var allResults []Relation
@@ -475,17 +506,10 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	for it.Next() {
 		tuple := it.Tuple()
 
-		// Create scalar input relations for this tuple
-		var tupleInputRelations []Relation
-		for i, sym := range relationInput.Symbols {
-			if i < len(tuple) {
-				scalarRel := NewMaterializedRelation(
-					[]query.Symbol{sym},
-					[]Tuple{{tuple[i]}},
-				)
-				tupleInputRelations = append(tupleInputRelations, scalarRel)
-			}
-		}
+		// Per-tuple inputs: this tuple's values as scalars in the relation's slot,
+		// with every other input relation forwarded in place (so scalars/collections
+		// survive — see perTupleInputRelations).
+		tupleInputRelations := perTupleInputRelations(inputRelations, iterationIndex, relationInput, tuple)
 
 		// Execute the plan with these scalar inputs using QueryExecutor
 		result, err := e.executeRealizedNonIterating(ctx, plan, tupleInputRelations, relationInput)
@@ -524,6 +548,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	inputRelations []Relation,
 	relationInput query.RelationInput,
 	iterationRelation Relation,
+	iterationIndex int,
 ) (Relation, error) {
 	// Determine number of workers
 	numWorkers := e.maxSubqueryWorkers
@@ -562,17 +587,9 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 				done <- struct{}{}
 			}()
 
-			// Create scalar input relations for this tuple
-			var tupleInputRelations []Relation
-			for i, sym := range relationInput.Symbols {
-				if i < len(tup) {
-					scalarRel := NewMaterializedRelation(
-						[]query.Symbol{sym},
-						[]Tuple{{tup[i]}},
-					)
-					tupleInputRelations = append(tupleInputRelations, scalarRel)
-				}
-			}
+			// Per-tuple inputs: this tuple's values as scalars in the relation's slot,
+			// with every other input relation forwarded in place.
+			tupleInputRelations := perTupleInputRelations(inputRelations, iterationIndex, relationInput, tup)
 
 			// Execute the plan with these scalar inputs. Each worker gets its
 			// own forked context: a Context's per-query state (queryStart,
