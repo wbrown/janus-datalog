@@ -157,13 +157,24 @@ func (s *simpleBatchScanner) calculateScanRange(bindingSet map[string]executor.T
 		}
 	}
 
+	// Same for the Tx slot — ATEV's [A][Tx↓][E][V] layout needs constTx
+	// after constA to produce a tight prefix. Tx is always an ElementID.
+	var constT []byte
+	if c, ok := s.pattern.GetT().(query.Constant); ok {
+		eid, ok := datalog.DerefElementID(c.Value)
+		if !ok {
+			panic(fmt.Sprintf("Tx constant must be ElementID, got %T", c.Value))
+		}
+		constT = s.matcher.store.encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
+	}
+
 	// Find min and max keys from binding values
 	for _, tuple := range bindingSet {
 		if s.position >= len(tuple) {
 			continue
 		}
 
-		key := s.buildKey(tuple[s.position], constA)
+		key := s.buildKey(tuple[s.position], constA, constT)
 		if key == nil {
 			continue
 		}
@@ -197,7 +208,7 @@ func (s *simpleBatchScanner) calculateScanRange(bindingSet map[string]executor.T
 //   - *uint64 is a non-interned boxed scalar sometimes used for
 //     comparable-value workarounds; dereference it for uniform
 //     handling.
-func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
+func (s *simpleBatchScanner) buildKey(value interface{}, constA, constT []byte) []byte {
 	if ptr, ok := value.(*uint64); ok {
 		value = *ptr
 	}
@@ -264,6 +275,23 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 				return encoder.EncodePrefix(s.index, attr[:])
 			}
 		}
+	case ATEV:
+		// ATEV: [A][Tx↓][E][V] — chosen when both A and Tx are constants.
+		// Position 0 (E varies):  [A][Tx][hash(E)] — fully tightened.
+		// Position 2 (V varies):  [A][Tx] — E sits between Tx and V and is
+		//                         unbound, so we can't include V in the prefix.
+		if constA == nil || constT == nil {
+			return nil
+		}
+		switch s.position {
+		case 0:
+			if e, ok := value.(datalog.Identity); ok {
+				hash := e.Hash()
+				return encoder.EncodePrefix(s.index, constA, constT, hash[:])
+			}
+		case 2:
+			return encoder.EncodePrefix(s.index, constA, constT)
+		}
 	case AVET:
 		// AVET: [A][type+V][E][Tx]. Useful prefixes:
 		//   position=1 (A varies):  [A] prefix from the binding keyword
@@ -313,17 +341,14 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA []byte) []byte {
 		}
 		return encoder.EncodePrefix(s.index, parts...)
 	case TAEV:
-		// TAEV: [Tx][A][E][V] — Tx encoded with bitwise-NOT for
-		// descending sort.
-		if eid, ok := datalog.DerefElementID(value); ok {
-			txBytes := NewTxFromElementID(eid)
-			encTx := encoder.EncodeTxForPrefix(txBytes)
-			return encoder.EncodePrefix(s.index, encTx)
-		} else if tx, ok := value.(uint64); ok {
-			txBytes := NewTxFromUint(tx)
-			encTx := encoder.EncodeTxForPrefix(txBytes)
-			return encoder.EncodePrefix(s.index, encTx)
+		// TAEV: [Tx][A][E][V] — Tx encoded with bitwise-NOT for descending sort.
+		// The binding value is always an ElementID.
+		eid, ok := datalog.DerefElementID(value)
+		if !ok {
+			panic(fmt.Sprintf("Tx binding must be ElementID, got %T", value))
 		}
+		encTx := encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
+		return encoder.EncodePrefix(s.index, encTx)
 	}
 	return nil
 }

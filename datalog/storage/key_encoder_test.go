@@ -44,7 +44,7 @@ func TestKeyEncoders(t *testing.T) {
 			encoder := tc.encoder
 
 			// Test all index types
-			indices := []IndexType{EAVT, AEVT, AVET, VAET, TAEV}
+			indices := []IndexType{EAVT, AEVT, AETV, ATEV, AVET, VAET, TAEV}
 
 			for _, idx := range indices {
 				// Encode key

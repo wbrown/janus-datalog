@@ -258,8 +258,12 @@ func (s *BadgerStore) MaxElementID() (datalog.ElementID, error) {
 
 // MaxElementIDForAttribute returns the highest ElementID for any (E, A) with this attribute.
 // Used for fast cache freshness checks on A-bound queries.
-// Uses AEVT index with forward scan - first entry has highest Tx due to bitwise NOT encoding.
-// Returns zero ElementID if no data exists for this attribute.
+//
+// O(1): single forward seek on the ATEV index. ATEV orders A → Tx↓ → E → V, so the
+// first entry under prefix [A] has the global maximum Tx for the attribute (Tx is
+// encoded with bitwise NOT for descending sort within (A) groups).
+//
+// Returns zero ElementID if no ATEV data exists for this attribute.
 func (s *BadgerStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, error) {
 	var maxID datalog.ElementID
 
@@ -270,62 +274,29 @@ func (s *BadgerStore) MaxElementIDForAttribute(a []byte) (datalog.ElementID, err
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		// Build AEVT prefix for this attribute: [prefix:1][A:32]
-		aevtPrefix := make([]byte, 1+32)
-		aevtPrefix[0] = byte(AEVT)
-		copy(aevtPrefix[1:33], a)
+		// Build ATEV prefix for this attribute: [prefix:1][A:32]
+		atevPrefix := make([]byte, 1+32)
+		atevPrefix[0] = byte(ATEV)
+		copy(atevPrefix[1:33], a)
 
-		it.Seek(aevtPrefix)
-
-		if it.Valid() {
-			key := it.Item().Key()
-			// Verify this key is for our attribute (prefix match)
-			if len(key) >= 33 && key[0] == byte(AEVT) {
-				if !bytesEqual(key[1:33], aevtPrefix[1:33]) {
-					// Different attribute - no data for this attribute
-					return nil
-				}
-				// Found an AEVT key for this attribute
-				// AEVT layout: [prefix:1][A:32][E:20][V:var][Tx:16][Op:1][AfterRef?:16]
-				// However, Tx is NOT the first component after A, so we can't rely on first entry
-				// having highest Tx. We need to scan through entries for this attribute.
-				//
-				// Actually, for AEVT, the key order is: A → E → V → Tx (descending)
-				// So within the same (A, E, V), first entry has highest Tx.
-				// But we want highest across ALL (E, V) for this A.
-				//
-				// For a true O(1) solution, we'd need an index like EATV where Tx comes earlier.
-				// For now, we scan entries until we find a different attribute.
-				// In practice, we only need to find ONE entry to know the attribute has data,
-				// and track the max as we go.
-				for it.Valid() {
-					key := it.Item().Key()
-					// Check if still in our attribute's prefix
-					if len(key) < 33 || key[0] != byte(AEVT) {
-						break
-					}
-					if !bytesEqual(key[1:33], aevtPrefix[1:33]) {
-						break // Different attribute
-					}
-
-					// Decode the Tx from this key
-					_, _, _, tx, _, _, err := s.encoder.DecodeKey(AEVT, key)
-					if err != nil {
-						it.Next()
-						continue
-					}
-					elemID := Tx(tx).ToElementID()
-					if elemID.Compare(maxID) > 0 {
-						maxID = elemID
-					}
-
-					it.Next()
-				}
-				return nil
-			}
+		it.Seek(atevPrefix)
+		if !it.Valid() {
+			return nil
 		}
 
-		// No AEVT entries found for this attribute
+		// Seek may land past the attribute's ATEV range (different index or
+		// different attribute) when no ATEV entries exist for this attribute.
+		key := it.Item().Key()
+		if key[0] != byte(ATEV) || !bytesEqual(key[1:33], atevPrefix[1:33]) {
+			return nil
+		}
+
+		// First entry under [ATEV][A] holds the global max Tx for the attribute.
+		_, _, _, tx, _, _, decodeErr := s.encoder.DecodeKey(ATEV, key)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		maxID = Tx(tx).ToElementID()
 		return nil
 	})
 
@@ -567,6 +538,11 @@ func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {
 		}
 		txBytes = key[offset : offset+txSize]
 
+	case ATEV:
+		// ATEV: [prefix:1][A:32][Tx:16][E:20][V:var][AfterRef?:16][Op:1]
+		// Tx is immediately after A
+		txBytes = key[prefixSize+attrSize : prefixSize+attrSize+txSize]
+
 	case EAVT, AEVT, AVET, VAET:
 		// These indices have Tx near the tail, but the tail also
 		// carries Op (1 byte, always last) and optionally AfterRef
@@ -590,7 +566,11 @@ func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {
 		txBytes = key[len(key)-tailAfterTx-txSize : len(key)-tailAfterTx]
 
 	default:
-		return datalog.ElementID{}
+		// Programmer error: a new IndexType was added without teaching this
+		// switch where Tx lives in its layout. Silent zero return here once
+		// hid a missing ATEV case — surface it loudly instead. Matches the
+		// encoder switches in key_encoder_{binary,l85}.go.
+		panic(fmt.Sprintf("extractElementIDFromKey: unknown index type %v", index))
 	}
 
 	// Reverse bitwise NOT to get original ElementID

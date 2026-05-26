@@ -257,7 +257,7 @@ For each phase in plan:
                            ▼
                     ┌──────────────┐
                     │   BadgerDB   │
-                    │  7 indices   │
+                    │  8 indices   │
                     │  per datom   │
                     └──────────────┘
 ```
@@ -276,7 +276,7 @@ For each phase in plan:
 3. **`tx.Commit()`** — Atomic:
    - Uniqueness validation (for `:db.unique/value` and `:db.unique/identity` attributes)
    - `store.Retract(retracts)` — write tombstones
-   - `store.Assert(datoms)` — write to all 7 indices per datom
+   - `store.Assert(datoms)` — write to all 8 indices per datom
    - Transaction metadata datom (`tx:N :db/txInstant time`)
    - EA cache invalidation for touched (entity, attribute) pairs
 
@@ -374,7 +374,7 @@ type Store interface {
 }
 ```
 
-Raw datom storage with 7 indices. Currently only `BadgerStore` (BadgerDB). The `BadgerMatcher` bridges this to the executor by implementing `PatternMatcher` — it chooses the optimal index based on which pattern components are bound, scans BadgerDB, and wraps results as `StreamingRelation`.
+Raw datom storage with 8 indices. Currently only `BadgerStore` (BadgerDB). The `BadgerMatcher` bridges this to the executor by implementing `PatternMatcher` — it chooses the optimal index based on which pattern components are bound, scans BadgerDB, and wraps results as `StreamingRelation`.
 
 ### EntityResolver — CRDT Resolution
 
@@ -394,7 +394,7 @@ Returns all attributes for an entity with CRDT conflict resolution applied. Used
 - **Fixed-size keys**: 69 bytes (E:20 + A:32 + Tx:16 + Op:1), plus optional 16-byte AfterRef for RGA
 - **Variable-size values**: 2-byte size prefix + 1-byte type tag + data
 - **L85 encoding**: Custom sort-preserving Base85 for range scans
-- **Seven indices**: Each serves different access patterns:
+- **Eight indices**: Each serves different access patterns:
 
 | Index | Use Case |
 |-------|----------|
@@ -402,6 +402,7 @@ Returns all attributes for an entity with CRDT conflict resolution applied. Used
 | EATV  | Entity lookups, LWW resolution (cardinality-one/vector) |
 | AEVT  | Attribute scans across entities |
 | AETV  | Attribute scans with temporal ordering |
+| ATEV  | O(1) attribute high-water mark; AsOf-by-attribute access |
 | AVET  | Value-based lookups (uniqueness, reverse lookup) |
 | VAET  | Reverse reference traversal |
 | TAEV  | Transaction-based queries, history |

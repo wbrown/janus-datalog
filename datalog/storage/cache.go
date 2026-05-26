@@ -198,8 +198,9 @@ func (c *Cache) InvalidateAttribute(a Attribute) {
 // IsAttributeFresh checks if the entire attribute is fresh in cache
 // Used for A-bound queries like [?e :name "Bob"] to avoid checking every entity
 //
-// IMPLEMENTATION NOTE: MaxElementIDForAttribute() performs an O(1) reverse seek
-// on the AEVT index to find the highest Tx for any entity with this attribute.
+// IMPLEMENTATION NOTE: MaxElementIDForAttribute() performs an O(1) forward seek
+// on the ATEV index. ATEV is ordered A → Tx↓ → E → V, so the first entry under
+// prefix [A] is the global max-Tx datom for the attribute in a single seek.
 //
 // EDGE CASE - Initial population after restart:
 // After process restart, attrVersions is empty. The first A-bound query will:

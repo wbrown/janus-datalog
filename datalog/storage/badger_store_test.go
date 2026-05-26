@@ -665,8 +665,8 @@ func TestTimeBasedQueries(t *testing.T) {
 		startTime := time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC)
 		endTime := time.Date(2024, 1, 1, 11, 30, 0, 0, time.UTC)
 
-		startTx := NewTxFromUint(uint64(startTime.UnixNano()))
-		endTx := NewTxFromUint(uint64(endTime.UnixNano()))
+		startTx := NewTxFromElementID(datalog.ElementID{Lamport: uint64(startTime.UnixNano())})
+		endTx := NewTxFromElementID(datalog.ElementID{Lamport: uint64(endTime.UnixNano())})
 
 		// With bitwise NOT encoding, higher Tx encodes to lower bytes
 		// So for range [startTime, endTime], scan from encoded(endTime) to encoded(startTime)
