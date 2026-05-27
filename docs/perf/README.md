@@ -58,7 +58,67 @@ Memory and allocations are flat across worker counts at ~792 MiB and
 11.28M allocs per op — the parallel-vs-sequential delta is all time.
 Beyond 8 workers, scheduler overhead exceeds the parallelism gain.
 
-### Profile signatures
+### `hash_join_baseline_2026-05-27.txt`
+
+Five hash-join benchmarks (`InputTypes`, `MaterializedVsStreaming`,
+`SingleIteration`, `LargeResult`, `Streaming`) covering 25 sub-cases:
+materialized × materialized, streaming × materialized, materialized
+× streaming, streaming × streaming at sizes 100/1000/5000/10000/50000.
+
+Machine: Apple M5, go1.26.3 darwin/arm64.
+Commit: `8e336f2` (main, post PR #85).
+
+n=10. Wall time ~4.5 minutes for the full suite.
+
+Key per-op numbers for representative cases:
+
+| Case | sec/op | B/op | allocs/op |
+|------|-------:|-----:|----------:|
+| InputTypes/mat_x_mat/size_5000 | 1.12 ms | 2.45 MB | 40,060 |
+| InputTypes/stream_x_mat/size_5000 | 1.59 ms | 3.28 MB | 55,083 |
+| LargeResult/size_50000 | 13.0 ms | 24.4 MB | 400,293 |
+
+The streaming-probe case adds ~15k allocs vs the both-materialized
+case at the same data size (8/op extra per row, consistent with the
+`tupleCopy` at `join.go:91-93` and other streaming-mode copies).
+
+Allocations scale linearly with result size: ~8/row in
+`LargeResult/size_50000` (400k allocs / 50k rows).
+
+### Hash-join profile signatures
+
+Three `.prof` files for `mat_x_mat/size_5000`, `stream_x_mat/size_5000`,
+and `LargeResult/size_50000`.
+
+All three are dominated by GC/scheduler primitives, consistent with
+high allocation pressure from the inner loop:
+
+| Symbol | mat×mat 5K | stream×mat 5K | large 50K |
+|--------|-----------:|--------------:|----------:|
+| `runtime.madvise` (GC pages) | 28.48% flat | 23.21% flat | 16.94% flat |
+| `runtime.pthread_cond_wait` | 14.62% flat | 13.94% flat | 14.40% flat |
+| `runtime.kevent` (netpoll) | 21.07% flat | 28.19% flat | 8.35% flat |
+| `runtime.usleep` | 6.11% flat | 6.10% flat | – |
+| `HashJoinWithOptions` (cum) | 8.85% | – | 28.43% |
+| `combineTuples` (cum) | – | – | 6.92% |
+| `TupleKeyMap.Put` (cum) | – | – | 5.68% |
+
+`combineTuples` and `TupleKeyMap.Put` only surface in the top 40 for
+the 50K case where the application work is large enough to register
+above scheduler noise. They are the largest application-level hot
+spots after GC, validating the targets in
+`docs/ideas/HASH_JOIN_HOT_PATH_OPTIMIZATIONS.md` findings #1 and #5.
+
+### `hash_join_buildsize_baseline_2026-05-27.txt`
+
+`BenchmarkHashJoinBuildSize` sweep — 6 build sizes (64..2048) × 8 data
+sizes (50..10000) at n=3. Tunes `DefaultHashTableSize`, not the
+per-row hot path; kept as a reference so after-state runs can confirm
+the chosen default still holds.
+
+---
+
+## Original relation-input profile signatures
 
 Three `.prof` files capture CPU samples (10s) for Sequential,
 Parallel-8Workers, Parallel-32Workers.

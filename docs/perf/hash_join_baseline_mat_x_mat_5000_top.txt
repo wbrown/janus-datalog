@@ -1,0 +1,48 @@
+File: exec.test
+Type: cpu
+Time: 2026-05-27 09:36:33 EDT
+Duration: 10.35s, Total samples = 14.57s (140.78%)
+Showing nodes accounting for 11.68s, 80.16% of 14.57s total
+Dropped 145 nodes (cum <= 0.07s)
+Showing top 40 nodes out of 77
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%      9.83s 67.47%  runtime.systemstack
+     4.15s 28.48% 28.48%      4.15s 28.48%  runtime.madvise
+         0     0% 28.48%      4.11s 28.21%  runtime.(*mheap).allocSpan
+         0     0% 28.48%      4.09s 28.07%  runtime.sysUsed (inline)
+         0     0% 28.48%      4.09s 28.07%  runtime.sysUsedOS (inline)
+         0     0% 28.48%      4.07s 27.93%  runtime.(*mheap).alloc.func1
+         0     0% 28.48%      3.11s 21.35%  runtime.startTheWorldWithSema
+     3.07s 21.07% 49.55%      3.07s 21.07%  runtime.kevent
+         0     0% 49.55%      3.07s 21.07%  runtime.netpoll
+         0     0% 49.55%      3.06s 21.00%  runtime.gcStart.func4
+         0     0% 49.55%      2.71s 18.60%  runtime.schedule
+         0     0% 49.55%      2.68s 18.39%  runtime.mcall
+         0     0% 49.55%      2.68s 18.39%  runtime.park_m
+         0     0% 49.55%      2.50s 17.16%  runtime.findRunnable
+         0     0% 49.55%      2.20s 15.10%  runtime.stopm
+         0     0% 49.55%      2.18s 14.96%  runtime.semasleep
+         0     0% 49.55%      2.13s 14.62%  runtime.mPark (inline)
+         0     0% 49.55%      2.13s 14.62%  runtime.notesleep
+     2.13s 14.62% 64.17%      2.13s 14.62%  runtime.pthread_cond_wait
+         0     0% 64.17%      1.91s 13.11%  runtime.gcBgMarkWorker.func2
+     0.02s  0.14% 64.31%      1.91s 13.11%  runtime.gcDrain
+         0     0% 64.31%      1.45s  9.95%  runtime.gcDrainMarkWorkerDedicated (inline)
+         0     0% 64.31%      1.40s  9.61%  runtime.semawakeup
+         0     0% 64.31%      1.39s  9.54%  runtime.notewakeup
+     1.39s  9.54% 73.85%      1.39s  9.54%  runtime.pthread_cond_signal
+         0     0% 73.85%      1.36s  9.33%  runtime.wakep
+         0     0% 73.85%      1.32s  9.06%  github.com/wbrown/janus-datalog/datalog/executor.BenchmarkHashJoinInputTypes.func1
+         0     0% 73.85%      1.32s  9.06%  runtime.startm
+         0     0% 73.85%      1.32s  9.06%  testing.(*B).launch
+         0     0% 73.85%      1.32s  9.06%  testing.(*B).runN
+         0     0% 73.85%      1.29s  8.85%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).HashJoin (inline)
+         0     0% 73.85%      1.29s  8.85%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).Join
+         0     0% 73.85%      1.29s  8.85%  github.com/wbrown/janus-datalog/datalog/executor.HashJoin
+     0.03s  0.21% 74.06%      1.29s  8.85%  github.com/wbrown/janus-datalog/datalog/executor.HashJoinWithOptions
+         0     0% 74.06%      1.16s  7.96%  runtime.(*gcControllerState).enlistWorker
+     0.89s  6.11% 80.16%      0.89s  6.11%  runtime.usleep
+         0     0% 80.16%      0.82s  5.63%  runtime.lock (inline)
+         0     0% 80.16%      0.82s  5.63%  runtime.lock2
+         0     0% 80.16%      0.82s  5.63%  runtime.lockWithRank (inline)
+         0     0% 80.16%      0.80s  5.49%  runtime.newstack
