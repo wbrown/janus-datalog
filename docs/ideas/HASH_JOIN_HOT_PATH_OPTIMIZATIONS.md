@@ -1,8 +1,69 @@
 # Hash-Join Hot-Path Optimizations
 
-**Status**: Proposed
+**Branch**: `perf/hash-join-hot-path`
 **Date**: 2026-05-27
 **Priority**: Medium (Performance)
+
+## Status
+
+| # | Finding | Status |
+|---|---------|--------|
+| 1 | `combineTuples` projection plan hoist | ✅ Applied (`397e39f`) |
+| 2 | `ValuesEqual` pointer-equality short-circuit | ⬜ Pending |
+| 3 | Identity hash via 8-byte SHA1 prefix | ⬜ Pending |
+| 4 | Defensive joined/probe-tuple copies | ⬜ Pending |
+| 5 | `seen` double-lookup → `PutIfAbsent` | ⬜ Pending |
+| 6 | Debug/annotation field gating | ⬜ Pending |
+
+### Pending verification for finding #1
+
+The int64 suite at sizes 5000+ showed +3 to +16% "regressions" in
+the after-state full-suite run that contradict:
+
+- The Identity suite at the same shapes (small wins or wash)
+- Targeted single-benchmark re-runs in cleaner thermal state
+  (e.g. `mat_x_mat/size_5000` measured 1.073ms clean vs 1.244ms
+  in the hot full-suite, a 14% improvement, not a regression)
+- The `combineTuples` profile delta (-41% absolute in the function)
+
+This looks like thermal sequence artifacts on the M5 Air across a
+4.5-min full suite, but cannot be ruled out as real without a
+controlled-thermal rerun. To confirm/refute:
+
+```
+go test -count=10 \
+  -bench='^BenchmarkHashJoin(InputTypes|MaterializedVsStreaming|SingleIteration|LargeResult|Streaming)$' \
+  -benchmem -run='^$' ./datalog/executor \
+  > /tmp/int64_thermal_rerun.txt
+benchstat docs/perf/hash_join_baseline_2026-05-27.txt /tmp/int64_thermal_rerun.txt
+```
+
+Expected on a thermally stable machine: small wins across all
+sizes (the change does strictly less work per call). If the
+mid-range regressions persist, finding #1 has a workload-dependent
+trade-off that needs to be understood before continuing to #2.
+
+## Pickup checklist (for a different machine)
+
+1. **Branch**: `perf/hash-join-hot-path`. `git log --oneline -5`
+   shows the chain.
+2. **Read order**: this doc top-to-bottom, then
+   `docs/perf/README.md` for the benchmark/profile workflow
+   (benchstat usage, profile re-rendering against a fresh test
+   binary).
+3. **Re-baseline on the new machine** before any new change. The
+   deltas this doc cites are Apple M5 numbers; absolute numbers
+   will differ on other hardware but the relative deltas should
+   hold.
+4. **Pick next finding by ranked impact**. Default order: #2, #5,
+   #3, #4, #6 (see [Ranking by Expected Profile Impact](#ranking-by-expected-profile-impact)).
+   The Duplicates profile (`docs/perf/hash_join_identity_baseline_duplicates_10x100_top.txt`)
+   is the most signal-dense single profile — `ValuesEqual` 2.95%
+   for #2, `hashValue` 2.56% for #3, `TupleKeyMap.Exists` 5.98%
+   for #5 all appear there.
+5. **Per finding**: implement (file:line refs in each Findings
+   section) → `go test -count=1 ./...` → re-run baseline →
+   `benchstat` → commit.
 
 ## Context
 
@@ -11,9 +72,6 @@ document catalogs concrete inefficiencies discovered by reading
 `datalog/executor/join.go`, `datalog/executor/tuple_key.go`, and
 `datalog/compare.go`. Each finding cites the file:line and proposes a
 specific fix.
-
-No benchmarks have been run for this analysis yet — these are findings
-from static reading. Profile-and-measure before/after for each change.
 
 ## Findings
 
