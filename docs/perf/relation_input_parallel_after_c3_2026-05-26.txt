@@ -1,0 +1,66 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/executor
+cpu: Apple M5
+BenchmarkRelationInputParallel/Sequential-10         	       3	 384486778 ns/op	823297741 B/op	11116691 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 416018056 ns/op	823297272 B/op	11116684 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 393104250 ns/op	823306562 B/op	11116748 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 392688014 ns/op	823301984 B/op	11116728 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 393473986 ns/op	823297784 B/op	11116691 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 386814806 ns/op	823294992 B/op	11116681 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 388922458 ns/op	823298090 B/op	11116699 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 386388222 ns/op	823292437 B/op	11116658 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 413744972 ns/op	823296704 B/op	11116693 allocs/op
+BenchmarkRelationInputParallel/Sequential-10         	       3	 389928167 ns/op	823294562 B/op	11116679 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 260189396 ns/op	823456406 B/op	11117284 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 262831698 ns/op	823452842 B/op	11117267 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 265760281 ns/op	823457322 B/op	11117317 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 289546271 ns/op	823451192 B/op	11117252 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 269879052 ns/op	823450292 B/op	11117269 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 270830771 ns/op	823454886 B/op	11117273 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 270897844 ns/op	823450154 B/op	11117252 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 272453490 ns/op	823457146 B/op	11117297 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 272164698 ns/op	823455864 B/op	11117267 allocs/op
+BenchmarkRelationInputParallel/Parallel-2Workers-10  	       4	 275905854 ns/op	823453756 B/op	11117294 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 232271025 ns/op	823466976 B/op	11117589 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       4	 250405854 ns/op	823475762 B/op	11117701 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 236756408 ns/op	823487785 B/op	11117717 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 224669008 ns/op	823475992 B/op	11117622 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 238144733 ns/op	823484352 B/op	11117714 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 229286967 ns/op	823484129 B/op	11117696 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 226361758 ns/op	823469248 B/op	11117563 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 225941583 ns/op	823471500 B/op	11117561 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 226734108 ns/op	823475953 B/op	11117623 allocs/op
+BenchmarkRelationInputParallel/Parallel-4Workers-10  	       5	 225373483 ns/op	823466542 B/op	11117536 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 239664692 ns/op	823491944 B/op	11118676 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 230516542 ns/op	823489232 B/op	11118685 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 231752900 ns/op	823496134 B/op	11118688 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 239358367 ns/op	823498366 B/op	11118619 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 230820700 ns/op	823486145 B/op	11118594 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 228482617 ns/op	823494606 B/op	11118621 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 244938275 ns/op	823481025 B/op	11118468 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 230758600 ns/op	823485696 B/op	11118681 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 228296733 ns/op	823483964 B/op	11118537 allocs/op
+BenchmarkRelationInputParallel/Parallel-8Workers-10  	       5	 274036075 ns/op	823472888 B/op	11118548 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       5	 244233275 ns/op	823550481 B/op	11119280 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       5	 244998742 ns/op	823538142 B/op	11119101 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       5	 251758358 ns/op	823523080 B/op	11119108 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       4	 255501469 ns/op	823499176 B/op	11118852 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       5	 245401700 ns/op	823515452 B/op	11118996 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       5	 247524183 ns/op	823533697 B/op	11119059 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       5	 244979592 ns/op	823524371 B/op	11118971 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       5	 258808625 ns/op	823521923 B/op	11118968 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       4	 256194406 ns/op	823545284 B/op	11119063 allocs/op
+BenchmarkRelationInputParallel/Parallel-16Workers-10 	       4	 257257208 ns/op	823525614 B/op	11119084 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 257491229 ns/op	823494940 B/op	11118779 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 258687833 ns/op	823478496 B/op	11118724 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 257317427 ns/op	823495638 B/op	11118740 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 258578854 ns/op	823496504 B/op	11118807 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 259698260 ns/op	823490066 B/op	11118729 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 261633208 ns/op	823489506 B/op	11118730 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 317647344 ns/op	823466458 B/op	11118593 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 269592531 ns/op	823501026 B/op	11118867 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 272680594 ns/op	823491920 B/op	11118752 allocs/op
+BenchmarkRelationInputParallel/Parallel-32Workers-10 	       4	 274521292 ns/op	823494638 B/op	11118692 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/executor	139.147s
