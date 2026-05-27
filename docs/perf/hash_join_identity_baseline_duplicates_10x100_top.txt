@@ -1,0 +1,48 @@
+File: exec.test
+Type: cpu
+Time: 2026-05-27 10:57:08 EDT
+Duration: 13.10s, Total samples = 12.87s (98.26%)
+Showing nodes accounting for 11.39s, 88.50% of 12.87s total
+Dropped 113 nodes (cum <= 0.06s)
+Showing top 40 nodes out of 66
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%      9.26s 71.95%  runtime.systemstack
+         0     0%     0%      7.65s 59.44%  runtime.gcStart.func4
+     7.65s 59.44% 59.44%      7.65s 59.44%  runtime.kevent
+         0     0% 59.44%      7.65s 59.44%  runtime.netpoll
+         0     0% 59.44%      7.65s 59.44%  runtime.startTheWorldWithSema
+         0     0% 59.44%      3.23s 25.10%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).HashJoin (inline)
+         0     0% 59.44%      3.23s 25.10%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).Join
+         0     0% 59.44%      3.23s 25.10%  github.com/wbrown/janus-datalog/datalog/executor.BenchmarkHashJoinIdentityDuplicates.func1
+         0     0% 59.44%      3.23s 25.10%  github.com/wbrown/janus-datalog/datalog/executor.HashJoin
+     0.06s  0.47% 59.91%      3.23s 25.10%  github.com/wbrown/janus-datalog/datalog/executor.HashJoinWithOptions
+         0     0% 59.91%      3.23s 25.10%  testing.(*B).launch
+         0     0% 59.91%      3.23s 25.10%  testing.(*B).runN
+     0.31s  2.41% 62.32%      1.66s 12.90%  github.com/wbrown/janus-datalog/datalog/executor.combineTuples (inline)
+         0     0% 62.32%      1.38s 10.72%  runtime.(*mheap).alloc.func1
+         0     0% 62.32%      1.38s 10.72%  runtime.(*mheap).allocSpan
+     1.37s 10.64% 72.96%      1.37s 10.64%  runtime.madvise
+         0     0% 72.96%      1.36s 10.57%  runtime.sysUsed (inline)
+         0     0% 72.96%      1.36s 10.57%  runtime.sysUsedOS (inline)
+     0.04s  0.31% 73.27%      0.77s  5.98%  github.com/wbrown/janus-datalog/datalog/executor.(*TupleKeyMap).Exists
+     0.04s  0.31% 73.58%      0.66s  5.13%  github.com/wbrown/janus-datalog/datalog/executor.NewTupleKeyFull
+     0.29s  2.25% 75.84%      0.62s  4.82%  github.com/wbrown/janus-datalog/datalog/executor.hashValues (inline)
+     0.06s  0.47% 76.30%      0.57s  4.43%  runtime.makeslicecopy
+     0.04s  0.31% 76.61%      0.50s  3.89%  runtime.mallocgc
+     0.14s  1.09% 77.70%      0.44s  3.42%  runtime.mallocgcSmallScanNoHeader
+     0.04s  0.31% 78.01%      0.42s  3.26%  github.com/wbrown/janus-datalog/datalog/executor.tupleValuesEqual
+     0.19s  1.48% 79.49%      0.38s  2.95%  github.com/wbrown/janus-datalog/datalog.ValuesEqual
+     0.13s  1.01% 80.50%      0.34s  2.64%  runtime.mapassign_fast64ptr
+     0.23s  1.79% 82.28%      0.33s  2.56%  github.com/wbrown/janus-datalog/datalog/executor.hashValue
+     0.14s  1.09% 83.37%      0.32s  2.49%  runtime.mapaccess2_fast64
+     0.26s  2.02% 85.39%      0.31s  2.41%  runtime.mapaccess1_fast64
+         0     0% 85.39%      0.26s  2.02%  runtime.schedule
+         0     0% 85.39%      0.25s  1.94%  runtime.findRunnable
+         0     0% 85.39%      0.24s  1.86%  runtime.mcall
+         0     0% 85.39%      0.24s  1.86%  runtime.park_m
+     0.23s  1.79% 87.18%      0.23s  1.79%  runtime.memhash64
+         0     0% 87.18%      0.18s  1.40%  runtime.semasleep
+         0     0% 87.18%      0.17s  1.32%  runtime.mPark (inline)
+         0     0% 87.18%      0.17s  1.32%  runtime.notesleep
+     0.17s  1.32% 88.50%      0.17s  1.32%  runtime.pthread_cond_wait
+         0     0% 88.50%      0.17s  1.32%  runtime.stopm

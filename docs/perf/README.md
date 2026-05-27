@@ -116,6 +116,89 @@ sizes (50..10000) at n=3. Tunes `DefaultHashTableSize`, not the
 per-row hot path; kept as a reference so after-state runs can confirm
 the chosen default still holds.
 
+### `hash_join_identity_baseline_2026-05-27.txt`
+
+`BenchmarkHashJoinIdentityKeys` + `BenchmarkHashJoinIdentityLargeResult`
+at n=10. Identity-keyed analogue of the int64-keyed benchmarks,
+exercising the `hashValue`/`ValuesEqual` paths for interned pointer
+types — the dominant join-key shape in real datalog queries.
+
+Same machine and commit as the other baseline.
+
+Headline per-op numbers (Identity vs int64 at matched configs):
+
+| Case | int64 | Identity | Δ |
+|------|------:|---------:|--:|
+| InputTypes/mat_x_mat/size_5000 | 1.12 ms | 1.33 ms | +19% |
+| LargeResult/size_50000 | 13.0 ms | 14.95 ms | +15% |
+
+Allocation counts are identical (400,293/op at 50K) — the delta is
+entirely CPU on Identity-specific hash and equality paths.
+
+Two profiles captured:
+- `hash_join_identity_baseline_mat_x_mat_5000.{prof,_top.txt}`
+- `hash_join_identity_baseline_large_50000.{prof,_top.txt}`
+
+Application-level symbols surfacing in the Identity 50K profile that
+do not appear in the int64 50K profile:
+
+| Symbol | cum % | Finding |
+|--------|------:|---------|
+| `executor.combineTuples` | 7.21% | #1 |
+| `executor.NewTupleKey` | 6.35% | secondary (multi-col alloc) |
+| `executor.hashValue` | 5.72% | #3 |
+
+`hashValue` 5.72% is the FNV-1a loop over the 20-byte SHA1 hash for
+`datalog.Identity` values. `NewTupleKey` 6.35% is the
+`make([]interface{}, len(indices))` for the multi-column key path.
+`combineTuples` is type-agnostic and tracks the int64 case closely.
+
+`ValuesEqual`/`reflect.ValueOf` (finding #2) does not surface in
+the LargeResult/50K profile. The cost is distributed across ~200k
+`ValuesEqual` calls (one per `TupleKeyMap` lookup with a non-empty
+bucket), each small enough that no single call site reaches the
+noise floor. The high-fanout and duplicate-heavy benchmarks below
+stress the same path with denser call counts.
+
+### Cardinality-many and duplicate-heavy profiles
+
+Two additional Identity-keyed benchmarks were added to stress paths
+the 1:1-keyed benchmarks don't exercise:
+
+- `BenchmarkHashJoinIdentityHighFanout` — K distinct keys, each
+  appearing M times on each side. Build accumulates M-tuple chains
+  per key; probe expands by M; result is K·M² rows. Profile:
+  `hash_join_identity_baseline_highfanout_100x50.{prof,_top.txt}`
+  (250k rows, 50.9 ms/op).
+- `BenchmarkHashJoinIdentityDuplicates` — K keys × R reps per side,
+  shared payload per key. After join, 99%+ of result rows are
+  duplicates that `seen` rejects. Inputs use
+  `NewMaterializedRelationNoDedupeWithOptions`. Profile:
+  `hash_join_identity_baseline_duplicates_10x100.{prof,_top.txt}`
+  (100k raw → 10 unique, 8.7 ms/op).
+
+Application symbols surfacing in each (cum %):
+
+| Symbol | HighFanout 100×50 | Duplicates 10×100 | LargeResult 50K |
+|--------|------------------:|------------------:|----------------:|
+| `HashJoinWithOptions` | 15.36% | 25.10% | 33.48% |
+| `combineTuples` | 4.64% | 12.90% | 7.21% |
+| `TupleKeyMap.Put` | 4.71% | – | – |
+| `TupleKeyMap.Exists` | – | 5.98% | – |
+| `NewTupleKeyFull` | – | 5.13% | – |
+| `hashValues` | – | 4.82% | – |
+| `tupleValuesEqual` | – | 3.26% | – |
+| `ValuesEqual` | – | **2.95%** | – |
+| `hashValue` | – | 2.56% | 5.72% |
+| `NewTupleKey` | – | – | 6.35% |
+
+`ValuesEqual` at 2.95% in the Duplicates profile is the dedup path
+firing 99,990 equality comparisons per benchmark op (one per
+rejected duplicate). `reflect.ValueOf` is inlined inside
+`ValuesEqual`; its cost rolls up to the caller and constitutes the
+bulk of that 2.95%. After finding #2 (move pointer-equality check
+to the top of `ValuesEqual`), the 2.95% should drop sharply.
+
 ---
 
 ## Original relation-input profile signatures

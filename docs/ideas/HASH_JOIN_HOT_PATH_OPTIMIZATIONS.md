@@ -488,25 +488,114 @@ in the smaller-size profiles because scheduler noise overwhelms the
 signal — but the same allocation pressure is what's driving the
 scheduler symbols, so the connection still holds.
 
-### What the existing benchmarks don't cover
+### Identity-keyed benchmark (added 2026-05-27)
 
-All five hot-path benchmarks join on `int64` keys with `string` payload
-values. They do not exercise:
+Added `BenchmarkHashJoinIdentityKeys` and
+`BenchmarkHashJoinIdentityLargeResult` in
+`datalog/executor/hash_join_identity_bench_test.go` to surface the
+`datalog.Identity` code paths the int64-keyed benchmarks don't
+exercise.
 
-- **Finding #2 (`ValuesEqual` reflect cost)**: the cheap interface
-  comparison `a == b` already short-circuits int/string equality
-  before the reflect path runs (Go's interface compares unbox
-  primitives directly). The reflect cost is felt mostly on
-  pointer-typed values — `Identity`, `Keyword`, `Symbol` — that go
-  through the type-assertion fall-through.
-- **Finding #3 (Identity hash)**: `hashValue` for int64 is a simple
-  cast; the FNV-1a-over-20-bytes loop only runs for the `Identity`
-  case.
+Headline numbers and Identity-vs-int64 deltas:
 
-These two findings will show small movement in the existing
-benchmarks. To measure them properly, an `Identity`-keyed join
-benchmark needs to be added. Defer this until the local fixes are in
-place; the new benchmark belongs with the change that needs it.
+| Case | int64 | Identity | Δ |
+|------|------:|---------:|--:|
+| InputTypes/mat_x_mat/size_5000 | 1.12 ms | 1.33 ms | +19% |
+| LargeResult/size_50000 | 13.0 ms | 14.95 ms | +15% |
+
+Allocation counts are identical at 400,293/op for the 50K case — the
+15-19% wall-time delta is entirely CPU on Identity-specific hash and
+equality paths.
+
+Application-level symbols that surface in the Identity 50K profile
+but not the int64 50K profile (cum %):
+
+| Symbol | Identity | int64 | Finding |
+|--------|---------:|------:|---------|
+| `executor.combineTuples` | 7.21% | 6.92% | #1 |
+| `executor.NewTupleKey` | 6.35% | not in top 40 | secondary (multi-col alloc) |
+| `executor.hashValue` | 5.72% | not in top 40 | #3 |
+
+`hashValue` at 5.72% cum is directly the FNV-1a-over-20-bytes loop
+for `Identity` values that finding #3 proposes to replace with one
+`binary.BigEndian.Uint64(bytes[:8])` load.
+
+`NewTupleKey` at 6.35% cum is the multi-column `[]interface{}`
+allocation called out in Secondary Observations — promoted to a
+visible target now that the benchmark exercises it.
+
+`ValuesEqual` / `reflect.ValueOf` (finding #2) does not surface in
+top-40 for the `IdentityLargeResult/size_50000` profile. The cause
+is workload shape, not absence of cost: `ValuesEqual` is called once
+per `TupleKeyMap.Get/Put/Exists` when the target bucket already has
+an entry. With unique entity IDs and unique payloads, every bucket
+has one entry, so each lookup does one `ValuesEqual` — total ~200k
+calls in the 50k benchmark, distributed across many call sites, none
+of which clear the noise floor as a top symbol.
+
+Two complementary benchmarks added to stress this:
+
+#### BenchmarkHashJoinIdentityHighFanout — realistic cardinality-many
+
+K distinct entities, each appearing M times on each side with
+different payloads. Build accumulates M-tuple chains per key; probe
+expands by M; result is K · M² rows. Models person × posts,
+account × transactions, etc.
+
+Shapes: `keys100/fanout10` (10k rows), `keys100/fanout50` (250k),
+`keys500/fanout20` (200k).
+
+Profile (`keys100/fanout50`, 50.9 ms/op):
+
+| Symbol | cum % |
+|--------|------:|
+| `HashJoinWithOptions` | 15.36% |
+| `TupleKeyMap.Put` | 4.71% |
+| `combineTuples` | 4.64% |
+
+The build-side `Put` activity is new — finding #1's combineTuples
+is no longer the only big application symbol; bucket-walk during
+same-key accumulation now shares the spotlight.
+
+#### BenchmarkHashJoinIdentityDuplicates — engineered dedup pressure
+
+K keys × R repetitions per side with shared payload per key. After
+join, 99%+ of result rows are duplicates that `seen` rejects.
+Inputs use `NewMaterializedRelationNoDedupeWithOptions` to preserve
+duplicate input tuples.
+
+Shapes: `keys10/reps100` (100k raw → 10 unique), `keys50/reps50`
+(125k raw → 50 unique).
+
+Profile (`keys10/reps100`, 8.7 ms/op):
+
+| Symbol | cum % | Finding |
+|--------|------:|---------|
+| `HashJoinWithOptions` | 25.10% | – |
+| `combineTuples` | 12.90% | #1 |
+| `TupleKeyMap.Exists` | 5.98% | #5 (dedup path) |
+| `NewTupleKeyFull` | 5.13% | – (allocates dedup key per match) |
+| `hashValues` | 4.82% | – |
+| `tupleValuesEqual` | 3.26% | – |
+| **`ValuesEqual`** | **2.95%** | **#2** |
+| `hashValue` | 2.56% | #3 |
+
+**Finding #2 is now profile-visible at 2.95% cum.** `reflect.ValueOf`
+is inlined into `ValuesEqual`; its cost rolls up to the caller and
+constitutes the bulk of that 2.95%. After the fix (move
+pointer-equality short-circuit to the top of `ValuesEqual`), this
+should drop sharply on this workload.
+
+#### Note on engineered hash collisions
+
+True `uint64` hash collisions in `TupleKeyMap` buckets (where
+distinct key values share a hash) cannot be engineered — FNV-1a
+over SHA1 bytes is collision-resistant enough that synthetic
+preimages are computationally infeasible. The cost #2 targets is
+the unconditional `reflect.ValueOf` *per `ValuesEqual` call*, which
+fires on any non-empty bucket regardless of whether the bucket
+holds one entry or many. The two benchmarks above maximize call
+count via duplicates and cardinality-many, which is sufficient.
 
 ### Predicted impact per finding
 
