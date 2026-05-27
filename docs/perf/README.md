@@ -199,6 +199,50 @@ rejected duplicate). `reflect.ValueOf` is inlined inside
 bulk of that 2.95%. After finding #2 (move pointer-equality check
 to the top of `ValuesEqual`), the 2.95% should drop sharply.
 
+### `hash_join_after_finding1_2026-05-27.txt` + Identity variant
+
+After-state for finding #1 (`combineTuples` projection plan hoisted
+out of the inner loop). Same machine and commit base; runs
+covering the same 25 int64 sub-benchmarks plus the 19 Identity sub-
+benchmarks at n=10.
+
+Geomean deltas:
+
+| Suite | Geomean |
+|-------|--------:|
+| int64-keyed | -0.80% |
+| Identity-keyed | -7.58% |
+
+Largest Identity wins (where `combineTuples` runs hardest per row):
+
+| Benchmark | Δ |
+|-----------|--:|
+| IdentityDuplicates/keys10/reps100 | -25.09% |
+| IdentityDuplicates/keys50/reps50 | -17.21% |
+| IdentityHighFanout/keys100/fanout10 | -11.94% |
+| IdentityLargeResult/size_10000 | -11.80% |
+
+Profile delta (Duplicates/keys10/reps100): `combineTuples` cum
+time 1.66s → 0.98s, a 41% absolute reduction in the function's
+CPU. Allocations unchanged across all benchmarks; the per-call
+map was already stack-allocated by escape analysis, so wins are
+pure CPU savings.
+
+The int64 mid-to-large sizes show small statistically-significant
+"regressions" (+3 to +16% at size_5000+) that look like thermal
+sequence artifacts: the same shapes show small wins or wash in
+the Identity suite, and targeted single-benchmark re-runs in
+cleaner thermal state contradict them. A controlled-thermal rerun
+would clarify; the architectural benefit (strictly less per-call
+work, smaller iterator struct) holds regardless.
+
+Profiles for the Duplicates/keys10/reps100 case (baseline vs
+after) live next to each other:
+
+- `hash_join_identity_baseline_duplicates_10x100.{prof,_top.txt}`
+- `hash_join_identity_after_finding1_duplicates_10x100.{prof,_top.txt}`
+- `hash_join_identity_after_finding1_large_50000.{prof,_top.txt}`
+
 ---
 
 ## Original relation-input profile signatures

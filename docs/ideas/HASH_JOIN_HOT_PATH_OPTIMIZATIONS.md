@@ -615,6 +615,85 @@ move from "~8 allocs/row, GC-dominated" toward "~5 allocs/row, less
 GC-dominated" with a wall-time improvement proportional to the GC
 share that disappears.
 
+## Finding #1 Results (2026-05-27)
+
+**Status**: Applied.
+
+### Change
+
+`combineTuples`'s per-row map allocation + symbol scans removed by
+hoisting the projection plan once per join. `HashJoinWithOptions`
+now computes `rightNonJoinIndices []int` and `resultWidth int`
+during the same pass that builds `outputSyms`, and passes them to
+`combineTuplesIndexed(first, second, secondNonJoinIndices,
+resultWidth)`. The new function does only `make + copy + indexed
+gather`.
+
+The hashJoinIterator dropped the three symbol-slice fields
+(`joinSyms`, `leftSyms`, `rightSyms`) in favor of `rightNonJoinIndices
+[]int` + `resultWidth int`, net -40 bytes per iterator.
+
+### Benchmark results
+
+Two suites at n=10:
+
+| Suite | Geomean |
+|-------|--------:|
+| int64-keyed (`BenchmarkHashJoin*`) | **-0.80%** |
+| Identity-keyed (`BenchmarkHashJoinIdentity*`) | **-7.58%** |
+
+Identity-keyed (closer to real datalog joins) shows consistent
+wins. The biggest deltas are on workloads where `combineTuples`
+runs per matched row at high volume:
+
+| Identity benchmark | Δ |
+|--------------------|--:|
+| Duplicates/keys10/reps100 | **-25.09%** |
+| Duplicates/keys50/reps50 | **-17.21%** |
+| HighFanout/keys100/fanout10 | -11.94% |
+| LargeResult/size_10000 | -11.80% |
+| Keys/mat_x_mat/size_100 | -10.31% |
+
+The int64 suite has small wins at small sizes (-12 to -16% at
+size_100, -7 to -11% at size_1000) and statistically-significant
+"regressions" at size_5000 and above (+3 to +16%). Targeted single-
+benchmark re-runs in cooler thermal state contradict these (e.g.
+`mat_x_mat/size_5000` measures **1.073ms** clean vs 1.244ms in the
+hot full-suite); the Identity benchmark at the same shape shows a
+small *improvement* (-2.96%) where int64 shows a *regression*
+(+3.4%). The data is consistent with thermal sequence effects on
+the M5 Air across a 4.5-min suite, but a thermally-controlled rig
+is needed for cleaner numbers. The change does strictly less work
+per call, so the architectural benefit holds regardless.
+
+Allocations are unchanged across all benchmarks: the per-call
+`map[Symbol]bool` was being stack-allocated by escape analysis.
+The wall-time wins come from removing the map population, the
+double symbol scan, and the per-row lookup work — pure CPU savings.
+
+### Profile delta — Duplicates/keys10/reps100 (Identity)
+
+This benchmark stresses `combineTuples` the hardest. Profile
+attribution within the executor package:
+
+| Symbol | Baseline cum | After cum | Δ |
+|--------|-------------:|----------:|---:|
+| `combineTuples` / `combineTuplesIndexed` | 1.66s (12.90%) | 0.98s (7.70%) | **-41% absolute** |
+| `HashJoinWithOptions` | 3.23s (25.10%) | 3.84s (30.16%) | – |
+
+`combineTuplesIndexed` is inlined into its callers; its symbol
+still appears because Go's profiler reports inlined frames. The
+combined `combine` work is 41% lower in absolute time, matching the
+-25% wall-time win on this benchmark.
+
+### Caveats
+
+- The `_5000`-and-above int64 numbers are likely thermal artifacts
+  but cannot be ruled out as real without rerunning on a
+  controlled-thermal machine.
+- All allocation/memory deltas are at noise floor (±0.01%) —
+  no change to GC pressure.
+
 ## Ranking by Expected Profile Impact
 
 1. **#1 `combineTuples` map allocation** — one map alloc per result row,
