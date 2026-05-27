@@ -22,3 +22,13 @@ if echo "$command" | grep -qE '/tmp[/\s]|/tmp$'; then
     echo "ERROR: Do not use /tmp. Write test files in the project directory." >&2
     exit 2
 fi
+
+# Block rm / rmdir / unlink — irreversible filesystem ops. Ask the user
+# explicitly before destroying anything; if the file was un-committed and
+# un-pushed there is no recovery path. Word-boundary match keeps "term",
+# "farm", etc. from triggering; the leading anchor restricts to command
+# position (start-of-line or after &&/;/| separators).
+if echo "$command" | grep -qE "(^|&&|;|\|)[[:space:]]*(rm|rmdir|unlink)([[:space:]]|$)"; then
+    echo "ERROR: rm/rmdir/unlink in Bash command — irreversible. Ask the user explicitly before deleting. To rename use 'git mv'; to move-to-trash use 'trash' or 'mv to backup/'." >&2
+    exit 2
+fi

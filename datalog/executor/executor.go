@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
@@ -463,28 +464,113 @@ func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *
 	return e.executeRealizedWithRelationInputIterationSequential(ctx, plan, inputRelations, relationInput, iterationRelation, iterationIndex)
 }
 
-// perTupleInputRelations builds the full ordered input-relation list for one
-// iteration of a RelationInput: every original input relation is forwarded in its
-// original position, except the iteration relation (at iterationIndex), which is
-// replaced by one single-value relation per RelationInput symbol drawn from this
-// tuple. Forwarding the non-iteration inputs (scalars, collections) in place keeps
-// them aligned with executeRealizedNonIterating's in-place :in rewrite; without it
-// they are dropped and BindQueryInputs binds the wrong values
+// perTupleInputBuilder pre-computes the layout of the per-tuple input-relation
+// list once. Per RelationInput iteration: every original input relation is
+// forwarded in its original position, except the iteration relation (at
+// iterationIndex), which is replaced by one single-value relation per
+// RelationInput symbol drawn from the tuple. Forwarding the non-iteration
+// inputs (scalars, collections) in place keeps them aligned with
+// executeRealizedNonIterating's in-place :in rewrite; without it they are
+// dropped and BindQueryInputs binds the wrong values
 // (see docs/bugs/resolved/BUG_SCALAR_PLUS_RELATION_INPUT_DROPS_OTHER_INPUTS.md).
-func perTupleInputRelations(inputRelations []Relation, iterationIndex int, relationInput query.RelationInput, tuple Tuple) []Relation {
-	out := make([]Relation, 0, len(inputRelations)+len(relationInput.Symbols))
-	for j, rel := range inputRelations {
-		if j == iterationIndex {
-			for i, sym := range relationInput.Symbols {
-				if i < len(tuple) {
-					out = append(out, NewMaterializedRelation([]query.Symbol{sym}, []Tuple{{tuple[i]}}))
-				}
-			}
-			continue
+//
+// Use Session() to obtain a workspace-reusable handle for repeated per-tuple
+// builds — that's the path used by both the parallel (per worker) and
+// sequential paths, and it allocates the scratch relations once instead of
+// per-tuple. Direct Build() exists only for one-shot use.
+type perTupleInputBuilder struct {
+	prefix   []Relation     // inputRelations[:iterationIndex]
+	suffix   []Relation     // inputRelations[iterationIndex+1:]
+	symbols  []query.Symbol // relationInput.Symbols
+	capacity int            // len(prefix) + len(suffix) + len(symbols)
+}
+
+// newPerTupleInputBuilder splits inputRelations around iterationIndex once.
+// If iterationIndex is out of range, no substitution is performed (the input
+// relations pass through unchanged).
+func newPerTupleInputBuilder(inputRelations []Relation, iterationIndex int, relationInput query.RelationInput) *perTupleInputBuilder {
+	if iterationIndex < 0 || iterationIndex >= len(inputRelations) {
+		return &perTupleInputBuilder{
+			prefix:   inputRelations,
+			symbols:  relationInput.Symbols,
+			capacity: len(inputRelations) + len(relationInput.Symbols),
 		}
-		out = append(out, rel)
 	}
-	return out
+	return &perTupleInputBuilder{
+		prefix:   inputRelations[:iterationIndex],
+		suffix:   inputRelations[iterationIndex+1:],
+		symbols:  relationInput.Symbols,
+		capacity: len(inputRelations) - 1 + len(relationInput.Symbols),
+	}
+}
+
+// perTupleInputSession is a workspace-reusable handle for repeated per-tuple
+// input-list builds, mirroring the BuildTupleInternedInto / it.workspace
+// pattern used by the storage iterators (matcher_iterator_reusing.go,
+// hash_join_matcher.go): all per-iteration state is pre-allocated, and each
+// step does an in-place update instead of an allocation.
+//
+// Pre-allocated once per worker:
+//   - valueSlots: N single-element Tuple slices, one per RelationInput symbol;
+//     the caller mutates valueSlots[i][0] per tuple to set the scalar value.
+//   - inputList: the full input-relation list (prefix + scratch relations +
+//     suffix), wired up to the scratch relations whose internal tuples
+//     ARE valueSlots[i]. Mutating valueSlots[i][0] changes what the relation
+//     yields on its next iteration.
+//
+// Safety contract: callers must not retain the returned Input slice or the
+// scratch relations within it across Update calls. executeRealizedNonIterating
+// satisfies this — it calls BindQueryInputs eagerly, which iterates each
+// input relation once and copies the value out via Tuple{tuple[0]}.
+//
+// Each worker creates its own session via builder.Session(); sessions are
+// not safe for concurrent use.
+type perTupleInputSession struct {
+	valueSlots []Tuple    // valueSlots[i] is the (mutable) 1-element Tuple slice for symbol i
+	inputList  []Relation // pre-wired: prefix + scratch relations + suffix
+}
+
+// Session pre-builds the per-symbol scratch relations and the full input
+// list once, so per-tuple work is reduced to N value writes (no allocation).
+func (b *perTupleInputBuilder) Session() *perTupleInputSession {
+	valueSlots := make([]Tuple, len(b.symbols))
+	scratchRels := make([]Relation, len(b.symbols))
+	for i, sym := range b.symbols {
+		// Each scratch tuple is a 1-element slice whose value is updated
+		// per tuple. Wrapping it in a MaterializedRelation means the
+		// relation's tuples[0] IS valueSlots[i] (deduplicateTuples on a
+		// 1-tuple input returns a fresh outer slice whose element shares
+		// the inner Tuple — confirmed by reading deduplicateTuples).
+		valueSlots[i] = make(Tuple, 1)
+		scratchRels[i] = NewMaterializedRelation([]query.Symbol{sym}, []Tuple{valueSlots[i]})
+	}
+	inputList := make([]Relation, 0, b.capacity)
+	inputList = append(inputList, b.prefix...)
+	inputList = append(inputList, scratchRels...)
+	inputList = append(inputList, b.suffix...)
+	return &perTupleInputSession{
+		valueSlots: valueSlots,
+		inputList:  inputList,
+	}
+}
+
+// Update writes the tuple's values into the session's scratch slots. No
+// allocation: this is the per-tuple equivalent of BuildTupleInternedInto
+// writing into a reused workspace.
+func (s *perTupleInputSession) Update(tuple Tuple) {
+	for i := range s.valueSlots {
+		if i < len(tuple) {
+			s.valueSlots[i][0] = tuple[i]
+		}
+	}
+}
+
+// Input returns the session's pre-wired input-relation list. The returned
+// slice (and the scratch relations within it) MUST be fully consumed before
+// the next Update call; executeRealizedNonIterating via BindQueryInputs
+// satisfies that.
+func (s *perTupleInputSession) Input() []Relation {
+	return s.inputList
 }
 
 // executeRealizedWithRelationInputIterationSequential executes QueryExecutor path sequentially for RelationInput
@@ -499,20 +585,24 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	// Collect results from each tuple iteration
 	var allResults []Relation
 
+	// Hoist the prefix/suffix split AND the scratch input relations out of
+	// the iteration loop; only the per-symbol values change per tuple (see
+	// perTupleInputSession for the workspace-reuse pattern).
+	builder := newPerTupleInputBuilder(inputRelations, iterationIndex, relationInput)
+	session := builder.Session()
+
 	// Iterate over each tuple in the relation
 	it := iterationRelation.Iterator()
 	defer it.Close()
 
 	for it.Next() {
-		tuple := it.Tuple()
-
-		// Per-tuple inputs: this tuple's values as scalars in the relation's slot,
-		// with every other input relation forwarded in place (so scalars/collections
-		// survive — see perTupleInputRelations).
-		tupleInputRelations := perTupleInputRelations(inputRelations, iterationIndex, relationInput, tuple)
+		// Per-tuple inputs: update the session's scratch value slots; the
+		// session's pre-wired inputList already references the scratch
+		// MaterializedRelations.
+		session.Update(it.Tuple())
 
 		// Execute the plan with these scalar inputs using QueryExecutor
-		result, err := e.executeRealizedNonIterating(ctx, plan, tupleInputRelations, relationInput)
+		result, err := e.executeRealizedNonIterating(ctx, plan, session.Input(), relationInput)
 		if err != nil {
 			return nil, fmt.Errorf("iteration execution failed: %w", err)
 		}
@@ -541,7 +631,22 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	return NewMaterializedRelation(symbols, allTuples), nil
 }
 
-// executeRealizedWithRelationInputIterationParallel executes QueryExecutor path in parallel for RelationInput
+// executeRealizedWithRelationInputIterationParallel executes the
+// QueryExecutor path in parallel for RelationInput. The producer (this
+// goroutine) streams tuples directly from iterationRelation's iterator
+// into the jobs channel; a fixed pool of numWorkers worker goroutines
+// drains jobs, runs per-tuple queries, and appends results into its own
+// slot in workerResults — no cross-worker synchronization on output.
+//
+// Earlier shape: spawn len(tuples) goroutines (one per input tuple),
+// each acquiring a slot of a numWorkers-slot semaphore. That paid a
+// goroutine creation + two channel sends + a done-channel send per
+// tuple. At hundreds of input tuples the scheduler primitives
+// (runtime.lock2, runtime.usleep, pthread_cond_*) dominated profiles
+// — see docs/perf/README.md for the baseline. The current shape
+// uses numWorkers goroutines regardless of input size, one channel
+// (jobs), and no inter-worker synchronization on output: each worker
+// appends to workerResults[wIdx], a slot only that worker writes.
 func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	ctx Context,
 	plan *planner.RealizedPlan,
@@ -550,85 +655,134 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	iterationRelation Relation,
 	iterationIndex int,
 ) (Relation, error) {
-	// Determine number of workers
 	numWorkers := e.maxSubqueryWorkers
 	if numWorkers <= 0 {
 		numWorkers = 4 // Default to 4 workers
 	}
 
-	// Collect all tuples first (needed for worker pool)
-	var tuples []Tuple
-	if err := collectTuplesInto(&tuples, iterationRelation); err != nil {
-		return nil, err
-	}
-
-	if len(tuples) == 0 {
-		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
-	}
-
-	// Result collection with mutex for thread safety
 	type iterationResult struct {
 		result Relation
 		err    error
 	}
-	results := make([]iterationResult, len(tuples))
 
-	// Worker pool using semaphore pattern
-	sem := make(chan struct{}, numWorkers)
-	done := make(chan struct{})
+	// Small fixed buffer: producer doesn't run far ahead of workers,
+	// workers don't starve waiting for the next item. Size scales with
+	// worker count, not input size.
+	jobs := make(chan Tuple, numWorkers*2)
 
-	for tupleIdx, tuple := range tuples {
-		go func(idx int, tup Tuple) {
-			// Acquire semaphore
-			sem <- struct{}{}
-			defer func() {
-				<-sem
-				// Signal completion after releasing semaphore
-				done <- struct{}{}
-			}()
+	// Each worker appends only to its own slot. The slice-of-slices header
+	// is shared, but each slot is written by exactly one worker, so the
+	// writes do not race. wg.Wait below is the only synchronization point
+	// between workers and the aggregator.
+	workerResults := make([][]iterationResult, numWorkers)
 
-			// Per-tuple inputs: this tuple's values as scalars in the relation's slot,
-			// with every other input relation forwarded in place.
-			tupleInputRelations := perTupleInputRelations(inputRelations, iterationIndex, relationInput, tup)
+	// Hoist per-query work out of the inner loop: the prefix/suffix split
+	// of inputRelations and the relation-input symbol list are identical
+	// for every tuple, so compute them once.
+	builder := newPerTupleInputBuilder(inputRelations, iterationIndex, relationInput)
 
-			// Execute the plan with these scalar inputs. Each worker gets its
-			// own forked context: a Context's per-query state (queryStart,
-			// metadata, scanRegistry) is not safe for concurrent mutation.
-			result, err := e.executeRealizedNonIterating(forkContext(ctx), plan, tupleInputRelations, relationInput)
-			results[idx] = iterationResult{result: result, err: err}
-		}(tupleIdx, tuple)
+	// Workers: long-lived, each consumes from jobs until closed. Each
+	// worker forks the context once at startup — a Context's per-query
+	// state (queryStart, metadata, scanRegistry) is not safe for concurrent
+	// mutation between parallel workers, but it is safe for sequential
+	// reuse within one worker (and beneficial when scan sharing is on,
+	// since the worker's ScanRegistry then deduplicates across its tuples).
+	//
+	// Each worker also owns its own perTupleInputSession: the N scratch
+	// MaterializedRelations and the wired-up inputList are allocated once
+	// at worker startup. The per-tuple inner loop only does N value writes
+	// (Update), avoiding ~N allocations and ~N deduplicateTuples calls per
+	// tuple. This mirrors the BuildTupleInternedInto / it.workspace
+	// workspace-reuse pattern used by the storage iterators.
+	var wg sync.WaitGroup
+	wg.Add(numWorkers)
+	for w := 0; w < numWorkers; w++ {
+		wIdx := w
+		go func() {
+			defer wg.Done()
+			workerCtx := forkContext(ctx)
+			session := builder.Session()
+			for tuple := range jobs {
+				session.Update(tuple)
+				result, err := e.executeRealizedNonIterating(workerCtx, plan, session.Input(), relationInput)
+				workerResults[wIdx] = append(workerResults[wIdx], iterationResult{result: result, err: err})
+			}
+		}()
 	}
 
-	// Wait for all workers to complete
-	for range tuples {
-		<-done
+	// Producer (this goroutine): stream iterationRelation → jobs.
+	// Backpressure flows naturally — if workers are slow, the bounded
+	// jobs buffer fills and iter.Next() stalls, pacing the storage scan
+	// to query throughput. Without a per-tuple results channel there is
+	// no deadlock risk from running the producer in this goroutine.
+	//
+	// The iterator-workspace-reuse contract (relation.go:14-23): when the
+	// source relation reports RequiresCopy()==true, its iterator's
+	// Tuple() returns a workspace slice that subsequent Next() calls
+	// overwrite. Sending that slice across the channel without copying
+	// would race the producer's next overwrite against workers reading
+	// their tuple. MaterializedRelation returns false (stable tuples,
+	// no copy needed); StreamingRelation returns true (default for
+	// storage-backed inputs).
+	needsCopy := iterationRelation.RequiresCopy()
+	iter := iterationRelation.Iterator()
+	for iter.Next() {
+		t := iter.Tuple()
+		if needsCopy {
+			t = copyTuple(t)
+		}
+		jobs <- t
 	}
+	iterErr := iter.Error()
+	closeErr := iter.Close()
+	close(jobs)
 
-	// Check for errors and collect results. Consume each per-worker result via
-	// collectTuplesInto so a failed scan's deferred error is propagated rather
-	// than silently dropped by Size() materialization.
+	wg.Wait()
+
+	// Aggregate from per-worker slices. Consume each per-worker result via
+	// collectTuplesInto so a failed scan's deferred error propagates rather
+	// than being laundered into a clean result by Size() materialization.
 	var allTuples []Tuple
 	var symbols []query.Symbol
-	for _, r := range results {
-		if r.err != nil {
-			return nil, fmt.Errorf("parallel iteration execution failed: %w", r.err)
-		}
-		if r.result == nil {
-			continue
-		}
-		if symbols == nil {
-			symbols = r.result.Symbols()
-		}
-		if err := collectTuplesInto(&allTuples, r.result); err != nil {
-			return nil, fmt.Errorf("parallel iteration execution failed: %w", err)
+	var firstResultErr error
+	for _, ws := range workerResults {
+		for _, r := range ws {
+			if r.err != nil {
+				if firstResultErr == nil {
+					firstResultErr = r.err
+				}
+				continue
+			}
+			if r.result == nil {
+				continue
+			}
+			if symbols == nil {
+				symbols = r.result.Symbols()
+			}
+			if err := collectTuplesInto(&allTuples, r.result); err != nil {
+				if firstResultErr == nil {
+					firstResultErr = err
+				}
+			}
 		}
 	}
 
-	// Combine all results
+	// Error priority: producer's iterator error first (it may have truncated
+	// the input — anything past the failure point was never seen by workers),
+	// then any per-worker error, then iter.Close() error.
+	if iterErr != nil {
+		return nil, iterErr
+	}
+	if firstResultErr != nil {
+		return nil, fmt.Errorf("parallel iteration execution failed: %w", firstResultErr)
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+
 	if symbols == nil {
 		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
 	}
-
 	return NewMaterializedRelation(symbols, allTuples), nil
 }
 

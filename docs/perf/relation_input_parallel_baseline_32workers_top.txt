@@ -1,0 +1,48 @@
+File: relation_input_parallel_baseline.test
+Type: cpu
+Time: 2026-05-26 20:25:18 EDT
+Duration: 11.23s, Total samples = 72.68s (646.92%)
+Showing nodes accounting for 40.91s, 56.29% of 72.68s total
+Dropped 399 nodes (cum <= 0.36s)
+Showing top 40 nodes out of 168
+      flat  flat%   sum%        cum   cum%
+     0.08s  0.11%  0.11%     33.89s 46.63%  runtime.systemstack
+     0.14s  0.19%   0.3%     23.68s 32.58%  runtime.lock2
+         0     0%   0.3%     23.68s 32.58%  runtime.lockWithRank (inline)
+         0     0%   0.3%     23.16s 31.87%  runtime.lock (partial-inline)
+         0     0%   0.3%     22.95s 31.58%  github.com/wbrown/janus-datalog/datalog/executor.(*Executor).executeRealizedWithRelationInputIterationParallel.func1
+     0.01s 0.014%  0.32%     22.36s 30.76%  github.com/wbrown/janus-datalog/datalog/executor.(*Executor).executeRealizedNonIterating
+     0.02s 0.028%  0.34%     21.97s 30.23%  github.com/wbrown/janus-datalog/datalog/executor.(*DefaultQueryExecutor).Execute
+    21.82s 30.02% 30.37%     21.82s 30.02%  runtime.usleep
+         0     0% 30.37%     19.08s 26.25%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).Join
+         0     0% 30.37%     18.94s 26.06%  github.com/wbrown/janus-datalog/datalog/executor.(*BaseContext).CollapseRelations
+     0.01s 0.014% 30.38%     18.94s 26.06%  github.com/wbrown/janus-datalog/datalog/executor.(*DefaultQueryExecutor).Execute.func2
+         0     0% 30.38%     18.93s 26.05%  github.com/wbrown/janus-datalog/datalog/executor.Relations.Collapse
+         0     0% 30.38%     18.90s 26.00%  github.com/wbrown/janus-datalog/datalog/executor.(*BaseContext).JoinRelations
+     0.01s 0.014% 30.39%     18.90s 26.00%  github.com/wbrown/janus-datalog/datalog/executor.Relations.Collapse.func1
+         0     0% 30.39%     18.87s 25.96%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).HashJoin (inline)
+     0.01s 0.014% 30.41%     18.87s 25.96%  github.com/wbrown/janus-datalog/datalog/executor.HashJoin
+     0.08s  0.11% 30.52%     18.86s 25.95%  github.com/wbrown/janus-datalog/datalog/executor.HashJoinWithOptions
+         0     0% 30.52%     16.24s 22.34%  runtime.osyield (inline)
+         0     0% 30.52%     13.85s 19.06%  github.com/wbrown/janus-datalog/datalog/executor.(*CountingIterator).Next
+     0.09s  0.12% 30.64%     13.85s 19.06%  github.com/wbrown/janus-datalog/datalog/executor.(*boundDatomIterator).Next
+     0.68s  0.94% 31.58%     11.56s 15.91%  runtime.mallocgc
+     0.03s 0.041% 31.62%     11.48s 15.80%  runtime.schedule
+     0.51s   0.7% 32.32%     11.35s 15.62%  github.com/wbrown/janus-datalog/datalog/executor.(*IndexedMemoryMatcher).matchWithIndex
+     0.03s 0.041% 32.36%     11.19s 15.40%  runtime.newstack
+     0.04s 0.055% 32.42%     11.02s 15.16%  runtime.findRunnable
+         0     0% 32.42%     10.67s 14.68%  runtime.morestack
+     0.03s 0.041% 32.46%     10.20s 14.03%  runtime.(*mheap).allocSpan
+         0     0% 32.46%      9.87s 13.58%  runtime.(*mheap).alloc.func1
+     0.03s 0.041% 32.50%      9.72s 13.37%  runtime.goschedImpl
+         0     0% 32.50%      9.52s 13.10%  runtime.gopreempt_m (inline)
+         0     0% 32.50%      9.30s 12.80%  runtime.mcall
+     0.02s 0.028% 32.53%      9.06s 12.47%  runtime.(*sweepLocked).sweep.(*mheap).freeSpan.func2
+         0     0% 32.53%      8.63s 11.87%  runtime.park_m
+         0     0% 32.53%      8.32s 11.45%  runtime.semasleep
+     8.21s 11.30% 43.82%      8.21s 11.30%  runtime.pthread_cond_wait
+     7.87s 10.83% 54.65%      7.87s 10.83%  runtime.madvise
+     0.09s  0.12% 54.77%      7.67s 10.55%  runtime.newobject
+         0     0% 54.77%      7.60s 10.46%  runtime.sysUsed (inline)
+         0     0% 54.77%      7.60s 10.46%  runtime.sysUsedOS (inline)
+     1.10s  1.51% 56.29%      7.18s  9.88%  runtime.mallocgcSmallScanNoHeader

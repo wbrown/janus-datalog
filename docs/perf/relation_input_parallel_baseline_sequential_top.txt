@@ -1,0 +1,48 @@
+File: relation_input_parallel_baseline.test
+Type: cpu
+Time: 2026-05-26 20:23:10 EDT
+Duration: 11.26s, Total samples = 17.62s (156.49%)
+Showing nodes accounting for 12.91s, 73.27% of 17.62s total
+Dropped 178 nodes (cum <= 0.09s)
+Showing top 40 nodes out of 101
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     12.07s 68.50%  runtime.systemstack
+     8.34s 47.33% 47.33%      8.34s 47.33%  runtime.kevent
+         0     0% 47.33%      8.34s 47.33%  runtime.netpoll
+         0     0% 47.33%      8.34s 47.33%  runtime.startTheWorldWithSema
+         0     0% 47.33%      8.33s 47.28%  runtime.gcStart.func4
+         0     0% 47.33%      3.49s 19.81%  runtime.schedule
+     0.01s 0.057% 47.39%      3.44s 19.52%  runtime.mcall
+         0     0% 47.39%      3.43s 19.47%  runtime.park_m
+         0     0% 47.39%      3.18s 18.05%  runtime.findRunnable
+         0     0% 47.39%         3s 17.03%  runtime.gcBgMarkWorker.func2
+     0.01s 0.057% 47.45%         3s 17.03%  runtime.gcDrain
+         0     0% 47.45%      2.99s 16.97%  runtime.semasleep
+         0     0% 47.45%      2.94s 16.69%  runtime.stopm
+         0     0% 47.45%      2.91s 16.52%  runtime.mPark (inline)
+         0     0% 47.45%      2.91s 16.52%  runtime.notesleep
+     2.91s 16.52% 63.96%      2.91s 16.52%  runtime.pthread_cond_wait
+         0     0% 63.96%      1.73s  9.82%  runtime.gcDrainMarkWorkerDedicated (inline)
+         0     0% 63.96%      1.65s  9.36%  runtime.semawakeup
+         0     0% 63.96%      1.64s  9.31%  runtime.notewakeup
+     1.63s  9.25% 73.21%      1.63s  9.25%  runtime.pthread_cond_signal
+         0     0% 73.21%      1.63s  9.25%  runtime.wakep
+         0     0% 73.21%      1.62s  9.19%  runtime.startm
+         0     0% 73.21%      1.59s  9.02%  runtime.(*gcControllerState).enlistWorker
+         0     0% 73.21%      1.48s  8.40%  github.com/wbrown/janus-datalog/datalog/executor.(*Executor).ExecuteRealized
+         0     0% 73.21%      1.48s  8.40%  github.com/wbrown/janus-datalog/datalog/executor.(*Executor).ExecuteWithRelations
+         0     0% 73.21%      1.48s  8.40%  github.com/wbrown/janus-datalog/datalog/executor.(*Executor).executeRealizedNonIterating
+         0     0% 73.21%      1.48s  8.40%  github.com/wbrown/janus-datalog/datalog/executor.(*Executor).executeRealizedWithRelationInputIteration
+         0     0% 73.21%      1.48s  8.40%  github.com/wbrown/janus-datalog/datalog/executor.(*Executor).executeRealizedWithRelationInputIterationSequential
+         0     0% 73.21%      1.48s  8.40%  github.com/wbrown/janus-datalog/datalog/executor.BenchmarkRelationInputParallel.func1
+         0     0% 73.21%      1.48s  8.40%  testing.(*B).runN
+         0     0% 73.21%      1.47s  8.34%  github.com/wbrown/janus-datalog/datalog/executor.(*DefaultQueryExecutor).Execute
+         0     0% 73.21%      1.35s  7.66%  runtime.gcBgMarkWorker
+         0     0% 73.21%      1.35s  7.66%  testing.(*B).launch
+         0     0% 73.21%      1.27s  7.21%  runtime.gcDrainMarkWorkerIdle (inline)
+         0     0% 73.21%      1.24s  7.04%  github.com/wbrown/janus-datalog/datalog/executor.(*BaseContext).CollapseRelations
+         0     0% 73.21%      1.24s  7.04%  github.com/wbrown/janus-datalog/datalog/executor.(*BaseContext).JoinRelations
+         0     0% 73.21%      1.24s  7.04%  github.com/wbrown/janus-datalog/datalog/executor.(*DefaultQueryExecutor).Execute.func2
+     0.01s 0.057% 73.27%      1.24s  7.04%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).Join
+         0     0% 73.27%      1.24s  7.04%  github.com/wbrown/janus-datalog/datalog/executor.Relations.Collapse
+         0     0% 73.27%      1.24s  7.04%  github.com/wbrown/janus-datalog/datalog/executor.Relations.Collapse.func1
