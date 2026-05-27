@@ -587,9 +587,11 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 
 	// Hoist the prefix/suffix split AND the scratch input relations out of
 	// the iteration loop; only the per-symbol values change per tuple (see
-	// perTupleInputSession for the workspace-reuse pattern).
+	// perTupleInputSession for the workspace-reuse pattern). Likewise hoist
+	// the QueryExecutor and the rewritten modifiedQuery via prepared.
 	builder := newPerTupleInputBuilder(inputRelations, iterationIndex, relationInput)
 	session := builder.Session()
+	prepared := e.prepareNonIterating(plan, relationInput)
 
 	// Iterate over each tuple in the relation
 	it := iterationRelation.Iterator()
@@ -601,8 +603,9 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 		// MaterializedRelations.
 		session.Update(it.Tuple())
 
-		// Execute the plan with these scalar inputs using QueryExecutor
-		result, err := e.executeRealizedNonIterating(ctx, plan, session.Input(), relationInput)
+		// Execute the plan with these scalar inputs using the prepared
+		// non-iterating executor.
+		result, err := prepared.Run(ctx, session.Input())
 		if err != nil {
 			return nil, fmt.Errorf("iteration execution failed: %w", err)
 		}
@@ -688,12 +691,13 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	// reuse within one worker (and beneficial when scan sharing is on,
 	// since the worker's ScanRegistry then deduplicates across its tuples).
 	//
-	// Each worker also owns its own perTupleInputSession: the N scratch
-	// MaterializedRelations and the wired-up inputList are allocated once
-	// at worker startup. The per-tuple inner loop only does N value writes
-	// (Update), avoiding ~N allocations and ~N deduplicateTuples calls per
-	// tuple. This mirrors the BuildTupleInternedInto / it.workspace
-	// workspace-reuse pattern used by the storage iterators.
+	// Each worker owns its own perTupleInputSession and prepared executor:
+	// the N scratch MaterializedRelations, the wired-up inputList, the
+	// QueryExecutor, and the rewritten modifiedQuery are all allocated
+	// once at worker startup. The per-tuple inner loop only does N value
+	// writes (session.Update) and one Run call — no allocation for setup.
+	// This mirrors the BuildTupleInternedInto / it.workspace workspace-reuse
+	// pattern used by the storage iterators.
 	var wg sync.WaitGroup
 	wg.Add(numWorkers)
 	for w := 0; w < numWorkers; w++ {
@@ -702,9 +706,10 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 			defer wg.Done()
 			workerCtx := forkContext(ctx)
 			session := builder.Session()
+			prepared := e.prepareNonIterating(plan, relationInput)
 			for tuple := range jobs {
 				session.Update(tuple)
-				result, err := e.executeRealizedNonIterating(workerCtx, plan, session.Input(), relationInput)
+				result, err := prepared.Run(workerCtx, session.Input())
 				workerResults[wIdx] = append(workerResults[wIdx], iterationResult{result: result, err: err})
 			}
 		}()
@@ -786,63 +791,91 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	return NewMaterializedRelation(symbols, allTuples), nil
 }
 
-// executeRealizedNonIterating executes a RealizedPlan without RelationInput iteration
-// This is the core QueryExecutor path, called once per RelationInput tuple during iteration.
-func (e *Executor) executeRealizedNonIterating(
-	ctx Context,
-	plan *planner.RealizedPlan,
-	scalarInputRelations []Relation,
-	relationInput query.RelationInput,
-) (Relation, error) {
-	// Create QueryExecutor
+// preparedNonIteratingExecution holds the per-query state that doesn't vary
+// across per-tuple calls during RelationInput iteration: the QueryExecutor,
+// the modifiedQuery (with RelationInput rewritten to ScalarInputs), and the
+// plan reference. Pre-allocating these once per worker — instead of once
+// per tuple — eliminates the per-call QueryExecutor allocation, the
+// modifiedQuery struct copy, and the newIn slice + N ScalarInput struct
+// allocations from the hot path.
+//
+// Safe to reuse across sequential per-tuple calls within a single worker:
+//   - DefaultQueryExecutor's mutable state (constantBindings) is only set
+//     by ExecuteRealized, never inside this code path; reads of a nil map
+//     return zero values in Go.
+//   - modifiedQuery is read-only after construction.
+//
+// NOT safe to share across goroutines. Each worker creates its own.
+type preparedNonIteratingExecution struct {
+	executor      *Executor
+	queryExecutor *DefaultQueryExecutor
+	plan          *planner.RealizedPlan
+	modifiedQuery *query.Query
+}
+
+// prepareNonIterating builds the reusable per-query state for one worker's
+// (or the sequential path's) per-tuple iteration loop. Allocations here
+// happen ONCE; the returned struct's Run method does the per-tuple work
+// without repeating any of this setup.
+func (e *Executor) prepareNonIterating(plan *planner.RealizedPlan, relationInput query.RelationInput) *preparedNonIteratingExecution {
 	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, e.options)
 
+	// Rewrite plan.Query's :in clause: replace the RelationInput with one
+	// ScalarInput per RelationInput symbol. The rewritten query is what
+	// BindQueryInputs binds per call.
+	modifiedQuery := *plan.Query
+	newIn := make([]query.InputSpec, 0, len(modifiedQuery.In)+len(relationInput.Symbols)-1)
+	for _, input := range modifiedQuery.In {
+		if _, isRelInput := input.(query.RelationInput); isRelInput {
+			for _, sym := range relationInput.Symbols {
+				newIn = append(newIn, query.ScalarInput{Symbol: sym})
+			}
+		} else {
+			newIn = append(newIn, input)
+		}
+	}
+	modifiedQuery.In = newIn
+
+	return &preparedNonIteratingExecution{
+		executor:      e,
+		queryExecutor: queryExecutor,
+		plan:          plan,
+		modifiedQuery: &modifiedQuery,
+	}
+}
+
+// Run executes one per-tuple query using the prepared state. The caller
+// supplies the per-tuple scalarInputRelations (typically from a
+// perTupleInputSession's Input()), which BindQueryInputs binds against
+// the prepared modifiedQuery.
+func (p *preparedNonIteratingExecution) Run(ctx Context, scalarInputRelations []Relation) (Relation, error) {
 	var currentGroups []Relation
 
-	// Bind scalar input relations (one per symbol from RelationInput)
+	// Bind scalar input relations against the prepared modifiedQuery.
 	if len(scalarInputRelations) > 0 {
-		// Create a modified query with scalar inputs instead of RelationInput
-		modifiedQuery := *plan.Query
-		var newIn []query.InputSpec
-
-		for _, input := range modifiedQuery.In {
-			if _, isRelInput := input.(query.RelationInput); isRelInput {
-				// Replace with scalar inputs
-				for _, sym := range relationInput.Symbols {
-					newIn = append(newIn, query.ScalarInput{Symbol: sym})
-				}
-			} else {
-				newIn = append(newIn, input)
-			}
-		}
-		modifiedQuery.In = newIn
-
-		// Bind the scalar input relations
-		boundRelation := BindQueryInputs(&modifiedQuery, scalarInputRelations)
+		boundRelation := BindQueryInputs(p.modifiedQuery, scalarInputRelations)
 		currentGroups = []Relation{boundRelation}
 	}
 
-	// Execute each phase as an independent query
-	for i, phase := range plan.Phases {
+	// Execute each phase as an independent query.
+	for i, phase := range p.plan.Phases {
 		phaseIndex := i
-		isLastPhase := (i == len(plan.Phases)-1)
+		isLastPhase := (i == len(p.plan.Phases)-1)
 
-		// Execute phase query
-		groups, err := queryExecutor.Execute(ctx, phase.Query, currentGroups)
+		groups, err := p.queryExecutor.Execute(ctx, phase.Query, currentGroups)
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
 		}
 
-		// Project each group to Keep symbols (what passes to next phase)
-		// Skip for last phase - QueryExecutor already projected to :find symbols
+		// Project each group to Keep symbols. Skip for the last phase —
+		// QueryExecutor already projected to :find symbols.
 		if !isLastPhase && len(phase.Keep) > 0 {
 			for i, group := range groups {
-				// Materialize first to avoid iterator consumption issues
-				var tuples []Tuple
-				// A non-last phase materializes each group to pass Keep symbols
-				// forward. Carry any deferred scan error onto the materialized
-				// relation so Project propagates it into the next phase instead of
+				// Materialize first to avoid iterator consumption issues, and
+				// carry any deferred scan error onto the materialized relation
+				// so Project propagates it into the next phase instead of
 				// laundering a failed scan into an empty result.
+				var tuples []Tuple
 				keepErr := collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
@@ -857,12 +890,12 @@ func (e *Executor) executeRealizedNonIterating(
 			}
 		}
 
-		// Early termination on empty
+		// Early termination on empty.
 		if len(groups) == 0 {
-			return emptyRelationForQuery(plan.Query), nil
+			return emptyRelationForQuery(p.plan.Query), nil
 		}
 
-		// For last phase, must collapse to single relation (error on Cartesian product)
+		// Last phase must collapse to a single relation (error on Cartesian).
 		if isLastPhase && len(groups) > 1 {
 			return nil, fmt.Errorf("phase %d resulted in %d disjoint relation groups", phaseIndex+1, len(groups))
 		}
@@ -870,16 +903,14 @@ func (e *Executor) executeRealizedNonIterating(
 		currentGroups = groups
 	}
 
-	// Return the final single relation
 	if len(currentGroups) == 0 {
-		return emptyRelationForQuery(plan.Query), nil
+		return emptyRelationForQuery(p.plan.Query), nil
 	}
 
 	finalResult := currentGroups[0]
 
-	// Apply ordering if specified
-	if len(plan.Query.OrderBy) > 0 {
-		finalResult = finalResult.Sort(plan.Query.OrderBy)
+	if len(p.plan.Query.OrderBy) > 0 {
+		finalResult = finalResult.Sort(p.plan.Query.OrderBy)
 	}
 
 	return finalResult, nil
