@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
 **Last Updated**: 2026-05-26 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, and iterator-error contract.
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, and relation-input parallel iteration refactor (worker pool + workspace reuse).
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-05-25, ATEV index).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-05-26, relation-input parallel iteration refactor).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -25,6 +25,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **AETV index & value elimination**: **5% faster**, **19% less memory**, **17% fewer allocations** (geomean); complex queries see **35% memory reduction** (verified 2026-02-06)
 - ✅ **LZ77+FSE compression codec**: **2.1-2.4 GB/s decompression** (7 allocs), **3.6x on prose**, **10-13x on structured/repetitive** data (verified 2026-03-28)
 - ✅ **ATEV index & attribute high-water mark**: `MaxElementIDForAttribute` and every `Cache.IsAttributeFresh` call become **O(1) (~1 µs)** instead of O(datoms-for-A); **2.2× → 555× faster** at 10–10,000 datoms-per-attribute (verified 2026-05-25). Costs ~14% more write work per commit (1 of 8 indices).
+- ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -709,6 +710,110 @@ which is how a missing ATEV case slipped past the first test run). Five
 historical `case` blocks that branched on `tx.(uint64)` for legacy Lamport-only
 Tx values were removed along with `NewTxFromUint`/`toStorageTx` — Tx is always
 an `ElementID` now, and the previously dead branch is gone.
+
+### 17. Relation-Input Parallel Iteration — Worker Pool + Workspace Reuse (COMPLETE - May 2026)
+**Status**: ✅ `executeRealizedWithRelationInputIterationParallel` reshaped from
+per-tuple-goroutine + semaphore to fixed worker pool, with per-query state
+hoisted out of the per-tuple inner loop
+
+**Why**: profiling `:in $ [[?x ?y ?z] ...]`-shape queries against persistent
+storage with hundreds of input tuples showed `runtime.usleep`, `runtime.lock2`,
+`pthread_cond_wait`/`signal`, and `runtime.newstack`/`morestack` dominating
+CPU (~70% in scheduler + GC, ~25–30% in application code). Same pattern as
+the historical `PrefetchValues=true` thrash noted in CLAUDE.md: a goroutine
+spawned per small unit of work, with a semaphore funnelling them through
+a worker-count gate.
+
+**What changed** (layered, see PR for individual commits):
+
+1. **Per-tuple goroutine spawn → fixed worker pool.** `numWorkers` long-lived
+   goroutines consume from a buffered `jobs` channel. Producer streams from
+   `iterationRelation.Iterator()` directly into `jobs` (no upfront
+   materialization). Workers write to per-worker slots in `workerResults[wIdx]`
+   — no inter-worker synchronization on output. Goroutine count per call:
+   `len(tuples)` → `numWorkers`.
+
+2. **Iterator-workspace-reuse race fixed.** When
+   `iterationRelation.RequiresCopy()` is true (the default for
+   `StreamingRelation`, used by storage-backed sources that reuse tuple
+   workspace), the producer copies before sending. Without this, workers
+   raced producer workspace overwrites; `go test -race` confirms the race
+   directly on the unfixed code. The bug was invisible to tests that only
+   use `MaterializedRelation` inputs (`RequiresCopy() == false`).
+
+3. **`forkContext` hoisted from per-tuple to per-worker.** Context state
+   safety is a parallel-workers concern, not sequential-within-one-worker;
+   `BindQueryInputs` eagerly consumes inputs, production code never sets
+   `metadata`, and `ScanRegistry` is safe to share within one worker.
+
+4. **C1: hoist `QueryExecutor` and `modifiedQuery`.** Both are deterministic
+   from the plan and never vary across per-tuple calls. Computed once per
+   worker.
+
+5. **C2: pre-built bound relation with workspace-reusable tuple slots.**
+   Replace per-call `BindQueryInputs` (N `ScalarInput` `MaterializedRelation`
+   allocations + N-1 join intermediates) with a single pre-built bound
+   relation whose `boundTuple` slots are mutated per call. Direct struct
+   construction bypasses `NewMaterializedRelation`'s `deduplicateTuples`
+   allocations on a known-singleton tuple. Mirrors the
+   `BuildTupleInternedInto` / `it.workspace` pattern used by
+   `matcher_iterator_*.go` and `hash_join_matcher.go`. Falls back to per-call
+   `BindQueryInputs` for shapes the fast path can't handle (`CollectionInput`,
+   etc.).
+
+6. **C3: API consolidation.** Caller code reduces from a four-step
+   orchestration (builder + session + prepared + Update + Run) to:
+
+   ```go
+   prepared := e.prepareIteration(plan, relationInput, inputRelations, iterationIndex)
+   for tuple := range tuples {
+       result, err := prepared.Run(ctx, tuple)
+   }
+   ```
+
+   `preparedIteration` owns the fallback session as a private field,
+   allocated only when the fast path can't activate.
+
+**Measurement** (`BenchmarkRelationInputParallel`, `datalog/executor/ohlc_subquery_performance_test.go`,
+`n=10`, Apple M5 MacBook Air with 4 P-cores + 6 E-cores):
+
+| Workers     | Baseline | After  | Delta  |
+|-------------|---------:|-------:|-------:|
+| Sequential  | 522.8m   | 391.3m | -25.2% |
+| Parallel-2  | 327.2m   | 270.9m | -17.2% |
+| Parallel-4  | 271.3m   | 228.0m | -16.0% |
+| Parallel-8  | 258.7m   | 231.3m | -10.6% |
+
+**Hardware interpretation**: above 4 workers on a 4P+6E core machine the
+measurement is dominated by P-core over-subscription. The 8-worker case
+runs 4 workers on slower E-cores; the 16/32-worker cases are pure
+scheduler-thrash measurements. The 10-25% win range above represents the
+configurations that fit on the actual performance cores.
+
+**Allocations**: 11.27M → 11.12M (-1.4%). **Memory**: 791.6Mi → 785.3Mi
+(-0.86%). The wall-time win is much larger than the allocation delta
+because the bulk of the savings is in `QueryExecutor` and `modifiedQuery`
+reuse — pointer + struct-copy operations whose CPU cost is dominated by
+GC scan time, not just allocator throughput.
+
+**Tests added** (`datalog/executor/relation_input_parallel_correctness_test.go`,
+7 tests). All pin invariants the refactor must preserve:
+- Sorted-list multiset equality with sequential
+- Matcher-error propagation (first error AND after partial success)
+- Deferred iterator-error propagation through the parallel path
+- No goroutine leaks across many invocations
+- Concurrent invocation correctness (16 outer goroutines × 20 iters each,
+  multiset-checked per goroutine)
+- Workspace-reuse iterator (`StreamingRelation` source): reproduces the
+  race; passes after the producer-copy fix; `-race` detector confirms the
+  race directly on the unfixed code
+
+All seven pass against the final state on this branch. `go test -count=1
+-race ./datalog/executor/` clean. Full `go test -count=1 ./...` green.
+
+**Adjacent tooling**: `.claude/hooks/validate-bash.sh` gains a rule
+blocking `rm` / `rmdir` / `unlink` in Bash commands (word-boundary
+match; `git rm` passes).
 
 ---
 
