@@ -18,6 +18,9 @@ coverage.txt
 *.prof
 cpu.prof
 mem.prof
+# Exception: durable baseline/comparison profiles in docs/perf/ are tracked
+# so before/after pprof -diff_base comparisons survive working-tree changes.
+!docs/perf/*.prof
 
 # Go workspace file
 go.work
