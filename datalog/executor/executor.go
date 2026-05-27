@@ -588,24 +588,27 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	// Hoist the prefix/suffix split AND the scratch input relations out of
 	// the iteration loop; only the per-symbol values change per tuple (see
 	// perTupleInputSession for the workspace-reuse pattern). Likewise hoist
-	// the QueryExecutor and the rewritten modifiedQuery via prepared.
+	// the QueryExecutor, the rewritten modifiedQuery, and (fast path) the
+	// pre-built bound relation via prepared.
 	builder := newPerTupleInputBuilder(inputRelations, iterationIndex, relationInput)
 	session := builder.Session()
-	prepared := e.prepareNonIterating(plan, relationInput)
+	prepared := e.prepareNonIterating(plan, relationInput, inputRelations, iterationIndex)
 
 	// Iterate over each tuple in the relation
 	it := iterationRelation.Iterator()
 	defer it.Close()
 
 	for it.Next() {
-		// Per-tuple inputs: update the session's scratch value slots; the
-		// session's pre-wired inputList already references the scratch
-		// MaterializedRelations.
-		session.Update(it.Tuple())
+		tuple := it.Tuple()
 
-		// Execute the plan with these scalar inputs using the prepared
+		// session.Update fills the fallback path's scratch relations. For
+		// the fast path Run mutates the bound relation's tuple slots
+		// directly from `tuple`.
+		session.Update(tuple)
+
+		// Execute the plan with these inputs using the prepared
 		// non-iterating executor.
-		result, err := prepared.Run(ctx, session.Input())
+		result, err := prepared.Run(ctx, tuple, session.Input())
 		if err != nil {
 			return nil, fmt.Errorf("iteration execution failed: %w", err)
 		}
@@ -706,10 +709,15 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 			defer wg.Done()
 			workerCtx := forkContext(ctx)
 			session := builder.Session()
-			prepared := e.prepareNonIterating(plan, relationInput)
+			prepared := e.prepareNonIterating(plan, relationInput, inputRelations, iterationIndex)
 			for tuple := range jobs {
+				// session.Update is still called for the fallback path
+				// (when prepared.canMutateBindings is false because the
+				// query's :in has e.g. a CollectionInput). For the fast
+				// path the boundTuple is mutated directly from `tuple`
+				// inside Run; the session work is wasted but cheap.
 				session.Update(tuple)
-				result, err := prepared.Run(workerCtx, session.Input())
+				result, err := prepared.Run(workerCtx, tuple, session.Input())
 				workerResults[wIdx] = append(workerResults[wIdx], iterationResult{result: result, err: err})
 			}
 		}()
@@ -793,17 +801,31 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 
 // preparedNonIteratingExecution holds the per-query state that doesn't vary
 // across per-tuple calls during RelationInput iteration: the QueryExecutor,
-// the modifiedQuery (with RelationInput rewritten to ScalarInputs), and the
-// plan reference. Pre-allocating these once per worker — instead of once
-// per tuple — eliminates the per-call QueryExecutor allocation, the
-// modifiedQuery struct copy, and the newIn slice + N ScalarInput struct
-// allocations from the hot path.
+// the modifiedQuery (with RelationInput rewritten to ScalarInputs), the
+// plan reference, and (when the input shape allows) a pre-built bound
+// relation whose tuple slots are mutated in place per call instead of
+// rebuilding the bound relation from scratch each time.
+//
+// Pre-allocating once per worker — instead of once per tuple — eliminates
+// the per-call QueryExecutor allocation (C1), the modifiedQuery struct
+// copy (C1), and per-call BindQueryInputs work (C2): N ScalarInput
+// MaterializedRelation allocations + N-1 join intermediates + the
+// combined MaterializedRelation, all collapsed into N value writes into
+// a single pre-built bound tuple's slots.
 //
 // Safe to reuse across sequential per-tuple calls within a single worker:
 //   - DefaultQueryExecutor's mutable state (constantBindings) is only set
 //     by ExecuteRealized, never inside this code path; reads of a nil map
 //     return zero values in Go.
 //   - modifiedQuery is read-only after construction.
+//   - boundTuple mutation: phase execution reads boundTuple's interface{}
+//     values into freshly-allocated result tuples (joins/projections build
+//     new tuples by combining columns; aggregations build new summary
+//     tuples). For primitive values (int64, string, bool, time.Time) the
+//     interface{} carries the value; for pointer types (Identity, Keyword)
+//     it carries the pointer. In both cases, copy-on-store at the consumer
+//     means a previously-stored interface{} snapshot is independent of
+//     subsequent boundTuple mutations.
 //
 // NOT safe to share across goroutines. Each worker creates its own.
 type preparedNonIteratingExecution struct {
@@ -811,18 +833,40 @@ type preparedNonIteratingExecution struct {
 	queryExecutor *DefaultQueryExecutor
 	plan          *planner.RealizedPlan
 	modifiedQuery *query.Query
+
+	// Fast-path state (when canMutateBindings is true): pre-built bound
+	// relation with mutable tuple slots. iterationSlots maps positions in
+	// the iteration tuple to positions in boundTuple — iterationSlots[i]
+	// is the slot in boundTuple where iteration tuple value [i] should be
+	// written; -1 if that iteration position doesn't appear in the bound
+	// relation (shouldn't happen in normal flow but handled defensively).
+	boundRelation     *MaterializedRelation
+	boundTuple        Tuple
+	iterationSlots    []int
+	canMutateBindings bool
 }
 
 // prepareNonIterating builds the reusable per-query state for one worker's
 // (or the sequential path's) per-tuple iteration loop. Allocations here
 // happen ONCE; the returned struct's Run method does the per-tuple work
 // without repeating any of this setup.
-func (e *Executor) prepareNonIterating(plan *planner.RealizedPlan, relationInput query.RelationInput) *preparedNonIteratingExecution {
+//
+// The inputRelations and iterationIndex are used to read CONSTANT scalar
+// values (those whose symbols are not in relationInput.Symbols) at prepare
+// time, so the fast path can bake them into boundTuple instead of
+// re-reading per call.
+//
+// Fast path activates only when modifiedQuery.In contains exclusively
+// DatabaseInputs, ScalarInputs, and TupleInputs — all of which produce a
+// single-tuple bound relation. CollectionInput or any other RelationInput
+// would produce a multi-tuple bound relation; in those cases the
+// canMutateBindings flag stays false and Run falls back to per-call
+// BindQueryInputs.
+func (e *Executor) prepareNonIterating(plan *planner.RealizedPlan, relationInput query.RelationInput, inputRelations []Relation, iterationIndex int) *preparedNonIteratingExecution {
 	queryExecutor := newQueryExecutor(e.matcher, e.entityResolver, e.options)
 
 	// Rewrite plan.Query's :in clause: replace the RelationInput with one
-	// ScalarInput per RelationInput symbol. The rewritten query is what
-	// BindQueryInputs binds per call.
+	// ScalarInput per RelationInput symbol.
 	modifiedQuery := *plan.Query
 	newIn := make([]query.InputSpec, 0, len(modifiedQuery.In)+len(relationInput.Symbols)-1)
 	for _, input := range modifiedQuery.In {
@@ -836,23 +880,168 @@ func (e *Executor) prepareNonIterating(plan *planner.RealizedPlan, relationInput
 	}
 	modifiedQuery.In = newIn
 
-	return &preparedNonIteratingExecution{
+	p := &preparedNonIteratingExecution{
 		executor:      e,
 		queryExecutor: queryExecutor,
 		plan:          plan,
 		modifiedQuery: &modifiedQuery,
 	}
+
+	// Try to pre-build the bound relation. This computes constant scalar
+	// values now and reserves slots for iteration-derived symbols, then
+	// constructs the combined bound relation once. Per-tuple Run only
+	// writes into boundTuple. If the input shape can't be handled (e.g.
+	// a CollectionInput appears), canMutateBindings stays false and Run
+	// falls back to per-call BindQueryInputs.
+	p.buildBoundRelation(relationInput, inputRelations, iterationIndex)
+
+	return p
 }
 
-// Run executes one per-tuple query using the prepared state. The caller
-// supplies the per-tuple scalarInputRelations (typically from a
-// perTupleInputSession's Input()), which BindQueryInputs binds against
-// the prepared modifiedQuery.
-func (p *preparedNonIteratingExecution) Run(ctx Context, scalarInputRelations []Relation) (Relation, error) {
+// buildBoundRelation tries to pre-build a workspace-reusable bound relation
+// for the fast path. Sets p.boundRelation, p.boundTuple, p.iterationSlots,
+// and p.canMutateBindings on success; leaves them at zero values on
+// fallback.
+//
+// The walk: modifiedQuery.In and inputRelations are kept in lockstep
+// (DatabaseInputs in modifiedQuery.In don't consume an inputRelations
+// slot). For each ScalarInput / TupleInput a slot is appended to
+// boundTuple. ScalarInputs whose symbol is in relationInput.Symbols are
+// iteration-derived (slot tracked in iterationSlots). Other ScalarInputs
+// and all TupleInputs are constant — their values are read from
+// inputRelations now and baked into boundTuple. CollectionInput or any
+// other shape aborts the optimization.
+func (p *preparedNonIteratingExecution) buildBoundRelation(relationInput query.RelationInput, inputRelations []Relation, iterationIndex int) {
+	// Map RelationInput symbols to their position in the iteration tuple,
+	// so we can resolve ScalarInputs derived from RelationInput rewrite
+	// back to the iteration tuple position they'll be written from.
+	iterSymToPos := make(map[query.Symbol]int, len(relationInput.Symbols))
+	for i, sym := range relationInput.Symbols {
+		iterSymToPos[sym] = i
+	}
+
+	// The inputRelations slice matches the ORIGINAL plan.Query.In layout
+	// (RelationInput at iterationIndex, scalars/collections around it).
+	// We need to look up scalar/tuple values from inputRelations using
+	// the original layout, not the rewritten modifiedQuery.In.
+	// originalInIndex walks plan.Query.In; relationIndex walks the
+	// (DatabaseInput-skipped) inputRelations slice.
+	var boundSymbols []query.Symbol
+	var boundTuple Tuple
+	iterationSlots := make([]int, len(relationInput.Symbols))
+	for i := range iterationSlots {
+		iterationSlots[i] = -1
+	}
+
+	relationIndex := 0
+	for _, input := range p.plan.Query.In {
+		switch inp := input.(type) {
+		case query.DatabaseInput:
+			// DatabaseInput doesn't consume an inputRelations slot.
+			continue
+		case query.RelationInput:
+			// The RelationInput is the iteration source. It expands to
+			// len(inp.Symbols) ScalarInputs in modifiedQuery.In, each
+			// iteration-derived (slot mutated per Run).
+			for i, sym := range inp.Symbols {
+				slotIdx := len(boundTuple)
+				boundSymbols = append(boundSymbols, sym)
+				boundTuple = append(boundTuple, nil) // filled by Run
+				if pos, ok := iterSymToPos[sym]; ok {
+					iterationSlots[pos] = slotIdx
+				}
+				_ = i
+			}
+			relationIndex++
+		case query.ScalarInput:
+			// Constant scalar input — read value from inputRelation now.
+			slotIdx := len(boundTuple)
+			boundSymbols = append(boundSymbols, inp.Symbol)
+			var v interface{}
+			if relationIndex < len(inputRelations) {
+				rel := inputRelations[relationIndex]
+				if rel != nil && rel.Size() > 0 {
+					it := rel.Iterator()
+					if it.Next() {
+						t := it.Tuple()
+						if len(t) > 0 {
+							v = t[0]
+						}
+					}
+					it.Close()
+				}
+			}
+			boundTuple = append(boundTuple, v)
+			_ = slotIdx
+			relationIndex++
+		case query.TupleInput:
+			// Constant tuple input — read values from inputRelation now.
+			if relationIndex < len(inputRelations) {
+				rel := inputRelations[relationIndex]
+				if rel != nil && rel.Size() > 0 && len(inp.Symbols) == len(rel.Symbols()) {
+					it := rel.Iterator()
+					if it.Next() {
+						t := it.Tuple()
+						for i, sym := range inp.Symbols {
+							boundSymbols = append(boundSymbols, sym)
+							var v interface{}
+							if i < len(t) {
+								v = t[i]
+							}
+							boundTuple = append(boundTuple, v)
+						}
+					}
+					it.Close()
+				}
+			}
+			relationIndex++
+		default:
+			// CollectionInput, or any other unhandled shape — fall back to
+			// per-call BindQueryInputs.
+			return
+		}
+	}
+
+	// If anything was bound, construct the workspace-reusable bound
+	// relation. Direct struct construction bypasses NewMaterializedRelation's
+	// deduplicateTuples — which would allocate a TupleKeyMap + TupleKey +
+	// result slice for a known-singleton input. The relation's tuples[0]
+	// IS boundTuple (the slice header is wrapped in a fresh outer slice,
+	// but tuples[0] points to the same Tuple), so mutating boundTuple
+	// mutates what the relation yields.
+	if len(boundSymbols) > 0 {
+		p.boundRelation = &MaterializedRelation{
+			symbols: boundSymbols,
+			tuples:  []Tuple{boundTuple},
+			options: ExecutorOptions{},
+		}
+		p.boundTuple = boundTuple
+		p.iterationSlots = iterationSlots
+		p.canMutateBindings = true
+	}
+}
+
+// Run executes one per-tuple query using the prepared state. iterationTuple
+// is the current tuple from the iteration relation; scalarInputRelations is
+// the full per-tuple input-relation list (typically from a
+// perTupleInputSession's Input()) used only by the fallback path. When the
+// fast path is active (canMutateBindings == true), scalarInputRelations is
+// ignored and the bound relation is updated in place from iterationTuple.
+func (p *preparedNonIteratingExecution) Run(ctx Context, iterationTuple Tuple, scalarInputRelations []Relation) (Relation, error) {
 	var currentGroups []Relation
 
-	// Bind scalar input relations against the prepared modifiedQuery.
-	if len(scalarInputRelations) > 0 {
+	if p.canMutateBindings {
+		// Fast path: mutate the pre-built boundTuple's slots from the
+		// iteration tuple values.
+		for i, slot := range p.iterationSlots {
+			if slot >= 0 && i < len(iterationTuple) {
+				p.boundTuple[slot] = iterationTuple[i]
+			}
+		}
+		currentGroups = []Relation{p.boundRelation}
+	} else if len(scalarInputRelations) > 0 {
+		// Fallback: per-call BindQueryInputs (CollectionInput or other
+		// unhandled shape present in the query's :in).
 		boundRelation := BindQueryInputs(p.modifiedQuery, scalarInputRelations)
 		currentGroups = []Relation{boundRelation}
 	}
