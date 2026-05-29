@@ -8,40 +8,47 @@
 
 | # | Finding | Status |
 |---|---------|--------|
-| 1 | `combineTuples` projection plan hoist | ✅ Applied (`397e39f`) |
-| 2 | `ValuesEqual` pointer-equality short-circuit | ⬜ Pending |
+| 1 | `combineTuples` projection plan hoist | ✅ Applied (`397e39f`); verified clean on M3 Ultra |
+| 2 | `ValuesEqual` pointer-equality short-circuit | ✅ Applied; verified on M3 Ultra |
 | 3 | Identity hash via 8-byte SHA1 prefix | ⬜ Pending |
 | 4 | Defensive joined/probe-tuple copies | ⬜ Pending |
 | 5 | `seen` double-lookup → `PutIfAbsent` | ⬜ Pending |
 | 6 | Debug/annotation field gating | ⬜ Pending |
 
-### Pending verification for finding #1
+### Finding #1 verification — RESOLVED (2026-05-28, M3 Ultra)
 
-The int64 suite at sizes 5000+ showed +3 to +16% "regressions" in
-the after-state full-suite run that contradict:
+The M5 Air's int64 "+3 to +16% regressions" at sizes 5000+ were
+**thermal sequence artifacts, confirmed**. Re-run on a Mac Studio
+(Apple M3 Ultra, 32 cores, go1.25.0) with the full int64 + Identity
+suites benchmarked against `main` (executor differs only by finding
+#1) at n=10:
 
-- The Identity suite at the same shapes (small wins or wash)
-- Targeted single-benchmark re-runs in cleaner thermal state
-  (e.g. `mat_x_mat/size_5000` measured 1.073ms clean vs 1.244ms
-  in the hot full-suite, a 14% improvement, not a regression)
-- The `combineTuples` profile delta (-41% absolute in the function)
+| Suite | M5 Air (doc) | M3 Ultra (clean) |
+|-------|-------------:|-----------------:|
+| int64-keyed | -0.80% (noisy) | **-9.08%** |
+| Identity-keyed | -7.58% | **-8.82%** |
 
-This looks like thermal sequence artifacts on the M5 Air across a
-4.5-min full suite, but cannot be ruled out as real without a
-controlled-thermal rerun. To confirm/refute:
+On the M3 Ultra **every int64 sub-benchmark improves** (p=0.000,
+range -5.2% to -13.4%) — the exact size_5000+ shapes that
+"regressed" on the M5 are now -5% to -9% wins. The int64 geomean
+moving from -0.80% to -9.08% is the smoking gun: the M5 figure was
+dragged down by the thermal artifacts, which vanish on a stable
+machine. Allocations stay flat (±0.1%) on both suites, confirming
+the per-call map was stack-allocated and the win is pure CPU.
 
-```
-go test -count=10 \
-  -bench='^BenchmarkHashJoin(InputTypes|MaterializedVsStreaming|SingleIteration|LargeResult|Streaming)$' \
-  -benchmem -run='^$' ./datalog/executor \
-  > /tmp/int64_thermal_rerun.txt
-benchstat docs/perf/hash_join_baseline_2026-05-27.txt /tmp/int64_thermal_rerun.txt
-```
+Identity Duplicates workloads land at -23.9% / -23.5%, matching the
+~-25% prediction. Only `IdentityLargeResult/size_50000` is a wash
+(p=0.971, ±7% variance).
 
-Expected on a thermally stable machine: small wins across all
-sizes (the change does strictly less work per call). If the
-mid-range regressions persist, finding #1 has a workload-dependent
-trade-off that needs to be understood before continuing to #2.
+Artifacts (this machine, dated 2026-05-28):
+
+- `docs/perf/hash_join_baseline_m3ultra_2026-05-28.txt` (main, int64)
+- `docs/perf/hash_join_identity_baseline_m3ultra_2026-05-28.txt` (main, Identity)
+- `docs/perf/hash_join_after_finding1_m3ultra_2026-05-28.txt` (branch, int64)
+- `docs/perf/hash_join_identity_after_finding1_m3ultra_2026-05-28.txt` (branch, Identity)
+
+The M3 Ultra is the verification rig for the remaining findings —
+re-baseline here (not the M5 numbers) before measuring #2–#6.
 
 ## Pickup checklist (for a different machine)
 
@@ -746,11 +753,74 @@ combined `combine` work is 41% lower in absolute time, matching the
 
 ### Caveats
 
-- The `_5000`-and-above int64 numbers are likely thermal artifacts
-  but cannot be ruled out as real without rerunning on a
-  controlled-thermal machine.
+- ~~The `_5000`-and-above int64 numbers are likely thermal artifacts~~
+  **Resolved 2026-05-28**: confirmed thermal artifacts. The M3 Ultra
+  rerun shows -5% to -9% wins at those exact shapes (see "Finding #1
+  verification — RESOLVED" above).
 - All allocation/memory deltas are at noise floor (±0.01%) —
   no change to GC pressure.
+
+## Finding #2 Results (2026-05-28, M3 Ultra)
+
+**Status**: Applied.
+
+### Change
+
+`ValuesEqual` (`datalog/compare.go`) reordered so the comparable
+hot-path types return before any reflection. The original called
+`reflect.ValueOf(a)` **and** `reflect.ValueOf(b)` unconditionally at
+the top (for the typed-slice path) — before the cheap interned/
+primitive checks. Now:
+
+- `[]byte`/`[]uint8` handled first by type assertion (slice safety +
+  most common slice value).
+- `*uint64` dereferenced.
+- Interned pointer types (`Identity`/`Keyword`/`Symbol`) and
+  `ElementID` compared via their `Equal` methods — no reflection.
+- Comparable primitives via a type switch → direct `==`.
+- `time.Time` via `Equal`.
+- The reflect-based typed-slice comparison is now the **slow path**,
+  reached only for actual non-`[]byte` slices.
+- A final `a == b` fallback (for any remaining comparable type and
+  both-nil) sits after the slice block, where it is panic-safe.
+
+Note: the doc's original sketch ("move `a == b` to the very top")
+is unsafe as written — `==` panics on two values sharing an
+uncomparable (slice) dynamic type, which is exactly why the original
+ran reflect first. The realization above keeps that safety while
+removing reflect from every hot path.
+
+### Benchmark results (after-#1 → after-#2)
+
+| Suite | Geomean |
+|-------|--------:|
+| int64-keyed | **+0.04%** (wash) |
+| Identity-keyed | **-1.03%** |
+
+int64 wash is expected — int64 keys hit the primitive switch, never
+the reflect path #2 removed. The Identity wins concentrate on the
+equality/dedup-heavy shapes the finding targets:
+
+| Identity benchmark | Δ |
+|--------------------|--:|
+| Duplicates/keys10/reps100 | **-2.24%** |
+| Duplicates/keys50/reps50 | **-2.26%** |
+| HighFanout/keys500/fanout20 | -2.87% |
+| HighFanout/keys100/fanout10 | -1.84% |
+| LargeResult/size_10000 | -1.46% |
+| LargeResult/size_50000 | -6.27% (baseline ±7% noise; true win ≈ -2%) |
+
+Small-size `IdentityKeys` are mostly wash. This matches the
+prediction: the Duplicates profile put `ValuesEqual` at 2.95% cum
+(99,990 equality calls/op), and a ~2.25% wall-time win there is the
+reflect cost coming off the hot path. Allocations unchanged.
+
+### Artifacts
+
+- `docs/perf/hash_join_after_finding2_m3ultra_2026-05-28.txt` (int64)
+- `docs/perf/hash_join_identity_after_finding2_m3ultra_2026-05-28.txt` (Identity)
+
+Baseline for #2 is the after-#1 state (`hash_join_after_finding1_*`).
 
 ## Ranking by Expected Profile Impact
 

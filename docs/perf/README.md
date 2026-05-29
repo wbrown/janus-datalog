@@ -243,6 +243,37 @@ after) live next to each other:
 - `hash_join_identity_after_finding1_duplicates_10x100.{prof,_top.txt}`
 - `hash_join_identity_after_finding1_large_50000.{prof,_top.txt}`
 
+### M3 Ultra rerun (`*_m3ultra_2026-05-28.txt`)
+
+Clean-thermal re-baseline of finding #1 to settle the M5's int64
+"regression" question. Machine: Apple M3 Ultra (32 cores),
+go1.25.0 darwin/arm64. Baseline = `main` (`362136e`), whose executor
+differs from the branch only by finding #1; after = branch tip. Both
+suites at n=10.
+
+| Stem | What |
+|------|------|
+| `hash_join_baseline_m3ultra_2026-05-28.txt` | main, int64 suite |
+| `hash_join_identity_baseline_m3ultra_2026-05-28.txt` | main, Identity suite |
+| `hash_join_after_finding1_m3ultra_2026-05-28.txt` | branch, int64 suite |
+| `hash_join_identity_after_finding1_m3ultra_2026-05-28.txt` | branch, Identity suite |
+
+Geomean deltas (main → branch):
+
+| Suite | M5 Air | M3 Ultra |
+|-------|-------:|---------:|
+| int64-keyed | -0.80% (noisy) | **-9.08%** |
+| Identity-keyed | -7.58% | **-8.82%** |
+
+On the M3 Ultra every int64 sub-benchmark improves (p=0.000, -5.2%
+to -13.4%); the size_5000+ shapes that "regressed" on the M5 are now
+-5% to -9% wins. **The M5 int64 regressions were thermal sequence
+artifacts.** Allocations flat (±0.1%) on both suites. Identity
+Duplicates land at -23.9%/-23.5% (≈ the -25% prediction); only
+`IdentityLargeResult/size_50000` is a wash (p=0.971). The M3 Ultra is
+the verification rig for findings #2–#6 — re-baseline here, not on
+the M5 numbers.
+
 ---
 
 ## Original relation-input profile signatures
