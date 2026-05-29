@@ -79,6 +79,20 @@ func (sr *SourceRouter) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	return nil, false
 }
 
+// CanFuseAttributeFetch implements AttributeFetchFusable by delegating to the
+// default source ($), so the executor's attribute-fetch fusion can consult the
+// schema and temporal mode through the router.
+func (sr *SourceRouter) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+	source, ok := sr.sources[datalog.SymDollar]
+	if !ok {
+		return false
+	}
+	if f, ok := source.(AttributeFetchFusable); ok {
+		return f.CanFuseAttributeFetch(attr)
+	}
+	return false
+}
+
 // TypeDefault implements query.TypedDefaulter. Delegates to the default
 // source ($) for type-converting default values in get-else.
 func (sr *SourceRouter) TypeDefault(attr datalog.Keyword, defaultVal interface{}) interface{} {

@@ -43,4 +43,9 @@ type ExecutorOptions struct {
 
 	// Entity prefetch: warm EA cache after first DataPattern
 	EnableEntityPrefetch bool
+
+	// Attribute-fetch fusion: execute a same-entity [?e :const-attr ?fresh]
+	// pattern as a per-tuple LookupAttribute column attach instead of a
+	// separate relation match + hash join. CardinalityOne, latest/as-of only.
+	EnableAttributeFetchFusion bool
 }

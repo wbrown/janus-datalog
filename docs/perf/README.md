@@ -319,6 +319,64 @@ test binaries on this hardware (thermal/GC variance shows small
 significant deltas in both directions); allocs/op is the reliable
 cross-binary signal and it confirms `nocache` reproduces the baseline.
 
+### `attr_fetch_baseline_2026-05-29.txt`
+
+`BenchmarkAttrFetch` — cost of getting K CardinalityOne attributes off one
+entity, two ways. `patterns` runs an anchor `[?e :place/type "room"]` plus
+K same-`?e` attribute patterns; each is its own narrow `(?e, vᵢ)` relation
+hash-joined on `?e` (K joins). `pull` runs the same anchor with
+`(pull ?e [… K attrs])`, fetching all K per entity in one go (no
+inter-attribute join). Both emit N rows with the same values and share the
+anchor, so the delta is the per-attribute join cost. N ∈ {100, 1000},
+K ∈ {1, 3, 6}.
+
+Machine: Apple M5, darwin/arm64. n=10. Base: `5f0e39d` (main).
+
+| N | K | patterns sec/op | pull sec/op | speedup | patterns allocs/op | pull allocs/op |
+|--:|--:|----------------:|------------:|--------:|-------------------:|---------------:|
+| 100 | 1 | 198.7µs | 121.8µs | 1.6× | 2,545 | 1,828 |
+| 100 | 3 | 266.3µs | 154.8µs | 1.7× | 5,210 | 2,638 |
+| 100 | 6 | 457.4µs | 212.5µs | 2.2× | 9,212 | 3,843 |
+| 1000 | 1 | 1.31ms | 1.14ms | 1.1× | 22,378 | 16,247 |
+| 1000 | 3 | 2.73ms | 1.77ms | 1.5× | 46,688 | 24,265 |
+| 1000 | 6 | 4.68ms | 2.59ms | 1.8× | 83,164 | 36,291 |
+
+The gap scales with K: one join (K=1) is marginal (1.1–1.6×); six (K=6)
+reach 1.8–2.2×. Marginal cost per added attribute at N=1000 ≈ 650–710µs
+(patterns) vs 275–315µs (pull) — each same-entity attribute pattern pays a
+join about equal to the value fetch. Allocations diverge most: at
+K=6/N=1000 patterns allocate 2.3× pull (the per-join `combineTuples` /
+`TupleKeyMap` churn). This is the baseline for a same-entity attribute-
+fusion optimization that would emit a wide row per entity instead of
+hash-joining narrow per-pattern relations; `pull` is the no-join floor
+proxy (it builds a nested map where a fused op would build flat tuples, so
+the achievable result may land somewhat either side of it).
+
+### `attr_fetch_fusion_2026-05-29.txt`
+
+After-state for same-entity attribute fusion (`EnableAttributeFetchFusion`,
+default on). Adds a `patterns-fused` arm to `BenchmarkAttrFetch`: the same
+`patterns` query run with fusion enabled, which turns each same-entity
+`[?e :const-attr ?fresh]` pattern into a per-tuple `LookupAttribute` column
+attach instead of a match + hash join. n=10, Apple M5 darwin/arm64.
+
+| N | K | patterns | fused | pull | fused vs patterns | patterns allocs | fused allocs |
+|--:|--:|---------:|------:|-----:|:-----------------:|----------------:|-------------:|
+| 100 | 1 | 91.7µs | 65.6µs | 74.3µs | 1.40× | 2,545 | 1,471 |
+| 100 | 3 | 163.7µs | 97.4µs | 99.8µs | 1.68× | 5,210 | 2,230 |
+| 100 | 6 | 276.7µs | 145.7µs | 130.4µs | 1.90× | 9,211 | 3,372 |
+| 1000 | 1 | 764.5µs | 513.8µs | 680.9µs | 1.49× | 22,376 | 12,280 |
+| 1000 | 3 | 1.488ms | 843.7µs | 965.2µs | 1.76× | 46,678 | 18,452 |
+| 1000 | 6 | 2.626ms | 1.353ms | 1.350ms | 1.94× | 83,143 | 27,719 |
+
+Fusion is **1.40–1.94× faster** than the join path, scaling with K (each saved
+join is a saved hashtable build/probe + `combineTuples` + tuple keys), with
+**~2.6–3× fewer allocations** (B/op at K=6/N=1000: 6.06Mi → 2.35Mi). It reaches
+the no-join `pull` floor — matching it at K=6 and beating it at K≤3, because
+fused emits flat tuples while `pull` builds nested maps (fused also allocates
+fewer: 27.7k vs 36.3k at K=6/N=1000). Both fused and unfused use the EA cache
+for the per-`(E,A)` lookups; the delta is purely the eliminated joins.
+
 ---
 
 ## Original relation-input profile signatures
