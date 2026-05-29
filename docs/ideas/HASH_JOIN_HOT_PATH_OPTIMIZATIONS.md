@@ -12,7 +12,7 @@
 | 2 | `ValuesEqual` pointer-equality short-circuit | ✅ Applied; verified on M3 Ultra |
 | 3 | Identity hash via 8-byte SHA1 prefix | ⬜ Pending |
 | 4 | Defensive joined/probe-tuple copies | ⬜ Pending |
-| 5 | `seen` double-lookup → `PutIfAbsent` | ⬜ Pending |
+| 5 | `seen` double-lookup → `PutIfAbsent` | ✅ Applied; verified on M3 Ultra |
 | 6 | Debug/annotation field gating | ⬜ Pending |
 
 ### Finding #1 verification — RESOLVED (2026-05-28, M3 Ultra)
@@ -821,6 +821,80 @@ reflect cost coming off the hot path. Allocations unchanged.
 - `docs/perf/hash_join_identity_after_finding2_m3ultra_2026-05-28.txt` (Identity)
 
 Baseline for #2 is the after-#1 state (`hash_join_after_finding1_*`).
+
+## Finding #5 Results (2026-05-29, M3 Ultra)
+
+**Status**: Applied.
+
+### Change
+
+Added `TupleKeyMap.PutIfAbsent(key, value) (existed bool)`, which
+walks the hash bucket exactly once: it runs `tupleValuesEqual` against
+each entry and appends only if no match is found. Both join dedup
+sites — streaming (`join.go`) and materialized (`join.go`) — replaced
+their `seen.Exists(k)` + `seen.Put(k, true)` pair (two bucket walks,
+same comparisons run twice) with a single `seen.PutIfAbsent(k, true)`.
+Semantics identical.
+
+### Benchmark results (after-#2 → after-#5)
+
+| Suite | Geomean |
+|-------|--------:|
+| int64-keyed | **-1.83%** |
+| Identity-keyed | **-1.92%** |
+
+Broad, consistent wins across sizes on both key types. The dedup-heavy
+Duplicates workloads (#5's primary target — `seen` rejects 99%+ of
+rows) land where predicted:
+
+| Identity benchmark | Δ |
+|--------------------|--:|
+| HighFanout/keys500/fanout20 | -3.43% |
+| HighFanout/keys100/fanout10 | -3.35% |
+| Duplicates/keys10/reps100 | -2.62% |
+| HighFanout/keys100/fanout50 | -2.41% |
+| Duplicates/keys50/reps50 | -2.30% |
+| LargeResult/size_10000 | -2.29% |
+
+Allocations unchanged (the work removed is a redundant bucket walk,
+not an allocation).
+
+### Thermal artifact note (and how it was caught)
+
+The first after-#5 Identity run — a single uncontrolled background
+invocation compared against the separately-captured after-#2 file —
+reported **+10 to +14% "regressions"** on the longest-running shapes
+(`HighFanout/fanout50` +13.97%, `HighFanout/keys500` +11.17%,
+`LargeResult/size_50000` +10.89%). These were rejected as artifacts,
+not recorded, because:
+
+1. `PutIfAbsent` does strictly **less** work than `Exists`+`Put`
+   (one bucket walk vs two) — a 14% slowdown is algorithmically
+   impossible.
+2. The int64 suite (same code path, ran first/cool) showed clean
+   uniform **-1.83%** wins.
+3. The "regressed" absolute times were **above both** prior
+   baselines (after-#1 and after-#2), the signature of thermal
+   throttling on the last/longest benchmarks in the chain.
+
+Confirmed by a controlled re-measurement: both binaries
+(after-#2 from committed HEAD, after-#5 from the working tree) run on
+the same Identity suite in **alternating order across two passes**, so
+each gets one cool slot and one hot slot (5+5 = n=10 each). Under that
+balance every "regression" flipped to a -2 to -3.4% win (table above).
+
+Lesson (same as finding #1): cross-run benchmark comparisons on
+this machine are thermally unreliable for the long-running Identity
+shapes; use a single-process alternating A/B for anything near the
+noise band.
+
+### Artifacts
+
+- `docs/perf/hash_join_after_finding5_m3ultra_2026-05-28.txt` (int64;
+  int64 ran first/cool in its chain, so this single run is trustworthy)
+- `docs/perf/hash_join_identity_finding5_balanced_after2_m3ultra_2026-05-29.txt`
+  and `..._after5_...` — the balanced-A/B Identity pair (authoritative;
+  the contaminated single-run Identity file was discarded)
 
 ## Ranking by Expected Profile Impact
 

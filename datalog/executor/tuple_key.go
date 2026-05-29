@@ -273,6 +273,26 @@ func (m *TupleKeyMap) Put(key TupleKey, value interface{}) {
 	})
 }
 
+// PutIfAbsent inserts key with the given value only if the key is not
+// already present, and reports whether it already existed. It walks the
+// hash bucket exactly once, where a separate Exists+Put pair would walk it
+// twice (running tupleValuesEqual against every entry both times). This is
+// the hot path for join deduplication, where every matched row probes the
+// seen set.
+func (m *TupleKeyMap) PutIfAbsent(key TupleKey, value interface{}) (existed bool) {
+	entries := m.m[key.hash]
+	for i := range entries {
+		if tupleValuesEqual(entries[i].values, key.values) {
+			return true
+		}
+	}
+	m.m[key.hash] = append(entries, mapEntry{
+		values: key.values,
+		value:  value,
+	})
+	return false
+}
+
 // Get retrieves a value by key
 func (m *TupleKeyMap) Get(key TupleKey) (interface{}, bool) {
 	entries, ok := m.m[key.hash]

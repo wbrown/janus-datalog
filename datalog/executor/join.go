@@ -64,10 +64,9 @@ func (it *hashJoinIterator) Next() bool {
 				joined = combineTuplesIndexed(it.currentProbeTuple, buildTuple, it.rightNonJoinIndices, it.resultWidth)
 			}
 
-			// Check for duplicates using seen map
+			// Check for duplicates using seen map (single bucket walk)
 			dedupKey := NewTupleKeyFull(joined)
-			if !it.seen.Exists(dedupKey) {
-				it.seen.Put(dedupKey, true)
+			if !it.seen.PutIfAbsent(dedupKey, true) {
 				// BUG FIX: Make a copy since combineTuples might return a slice that gets reused
 				joinedCopy := make(Tuple, len(joined))
 				copy(joinedCopy, joined)
@@ -502,9 +501,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 				}
 
 				// Create a key for deduplication based on all tuple values
+				// (single bucket walk via PutIfAbsent)
 				dedupKey := NewTupleKeyFull(joined)
-				if !seen.Exists(dedupKey) {
-					seen.Put(dedupKey, true)
+				if !seen.PutIfAbsent(dedupKey, true) {
 					results = append(results, joined)
 				}
 			}
