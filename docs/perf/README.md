@@ -274,6 +274,51 @@ Duplicates land at -23.9%/-23.5% (≈ the -25% prediction); only
 the verification rig for findings #2–#6 — re-baseline here, not on
 the M5 numbers.
 
+### `vbound_validation_baseline_2026-05-29.txt`
+
+`BenchmarkVBoundValidation` + `BenchmarkVBoundValidationSupersession` —
+the V-bound CardinalityOne validation path
+(`validatingVBoundIterator.validateCandidate`). A query
+`[?e :place/type "room"]` (A+V constant, E unbound, CardinalityOne
+non-unique) drives one `validateCandidate` call per emitted candidate;
+N entities share the queried value. On the baseline each validation is
+a per-candidate EATV point seek (Badger ConcatIterator open/close +
+IncrRef/DecrRef). The `cache`/`nocache` arms set `DisableCache`
+false/true; both pay the AVET candidate scan, so the delta isolates the
+validation cost. Supersession variant re-types half the entities so the
+candidate count stays N while half are stale (reject path).
+
+Machine: Apple M5, darwin/arm64. n=10.
+Baseline commit: `362136e` (main). After: branch
+`perf/vbound-validation-cache` — `validateCandidate` gains a latest-mode
+CardinalityOne fast path that resolves the current (E, A) value from the
+EA cache (`GetOrResolve`) instead of seeking.
+
+After-state file: `vbound_validation_after_2026-05-29.txt`.
+Comparison: `vbound_validation_benchstat_2026-05-29.txt`.
+
+benchstat headline (baseline → after):
+
+| Metric | `cache` arm (fast path active) | `nocache` arm (cache disabled) |
+|--------|-------------------------------|-------------------------------|
+| sec/op | **−64% to −82%** (all p=0.000) | ±9–21%, thermal noise |
+| allocs/op | **−70% to −78%** (all p=0.000) | **identical** (p=1.000 / ~) |
+| B/op | −79% to −85% | ±0.2% |
+
+The win scales with candidates-per-value: each validation drops from an
+EATV seek to an O(1) cache lookup (≈2.85 µs/candidate saved at N=5000),
+and the per-candidate Badger iterator allocations disappear (the −70–78%
+allocs).
+
+The `nocache` arm is the equivalence control: allocs/op are **byte-for-
+byte identical** between baseline and after (the fast path is the only
+behavioral change; the scan-loop refactor that accompanies it — adding
+`shouldFilterTx` skipping for as-of correctness — is work-neutral in
+latest mode). nocache sec/op is not comparable across the two separate
+test binaries on this hardware (thermal/GC variance shows small
+significant deltas in both directions); allocs/op is the reliable
+cross-binary signal and it confirms `nocache` reproduces the baseline.
+
 ---
 
 ## Original relation-input profile signatures

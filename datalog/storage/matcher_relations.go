@@ -795,6 +795,50 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	aPtr := datalog.NewKeyword(a.String())
 	aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
 
+	// Latest-mode CardinalityOne fast path. The EA cache resolves the current
+	// (E, A) value with the same EATV-first-entry + tombstone semantics this
+	// scan performs, but memoized — turning a per-candidate Badger seek into an
+	// O(1) cache lookup. For a set-once attribute (e.g. a type tag), every
+	// candidate after the first is a permanent cache hit.
+	//
+	// Equivalence preconditions (all required):
+	//   - cache != nil: cache exists (not DisableCache).
+	//   - txID == nil: latest mode. The scan below reads the absolute-latest
+	//     entry with NO shouldFilterTx, so it equals ResolveLWW only when no
+	//     as-of/history filter applies. Concrete-AsOf and history keep the scan
+	//     path untouched — this change is a strict no-op in those modes.
+	//   - non-unique: ResolveLWW walks for unique attributes (CRDT-unique
+	//     fallback), which differs from this scan's naive first-entry. Unique
+	//     attributes already short-circuit before validation via
+	//     tryEmitUniqueWinner; this guard makes the precondition self-evident.
+	if it.matcher.cache != nil && it.matcher.txID == nil && !it.attrIsUnique(a) {
+		var eEnt Entity
+		var aAttr Attribute
+		copy(eEnt[:], eBytes[:])
+		copy(aAttr[:], aStorage[:])
+		entry := it.matcher.cache.GetOrResolve(CacheKey{E: eEnt, A: aAttr}, it.matcher)
+		if entry != nil && entry.Cardinality() == schema.CardinalityOne {
+			// oneValue is nil for a tombstoned or never-set (E, A); ValuesEqual
+			// against the (always non-nil) bound V yields false, matching the
+			// scan path's tombstone and no-winner handling exactly.
+			matches := datalog.ValuesEqual(entry.OneValue(), it.currentBoundV)
+			if it.matcher.handler != nil {
+				it.matcher.handler(annotations.Event{
+					Name:  "v-validation/cache-resolved",
+					Start: time.Now(),
+					Data: map[string]any{
+						"e":        e.String(),
+						"a":        a.String(),
+						"bound_v":  fmt.Sprintf("%v", it.currentBoundV),
+						"cached_v": fmt.Sprintf("%v", entry.OneValue()),
+						"matches":  matches,
+					},
+				})
+			}
+			return matches
+		}
+	}
+
 	// Point lookup on EATV: scan (E, A) prefix, first result is CRDT winner
 	start, end := encoder.EncodePrefixRange(it.validationIndex, eBytes[:], aStorage[:])
 	rawIter, err := it.matcher.store.ScanKeysOnly(it.validationIndex, start, end)
@@ -803,57 +847,69 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	}
 	defer rawIter.Close()
 
-	// First result is the CRDT winner (Tx descending in EATV)
-	if !rawIter.Next() {
+	// Resolve the (E, A) winner visible in this matcher's mode: the highest-Tx
+	// entry not filtered out by the as-of target (EATV sorts Tx descending). In
+	// latest and history mode shouldFilterTx is always false, so this is the
+	// first entry — identical to the prior behavior. In concrete as-of mode it
+	// skips entries newer than the snapshot, mirroring ResolveLWW, so a V-bound
+	// query as-of T validates against the value as of T rather than
+	// absolute-latest. Without this skip, a value overwritten or tombstoned
+	// after T leaked into validation and wrongly rejected (or admitted)
+	// candidates under as-of.
+	for rawIter.Next() {
+		winner, err := rawIter.Datom()
+		if err != nil {
+			return false
+		}
+		if it.matcher.shouldFilterTx(winner.Tx) {
+			continue
+		}
+
+		// Check Op: if the latest visible operation is a tombstone, the
+		// attribute doesn't exist. No V can match a tombstoned attribute.
+		if winner.Op == datalog.OpCRDTRemove {
+			return false
+		}
+
+		// Check if winner's V matches our bound V. Use ValuesEqual (not raw ==)
+		// so byte-slice values compare by content instead of panicking on the
+		// uncomparable []byte dynamic type.
+		matches := datalog.ValuesEqual(winner.V, it.currentBoundV)
+
 		if it.matcher.handler != nil {
 			it.matcher.handler(annotations.Event{
-				Name:  "v-validation/no-winner",
+				Name:  "v-validation/result",
 				Start: time.Now(),
 				Data: map[string]any{
-					"e":     e.String(),
-					"a":     a.String(),
-					"bound": fmt.Sprintf("%v", it.currentBoundV),
+					"e":           e.String(),
+					"a":           a.String(),
+					"bound_v":     fmt.Sprintf("%v", it.currentBoundV),
+					"winner_v":    fmt.Sprintf("%v", winner.V),
+					"winner_tx":   winner.Tx.String(),
+					"winner_op":   fmt.Sprintf("%d", winner.Op),
+					"matches":     matches,
+					"will_emit":   matches,
+					"cardinality": it.getCardinality(a),
 				},
 			})
 		}
-		return false // No current value
+
+		return matches
 	}
 
-	winner, err := rawIter.Datom()
-	if err != nil {
-		return false
-	}
-
-	// Check Op: if the latest operation is a tombstone, the attribute doesn't exist.
-	// No V can match a tombstoned attribute.
-	if winner.Op == datalog.OpCRDTRemove {
-		return false
-	}
-
-	// Check if winner's V matches our bound V. Use ValuesEqual (not raw ==)
-	// so byte-slice values compare by content instead of panicking on the
-	// uncomparable []byte dynamic type.
-	matches := datalog.ValuesEqual(winner.V, it.currentBoundV)
-
+	// No entry visible under this snapshot — the attribute has no value as-of T.
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{
-			Name:  "v-validation/result",
+			Name:  "v-validation/no-winner",
 			Start: time.Now(),
 			Data: map[string]any{
-				"e":           e.String(),
-				"a":           a.String(),
-				"bound_v":     fmt.Sprintf("%v", it.currentBoundV),
-				"winner_v":    fmt.Sprintf("%v", winner.V),
-				"winner_tx":   winner.Tx.String(),
-				"winner_op":   fmt.Sprintf("%d", winner.Op),
-				"matches":     matches,
-				"will_emit":   matches,
-				"cardinality": it.getCardinality(a),
+				"e":     e.String(),
+				"a":     a.String(),
+				"bound": fmt.Sprintf("%v", it.currentBoundV),
 			},
 		})
 	}
-
-	return matches
+	return false
 }
 
 // getCardinality looks up the cardinality for an attribute (for annotations)
@@ -875,6 +931,18 @@ func (it *validatingVBoundIterator) getCardinality(a datalog.Keyword) string {
 	default:
 		return "unknown"
 	}
+}
+
+// attrIsUnique reports whether attribute a is declared unique in the schema.
+// Keeps the validateCandidate cache fast-path off unique attributes, whose
+// ResolveLWW uses walk-based resolution that differs from the naive
+// first-entry scan the fast path is proven equivalent to.
+func (it *validatingVBoundIterator) attrIsUnique(a datalog.Keyword) bool {
+	if it.matcher.schema == nil {
+		return false
+	}
+	def := it.matcher.schema.GetAttribute(a)
+	return def != nil && def.Unique != ""
 }
 
 // getCardinalityEnum looks up the cardinality enum for an attribute
@@ -953,7 +1021,14 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 	// - Add-wins with same-Tx tiebreaking for CardinalityMany
 	// - RGA for CardinalityVector
 	// - Add-wins for CardinalityUnknown (same as CardinalityMany)
-	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, datalog.ElementID{}, it.matcher)
+	//
+	// Pass the matcher's as-of target (crdtTxID) so candidate resolution
+	// respects the snapshot. In latest and history mode this is the zero
+	// ElementID (no filter); in concrete as-of mode it skips post-snapshot
+	// entries, so a value tombstoned or overwritten after T does not drop or
+	// alter a candidate that existed as of T. Every other CRDTResolvingIterator
+	// call site already threads crdtTxID(); this one previously hardcoded zero.
+	crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.crdtTxID(), it.matcher)
 
 	if it.matcher.handler != nil {
 		it.matcher.handler(annotations.Event{

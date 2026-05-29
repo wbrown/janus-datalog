@@ -1,0 +1,52 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+                                               │ docs/perf/vbound_validation_baseline_2026-05-29.txt │ docs/perf/vbound_validation_after_2026-05-29.txt │
+                                               │                       sec/op                        │          sec/op           vs base                │
+VBoundValidation/N=100/cache-10                                                        277.88µ ± 15%               99.57µ ± 21%  -64.17% (p=0.000 n=10)
+VBoundValidation/N=100/nocache-10                                                       298.5µ ± 23%               361.8µ ± 11%  +21.19% (p=0.004 n=10)
+VBoundValidation/N=1000/cache-10                                                       3526.5µ ±  5%               684.9µ ± 10%  -80.58% (p=0.000 n=10)
+VBoundValidation/N=1000/nocache-10                                                      3.322m ± 10%               3.014m ±  4%   -9.26% (p=0.000 n=10)
+VBoundValidation/N=5000/cache-10                                                       18.467m ±  9%               4.024m ±  9%  -78.21% (p=0.000 n=10)
+VBoundValidation/N=5000/nocache-10                                                      18.45m ±  7%               17.58m ± 38%        ~ (p=0.631 n=10)
+VBoundValidationSupersession/N=100/cache-10                                            299.71µ ± 19%               69.82µ ±  7%  -76.70% (p=0.000 n=10)
+VBoundValidationSupersession/N=100/nocache-10                                           321.5µ ± 10%               308.5µ ±  9%        ~ (p=0.739 n=10)
+VBoundValidationSupersession/N=1000/cache-10                                           3398.2µ ± 84%               712.6µ ± 27%  -79.03% (p=0.000 n=10)
+VBoundValidationSupersession/N=1000/nocache-10                                          3.862m ± 59%               3.225m ±  6%  -16.50% (p=0.000 n=10)
+VBoundValidationSupersession/N=5000/cache-10                                           18.944m ±  5%               3.491m ±  9%  -81.57% (p=0.000 n=10)
+VBoundValidationSupersession/N=5000/nocache-10                                          18.21m ± 17%               17.23m ± 12%        ~ (p=0.280 n=10)
+geomean                                                                                 2.691m                     1.258m        -53.27%
+
+                                               │ docs/perf/vbound_validation_baseline_2026-05-29.txt │ docs/perf/vbound_validation_after_2026-05-29.txt │
+                                               │                        B/op                         │           B/op            vs base                │
+VBoundValidation/N=100/cache-10                                                        211.79Ki ± 0%               44.87Ki ± 0%  -78.81% (p=0.000 n=10)
+VBoundValidation/N=100/nocache-10                                                       211.8Ki ± 0%               212.1Ki ± 0%   +0.16% (p=0.009 n=10)
+VBoundValidation/N=1000/cache-10                                                       2107.1Ki ± 0%               431.7Ki ± 0%  -79.51% (p=0.000 n=10)
+VBoundValidation/N=1000/nocache-10                                                      2.058Mi ± 0%               2.055Mi ± 0%   -0.10% (p=0.000 n=10)
+VBoundValidation/N=5000/cache-10                                                       10.263Mi ± 0%               1.966Mi ± 0%  -80.84% (p=0.000 n=10)
+VBoundValidation/N=5000/nocache-10                                                      10.25Mi ± 0%               10.26Mi ± 0%        ~ (p=0.912 n=10)
+VBoundValidationSupersession/N=100/cache-10                                            203.06Ki ± 0%               36.07Ki ± 0%  -82.24% (p=0.000 n=10)
+VBoundValidationSupersession/N=100/nocache-10                                           203.2Ki ± 0%               203.2Ki ± 0%        ~ (p=0.796 n=10)
+VBoundValidationSupersession/N=1000/cache-10                                           1987.4Ki ± 0%               312.7Ki ± 0%  -84.27% (p=0.000 n=10)
+VBoundValidationSupersession/N=1000/nocache-10                                          1.943Mi ± 0%               1.940Mi ± 0%   -0.13% (p=0.005 n=10)
+VBoundValidationSupersession/N=5000/cache-10                                            9.777Mi ± 0%               1.460Mi ± 0%  -85.07% (p=0.000 n=10)
+VBoundValidationSupersession/N=5000/nocache-10                                          9.775Mi ± 0%               9.750Mi ± 0%        ~ (p=0.190 n=10)
+geomean                                                                                 1.595Mi                    693.7Ki       -57.51%
+
+                                               │ docs/perf/vbound_validation_baseline_2026-05-29.txt │ docs/perf/vbound_validation_after_2026-05-29.txt │
+                                               │                      allocs/op                      │       allocs/op         vs base                  │
+VBoundValidation/N=100/cache-10                                                          3.702k ± 0%              1.102k ± 0%  -70.23% (p=0.000 n=10)
+VBoundValidation/N=100/nocache-10                                                        3.702k ± 0%              3.702k ± 0%        ~ (p=1.000 n=10) ¹
+VBoundValidation/N=1000/cache-10                                                        35.223k ± 0%              9.214k ± 0%  -73.84% (p=0.000 n=10)
+VBoundValidation/N=1000/nocache-10                                                       35.22k ± 0%              35.22k ± 0%        ~ (p=0.080 n=10)
+VBoundValidation/N=5000/cache-10                                                        175.40k ± 0%              45.27k ± 0%  -74.19% (p=0.000 n=10)
+VBoundValidation/N=5000/nocache-10                                                       175.4k ± 0%              175.4k ± 0%        ~ (p=0.985 n=10)
+VBoundValidationSupersession/N=100/cache-10                                              3550.0 ± 0%               950.0 ± 0%  -73.24% (p=0.000 n=10)
+VBoundValidationSupersession/N=100/nocache-10                                            3.550k ± 0%              3.550k ± 0%        ~ (p=1.000 n=10) ¹
+VBoundValidationSupersession/N=1000/cache-10                                            33.720k ± 0%              7.710k ± 0%  -77.14% (p=0.000 n=10)
+VBoundValidationSupersession/N=1000/nocache-10                                           33.72k ± 0%              33.72k ± 0%   -0.01% (p=0.003 n=10)
+VBoundValidationSupersession/N=5000/cache-10                                            167.95k ± 0%              37.77k ± 0%  -77.51% (p=0.000 n=10)
+VBoundValidationSupersession/N=5000/nocache-10                                           167.9k ± 0%              167.9k ± 0%        ~ (p=0.196 n=10)
+geomean                                                                                  27.78k                   14.04k       -49.48%
+¹ all samples are equal
