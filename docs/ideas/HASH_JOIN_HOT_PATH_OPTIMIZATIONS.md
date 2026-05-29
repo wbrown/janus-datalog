@@ -13,7 +13,7 @@
 | 3 | Identity/Keyword hash via interned pointer | ✅ Applied (better than the 8-byte-SHA1 plan); verified on M3 Ultra |
 | 4 | Defensive joined/probe-tuple copies | ✅ Applied; verified on M3 Ultra (first alloc reduction) |
 | 5 | `seen` double-lookup → `PutIfAbsent` | ✅ Applied; verified on M3 Ultra |
-| 6 | Debug/annotation field gating | ⬜ Pending |
+| 6 | Debug/annotation field gating | ✅ Applied (cleanup; not benchmarked — sub-resolution) |
 
 ### Finding #1 verification — RESOLVED (2026-05-28, M3 Ultra)
 
@@ -1028,6 +1028,32 @@ was not touched.
   + `..._finding4_baseline_arm_...`
 - `docs/perf/hash_join_identity_after_finding4_m3ultra_2026-05-29.txt`
   + `..._finding4_baseline_arm_...`
+
+## Finding #6 Results (2026-05-29)
+
+**Status**: Applied as a cleanup. Not benchmarked — the change is below
+benchmark resolution by construction (see below).
+
+### Change
+
+- Per-row debug counters (`probeCount`/`matchCount`/`resultCount`) moved
+  behind a `*hashJoinDebug` pointer that is non-nil only when
+  `EnableDebugLogging` is set. With debug off the hot path neither writes
+  them nor carries them in the iterator struct.
+- The `maybeCopy` build-loop closure (which captured and mutated
+  `copyCount`/`passthruCount`, forcing a per-join heap allocation) was
+  inlined into the build loop. Its counters are now tracked only when
+  `opts.Collector != nil` (the same condition that gates the
+  `JoinBuildCopy` annotation emit).
+
+### Why it was not benchmarked
+
+The removed cost is one closure heap allocation per *join call* (≈1
+alloc/op against the 8k–400k allocs/op these benchmarks already do) plus
+a handful of gated per-row int writes. Both are below the measurement
+floor; an A/B would only report thermal noise. Correctness is covered by
+`go test ./...` (green). The justification is principled overhead removal
+and cleaner code, not a measurable speedup.
 
 ## Ranking by Expected Profile Impact
 

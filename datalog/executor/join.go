@@ -43,7 +43,16 @@ type hashJoinIterator struct {
 	matchIdx          int
 	closed            bool
 
-	// Debug counters
+	// debug is non-nil only when EnableDebugLogging is set; the per-row
+	// counters live behind it so the hot path neither writes them nor carries
+	// them in the iterator struct when debug is off.
+	debug *hashJoinDebug
+}
+
+// hashJoinDebug holds per-row counters used only for debug logging. It is
+// allocated and incremented only when ExecutorOptions.EnableDebugLogging is
+// set, keeping these writes off the hot path entirely.
+type hashJoinDebug struct {
 	probeCount  int
 	matchCount  int
 	resultCount int
@@ -76,7 +85,9 @@ func (it *hashJoinIterator) Next() bool {
 				// downstream consumer that retains tuples copies at its own
 				// boundary (this join's StreamingRelation has RequiresCopy()==true).
 				it.currentJoined = joined // Store for Tuple() to return
-				it.resultCount++
+				if it.debug != nil {
+					it.debug.resultCount++
+				}
 				return true
 			}
 			// Duplicate, continue to next match
@@ -85,14 +96,16 @@ func (it *hashJoinIterator) Next() bool {
 
 		// Need next probe tuple
 		if !it.probeIt.Next() {
-			if it.options.EnableDebugLogging {
+			if it.debug != nil {
 				fmt.Printf("[hashJoinIterator] Probe exhausted after %d tuples, %d matched, produced %d results\n",
-					it.probeCount, it.matchCount, it.resultCount)
+					it.debug.probeCount, it.debug.matchCount, it.debug.resultCount)
 			}
 			return false
 		}
 
-		it.probeCount++
+		if it.debug != nil {
+			it.debug.probeCount++
+		}
 		it.currentProbeTuple = it.probeIt.Tuple()
 
 		// Only copy when the probe iterator reuses its tuple workspace. A
@@ -109,7 +122,7 @@ func (it *hashJoinIterator) Next() bool {
 
 		key := NewTupleKey(it.currentProbeTuple, it.probeIndices)
 
-		if it.options.EnableDebugLogging && it.probeCount == 1 {
+		if it.debug != nil && it.debug.probeCount == 1 {
 			fmt.Printf("[hashJoinIterator] First probe key: %v\n", key)
 		}
 
@@ -117,7 +130,9 @@ func (it *hashJoinIterator) Next() bool {
 		if matchesVal, ok := it.hashTable.Get(key); ok {
 			it.matches = matchesVal.([]Tuple)
 			it.matchIdx = 0
-			it.matchCount++
+			if it.debug != nil {
+				it.debug.matchCount++
+			}
 			continue
 		}
 
@@ -337,15 +352,11 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Check if we need to copy tuples from the build relation
 	// This avoids unnecessary copies when the source guarantees stable tuples
 	needsCopy := buildRel.RequiresCopy()
+	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
+	// track them when a collector will read them. Inlined into the build loop
+	// (no closure) to avoid a per-join heap allocation.
+	trackCopy := opts.Collector != nil
 	var copyCount, passthruCount int
-	maybeCopy := func(t Tuple) Tuple {
-		if needsCopy {
-			copyCount++
-			return copyTuple(t)
-		}
-		passthruCount++
-		return t
-	}
 
 	// Pure relational build: group every build tuple by its join key. All rows
 	// are preserved; identical output tuples are deduplicated downstream by set
@@ -357,15 +368,26 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	var firstBuildTuple Tuple
 	for buildIt.Next() {
 		tuple := buildIt.Tuple()
+		// Copy only when the build relation reuses its tuple workspace; the
+		// hash table retains these tuples for the join's lifetime. Key is built
+		// after the copy — same values, so the join key is unaffected.
+		if needsCopy {
+			tuple = copyTuple(tuple)
+			if trackCopy {
+				copyCount++
+			}
+		} else if trackCopy {
+			passthruCount++
+		}
 		key := NewTupleKey(tuple, buildIndices)
 		if buildCount == 0 && opts.EnableDebugLogging {
 			firstBuildKey = &key
 			firstBuildTuple = tuple
 		}
 		if existing, ok := hashTable.Get(key); ok {
-			hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
+			hashTable.Put(key, append(existing.([]Tuple), tuple))
 		} else {
-			hashTable.Put(key, []Tuple{maybeCopy(tuple)})
+			hashTable.Put(key, []Tuple{tuple})
 		}
 		buildCount++
 	}
@@ -441,6 +463,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			resultWidth:         resultWidth,
 			options:             opts,
 			matchIdx:            0,
+		}
+		if opts.EnableDebugLogging {
+			iter.debug = &hashJoinDebug{}
 		}
 
 		// Return streaming result - no forced materialization
