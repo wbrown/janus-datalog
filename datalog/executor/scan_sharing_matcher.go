@@ -109,6 +109,15 @@ func (m *ScanSharingMatcher) LookupAttribute(entity datalog.Identity, attr datal
 	return nil, false
 }
 
+// CanFuseAttributeFetch forwards to inner matcher if it supports fusion, so
+// same-entity attribute fusion still applies under scan sharing.
+func (m *ScanSharingMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
+	if f, ok := m.inner.(AttributeFetchFusable); ok {
+		return f.CanFuseAttributeFetch(attr)
+	}
+	return false
+}
+
 // TypeDefault forwards to inner matcher for typed default conversion.
 // This is critical for get-else with vector defaults: without forwarding,
 // the TypedDefaulter type assertion fails and []interface{} is returned

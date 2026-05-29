@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
 **Last Updated**: 2026-05-29 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), and hash-join hot-path inner-loop optimizations.
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, and same-entity attribute-fetch fusion.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-05-26, relation-input parallel iteration refactor).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-05-29, same-entity attribute-fetch fusion).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -27,6 +27,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **ATEV index & attribute high-water mark**: `MaxElementIDForAttribute` and every `Cache.IsAttributeFresh` call become **O(1) (~1 µs)** instead of O(datoms-for-A); **2.2× → 555× faster** at 10–10,000 datoms-per-attribute (verified 2026-05-25). Costs ~14% more write work per commit (1 of 8 indices).
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
+- ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` column attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)

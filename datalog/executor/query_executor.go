@@ -67,14 +67,30 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	for i, clause := range q.Where {
 		switch c := clause.(type) {
 		case *query.DataPattern:
-			newRel, err := e.executePattern(ctx, c, groups)
-			if err != nil {
-				return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
+			// Same-entity attribute fetch: a [?e :const-attr ?fresh] on an
+			// already-bound ?e is a per-tuple column attach, not a new relation
+			// to hash-join. Recognized from the clause structure + binding state.
+			fused := false
+			if e.options.EnableAttributeFetchFusion {
+				newGroups, ok, err := e.tryFuseAttributeFetch(ctx, c, groups)
+				if err != nil {
+					return nil, fmt.Errorf("clause %d (attribute fetch) failed: %w", i, err)
+				}
+				if ok {
+					groups = Relations(newGroups)
+					fused = true
+				}
 			}
-			// Always append the relation - don't check IsEmpty() as that consumes iterators
-			// Collapse will handle empty relations correctly
-			if newRel != nil {
-				groups = append(groups, newRel)
+			if !fused {
+				newRel, err := e.executePattern(ctx, c, groups)
+				if err != nil {
+					return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
+				}
+				// Always append the relation - don't check IsEmpty() as that consumes iterators
+				// Collapse will handle empty relations correctly
+				if newRel != nil {
+					groups = append(groups, newRel)
+				}
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -380,6 +396,132 @@ func (e *DefaultQueryExecutor) executePattern(ctx Context, pattern *query.DataPa
 		return nil, err
 	}
 	return rel, nil
+}
+
+// tryFuseAttributeFetch recognizes a same-entity attribute fetch directly from
+// the Datalog clause and executes it as a per-tuple column attach instead of a
+// pattern match + hash join. It fires when:
+//   - the pattern is [?e :const-attr ?v] on the default source, 3 elements;
+//   - ?e is already bound in exactly one current group;
+//   - ?v is a fresh variable (bound here, not yet present in any group);
+//   - :const-attr is schema CardinalityOne (one value per entity);
+//   - the matcher supports per-entity LookupAttribute.
+//
+// For each entity it looks up the attribute (CRDT-resolved, cache-backed via
+// LookupAttribute) and attaches the value as a new column, dropping the tuple
+// when the attribute is absent or tombstoned — the same inner-join semantics a
+// matched pattern has. This is the get-else execution model (LookupAttribute
+// column attach) applied to a required attribute pattern, so it avoids the
+// hashtable build/probe and combineTuples a join would pay.
+//
+// Returns (newGroups, true, nil) when fused; (nil, false, nil) when the clause
+// doesn't qualify — the caller then runs the normal match + collapse path.
+func (e *DefaultQueryExecutor) tryFuseAttributeFetch(ctx Context, pattern *query.DataPattern, groups []Relation) ([]Relation, bool, error) {
+	if pattern.Source != nil || pattern.GetT() != nil {
+		return nil, false, nil
+	}
+	eVar, ok := pattern.GetE().(query.Variable)
+	if !ok {
+		return nil, false, nil
+	}
+	aConst, ok := pattern.GetA().(query.Constant)
+	if !ok {
+		return nil, false, nil
+	}
+	attr, ok := aConst.Value.(datalog.Keyword)
+	if !ok {
+		return nil, false, nil
+	}
+	vVar, ok := pattern.GetV().(query.Variable)
+	if !ok {
+		return nil, false, nil
+	}
+
+	lookupMatcher, ok := e.matcher.(EntityLookupMatcher)
+	if !ok {
+		return nil, false, nil
+	}
+	fusable, ok := e.matcher.(AttributeFetchFusable)
+	if !ok || !fusable.CanFuseAttributeFetch(attr) {
+		return nil, false, nil
+	}
+
+	// ?e must be bound in exactly one group; ?v must not be bound anywhere.
+	eGroupIdx := -1
+	for gi, g := range groups {
+		for _, s := range g.Symbols() {
+			if s == vVar.Name {
+				return nil, false, nil // ?v already bound: a join condition, not a fetch
+			}
+			if s == eVar.Name {
+				if eGroupIdx >= 0 {
+					return nil, false, nil // ?e spans multiple groups: leave to the join
+				}
+				eGroupIdx = gi
+			}
+		}
+	}
+	if eGroupIdx < 0 {
+		return nil, false, nil // ?e not bound yet: this is the anchor, match normally
+	}
+
+	g := groups[eGroupIdx]
+	relSyms := g.Symbols()
+	eIdx := -1
+	for i, s := range relSyms {
+		if s == eVar.Name {
+			eIdx = i
+			break
+		}
+	}
+
+	outputSyms := make([]query.Symbol, len(relSyms)+1)
+	copy(outputSyms, relSyms)
+	outputSyms[len(relSyms)] = vVar.Name
+
+	var out []Tuple
+	in := 0
+	it := g.Iterator()
+	for it.Next() {
+		t := it.Tuple()
+		in++
+		if eIdx >= len(t) {
+			continue
+		}
+		entity, ok := t[eIdx].(datalog.Identity)
+		if !ok {
+			continue
+		}
+		val, found := lookupMatcher.LookupAttribute(entity, attr)
+		if !found {
+			continue // required attribute absent/tombstoned — drop, as a match would
+		}
+		nt := make(Tuple, len(outputSyms))
+		copy(nt, t)
+		nt[len(relSyms)] = val
+		out = append(out, nt)
+	}
+	if err := it.Error(); err != nil {
+		it.Close()
+		return nil, false, err
+	}
+	it.Close()
+
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: "pattern/fused-fetch",
+			Data: map[string]interface{}{
+				"attr": attr.String(),
+				"in":   in,
+				"out":  len(out),
+			},
+		})
+	}
+
+	newGroups := make([]Relation, len(groups))
+	copy(newGroups, groups)
+	newGroups[eGroupIdx] = NewMaterializedRelationWithOptions(outputSyms, out, e.options)
+	return newGroups, true, nil
 }
 
 // executeExpression evaluates an expression clause

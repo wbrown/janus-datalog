@@ -498,6 +498,10 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableStreamingAggregation: true,  // Streaming aggregation
 		EnableDebugLogging:         false,
 
+		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple
+		// LookupAttribute column attach instead of match + hash join.
+		EnableAttributeFetchFusion: true,
+
 		// Storage join strategy
 		IndexNestedLoopThreshold: 0, // Default to HashJoinScan for all binding sizes
 

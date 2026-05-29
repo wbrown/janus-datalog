@@ -35,6 +35,21 @@ type EntityLookupMatcher interface {
 	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool)
 }
 
+// AttributeFetchFusable reports whether a same-entity fetch of attr can be
+// fused into a per-tuple LookupAttribute column attach instead of a separate
+// pattern match + hash join. Fusion is valid only when the matcher's
+// LookupAttribute returns the single value a matched pattern would, which
+// requires both:
+//   - the attribute is CardinalityOne (CardinalityMany/Vector must expand on
+//     the join path), and
+//   - the matcher is NOT in history mode (history exposes every raw version,
+//     so a one-value attach would drop superseded datoms).
+// The matcher owns both facts (schema + temporal mode), so the decision lives
+// there rather than being reconstructed by the executor.
+type AttributeFetchFusable interface {
+	CanFuseAttributeFetch(attr datalog.Keyword) bool
+}
+
 // EntityPrefetcher extends PatternMatcher with batch entity prefetch capability.
 // When a large set of entity IDs is known upfront, prefetching all their
 // attributes into the EA cache avoids per-entity storage scans later.

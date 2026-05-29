@@ -31,6 +31,7 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 		EnableStreamingJoins:       false,
 		EnableStreamingAggregation: true,
 		EnableDebugLogging:         false,
+		EnableAttributeFetchFusion: true,
 	}
 	return NewExecutorWithOptions(matcher, resolver, defaultOpts)
 }
@@ -74,6 +75,7 @@ func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
 		EnableDebugLogging:              opts.EnableDebugLogging,
 		EnableScanSharing:               opts.EnableScanSharing,
 		EnableEntityPrefetch:            opts.EnableEntityPrefetch,
+		EnableAttributeFetchFusion:      opts.EnableAttributeFetchFusion,
 	}
 }
 
