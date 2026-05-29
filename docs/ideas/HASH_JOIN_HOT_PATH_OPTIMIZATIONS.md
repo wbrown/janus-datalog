@@ -10,7 +10,7 @@
 |---|---------|--------|
 | 1 | `combineTuples` projection plan hoist | ✅ Applied (`397e39f`); verified clean on M3 Ultra |
 | 2 | `ValuesEqual` pointer-equality short-circuit | ✅ Applied; verified on M3 Ultra |
-| 3 | Identity hash via 8-byte SHA1 prefix | ⬜ Pending |
+| 3 | Identity/Keyword hash via interned pointer | ✅ Applied (better than the 8-byte-SHA1 plan); verified on M3 Ultra |
 | 4 | Defensive joined/probe-tuple copies | ⬜ Pending |
 | 5 | `seen` double-lookup → `PutIfAbsent` | ✅ Applied; verified on M3 Ultra |
 | 6 | Debug/annotation field gating | ⬜ Pending |
@@ -211,6 +211,13 @@ case datalog.Identity:
 
 One load instead of 20 multiplies. Join keys are dominantly `Identity`,
 so this hits the hot path of the hot path.
+
+> **Superseded (2026-05-29).** We didn't need the SHA1 bytes at all.
+> `Identity`/`Keyword` are interned pointer types whose `Equal` *is*
+> pointer comparison (panicking on same-content/different-pointer), so
+> the pointer address is itself a unique, stable key. Implemented as
+> `uint64(uintptr(unsafe.Pointer(ptr)))` for both types — no `ptr.Hash()`
+> 20-byte copy, no FNV loop. See "Finding #3 Results" below.
 
 ### 4. Defensive tuple copies that aren't needed
 
@@ -895,6 +902,71 @@ noise band.
 - `docs/perf/hash_join_identity_finding5_balanced_after2_m3ultra_2026-05-29.txt`
   and `..._after5_...` — the balanced-A/B Identity pair (authoritative;
   the contaminated single-run Identity file was discarded)
+
+## Finding #3 Results (2026-05-29, M3 Ultra)
+
+**Status**: Applied — as interned-pointer hashing, not the 8-byte-SHA1
+plan the original finding proposed. This was the biggest single win of
+the series.
+
+### Change
+
+`Identity` and `Keyword` are interned pointer types (`*identity` /
+`*keyword`) whose `Equal` is pointer comparison and panics on
+same-content/different-pointer — interning is an enforced invariant,
+not best-effort. So the pointer address is already a unique, stable
+key. In `hashValue` (`datalog/executor/tuple_key.go`):
+
+- `Identity`: `hashBytes(ptr.Hash()[:])` → `uint64(uintptr(unsafe.Pointer(ptr)))`.
+  The old path copied the 20-byte SHA1 array by value (`Hash()` returns
+  `[20]byte`) *and* ran a 20-iteration FNV loop, on every key build.
+- `Keyword`: `hashString(ptr.String())` (per-byte FNV over the keyword
+  string) → the same pointer-address hash.
+- Removed the two dead `Identity`/`Keyword` cases in the second type
+  switch (unreachable — the first switch returns for those types).
+
+Correctness rests on the same invariant the map already enforces: the
+bucket collision check is `Equal`, which is pointer equality, so equal
+values always share a pointer → same pointer-hash → same bucket. The
+hash is in-memory only (never persisted/compared cross-process), and
+Go's GC does not move heap objects, so the address is stable.
+
+### Benchmark results (after-#5 → after-#3, balanced A/B)
+
+| Suite | Geomean |
+|-------|--------:|
+| Identity-keyed | **-12.72%** |
+| int64-keyed (sanity) | -0.53% (wash — int64 never hits this path) |
+
+Every Identity sub-benchmark improved (p=0.000, -8.6% to -16.9%):
+
+| Identity benchmark | Δ |
+|--------------------|--:|
+| Duplicates/keys10/reps100 | -16.89% |
+| Duplicates/keys50/reps50 | -16.66% |
+| Keys/mat_x_mat/size_100 | -16.84% |
+| LargeResult/size_50000 | -13.86% |
+| Keys/size_1000 (all shapes) | ~-12% |
+| HighFanout (all shapes) | -8.8 to -9.2% |
+
+Allocations unchanged. The win exceeds the original finding's ~5.7%
+estimate because the old path's per-call cost was a 20-byte array copy
+plus FNV, not FNV alone, and dedup (`NewTupleKeyFull`) hashes every
+output column. The **Keyword** half of the change is not exercised by
+these Identity-keyed benchmarks (their tuples carry no keyword columns
+through dedup), so its real-world payoff — keywords are in every
+datom's attribute position — is on top of the measured -12.72%.
+
+Verified with the controlled alternating-order A/B (per the #5 thermal
+lesson): the change is so far above the noise band (-8% to -17%) that
+thermal effects are immaterial here, but the method was used anyway.
+
+### Artifacts
+
+- `docs/perf/hash_join_identity_after_finding3_m3ultra_2026-05-29.txt`
+  + `..._finding3_baseline_arm_...` (Identity A/B pair)
+- `docs/perf/hash_join_int64_after_finding3_m3ultra_2026-05-29.txt`
+  + `..._finding3_baseline_arm_...` (int64 sanity pair)
 
 ## Ranking by Expected Profile Impact
 

@@ -64,24 +64,28 @@ func hashValues(values []interface{}) uint64 {
 
 // hashValue hashes a single value without string conversion
 func hashValue(v interface{}) uint64 {
-	// Handle pointers first - with interning, we'll see these often
+	// Interned pointer types first — with interning, we see these constantly.
 	switch ptr := v.(type) {
 	case datalog.Identity:
-		// Check for nil - Identity is a pointer type alias
+		// Interned: equal identities share a pointer (Identity.Equal is
+		// pointer comparison and panics on same-hash/different-pointer), so
+		// the pointer address is a unique, stable key. This avoids FNV over
+		// the 20-byte SHA1. The hash is in-memory only (never persisted); Go's
+		// GC does not move heap objects, so the address is stable for the
+		// identity's lifetime, and the map's collision check (Identity.Equal)
+		// would catch any interning violation rather than silently mismatch.
 		if ptr == nil {
 			return 0
 		}
-		// For interned pointers, we can use pointer equality as a fast path
-		// But for hashing, we need consistent hash based on value
-		bytes := ptr.Hash()
-		return hashBytes(bytes[:])
+		return uint64(uintptr(unsafe.Pointer(ptr)))
 	case datalog.Keyword:
-		// Check for nil - Keyword is a pointer type alias
+		// Interned the same way as Identity (Keyword.Equal is pointer
+		// comparison with the same panic guard), so hash by pointer address
+		// instead of FNV over the keyword string.
 		if ptr == nil {
 			return 0
 		}
-		str := ptr.String()
-		return hashString(str)
+		return uint64(uintptr(unsafe.Pointer(ptr)))
 	case *uint64:
 		if ptr == nil {
 			return 0
@@ -89,25 +93,8 @@ func hashValue(v interface{}) uint64 {
 		return *ptr
 	}
 
-	// Handle regular values
+	// Remaining value types (Identity/Keyword/*uint64 handled above).
 	switch val := v.(type) {
-	case datalog.Identity:
-		// Check for nil - Identity is a pointer type alias
-		if val == nil {
-			return 0
-		}
-		// Hash the raw bytes directly
-		bytes := val.Hash()
-		return hashBytes(bytes[:])
-
-	case datalog.Keyword:
-		// Check for nil - Keyword is a pointer type alias
-		if val == nil {
-			return 0
-		}
-		// Use pointer value for hash - interned keywords are unique pointers
-		return uint64(uintptr(unsafe.Pointer(val)))
-
 	case string:
 		return hashString(val)
 
