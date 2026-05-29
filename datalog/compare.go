@@ -236,26 +236,70 @@ func compareUint64s(a, b uint64) int {
 }
 
 // ValuesEqual checks if two values are equal.
-// It uses CompareValues for consistent equality checking.
+//
+// The comparable hot-path types (interned Identity/Keyword/Symbol and the
+// scalar primitives) return before any reflection: join keys are dominantly
+// Identity, so paying reflect.ValueOf on every equality check was pure
+// overhead. reflect is now reached only for typed slices, the rare slow
+// path. The general == fallback at the end is panic-safe because slices have
+// already been handled (== panics on two values sharing an uncomparable
+// dynamic type).
 func ValuesEqual(a, b interface{}) bool {
-	// Handle []byte/[]uint8 first - slices aren't comparable with ==
-	// This is common because strings are stored as []uint8 internally
+	// []byte/[]uint8 first ([]uint8 is an alias of []byte, so one assertion
+	// covers both). Strings are stored as []uint8 internally, so this is the
+	// most common slice value. Slices aren't comparable with == (would
+	// panic), so they're handled before the == fast paths below.
 	if ba, ok := a.([]byte); ok {
-		if bb, ok := b.([]byte); ok {
-			return bytes.Equal(ba, bb)
-		}
-		return false
-	}
-	if ba, ok := a.([]uint8); ok {
-		if bb, ok := b.([]uint8); ok {
-			return bytes.Equal(ba, bb)
-		}
-		return false
+		bb, ok := b.([]byte)
+		return ok && bytes.Equal(ba, bb)
 	}
 
-	// Slice comparison — must come before a == b which panics on slices.
-	// Handles typed slices ([]string, []int64) and []interface{} with
-	// element-wise recursive comparison via ValuesEqual.
+	// Dereference *uint64 so the primitive comparison below sees plain uint64.
+	if ptr, ok := a.(*uint64); ok {
+		a = *ptr
+	}
+	if ptr, ok := b.(*uint64); ok {
+		b = *ptr
+	}
+
+	// Interned pointer types compare via their Equal method (which handles
+	// nil). These are the dominant hash-join key shapes (entity references),
+	// so they're checked first and never pay reflection.
+	if id1, ok := a.(Identity); ok {
+		id2, ok := b.(Identity)
+		return ok && id1.Equal(id2)
+	}
+	if kw1, ok := a.(Keyword); ok {
+		kw2, ok := b.(Keyword)
+		return ok && kw1.Equal(kw2)
+	}
+	if sym1, ok := a.(Symbol); ok {
+		sym2, ok := b.(Symbol)
+		return ok && sym1.Equal(sym2)
+	}
+
+	// ElementID — dereference pointers, then compare by value.
+	if eid1, ok := DerefElementID(a); ok {
+		eid2, ok := DerefElementID(b)
+		return ok && eid1.Equal(eid2)
+	}
+
+	// Comparable primitives — direct ==, no reflection.
+	switch a.(type) {
+	case int, int64, float64, string, bool, uint64:
+		return a == b
+	}
+
+	// time.Time uses Equal (instant equality, ignoring location).
+	if av, ok := a.(time.Time); ok {
+		bv, ok := b.(time.Time)
+		return ok && av.Equal(bv)
+	}
+
+	// Slice comparison for typed slices ([]string, []int64) and
+	// []interface{}, element-wise via reflect. Slow path; must precede the
+	// general == fallback below, which would panic on two values that share
+	// an uncomparable (slice) dynamic type.
 	ra := reflect.ValueOf(a)
 	rb := reflect.ValueOf(b)
 	if ra.Kind() == reflect.Slice || rb.Kind() == reflect.Slice {
@@ -273,71 +317,9 @@ func ValuesEqual(a, b interface{}) bool {
 		return true
 	}
 
-	// Quick pointer equality check for interned values
-	// This handles Identity (always interned pointers) directly
-	if a == b {
-		return true
-	}
-
-	// Handle uint64 pointers by dereferencing
-	if ptr, ok := a.(*uint64); ok {
-		a = *ptr
-	}
-	if ptr, ok := b.(*uint64); ok {
-		b = *ptr
-	}
-
-	// Identity comparison - pointer equality since all Identities are interned
-	if id1, ok := a.(Identity); ok {
-		if id2, ok := b.(Identity); ok {
-			// Use Equal method which handles nil
-			return id1.Equal(id2)
-		}
-		return false
-	}
-
-	// Keyword comparison - pointer equality since all Keywords are interned
-	if kw1, ok := a.(Keyword); ok {
-		if kw2, ok := b.(Keyword); ok {
-			// Use Equal method which handles nil
-			return kw1.Equal(kw2)
-		}
-		return false
-	}
-
-	// Symbol comparison - pointer equality since all Symbols are interned
-	if sym1, ok := a.(Symbol); ok {
-		if sym2, ok := b.(Symbol); ok {
-			return sym1.Equal(sym2)
-		}
-		return false
-	}
-
-	// ElementID comparison — dereference pointers, then compare by value
-	if eid1, ok := DerefElementID(a); ok {
-		if eid2, ok := DerefElementID(b); ok {
-			return eid1.Equal(eid2)
-		}
-		return false
-	}
-
-	// Quick check for identity (after dereferencing and special type handling)
-	if a == b {
-		return true
-	}
-
-	// For numeric types and others, use direct comparison
-	switch av := a.(type) {
-	case int, int64, float64, string, bool, uint64:
-		return a == b
-	case time.Time:
-		if bv, ok := b.(time.Time); ok {
-			return av.Equal(bv)
-		}
-	}
-
-	// Unknown types: not equal. All comparable types are handled above.
-	return false
+	// General fallback for any remaining comparable type (and both-nil).
+	// Safe: neither a nor b is a slice here, so == cannot panic.
+	return a == b
 }
 
 // stringValue converts any value to a string for comparison

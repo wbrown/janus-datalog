@@ -1,0 +1,48 @@
+File: exec.test
+Type: cpu
+Time: 2026-05-27 09:36:55 EDT
+Duration: 14.10s, Total samples = 21.67s (153.64%)
+Showing nodes accounting for 12.80s, 59.07% of 21.67s total
+Dropped 167 nodes (cum <= 0.11s)
+Showing top 40 nodes out of 108
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     10.99s 50.72%  runtime.systemstack
+         0     0%     0%      6.21s 28.66%  github.com/wbrown/janus-datalog/datalog/executor.BenchmarkHashJoinLargeResult.func1
+         0     0%     0%      6.21s 28.66%  testing.(*B).launch
+         0     0%     0%      6.21s 28.66%  testing.(*B).runN
+         0     0%     0%      6.16s 28.43%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).HashJoin (inline)
+         0     0%     0%      6.16s 28.43%  github.com/wbrown/janus-datalog/datalog/executor.(*MaterializedRelation).Join
+         0     0%     0%      6.16s 28.43%  github.com/wbrown/janus-datalog/datalog/executor.HashJoin
+     0.16s  0.74%  0.74%      6.16s 28.43%  github.com/wbrown/janus-datalog/datalog/executor.HashJoinWithOptions
+     0.01s 0.046%  0.78%      4.84s 22.34%  runtime.gcBgMarkWorker.func2
+     0.04s  0.18%  0.97%      4.83s 22.29%  runtime.gcDrain
+     0.01s 0.046%  1.02%      3.74s 17.26%  runtime.schedule
+         0     0%  1.02%      3.71s 17.12%  runtime.mcall
+         0     0%  1.02%      3.71s 17.12%  runtime.park_m
+     0.01s 0.046%  1.06%      3.68s 16.98%  runtime.gcBgMarkWorker
+     0.02s 0.092%  1.15%      3.67s 16.94%  runtime.(*mheap).allocSpan
+     3.67s 16.94% 18.09%      3.67s 16.94%  runtime.madvise
+     0.01s 0.046% 18.14%      3.64s 16.80%  runtime.(*mheap).alloc.func1
+         0     0% 18.14%      3.55s 16.38%  runtime.sysUsed (inline)
+         0     0% 18.14%      3.55s 16.38%  runtime.sysUsedOS (inline)
+         0     0% 18.14%      3.48s 16.06%  runtime.findRunnable
+         0     0% 18.14%      3.21s 14.81%  runtime.stopm
+     0.01s 0.046% 18.18%      3.16s 14.58%  runtime.semasleep
+     3.12s 14.40% 32.58%      3.13s 14.44%  runtime.pthread_cond_wait
+         0     0% 32.58%      3.12s 14.40%  runtime.mPark (inline)
+         0     0% 32.58%      3.12s 14.40%  runtime.notesleep
+     0.31s  1.43% 34.01%      2.70s 12.46%  runtime.mallocgc
+         0     0% 34.01%      2.62s 12.09%  runtime.gcDrainMarkWorkerIdle (inline)
+         0     0% 34.01%      2.55s 11.77%  runtime.scanSpan
+     1.06s  4.89% 38.90%      2.44s 11.26%  runtime.scanObjectsSmall
+     0.84s  3.88% 42.78%      2.27s 10.48%  runtime.mallocgcSmallScanNoHeader
+         0     0% 42.78%      2.21s 10.20%  runtime.gcDrainMarkWorkerDedicated (inline)
+         0     0% 42.78%      1.81s  8.35%  runtime.gcStart.func4
+     1.81s  8.35% 51.13%      1.81s  8.35%  runtime.kevent
+         0     0% 51.13%      1.81s  8.35%  runtime.netpoll
+         0     0% 51.13%      1.81s  8.35%  runtime.startTheWorldWithSema
+     1.33s  6.14% 57.27%      1.81s  8.35%  runtime.tryDeferToSpanScan
+     0.17s  0.78% 58.05%      1.50s  6.92%  github.com/wbrown/janus-datalog/datalog/executor.combineTuples (inline)
+         0     0% 58.05%      1.24s  5.72%  runtime.wakep
+     0.15s  0.69% 58.74%      1.23s  5.68%  github.com/wbrown/janus-datalog/datalog/executor.(*TupleKeyMap).Put
+     0.07s  0.32% 59.07%      1.22s  5.63%  runtime.newobject

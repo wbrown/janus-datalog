@@ -1,7 +1,7 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2026-05-26 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, and relation-input parallel iteration refactor (worker pool + workspace reuse).
+**Last Updated**: 2026-05-29 (v0.12.0)
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), and hash-join hot-path inner-loop optimizations.
 
 ## Executive Summary
 
@@ -26,6 +26,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **LZ77+FSE compression codec**: **2.1-2.4 GB/s decompression** (7 allocs), **3.6x on prose**, **10-13x on structured/repetitive** data (verified 2026-03-28)
 - ✅ **ATEV index & attribute high-water mark**: `MaxElementIDForAttribute` and every `Cache.IsAttributeFresh` call become **O(1) (~1 µs)** instead of O(datoms-for-A); **2.2× → 555× faster** at 10–10,000 datoms-per-attribute (verified 2026-05-25). Costs ~14% more write work per commit (1 of 8 indices).
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
+- ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -1747,3 +1748,56 @@ Design: `docs/proposals/COMPRESSED_STRING_VALUES.md`, `docs/proposals/COMPRESSIO
 - Replaced sync.RWMutex with sync.Map → 6.26× BadgerDB speedup
 - Fixed index selection to use AEVT when E+A both bound
 - Performance gains: In-memory 6.9×, BadgerDB 1.63× → 6.26×
+
+### 2026-05-29: Hash-Join Hot-Path Optimizations
+
+Six targeted optimizations to the hash-join inner loops
+(`datalog/executor/join.go`, `tuple_key.go`, `compare.go`), each measured in
+isolation on an Apple M3 Ultra (go1.25.0). Branch: `perf/hash-join-hot-path`.
+Full per-finding analysis: `docs/ideas/HASH_JOIN_HOT_PATH_OPTIMIZATIONS.md`; raw
+benchmark artifacts under `docs/perf/` (`*_m3ultra_*.txt`).
+
+**Cumulative (branch start → all six findings), n=10 geomean:**
+
+| Metric | int64 keys | Identity keys (entity refs — real joins) |
+|--------|-----------:|-----------------------------------------:|
+| sec/op | −14.1% | −24.9% |
+| B/op | −3.9% | −3.8% |
+| allocs/op | −4.6% | −4.4% |
+
+**Per-finding contribution (geomean, Identity / int64):**
+
+| # | Finding | Identity | int64 |
+|---|---------|---------:|------:|
+| 1 | Hoist `combineTuples` projection plan out of the inner loop | −8.8% | −9.1% |
+| 2 | Short-circuit `ValuesEqual` before reflection | −1.0% | wash |
+| 5 | Collapse `seen` dedup double-lookup into `PutIfAbsent` | −1.9% | −1.8% |
+| 3 | Hash interned Identity/Keyword by pointer, not content | −12.7% | wash |
+| 4 | Drop redundant joined copy; gate probe copy on `RequiresCopy` | −3.8% | −3.7% |
+| 6 | Gate debug counters / inline `maybeCopy` closure (cleanup) | — | — |
+
+**Highlights:**
+- **#3 (pointer-hash) is the single biggest win.** `Identity`/`Keyword` are
+  interned pointer types whose `Equal` is pointer comparison (and panics on
+  same-content/different-pointer), so the pointer address is already a unique,
+  stable key — hashing the 20-byte SHA1 content was redundant. One load replaces
+  a 20-byte array copy plus an FNV loop on every key build, on every
+  probe/build/dedup column.
+- **#1** removed a per-result-row `map[query.Symbol]bool` allocation plus a double
+  symbol scan by precomputing the right-side projection plan once per join.
+- **#4** is the only finding that reduced allocations: dropping a doubly-redundant
+  per-result-row tuple copy (`combineTuplesIndexed` already returns a fresh slice;
+  downstream copies at the `StreamingRelation` boundary) cut **−8 to −9% allocs**
+  on streaming-iterator joins, reducing the GC pressure the baseline profiles
+  showed dominating. The probe-copy is now gated on `RequiresCopy()` (materialized
+  probes skip it).
+- **#6** was cleanup below benchmark resolution (one closure heap alloc per join
+  call + gated per-row counter writes); not benchmarked.
+
+**Method note:** cross-run benchmark comparisons on this machine are thermally
+unreliable at the ~2% noise band — a first uncontrolled run produced spurious
++10–14% "regressions" on the longest-running benchmarks. Every per-finding delta
+above was a controlled alternating-order A/B (each binary run in both a cool and a
+hot slot, pooled to n=10). The cumulative was confirmed by direct `benchstat` of
+the saved start/now files, matching the composed product of per-step geomeans to
+within tenths of a percent.

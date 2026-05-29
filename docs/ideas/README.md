@@ -12,6 +12,8 @@ Potential optimizations and features under consideration.
 
 ### Performance Optimizations
 
+- **HASH_JOIN_HOT_PATH_OPTIMIZATIONS.md** - 🎯 Five inner-loop inefficiencies in `combineTuples`, `ValuesEqual`, identity hashing, defensive copies, and dedup lookups
+- **REMOVE_HASHJOIN_MATERIALIZATION.md** - 🎯 Remove forced materialization in HashJoin streaming path
 - **iterator-seek-optimization-plan.md** - ✅ **MOVED TO ARCHIVE** - SimpleBatchScanner implemented (Phase 1 complete)
 - **LAZY_MATERIALIZATION_IDEAS.md** - ✅ **MOVED TO ARCHIVE** - Realized as streaming architecture (October 2025)
 - **STORAGE_OPTIMIZATION_PLAN.md** - ✅ **MOVED TO ARCHIVE** - Phase 1 implemented, performance goals achieved

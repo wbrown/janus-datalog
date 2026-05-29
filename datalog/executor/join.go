@@ -22,11 +22,19 @@ type hashJoinIterator struct {
 	buildErr     error // deferred error captured from the (eagerly consumed) build relation
 	seen         *TupleKeyMap
 	buildIsLeft  bool
-	joinSyms     []query.Symbol
-	leftSyms     []query.Symbol
-	rightSyms    []query.Symbol
-	probeIndices []int
-	options      ExecutorOptions
+	// probeNeedsCopy is true when the probe relation's iterator reuses its
+	// tuple workspace (RequiresCopy()); only then must currentProbeTuple be
+	// copied before use. Materialized probes return stable tuples and skip it.
+	probeNeedsCopy bool
+	probeIndices   []int
+	// rightNonJoinIndices identifies positions in the right-side tuple
+	// (per buildIsLeft, the probe side when buildIsLeft is true, otherwise
+	// the build side) whose values must be appended to each result tuple.
+	// Computed once at iterator setup; the combine inner loop is a pure
+	// indexed gather, never a per-call symbol scan.
+	rightNonJoinIndices []int
+	resultWidth         int
+	options             ExecutorOptions
 
 	// Current state - NOT safe for concurrent access
 	currentProbeTuple Tuple
@@ -35,7 +43,16 @@ type hashJoinIterator struct {
 	matchIdx          int
 	closed            bool
 
-	// Debug counters
+	// debug is non-nil only when EnableDebugLogging is set; the per-row
+	// counters live behind it so the hot path neither writes them nor carries
+	// them in the iterator struct when debug is off.
+	debug *hashJoinDebug
+}
+
+// hashJoinDebug holds per-row counters used only for debug logging. It is
+// allocated and incremented only when ExecutorOptions.EnableDebugLogging is
+// set, keeping these writes off the hot path entirely.
+type hashJoinDebug struct {
 	probeCount  int
 	matchCount  int
 	resultCount int
@@ -52,23 +69,25 @@ func (it *hashJoinIterator) Next() bool {
 			buildTuple := it.matches[it.matchIdx]
 			it.matchIdx++
 
-			// Combine tuples
+			// Combine tuples via the precomputed projection plan.
 			var joined Tuple
 			if it.buildIsLeft {
-				joined = combineTuples(buildTuple, it.currentProbeTuple, it.joinSyms, it.leftSyms, it.rightSyms)
+				joined = combineTuplesIndexed(buildTuple, it.currentProbeTuple, it.rightNonJoinIndices, it.resultWidth)
 			} else {
-				joined = combineTuples(it.currentProbeTuple, buildTuple, it.joinSyms, it.leftSyms, it.rightSyms)
+				joined = combineTuplesIndexed(it.currentProbeTuple, buildTuple, it.rightNonJoinIndices, it.resultWidth)
 			}
 
-			// Check for duplicates using seen map
+			// Check for duplicates using seen map (single bucket walk)
 			dedupKey := NewTupleKeyFull(joined)
-			if !it.seen.Exists(dedupKey) {
-				it.seen.Put(dedupKey, true)
-				// BUG FIX: Make a copy since combineTuples might return a slice that gets reused
-				joinedCopy := make(Tuple, len(joined))
-				copy(joinedCopy, joined)
-				it.currentJoined = joinedCopy // Store for Tuple() to return
-				it.resultCount++
+			if !it.seen.PutIfAbsent(dedupKey, true) {
+				// combineTuplesIndexed returns a fresh slice on every call and
+				// nothing mutates it, so no defensive copy is needed here. Any
+				// downstream consumer that retains tuples copies at its own
+				// boundary (this join's StreamingRelation has RequiresCopy()==true).
+				it.currentJoined = joined // Store for Tuple() to return
+				if it.debug != nil {
+					it.debug.resultCount++
+				}
 				return true
 			}
 			// Duplicate, continue to next match
@@ -77,24 +96,33 @@ func (it *hashJoinIterator) Next() bool {
 
 		// Need next probe tuple
 		if !it.probeIt.Next() {
-			if it.options.EnableDebugLogging {
+			if it.debug != nil {
 				fmt.Printf("[hashJoinIterator] Probe exhausted after %d tuples, %d matched, produced %d results\n",
-					it.probeCount, it.matchCount, it.resultCount)
+					it.debug.probeCount, it.debug.matchCount, it.debug.resultCount)
 			}
 			return false
 		}
 
-		it.probeCount++
+		if it.debug != nil {
+			it.debug.probeCount++
+		}
 		it.currentProbeTuple = it.probeIt.Tuple()
 
-		// BUG FIX: Make a copy of the tuple since the probe iterator might reuse the slice
-		tupleCopy := make(Tuple, len(it.currentProbeTuple))
-		copy(tupleCopy, it.currentProbeTuple)
-		it.currentProbeTuple = tupleCopy
+		// Only copy when the probe iterator reuses its tuple workspace. A
+		// materialized probe returns stable tuples (RequiresCopy()==false), so
+		// the copy is skipped — saving one alloc per probe row. Values read
+		// from currentProbeTuple are consumed before the next probeIt.Next()
+		// (combineTuplesIndexed copies them into fresh result slices), so a
+		// reused buffer only needs copying when the iterator says so.
+		if it.probeNeedsCopy {
+			tupleCopy := make(Tuple, len(it.currentProbeTuple))
+			copy(tupleCopy, it.currentProbeTuple)
+			it.currentProbeTuple = tupleCopy
+		}
 
 		key := NewTupleKey(it.currentProbeTuple, it.probeIndices)
 
-		if it.options.EnableDebugLogging && it.probeCount == 1 {
+		if it.debug != nil && it.debug.probeCount == 1 {
 			fmt.Printf("[hashJoinIterator] First probe key: %v\n", key)
 		}
 
@@ -102,7 +130,9 @@ func (it *hashJoinIterator) Next() bool {
 		if matchesVal, ok := it.hashTable.Get(key); ok {
 			it.matches = matchesVal.([]Tuple)
 			it.matchIdx = 0
-			it.matchCount++
+			if it.debug != nil {
+				it.debug.matchCount++
+			}
 			continue
 		}
 
@@ -201,19 +231,27 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 	}
 
-	// Determine output symbols (union without duplicates)
-	outputSyms := append([]query.Symbol{}, left.Symbols()...)
-	rightSymSet := make(map[query.Symbol]bool)
+	// Determine output symbols and the right-side projection plan in a
+	// single pass: positions in right.Symbols() that are not join columns
+	// both append to outputSyms (the result schema) and to
+	// rightNonJoinIndices (the gather indices used by combineTuplesIndexed
+	// on every matched row). Precomputing these here turns the per-row
+	// inner loop into a pure indexed copy.
+	leftSyms := left.Symbols()
+	outputSyms := append([]query.Symbol{}, leftSyms...)
+	joinSymSet := make(map[query.Symbol]bool, len(joinSyms))
 	for _, sym := range joinSyms {
-		rightSymSet[sym] = true
+		joinSymSet[sym] = true
 	}
-
-	// Add right symbols that aren't in join symbols
-	for _, sym := range right.Symbols() {
-		if !rightSymSet[sym] {
+	rightSyms := right.Symbols()
+	rightNonJoinIndices := make([]int, 0, len(rightSyms))
+	for i, sym := range rightSyms {
+		if !joinSymSet[sym] {
 			outputSyms = append(outputSyms, sym)
+			rightNonJoinIndices = append(rightNonJoinIndices, i)
 		}
 	}
+	resultWidth := len(leftSyms) + len(rightNonJoinIndices)
 
 	// Choose smaller relation to build hash table
 	var buildRel, probeRel Relation
@@ -314,15 +352,11 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Check if we need to copy tuples from the build relation
 	// This avoids unnecessary copies when the source guarantees stable tuples
 	needsCopy := buildRel.RequiresCopy()
+	// copyCount/passthruCount feed the JoinBuildCopy annotation below; only
+	// track them when a collector will read them. Inlined into the build loop
+	// (no closure) to avoid a per-join heap allocation.
+	trackCopy := opts.Collector != nil
 	var copyCount, passthruCount int
-	maybeCopy := func(t Tuple) Tuple {
-		if needsCopy {
-			copyCount++
-			return copyTuple(t)
-		}
-		passthruCount++
-		return t
-	}
 
 	// Pure relational build: group every build tuple by its join key. All rows
 	// are preserved; identical output tuples are deduplicated downstream by set
@@ -334,15 +368,26 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	var firstBuildTuple Tuple
 	for buildIt.Next() {
 		tuple := buildIt.Tuple()
+		// Copy only when the build relation reuses its tuple workspace; the
+		// hash table retains these tuples for the join's lifetime. Key is built
+		// after the copy — same values, so the join key is unaffected.
+		if needsCopy {
+			tuple = copyTuple(tuple)
+			if trackCopy {
+				copyCount++
+			}
+		} else if trackCopy {
+			passthruCount++
+		}
 		key := NewTupleKey(tuple, buildIndices)
 		if buildCount == 0 && opts.EnableDebugLogging {
 			firstBuildKey = &key
 			firstBuildTuple = tuple
 		}
 		if existing, ok := hashTable.Get(key); ok {
-			hashTable.Put(key, append(existing.([]Tuple), maybeCopy(tuple)))
+			hashTable.Put(key, append(existing.([]Tuple), tuple))
 		} else {
-			hashTable.Put(key, []Tuple{maybeCopy(tuple)})
+			hashTable.Put(key, []Tuple{tuple})
 		}
 		buildCount++
 	}
@@ -407,17 +452,20 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 
 		iter := &hashJoinIterator{
-			hashTable:    hashTable,
-			probeIt:      probeRel.Iterator(),
-			buildErr:     buildErr,
-			seen:         NewTupleKeyMapWithCapacity(expectedResults),
-			buildIsLeft:  buildIsLeft,
-			joinSyms:     joinSyms,
-			leftSyms:     left.Symbols(),
-			rightSyms:    right.Symbols(),
-			probeIndices: probeIndices,
-			options:      opts,
-			matchIdx:     0,
+			hashTable:           hashTable,
+			probeIt:             probeRel.Iterator(),
+			buildErr:            buildErr,
+			seen:                NewTupleKeyMapWithCapacity(expectedResults),
+			buildIsLeft:         buildIsLeft,
+			probeNeedsCopy:      probeRel.RequiresCopy(),
+			probeIndices:        probeIndices,
+			rightNonJoinIndices: rightNonJoinIndices,
+			resultWidth:         resultWidth,
+			options:             opts,
+			matchIdx:            0,
+		}
+		if opts.EnableDebugLogging {
+			iter.debug = &hashJoinDebug{}
 		}
 
 		// Return streaming result - no forced materialization
@@ -482,18 +530,18 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			}
 			matches := matchesVal.([]Tuple)
 			for _, buildTuple := range matches {
-				// Combine tuples
+				// Combine tuples via the precomputed projection plan.
 				var joined Tuple
 				if buildIsLeft {
-					joined = combineTuples(buildTuple, probeTuple, joinSyms, left.Symbols(), right.Symbols())
+					joined = combineTuplesIndexed(buildTuple, probeTuple, rightNonJoinIndices, resultWidth)
 				} else {
-					joined = combineTuples(probeTuple, buildTuple, joinSyms, left.Symbols(), right.Symbols())
+					joined = combineTuplesIndexed(probeTuple, buildTuple, rightNonJoinIndices, resultWidth)
 				}
 
 				// Create a key for deduplication based on all tuple values
+				// (single bucket walk via PutIfAbsent)
 				dedupKey := NewTupleKeyFull(joined)
-				if !seen.Exists(dedupKey) {
-					seen.Put(dedupKey, true)
+				if !seen.PutIfAbsent(dedupKey, true) {
 					results = append(results, joined)
 				}
 			}
@@ -639,36 +687,24 @@ func isStreaming(rel Relation) bool {
 	return ok
 }
 
-func combineTuples(left, right Tuple, joinSyms []query.Symbol, leftSyms, rightSyms []query.Symbol) Tuple {
-	// Create set of join symbols for quick lookup
-	joinSet := make(map[query.Symbol]bool, len(joinSyms))
-	for _, sym := range joinSyms {
-		joinSet[sym] = true
+// combineTuplesIndexed builds a result tuple by copying `first` into the
+// leading positions, then appending values from `second` at the indices
+// listed in secondNonJoinIndices. `resultWidth` is len(first) +
+// len(secondNonJoinIndices), passed in to avoid a redundant add per call.
+//
+// The projection plan (secondNonJoinIndices, resultWidth) is invariant
+// for the lifetime of a hash join — it depends only on the join's
+// symbols, not on any tuple — so it is computed once in
+// HashJoinWithOptions and reused for every matched row. This replaces the
+// previous combineTuples which allocated a joinSet map and walked
+// rightSyms twice on every call.
+func combineTuplesIndexed(first, second Tuple, secondNonJoinIndices []int, resultWidth int) Tuple {
+	result := make(Tuple, resultWidth)
+	copy(result, first)
+	base := len(first)
+	for k, idx := range secondNonJoinIndices {
+		result[base+k] = second[idx]
 	}
-
-	// Calculate exact result size to avoid repeated allocations
-	rightNonJoinCount := 0
-	for _, sym := range rightSyms {
-		if !joinSet[sym] {
-			rightNonJoinCount++
-		}
-	}
-
-	// Pre-allocate result with exact size
-	result := make(Tuple, len(left)+rightNonJoinCount)
-
-	// Copy left tuple
-	copy(result, left)
-
-	// Add values from right that aren't join symbols
-	offset := len(left)
-	for i, sym := range rightSyms {
-		if !joinSet[sym] {
-			result[offset] = right[i]
-			offset++
-		}
-	}
-
 	return result
 }
 
