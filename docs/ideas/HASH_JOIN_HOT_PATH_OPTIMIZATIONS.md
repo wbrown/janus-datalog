@@ -11,7 +11,7 @@
 | 1 | `combineTuples` projection plan hoist | ✅ Applied (`397e39f`); verified clean on M3 Ultra |
 | 2 | `ValuesEqual` pointer-equality short-circuit | ✅ Applied; verified on M3 Ultra |
 | 3 | Identity/Keyword hash via interned pointer | ✅ Applied (better than the 8-byte-SHA1 plan); verified on M3 Ultra |
-| 4 | Defensive joined/probe-tuple copies | ⬜ Pending |
+| 4 | Defensive joined/probe-tuple copies | ✅ Applied; verified on M3 Ultra (first alloc reduction) |
 | 5 | `seen` double-lookup → `PutIfAbsent` | ✅ Applied; verified on M3 Ultra |
 | 6 | Debug/annotation field gating | ⬜ Pending |
 
@@ -967,6 +967,67 @@ thermal effects are immaterial here, but the method was used anyway.
   + `..._finding3_baseline_arm_...` (Identity A/B pair)
 - `docs/perf/hash_join_int64_after_finding3_m3ultra_2026-05-29.txt`
   + `..._finding3_baseline_arm_...` (int64 sanity pair)
+
+## Finding #4 Results (2026-05-29, M3 Ultra)
+
+**Status**: Applied. First finding to reduce allocations.
+
+### Change
+
+Two redundant defensive copies in the streaming `hashJoinIterator`
+(`datalog/executor/join.go`):
+
+- **Joined-tuple copy removed.** `combineTuplesIndexed` already returns
+  a fresh `make(Tuple, resultWidth)` on every call and nothing mutates
+  it; downstream consumers that retain tuples copy at their own boundary
+  (this join's `StreamingRelation` has `RequiresCopy()==true`). The
+  per-result-row `make`+`copy` was doubly redundant. The stale "BUG FIX:
+  combineTuples might return a reused slice" comment was wrong.
+- **Probe-tuple copy gated** on `probeRel.RequiresCopy()` (new
+  `probeNeedsCopy` field set at construction). Values read from the probe
+  tuple are consumed before the next `probeIt.Next()`, so only a
+  workspace-reusing (streaming) probe needs copying; a materialized probe
+  is stable and skips it — mirroring what the materialized join path
+  already does.
+
+### Benchmark results (after-#3 → after-#4, balanced A/B)
+
+| Suite | sec/op | allocs/op |
+|-------|-------:|----------:|
+| int64-keyed | **-3.67%** | **-4.61%** |
+| Identity-keyed | **-3.75%** | **-4.37%** |
+
+The wins concentrate in the streaming-iterator shapes (`stream_x_mat`,
+`mat_x_stream`, `stream_x_stream`, `MaterializedVsStreaming/streaming`):
+**-8 to -9% allocs** (exactly one fewer alloc per result row, from the
+joined-copy removal) and **-5 to -12% wall-time** there. Pure
+materialized-path shapes (`mat_x_mat`, `Duplicates`, `HighFanout`,
+`LargeResult`) show no alloc change — that path never had the copy and
+was not touched.
+
+### Notes
+
+- The **probe-copy gating is not exercised** by these benchmark shapes:
+  in every `InputTypes` case the probe side is streaming
+  (`RequiresCopy()==true`), so it still copies. The measured wins are
+  entirely from the joined-copy removal. The probe-copy benefit is
+  latent — real queries with a materialized probe side under streaming
+  mode.
+- A few Identity materialized-path cases (`Duplicates`,
+  `LargeResult/10000`) show +0.8 to +1.7%. Their alloc counts are
+  unchanged and their code path is byte-identical between the two
+  binaries (only the streaming iterator was edited), so these are
+  run-to-run variance on the long benchmarks, not a regression.
+- This is the GC-pressure reduction the baseline profiles pointed at
+  (`runtime.madvise`/scheduler dominating); fewer per-row allocations
+  directly cut it on the streaming path.
+
+### Artifacts
+
+- `docs/perf/hash_join_int64_after_finding4_m3ultra_2026-05-29.txt`
+  + `..._finding4_baseline_arm_...`
+- `docs/perf/hash_join_identity_after_finding4_m3ultra_2026-05-29.txt`
+  + `..._finding4_baseline_arm_...`
 
 ## Ranking by Expected Profile Impact
 

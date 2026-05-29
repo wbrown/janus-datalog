@@ -22,7 +22,11 @@ type hashJoinIterator struct {
 	buildErr     error // deferred error captured from the (eagerly consumed) build relation
 	seen         *TupleKeyMap
 	buildIsLeft  bool
-	probeIndices []int
+	// probeNeedsCopy is true when the probe relation's iterator reuses its
+	// tuple workspace (RequiresCopy()); only then must currentProbeTuple be
+	// copied before use. Materialized probes return stable tuples and skip it.
+	probeNeedsCopy bool
+	probeIndices   []int
 	// rightNonJoinIndices identifies positions in the right-side tuple
 	// (per buildIsLeft, the probe side when buildIsLeft is true, otherwise
 	// the build side) whose values must be appended to each result tuple.
@@ -67,10 +71,11 @@ func (it *hashJoinIterator) Next() bool {
 			// Check for duplicates using seen map (single bucket walk)
 			dedupKey := NewTupleKeyFull(joined)
 			if !it.seen.PutIfAbsent(dedupKey, true) {
-				// BUG FIX: Make a copy since combineTuples might return a slice that gets reused
-				joinedCopy := make(Tuple, len(joined))
-				copy(joinedCopy, joined)
-				it.currentJoined = joinedCopy // Store for Tuple() to return
+				// combineTuplesIndexed returns a fresh slice on every call and
+				// nothing mutates it, so no defensive copy is needed here. Any
+				// downstream consumer that retains tuples copies at its own
+				// boundary (this join's StreamingRelation has RequiresCopy()==true).
+				it.currentJoined = joined // Store for Tuple() to return
 				it.resultCount++
 				return true
 			}
@@ -90,10 +95,17 @@ func (it *hashJoinIterator) Next() bool {
 		it.probeCount++
 		it.currentProbeTuple = it.probeIt.Tuple()
 
-		// BUG FIX: Make a copy of the tuple since the probe iterator might reuse the slice
-		tupleCopy := make(Tuple, len(it.currentProbeTuple))
-		copy(tupleCopy, it.currentProbeTuple)
-		it.currentProbeTuple = tupleCopy
+		// Only copy when the probe iterator reuses its tuple workspace. A
+		// materialized probe returns stable tuples (RequiresCopy()==false), so
+		// the copy is skipped — saving one alloc per probe row. Values read
+		// from currentProbeTuple are consumed before the next probeIt.Next()
+		// (combineTuplesIndexed copies them into fresh result slices), so a
+		// reused buffer only needs copying when the iterator says so.
+		if it.probeNeedsCopy {
+			tupleCopy := make(Tuple, len(it.currentProbeTuple))
+			copy(tupleCopy, it.currentProbeTuple)
+			it.currentProbeTuple = tupleCopy
+		}
 
 		key := NewTupleKey(it.currentProbeTuple, it.probeIndices)
 
@@ -423,6 +435,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			buildErr:            buildErr,
 			seen:                NewTupleKeyMapWithCapacity(expectedResults),
 			buildIsLeft:         buildIsLeft,
+			probeNeedsCopy:      probeRel.RequiresCopy(),
 			probeIndices:        probeIndices,
 			rightNonJoinIndices: rightNonJoinIndices,
 			resultWidth:         resultWidth,
