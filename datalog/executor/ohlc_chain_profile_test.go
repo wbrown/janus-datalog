@@ -225,11 +225,13 @@ func BenchmarkMetadataPropagation(b *testing.B) {
 	// Create a context and benchmark Set/Get metadata operations
 	ctx := NewContext(nil)
 
-	// Create sample time ranges
-	ranges := make([]TimeRange, 260)
+	// Sample payload slice for the metadata Set/Get benchmark (the element type
+	// is arbitrary — this exercises Context metadata, not time ranges).
+	type interval struct{ Start, End time.Time }
+	ranges := make([]interval, 260)
 	startTime := time.Date(2025, 6, 20, 9, 0, 0, 0, time.UTC)
 	for i := 0; i < 260; i++ {
-		ranges[i] = TimeRange{
+		ranges[i] = interval{
 			Start: startTime.Add(time.Duration(i) * time.Hour),
 			End:   startTime.Add(time.Duration(i+1) * time.Hour),
 		}
@@ -257,7 +259,7 @@ func BenchmarkMetadataPropagation(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			if val, ok := ctx.GetMetadata("time_ranges"); ok {
-				_ = val.([]TimeRange)
+				_ = val.([]interval)
 			}
 		}
 	})

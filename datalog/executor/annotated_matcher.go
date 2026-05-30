@@ -216,17 +216,3 @@ func (m *AnnotatedMatcher) PrefetchEntities(entities []datalog.Identity) {
 	}
 }
 
-// WithTimeRanges implements TimeRangeAware if the underlying matcher supports it.
-// This ensures decorators are transparent for all interface extensions.
-func (m *AnnotatedMatcher) WithTimeRanges(ranges []TimeRange) TimeRangeAware {
-	if tra, ok := m.underlying.(TimeRangeAware); ok {
-		// Update underlying matcher and return a new decorated version
-		updated := tra.WithTimeRanges(ranges)
-		return &AnnotatedMatcher{
-			underlying: updated.(PatternMatcher),
-			collector:  m.collector,
-		}
-	}
-	// Underlying doesn't support time ranges, return self
-	return m
-}

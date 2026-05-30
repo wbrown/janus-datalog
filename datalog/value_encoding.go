@@ -103,6 +103,54 @@ func Type(v Value) ValueType {
 	}
 }
 
+// Scalar values are encoded so that the lexicographic order of their bytes
+// matches their numeric order. This is required because int64/float64/time.Time
+// values appear in the AVET and VAET index keys, and those keys live in a single
+// byte-sorted keyspace — value-range scans, index min/max, and ordered iteration
+// are only correct when bytes.Compare(enc(a), enc(b)) == cmp(a, b). Plain
+// big-endian two's-complement / IEEE-754 bits fail this for negatives (and
+// pre-1970 times). Each transform below is a bijection, so the matching decode in
+// ValueFromBytes inverts it exactly — there is no separate non-ordered encoding.
+
+// orderedInt64 encodes v as 8 big-endian bytes that sort in numeric order.
+// Two's-complement already orders correctly within a sign group; flipping the
+// sign bit moves all negatives ahead of all non-negatives. Self-inverse.
+func orderedInt64(v int64) []byte {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(v)^(1<<63))
+	return buf
+}
+
+func decodeOrderedInt64(data []byte) int64 {
+	return int64(binary.BigEndian.Uint64(data) ^ (1 << 63))
+}
+
+// orderedFloat64 encodes v as 8 big-endian bytes that sort in numeric order: the
+// standard IEEE-754 total-order transform. Negative floats have their bits
+// reversed (raw magnitude order runs backward for negatives) and non-negatives
+// get the sign bit set so they sort after negatives.
+func orderedFloat64(v float64) []byte {
+	bits := math.Float64bits(v)
+	if bits&(1<<63) != 0 {
+		bits = ^bits // negative: flip all bits
+	} else {
+		bits |= 1 << 63 // non-negative: flip only the sign bit
+	}
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, bits)
+	return buf
+}
+
+func decodeOrderedFloat64(data []byte) float64 {
+	bits := binary.BigEndian.Uint64(data)
+	if bits&(1<<63) != 0 {
+		bits &^= 1 << 63 // encoded high bit set => was non-negative
+	} else {
+		bits = ^bits // encoded high bit clear => was negative
+	}
+	return math.Float64frombits(bits)
+}
+
 // Bytes serializes a value to bytes
 func ValueBytes(v Value) []byte {
 	v = NormalizeValue(v) // int/int8/int16/int32 -> canonical int64
@@ -125,22 +173,16 @@ func ValueBytes(v Value) []byte {
 	case string:
 		return []byte(val)
 	case int64:
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(val))
-		return buf
+		return orderedInt64(val)
 	case float64:
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, math.Float64bits(val))
-		return buf
+		return orderedFloat64(val)
 	case bool:
 		if val {
 			return []byte{1}
 		}
 		return []byte{0}
 	case time.Time:
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(val.UnixNano()))
-		return buf
+		return orderedInt64(val.UnixNano())
 	case []byte:
 		return val
 	case Identity:
@@ -171,12 +213,12 @@ func ValueFromBytes(vType ValueType, data []byte) (Value, error) {
 		if len(data) != 8 {
 			return nil, fmt.Errorf("int value must be 8 bytes, got %d", len(data))
 		}
-		return int64(binary.BigEndian.Uint64(data)), nil
+		return decodeOrderedInt64(data), nil
 	case TypeFloat:
 		if len(data) != 8 {
 			return nil, fmt.Errorf("float value must be 8 bytes, got %d", len(data))
 		}
-		return math.Float64frombits(binary.BigEndian.Uint64(data)), nil
+		return decodeOrderedFloat64(data), nil
 	case TypeBool:
 		if len(data) != 1 {
 			return nil, fmt.Errorf("bool value must be 1 byte, got %d", len(data))
@@ -186,7 +228,7 @@ func ValueFromBytes(vType ValueType, data []byte) (Value, error) {
 		if len(data) != 8 {
 			return nil, fmt.Errorf("time value must be 8 bytes, got %d", len(data))
 		}
-		nanos := int64(binary.BigEndian.Uint64(data))
+		nanos := decodeOrderedInt64(data)
 		return time.Unix(0, nanos).UTC(), nil
 	case TypeBytes:
 		return data, nil

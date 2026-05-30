@@ -16,7 +16,6 @@ import (
 type BadgerMatcher struct {
 	store             *BadgerStore
 	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
-	timeRanges        []executor.TimeRange     // For time range optimization
 	builderCache      *sync.Map                // map[string]*query.InternedTupleBuilder - Thread-safe cache for tuple builders
 	builderCacheOnce  sync.Once                // Ensures builderCache is initialized exactly once
 	handler           annotations.Handler      // Set from HandlerProvider for detailed storage events
@@ -114,7 +113,6 @@ func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 	return &BadgerMatcher{
 		store:        m.store,
 		txID:         &txID,
-		timeRanges:   m.timeRanges,
 		builderCache: m.builderCache,
 		handler:      m.handler,
 		options:      m.options,
@@ -153,11 +151,6 @@ func (m *BadgerMatcher) SetCache(c *Cache) {
 	m.cache = c
 }
 
-// WithTimeRanges sets the time range constraints and returns self for chaining
-func (m *BadgerMatcher) WithTimeRanges(ranges []executor.TimeRange) executor.TimeRangeAware {
-	m.timeRanges = ranges
-	return m
-}
 
 // getTupleBuilder returns a cached tuple builder or creates a new one
 func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *query.InternedTupleBuilder {
@@ -442,89 +435,6 @@ func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetTx datalog.E
 				break
 			}
 		}
-	}
-
-	return results, nil
-}
-
-// scanTimeRanges performs multi-range scanning on AVET index for time optimization
-func (m *BadgerMatcher) scanTimeRanges(attr datalog.Keyword, tx interface{}) ([]datalog.Datom, error) {
-	// Use map to deduplicate by entity ID (entities might appear in multiple ranges)
-	seen := make(map[datalog.Identity]bool)
-	var results []datalog.Datom
-
-	encoder := m.store.encoder
-
-	// Convert attribute to storage format (use interned pointer)
-	attrPtr := datalog.NewKeyword(attr.String())
-	aStorage := ToStorageDatom(datalog.Datom{A: attrPtr}).A
-
-	// Scan each time range
-	for _, timeRange := range m.timeRanges {
-		// AVET index order: A + V + E + Tx
-		// We want all datoms where A = :price/time AND Start <= V < End
-
-		// For start key: encode [A, Start_time] as prefix
-		// For end key: encode [A, End_time] as prefix
-		// The encoder's EncodePrefix can create this for us
-
-		// Encode the time values with their type prefix (same as in EncodeKey)
-		startValue := datalog.ValueBytes(timeRange.Start)
-		endValue := datalog.ValueBytes(timeRange.End)
-
-		// Create prefix keys: AVET = A + V + ...
-		start := encoder.EncodePrefix(AVET, aStorage[:], startValue)
-		end := encoder.EncodePrefix(AVET, aStorage[:], endValue)
-
-		// Scan this range
-		iter, err := m.store.ScanKeysOnly(AVET, start, end)
-		if err != nil {
-			return nil, fmt.Errorf("time range scan failed: %w", err)
-		}
-
-		for iter.Next() {
-			datom, err := iter.Datom()
-			if err != nil {
-				iter.Close()
-				return nil, err
-			}
-
-			// Check transaction filter
-			if m.shouldFilterTx(datom.Tx) {
-				continue
-			}
-
-			// Check tx constraint
-			if tx != nil {
-				switch txv := tx.(type) {
-				case uint64:
-					if datom.Tx.Lamport != txv {
-						continue
-					}
-				case int64:
-					if datom.Tx.Lamport != uint64(txv) {
-						continue
-					}
-				case int:
-					if datom.Tx.Lamport != uint64(txv) {
-						continue
-					}
-				case datalog.ElementID:
-					if datom.Tx != txv {
-						continue
-					}
-				default:
-					continue
-				}
-			}
-
-			// Deduplicate by entity (interned pointer is a stable, comparable key)
-			if !seen[datom.E] {
-				seen[datom.E] = true
-				results = append(results, *datom)
-			}
-		}
-		iter.Close()
 	}
 
 	return results, nil
