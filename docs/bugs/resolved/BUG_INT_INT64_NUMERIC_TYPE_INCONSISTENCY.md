@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-30
 **Severity**: Correctness / Robustness (Medium)
-**Status**: Open
+**Status**: RESOLVED (2026-05-30) — Go integer widths are normalized to canonical `int64` at the API boundary (`datalog.NormalizeValue`), `Type`/`ValueBytes` coerce so encode never panics, and `ValuesEqual`/`CompareValues` agree on integer widths (int-vs-float stays strict). See [Resolution](#resolution).
 **Affected**: `datalog/compare.go` (`ValuesEqual` vs `CompareValues`), `datalog/value_encoding.go` (`Type`, `ValueBytes`), all programmatic API paths that accept a Go `int` (query `:in` parameters, query-builder constants, `tx.Add`/`Set` values). EDN query *literals* are unaffected (the parser produces `int64`).
 
 ## Summary
@@ -192,3 +192,46 @@ Regression tests that fail before the fix:
   for `float64` vs integer if any).
 - If normalization is chosen, an end-to-end test: write `int`, reopen, read back
   as `int64`, and confirm `int`/`int64` query parameters both match.
+
+## Resolution
+
+Policy chosen: **normalize to `int64` at the API boundary** (option 1), plus
+**reconcile `ValuesEqual` with `CompareValues`** on integer widths (option 2) as
+defense in depth. `int64` is the engine's single canonical integer — the EDN
+parser, storage decode, and schema validation all already standardize on it.
+
+- `datalog.NormalizeValue` coerces `int`/`int8`/`int16`/`int32` → `int64`
+  (everything else, including `int64`, passes through untouched). It is applied
+  where Go values enter: `Transaction.Add`/`Set`/`Remove`, the query `:in` input
+  conversion (scalar/collection/tuple/relation), and `qb.V` constants.
+- Facet 2 (encode panic): `Type` and `ValueBytes` now call `NormalizeValue`
+  first, so a bare Go `int` encodes as `int64` instead of panicking. Schema
+  validation already accepted these widths, so validation and encoding are now
+  consistent.
+- Facet 1 (silent non-match): a single `asInt64` helper unifies integer widths
+  by magnitude in `ValuesEqual` and routes `CompareValues`/`compareNumeric`/
+  `compareFloat`/`compareUint64`, so equality and ordering agree. `int`-vs-`float`
+  stays strict in `ValuesEqual` (so mixed-numeric join keys aren't conflated)
+  while `CompareValues` still orders them by magnitude. `hashValue` hashes all
+  widths as `int64` so unified values share a `TupleKeyMap` bucket.
+
+Hot path: `ValuesEqual` keeps the `==` fast path first; width unification runs
+only when `==` already failed. Allocation-free microbenchmarks
+(`compare_int_bench_test.go`, `tuple_key_int_bench_test.go`) measured zero added
+allocations and per-call latency unchanged within noise on the common paths,
+with ~1 ns added only on the rare unequal-integer (hash-collision) path —
+immaterial against the allocation-dominated join.
+
+Tests added:
+
+- `datalog` (unit): `TestNormalizeValue_CoercesIntegerWidths`,
+  `TestValuesEqual_CompareValues_AgreeOnIntegerWidths`,
+  `TestValuesEqual_IntVsFloatStaysStrict`,
+  `TestType_And_ValueBytes_GoIntEncodeAsInt64`.
+- `datalog/executor` (unit): `TestTupleKey_UnifiesIntegerWidths` (int and int64
+  share a hash bucket and compare equal; different magnitudes don't).
+- `datalog/storage` (end-to-end): `TestWrite_GoIntValueDoesNotPanic`,
+  `TestQuery_IntInputMatchesInt64StoredValue`,
+  `TestPredicateAndJoinAgreeOnIntInt64`.
+
+Full suite green (`go test -count=1 ./...`).

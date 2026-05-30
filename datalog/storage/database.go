@@ -1317,6 +1317,11 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
 	}
 
+	// Normalize integer width to canonical int64 at the API boundary, so a Go int
+	// stores and matches the same as int64 (and never reaches the encoder as a
+	// non-int64 width).
+	v = datalog.NormalizeValue(v)
+
 	// Schema validation (if schema present)
 	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
 		return fmt.Errorf("schema validation failed for %s: %w", a.String(), err)
@@ -1446,6 +1451,9 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 	if v == nil {
 		return fmt.Errorf("nil value not allowed for Remove on attribute %s", a.String())
 	}
+
+	// Normalize integer width to canonical int64 at the API boundary.
+	v = datalog.NormalizeValue(v)
 
 	// Determine cardinality for Remove semantics
 	s := t.db.Schema()
@@ -1642,6 +1650,9 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 	if v == nil {
 		return fmt.Errorf("nil value not allowed for attribute %s: use absence of fact to represent no value", a.String())
 	}
+
+	// Normalize integer width to canonical int64 at the API boundary.
+	v = datalog.NormalizeValue(v)
 
 	// Check cardinality first - determines validation strategy
 	card := schema.CardinalityOne
@@ -2214,10 +2225,11 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 				return nil, fmt.Errorf("not enough inputs: expected input for %s (have %d inputs, need %d)", spec.Symbol, len(inputs), inputIdx+1)
 			}
 
-			// Create single-value relation
+			// Create single-value relation (normalize integer width to int64 so
+			// an int parameter matches stored int64 data).
 			rel := executor.NewMaterializedRelation(
 				[]query.Symbol{spec.Symbol},
-				[]executor.Tuple{{inputs[inputIdx]}},
+				[]executor.Tuple{{datalog.NormalizeValue(inputs[inputIdx])}},
 			)
 			inputRelations = append(inputRelations, rel)
 			inputIdx++
@@ -2235,7 +2247,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 
 			tuples := make([]executor.Tuple, slice.Len())
 			for i := 0; i < slice.Len(); i++ {
-				tuples[i] = executor.Tuple{slice.Index(i).Interface()}
+				tuples[i] = executor.Tuple{datalog.NormalizeValue(slice.Index(i).Interface())}
 			}
 
 			rel := executor.NewMaterializedRelation(
@@ -2263,7 +2275,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 			// Create single tuple
 			tuple := make(executor.Tuple, slice.Len())
 			for i := 0; i < slice.Len(); i++ {
-				tuple[i] = slice.Index(i).Interface()
+				tuple[i] = datalog.NormalizeValue(slice.Index(i).Interface())
 			}
 
 			rel := executor.NewMaterializedRelation(spec.Symbols, []executor.Tuple{tuple})
@@ -2294,7 +2306,7 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 
 				tuple := make(executor.Tuple, innerSlice.Len())
 				for j := 0; j < innerSlice.Len(); j++ {
-					tuple[j] = innerSlice.Index(j).Interface()
+					tuple[j] = datalog.NormalizeValue(innerSlice.Index(j).Interface())
 				}
 				tuples[i] = tuple
 			}
