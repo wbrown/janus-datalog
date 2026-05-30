@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-30
 **Severity**: Latent / Correctness-Trap (Low today, High if value-range pushdown is added)
-**Status**: Open
+**Status**: RESOLVED (2026-05-30) — value bytes in index keys are now order-preserving for `int64`/`float64`/`time.Time` (bijective transforms in `ValueBytes`/`ValueFromBytes`, no migration), and the dead `scanTimeRanges` is removed. See [Resolution](#resolution).
 **Affected**: `datalog/value_encoding.go` (`ValueBytes`), AVET/VAET key layout, `datalog/storage/matcher.go` (`chooseIndex`, dead `scanTimeRanges`). No incorrect results today, because the live query path never does value-range scans — this documents a trap that a future optimization will fall into.
 
 ## Summary
@@ -166,3 +166,54 @@ range filtering) for the owner.
   in-memory-filter baseline.
 - Decide and record the fate of `scanTimeRanges` (remove, or fix type-tag +
   ordering) so the dead path can't mislead.
+
+## Resolution
+
+Chosen: **make value bytes order-preserving** (the report's option 1), with **no
+migration**. The invariant has to hold — the value lives in the AVET/VAET key,
+which shares the single byte-sorted keyspace, so any future value-range scan /
+index min-max / ordered iteration is only correct if `bytes.Compare(enc(a),
+enc(b)) == cmp(a, b)`. Three scalar types violated it; the rest (string, []byte,
+bool, L85 refs, keyword/symbol, ElementID/uint64) already sort.
+
+No migration is needed because the transforms are **bijections of the same 8
+bytes** — `ValueFromBytes` inverts exactly what `ValueBytes` produced, so there
+is no old format to keep reading and no version negotiation. (`int64`: flip the
+sign bit; `float64`: the standard IEEE total-order transform — negatives flip all
+bits, non-negatives flip the sign bit; `time.Time`: `UnixNano` through the int64
+transform.)
+
+There is a single encode site and a single decode funnel, so one pair of changes
+covers everything:
+
+- Encode: every value-in-key goes through `datalog.ValueBytes` (via
+  `BinaryKeyEncoder.EncodeValueBytes`; `BinaryStrategy` is the only encoder the
+  store uses), and the same bytes back the value portion.
+- Decode: every reconstruction funnels through `datalog.ValueFromBytes`
+  (datom_decoder, rga_element, types, set_entry). Nothing decodes value bytes
+  with a separate int/float reader.
+
+The entire never-wired time-range AVET-scan feature is deleted, not just the
+trap. `scanTimeRanges` was the only consumer of the `TimeRange` values that
+`extractTimeRanges` produced, and nothing ever called `WithTimeRanges` to push
+them into a matcher — the chain was dead end to end. Removed: `scanTimeRanges`,
+the `timeRanges` field, and `BadgerMatcher.WithTimeRanges` (storage); the
+`executor/time_range.go` file (`TimeRange`, `extractTimeRanges`), the
+`TimeRangeAware` interface, and `AnnotatedMatcher.WithTimeRanges` (executor); and
+the two test files dedicated to it (`time_range_optimization_test.go`,
+`time_range_bench_test.go`) — they only exercised the dead function, so they were
+not independent coverage. The live in-memory `TimeRangeConstraint` filter and the
+integration tests that run time-range *queries* are unrelated and untouched.
+
+Tests added:
+
+- `datalog`: `TestValueBytes_Int64_OrderPreserving`,
+  `TestValueBytes_Float64_OrderPreserving`, `TestValueBytes_Time_OrderPreserving`
+  — assert `bytes.Compare(enc(a), enc(b))` matches `CompareValues` across
+  `MinInt64`…`MaxInt64`, `±MaxFloat64`, and pre/post-1970 instants, plus exact
+  round-trip.
+- `datalog/storage`: `TestNegativeAndPre1970ValuesRoundTripThroughStorage` —
+  writes a negative int, negative float, and a 1955 time, reads them back through
+  a query (real index keys + value portion) equal.
+
+Full suite green (`go test -count=1 ./...`).

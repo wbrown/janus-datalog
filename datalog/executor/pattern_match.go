@@ -21,11 +21,6 @@ type HandlerProvider interface {
 	GetHandler() annotations.Handler
 }
 
-// TimeRangeAware allows matchers to receive time range constraints for optimization
-type TimeRangeAware interface {
-	WithTimeRanges(ranges []TimeRange) TimeRangeAware
-}
-
 // NewMemoryPatternMatcher creates a pattern matcher for in-memory datoms.
 // Returns an IndexedMemoryMatcher, which indexes datoms by (E, A, V) for
 // 5-5000× speedups over linear scans depending on query shape.
