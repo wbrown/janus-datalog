@@ -887,6 +887,17 @@ Before declaring any work complete:
 
 This document catalogs critical bugs that have been fixed and the patterns that lead to them. Understanding these patterns prevents repeating the same mistakes.
 
+**Convention — entries are historical learnings, not a live bug list.** Every
+entry here describes a bug that has been *fixed* unless it carries an explicit
+`**Status**: Open` marker. Several entries are written in the present tense
+describing the *original defect* ("X does not check Y") — that is the problem
+statement at the time of discovery, **not** a claim about the current code. Do
+not infer current state from an entry's prose or tense. Before treating anything
+here as a live bug, re-read the cited code; if you fix or confirm an entry, add
+or update its `**Status**:` line (with date and commit) so the next reader
+doesn't have to re-derive it. A stale "this is broken" note manufactures phantom
+bugs just as easily as a missing note hides real ones.
+
 ---
 
 ### Storage Layer Integration (2025-06-21)
@@ -1209,6 +1220,14 @@ if len(phase.Patterns) == 0 && len(collapsed) == 0 {
 
 ### Streaming Architecture Violation (2026-02-05)
 
+**Status**: ✅ RESOLVED. The buffering approach described below was abandoned;
+`copyDatom` no longer exists. The current `CRDTResolvingIterator`
+(`datalog/storage/crdt_resolving_iterator.go`) buffers *state*, not datoms —
+CardinalityOne emits the first entry and skips the rest, CardinalityMany tracks
+per-value add/remove Lamports, CardinalityVector accumulates minimal RGA element
+state. This entry is retained as a *learning*; it does **not** describe the
+current iterator, which follows the prescribed approach below.
+
 **Critical Architecture Bug**: Created a buffering "CRDT resolution" layer that defeated the entire streaming architecture.
 
 **What I Did Wrong**:
@@ -1257,7 +1276,17 @@ The comments in `key_encoder_binary.go` say it explicitly:
 
 ### Cache Path CardinalityOne Tombstone Gap (2026-02-08)
 
-**Critical Correctness Bug**: `ResolveLWW` (cache path) does not check `datom.Op`, so Remove() tombstones on CardinalityOne attributes are invisible to PullInto and multi-clause join-bound queries. The streaming path (`CRDTResolvingIterator`) handles it correctly.
+**Status**: ✅ FIXED (2026-02-08, commit `816b535`). `ResolveLWW` now checks
+`datom.Op`: when the highest-Tx entry is a Remove it returns a nil value with
+the tombstone's ElementID, so the attribute correctly reads as absent
+(`datalog/storage/cache_resolver.go`, the `OpCRDTRemove` check). The text below
+is retained as a *learning*, not an open bug — do not report it as live without
+re-reading `ResolveLWW`.
+
+**Original Bug (now fixed)**: `ResolveLWW` (cache path) did **not** check
+`datom.Op`, so Remove() tombstones on CardinalityOne attributes were invisible
+to PullInto and multi-clause join-bound queries. The streaming path
+(`CRDTResolvingIterator`) always handled it correctly.
 
 **What I Did Wrong**:
 1. Wrote `ResolveLWW` without checking `datom.Op` — returns first datom's V blindly
@@ -1271,7 +1300,7 @@ The tests looked comprehensive: round-trip, overwrite, re-add, V-irrelevant, mul
 **The Trust Problem**:
 Claude wrote the buggy code, wrote tests that don't cover it, and shipped it as complete. The user cannot trust "all tests pass" as evidence of correctness. This bug was only found because the user built a real application on top and hit it in production use.
 
-**See**: `docs/bugs/BUG_CACHE_CARDINALIY_ONE_TOMBSTONE.md` for full analysis and reproducer.
+**See**: `docs/bugs/resolved/BUG_CACHE_CARDINALIY_ONE_TOMBSTONE.md` for full analysis and reproducer.
 
 **Root Cause Mental Model Error**: Claude thinks of datoms as values that replace each other — "Set name to Bob overwrites Alice." This is wrong. Storage is append-only. Both datoms exist. Resolution reads the first entry (highest Tx) and interprets the **operation**. If the operation is a tombstone, the attribute doesn't exist. The word "overwrite" encodes a mutable-storage mental model that directly caused this bug: ResolveLWW returns the first entry's V without checking its Op, because in the "overwrite" model there's nothing to check.
 

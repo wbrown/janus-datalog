@@ -1,5 +1,13 @@
 # janus-datalog Bug: Cache Path Does Not Resolve CardinalityOne Remove() Tombstones
 
+**Status**: ✅ RESOLVED (2026-02-08, commit `816b535`). `ResolveLWW` now checks
+`datom.Op` and treats a highest-Tx `OpCRDTRemove` as absent
+(`datalog/storage/cache_resolver.go`). A second, related V-bound streaming bug
+found while fixing this is also resolved (V-bound routing + `validateCandidate`
+Op check in `matcher_relations.go`). Full suite green. See "Final status" at the
+end of this document for the complete change list. The body below is the
+original report and the (long) investigation log, retained as a learning.
+
 ## Summary
 
 After calling `Remove()` on a CardinalityOne (LWW) attribute, both `PullInto()`
