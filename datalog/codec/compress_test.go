@@ -169,7 +169,7 @@ func TestCompress_Header_Truncated(t *testing.T) {
 
 func TestCompress_Header_WrongVersion(t *testing.T) {
 	data := make([]byte, 20)
-	data[0] = 0x02 // wrong version
+	data[0] = 0x03 // unsupported version (1 and 2 are valid)
 	binary.BigEndian.PutUint32(data[1:], 100)
 	_, err := Decompress(data)
 	assert.Error(t, err)
@@ -384,43 +384,51 @@ func TestCompress_Ratio_SourceCode(t *testing.T) {
 type goldenTest struct {
 	name        string
 	input       []byte
-	expectedHex string // hex-encoded expected compressed output (empty = not yet recorded)
+	expectedHex string // hex-encoded expected v2 compressed output (empty = not yet recorded)
+	v1Hex       string // captured v1 (uint16-header) blob; dual-read back-compat fixture
 	minRatio    float64
 }
 
 // Golden tests: frozen compressed outputs. If ANY of these change, the codec
 // determinism guarantee is broken and the change MUST be rejected.
-// Recorded 2026-03-28 from CompressionVersion 0x01.
+// expectedHex re-recorded 2026-05-30 from CompressionVersion 0x02 (uint32 counts).
+// v1Hex retains the original 2026-03-28 0x01 (uint16 counts) blobs as real
+// captured fixtures proving Decompress still reads legacy v1 data.
 var goldenTests = []goldenTest{
 	{
 		name:        "paragraph_500",
 		input:       []byte(strings.Repeat("The quick brown fox jumps over the lazy dog. ", 11))[:500],
 		minRatio:    2.0,
-		expectedHex: "01000001f4000300030000002e0000002e010000002e54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2000000000030100000003140001000000030100000003171701000000030100000003050500000000040100000004fd6ead06",
+		expectedHex: "02000001f400000003000000030000002e0000002e010000002e54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2000000000030100000003140001000000030100000003171701000000030100000003050500000000040100000004fd6ead06",
+		v1Hex:       "01000001f4000300030000002e0000002e010000002e54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f672e2000000000030100000003140001000000030100000003171701000000030100000003050500000000040100000004fd6ead06",
 	},
 	{
 		name:        "prose_1kb",
 		input:       []byte(strings.Repeat("To be or not to be, that is the question. Whether tis nobler in the mind to suffer the slings and arrows. ", 10))[:1024],
 		minRatio:    2.0,
-		expectedHex: "01000004000008000800000059000000590100000059546f206265206f72206e6f7420742c207468617420697320746865207175657374696f6e2e205768657468657220746973206e6f626c657220696e6d696e6473756666686520736c696e677320616e64206172726f77732e200000000801000000080e14040412000000000000080100000008010201011717171600000008010000000803050505060606060000000a010000000a6dc2836ff5adbed55e05",
+		expectedHex: "0200000400000000080000000800000059000000590100000059546f206265206f72206e6f7420742c207468617420697320746865207175657374696f6e2e205768657468657220746973206e6f626c657220696e6d696e6473756666686520736c696e677320616e64206172726f77732e200000000801000000080e14040412000000000000080100000008010201011717171600000008010000000803050505060606060000000a010000000a6dc2836ff5adbed55e05",
+		v1Hex:       "01000004000008000800000059000000590100000059546f206265206f72206e6f7420742c207468617420697320746865207175657374696f6e2e205768657468657220746973206e6f626c657220696e6d696e6473756666686520736c696e677320616e64206172726f77732e200000000801000000080e14040412000000000000080100000008010201011717171600000008010000000803050505060606060000000a010000000a6dc2836ff5adbed55e05",
 	},
 	{
 		name:        "edn_1kb",
 		input:       []byte(strings.Repeat("[#identity \"hash25\" :test/attr \"some value here\" [42 1] :op/none]\n", 16))[:1024],
 		minRatio:    2.0,
-		expectedHex: "010000040000040004000000420000004201000000425b236964656e74697479202268617368323522203a746573742f617474722022736f6d652076616c7565206865726522205b343220315d203a6f702f6e6f6e655d0a000000040100000004150000000000000401000000041717171700000004010000000406060606000000080100000008f22dbc85b7501200",
+		expectedHex: "02000004000000000400000004000000420000004201000000425b236964656e74697479202268617368323522203a746573742f617474722022736f6d652076616c7565206865726522205b343220315d203a6f702f6e6f6e655d0a000000040100000004150000000000000401000000041717171700000004010000000406060606000000080100000008f22dbc85b7501200",
+		v1Hex:       "010000040000040004000000420000004201000000425b236964656e74697479202268617368323522203a746573742f617474722022736f6d652076616c7565206865726522205b343220315d203a6f702f6e6f6e655d0a000000040100000004150000000000000401000000041717171700000004010000000406060606000000080100000008f22dbc85b7501200",
 	},
 	{
 		name:        "repetitive_1kb",
 		input:       bytes.Repeat([]byte{0xDE, 0xAD, 0xBE, 0xEF}, 256),
 		minRatio:    5.0,
-		expectedHex: "01000004000004000400000004000000040100000004deadbeef0000000401000000040400000000000004010000000417171717000000040100000004020202020000000501000000056fdebc1903",
+		expectedHex: "0200000400000000040000000400000004000000040100000004deadbeef0000000401000000040400000000000004010000000417171717000000040100000004020202020000000501000000056fdebc1903",
+		v1Hex:       "01000004000004000400000004000000040100000004deadbeef0000000401000000040400000000000004010000000417171717000000040100000004020202020000000501000000056fdebc1903",
 	},
 	{
 		name:        "all_same_1kb",
 		input:       bytes.Repeat([]byte{'a'}, 1024),
 		minRatio:    10.0,
-		expectedHex: "0100000400000400040000000100000001010000000161000000040100000004010000000000000401000000041717171700000004010000000400000000000000040100000004eff7db0c",
+		expectedHex: "020000040000000004000000040000000100000001010000000161000000040100000004010000000000000401000000041717171700000004010000000400000000000000040100000004eff7db0c",
+		v1Hex:       "0100000400000400040000000100000001010000000161000000040100000004010000000000000401000000041717171700000004010000000400000000000000040100000004eff7db0c",
 	},
 }
 
@@ -469,6 +477,132 @@ func TestCompress_Determinism_Golden(t *testing.T) {
 				require.True(t, bytes.Equal(golden, compressed),
 					"%s: iteration %d differs", gt.name, i)
 			}
+		})
+	}
+}
+
+// ---- v1 → v2 back-compat (dual read) ----
+
+// TestDecompress_V1BlobStillReadable proves the v2 decoder still reads real
+// captured v1 (uint16-header) blobs. The fixtures are the original golden
+// outputs recorded under CompressionVersion 0x01 — genuine legacy bytes, not
+// synthesized — so this guards the dual-read path against regression.
+func TestDecompress_V1BlobStillReadable(t *testing.T) {
+	for _, gt := range goldenTests {
+		t.Run(gt.name, func(t *testing.T) {
+			v1, err := hex.DecodeString(gt.v1Hex)
+			require.NoError(t, err)
+			require.Equal(t, byte(0x01), v1[0], "fixture must be a v1 blob")
+
+			got, err := Decompress(v1)
+			require.NoError(t, err, "v1 blob must still decode under the v2 decoder")
+			assert.True(t, bytes.Equal(gt.input, got),
+				"v1 blob did not round-trip to its original input")
+		})
+	}
+}
+
+// ---- uint16 sequence-count overflow regression (data-loss fix) ----
+
+// jsonish builds the densest realistic content: a JSON-like array of small
+// uniform records. Sequence count scales with the number of distinct short
+// fields, so this crosses 65535 sequences (the old uint16 ceiling) well before
+// a few MB.
+func jsonish(n int) []byte {
+	var b bytes.Buffer
+	b.WriteByte('[')
+	for i := 0; b.Len() < n; i++ {
+		fmt.Fprintf(&b, `{"id":%d,"name":"alice","active":true,"score":%d},`,
+			100000+i, i%97)
+	}
+	return b.Bytes()[:n]
+}
+
+// adversarialDenseSequences emits a stream of recurring 4-byte tokens, each
+// followed by a pseudo-random separator byte. The tokens recur (so the 4-byte
+// match hash hits and a sequence is emitted) but the separator prevents match
+// extension and keeps the stream aperiodic, maximizing sequence count per byte.
+func adversarialDenseSequences(n int) []byte {
+	r := mathrand.New(mathrand.NewSource(1))
+	const poolSize = 256
+	pool := make([][4]byte, poolSize)
+	for i := range pool {
+		binary.BigEndian.PutUint32(pool[i][:], uint32(i)*2654435761)
+	}
+	out := make([]byte, 0, n+8)
+	for len(out) < n {
+		tok := pool[r.Intn(poolSize)]
+		out = append(out, tok[:]...)
+		out = append(out, byte(r.Intn(256)))
+	}
+	return out[:n]
+}
+
+// TestCompress_JSONLikeValueAboveUint16Sequences_RoundTrips is the core
+// regression: a ~2 MB densely-structured value produces more than 65535 LZ77
+// sequences. Under v1 the count truncated to uint16 and the blob became
+// permanently unreadable; under v2 it must round-trip exactly.
+func TestCompress_JSONLikeValueAboveUint16Sequences_RoundTrips(t *testing.T) {
+	input := jsonish(2 * 1024 * 1024)
+
+	seqs := len(FindMatches(input).Sequences)
+	require.Greater(t, seqs, 0xFFFF,
+		"test input must exceed the old uint16 cap (got %d sequences)", seqs)
+	t.Logf("jsonish 2 MB → %d sequences", seqs)
+
+	compressed := Compress(input)
+	require.NotNil(t, compressed, "structured value should compress")
+	require.Equal(t, CompressionVersion, compressed[0], "must be written as v2")
+
+	out, err := Decompress(compressed)
+	require.NoError(t, err, "value with >uint16 sequences must decompress")
+	assert.True(t, bytes.Equal(input, out), "round trip must be lossless")
+}
+
+// TestCompress_AdversarialDenseSequences_RoundTrips drives the sequence count
+// past the old cap with a much smaller (~512 KB) adversarial value.
+func TestCompress_AdversarialDenseSequences_RoundTrips(t *testing.T) {
+	input := adversarialDenseSequences(512 * 1024)
+
+	seqs := len(FindMatches(input).Sequences)
+	require.Greater(t, seqs, 0xFFFF,
+		"adversarial input must exceed the old uint16 cap (got %d sequences)", seqs)
+	t.Logf("adversarial 512 KB → %d sequences", seqs)
+
+	compressed := Compress(input)
+	if compressed == nil {
+		// Safety net engaged: stored raw, which is also safe (never unreadable).
+		t.Skip("adversarial value did not compress below original; stored raw (safe)")
+	}
+	require.Equal(t, CompressionVersion, compressed[0], "must be written as v2")
+
+	out, err := Decompress(compressed)
+	require.NoError(t, err, "value with >uint16 sequences must decompress")
+	assert.True(t, bytes.Equal(input, out), "round trip must be lossless")
+}
+
+// TestCompress_SequenceCountOverflow_DoesNotProduceUnreadableBlob asserts the
+// invariant directly: for inputs whose sequence count exceeds the old uint16
+// ceiling, Compress must EITHER produce a blob that decompresses correctly
+// (widened v2 header) OR decline (return nil ⇒ stored raw). It must never
+// produce a blob that Decompress rejects.
+func TestCompress_SequenceCountOverflow_DoesNotProduceUnreadableBlob(t *testing.T) {
+	inputs := map[string][]byte{
+		"jsonish_2mb":     jsonish(2 * 1024 * 1024),
+		"adversarial_512": adversarialDenseSequences(512 * 1024),
+	}
+	for name, input := range inputs {
+		t.Run(name, func(t *testing.T) {
+			require.Greater(t, len(FindMatches(input).Sequences), 0xFFFF,
+				"input must exceed the old uint16 cap to exercise the fix")
+
+			compressed := Compress(input)
+			if compressed == nil {
+				return // declined → stored raw → safe by construction
+			}
+			out, err := Decompress(compressed)
+			require.NoError(t, err, "compressed blob must never be unreadable")
+			assert.True(t, bytes.Equal(input, out))
 		})
 	}
 }
