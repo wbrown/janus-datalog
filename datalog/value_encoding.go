@@ -43,7 +43,29 @@ type BlobData struct {
 const maxKeyValueSize = 60000
 
 // Type returns the type of a value
+// NormalizeValue coerces a value's dynamic integer type to the engine's
+// canonical int64 representation: int, int8, int16, int32 become int64; every
+// other type (including int64) is returned unchanged. Storage decode, the EDN
+// parser, and comparison all standardize on int64, so normalizing user-supplied
+// values where they enter the engine (writes, query inputs, query-builder
+// constants) keeps a Go int from diverging from stored int64 data. int64 and
+// non-integers pass through untouched, adding no allocation for the common case.
+func NormalizeValue(v Value) Value {
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int8:
+		return int64(n)
+	case int16:
+		return int64(n)
+	case int32:
+		return int64(n)
+	}
+	return v
+}
+
 func Type(v Value) ValueType {
+	v = NormalizeValue(v) // int/int8/int16/int32 -> canonical int64
 	// Handle pointers by checking what they point to
 	switch val := v.(type) {
 	case *Identity:
@@ -83,6 +105,7 @@ func Type(v Value) ValueType {
 
 // Bytes serializes a value to bytes
 func ValueBytes(v Value) []byte {
+	v = NormalizeValue(v) // int/int8/int16/int32 -> canonical int64
 	// Handle pointer types first
 	switch ptr := v.(type) {
 	case Identity:

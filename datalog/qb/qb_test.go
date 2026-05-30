@@ -51,10 +51,11 @@ func TestVal(t *testing.T) {
 		t.Errorf("Expected hello, got %v", strVal.value)
 	}
 
-	// Int value
+	// Int value — V normalizes a Go int to the canonical int64, so it matches
+	// stored int64 data and the EDN parser's int64 literals.
 	intVal := V(42)
-	if intVal.value != 42 {
-		t.Errorf("Expected 42, got %v", intVal.value)
+	if intVal.value != int64(42) {
+		t.Errorf("Expected int64(42), got %v (%T)", intVal.value, intVal.value)
 	}
 
 	// Float value

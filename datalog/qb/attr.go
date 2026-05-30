@@ -63,7 +63,9 @@ type Val struct {
 //	qb.Pat(e, PersonCity, qb.V("NYC"))
 //	qb.Pat(e, PersonAge, qb.V(int64(30)))
 func V(value interface{}) Val {
-	return Val{value: value}
+	// Normalize integer width to canonical int64 so a Go int constant matches
+	// stored int64 data the same as the EDN parser's int64 literals do.
+	return Val{value: datalog.NormalizeValue(value)}
 }
 
 // Value returns the underlying value.

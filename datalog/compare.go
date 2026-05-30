@@ -75,12 +75,14 @@ func CompareValues(left, right interface{}) int {
 		return -1
 	}
 
-	// Handle numeric comparisons
+	// Integer widths normalize to int64 (the canonical representation) so
+	// ordering agrees with ValuesEqual.
+	if li, ok := asInt64(left); ok {
+		return compareNumeric(li, right)
+	}
+
+	// Handle remaining numeric comparisons
 	switch l := left.(type) {
-	case int:
-		return compareNumeric(int64(l), right)
-	case int64:
-		return compareNumeric(l, right)
 	case uint64:
 		return compareUint64(l, right)
 	case float64:
@@ -121,13 +123,11 @@ func CompareValues(left, right interface{}) int {
 
 // compareNumeric compares an int64 with another numeric value
 func compareNumeric(left int64, right interface{}) int {
-	switch r := right.(type) {
-	case int:
-		return compareInt64s(left, int64(r))
-	case int64:
-		return compareInt64s(left, r)
-	case float64:
-		return compareFloat(float64(left), right)
+	if ri, ok := asInt64(right); ok {
+		return compareInt64s(left, ri)
+	}
+	if r, ok := right.(float64); ok {
+		return compareFloats(float64(left), r)
 	}
 	// Non-numeric: type mismatch
 	return -1
@@ -135,12 +135,10 @@ func compareNumeric(left int64, right interface{}) int {
 
 // compareFloat compares a float64 with another numeric value
 func compareFloat(left float64, right interface{}) int {
-	switch r := right.(type) {
-	case int:
-		return compareFloats(left, float64(r))
-	case int64:
-		return compareFloats(left, float64(r))
-	case float64:
+	if ri, ok := asInt64(right); ok {
+		return compareFloats(left, float64(ri))
+	}
+	if r, ok := right.(float64); ok {
 		return compareFloats(left, r)
 	}
 	// Non-numeric: type mismatch
@@ -205,19 +203,15 @@ func compareFloats(a, b float64) int {
 
 // compareUint64 compares a uint64 with another numeric value
 func compareUint64(left uint64, right interface{}) int {
+	if ri, ok := asInt64(right); ok {
+		if ri < 0 {
+			return 1 // unsigned is always >= 0
+		}
+		return compareUint64s(left, uint64(ri))
+	}
 	switch r := right.(type) {
 	case uint64:
 		return compareUint64s(left, r)
-	case int:
-		if r < 0 {
-			return 1 // unsigned is always >= 0
-		}
-		return compareUint64s(left, uint64(r))
-	case int64:
-		if r < 0 {
-			return 1 // unsigned is always >= 0
-		}
-		return compareUint64s(left, uint64(r))
 	case float64:
 		return compareFloats(float64(left), r)
 	}
@@ -233,6 +227,28 @@ func compareUint64s(a, b uint64) int {
 		return 1
 	}
 	return 0
+}
+
+// asInt64 returns the int64 magnitude of any signed integer width
+// (int, int8, int16, int32, int64) and reports whether v was such a value.
+// int64 is the engine's canonical integer representation — the EDN parser,
+// storage decode, and schema validation all standardize on it — so this is the
+// single place mixed integer widths are unified for comparison and hashing.
+// int64 is listed first as the dominant case.
+func asInt64(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case int16:
+		return int64(n), true
+	case int8:
+		return int64(n), true
+	}
+	return 0, false
 }
 
 // ValuesEqual checks if two values are equal.
@@ -284,10 +300,24 @@ func ValuesEqual(a, b interface{}) bool {
 		return ok && eid1.Equal(eid2)
 	}
 
-	// Comparable primitives — direct ==, no reflection.
+	// Comparable primitives. The == fast path is correct (and allocation-free)
+	// whenever the two dynamic types match — the dominant case, and the only one
+	// reached after boundary normalization makes user integers int64. Only when
+	// == is false do we pay to unify integer width: a non-canonical width
+	// (int/int8/int16/int32) compares by magnitude against any other integer
+	// width, while int-vs-float stays strict (asInt64 reports false for float64),
+	// so mixed-numeric values are never conflated.
 	switch a.(type) {
-	case int, int64, float64, string, bool, uint64:
-		return a == b
+	case int64, float64, string, bool, uint64, int, int8, int16, int32:
+		if a == b {
+			return true
+		}
+		if ia, ok := asInt64(a); ok {
+			if ib, ok := asInt64(b); ok {
+				return ia == ib
+			}
+		}
+		return false
 	}
 
 	// time.Time uses Equal (instant equality, ignoring location).

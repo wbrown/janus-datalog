@@ -120,6 +120,19 @@ func hashValue(v interface{}) uint64 {
 	case int64:
 		return uint64(val)
 
+	case int8:
+		// Integer widths hash by int64 magnitude so they collide with the
+		// canonical int64 in a TupleKeyMap, matching datalog.ValuesEqual, which
+		// treats integer widths as equal by magnitude. Listed after int/int64
+		// so the common widths keep their original position in the switch.
+		return uint64(int64(val))
+
+	case int16:
+		return uint64(int64(val))
+
+	case int32:
+		return uint64(int64(val))
+
 	case uint64:
 		return val
 
