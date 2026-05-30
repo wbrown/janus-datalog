@@ -55,6 +55,12 @@ type Database struct {
 	replicaID         uint64                  // CRDT: This database's replica identifier
 	cache             *Cache                  // CRDT: Unified cache for resolved CRDT views
 	temporalTxID      *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
+
+	// onCommitWindow, if set, is invoked inside Commit after the storage commit
+	// returns but before the cache is updated — the window where a stale cached
+	// read was once possible. Test-only (nil in production); lets a test run a
+	// reader deterministically in that window. See the cache stale-read tests.
+	onCommitWindow func()
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -2101,14 +2107,32 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 		return datalog.ElementID{}, commitErr
 	}
 
+	// Mark every (E, A) this commit touches as in-flight BEFORE the storage
+	// commit. While in-flight, readers resolve those keys straight from storage,
+	// so the storage commit and the cache update become atomic from a reader's
+	// perspective — no reader observes the pre-commit value once stx.Commit()
+	// returns. Cleared by the Invalidate below (success) or on commit failure.
+	var touched []CacheKey
+	if t.db.cache != nil {
+		touched = t.touchedCacheKeys()
+		t.db.cache.BeginInFlight(touched)
+	}
+
 	if err := stx.Commit(); err != nil {
+		if t.db.cache != nil {
+			t.db.cache.Invalidate(touched) // clear in-flight sentinels
+		}
 		return datalog.ElementID{}, fmt.Errorf("failed to commit storage transaction: %w", err)
+	}
+
+	// Test-only: run a reader in the post-commit / pre-cache-update window.
+	if t.db.onCommitWindow != nil {
+		t.db.onCommitWindow()
 	}
 
 	// Update cache: track max versions and invalidate stale entries
 	// Skip if cache is disabled
 	if t.db.cache != nil {
-		touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
 		seenKeys := make(map[CacheKey]bool)
 
 		// Attributes written in this commit that are declared Unique.
@@ -2136,7 +2160,6 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			key := CacheKey{E: eBytes, A: aBytes}
 			if !seenKeys[key] {
 				seenKeys[key] = true
-				touched = append(touched, key)
 				t.db.cache.UpdateMaxVersion(key, d.Tx)
 			}
 			checkUnique(d.A, aBytes)
@@ -2152,13 +2175,15 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 			key := CacheKey{E: eBytes, A: aBytes}
 			if !seenKeys[key] {
 				seenKeys[key] = true
-				touched = append(touched, key)
 				t.db.cache.UpdateMaxVersion(key, d.Tx)
 			}
 			checkUnique(d.A, aBytes)
 		}
 
-		// Invalidate cache entries for all touched (E, A) pairs
+		// Invalidate cache entries for all touched (E, A) pairs. This also
+		// deletes the in-flight sentinels set by BeginInFlight above, ending the
+		// in-flight window: subsequent reads rebuild from storage at the new
+		// value, and maxVersions was just bumped to match.
 		t.db.cache.Invalidate(touched)
 
 		// Conservative unique-attr invalidation: for each unique attribute
@@ -2178,6 +2203,30 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	// Return the metadata ElementID - it has the highest Lamport in this tx,
 	// making it the correct high-water mark for as-of queries
 	return metadataElemID, nil
+}
+
+// touchedCacheKeys returns the deduplicated set of (E, A) cache keys this
+// transaction's asserts and retracts touch. Computed before the storage commit
+// so the keys can be marked in-flight; reused afterward to invalidate them.
+func (t *Transaction) touchedCacheKeys() []CacheKey {
+	touched := make([]CacheKey, 0, len(t.datoms)+len(t.retracts))
+	seen := make(map[CacheKey]bool)
+	add := func(e datalog.Identity, a datalog.Keyword) {
+		var aBytes Attribute
+		copy(aBytes[:], a.String())
+		key := CacheKey{E: Entity(e.Hash()), A: aBytes}
+		if !seen[key] {
+			seen[key] = true
+			touched = append(touched, key)
+		}
+	}
+	for _, d := range t.datoms {
+		add(d.E, d.A)
+	}
+	for _, d := range t.retracts {
+		add(d.E, d.A)
+	}
+	return touched
 }
 
 // Rollback aborts the transaction
