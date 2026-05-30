@@ -20,6 +20,12 @@ type CacheKey struct {
 
 // CacheEntry holds the resolved CRDT view for an (E, A) pair
 type CacheEntry struct {
+	// inFlight marks a placeholder entry stored while a commit to this (E, A) is
+	// in progress. Readers that see it bypass the cache and resolve directly from
+	// storage, and cache writers refuse to overwrite it, so no reader observes the
+	// pre-commit value once the storage commit is visible. The remaining fields
+	// are unset on a sentinel.
+	inFlight    bool
 	version     datalog.ElementID // Max ElementID when this entry was computed
 	cardinality schema.Cardinality
 
@@ -92,6 +98,48 @@ func NewCache() *Cache {
 	return &Cache{}
 }
 
+// inFlightEntry is the shared sentinel stored for an (E, A) while its commit is
+// in progress. It carries no resolved value — readers and writers key off the
+// inFlight flag alone — so a single shared instance is safe across all keys.
+var inFlightEntry = &CacheEntry{inFlight: true}
+
+// BeginInFlight marks the given keys as committing by storing the in-flight
+// sentinel for each, overwriting any cached entry. Called by Transaction.Commit
+// BEFORE the storage commit; the matching clear is Invalidate (called after the
+// commit, or after a failed commit), which deletes the entries. While a key is
+// in-flight, GetOrResolve resolves it from storage and storeIfNotInFlight refuses
+// to cache it, so the storage commit and the cache become visible atomically from
+// a reader's perspective.
+func (c *Cache) BeginInFlight(keys []CacheKey) {
+	for _, key := range keys {
+		c.entries.Store(key, inFlightEntry)
+	}
+}
+
+// storeIfNotInFlight stores entry for key unless an in-flight sentinel is
+// present, returning whether it stored. The compare-and-swap loop closes the
+// window where a concurrent rebuild, having resolved the pre-commit value, could
+// otherwise clobber a sentinel that BeginInFlight set in the meantime: if the
+// slot turned into (or already holds) a sentinel, the store is abandoned.
+func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
+	for {
+		cur, ok := c.entries.Load(key)
+		if ok && cur.(*CacheEntry).inFlight {
+			return false // a commit owns this key; do not cache
+		}
+		if !ok {
+			if _, loaded := c.entries.LoadOrStore(key, entry); !loaded {
+				return true
+			}
+			continue // lost the race; re-check (the winner may be a sentinel)
+		}
+		if c.entries.CompareAndSwap(key, cur, entry) {
+			return true
+		}
+		// The slot changed under us (possibly to a sentinel); re-evaluate.
+	}
+}
+
 // GetOrResolve returns cached entry if fresh, rebuilds if stale
 //
 // Freshness is tracked via maxVersions sync.Map, updated atomically on every write.
@@ -101,6 +149,13 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
 	// Fast path: load existing entry
 	if val, ok := c.entries.Load(key); ok {
 		entry := val.(*CacheEntry)
+
+		// In-flight: a commit to this (E, A) is in progress. Resolve from storage
+		// (the rebuild below) without caching, so the result reflects whichever
+		// side of the commit is currently durable — never a stale cache hit.
+		if entry.inFlight {
+			return c.rebuild(key, resolver)
+		}
 
 		// Check freshness: compare stored version with maxVersions (O(1) map lookup)
 		if maxVal, ok := c.maxVersions.Load(key); ok {
@@ -117,11 +172,14 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
 	// That's fine - CRDT resolution is deterministic, both compute same result.
 	entry := c.rebuild(key, resolver)
 	if entry != nil {
-		c.entries.Store(key, entry)
-		// Update maxVersions to reflect what we just resolved
-		c.UpdateMaxVersion(key, entry.version)
-		// Track that we've cached this attribute for this entity
-		c.TrackEntityAttr(key.E, key.A)
+		// storeIfNotInFlight refuses to overwrite an in-flight sentinel, so a
+		// rebuild that raced a commit doesn't re-cache the pre-commit value.
+		if c.storeIfNotInFlight(key, entry) {
+			// Update maxVersions to reflect what we just resolved
+			c.UpdateMaxVersion(key, entry.version)
+			// Track that we've cached this attribute for this entity
+			c.TrackEntityAttr(key.E, key.A)
+		}
 	}
 	return entry
 }
@@ -272,9 +330,13 @@ func (c *Cache) GetCachedAttrs(e Entity) map[Attribute]bool {
 // crosses an attribute boundary, the accumulated datoms are resolved and
 // cached here in a single call.
 func (c *Cache) PopulateFromDatoms(key CacheKey, card schema.Cardinality, datoms []datalog.Datom) {
-	// Skip if already cached and fresh
+	// Skip if a commit to this (E, A) is in flight (the committer owns the cache
+	// for this key), or if already cached and fresh.
 	if val, ok := c.entries.Load(key); ok {
 		entry := val.(*CacheEntry)
+		if entry.inFlight {
+			return
+		}
 		if maxVal, ok := c.maxVersions.Load(key); ok {
 			if entry.version == maxVal.(datalog.ElementID) {
 				return
@@ -320,9 +382,11 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card schema.Cardinality, datoms
 	}
 
 	if entry != nil {
-		c.entries.Store(key, entry)
-		c.UpdateMaxVersion(key, entry.version)
-		c.TrackEntityAttr(key.E, key.A)
+		// Refuse to cache if a commit grabbed this key after the freshness check.
+		if c.storeIfNotInFlight(key, entry) {
+			c.UpdateMaxVersion(key, entry.version)
+			c.TrackEntityAttr(key.E, key.A)
+		}
 	}
 }
 

@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-30
 **Severity**: Consistency (Low–Moderate; concurrency-only, transient)
-**Status**: Open
+**Status**: RESOLVED (2026-05-30) — `Commit` marks the touched `(E, A)` keys in-flight in the cache *before* the storage commit (option-2 done with a clobber-proof sentinel); readers resolve in-flight keys straight from storage, so no reader observes the pre-commit value once `stx.Commit()` returns. See [Resolution](#resolution).
 **Affected**: `datalog/storage/database.go` (`Transaction.Commit`), `datalog/storage/cache.go` (EA cache freshness). Only manifests with concurrent readers on the same `*Database` while a writer commits, and only for `(E, A)` pairs that already have a cached entry. Single-writer / sequential usage is unaffected. History-mode reads (which bypass the cache) are unaffected.
 
 ## Summary
@@ -186,3 +186,53 @@ architectural decision for the owner, not a mechanical fix.
 - Run the concurrent tests under `go test -race` to catch any new data races
   introduced by the reordering (note: `-race` is not part of the standard gate;
   only add it for these targeted tests).
+
+## Resolution
+
+Chosen approach: **option 2 (invalidate before the storage commit), made
+clobber-proof with an in-flight sentinel** rather than a deletion. Picked over
+option 1 (pre-bump `maxVersions`) because `UpdateMaxVersion` is monotonic
+(`cache.go`), so option 1's rollback would have to *lower* `maxVersions` — a
+non-monotonic, race-prone revert (a too-high `maxVersions` permanently bypasses
+the cache for that key). Option 3 (storage-derived freshness) was rejected: a
+per-`(E, A)` freshness seek ≈ the CardinalityOne resolution cost, defeating the
+cache's purpose.
+
+Mechanism:
+
+- `Transaction.Commit` computes the touched `(E, A)` keys and calls
+  `Cache.BeginInFlight` to store a shared `inFlightEntry` sentinel for each,
+  **before** `stx.Commit()`. The post-commit `Invalidate` (which already deletes
+  the touched entries) clears the sentinels; on commit failure the same
+  `Invalidate` runs, and `maxVersions` was never pre-bumped, so there is nothing
+  to revert.
+- `GetOrResolve` returns `rebuild(...)` (resolve from storage, do **not** cache)
+  when it loads a sentinel, so an in-flight key always reflects current storage —
+  `V_old` before the commit is durable, `V_new` after.
+- The cache's two write paths (`GetOrResolve`'s rebuild-store and
+  `PopulateFromDatoms`) go through `storeIfNotInFlight`, a compare-and-swap that
+  refuses to overwrite a sentinel. This closes the clobber window where a
+  concurrent rebuild — having resolved the pre-commit value — would otherwise
+  re-cache it over a sentinel set in the meantime.
+- `maxVersions` stays monotonic throughout (only ever bumped, after the commit),
+  which is what keeps rollback trivial.
+
+Performance: the read hot path adds a single `entry.inFlight` field read on an
+already-loaded struct. `BenchmarkGetOrResolve_FreshHit` measured **16.35 → 16.43
+ns/op (+0.5%, within noise), 0 allocs** before/after. The cost concentrates on
+the rare commit path (one sentinel store per touched key) and on reads of the
+specific keys being committed during the brief commit window (they resolve from
+storage instead of hitting the cache — the intended correctness trade).
+
+Tests added (`datalog/storage/cache_commit_inflight_test.go`):
+
+- `TestCommit_NoStaleCachedReadAfterCommitReturns` — the regression, via the
+  test-only `Database.onCommitWindow` hook; verified to **fail** when
+  `BeginInFlight` is disabled (it observes the stale `V_old`).
+- `TestCommit_ConcurrentReadersSeeCommittedValue` — 8 readers vs a monotonic
+  writer; values never move backward. Race-clean under `-race`.
+- `TestCommit_RollbackPathDoesNotPoisonCache` — the failure-path cleanup
+  (`BeginInFlight` then `Invalidate`, no `UpdateMaxVersion`) leaves the cache
+  serving the correct pre-commit value and unpoisoned for the next commit.
+
+Full suite green (`go test -count=1 ./...`); storage package clean under `-race`.
