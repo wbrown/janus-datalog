@@ -4,7 +4,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
 
@@ -207,54 +206,93 @@ func TestDoubleIterationWithoutMaterializePanics(t *testing.T) {
 	rel.Iterator()
 }
 
-// TestSizeBlocksWhileCaching tests that Size() blocks while caching is in progress
+// gatedSliceIterator yields its tuples but blocks on `gate` before the first
+// one, closing `started` first. It lets a test pin a StreamingRelation in the
+// caching-in-progress state with no timing assumptions: once `started` is
+// closed, StreamingRelation.Iterator() has already set cachingInProgress (it
+// does so before pulling the source), and the cache build is parked here, so it
+// cannot complete until the test closes `gate`.
+type gatedSliceIterator struct {
+	tuples  []Tuple
+	pos     int
+	started chan struct{}
+	gate    chan struct{}
+	blocked bool
+}
+
+func (it *gatedSliceIterator) Next() bool {
+	if !it.blocked {
+		it.blocked = true
+		close(it.started)
+		<-it.gate
+	}
+	it.pos++
+	return it.pos < len(it.tuples)
+}
+
+func (it *gatedSliceIterator) Tuple() Tuple { return it.tuples[it.pos] }
+func (it *gatedSliceIterator) Close() error { return nil }
+func (it *gatedSliceIterator) Error() error { return nil }
+
+// TestSizeBlocksWhileCaching verifies that Size() called while the cache is
+// being built returns the correct count (never -1 or a partial count). The
+// gated source iterator makes the caching-in-progress state deterministic via
+// channel handshakes, so the test has no timing assumptions and cannot flake.
 func TestSizeBlocksWhileCaching(t *testing.T) {
-	// Create a streaming relation with 100 tuples
 	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := make([]Tuple, 100)
 	for i := 0; i < 100; i++ {
 		tuples[i] = Tuple{int64(i)}
 	}
 
-	iter := &sliceIterator{tuples: tuples, pos: -1}
+	src := &gatedSliceIterator{
+		tuples:  tuples,
+		pos:     -1,
+		started: make(chan struct{}),
+		gate:    make(chan struct{}),
+	}
 
 	opts := ExecutorOptions{EnableTrueStreaming: true}
-	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
+	rel := NewStreamingRelationWithOptions(symbols, src, opts).Materialize().(*StreamingRelation)
 
-	// Call Materialize() to enable caching
-	rel = rel.Materialize().(*StreamingRelation)
-
-	// Start first iterator in a goroutine (this will build cache)
+	// Build the cache in a goroutine; it parks inside the gated source.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		iter := rel.Iterator()
-		for iter.Next() {
-			// Iterate
+		it := rel.Iterator()
+		for it.Next() {
 		}
-		iter.Close()
+		it.Close()
 	}()
 
-	// Give the iterator time to start caching
-	// (In real code, this race is fine - we just want to test blocking behavior)
-	// Wait a tiny bit to ensure caching has started
-	time.Sleep(1 * time.Millisecond)
+	// Handshake: once the source has been entered, Iterator() has set
+	// cachingInProgress and the build is parked, so it cannot complete. From
+	// here Size() can never observe the not-started state -- the state that
+	// returned -1 in the flaky (sleep-based) version.
+	<-src.started
 
-	// Now call Size() from main goroutine - should block until cache is complete
-	size := rel.Size()
+	// Call Size() while caching is held open. cacheReady is false (the source
+	// is parked, so the build cannot have finished), so Size() must take the
+	// caching-in-progress branch and block on completion rather than fast-path.
+	sizeCalled := make(chan struct{})
+	sizeCh := make(chan int, 1)
+	go func() {
+		close(sizeCalled)
+		sizeCh <- rel.Size()
+	}()
+	<-sizeCalled
 
-	// Wait for iterator to finish
+	// Releasing the gate lets the build finish; only then can Size() return.
+	close(src.gate)
+
+	if size := <-sizeCh; size != 100 {
+		t.Errorf("Size() during caching = %d, want 100", size)
+	}
 	wg.Wait()
 
-	// Verify we got the correct size
-	if size != 100 {
-		t.Errorf("Expected Size() to return 100 after blocking, got %d", size)
-	}
-
-	// Call Size() again - should return immediately now
-	size2 := rel.Size()
-	if size2 != 100 {
-		t.Errorf("Expected second Size() to return 100, got %d", size2)
+	// After caching completes, Size() returns immediately.
+	if size := rel.Size(); size != 100 {
+		t.Errorf("Size() after caching = %d, want 100", size)
 	}
 }
