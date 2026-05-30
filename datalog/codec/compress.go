@@ -10,7 +10,21 @@ import (
 // If the algorithm changes, increment this. The decompressor rejects
 // unknown versions. The format is frozen per version — same input must
 // always produce same output for a given version.
-const CompressionVersion byte = 0x01
+//
+// v1 (0x01): sequence/match counts are uint16 — overflowed and silently
+//   truncated above 65535 sequences, producing unreadable blobs for large,
+//   compressible, densely-structured values. Read-only now; never written.
+// v2 (0x02): sequence/match counts widened to uint32. Decompress reads both
+//   versions; Compress always writes v2.
+const CompressionVersion byte = 0x02
+
+// maxSequenceCount is the largest sequence/match count the v2 header can encode
+// (uint32). Compress declines (returns nil → value stored raw) above this rather
+// than truncating the count and writing a blob that later fails to decompress.
+// Unreachable for any real value — each sequence needs ≥3 bytes, so exceeding
+// this implies a >12 GB input — it is a belt-and-suspenders invariant against a
+// future header-width regression, not a limit reached in practice.
+const maxSequenceCount = 0xFFFFFFFF
 
 // Compress compresses input using LZ77 + FSE.
 // Returns compressed bytes with header, or nil if compression provides
@@ -32,6 +46,15 @@ func Compress(input []byte) []byte {
 		if seq.Offset > 0 {
 			numMatches++
 		}
+	}
+
+	// Correctness guard: the v2 header encodes both counts as uint32. If a value
+	// ever produced more sequences/matches than that, the count would truncate on
+	// write and the blob would be unrecoverable on read. Decline instead so the
+	// caller stores the value raw (Compress == nil ⇒ uncompressed). Unreachable in
+	// practice; see maxSequenceCount.
+	if len(sb.Sequences) > maxSequenceCount || numMatches > maxSequenceCount {
+		return nil
 	}
 
 	// Build extra bits bitstream
@@ -61,12 +84,12 @@ func Compress(input []byte) []byte {
 	extraBlock := rawBlock(extraBits)
 
 	// Assemble output
-	// Header: [version:1][originalLen:4 BE][numSequences:2][numMatches:2][numLiterals:4]
+	// Header (v2): [version:1][originalLen:4 BE][numSequences:4][numMatches:4][numLiterals:4]
 	result := make([]byte, 0, len(input))
 	result = append(result, CompressionVersion)
 	result = binary.BigEndian.AppendUint32(result, uint32(len(input)))
-	result = binary.BigEndian.AppendUint16(result, uint16(len(sb.Sequences)))
-	result = binary.BigEndian.AppendUint16(result, uint16(numMatches))
+	result = binary.BigEndian.AppendUint32(result, uint32(len(sb.Sequences)))
+	result = binary.BigEndian.AppendUint32(result, uint32(numMatches))
 	result = binary.BigEndian.AppendUint32(result, uint32(len(sb.Literals)))
 
 	// Blocks
@@ -84,23 +107,41 @@ func Compress(input []byte) []byte {
 	return result
 }
 
-// Decompress decompresses data produced by Compress.
+// Decompress decompresses data produced by Compress. It reads both header
+// formats: v1 (uint16 sequence/match counts, 13-byte header) and v2 (uint32
+// counts, 17-byte header). The version-dispatch below runs once per value,
+// outside the per-byte decode loop, so the dual-read path costs nothing in the
+// hot path. Compress only ever writes v2.
 func Decompress(compressed []byte) ([]byte, error) {
-	if len(compressed) < 13 { // minimum header
+	if len(compressed) < 1 {
 		return nil, errors.New("compress: data too short")
 	}
 
-	// Parse header
+	// Parse header — field widths and offsets depend on the version byte.
 	version := compressed[0]
-	if version != CompressionVersion {
-		return nil, fmt.Errorf("compress: unsupported version %d (expected %d)", version, CompressionVersion)
+	var originalLen, numSequences, numMatches, numLiterals, pos int
+	switch version {
+	case 1:
+		if len(compressed) < 13 { // minimum v1 header
+			return nil, errors.New("compress: data too short")
+		}
+		originalLen = int(binary.BigEndian.Uint32(compressed[1:5]))
+		numSequences = int(binary.BigEndian.Uint16(compressed[5:7]))
+		numMatches = int(binary.BigEndian.Uint16(compressed[7:9]))
+		numLiterals = int(binary.BigEndian.Uint32(compressed[9:13]))
+		pos = 13
+	case 2:
+		if len(compressed) < 17 { // minimum v2 header
+			return nil, errors.New("compress: data too short")
+		}
+		originalLen = int(binary.BigEndian.Uint32(compressed[1:5]))
+		numSequences = int(binary.BigEndian.Uint32(compressed[5:9]))
+		numMatches = int(binary.BigEndian.Uint32(compressed[9:13]))
+		numLiterals = int(binary.BigEndian.Uint32(compressed[13:17]))
+		pos = 17
+	default:
+		return nil, fmt.Errorf("compress: unsupported version %d (expected 1 or 2)", version)
 	}
-	originalLen := int(binary.BigEndian.Uint32(compressed[1:5]))
-	numSequences := int(binary.BigEndian.Uint16(compressed[5:7]))
-	numMatches := int(binary.BigEndian.Uint16(compressed[7:9]))
-	numLiterals := int(binary.BigEndian.Uint32(compressed[9:13]))
-
-	pos := 13
 
 	// Read and decompress blocks
 	literals, n, err := readDecompressBlock(compressed, pos, numLiterals)

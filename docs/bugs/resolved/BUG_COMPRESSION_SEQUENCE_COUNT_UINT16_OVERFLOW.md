@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-30
 **Severity**: Correctness / Data Loss (High)
-**Status**: Open
+**Status**: RESOLVED (2026-05-30) — header counts widened to `uint32` (`CompressionVersion` 0x01 → 0x02), `Decompress` dual-reads both formats, and a belt-and-suspenders `Compress` guard declines (stores raw) above the `uint32` ceiling. See [Resolution](#resolution).
 **Affected**: `datalog/codec/compress.go` (LZJ codec), all string/`[]byte` values large and compressible enough to exceed 65,535 LZ77 sequences; compression is on by default (threshold 512 bytes), so this is reachable without opt-in.
 
 ## Summary
@@ -218,3 +218,38 @@ If the header is widened, also add:
 - `TestDecompress_V1BlobStillReadable` — a captured v1 (uint16-header) blob
   decodes correctly under the v2 decoder (back-compat), or an explicit decision
   is recorded that no v1 data needs to be preserved.
+
+## Resolution
+
+Both directions from the fix were taken: the header was widened **and** the guard
+kept.
+
+- **Header widened to `uint32`, `CompressionVersion` 0x01 → 0x02.** The two count
+  fields are now `binary.BigEndian.AppendUint32` (v2 header is 17 bytes vs v1's
+  13). The header layout is otherwise unchanged, and the FSE/LZ blocks are
+  byte-identical to v1 for the same input — the version bump only widens the two
+  counts.
+- **Dual-read in `Decompress`.** A `switch` on the version byte reads v1 (uint16,
+  offsets 5:7 / 7:9, `pos` 13) or v2 (uint32, offsets 5:9 / 9:13, `pos` 17). It
+  runs once per value, outside the per-byte decode loop, so it costs nothing in
+  the hot path. Existing on-disk v1 blobs remain readable; `Compress` only ever
+  writes v2. Unknown versions still error.
+- **Belt-and-suspenders guard.** `Compress` returns `nil` (→ value stored raw via
+  the existing safety-net path) if `len(sb.Sequences)` or `numMatches` exceeds
+  `maxSequenceCount` (`0xFFFFFFFF`). Unreachable in practice (>12 GB input), it
+  documents the format ceiling and guards against a future header-width
+  regression.
+
+Regression tests added:
+
+- `codec`: `TestCompress_JSONLikeValueAboveUint16Sequences_RoundTrips`
+  (~2 MB JSON-ish, 77,821 sequences), `TestCompress_AdversarialDenseSequences_RoundTrips`
+  (~512 KB adversarial, 104,419 sequences), `TestCompress_SequenceCountOverflow_DoesNotProduceUnreadableBlob`
+  (round-trip-or-raw invariant), and `TestDecompress_V1BlobStillReadable`, which
+  decodes the original v1 golden blobs (genuine captured legacy bytes, retained as
+  `v1Hex` fixtures alongside the re-recorded v2 `expectedHex`).
+- `storage`: `TestLargeCompressedValue_RoundTripsThroughStorage` — writes a ~2 MB
+  structured value, commits, closes, reopens from disk, and reads it back equal,
+  exercising Tier-3 blob routing + decode end-to-end.
+
+Full suite green (`go test -count=1 ./...`).
