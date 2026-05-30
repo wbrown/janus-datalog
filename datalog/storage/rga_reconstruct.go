@@ -59,6 +59,14 @@ func ReconstructRGA(elements []RGAElement) []any {
 
 	// DFS from HEAD to build ordered result
 	// Only emit values for non-tombstoned elements
+	//
+	// NOTE: recursive. Sequential Add() appends chain each element to the
+	// previous one (AfterRef = prior element), so the tree degenerates into a
+	// near-linear chain and recursion depth ≈ vector length. Go grows
+	// goroutine stacks dynamically, so this is safe for normal vectors, but a
+	// pathologically long single vector (≫ hundreds of thousands of live
+	// elements) could exhaust the stack. If that ever becomes a real workload,
+	// convert this DFS to an explicit stack/iterative walk.
 	var result []any
 	var walk func(id datalog.ElementID)
 	walk = func(id datalog.ElementID) {
@@ -105,6 +113,8 @@ func ReconstructRGAWithIDs(elements []RGAElement) []RGAElementWithPosition {
 
 	// DFS from HEAD to build ordered result with positions
 	// Only emit non-tombstoned elements
+	// Recursion depth ≈ vector length for sequentially-appended vectors; see
+	// the stack-depth note in ReconstructRGA.
 	var result []RGAElementWithPosition
 	var walk func(id datalog.ElementID)
 	walk = func(id datalog.ElementID) {

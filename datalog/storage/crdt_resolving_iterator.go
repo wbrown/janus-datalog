@@ -416,7 +416,9 @@ func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 		sortRGAByID(children[k])
 	}
 
-	// DFS from HEAD, collect values into a single resolved list
+	// DFS from HEAD, collect values into a single resolved list.
+	// Recursion depth ≈ vector length for sequentially-appended vectors; see
+	// the stack-depth note in storage/rga_reconstruct.go (ReconstructRGA).
 	var values []any
 	var maxTx datalog.ElementID
 	visited := make(map[datalog.ElementID]bool)

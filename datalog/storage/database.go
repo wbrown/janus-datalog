@@ -80,7 +80,7 @@ type DatabaseOptions struct {
 	ReplicaID            uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
 	DisableCache         bool                    // Disable EA cache; queries resolve directly from storage
 	PlannerOptions       *planner.PlannerOptions // Optional override for default planner options
-	CompressionThreshold int                     // Compress string/[]byte values >= this size (default 256; -1 to disable)
+	CompressionThreshold int                     // Compress string/[]byte values >= this size (0 = default 512; -1 to disable)
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.

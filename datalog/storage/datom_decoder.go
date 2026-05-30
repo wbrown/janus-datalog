@@ -71,6 +71,11 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder, db *badger.DB
 		return datalog.Datom{}, fmt.Errorf("failed to decode value: %w", err)
 	}
 
+	// E is reconstructed from the stored 20-byte hash only: the original name
+	// string is not persisted (entities are content-addressed — see the
+	// datalog.identity doc). The returned Identity's String() is therefore the
+	// L85 hash unless the same name was also interned in-process. Store the name
+	// as an attribute if you need it back.
 	return datalog.Datom{
 		E:        datalog.InternIdentityFromHash(entity),
 		A:        datalog.InternKeywordFromBytes(attr),

@@ -8,12 +8,34 @@ import (
 )
 
 // identity is the unexported base type for entity identifiers.
+//
+// Design: entities are CONTENT-ADDRESSED. An identity IS the SHA1 of its string
+// name; there is no separate auto-assigned entity id (unlike Datomic). The
+// original string is kept in `str` only as a convenience for identities
+// constructed in-process via NewIdentity; it is NOT persisted. Identities
+// reconstructed from storage (NewIdentityFromHash, the decode path) have an
+// empty `str`, so String() falls back to the L85 of the hash. Two consequences
+// callers must know:
+//
+//   - After a fresh open, query results render entities as L85 hashes, not their
+//     original names. To recover a human name, store it as an attribute (e.g.
+//     :person/name) and read that back — the hash alone does not round-trip to
+//     the string.
+//   - Because interning is keyed by the 20-byte hash, two DISTINCT name strings
+//     that collide in SHA1 would intern to the SAME identity and silently alias
+//     to one entity. This is astronomically unlikely and SHA1 is used here for
+//     content addressing, not security. Note the Equal/Compare panic guards the
+//     INTERNING invariant (no two live pointers share a hash); it does not — and
+//     cannot — detect a genuine hash collision, since the colliding names become
+//     one pointer before any comparison happens.
 type identity struct {
-	value [20]byte // SHA1 hash
-	str   string   // Original string (if known)
+	value [20]byte // SHA1 hash (the content address; this IS the entity's identity)
+	str   string   // Original string, in-process only; empty when decoded from storage
 }
 
-// Identity is the exported pointer type, always interned.
+// Identity is the exported pointer type, always interned. See the identity
+// struct doc for content-addressing semantics (names are not persisted; reads
+// surface L85 hashes unless the name is stored as an attribute).
 type Identity = *identity
 
 // NewIdentity creates an interned identity from a string.

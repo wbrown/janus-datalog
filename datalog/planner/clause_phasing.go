@@ -2,6 +2,8 @@ package planner
 
 import (
 	"fmt"
+	"sort"
+
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -133,6 +135,13 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 			availableList = append(availableList, sym)
 		}
 	}
+	// Sort for deterministic ordering. Available is used only as a set
+	// (membership) and to build the phase's :in clause, which the executor
+	// ignores — so order has no effect on results. Sorting keeps EXPLAIN/plan
+	// output stable across runs (map iteration is otherwise nondeterministic).
+	sort.Slice(availableList, func(i, j int) bool {
+		return availableList[i].Compare(availableList[j]) < 0
+	})
 
 	phase := ClausePhase{
 		Clauses:   selectedClauses,
@@ -175,6 +184,12 @@ func computeKeepSymbols(currentPhase ClausePhase, remainingClauses []query.Claus
 			keep = append(keep, sym)
 		}
 	}
+	// Sort for deterministic ordering. Downstream phases match Keep symbols by
+	// name (Project / joins look up by symbol, not position), so order does not
+	// affect results — this only stabilizes EXPLAIN/plan output across runs.
+	sort.Slice(keep, func(i, j int) bool {
+		return keep[i].Compare(keep[j]) < 0
+	})
 
 	return keep
 }

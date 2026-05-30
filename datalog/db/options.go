@@ -49,7 +49,7 @@ func WithPlannerOptions(opts planner.PlannerOptions) Option {
 
 // WithCompressionThreshold sets the compression threshold in bytes.
 // Values at or above this size are transparently compressed.
-// Default is 256 (enabled). Use -1 to disable compression.
+// Default (when unset / 0) is 512. Use -1 to disable compression.
 func WithCompressionThreshold(bytes int) Option {
 	return func(c *config) { c.compressionThreshold = bytes }
 }
