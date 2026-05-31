@@ -170,12 +170,30 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		cache = NewCache()
 	}
 
+	// When the caller supplies no schema, reconstruct one from the CRDT ops
+	// already stored on disk so vector/many attributes resolve correctly instead
+	// of collapsing to a single LWW value (e.g. the `datalog` CLI opening an
+	// existing database). A supplied schema is authoritative and wins entirely —
+	// no inference. On an empty store this yields an empty schema, equivalent to
+	// the previous nil behavior.
+	effectiveSchema := opts.Schema
+	if effectiveSchema == nil {
+		inferred, ierr := inferSchemaFromStore(store)
+		if ierr != nil {
+			store.Close()
+			return nil, fmt.Errorf("inferring schema from store: %w", ierr)
+		}
+		if inferred.HasSchema() {
+			effectiveSchema = inferred
+		}
+	}
+
 	return &Database{
 		store:             store,
 		activeTx:          make(map[*Transaction]bool),
 		planCache:         planner.NewPlanCache(1000, 0),
 		parseCache:        NewParseCache(1000),
-		schema:            opts.Schema,
+		schema:            effectiveSchema,
 		annotationHandler: annotations.Synchronized(opts.AnnotationHandler),
 		plannerOptions:    opts.PlannerOptions,
 		clock:             clock,
