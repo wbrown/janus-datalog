@@ -455,17 +455,21 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 		})
 	}
 
-	// We need to materialize the binding relation to iterate multiple times
-	// CRITICAL: Must copy tuples because iterator reuses buffer
+	// We need to materialize the binding relation to iterate multiple times.
+	// ForEach drives the iterator per the storage.Iterator contract: a deferred
+	// binding-relation failure (Tier-3 blob decode, CRDT unique-walk) surfaces
+	// only through Error()/Close() after Next() returns false, and must abort
+	// the match rather than be laundered into a clean partial result.
+	// CRITICAL: Must copy tuples because the iterator reuses its buffer.
 	var bindingTuples []executor.Tuple
-	it := bindingRel.Iterator()
-	for it.Next() {
-		tuple := it.Tuple()
+	if err := executor.ForEach(bindingRel, func(tuple executor.Tuple) error {
 		tupleCopy := make(executor.Tuple, len(tuple))
 		copy(tupleCopy, tuple)
 		bindingTuples = append(bindingTuples, tupleCopy)
+		return nil
+	}); err != nil {
+		return nil, err
 	}
-	it.Close()
 
 	// Create iterator that will scan for each binding tuple
 	iter := &nonReusingIterator{
