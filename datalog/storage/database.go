@@ -394,37 +394,25 @@ func (d *Database) NewTransactionAt(t time.Time) *Transaction {
 }
 
 // Matcher returns a PatternMatcher for the current database state
+// effectivePlannerOptions returns the database's planner options: the
+// caller-supplied override (DatabaseOptions.PlannerOptions) when set, otherwise
+// DefaultPlannerOptions(). Every query-construction path (Query, NewExecutor,
+// Matcher) funnels through this accessor so the executor and the default-source
+// matcher always agree on the effective options. See
+// BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.
+func (d *Database) effectivePlannerOptions() planner.PlannerOptions {
+	if d.plannerOptions != nil {
+		return *d.plannerOptions
+	}
+	return DefaultPlannerOptions()
+}
+
+// Matcher returns the default-source pattern matcher, configured from the
+// database's effective planner options (override or defaults) so the relations
+// it produces carry the same executor options the query runs with — not a
+// hardcoded default set.
 func (d *Database) Matcher() executor.PatternMatcher {
-	// Convert default planner options to executor options
-	opts := DefaultPlannerOptions()
-	execOpts := executor.ExecutorOptions{
-		EnableIteratorComposition:       opts.EnableIteratorComposition,
-		EnableTrueStreaming:             opts.EnableTrueStreaming,
-		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
-		EnableStreamingJoins:            opts.EnableStreamingJoins,
-		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
-		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
-		EnableDebugLogging:              opts.EnableDebugLogging,
-		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
-	}
-	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
-	// Set annotation handler for storage-level events (index selection, scan details)
-	matcher.SetHandler(d.annotationHandler)
-	// Set schema for CRDT cardinality-aware resolution
-	if d.schema != nil {
-		matcher.SetSchema(d.schema)
-	}
-	// Set cache for CRDT resolution O(1) access
-	if d.cache != nil {
-		matcher.SetCache(d.cache)
-	}
-	// Apply temporal mode if set (AsOf/History)
-	if d.temporalTxID != nil {
-		return matcher.AsOf(*d.temporalTxID)
-	}
-	return matcher
+	return d.matcherWithExecOptions(d.effectivePlannerOptions())
 }
 
 // Match implements executor.PatternMatcher — the Database itself can answer pattern queries.
@@ -516,52 +504,31 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 
 // NewExecutor creates a new query executor that uses the database's plan cache
 func (d *Database) NewExecutor() *executor.Executor {
-	var opts planner.PlannerOptions
-	if d.plannerOptions != nil {
-		opts = *d.plannerOptions
-	} else {
-		opts = DefaultPlannerOptions()
-	}
+	opts := d.effectivePlannerOptions()
 	opts.Cache = d.planCache // Use database's cache
-	return executor.NewExecutorWithOptions(d.Matcher(), d, opts)
+	return executor.NewExecutorWithOptions(d.matcherWithExecOptions(opts), d, opts)
 }
 
 // NewExecutorWithOptions creates a new query executor with custom planner
 // options and the database's plan cache.
 //
-// Uses d.Matcher() to construct the pattern matcher, so schema, cache,
-// annotation handler, and temporal mode (AsOf/History) are all applied.
-// The executor options from the planner options override the matcher's
-// default executor options.
+// Builds the pattern matcher from the same custom options via
+// matcherWithExecOptions, so the executor and the matcher's relations agree on
+// the effective options, and schema, cache, annotation handler, and temporal
+// mode (AsOf/History) are all applied.
 func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor.Executor {
 	opts.Cache = d.planCache
-	// Build the matcher via d.Matcher() which applies schema, cache,
-	// annotation handler, and temporal mode. Then override its executor
-	// options with the caller's custom options.
 	matcher := d.matcherWithExecOptions(opts)
 	return executor.NewExecutorWithOptions(matcher, d, opts)
 }
 
 // matcherWithExecOptions builds a fully-configured BadgerMatcher using the
-// caller's executor options (from PlannerOptions) while applying all
+// given planner options (converted through executor.ExecutorOptionsFromPlanner,
+// the single source of truth shared with the executor) while applying all
 // database-level state: schema, cache, annotation handler, temporal mode.
-//
-// This is the same as Matcher() but with custom executor options instead of
-// the defaults.
+// Matcher() funnels through here with the database's effective options.
 func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
-	execOpts := executor.ExecutorOptions{
-		EnableIteratorComposition:       opts.EnableIteratorComposition,
-		EnableTrueStreaming:             opts.EnableTrueStreaming,
-		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
-		EnableStreamingJoins:            opts.EnableStreamingJoins,
-		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
-		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
-		EnableDebugLogging:              opts.EnableDebugLogging,
-		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
-	}
-	matcher := NewBadgerMatcherWithOptions(d.store, execOpts)
+	matcher := NewBadgerMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
 	matcher.SetHandler(d.annotationHandler)
 	if d.schema != nil {
 		matcher.SetSchema(d.schema)

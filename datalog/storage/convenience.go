@@ -6,7 +6,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -48,12 +47,7 @@ func (d *Database) Query(queryInput interface{}, inputs ...interface{}) (executo
 	}
 
 	// Execute with the SourceRouter as the PatternMatcher
-	var planOpts planner.PlannerOptions
-	if d.plannerOptions != nil {
-		planOpts = *d.plannerOptions
-	} else {
-		planOpts = DefaultPlannerOptions()
-	}
+	planOpts := d.effectivePlannerOptions()
 	planOpts.Cache = d.planCache
 	exec := executor.NewExecutorWithOptions(router, d, planOpts)
 	result, err := exec.ExecuteWithRelations(executor.NewContext(d.annotationHandler), q, inputRelations)
