@@ -593,19 +593,37 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 	// (fallback). The per-tuple inner loop is just prepared.Run(ctx, tuple).
 	prepared := e.prepareIteration(plan, relationInput, inputRelations, iterationIndex)
 
-	// Iterate over each tuple in the relation
+	// Iterate over each tuple in the relation. Close() is explicit (not
+	// deferred) so its error can be inspected before results are combined, and
+	// so a deferred input-iteration failure — which surfaces only through
+	// Error() after Next() returns false — is not laundered into a clean
+	// partial result. This mirrors the parallel path's policy.
 	it := iterationRelation.Iterator()
-	defer it.Close()
 
 	for it.Next() {
 		result, err := prepared.Run(ctx, it.Tuple())
 		if err != nil {
+			// Per-tuple execution error is the most specific cause: close
+			// best-effort and do not let a Close() error mask it.
+			it.Close()
 			return nil, fmt.Errorf("iteration execution failed: %w", err)
 		}
 
 		if result != nil {
 			allResults = append(allResults, result)
 		}
+	}
+
+	// Error priority: a deferred iteration error (the input may have truncated,
+	// so anything past the failure point was never seen) wins over a Close()
+	// error, so cleanup cannot mask the real cause.
+	iterErr := it.Error()
+	closeErr := it.Close()
+	if iterErr != nil {
+		return nil, iterErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 
 	// Combine all results
