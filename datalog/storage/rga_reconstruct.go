@@ -60,13 +60,24 @@ func ReconstructRGA(elements []RGAElement) []any {
 	// DFS from HEAD to build ordered result
 	// Only emit values for non-tombstoned elements
 	//
-	// NOTE: recursive. Sequential Add() appends chain each element to the
-	// previous one (AfterRef = prior element), so the tree degenerates into a
-	// near-linear chain and recursion depth ≈ vector length. Go grows
-	// goroutine stacks dynamically, so this is safe for normal vectors, but a
-	// pathologically long single vector (≫ hundreds of thousands of live
-	// elements) could exhaust the stack. If that ever becomes a real workload,
-	// convert this DFS to an explicit stack/iterative walk.
+	// Why recursion: the DFS tree walk is intrinsic to RGA — order is defined
+	// by each element's AfterRef, so reconstruction MUST traverse the insertion
+	// tree. There is no non-traversal alternative.
+	//
+	// Depth: sequential Add() chains each element after the previous one
+	// (AfterRef = prior element), so the tree degenerates into a near-linear
+	// chain and recursion depth ≈ vector length. Go grows goroutine stacks
+	// dynamically (8KB → ~1GB cap), so this is safe until a SINGLE vector holds
+	// on the order of millions of live elements.
+	//
+	// Why not "just use an explicit stack": that doesn't remove the cost, it
+	// relocates it. The result slice below is already O(n) in live elements and
+	// dominates memory; an explicit stack would also be O(depth) ≈ O(n) on the
+	// heap. So the iterative form buys only a higher cliff (heap OOM instead of
+	// the ~1GB stack cap), not a lower asymptotic footprint — for a vector that
+	// large you have bigger problems than stack depth. Convert only if such a
+	// workload actually materializes; until then recursion is simpler and
+	// equivalent in the regime that matters.
 	var result []any
 	var walk func(id datalog.ElementID)
 	walk = func(id datalog.ElementID) {

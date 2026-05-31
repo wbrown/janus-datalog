@@ -213,10 +213,13 @@ func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 	}
 }
 
-// TestSubqueryWithTwoInputs tests subquery that takes multiple input variables
-// NOTE: Current implementation only supports single input to subqueries
+// TestSubqueryWithTwoInputs tests subquery that takes multiple input variables.
+// This is a LIVE gap: with the skip removed the test fails (totals come back 0
+// instead of 300/50). Tracked in docs/bugs/BUG_SUBQUERY_MULTIPLE_INPUTS.md; the
+// skip points there rather than silently hiding the gap. Remove the skip and
+// assert the totals when the bug is fixed.
 func TestSubqueryWithTwoInputs(t *testing.T) {
-	t.Skip("Multiple inputs to subqueries not yet supported")
+	t.Skip("Multiple inputs to subqueries not yet supported — see docs/bugs/BUG_SUBQUERY_MULTIPLE_INPUTS.md")
 
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{

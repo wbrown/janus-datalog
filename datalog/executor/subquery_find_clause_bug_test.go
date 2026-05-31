@@ -162,8 +162,7 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 	}
 
 	if len(aggregationEvents) == 0 {
-		t.Skip("No aggregation events captured - annotations not wired up yet")
-		return
+		t.Fatal("expected aggregation annotation events to be captured for the correlated subquery")
 	}
 
 	// With the decorrelation cache, grouped aggregation (groupby_count=1) is

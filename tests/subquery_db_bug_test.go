@@ -45,7 +45,8 @@ func TestSubqueryMissingDB(t *testing.T) {
 	}
 }
 
-// TestSubqueryWithDBGeneratesCorrectEDN verifies the fix once applied.
+// TestSubqueryWithDBGeneratesCorrectEDN verifies qb.Subquery emits the database
+// $ in the correlated subquery invocation.
 func TestSubqueryWithDBGeneratesCorrectEDN(t *testing.T) {
 	outer := qb.NewVar("outer")
 	result := qb.NewVar("result")
@@ -69,8 +70,7 @@ func TestSubqueryWithDBGeneratesCorrectEDN(t *testing.T) {
 
 	generated := q.String()
 
-	// After the fix, this should pass
 	if !strings.Contains(generated, "$ ?outer) [[?result]]") {
-		t.Skipf("Bug not yet fixed - subquery missing $ in: %s", generated)
+		t.Errorf("Subquery invocation missing database $\n\nGenerated:\n%s\n\nExpected to contain: $ ?outer) [[?result]]", generated)
 	}
 }
