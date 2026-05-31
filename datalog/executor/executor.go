@@ -39,7 +39,7 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 // NewExecutorWithOptions creates a new query executor with custom planner options
 func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opts planner.PlannerOptions) *Executor {
 	// Convert to executor options
-	execOpts := convertToExecutorOptions(opts)
+	execOpts := ExecutorOptionsFromPlanner(opts)
 
 	// Configure matcher with executor options if it supports it
 	if indexedMatcher, ok := matcher.(*IndexedMemoryMatcher); ok {
@@ -59,8 +59,15 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 	}
 }
 
-// convertToExecutorOptions extracts executor-specific options from PlannerOptions
-func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
+// ExecutorOptionsFromPlanner is the single source of truth for deriving
+// ExecutorOptions from PlannerOptions. Both the executor (NewExecutorWithOptions)
+// and the storage default-source matcher (storage.Database.Matcher) convert
+// through this function so they cannot disagree on which fields cross the
+// boundary — every PlannerOptions field that has an ExecutorOptions counterpart
+// is copied here. Collector is set per-query from the execution context, and
+// DefaultHashTableSize has no PlannerOptions counterpart, so both are left at
+// their zero value.
+func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
 		EnableIteratorComposition:       opts.EnableIteratorComposition,
 		EnableTrueStreaming:             opts.EnableTrueStreaming,
@@ -76,6 +83,7 @@ func convertToExecutorOptions(opts planner.PlannerOptions) ExecutorOptions {
 		EnableScanSharing:               opts.EnableScanSharing,
 		EnableEntityPrefetch:            opts.EnableEntityPrefetch,
 		EnableAttributeFetchFusion:      opts.EnableAttributeFetchFusion,
+		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
 	}
 }
 
