@@ -21,19 +21,6 @@ import (
 //
 // Start with Match() and MatchWithConstraints() in this file.
 
-// DEBUG: Global counter for iterator opens
-var globalIteratorOpens int
-
-// ResetIteratorOpenCount resets the global iterator open counter for testing
-func ResetIteratorOpenCount() {
-	globalIteratorOpens = 0
-}
-
-// GetIteratorOpenCount returns the current iterator open count for testing
-func GetIteratorOpenCount() int {
-	return globalIteratorOpens
-}
-
 // Ensure BadgerMatcher implements PatternMatcher
 var _ executor.PatternMatcher = (*BadgerMatcher)(nil)
 

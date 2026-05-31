@@ -267,8 +267,6 @@ func TestIteratorReuseRegression(t *testing.T) {
 	})
 
 	t.Run("ActualProductionQuery", func(t *testing.T) {
-		// Reset the real iterator counter
-		ResetIteratorOpenCount()
 		// The actual problematic query pattern from production:
 		// [?b :price/symbol ?sym] with ?sym bound
 		// [?b :price/minute-of-day ?mod] with range check
@@ -401,8 +399,6 @@ func TestIteratorReuseRegression(t *testing.T) {
 		t.Logf("  Datoms scanned: %d", matcher.stats.datomsScanned)
 		t.Logf("  Results: %d", barCount)
 		t.Logf("  FAKE Iterator opens from test: %d", matcher.stats.iteratorOpens)
-		t.Logf("  REAL Iterator opens from storage: %d (should be 1 with reuse, %d without)",
-			GetIteratorOpenCount(), len(symbols))
 	})
 }
 
