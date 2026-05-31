@@ -93,6 +93,48 @@ When the user says "revert", do it as your very next action. Do not:
 - **Immediate revert** = recoverable state preserved
 - **Deferred revert** = potentially permanent damage
 
+## Principles Are Upstream, Not a Final Filter
+
+Every rule in this file is a **discipline that generates your actions**, not a
+token or command to suppress at the last checkpoint. When you implement a rule as
+an output filter — scanning for a banned word in identifiers, or catching a
+banned command just before you run it — you leak it everywhere the filter doesn't
+reach, and the leak is proof the upstream thinking already lapsed. If you find
+yourself routing a rule through a checkpoint instead of letting it shape the
+action, stop: you have already lost it. These are the recurring instances:
+
+- **"No helpers" is not "don't type `helper` in a function name."** It is: name
+  every piece of code for what it does. If the word *helper* occurs to you at all
+  — in a name, a comment, or describing your own work out loud — you have not done
+  the naming, and that code needs a second look. The word surfacing IS the
+  violation, wherever it surfaces.
+
+- **Never destroy state you cannot get back.** This is not "avoid these verbs," it
+  is a property of the action. `git clean` and `git stash` are **banned outright,
+  for any reason** — `clean` irrecoverably deletes untracked files (ones git has
+  no record of), `stash` has silently buried work in this repo. Do not `rm`/`rmdir`
+  files. To undo your *own* uncommitted edits when the user asks you to revert,
+  `git restore` on the tracked files you changed this turn is fine; to remove a
+  file you created, leave it in place and ask, or move it — never delete. When in
+  doubt, move, don't delete.
+
+- **Green gates commit-prep.** `git add`, moving a bug doc to `resolved/`, marking
+  something RESOLVED — these are commit-prep, and they come *after* a green
+  `go test -count=1 ./...`, never in the same breath as the run that would tell you
+  whether the work is even correct. A red pre-existing test is the loudest signal
+  the approach is wrong; you must not be anywhere near `git add` when you haven't
+  earned green.
+
+- **Diagnose by reading, not by ritual.** No throwaway `*_test.go` scratch files,
+  no `md5`/`shasum`/`wc -l`/`cat -A` on source files. A failed Edit means your
+  `old_string` was wrong or your context is stale — Read the relevant lines and fix
+  it. The file is not haunted; hashing it tells you nothing about your mistake.
+
+- **One result at a time when actions depend on each other.** Over-parallelizing
+  tool calls so you act on step N before reading step N-1's result is how the
+  destructive and premature mistakes above actually happen. Fan out only truly
+  independent work.
+
 ## Project Overview
 
 This repository contains a Datomic-style Datalog engine implementation in Go, inspired by memories of previous single-node and distributed implementations.
