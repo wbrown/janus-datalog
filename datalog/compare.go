@@ -9,13 +9,63 @@ import (
 	"time"
 )
 
+// typeRank assigns each value an ordering class so CompareValues is a total,
+// antisymmetric order even across types. Values of different types are ordered
+// by rank; same-rank values compare by value. int and float share rank 1 so
+// they continue to compare by numeric magnitude (not split into separate
+// classes) — the engine's existing, correct numeric cross-comparison. The rank
+// order is internal to in-memory comparison; it is deliberately NOT the on-disk
+// ValueType tag order (which separates int and float and would break numeric
+// cross-compare). Unknown types share the top rank and fall back to string form.
+func typeRank(v interface{}) int {
+	switch v.(type) {
+	case nil:
+		return 0
+	case int, int8, int16, int32, int64, uint64, *uint64, float64:
+		return 1
+	case bool:
+		return 2
+	case time.Time:
+		return 3
+	case string:
+		return 4
+	case []byte:
+		return 5
+	case Keyword:
+		return 6
+	case Symbol:
+		return 7
+	case Identity:
+		return 8
+	case ElementID, *ElementID:
+		return 9
+	default:
+		return 10
+	}
+}
+
+// compareByRank orders two values of different types by their type rank. It is
+// only called once same-type comparison has been ruled out; equal ranks at this
+// point mean an unknown/unhandled type pair, which falls back to string form so
+// the result is still deterministic and antisymmetric.
+func compareByRank(left, right interface{}) int {
+	lr, rr := typeRank(left), typeRank(right)
+	if lr != rr {
+		return compareInt64s(int64(lr), int64(rr))
+	}
+	return strings.Compare(stringValue(left), stringValue(right))
+}
+
 // CompareValues compares two values and returns:
 //
 //	-1 if left < right
 //	 0 if left == right
 //	 1 if left > right
 //
-// This function handles all Datalog value types including:
+// Across different types it applies a stable type rank (see typeRank), so the
+// result is a total antisymmetric order usable by sort/min/max/order-by. int and
+// float still compare by numeric magnitude. This function handles all Datalog
+// value types including:
 // - Basic types: int, int64, float64, string, bool, time.Time
 // - Datalog types: Identity, Keyword
 // - Nil values (nil is less than any non-nil value)
@@ -45,8 +95,8 @@ func CompareValues(left, right interface{}) int {
 		if id2, ok := right.(Identity); ok {
 			return id1.Compare(id2)
 		}
-		// Identity vs non-Identity: type mismatch
-		return -1
+		// Identity vs non-Identity: order by type rank.
+		return compareByRank(left, right)
 	}
 
 	// Handle Keyword comparison - use the Compare method which handles nil
@@ -54,8 +104,8 @@ func CompareValues(left, right interface{}) int {
 		if kw2, ok := right.(Keyword); ok {
 			return kw1.Compare(kw2)
 		}
-		// Keyword vs non-Keyword: type mismatch
-		return -1
+		// Keyword vs non-Keyword: order by type rank.
+		return compareByRank(left, right)
 	}
 
 	// Handle Symbol comparison - use the Compare method which handles nil
@@ -63,8 +113,8 @@ func CompareValues(left, right interface{}) int {
 		if sym2, ok := right.(Symbol); ok {
 			return sym1.Compare(sym2)
 		}
-		// Symbol vs non-Symbol: type mismatch
-		return -1
+		// Symbol vs non-Symbol: order by type rank.
+		return compareByRank(left, right)
 	}
 
 	// Handle ElementID comparison — dereference pointers, then compare by value
@@ -72,7 +122,8 @@ func CompareValues(left, right interface{}) int {
 		if eid2, ok := DerefElementID(right); ok {
 			return eid1.Compare(eid2)
 		}
-		return -1
+		// ElementID vs non-ElementID: order by type rank.
+		return compareByRank(left, right)
 	}
 
 	// Integer widths normalize to int64 (the canonical representation) so
@@ -91,8 +142,14 @@ func CompareValues(left, right interface{}) int {
 		if r, ok := right.(string); ok {
 			return strings.Compare(l, r)
 		}
-		// String vs non-string: type mismatch
-		return -1
+		// String vs non-string: order by type rank.
+		return compareByRank(left, right)
+	case []byte:
+		if r, ok := right.([]byte); ok {
+			return bytes.Compare(l, r)
+		}
+		// []byte vs non-[]byte: order by type rank.
+		return compareByRank(left, right)
 	case bool:
 		if r, ok := right.(bool); ok {
 			if !l && r {
@@ -102,8 +159,8 @@ func CompareValues(left, right interface{}) int {
 			}
 			return 0
 		}
-		// Bool vs non-bool: type mismatch
-		return -1
+		// Bool vs non-bool: order by type rank.
+		return compareByRank(left, right)
 	case time.Time:
 		if r, ok := right.(time.Time); ok {
 			if l.Before(r) {
@@ -113,12 +170,13 @@ func CompareValues(left, right interface{}) int {
 			}
 			return 0
 		}
-		// Time vs non-time: type mismatch
-		return -1
+		// Time vs non-time: order by type rank.
+		return compareByRank(left, right)
 	}
 
-	// Fall back to string comparison for unknown types
-	return strings.Compare(stringValue(left), stringValue(right))
+	// Unknown types: order by type rank (falls back to string form for
+	// same-rank unknowns), keeping the comparator total and antisymmetric.
+	return compareByRank(left, right)
 }
 
 // compareNumeric compares an int64 with another numeric value
@@ -129,7 +187,9 @@ func compareNumeric(left int64, right interface{}) int {
 	if r, ok := right.(float64); ok {
 		return compareFloats(float64(left), r)
 	}
-	// Non-numeric: type mismatch
+	// Numeric (rank 1) vs non-numeric (higher rank): numeric sorts first. The
+	// reverse direction (non-numeric left vs numeric right) reaches
+	// compareByRank and yields +1, so this is antisymmetric.
 	return -1
 }
 
@@ -141,7 +201,7 @@ func compareFloat(left float64, right interface{}) int {
 	if r, ok := right.(float64); ok {
 		return compareFloats(left, r)
 	}
-	// Non-numeric: type mismatch
+	// Numeric (rank 1) vs non-numeric: numeric sorts first (see compareNumeric).
 	return -1
 }
 
@@ -215,7 +275,7 @@ func compareUint64(left uint64, right interface{}) int {
 	case float64:
 		return compareFloats(float64(left), r)
 	}
-	// Non-numeric: type mismatch
+	// Numeric (rank 1) vs non-numeric: numeric sorts first (see compareNumeric).
 	return -1
 }
 

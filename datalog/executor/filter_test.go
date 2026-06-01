@@ -240,9 +240,9 @@ func TestCompareValues(t *testing.T) {
 		{"int64 to float", int64(10), 20.5, -1},
 		{"float to int", 10.5, int(10), 1},
 
-		// Type mismatch
-		{"string vs int", "test", 123, -1},
-		{"bool vs string", true, "test", -1},
+		// Mixed types order by type rank (numeric=1 < bool=2 < string=4).
+		{"string vs int", "test", 123, 1},  // string rank > numeric rank
+		{"bool vs string", true, "test", -1}, // bool rank < string rank
 	}
 
 	for _, tt := range tests {
