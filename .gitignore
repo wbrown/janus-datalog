@@ -67,3 +67,6 @@ datalog/storage/testdata/
 
 # Test files
 test_*.txt
+
+# Claude Code hook runtime state (per-turn tool-call gate lock markers)
+.claude/.gate-locks/
