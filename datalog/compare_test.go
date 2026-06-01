@@ -243,9 +243,13 @@ func TestSymbolCompareValues(t *testing.T) {
 		t.Errorf("CompareValues(beta, alpha) = %d, want > 0", cmp)
 	}
 
-	// Symbol vs non-Symbol
-	if cmp := CompareValues(a, "alpha"); cmp >= 0 {
-		t.Errorf("CompareValues(symbol, string) = %d, want < 0 (type mismatch)", cmp)
+	// Symbol vs non-Symbol: ordered by type rank. Symbol (rank 7) sorts after
+	// string (rank 4), so the result is > 0. (Antisymmetric: the reverse is < 0.)
+	if cmp := CompareValues(a, "alpha"); cmp <= 0 {
+		t.Errorf("CompareValues(symbol, string) = %d, want > 0 (symbol rank > string rank)", cmp)
+	}
+	if cmp := CompareValues("alpha", a); cmp >= 0 {
+		t.Errorf("CompareValues(string, symbol) = %d, want < 0 (string rank < symbol rank)", cmp)
 	}
 }
 
@@ -293,9 +297,13 @@ func TestElementIDCompareValues(t *testing.T) {
 		t.Errorf("CompareValues(higher ReplicaID, lower ReplicaID) = %d, want > 0", cmp)
 	}
 
-	// ElementID vs non-ElementID
-	if cmp := CompareValues(a, int64(100)); cmp >= 0 {
-		t.Errorf("CompareValues(ElementID, int64) = %d, want < 0 (type mismatch)", cmp)
+	// ElementID vs non-ElementID: ordered by type rank. ElementID (rank 9) sorts
+	// after numeric (rank 1), so the result is > 0. (Antisymmetric: reverse < 0.)
+	if cmp := CompareValues(a, int64(100)); cmp <= 0 {
+		t.Errorf("CompareValues(ElementID, int64) = %d, want > 0 (ElementID rank > numeric rank)", cmp)
+	}
+	if cmp := CompareValues(int64(100), a); cmp >= 0 {
+		t.Errorf("CompareValues(int64, ElementID) = %d, want < 0 (numeric rank < ElementID rank)", cmp)
 	}
 }
 
