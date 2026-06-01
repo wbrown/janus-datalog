@@ -313,7 +313,16 @@ func (d *Database) GetVectorNth(e datalog.Identity, a datalog.Keyword, n int64) 
 	matcher := NewBadgerMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
-	entry := d.cache.GetOrResolve(key, matcher)
+	// Cache is an optimization, not a correctness requirement: when DisableCache
+	// is set (d.cache == nil), resolve the entry directly from storage via
+	// ResolveEntry, which produces the same *CacheEntry shape and determines
+	// cardinality the same way (GetCardinality over d.schema).
+	var entry *CacheEntry
+	if d.cache != nil {
+		entry = d.cache.GetOrResolve(key, matcher)
+	} else {
+		entry = ResolveEntry(key, matcher)
+	}
 	if entry == nil {
 		return nil, nil
 	}
@@ -344,7 +353,16 @@ func (d *Database) GetVectorLength(e datalog.Identity, a datalog.Keyword) (int64
 	matcher := NewBadgerMatcher(d.store)
 	matcher.SetSchema(d.schema)
 
-	entry := d.cache.GetOrResolve(key, matcher)
+	// Cache is an optimization, not a correctness requirement: when DisableCache
+	// is set (d.cache == nil), resolve the entry directly from storage via
+	// ResolveEntry, which produces the same *CacheEntry shape and determines
+	// cardinality the same way (GetCardinality over d.schema).
+	var entry *CacheEntry
+	if d.cache != nil {
+		entry = d.cache.GetOrResolve(key, matcher)
+	} else {
+		entry = ResolveEntry(key, matcher)
+	}
 	if entry == nil {
 		return 0, nil
 	}
