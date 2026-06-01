@@ -100,13 +100,27 @@ $RECENT_CONTEXT
 $REVIEW_PROMPT"
 fi
 
+# Correlation id + timing so the log pairs each model call's start with its
+# completion. A [START id] with no matching [DONE id] means the hook process was
+# killed externally — the settings wrapper timeout — before the || handler below
+# could log a failure. That externally-killed case is the failure mode the prior
+# log could not record at all (this hook had no timing instrumentation), and the
+# likely cause of a low hit rate.
+RUN_ID=$(printf '%04x%04x' "$RANDOM" "$RANDOM")
+START_TIME=$(date +%s)
+echo "[START ${RUN_ID}] $(date '+%H:%M:%S') file=${FILE_PATH}" >> /tmp/supervisor_log.txt
 REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE claude -p --model haiku --system-prompt "$SYSTEM_PROMPT" --no-session-persistence --tools "" "Review this proposed code change. The agent's reasoning is included above. Is the change correct given the stated reasoning? Is it modifying the right component?" 2>/dev/null) || {
     # If the review fails (API error, timeout, etc.), allow the edit
     # We don't want infrastructure failures to block all work
+    END_TIME=$(date +%s)
+    ELAPSED=$((END_TIME - START_TIME))
+    echo "[DONE ${RUN_ID} ${ELAPSED}.0s] SUPERVISOR HOOK FAILED (claude exited non-zero: API error or internal timeout)" >> /tmp/supervisor_log.txt
     exit 0
 }
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
 
-echo "$REVIEW_RESULT" >> /tmp/supervisor_log.txt
+echo "[DONE ${RUN_ID} ${ELAPSED}.0s] $REVIEW_RESULT" >> /tmp/supervisor_log.txt
 echo "SUPERVISOR: $REVIEW_RESULT" >&2
 
 if echo "$REVIEW_RESULT" | grep -q "BLOCK"; then

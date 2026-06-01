@@ -135,18 +135,26 @@ $REASONING
 
 PROPOSED ACTION: $CHANGE_DESC"
 
+# Correlation id so the log pairs each model call's start with its completion.
+# A [START id] line with no matching [DONE id] means the hook process was killed
+# externally — the settings wrapper timeout — before the || error handler below
+# could run and log HOOK FAILED. That externally-killed case is the one failure
+# mode the prior log could not record at all, and the likely cause of a low hit
+# rate. Unmatched starts = wrapper-timeout deaths.
+RUN_ID=$(printf '%04x%04x' "$RANDOM" "$RANDOM")
 START_TIME=$(date +%s)
+echo "[START ${RUN_ID}] $(date '+%H:%M:%S') file=${FILE_PATH}" >> /tmp/reasoning_audit_log.txt
 REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE claude --effort low -p --model sonnet --system-prompt "$SYSTEM_PROMPT" --no-session-persistence --tools "" "Review the reasoning chain that led to this proposed code change. Is the reasoning sound, or does it exhibit known failure modes?" 2>/dev/null) || {
     END_TIME=$(date +%s)
     ELAPSED=$((END_TIME - START_TIME))
-    echo "[${ELAPSED}.0s] HOOK FAILED (timeout or API error)" >> /tmp/reasoning_audit_log.txt
+    echo "[DONE ${RUN_ID} ${ELAPSED}.0s] HOOK FAILED (claude exited non-zero: API error or internal timeout)" >> /tmp/reasoning_audit_log.txt
     echo "REASONING AUDIT [${ELAPSED}s]: HOOK FAILED (timeout or API error)" >&2
     exit 0
 }
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 
-echo "[${ELAPSED}.0s] $REVIEW_RESULT" >> /tmp/reasoning_audit_log.txt
+echo "[DONE ${RUN_ID} ${ELAPSED}.0s] $REVIEW_RESULT" >> /tmp/reasoning_audit_log.txt
 
 # Check the LAST line for the verdict — Sonnet sometimes produces multi-line
 # reasoning before the final verdict, and intermediate text may contain "BLOCK"

@@ -101,7 +101,7 @@
         "hooks": [
           { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/validate-bash.sh" },
           { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-pretooluse.sh" },
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-commit.sh", "timeout": 60 }
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/review-commit.sh", "timeout": 120 }
         ]
       },
       {

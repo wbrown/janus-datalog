@@ -81,17 +81,24 @@ $REASONING
 
 COMMIT COMMAND: $COMMIT_MSG"
 
+# Correlation id so the log pairs each model call's start with its completion.
+# A [START id] with no matching [DONE id] means the hook process was killed
+# externally — the settings wrapper timeout — before the || handler below could
+# log COMMIT HOOK FAILED. That externally-killed case is the failure mode the
+# prior log could not record, and the likely cause of a low hit rate.
+RUN_ID=$(printf '%04x%04x' "$RANDOM" "$RANDOM")
 START_TIME=$(date +%s)
+echo "[START ${RUN_ID}] $(date '+%H:%M:%S') commit" >> /tmp/commit_audit_log.txt
 REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE claude --effort low -p --model sonnet --system-prompt "$SYSTEM_PROMPT" --no-session-persistence --tools "" "Review whether this commit is premature victory — is the agent declaring done while known problems remain?" 2>/dev/null) || {
     END_TIME=$(date +%s)
     ELAPSED=$((END_TIME - START_TIME))
-    echo "[${ELAPSED}.0s] COMMIT HOOK FAILED (timeout or API error)" >> /tmp/commit_audit_log.txt
+    echo "[DONE ${RUN_ID} ${ELAPSED}.0s] COMMIT HOOK FAILED (claude exited non-zero: API error or internal timeout)" >> /tmp/commit_audit_log.txt
     exit 0
 }
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 
-echo "[${ELAPSED}.0s] $REVIEW_RESULT" >> /tmp/commit_audit_log.txt
+echo "[DONE ${RUN_ID} ${ELAPSED}.0s] $REVIEW_RESULT" >> /tmp/commit_audit_log.txt
 
 LAST_LINE=$(echo "$REVIEW_RESULT" | tail -1)
 if echo "$LAST_LINE" | grep -q "\[BLOCKED\]"; then
