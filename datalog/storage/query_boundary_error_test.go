@@ -87,6 +87,17 @@ func TestCollectTuples_SurfacesBlobDecodeError(t *testing.T) {
 	require.ErrorContains(t, err, "blob", "a missing blob must not be reported as an empty result")
 }
 
+// Analyze fully executes the query (EXPLAIN ANALYZE-style), so a deferred
+// blob-decode failure must surface as an error from Analyze itself — not be
+// deferred past the API boundary into a lazy result the caller iterates later.
+func TestAnalyze_SurfacesBlobDecodeError(t *testing.T) {
+	db, e, _ := writeTier3ValueThenCorruptBlob(t)
+	defer db.Close()
+
+	_, err := db.Analyze(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e)
+	require.ErrorContains(t, err, "blob", "Analyze must surface a deferred decode error, not return a clean lazy result")
+}
+
 func TestQueryInto_SurfacesBlobDecodeError(t *testing.T) {
 	db, e, _ := writeTier3ValueThenCorruptBlob(t)
 	defer db.Close()

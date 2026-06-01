@@ -882,11 +882,30 @@ func (d *Database) Analyze(queryInput interface{}, inputs ...interface{}) (*Anal
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
 
+	// Analyze is EXPLAIN ANALYZE-style: it must reflect ACTUAL execution. The
+	// default relation is lazy — storage scans, joins, filters, and deferred
+	// iterator errors happen only when the result is iterated. Drive that work
+	// here via ForEach (which enforces the deferred-error contract) so the
+	// captured events, TotalTime, and any error cover the whole query, not just
+	// plan/pipeline construction. The drained tuples become a materialized,
+	// re-iterable relation for the caller.
+	symbols := result.Symbols()
+	tuples := make([]executor.Tuple, 0)
+	if err := executor.ForEach(result, func(t executor.Tuple) error {
+		cp := make(executor.Tuple, len(t))
+		copy(cp, t)
+		tuples = append(tuples, cp)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+	materialized := executor.NewMaterializedRelation(symbols, tuples)
+
 	totalTime := time.Since(startTime)
 
 	return &AnalyzeResult{
 		Plan:      plan,
-		Result:    result,
+		Result:    materialized,
 		Events:    events,
 		TotalTime: totalTime,
 	}, nil
