@@ -269,3 +269,67 @@ func TestAnalyze(t *testing.T) {
 		t.Logf("Join query analysis:\n%s", result.String())
 	})
 }
+
+// TestAnalyze_ConsumesStreamingResults pins that Analyze() fully executes the
+// query before returning, rather than handing back a lazy relation whose work
+// (storage scans, joins, deferred errors) happens only when a caller later
+// iterates it. EXPLAIN ANALYZE-style APIs are expected to measure actual
+// execution; against the unfixed code the storage scan fires during lazy
+// iteration after Analyze has returned, so its events are absent here.
+func TestAnalyze_ConsumesStreamingResults(t *testing.T) {
+	dir, err := os.MkdirTemp("", "analyze-consume-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	tx := db.NewTransaction()
+	for i, name := range []string{"Task A", "Task B", "Task C"} {
+		e := datalog.NewIdentity(string(rune('a'+i)) + "-task")
+		tx.Add(e, datalog.NewKeyword(":task/name"), name)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	result, err := db.Analyze(`[:find ?e :where [?e :task/name ?name]]`)
+	if err != nil {
+		t.Fatalf("Analyze failed: %v", err)
+	}
+
+	// The storage scan is the query's actual work. Analyze must have driven it,
+	// so its event is present without the caller iterating the result.
+	foundScan := false
+	for _, e := range result.Events {
+		if e.Name == annotations.PatternStorageScan {
+			foundScan = true
+			break
+		}
+	}
+	if !foundScan {
+		t.Errorf("Analyze did not capture the storage scan event; query work was deferred past the API boundary. Events: %d", len(result.Events))
+	}
+
+	// The returned result must be fully usable: correct size and re-iterable.
+	if got := result.Result.Size(); got != 3 {
+		t.Errorf("expected 3 result tuples, got %d", got)
+	}
+	count := 0
+	it := result.Result.Iterator()
+	for it.Next() {
+		count++
+	}
+	if err := it.Error(); err != nil {
+		t.Errorf("iterating Analyze result errored: %v", err)
+	}
+	it.Close()
+	if count != 3 {
+		t.Errorf("re-iterating Analyze result yielded %d tuples, want 3", count)
+	}
+}
