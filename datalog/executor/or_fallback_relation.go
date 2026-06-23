@@ -204,18 +204,36 @@ func collectBranchOutputSymbols(branch []query.Clause) []query.Symbol {
 
 func (r *OrFallbackRelation) Iterator() Iterator {
 	r.iteratorCount++
-	outerIter := r.outerRel.Iterator()
+
+	// When a cacheable DataPattern-only or-join branch will be narrowed to the
+	// outer join keys (see outerJoinKeys), the outer must be re-iterable: once to
+	// extract the join keys and again to drive per-tuple probing. A streaming
+	// outer can only be iterated once, so drain it to a MaterializedRelation up
+	// front. OR-fallback iterates the whole outer per-tuple regardless, so this
+	// buffers the driving relation rather than adding work.
+	// See docs/bugs/BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
+	outer := r.outerRel
+	var setupErr error
+	if r.shortCircuit && len(r.joinSyms) > 0 && hasNarrowableBranch(r.branches) {
+		if _, isMat := outer.(*MaterializedRelation); !isMat {
+			var tuples []Tuple
+			setupErr = collectTuplesInto(&tuples, outer)
+			outer = NewMaterializedRelationWithOptions(outer.Symbols(), tuples, r.options)
+		}
+	}
+
+	outerIter := outer.Iterator()
 
 	// Emit annotation for iterator creation
-	// Note: Don't call r.outerRel.Size() - it may block for streaming relations
+	// Note: Don't call outer.Size() - it may block for streaming relations
 	if collector := r.ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
 			Name:  "or-fallback/iterator.created",
 			Start: time.Now(),
 			Data: map[string]interface{}{
 				"iterator_count": r.iteratorCount,
-				"outer_symbols":  fmt.Sprintf("%v", r.outerRel.Symbols()),
-				"outer_type":     fmt.Sprintf("%T", r.outerRel),
+				"outer_symbols":  fmt.Sprintf("%v", outer.Symbols()),
+				"outer_type":     fmt.Sprintf("%T", outer),
 			},
 		})
 	}
@@ -226,12 +244,14 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		branches:     r.branches,
 		shortCircuit: r.shortCircuit,
 		outerIter:    outerIter,
-		outerRel:     r.outerRel, // Materialized relation for EA cache branch building
-		outerSyms:    r.outerRel.Symbols(),
+		outerRel:     outer, // re-iterable: drives join-key narrowing & EA cache branch building
+		outerSyms:    outer.Symbols(),
 		outputSyms:   r.symbols, // Use pre-computed symbols
 		options:      r.options,
 		joinSyms:     r.joinSyms,
 		prefetched:   r.prefetched,
+		err:          setupErr,
+		done:         setupErr != nil,
 	}
 }
 
@@ -371,6 +391,15 @@ type OrFallbackIterator struct {
 	// See ALGEBRA.md "OR-Fallback Branch Caching" for specification.
 	branchCache map[int]*cachedBranch
 	prefetched  bool // True when PrefetchEntities has warmed the EA cache for outer entities
+
+	// Narrowed join keys for cacheable DataPattern-only or-join branches: the
+	// outer relation projected onto joinSyms (deduplicated), computed once.
+	// Passing these as the cached branch's bindings narrows its scan to the
+	// outer entities instead of the whole attribute extent — without them, a
+	// get-else on a single bound entity full-scans the attribute.
+	// See docs/bugs/BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
+	joinKeyRel       Relation
+	joinKeysComputed bool
 
 	// Correlated union state: track which branch we're iterating within the current outer tuple
 	unionBranchIdx  int      // next branch to try for current outer tuple
@@ -530,6 +559,36 @@ func isCacheableBranch(branch []query.Clause, isOrJoin bool) bool {
 	}
 	// All clauses are DataPatterns — cacheable in or-join context
 	return isOrJoin && len(branch) > 0
+}
+
+// isDataPatternOnlyBranch reports whether a branch consists solely of
+// DataPatterns (and is non-empty). In an or-join, such a branch is the one
+// outerJoinKeys narrows to the outer join keys: it can be evaluated once with
+// the join variables bound to the outer relation's values. Subquery branches,
+// or branches containing expressions/predicates, are not narrowable this way.
+func isDataPatternOnlyBranch(branch []query.Clause) bool {
+	if len(branch) == 0 {
+		return false
+	}
+	for _, c := range branch {
+		if _, ok := c.(*query.DataPattern); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// hasNarrowableBranch reports whether any branch is a DataPattern-only branch —
+// the branches outerJoinKeys narrows. The OrFallbackRelation iterator uses this
+// to decide whether the outer relation must be materialized for re-iteration
+// before iteration begins.
+func hasNarrowableBranch(branches [][]query.Clause) bool {
+	for _, branch := range branches {
+		if isDataPatternOnlyBranch(branch) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildCachedBranch builds a hash index over a branch result keyed on
@@ -701,6 +760,91 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 	}
 }
 
+// outerJoinKeys returns the outer relation projected onto the or-join's join
+// symbols, deduplicated and memoized. Passing these as bindings to a cacheable
+// DataPattern-only or-join branch narrows its single evaluation to the entities
+// actually present in the outer relation — so a get-else on one bound entity is
+// a point lookup instead of a full scan of the attribute extent.
+//
+// Returns nil (the caller then falls back to the existing unbound scan) when
+// narrowing can't be applied safely: no outer relation, no join symbols, a
+// non-re-iterable streaming outer (a second Iterator() call panics), a join
+// symbol absent from the outer relation, or no extractable keys.
+//
+// The result has identical reachable content to the unbounded scan's cache:
+// the per-tuple probe only ever looks up outer entities' join keys, so the
+// unbounded scan's extra rows are dead entries. Deduplicating the keys keeps
+// the matcher from emitting duplicate (entity, value) rows for a repeated
+// outer entity, matching the unbounded scan's cardinality.
+func (it *OrFallbackIterator) outerJoinKeys() Relation {
+	if it.joinKeysComputed {
+		return it.joinKeyRel
+	}
+	it.joinKeysComputed = true
+
+	if it.outerRel == nil || len(it.joinSyms) == 0 {
+		return nil
+	}
+	// StreamingRelation panics on a second Iterator() call; the per-tuple loop
+	// already holds one iterator over it.outerRel, so we can only re-iterate a
+	// materialized outer. (buildBranchFromEACache guards the same way.)
+	if _, isStreaming := it.outerRel.(*StreamingRelation); isStreaming {
+		return nil
+	}
+
+	// Map each join symbol to its column in the outer relation.
+	pos := make([]int, len(it.joinSyms))
+	for i, js := range it.joinSyms {
+		pos[i] = -1
+		for oi, osym := range it.outerSyms {
+			if osym == js {
+				pos[i] = oi
+				break
+			}
+		}
+		if pos[i] < 0 {
+			return nil // join symbol not in the outer relation — can't narrow
+		}
+	}
+
+	// Collect distinct join-key tuples.
+	keyIdx := make([]int, len(it.joinSyms))
+	for i := range keyIdx {
+		keyIdx[i] = i
+	}
+	seen := NewTupleKeyMap()
+	var keys []Tuple
+	oit := it.outerRel.Iterator()
+	for oit.Next() {
+		t := oit.Tuple()
+		key := make(Tuple, len(pos))
+		ok := true
+		for i, p := range pos {
+			if p >= len(t) {
+				ok = false
+				break
+			}
+			key[i] = t[p]
+		}
+		if !ok {
+			continue
+		}
+		tk := NewTupleKey(key, keyIdx)
+		if _, dup := seen.Get(tk); dup {
+			continue
+		}
+		seen.Put(tk, true)
+		keys = append(keys, key)
+	}
+	oit.Close()
+
+	if len(keys) == 0 {
+		return nil
+	}
+	it.joinKeyRel = NewMaterializedRelationWithOptions(it.joinSyms, keys, it.options)
+	return it.joinKeyRel
+}
+
 // nextShortCircuit tries branches in order until one returns results (fallback semantics).
 func (it *OrFallbackIterator) nextShortCircuit() bool {
 	for {
@@ -765,21 +909,59 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				matches := cb.probe(outerTuple)
 				branchResult = NewMaterializedRelation(cb.branchSyms, matches)
 			} else {
-				// Execute the branch.
-				// For cacheable branches (uncorrelated SubqueryPatterns, or
-				// DataPattern-only branches in or-join), execute WITHOUT
-				// inputRel so the result covers ALL values. The branch cache
-				// indexes the full result for O(1) per-tuple probes.
+				// Execute the branch once, then cache + probe per outer tuple.
+				// Cacheable branches are not given the single outer tuple as
+				// inputRel (that would re-evaluate per tuple); instead:
+				//   - uncorrelated SubqueryPatterns run with no input;
+				//   - DataPattern-only or-join branches run narrowed to the
+				//     outer relation's join keys (it.outerJoinKeys()), so the
+				//     scan is bounded by the outer entities rather than the whole
+				//     attribute extent. The branch cache then indexes the
+				//     already-narrowed result for O(1) per-tuple probes. Without
+				//     this, get-else on a single bound entity full-scans the
+				//     attribute. See
+				//     docs/bugs/BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
 				//
 				// Fast path: for DataPattern branches in or-join, try building
 				// the branch cache from EA cache (LookupAttribute) instead of
-				// a full storage scan. Falls back to storage scan if the EA
-				// cache isn't available.
+				// a storage scan. Falls back to the scan path if the EA cache
+				// isn't warm.
 				execInput := inputRel
 				isOrJoin := len(it.joinSyms) > 0
 				isCacheable := isCacheableBranch(branch, isOrJoin)
+				// A DataPattern-only branch in an or-join benefits from join-key
+				// narrowing; uncorrelated subqueries (also cacheable) must still
+				// run with no input.
+				narrowable := isOrJoin && isDataPatternOnlyBranch(branch)
 				if isCacheable {
-					execInput = nil
+					if narrowable {
+						execInput = it.outerJoinKeys()
+					} else {
+						execInput = nil
+					}
+				}
+
+				// Report the narrowing decision so the choice (and any silent
+				// fall-back to a full scan) is observable rather than inferred
+				// from index selection.
+				// See docs/bugs/BUG_GETELSE_SCAN_REWRITE_NOT_NARROWED_BY_BOUND_CHILD.md.
+				if narrowable {
+					if collector := it.ctx.Collector(); collector != nil {
+						data := map[string]interface{}{
+							"branch":   branchIdx,
+							"narrowed": execInput != nil,
+						}
+						if execInput != nil {
+							data["join_keys"] = execInput.Size()
+						} else {
+							data["reason"] = "outer not re-iterable for join-key extraction"
+						}
+						collector.Add(annotations.Event{
+							Name:  "or-fallback/branch.narrowed",
+							Start: time.Now(),
+							Data:  data,
+						})
+					}
 				}
 
 				// Try EA-cache-based branch build for DataPattern-only or-join branches.
@@ -810,8 +992,15 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 					}
 
 					if branchResult != nil {
-						// First evaluation: cache uncorrelated branches
-						if execInput == nil {
+						// First evaluation: cache the once-evaluated branch.
+						// Cacheable branches (execInput is the narrowed join-key
+						// relation for DataPattern or-join branches, or nil for
+						// uncorrelated subqueries) are indexed and probed;
+						// correlated branches with a real per-tuple inputRel are
+						// filtered instead. execInput==nil also covers a unit
+						// outer relation (no join keys) whose pass-through
+						// behavior must be preserved.
+						if isCacheable || execInput == nil {
 							if collector := it.ctx.Collector(); collector != nil {
 								collector.Add(annotations.Event{
 									Name: "or-fallback/cache-build",
