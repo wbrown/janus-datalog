@@ -738,9 +738,18 @@ cited sections.
   a possible future opt-in.
 - **`History()` across the chain (§10.11): merged lineage, fork-ceilings applied** — the
   raw datoms the session could have seen (own + ancestors up to fork), unresolved.
-- **Branch/snapshot metadata storage: reserved Badger `refs/` keyspace** (`name → path,
-  parent, forkLamport`) via `GetMetadataUint64`/`SetMetadataUint64`; dogfooding as
-  system-attribute datoms deferred.
+- **Branch/snapshot metadata storage: system-attribute datoms** (`:db.snapshot/*`),
+  listed and resolved via Datalog queries. *Reversed 2026-06-26 from the earlier
+  "reserved Badger `refs/` keyspace via `GetMetadataUint64`/`SetMetadataUint64`" plan;
+  full reasoning in §12.1 Slice A.* The operations the linear slice must support — list
+  snapshots, see their causal ordering — are exactly what datoms give for free: a snapshot
+  is a first-class entity, so `Snapshots()` is a query, causal order is intrinsic to each
+  marker's Tx, name-uniqueness rides the existing read-time `(A,V)`-LWW (§7), and the
+  registry adds no new store surface. Rollback is **timeline-coupled** (semantics (i),
+  §12.1): a snapshot's point is its own marker's Tx, so `TruncateTo` keeps the target
+  snapshot and prunes any taken later, leaving no dangling refs. The `refs/` keyspace and
+  content-addressed metadata remain available for the branching/distribution rounds;
+  dogfooding does not preclude them.
 - **Clock model (§4.1): one shared counter**, stamped per-arena — globally monotonic,
   tie-free on a single node.
 - **Deferred (axis A only):** cache validity-stamp granularity (§8.4) — relevant only if
@@ -1210,7 +1219,7 @@ The three flavors differ in what (if anything) they destroy:
 > when the rollback variants were first sketched, a gap in the reasoning, not just the
 > writeup.) **Decided (2026-06-26): forbid.** Hard-truncate errors if any descendant's
 > fork-point exceeds `T`; the caller must drop or re-base those children first. This is
-> cheap to enforce: the `refs/` keyspace records each branch's parent and `forkLamport`
+> cheap to enforce: the snapshot/branch registry (`:db.snapshot/*` datoms, §9.6) records each branch's parent and `forkLamport`
 > (§11.2), so descendants past `T` are a direct lookup. Cascade (auto-invalidating
 > descendants) is a possible future opt-in, not the default. Soft rollback and
 > branch-on-rollback carry no such hazard: they delete nothing.
@@ -1376,7 +1385,7 @@ func (d *Database) Fork(name string) (*Database, error) {
     forkAt, _ := d.store.MaxElementID()     // committed high-water (not Peek; §10.3): ceiling for d.arena
 
     if err := d.store.putBranchRef(name, child, d.arena, forkAt); err != nil {
-        return nil, err                     // refs keyspace (§9.6): name → (path, parent, forkLamport)
+        return nil, err                     // branch registry (§9.6): a :db.snapshot/* marker — name → (path, parent, forkLamport)
     }
 
     // The child's chain = d's chain, but d.arena flips from leaf (unbounded) to a
@@ -1550,8 +1559,8 @@ otherwise untouched.
    R5 split; §11.5).
 2. **One `Iterator`-interface addition:** `Key() []byte` — the merge needs raw-key
    ordering; trivial on `BadgerIterator`, which already holds the key.
-3. **Branch metadata in a `refs/` keyspace** (`name → path, parent, forkLamport`), per
-   §9.6.
+3. **Branch metadata as `:db.snapshot/*` datoms** (`name → path, parent, forkLamport`),
+   per §9.6 — listed and resolved by query, not a side keyspace.
 4. **Session handle is a writable `Database` clone** — unlike `AsOf`/`History`, which
    panic on write.
 
@@ -1596,30 +1605,66 @@ coordinate for the new writes, i.e. the branch axis, which is what the tree-path
 adds and why branch-on-rollback is deferred. So linear rollback is one of two things
 only: a read-only view (Slice A) or a destructive rewind (Slice B).
 
-**Slice A — snapshots + read-only views.** Almost pure metadata over existing
-machinery; reuses `store.MaxElementID()` (capture) and `d.AsOf(eid)` (read), so there is
-no new read code.
+**Slice A — snapshots + read-only views, recorded as system-attribute datoms.** A
+snapshot is an ordinary entity in a reserved `:db.snapshot/*` namespace, not a row in a
+side table. This *reverses* the earlier "reserved `refs/` keyspace" plan (§9.6), and the
+reason is the slice's own requirements: the operations it must support are *list the
+snapshots* and *see their causal ordering*, and for those, datoms are the natural
+representation while a side table is a second, weaker API bolted alongside the engine.
+Recording snapshots as datoms gives, in order of why it won:
+
+- **`Snapshots()` is a Datalog query, not new storage code.** For example
+  `[:find ?name ?lamport ?created :where [?s :db.snapshot/name ?name]
+  [?s :db.snapshot/at-lamport ?lamport] [?s :db.snapshot/created ?created]]`, ordered by
+  `?lamport` (the captured point) or `?created` (wall clock).
+- **Causal ordering is inherent and real.** Each marker is itself a datom with a Lamport
+  Tx, so the order snapshots were *created* is intrinsic to the log, and the point each
+  one *captures* is a queryable, sortable attribute. A `refs/` side table would have
+  carried only a wall-clock field unless it separately recorded the creating Tx — i.e. it
+  would have had to *reconstruct* what datoms already are.
+- **No new store surface.** Capture reuses `store.MaxElementID()`; the marker write reuses
+  the ordinary transaction path; name-uniqueness rides the existing read-time `(A,V)`-LWW
+  (§7); `AsOfSnapshot` is a query plus the existing `d.AsOf(eid)`; `DeleteSnapshot` is a
+  retract. This is *more* faithful to the slice's "zero storage-core change" goal than the
+  bytes-metadata side API the `refs/` plan implied — it adds none.
+- **It is how Datomic models its own metadata** (`:db/*` system attributes), so it is
+  idiomatic, not a novel mechanism.
 
 ```go
-// Snapshot names the current state of THIS handle. Internally records the handle's
-// high-water point (ElementID today via store.MaxElementID(); (arena, frontier) under
-// tree-path) — the signature does not change. Errors if name exists.
+// Snapshot names the current state of THIS handle as a :db.snapshot/* entity. Captures
+// store.MaxElementID() as the point and writes the marker in one transaction. Errors if
+// the name already exists (a read-time uniqueness check, not write-time enforcement).
 func (d *Database) Snapshot(name string) (SnapshotInfo, error)
 
 // AsOfSnapshot returns a READ-ONLY handle viewing the DB as of the named snapshot.
-// Internally d.AsOf(ref); AsOf handles already reject writes (NewTransaction panics).
+// Reads at the marker's own high-water (always non-zero, so it dodges the zero-ElementID
+// History sentinel; domain-equivalent to the captured point); AsOf handles already reject
+// writes (NewTransaction panics on a temporal handle), so the read-only guarantee is free.
 func (d *Database) AsOfSnapshot(name string) (*Database, error)
 
+// Snapshots lists every snapshot — a query over :db.snapshot/* — in causal order.
 func (d *Database) Snapshots() ([]SnapshotInfo, error)
+
+// DeleteSnapshot retracts the named marker entity. The rewindable timeline is untouched;
+// only the registry entry goes away.
 func (d *Database) DeleteSnapshot(name string) error
 
-// SnapshotInfo is opaque beyond Name. Its internal ref widens (ElementID → arena+frontier)
-// without changing this type's contract; metadata fields can be added additively.
+// SnapshotInfo is the decoded marker. Fields are additive: the branching round adds
+// Path/Parent without changing existing callers (their absence ⇒ root).
 type SnapshotInfo struct {
-    Name string
-    // unexported: ref, created — internal, free to grow
+    Name    string
+    At      datalog.ElementID // captured high-water point
+    Created time.Time
 }
 ```
+
+**Reserved namespace.** `:db.snapshot/name` (the unique key); `:db.snapshot/at-lamport`
+and `:db.snapshot/at-replica` (the captured `ElementID`, stored as two `int64`s so the
+point is itself queryable and comparable — that is what makes causal ordering a query
+rather than a decode); `:db.snapshot/created` (`time.Time`, for human listing). These
+markers are visible in `History()` and raw scans — by design: the registry is itself
+auditable and time-travelable — and are filtered out of domain queries by their reserved
+namespace, exactly as Datomic's `:db/*` datoms are.
 
 `AsOfSnapshot` returns a read-only handle: an `AsOf`/`History` handle rejects writes
 (`NewTransaction` panics on a temporal handle). So Slice A is "name a checkpoint;
@@ -1636,17 +1681,144 @@ query/operate as of it"; it does not change the live, writable DB.
 func (d *Database) TruncateTo(name string) error
 ```
 
-- **Mechanics:** scan TAEV (the Tx-leading index) for `Tx > eid` — a bounded range
-  from the index start to `encode(eid)`; for each affected datom, physically delete its
-  key from all eight indices in one `BadgerTx`; then `clock.Restore(eid)` so the next
-  write resumes at `eid.Lamport+1`; invalidate the cache.
+- **Mechanics (semantics (i), timeline-coupled).** Resolve the target's captured point
+  `at` and its marker entity by query. The marker was written *just after* it captured
+  `at`, so its own datoms occupy the Tx range immediately above `at`; let `markerMax` be
+  the marker entity's highest Tx. The deletion floor is `markerMax`, not `at`: deleting
+  `Tx > markerMax` keeps the target marker itself, prunes every snapshot taken later (each
+  indexed a now-erased future, so removing them is exactly what *prevents* dangling refs),
+  and erases all post-snapshot game writes — and there are none in `(at, markerMax]`
+  because the marker is written contiguously, right after the capture. Concretely: scan
+  TAEV (the Tx-leading index) for `Tx > markerMax` — a bounded range from the index start
+  to `encode(markerMax)` — and physically delete each affected datom's key from all eight
+  indices in one `BadgerTx`; then `clock.Restore(markerMax)` so the next write resumes at
+  `markerMax.Lamport+1` with no collision against the surviving marker; invalidate the
+  cache. (`AsOfSnapshot` reads at `markerMax` too, not at the stored `at`: it is
+  domain-equivalent — the marker datoms it includes are reserved-namespace, filtered from
+  domain queries — and, unlike `at`, always non-zero, so an empty-database snapshot whose
+  `at` is the zero ElementID does not collide with the matcher's History sentinel and read
+  back as the whole database.)
 - **The new primitive — physical delete-by-Tx.** Today the store has only `Retract`,
   which appends a tombstone at a higher Tx (forward, the opposite of a rewind), so true
   truncation is new code: scan + 8 key deletes per affected datom.
 - **Destructive, by design:** the rolled-back datoms are gone; `History()` will not show
-  them either. Safe in the linear case because there are no branches, hence no
-  descendants to orphan; the §10.7 guard is vacuous now and becomes active only under
+  them either. The target snapshot and every snapshot taken at or before it survive (their
+  markers sit at or below `markerMax`); snapshots taken *after* it are pruned along with
+  the timeline they indexed. Safe in the linear case because there are no branches, hence
+  no descendants to orphan; the §10.7 guard is vacuous now and becomes active only under
   tree-path.
+
+**Rollback safety under concurrency.** The single-threaded mechanics above are not safe
+against concurrent readers and writers; `TruncateTo` is a destructive control-plane
+operation and must be made safe explicitly. There are two hazards, of different severity:
+
+- **Clock collision — real corruption.** `clock.Restore(markerMax)` rewinds the Lamport
+  counter while `TruncateAfter` deletes `Tx > markerMax`. If a writer is mid-commit with
+  Lamports already assigned above `markerMax`, either its datoms are deleted out from under
+  a commit the caller was told succeeded, or after the restore the next writer is handed a
+  Lamport the concurrent writer already used — an identical `(Lamport, ReplicaID)`, which
+  is duplicate-key corruption of the CRDT order, not merely a stale read. This is the
+  hazard that forces serialization against writers.
+- **Cache incoherence on a rewind.** Storage reads are already safe: BadgerDB MVCC gives
+  every iterator a consistent snapshot, so a reader overlapping the delete sees its own pre-
+  or post-delete snapshot. The cache is the gap. It holds resolved CRDT views keyed by
+  `(E, A)`, and a rewind makes any entry over a deleted datom stale. The freshness counter
+  compounds it: `UpdateMaxVersion` only ever raises the per-`(E,A)` high-water (cache.go),
+  because a forward commit only ever advances it. A rewind lowers the true high-water,
+  which the freshness path cannot represent — left alone, a rebuilt lower-version entry
+  compares unequal to the stranded high recorded max forever, so it never cache-hits again:
+  a silent permanent slowdown for every rewound key, on top of the staleness.
+
+So reads need no lock for storage correctness; only the clock and the cache do. That
+shapes the design.
+
+**Why write-drain, not a read lock.** `TruncateTo` is rare; reads are the hot path. Gating
+every read behind a shared lock so a rare operation can exclude them is the wrong trade for
+a high-performance store, and `sync.RWMutex` punishes it specifically: the read side
+contends on one `readerCount` cacheline at high core counts, and Go gives a waiting writer
+priority, so the instant `TruncateTo` called `Lock()` it would stall all new reads until it
+finished and the slowest in-flight query drained. Streaming makes it worse: a `Query`
+iterator outlives the call, so a read lock would have to be held across iteration, turning
+a leaked iterator into a hung rollback. Reads therefore take no new lock. The clock hazard
+is closed by draining writers; the cache hazard by the existing in-flight mechanism plus a
+freshness reset. (A full read/write `RWMutex` gate and a caller-quiesce contract were both
+weighed and rejected — the first for the per-read cost, the second for pushing correctness
+onto the caller.)
+
+**Writer semantics: drain in-flight, drop new.** A rollback lets the writes already in
+flight finish and rejects writes that start while it runs:
+
+- A transaction created *before* the rollback (already in `activeTx`) is allowed to commit;
+  the drain waits for it. Its post-snapshot datoms are then erased by the delete like any
+  other `Tx > markerMax` — "clearing" means committing cleanly, not surviving.
+- A transaction created *while* a rollback is in progress is dropped: its writes return
+  `ErrRollbackInProgress`.
+
+Dropping rather than blocking-then-applying is what makes the result deterministic. A
+blocked-then-resumed write would land at `markerMax+1` after the restore and survive, so a
+write that merely raced the rollback would leak onto the rewound timeline and the
+post-rollback state would be "the snapshot plus whatever happened to race," not the
+snapshot. Dropping also keeps any writer from hanging for the rollback's duration. The drop
+is a retryable sentinel error, never a silent no-op: the caller learns its write did not
+land and can retry after the rollback or abandon it. Silent write loss is exactly the
+failure that stays invisible until it has corrupted downstream state.
+
+**The cache half is the existing in-flight pattern.** No new "uncached window" mechanism is
+needed: `Commit` already implements precisely this (cache.go `BeginInFlight` /
+`storeIfNotInFlight` / `Invalidate`). Before its storage mutation it stores an in-flight
+sentinel for each touched `(E, A)`; while the sentinel is present `GetOrResolve` resolves
+straight from storage without caching and writers refuse to cache, so those keys are
+uncached for the duration; after the mutation `Invalidate` drops the sentinels and reads
+rebuild fresh. The rollback reuses this verbatim, with one extension. `Invalidate`
+deliberately keeps `maxVersions` (a forward commit just advanced it, and the next read
+should see the entry as current); a rewind must instead drop `maxVersions` for the touched
+keys and `attrVersions` for the touched attributes, so the monotonic high-water above is
+cleared rather than stranded over the rebuilt value. That is the one new cache method,
+`InvalidateRewind(touched)`: drop entries and `maxVersions` per key, and `attrVersions` per
+touched attribute.
+
+**Choreography.** `TruncateTo` holds a dedicated `rollbackMu` for its whole duration, which
+serializes rollback against rollback. Inside it:
+
+1. `db.mu.Lock()`; set `rollbackInProgress = true`; `for len(activeTx) > 0 { cond.Wait() }`;
+   `db.mu.Unlock()`. `Cond.Wait` releases `db.mu` while blocked, which is what lets an
+   in-flight commit reacquire `db.mu` to deregister from `activeTx` and signal the drain;
+   holding `db.mu` across the wait would deadlock against the very commits being waited on.
+   When the loop returns, in-flight writers have cleared and `rollbackInProgress` gates new
+   ones.
+2. Scan TAEV for `Tx > markerMax`, collecting the affected datoms and their touched
+   `(E, A)` keys. The set is stable because writers are drained and new ones dropped.
+3. `cache.BeginInFlight(keys)` — open the uncached window before the delete is visible, so
+   no reader can cache-hit a soon-to-be-stale entry.
+4. Physically delete the collected datoms from all eight indices in one `BadgerTx`.
+5. `clock.Restore(markerMax)` — safe now, since no writer holds a Lamport above `markerMax`.
+6. `cache.InvalidateRewind(keys)` — close the window and reset freshness.
+7. `db.mu.Lock()`; `rollbackInProgress = false`; `db.mu.Unlock()`; release `rollbackMu`.
+
+Steps 2–6 run without `db.mu` held, so a rollback never blocks the brief `db.mu` sections
+`NewTransaction` and `Commit` take; `rollbackInProgress`, not the lock, gates writers across
+the storage work.
+
+**Concurrency surface.** The entire addition: a `doomed bool` per `Transaction`, stamped
+from `rollbackInProgress` at `NewTransaction` time, with `Add`/`Retract`/`Commit` returning
+`ErrRollbackInProgress` when it is set; a `rollbackInProgress bool` and a `sync.Cond` over
+the existing `db.mu`, used only for the drain; and a `rollbackMu` serializing rollbacks. The
+read path is untouched — no new lock, no atomic. The write path gains, per operation, one
+bool check and (in commit/rollback cleanup, only while a rollback is draining) one
+`cond.Broadcast`, both inside a `db.mu` section those paths already take.
+
+**Consequences and contract.**
+- An in-flight commit can succeed and then have its data erased by the rollback that was
+  draining it. That is inherent to destructively rewinding past a point the commit wrote,
+  not a bug.
+- A write attempted during a rollback fails with `ErrRollbackInProgress` (retryable),
+  rather than blocking or silently vanishing.
+- Reads never block on a rollback and never see a torn or stale-cached value: they run on
+  MVCC snapshots and bypass the cache for touched keys across the window.
+- The drain waits on in-flight write transactions only, so a write transaction the caller
+  holds open stalls the rollback for as long as it stays open; the contract is that write
+  transactions are short-lived. A future drain deadline could bound this; it is out of
+  scope for the linear slice.
 
 **Forward-compatibility.** The public surface expresses only what generalizes;
 everything that changes stays behind it. Five rules, each tied to the breakage it
@@ -1657,14 +1829,15 @@ prevents:
 | **Name-based API** — snapshots/rollback by `string`; the ref never appears in a signature | Snapshot identity widening `ElementID → (arena, frontier)` would change a return/param type |
 | **Methods on `*Database`, returning `*Database`** | A session handle (tree-path) would otherwise need a new type; instead the same methods work on root and session handles |
 | **All mutators return `error`** | The future descendant-guard (§10.7) is a new error case, not a new signature (vacuous linearly) |
-| **Opaque, version-tagged stored ref** | The record grows `[v1][ElementID:16] → [v2][arena:32][frontier…]` with no migration of old snapshots |
+| **Marker stored as additive datoms** | The branching round adds `:db.snapshot/path` (etc.) attributes; old snapshots stay valid (no path ⇒ root) with no record migration — additivity is what datoms give natively |
 | **`RollbackTo`/`Fork` reserved; destructive op named `TruncateTo`** | No verb ever flips meaning from destructive → non-destructive when branching lands |
 
 **What generalizes underneath the stable surface** (none of it visible in the API):
 - `Snapshot` capture: `store.MaxElementID()` → the handle's `(arena, frontier)`.
-- Stored ref: version-tagged — `v1 = [ElementID:16]` → `v2 = [arena:32][frontier…]`. Old
-  `v1` snapshots stay valid: a linear snapshot is `(rootArena, eid)`, which the §10
-  ancestor-chain read path already handles (root is the base of every chain).
+- Stored marker: today `:db.snapshot/at-{lamport,replica}`; under tree-path the same
+  entity gains `:db.snapshot/path` (and parent/fork attributes). Datoms are additive, so
+  old markers stay valid with no migration: a linear snapshot has no path, which the §10
+  ancestor-chain read path already treats as the root — the base of every chain.
 - `AsOfSnapshot` read path: `d.AsOf(eid)` → the §10 ancestor-chain merge; same handle
   type and signature.
 - `TruncateTo` scope: the whole linear timeline → the current branch's subtree, plus the
@@ -1683,6 +1856,13 @@ so the friendly "rollback" name never has to flip from destructive to non-destru
   next write gets `T+1` with no collision; truncate → write → truncate is stable.
 - Edges: snapshot of an empty DB; truncate to the latest snapshot (no-op); snapshot the
   rewound timeline and read it back.
+- Concurrency (run under `-race`): a write transaction opened *before* `TruncateTo` commits
+  cleanly and the rollback drains it; a write *started during* the rollback returns
+  `ErrRollbackInProgress`; a writer racing a rollback never produces a duplicate
+  `(Lamport, ReplicaID)` and the post-rollback clock is collision-free; a reader running
+  across the rollback never observes a stale-cached value for a truncated `(E, A)`; two
+  concurrent `TruncateTo` calls serialize. Any race the detector surfaces in this new
+  concurrency code is mine to resolve before the slice ships.
 
 ### 12.2 Full staged arc
 
