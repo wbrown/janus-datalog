@@ -61,6 +61,13 @@ type Database struct {
 	// read was once possible. Test-only (nil in production); lets a test run a
 	// reader deterministically in that window. See the cache stale-read tests.
 	onCommitWindow func()
+
+	// Rollback (TruncateTo) coordination: rollbackInProgress and drainCond are guarded by
+	// mu (drainCond signals the rollback's drain as activeTx shrinks); rollbackMu
+	// serializes one rollback against another.
+	rollbackInProgress bool
+	drainCond          *sync.Cond
+	rollbackMu         sync.Mutex
 }
 
 // NewDatabase creates a new database with BadgerDB storage
@@ -188,7 +195,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		}
 	}
 
-	return &Database{
+	d := &Database{
 		store:             store,
 		activeTx:          make(map[*Transaction]bool),
 		planCache:         planner.NewPlanCache(1000, 0),
@@ -199,7 +206,9 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		clock:             clock,
 		replicaID:         replicaID,
 		cache:             cache,
-	}, nil
+	}
+	d.drainCond = sync.NewCond(&d.mu)
+	return d, nil
 }
 
 // Schema returns the current schema (may be nil)
@@ -415,9 +424,14 @@ func (d *Database) NewTransaction() *Transaction {
 		datoms:            make([]datalog.Datom, 0),
 		retracts:          make([]datalog.Datom, 0),
 		lastVectorElement: make(map[entityAttrKey]datalog.ElementID),
+		doomed:            d.rollbackInProgress,
 	}
 
-	d.activeTx[tx] = true
+	// A transaction born during a rollback is dropped (its writes return
+	// ErrRollbackInProgress) and is not registered, so it never holds up the drain.
+	if !tx.doomed {
+		d.activeTx[tx] = true
+	}
 	return tx
 }
 
@@ -1308,6 +1322,7 @@ type Transaction struct {
 	closed            bool
 	txTime            *time.Time                          // Optional custom transaction time
 	lastVectorElement map[entityAttrKey]datalog.ElementID // Track last appended element per (E,A) for RGA chaining
+	doomed            bool                                // born during a rollback; its writes return ErrRollbackInProgress
 }
 
 // SetTime sets a custom transaction time for this transaction
@@ -1334,6 +1349,9 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	if t.closed {
 		return fmt.Errorf("transaction is closed")
+	}
+	if t.doomed {
+		return ErrRollbackInProgress
 	}
 
 	if err := validateAttributeStorable(a); err != nil {
@@ -1984,6 +2002,9 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 	if t.closed {
 		return fmt.Errorf("transaction is closed")
 	}
+	if t.doomed {
+		return ErrRollbackInProgress
+	}
 
 	if err := validateAttributeStorable(a); err != nil {
 		return err
@@ -2063,6 +2084,9 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 
 	if t.closed {
 		return datalog.ElementID{}, fmt.Errorf("transaction is closed")
+	}
+	if t.doomed {
+		return datalog.ElementID{}, ErrRollbackInProgress
 	}
 
 	// Uniqueness is a read-time CRDT resolution rule, not a write-time gate.
@@ -2220,6 +2244,9 @@ func (t *Transaction) Commit() (datalog.ElementID, error) {
 	t.closed = true
 	t.db.mu.Lock()
 	delete(t.db.activeTx, t)
+	if t.db.rollbackInProgress {
+		t.db.drainCond.Broadcast()
+	}
 	t.db.mu.Unlock()
 
 	// Return the metadata ElementID - it has the highest Lamport in this tx,
@@ -2266,6 +2293,9 @@ func (t *Transaction) Rollback() error {
 
 	t.db.mu.Lock()
 	delete(t.db.activeTx, t)
+	if t.db.rollbackInProgress {
+		t.db.drainCond.Broadcast()
+	}
 	t.db.mu.Unlock()
 
 	return nil

@@ -223,6 +223,25 @@ func (c *Cache) Invalidate(touched []CacheKey) {
 	// next IsAttributeFresh() call will fetch current max from store
 }
 
+// InvalidateRewind drops cached state for keys whose datoms a rollback physically removed.
+// Unlike Invalidate (forward commits, where maxVersions was just advanced and must be
+// kept), a rewind RETREATS the version high-water, and UpdateMaxVersion is monotonic — so
+// the per-(E,A) max and the per-attribute version must be dropped too, or a rebuilt
+// lower-version entry would compare unequal to the stranded max forever and never cache-hit
+// again. Pairs with BeginInFlight: that opens the uncached window before the delete, this
+// closes it after.
+func (c *Cache) InvalidateRewind(touched []CacheKey) {
+	seenAttr := make(map[Attribute]struct{}, len(touched))
+	for _, key := range touched {
+		c.entries.Delete(key)
+		c.maxVersions.Delete(key)
+		if _, ok := seenAttr[key.A]; !ok {
+			seenAttr[key.A] = struct{}{}
+			c.attrVersions.Delete(key.A)
+		}
+	}
+}
+
 // InvalidateAttribute removes all cached entries for the given attribute,
 // regardless of entity. Used when a write to a unique attribute may have
 // silently staled other entities' cached values under the walk-based

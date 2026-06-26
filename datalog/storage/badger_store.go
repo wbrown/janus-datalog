@@ -163,6 +163,91 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 	return nil
 }
 
+// MaxTxForEntity returns the highest Tx among a single entity's datoms. The bool is
+// false when the entity has no datoms. TruncateTo uses it to find the floor below which
+// a snapshot marker must be preserved.
+func (s *BadgerStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error) {
+	prefix := concatBytes([]byte{byte(EAVT)}, e.Bytes())
+	var maxID datalog.ElementID
+	found := false
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			datom, err := DatomFromKey(EAVT, it.Item().KeyCopy(nil), s.encoder, s.db)
+			if err != nil {
+				return fmt.Errorf("decode EAVT key: %w", err)
+			}
+			if !found || maxID.Less(datom.Tx) {
+				maxID = datom.Tx
+				found = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return datalog.ElementID{}, false, err
+	}
+	return maxID, found, nil
+}
+
+// DatomsAfter returns every datom whose Tx is strictly greater than eid. It scans TAEV,
+// whose Tx-descending order puts the affected datoms first, and stops at the first datom
+// with Tx <= eid. Read-only; the caller removes them with DeleteDatoms, doing whatever
+// cache/clock coordination it needs in between.
+func (s *BadgerStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error) {
+	taevPrefix := []byte{byte(TAEV)}
+	var datoms []datalog.Datom
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Seek(taevPrefix); it.ValidForPrefix(taevPrefix); it.Next() {
+			datom, err := DatomFromKey(TAEV, it.Item().KeyCopy(nil), s.encoder, s.db)
+			if err != nil {
+				return fmt.Errorf("decode TAEV key: %w", err)
+			}
+			if !eid.Less(datom.Tx) {
+				// Tx <= eid; TAEV is Tx-descending, so nothing later exceeds eid either.
+				break
+			}
+			datoms = append(datoms, datom)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return datoms, nil
+}
+
+// DeleteDatoms physically removes each given datom from all eight indices in a single
+// transaction, returning the count removed. Unlike Retract (which appends a tombstone at a
+// higher Tx), this is a true rewind: the keys are gone, so the datoms vanish from
+// History() too.
+func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
+	deleted := 0
+	err := s.db.Update(func(txn *badger.Txn) error {
+		for i := range datoms {
+			for _, idx := range Indices {
+				key := s.encoder.EncodeKey(idx, &datoms[i])
+				if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
+					return fmt.Errorf("delete from %v index: %w", idx, err)
+				}
+			}
+			deleted++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
 // Scan returns an iterator for a range of keys
 func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
 	txn := s.db.NewTransaction(false)
