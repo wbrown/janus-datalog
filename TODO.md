@@ -33,6 +33,7 @@
 - **LZ77+FSE compression codec** (3.6× on prose, 10-13× on structured/repetitive; 2.1-2.4 GB/s decompression; deterministic; Tier-3 blob store for large values)
 - **Iterator-error contract enforced across executor + storage**: deferred storage errors (Tier-3 blob decode, etc.) ride through every materialization, join, sort, projection, union, and subquery boundary instead of being laundered into clean partial results
 - **Collection binding `[?x ...]`** for set inputs (parser + executor wired through subqueries, OR fallback, and input handling)
+- **Top-level `:limit`** (bounded results / top-N / latest-1) with streaming early-termination when unordered; finalization (`:order-by` then `:limit`) unified at the `ExecuteRealized` boundary so it composes correctly with aggregation and `RelationInput` (also corrected a latent `:order-by`+`RelationInput` global-ordering bug)
 
 ### Production Readiness: ✅ Ready
 
@@ -92,11 +93,13 @@ These items have been completed and are preserved for historical context:
 
 ### Query Engine Enhancements
 1. **Distinct Aggregation**: `(count-distinct ?x)` and a `distinct` modifier on existing aggregates
+2. **Subquery `:limit` (per-invocation)**: top-level `:limit` is done; inside a subquery it is currently a **parse error** (would otherwise be silently ignored). Supporting it requires per-invocation finalization, disabling batching when a cap is present, and guarding decorrelation. Forward-compatible tests already assert correctness once the parse rejection is removed (`datalog/executor/limit_edge_test.go`). Full design: [docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md](docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md).
 
 ### Performance Optimizations
 1. **Parallel Pattern Execution**: For independent patterns (complex dependency analysis)
 2. **Statistics Collection**: For better query planning (requires architecture changes)
 3. **Adaptive Streaming Strategy**: Automatically choose streaming vs materialized based on data
+4. **Index-order pushdown for `:order-by … :limit`**: turn `:order-by [[?tx :desc]] :limit 1` into a true point read (the EATV/ATEV indices already store Tx descending) instead of materialize-and-sort. Staged design + soundness preconditions (joins, aggregation, CRDT, ordering totality) in [docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md](docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md).
 
 ## Long Term (3-6 Months)
 

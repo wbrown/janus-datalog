@@ -122,6 +122,25 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 			}
 			i++
 
+		case ":limit":
+			// :limit expects exactly one non-negative integer.
+			if i >= len(node.Nodes) {
+				return nil, fmt.Errorf(":limit requires a non-negative integer")
+			}
+			if node.Nodes[i].Type != edn.NodeInt {
+				return nil, fmt.Errorf(":limit must be a non-negative integer, got %v", node.Nodes[i].Type)
+			}
+			n, err := strconv.ParseInt(node.Nodes[i].Value, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf(":limit must be a valid integer: %w", err)
+			}
+			if n < 0 {
+				return nil, fmt.Errorf(":limit must be non-negative, got %d", n)
+			}
+			limit := int(n)
+			q.Limit = &limit
+			i++
+
 		default:
 			return nil, fmt.Errorf("unknown query clause: %s", keyword)
 		}
@@ -133,6 +152,12 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 	}
 	if len(q.Where) == 0 {
 		return nil, fmt.Errorf("query must have at least one where pattern")
+	}
+
+	// Scalar find spec (.) returns a single value, so a :limit above 1 is
+	// contradictory. :limit 0 (no result) and :limit 1 are coherent.
+	if q.ScalarReturn && q.Limit != nil && *q.Limit > 1 {
+		return nil, fmt.Errorf("scalar find spec (.) is incompatible with :limit %d (limit must be 0 or 1)", *q.Limit)
 	}
 
 	return q, nil
@@ -493,6 +518,16 @@ func parseSubqueryPattern(list *edn.Node, bindingNode *edn.Node) (*query.Subquer
 	nestedQuery, err := parseQueryVector(&list.Nodes[1])
 	if err != nil {
 		return nil, fmt.Errorf("error parsing nested query: %w", err)
+	}
+
+	// :limit inside a subquery is not yet supported. The subquery execution path
+	// applies neither :order-by nor :limit (both are top-level finalization
+	// steps), so honoring it would require per-invocation finalization plus
+	// disabling batching/decorrelation when a cap is present. Rejecting here
+	// prevents silently-ignored caps (wrong results). Tracked in
+	// docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md.
+	if nestedQuery.Limit != nil {
+		return nil, fmt.Errorf(":limit is not supported inside a subquery; cap rows in the enclosing query, or use the (max ?x)/(min ?x) aggregate idiom for top-1-per-group")
 	}
 
 	// Parse inputs (everything between query and end)
@@ -1316,6 +1351,14 @@ func formatQueryWithIndent(q *query.Query, indent string) string {
 			}
 		}
 		sb.WriteString("]")
+	}
+
+	// Add :limit clause if present
+	if q.Limit != nil {
+		sb.WriteString("\n")
+		sb.WriteString(indent)
+		sb.WriteString(" :limit ")
+		sb.WriteString(strconv.Itoa(*q.Limit))
 	}
 
 	sb.WriteString("]")
