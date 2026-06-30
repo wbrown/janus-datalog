@@ -171,6 +171,13 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 		}
 	}
 
+	// Hash limit clause. The realized plan carries the query and the executor
+	// reads the limit from it, so two queries differing only by :limit must not
+	// share a cache entry (else the wrong limit would be applied).
+	if q.Limit != nil {
+		fmt.Fprintf(h, "LIMIT:%d;", *q.Limit)
+	}
+
 	// Hash planner options that affect the plan
 	fmt.Fprintf(h, "OPTIONS:")
 	fmt.Fprintf(h, "AlgebraOptimizer:%v;", opts.EnableAlgebraOptimizer)

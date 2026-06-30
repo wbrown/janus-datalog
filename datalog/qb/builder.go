@@ -14,6 +14,7 @@ type QueryBuilder struct {
 	in      []query.InputSpec
 	where   []query.Clause
 	orderBy []query.OrderByClause
+	limit   *int
 	errors  []error
 }
 
@@ -134,6 +135,26 @@ func (b *QueryBuilder) OrderBy(specs ...interface{}) *QueryBuilder {
 	return b
 }
 
+// Limit caps the number of result rows. The cap is applied after OrderBy (and
+// after aggregation), so OrderBy(Desc(...)) + Limit(1) is the "latest record"
+// query. A negative limit is a build error.
+//
+// Example:
+//
+//	qb.Query().
+//	    Find(e, tx).
+//	    Where(...).
+//	    OrderBy(qb.Desc(tx)).
+//	    Limit(1)
+func (b *QueryBuilder) Limit(n int) *QueryBuilder {
+	if n < 0 {
+		b.errors = append(b.errors, fmt.Errorf("limit must be non-negative, got %d", n))
+		return b
+	}
+	b.limit = &n
+	return b
+}
+
 // Build finalizes and validates the query, returning the built *query.Query.
 // Returns an error if the query is invalid or if any errors occurred during construction.
 func (b *QueryBuilder) Build() (*query.Query, error) {
@@ -152,6 +173,7 @@ func (b *QueryBuilder) Build() (*query.Query, error) {
 		In:      b.in,
 		Where:   b.where,
 		OrderBy: b.orderBy,
+		Limit:   b.limit,
 	}, nil
 }
 

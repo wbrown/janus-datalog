@@ -354,6 +354,7 @@ type Query struct {
 	In           []InputSpec     // Input specifications (database and parameters)
 	Where        []Clause        // Clauses in WHERE (DataPattern, Predicate, Expression, Subquery)
 	OrderBy      []OrderByClause // Optional ordering of results
+	Limit        *int            // Optional cap on result rows (nil = unbounded); applied after OrderBy and aggregation
 	ScalarReturn bool            // If true, return scalar value (find spec ends with .)
 }
 
@@ -517,6 +518,11 @@ func (q Query) formatWithIndent(indent string) string {
 			result += clause.String()
 		}
 		result += "]"
+	}
+
+	// Add :limit clause if present
+	if q.Limit != nil {
+		result += "\n" + indent + " :limit " + strconv.Itoa(*q.Limit)
 	}
 
 	result += "]"

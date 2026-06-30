@@ -86,6 +86,10 @@ Queries are EDN vectors. The basic form:
 [:find ?dept (sum ?salary) (count ?e) :where ...]
 
 ;; Available: sum, count, avg, min, max
+
+;; Scalar find-spec — trailing "." means "return a single value" (the first
+;; result), not a set. Requires exactly one find element.
+[:find ?name . :where [?p :person/name ?name]]
 ```
 
 ### Where Clauses
@@ -191,6 +195,8 @@ Important: `enumerate` produces **multiple output tuples** from a single input t
 
 The subquery `(q [...] $ ?var1 ?var2)` takes a full query, then lists the inputs to pass (matching the subquery's `:in` clause). The binding after `)` determines how results are captured: `[[?x]]` for a single tuple, `[[?x ?y] ...]` for multiple tuples.
 
+`:limit` is **not** supported inside a subquery (it parse-errors). For "top-1 per group", use the `(max ?x)`/`(min ?x)` aggregate idiom in the subquery instead.
+
 **Tagged literals** — use typed constants directly in patterns and predicates:
 ```clojure
 [#identity "L85hash..." :person/name ?name]   ;; match specific entity
@@ -246,6 +252,61 @@ Each `-in` value is parsed as EDN, so tagged literals work too: `-in '#inst "202
  :where [?p :person/name ?name]
         [?p :person/age ?age]]
 ```
+
+### Limiting Results and Pagination
+
+**`:limit N`** caps the number of result rows — for *bounding* a result (top-N,
+latest-1, "does any row match"), not for pagination. `:order-by` is optional and
+independent: `:limit N` alone returns the first N rows the engine produces
+(arbitrary but valid, like SQL `LIMIT` without `ORDER BY`) and stops the scan
+early. Add `:order-by` only when N must be chosen by a sort key — e.g. with
+`:order-by … :desc`, `:limit 1` is the canonical "latest record" query:
+
+```clojure
+;; "give me any one matching entity" — no :order-by needed
+[:find ?e :where [?e :entity/type :entity.type/telemetry] :limit 1]
+```
+
+When ordering matters, the cap is applied after `:order-by` (and after
+aggregation):
+
+```clojure
+[:find ?e ?tx
+ :where [?e :entity/type :entity.type/telemetry ?tx]
+ :order-by [[?tx :desc]]
+ :limit 1]
+```
+
+Scalar rule: with a scalar find-spec (`:find … .`), `:limit 0` and `:limit 1` are
+allowed; `:limit N>1` is an error — it contradicts "return a single value".
+
+```bash
+~/go/bin/datalog -db <path> -query \
+  '[:find ?e ?seq
+    :where [?e :event/kind "telemetry"] [?e :event/seq ?seq]
+    :order-by [[?seq :desc]] :limit 1]'
+```
+
+**There is no `:offset` / pagination clause, by design.** A query result is a
+streaming relation, so "the next page" is just *keep pulling from the same
+iterator* — which reads one consistent snapshot and gives stable, gap-free paging
+for free. An offset would re-scan and discard rows every page and is unstable
+across writes. For stateless/cross-process paging, use **keyset (cursor)
+pagination** instead: pin a snapshot with `d.AsOf(tx)` and carry the last-seen
+sort key forward as a `:where` bound —
+
+```clojure
+;; page 2+: continue past the last tx already seen
+[:find ?e ?tx
+ :in $ ?last-tx
+ :where [?e :entity/type :entity.type/telemetry ?tx]
+        [(> ?tx ?last-tx)]
+ :order-by [[?tx :asc]]
+ :limit 100]
+```
+
+This is O(N) per page (no discard), uses the index directly, and is stable under
+`d.AsOf`.
 
 ### Time-Travel
 

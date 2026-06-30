@@ -216,7 +216,30 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 // - Each phase executes as independent Query returning []Relation (disjoint groups)
 // - Groups are projected to Keep symbols and passed to next phase
 // - Final phase must collapse to single relation or error on Cartesian product
+//
+// Finalization (:order-by then :limit) is applied here, at the single outer
+// boundary, on the fully-assembled result. This is what makes the inline path
+// and the per-tuple RelationInput-iteration path behave identically: the result
+// of a RelationInput query is the union of its per-tuple executions, so ordering
+// and capping must run over that whole union — not per iteration. Sorting before
+// limiting yields a correct global top-N.
 func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
+	result, err := e.executeRealizedPlan(ctx, plan, inputRelations)
+	if err != nil {
+		return nil, err
+	}
+	if len(plan.Query.OrderBy) > 0 {
+		result = result.Sort(plan.Query.OrderBy)
+	}
+	if plan.Query.Limit != nil {
+		result = NewLimitRelation(result, *plan.Query.Limit)
+	}
+	return result, nil
+}
+
+// executeRealizedPlan runs the phase pipeline and returns the assembled result
+// (un-ordered, un-limited). ExecuteRealized applies :order-by and :limit to it.
+func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
 	// Check if we need to iterate over a RelationInput
 	// RelationInput (e.g., :in [[?a ?b]]) requires executing the query once per tuple
 	if hasRelationInput(plan.Query) && len(inputRelations) > 0 {
@@ -422,14 +445,8 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		return emptyRelationForQuery(plan.Query), nil
 	}
 
-	finalResult := currentGroups[0]
-
-	// Apply ordering if specified
-	if len(plan.Query.OrderBy) > 0 {
-		finalResult = finalResult.Sort(plan.Query.OrderBy)
-	}
-
-	return finalResult, nil
+	// :order-by and :limit are applied by ExecuteRealized on the final result.
+	return currentGroups[0], nil
 }
 
 // executeRealizedWithRelationInputIteration handles RelationInput iteration for QueryExecutor path
@@ -1114,13 +1131,11 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 		return emptyRelationForQuery(p.plan.Query), nil
 	}
 
-	finalResult := currentGroups[0]
-
-	if len(p.plan.Query.OrderBy) > 0 {
-		finalResult = finalResult.Sort(p.plan.Query.OrderBy)
-	}
-
-	return finalResult, nil
+	// Per-tuple results are returned un-ordered: the RelationInput result is the
+	// union of all per-tuple executions, and :order-by/:limit are applied once by
+	// ExecuteRealized over that whole union (a per-tuple sort here would be
+	// discarded by the union and would not produce a global ordering).
+	return currentGroups[0], nil
 }
 
 // SetPlanCache sets the plan cache for this executor
