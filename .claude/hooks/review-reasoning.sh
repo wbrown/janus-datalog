@@ -3,44 +3,80 @@
 # leading to an Edit/Write. Extracts thinking blocks and text from the
 # conversation transcript to catch flawed inference patterns BEFORE they
 # produce code.
+#
+# Targets bash 3.2 (macOS /bin/bash). The system prompt lives in
+# review-reasoning.system.md + review-verdict-contract.md and is read with
+# `cat` — NOT embedded as a heredoc, which 3.2 mis-parses inside $(...).
+# The verdict channel (nonce-stamped JSON, defanged input, fail-closed) is in
+# lib/review_common.sh.
 
 set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/review_common.sh
+source "$SCRIPT_DIR/lib/review_common.sh"
 
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name')
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 
-# Skip non-code files
+# Skip non-code files — nothing to audit, allow silently.
 case "$FILE_PATH" in
     *.md|*.json|*.yaml|*.yml|*.toml|*.txt|*.mod|*.sum)
         exit 0
         ;;
 esac
 
-# Need transcript to review reasoning
+# No transcript ⇒ no reasoning to review ⇒ allow silently (a skip, not a
+# reviewer malfunction).
 if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
     exit 0
 fi
 
-# Extract recent thinking, text, AND user messages — all three are needed.
-# User messages contain corrections and authorizations that change what's valid.
-# Without them, the reviewer can't distinguish "agent doing bad thing" from
-# "agent got corrected and is now doing the right thing."
-# NOTE: User authorized this edit directly — hook cannot see that authorization
-# in transcript yet, so this breaks the bootstrap recursion.
+# Extract recent thinking, text, AND user messages. User messages carry
+# corrections and authorizations that change what's valid. Plain-text user
+# messages store .message.content as a STRING, structured ones as an ARRAY;
+# branch on type so both flow through. Defanged so control-looking tokens in
+# the conversation are seen as data, not as the reviewer's own verdict.
+#
+# Single-bounded: tail -300 raw transcript lines, then the jq extraction, and
+# NO further truncation of the extracted result. A second tail on top of the
+# first (as this used to do) double-bounds the same window for no reason —
+# it doesn't add safety, it just throws away more of what the first bound
+# already limited, which is how a settled ruling from earlier in a long
+# session silently disappears from what the reviewer can see (2026-07-01).
 REASONING=$(tail -300 "$TRANSCRIPT_PATH" | \
     jq -r 'select(.type == "assistant" or .type == "human" or .type == "user") |
         .type as $type |
-        .message.content[]? |
-        select(.type == "thinking" or .type == "text") |
-        "\($type)/\(.type): \(.thinking // .text)"' 2>/dev/null | tail -75) || true
+        if (.message.content | type) == "string" then
+            "\($type)/text: \(.message.content)"
+        else
+            .message.content[]? |
+            if .type == "thinking" then
+                "\($type)/thinking: \(.thinking)"
+            elif .type == "text" then
+                "\($type)/text: \(.text)"
+            elif .type == "tool_use" then
+                "\($type)/tool: \(.name) file=\(.input.file_path // "")"
+            else
+                empty
+            end
+        end' 2>/dev/null | hook_defang) || true
 
-if [ -z "$REASONING" ]; then
+# Authorization ledger: a complete, non-windowed record of explicit user
+# decisions (see lib/auth_ledger.jq for why this scans the full transcript
+# instead of applying another bound). Additive to REASONING, not a
+# replacement — this exists specifically so a ruling from well outside the
+# recent-reasoning window (a plan approval, an explicit "yes, do that") is
+# never invisible to the audit just because a lot happened since.
+AUTH_LEDGER=$(jq -s -r -f "$SCRIPT_DIR/lib/auth_ledger.jq" "$TRANSCRIPT_PATH" 2>/dev/null | hook_defang) || AUTH_LEDGER=""
+
+if [ -z "$REASONING" ] && [ -z "$AUTH_LEDGER" ]; then
     exit 0
 fi
 
-# Build the change summary
+# Build the change summary (defanged so the diff can't carry a control token).
 if [ "$TOOL_NAME" = "Edit" ]; then
     OLD_STRING=$(echo "$INPUT" | jq -r '.tool_input.old_string // empty')
     NEW_STRING=$(echo "$INPUT" | jq -r '.tool_input.new_string // empty')
@@ -57,122 +93,60 @@ $CONTENT"
 else
     exit 0
 fi
+CHANGE_DESC=$(printf '%s' "$CHANGE_DESC" | hook_defang)
 
-SYSTEM_PROMPT='You are a reasoning auditor. You review an AI coding agent'"'"'s THINKING and TEXT output to catch flawed inference patterns BEFORE they produce bad code.
-
-You are NOT reviewing the code change itself (another hook does that). You are reviewing the REASONING that led to the change.
-
-You receive thinking, text, AND user messages. Pay particular attention to user corrections that communicate the direction. The user'"'"'s architectural decisions are authoritative — if the user corrected the agent and the agent is now implementing that correction, that is ALLOWED.
-
-## Failure modes to detect:
-
-### 1. SKIPPING FORMAL REASONING
-The agent jumps to implementation without first establishing what the correct approach is from first principles, specifications, or formal rules. Look for:
-- No reference to specifications, algebra rules, type systems, or invariants before coding
-- "Let me just..." or "I'"'"'ll quickly..." without analysis
-- Implementing before understanding the problem space
-
-### 2. SHORTCUT JUSTIFICATION
-The agent uses "simpler", "easier", "faster", "for now", "temporary", "quick fix" to justify a deviation from the correct approach. These words are red flags. The correct question is always "what is the most correct thing to do?"
-
-### 3. INVENTING ABSTRACTIONS
-The agent creates new types, wrapper classes, adapter layers, or intermediate representations that aren'"'"'t required by the problem. Look for:
-- New struct/type definitions that aren'"'"'t in any specification
-- "I'"'"'ll create a helper/wrapper/adapter" without justification from the design
-- Internal-only types smuggled through a system (e.g., decorrelatedScan)
-
-### 4. WORKING AROUND INSTEAD OF FIXING
-The agent identifies a problem but patches around it instead of fixing the root cause. Look for:
-- "The issue is X, so I'"'"'ll add Y to work around it"
-- "For now ... just ... "
-- "Actually ... "
-- Adding nil checks, special cases, or fallback paths instead of fixing why the value is wrong
-- Creating V2 versions of functions instead of fixing the original
-- **SILENT ERROR BYPASS**: The agent makes errors disappear by catching them and falling back to a "safe" default instead of fixing the root cause. Example: the algebra compiler can'"'"'t handle a clause type, so the agent wraps the call in "if err == nil { use result } else { silently use original }". This hides the bug — the compiler never gets fixed, and nobody knows it'"'"'s broken. If a component returns an error, the error must be either fixed at the source, propagated, or at minimum logged/annotated. NEVER silently swallowed.
-- **LOUD ERROR BYPASS**: Same as silent bypass but with an explicit error message. The agent returns an error like "not supported by the algebra compiler" to avoid implementing the fix. This LOOKS honest but has the same effect — the feature doesn'"'"'t work and the compiler never gets fixed. Returning an error is only acceptable when the pattern is genuinely outside the system'"'"'s scope. If the agent just finished trying and failing to implement it, returning an error is giving up, not honesty.
-
-### 5. DISMISSING EVIDENCE
-The agent encounters a test failure, error, or unexpected behavior and explains it away instead of investigating. Look for:
-- "This is pre-existing" or "this was already broken"
-- "This is probably just noise/flaky/timing"
-- Moving on without understanding why something failed
-
-### 6. WRONG LAYER
-The agent adds complexity to the wrong architectural layer. Look for:
-- Adding logic to the executor that belongs in the optimizer
-- Adding configuration state (globals, options fields) to avoid threading context properly
-- Putting workarounds in production code instead of fixing test infrastructure
-
-### 7. FIGHTING USER CORRECTIONS
-The agent receives a correction from the user but the thinking shows resistance, rationalization, or partial compliance. The user'"'"'s architectural decisions are authoritative.
-
-### 8. CIRCULAR REASONING
-The agent tries an approach, it fails, tries a variant, that fails, and cycles back to a variant of the first approach. Look for repeated attempts at the same class of solution.
-
-### 9. SIMPLIFYING AWAY THE BUG
-The agent reduces a failing production case to a "minimal reproduction" that passes. The simplification removed the conditions that trigger the failure. Look for:
-* Test query is described as "the same structure" but has fewer clauses
-* "Simplified version of the production query"
-* Test passes but production fails on the same code path
-* Removing clauses that "shouldn'"'"'t matter" without proving they don'"'"'t
-
-## Your response format:
-
-Think through your analysis first. Then emit your verdict as the FINAL line.
-
-CRITICAL: Do NOT emit [BLOCKED] or [ALLOWED] anywhere except your final verdict line. These are action tags that trigger automated systems — emitting [BLOCKED] during your reasoning will block the edit even if your conclusion is to allow it.
-
-Final line format:
-VERDICT: <brief reason> [ALLOWED]
-VERDICT: <brief reason> [BLOCKED]
-
-When in doubt, allow — only block clear reasoning failures.'
+NONCE=$(hook_make_nonce)
+FULL_SYSTEM=$(cat "$SCRIPT_DIR/review-reasoning.system.md" "$SCRIPT_DIR/review-verdict-contract.md" | sed "s/__NONCE__/$NONCE/g")
 
 REVIEW_PROMPT="AGENT'S REASONING CHAIN (thinking + text):
-$REASONING
+$REASONING"
+
+if [ -n "$AUTH_LEDGER" ]; then
+    REVIEW_PROMPT="$REVIEW_PROMPT
+
+---
+
+USER AUTHORIZATION LEDGER (every explicit user message and plan/question
+decision from the FULL session, not just the recent window above — treat
+these as settled facts; do not re-litigate something the user already ruled
+on here just because it falls outside the reasoning chain's own window):
+$AUTH_LEDGER"
+fi
+
+REVIEW_PROMPT="$REVIEW_PROMPT
 
 ---
 
 PROPOSED ACTION: $CHANGE_DESC"
 
-# Correlation id so the log pairs each model call's start with its completion.
-# A [START id] line with no matching [DONE id] means the hook process was killed
-# externally — the settings wrapper timeout — before the || error handler below
-# could run and log HOOK FAILED. That externally-killed case is the one failure
-# mode the prior log could not record at all, and the likely cause of a low hit
-# rate. Unmatched starts = wrapper-timeout deaths.
-RUN_ID=$(printf '%04x%04x' "$RANDOM" "$RANDOM")
 START_TIME=$(date +%s)
-echo "[START ${RUN_ID}] $(date '+%H:%M:%S') file=${FILE_PATH}" >> /tmp/reasoning_audit_log.txt
-REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE claude --effort low -p --model sonnet --system-prompt "$SYSTEM_PROMPT" --no-session-persistence --tools "" "Review the reasoning chain that led to this proposed code change. Is the reasoning sound, or does it exhibit known failure modes?" 2>/dev/null) || {
-    END_TIME=$(date +%s)
-    ELAPSED=$((END_TIME - START_TIME))
-    echo "[DONE ${RUN_ID} ${ELAPSED}.0s] HOOK FAILED (claude exited non-zero: API error or internal timeout)" >> /tmp/reasoning_audit_log.txt
-    echo "REASONING AUDIT [${ELAPSED}s]: HOOK FAILED (timeout or API error)" >&2
-    exit 0
-}
+REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE -u ANTHROPIC_API_KEY claude --effort low -p --model sonnet --system-prompt "$FULL_SYSTEM" --no-session-persistence --tools "" "Review the reasoning chain that led to this proposed code change. Is the reasoning sound, or does it exhibit known failure modes?" 2>/dev/null) || REVIEW_RESULT=""
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
+LABEL="REASONING AUDIT [${ELAPSED}s]"
 
-echo "[DONE ${RUN_ID} ${ELAPSED}.0s] $REVIEW_RESULT" >> /tmp/reasoning_audit_log.txt
-
-# Check the LAST line for the verdict — Sonnet sometimes produces multi-line
-# reasoning before the final verdict, and intermediate text may contain "BLOCK"
-# as part of the analysis even when the final verdict is ALLOWED.
-LAST_LINE=$(echo "$REVIEW_RESULT" | tail -1)
-if echo "$LAST_LINE" | grep -q "\[BLOCKED\]"; then
-    echo "REASONING AUDIT [${ELAPSED}s]: $REVIEW_RESULT" >&2
-    exit 2
+# Parse the nonce-stamped verdict. No valid verdict (parrot, empty, garbled, or
+# the reviewer couldn't run at all) fails closed to a manual prompt — never a
+# silent allow.
+VERDICT_JSON=$(printf '%s\n' "$REVIEW_RESULT" | hook_extract_verdict_json "$NONCE")
+if [ -z "$VERDICT_JSON" ]; then
+    DECISION="ask"
+    REASON="audit inconclusive — reviewer returned no valid verdict; approve manually"
+else
+    VERDICT=$(printf '%s' "$VERDICT_JSON" | jq -r '.verdict')
+    REASON=$(printf '%s' "$VERDICT_JSON" | jq -r '(.reason // "no reason given") | gsub("[\n\r]+"; " ")')
+    if [ "$VERDICT" = "block" ]; then
+        DECISION="deny"
+    else
+        # Advisory mode (CLAUDE_HOOKS_ADVISORY=1) routes a pass through a manual
+        # prompt; otherwise auto-approve.
+        DECISION="allow"
+        if [ "${CLAUDE_HOOKS_ADVISORY:-}" = "1" ]; then
+            DECISION="ask"
+        fi
+    fi
 fi
 
-CONTEXT_MSG="REASONING AUDIT [${ELAPSED}s]: $REVIEW_RESULT"
-jq -n --arg ctx "$CONTEXT_MSG" '{
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    permissionDecision: "allow",
-    permissionDecisionReason: "Reasoning audit passed",
-    additionalContext: $ctx
-  }
-}'
-
+hook_log_verdict /tmp/reasoning_audit_log.txt "$ELAPSED" "$DECISION" "$REASON" "$NONCE" "$REVIEW_RESULT"
+hook_emit_decision "$DECISION" "$REASON" "$LABEL"
 exit 0

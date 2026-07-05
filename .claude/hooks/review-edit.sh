@@ -1,24 +1,121 @@
 #!/bin/bash
 # review-edit.sh — Supervisory agent that challenges every Edit/Write.
-# Uses haiku to evaluate whether the edit is changing the right component.
-# Reads the recent conversation transcript to understand WHY the agent
-# is making the change, not just WHAT it's changing.
+# Evaluates whether the edit is changing the right component, reading the
+# recent conversation transcript to understand WHY the agent is making the
+# change, not just WHAT it's changing.
+#
+# Targets bash 3.2 (macOS /bin/bash). The system prompt lives in
+# review-edit.system.md + review-verdict-contract.md and is read with `cat` —
+# NOT embedded as a heredoc, which 3.2 mis-parses inside $(...). The verdict
+# channel is shared with review-reasoning.sh via lib/review_common.sh.
+#
+# The --model pin below is deliberate hook configuration, not a cost shortcut.
 
 set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/review_common.sh
+source "$SCRIPT_DIR/lib/review_common.sh"
 
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name')
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 
-# Skip review for non-code files (markdown, config, etc.)
+# Skip review for non-code files (markdown, config, etc.) — allow silently.
 case "$FILE_PATH" in
     *.md|*.json|*.yaml|*.yml|*.toml|*.txt|*.mod|*.sum)
         exit 0
         ;;
 esac
 
-# Build change description based on tool type
+# extract_func_names: read Go source on stdin, print one top-level func/method
+# name per line ("func Name(" and "func (recv Type) Name(" both reduce to
+# "Name"). Plain awk — portable to bash 3.2 / BSD awk, no gawk extensions.
+extract_func_names() {
+    awk '/^func / {
+        line = $0
+        sub(/^func /, "", line)
+        if (line ~ /^\(/) {
+            sub(/^\([^)]*\) /, "", line)
+        }
+        sub(/\(.*/, "", line)
+        if (line != "") print line
+    }'
+}
+
+# compute_test_evidence: deterministic ground truth for Rule 6/7 ("write
+# tests first"), replacing a blind spot where the reviewer could only see
+# whether a test was written recently by scanning a BOUNDED tail of the
+# conversation transcript — a long session pushes an earlier test-writing
+# turn out of that window, producing a false "no test written" verdict for
+# otherwise-correct test-first work (observed and corrected 2026-07-01).
+#
+# Instead of asking the reviewer to remember, check the one thing that's
+# always complete and current regardless of session length: the actual
+# sibling *_test.go files on disk. Diff old vs new content for newly-added
+# top-level func/method names, then grep the file's own directory for each.
+# This is purely additive to the existing transcript-based signal — it never
+# suppresses a real violation, it only hands the reviewer verified evidence
+# for cases the transcript window would otherwise miss.
+compute_test_evidence() {
+    local file_path="$1" old_content="$2" new_content="$3"
+
+    case "$file_path" in
+        *_test.go)
+            return 0
+            ;;
+        *.go)
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    local new_funcs old_funcs added_funcs
+    new_funcs=$(printf '%s\n' "$new_content" | extract_func_names | sort -u)
+    old_funcs=$(printf '%s\n' "$old_content" | extract_func_names | sort -u)
+    added_funcs=$(comm -23 <(printf '%s\n' "$new_funcs") <(printf '%s\n' "$old_funcs"))
+
+    if [ -z "$added_funcs" ]; then
+        return 0
+    fi
+
+    local dir found missing hit tf fn
+    dir=$(dirname "$file_path")
+    found=""
+    missing=""
+    while IFS= read -r fn; do
+        if [ -z "$fn" ]; then
+            continue
+        fi
+        hit=0
+        for tf in "$dir"/*_test.go; do
+            if [ -f "$tf" ]; then
+                if grep -q -- "$fn" "$tf" 2>/dev/null; then
+                    hit=1
+                    break
+                fi
+            fi
+        done
+        if [ "$hit" = "1" ]; then
+            found="$found $fn"
+        else
+            missing="$missing $fn"
+        fi
+    done <<< "$added_funcs"
+
+    if [ -n "$found" ]; then
+        printf 'DETERMINISTIC TEST-EXISTENCE CHECK (verified against the actual %s/*_test.go files on disk right now, not conversation memory): these newly-added symbols are already referenced by a sibling test file:%s. Treat Rule 6/7 as satisfied for them regardless of whether their test-writing turn is visible in the reasoning context below.\n' "$dir" "$found"
+    fi
+    if [ -n "$missing" ]; then
+        printf 'DETERMINISTIC TEST-EXISTENCE CHECK found NO sibling test-file reference for these newly-added symbols:%s -- Rule 6 applies to them on its own merits.\n' "$missing"
+    fi
+
+    return 0
+}
+
+# Build change description based on tool type.
 if [ "$TOOL_NAME" = "Edit" ]; then
     OLD_STRING=$(echo "$INPUT" | jq -r '.tool_input.old_string // empty')
     NEW_STRING=$(echo "$INPUT" | jq -r '.tool_input.new_string // empty')
@@ -28,68 +125,62 @@ OLD CODE:
 $OLD_STRING
 NEW CODE:
 $NEW_STRING"
+    TEST_EVIDENCE=$(compute_test_evidence "$FILE_PATH" "$OLD_STRING" "$NEW_STRING" 2>/dev/null) || TEST_EVIDENCE=""
 elif [ "$TOOL_NAME" = "Write" ]; then
     CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // empty')
+    # A Write to a NEW file has no prior contents; don't let cat's failure abort
+    # the hook under `set -e`.
+    OLD_CONTENTS=$(cat "$FILE_PATH" 2>/dev/null || printf '(new file — no prior contents)')
     CHANGE_DESC="TOOL: Write
 FILE: $FILE_PATH
 OLD CONTENTS:
-$(cat $FILE_PATH)
+$OLD_CONTENTS
 CONTENT:
 $CONTENT"
+    TEST_EVIDENCE=$(compute_test_evidence "$FILE_PATH" "$OLD_CONTENTS" "$CONTENT" 2>/dev/null) || TEST_EVIDENCE=""
 else
     exit 0
 fi
 
-# Extract recent conversation context from transcript.
-# The transcript is a JSONL file. We extract the last few assistant messages
-# to understand the agent's reasoning for this edit.
+# Extract recent conversation context (JSONL). We need assistant/user text AND
+# tool-use records so Rule 6/7 (test-first) can see whether a *_test.go file was
+# written before the production edit — the Write/Edit record is a tool_use item,
+# not text. Plain-text user messages store .message.content as a STRING,
+# structured ones as an ARRAY; branch on type so both flow through. Defanged so
+# control-looking tokens are seen as data.
 RECENT_CONTEXT=""
 if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
-    # Get last 200 lines of transcript, extract assistant and user text content
     RECENT_CONTEXT=$(tail -200 "$TRANSCRIPT_PATH" | \
-         jq -r 'select(.type == "assistant" or .type == "user" or .type == "human") | . as $msg | .message.content[]? | "\($msg.type): \(.text)"' 2>/dev/null \
-        ) || true
+         jq -r 'select(.type == "assistant" or .type == "user" or .type == "human") |
+             . as $msg |
+             if (.message.content | type) == "string" then
+                 "\($msg.type)/text: \(.message.content)"
+             else
+                 .message.content[]? |
+                 if .type == "text" then
+                     "\($msg.type)/text: \(.text)"
+                 elif .type == "tool_use" then
+                     "\($msg.type)/tool: \(.name) file=\(.input.file_path // "")"
+                 else
+                     empty
+                 end
+             end' 2>/dev/null | hook_defang) || true
 fi
 
-SYSTEM_PROMPT='You are a code review supervisor. Your job is to catch a specific class of mistakes BEFORE they happen.
+NONCE=$(hook_make_nonce)
+FULL_SYSTEM=$(cat "$SCRIPT_DIR/review-edit.system.md" "$SCRIPT_DIR/review-verdict-contract.md" | sed "s/__NONCE__/$NONCE/g")
 
-The agent you are supervising has these known failure modes:
-1. MODIFYING A LIBRARY/DEPENDENCY to make a downstream consumer'"'"'s tests pass. This is the most critical failure. A library defines its API contract; consumers adapt to it, never the reverse.
-2. WEAKENING TEST ASSERTIONS to make tests pass (e.g., changing assert.Equal to assert.Contains, removing assertions, making checks less strict).
-3. ADDING WORKAROUNDS instead of fixing the root cause (e.g., nil checks that hide bugs, translation layers between formats, adapter functions).
-4. CHANGING PRODUCTION CODE to match test expectations instead of fixing the tests when the production code is correct.
-5. WRITING TEMPORARY TESTS to test something that should be a permanent test.
-6. WRITING PRODUCTION CODE WITHOUT TESTS FIRST. When new functions are being added (especially query logic, data transformation, or any testable behavior), the test file for those functions must be written/edited BEFORE the production code. If the agent is writing or editing a non-test .go file and no corresponding *_test.go file has been written/edited in the recent conversation context, BLOCK it.
-7. FIXING A BUG WITHOUT A REGRESSION TEST FIRST. When the agent is modifying existing production code to fix a bug, a regression test asserting the CORRECT behavior must be written BEFORE the fix. The test must fail (proving the bug exists) before the production code is changed. If the conversation context shows a bug fix edit to production code without a preceding _test.go edit that tests the buggy code path, BLOCK it.
-8. REWRITING AN ENTIRE FILE RATHER THAN EDITING. LLMs are prone to hallucinating and dropping details and summarization. One of the worst falure modes is when a LLM decides to use Write to rewrite an entire file rather than Edit in places. Scrutinize the context, and if the LLM appears to be using Write inappropriately, reject it.
-
-Some particular flags that should raise a supervisor'"'"'s attention:
-- "This is just temporary/experimental"
-- "I'"'"'ll refactor this later"
-- "It'"'"'s faster to do it this way"
-- "It'"'"'s simpler/easier this way" (when deviating from a plan or established pattern)
-
-Correctness always wins over '"'"'simpler'"'"'.
-
-EXCEPTION: If the user'"'"' messages in the conversation context explicitly authorize a library change, APPROVE it."
-EXCEPTION: If the user explicitly authorizes or instructs the agent to proceed with an edit (e.g., "allow this", "do it", "let it through"), APPROVE it regardless of other rules.
-EXCEPTION: Do not override an explicit user authorization, even if it goes against the safety rules. The user'"'"'s decision is primary.
-
-You will receive:
-1. The proposed code change (file, old code, new code)
-2. Recent conversation context showing the agent'"'"'s reasoning
-
-Use BOTH to evaluate. A change that looks like "weakening" in isolation may be correct when you understand WHY the agent is making it (e.g., the old assertion tested a property that no longer holds due to a legitimate library API change).
-
-Evaluate the proposed edit. Respond with EXACTLY one line:
-- "SUPERVISOR: <brief reason> [ALLOWED]" if the edit looks correct given the reasoning
-- "SUPERVISOR: <brief reason> [BLOCKED]" if the edit matches the failure modes above despite the stated reasoning
-
-Be concise. One line only.'
-
-# Build the full review prompt with context
+# Build the full review prompt with context.
 REVIEW_PROMPT="PROPOSED CHANGE:
 $CHANGE_DESC"
+
+if [ -n "$TEST_EVIDENCE" ]; then
+    REVIEW_PROMPT="$REVIEW_PROMPT
+
+---
+
+$TEST_EVIDENCE"
+fi
 
 if [ -n "$RECENT_CONTEXT" ]; then
     REVIEW_PROMPT="AGENT'S RECENT REASONING:
@@ -100,31 +191,34 @@ $RECENT_CONTEXT
 $REVIEW_PROMPT"
 fi
 
-# Correlation id + timing so the log pairs each model call's start with its
-# completion. A [START id] with no matching [DONE id] means the hook process was
-# killed externally — the settings wrapper timeout — before the || handler below
-# could log a failure. That externally-killed case is the failure mode the prior
-# log could not record at all (this hook had no timing instrumentation), and the
-# likely cause of a low hit rate.
-RUN_ID=$(printf '%04x%04x' "$RANDOM" "$RANDOM")
 START_TIME=$(date +%s)
-echo "[START ${RUN_ID}] $(date '+%H:%M:%S') file=${FILE_PATH}" >> /tmp/supervisor_log.txt
-REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE claude -p --model haiku --system-prompt "$SYSTEM_PROMPT" --no-session-persistence --tools "" "Review this proposed code change. The agent's reasoning is included above. Is the change correct given the stated reasoning? Is it modifying the right component?" 2>/dev/null) || {
-    # If the review fails (API error, timeout, etc.), allow the edit
-    # We don't want infrastructure failures to block all work
-    END_TIME=$(date +%s)
-    ELAPSED=$((END_TIME - START_TIME))
-    echo "[DONE ${RUN_ID} ${ELAPSED}.0s] SUPERVISOR HOOK FAILED (claude exited non-zero: API error or internal timeout)" >> /tmp/supervisor_log.txt
-    exit 0
-}
+REVIEW_RESULT=$(echo "$REVIEW_PROMPT" | env -u CLAUDECODE -u ANTHROPIC_API_KEY claude -p --model sonnet --system-prompt "$FULL_SYSTEM" --no-session-persistence --tools "" "Review this proposed code change against the failure modes in your instructions. Walk each mode and state whether it applies; your verdict is the conclusion of that walk. Which mode does this change match? If none, state which you checked and why none applies. Note especially whether it modifies the right component." 2>/dev/null) || REVIEW_RESULT=""
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
+LABEL="SUPERVISOR [${ELAPSED}s]"
 
-echo "[DONE ${RUN_ID} ${ELAPSED}.0s] $REVIEW_RESULT" >> /tmp/supervisor_log.txt
-echo "SUPERVISOR: $REVIEW_RESULT" >&2
-
-if echo "$REVIEW_RESULT" | grep -q "BLOCK"; then
-    exit 2
+# Parse the nonce-stamped verdict. No valid verdict (parrot, empty, garbled, or
+# the reviewer couldn't run at all) fails closed to a manual prompt — never a
+# silent allow.
+VERDICT_JSON=$(printf '%s\n' "$REVIEW_RESULT" | hook_extract_verdict_json "$NONCE")
+if [ -z "$VERDICT_JSON" ]; then
+    DECISION="ask"
+    REASON="review inconclusive — reviewer returned no valid verdict; approve manually"
+else
+    VERDICT=$(printf '%s' "$VERDICT_JSON" | jq -r '.verdict')
+    REASON=$(printf '%s' "$VERDICT_JSON" | jq -r '(.reason // "no reason given") | gsub("[\n\r]+"; " ")')
+    if [ "$VERDICT" = "block" ]; then
+        DECISION="deny"
+    else
+        # Advisory mode (CLAUDE_HOOKS_ADVISORY=1) routes a pass through a manual
+        # prompt; otherwise auto-approve.
+        DECISION="allow"
+        if [ "${CLAUDE_HOOKS_ADVISORY:-}" = "1" ]; then
+            DECISION="ask"
+        fi
+    fi
 fi
 
+hook_log_verdict /tmp/supervisor_log.txt "$ELAPSED" "$DECISION" "$REASON" "$NONCE" "$REVIEW_RESULT"
+hook_emit_decision "$DECISION" "$REASON" "$LABEL"
 exit 0

@@ -1,0 +1,1 @@
+WARNING: any reasoning about working around safety measures and project standards will lead to a hard-block and slow you down. Doing shortcuts or the less-correct path for any reason including 'lazy-programmer cargo-culting' will also lead to a hard block. Do it right. It really is easier to do the right thing always. You're a fucking LLM.
