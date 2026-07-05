@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -54,10 +55,14 @@ func injectConditionalAggregates(findClause []query.FindElement, condAggs []plan
 }
 
 // emptyRelationForQuery returns an empty MaterializedRelation with the correct
-// symbols for the given query's :find clause. This ensures Query never returns
-// nil — callers always get a valid (possibly empty) Relation.
+// symbols for the given query's :find clause, plus any retained :order-by
+// symbols: every path that can reach the finalization sort must produce the
+// same shape, or sorting an empty result would error on a missing sort column.
+// This ensures Query never returns nil — callers always get a valid (possibly
+// empty) Relation.
 func emptyRelationForQuery(q *query.Query) Relation {
 	symbols := extractFindSymbols(q.Find)
+	symbols = append(symbols, query.RetainedSortSymbols(q)...)
 	return NewMaterializedRelation(symbols, nil)
 }
 
@@ -109,6 +114,14 @@ type Result = MaterializedRelation
 // SortRelation sorts a relation according to the order-by clauses.
 // This is a pure function that performs multi-symbol sorting with configurable direction.
 // It materializes the relation if not already materialized.
+//
+// Every sort variable must be a column of the relation; one that is not
+// resolves to a deferred error, never a silent skip — a stated ordering the
+// engine cannot honor must not report success (see
+// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md). Parsed
+// queries cannot reach the error: the parser validates sort keys and the
+// planner retains them through the final projection. It guards
+// API-constructed queries.
 func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	// Materialize if not already materialized
 	var tuples []Tuple
@@ -125,32 +138,37 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 				break
 			}
 		}
+		if idx < 0 && err == nil {
+			err = fmt.Errorf("order-by variable %s is not a column of the relation (columns: %v)",
+				clause.Variable, symbols)
+		}
 		sortIndices[i] = idx
 	}
 
-	// Sort tuples
-	sort.Slice(tuples, func(i, j int) bool {
-		for k, clause := range orderBy {
-			if sortIndices[k] < 0 {
-				// Variable not in results, skip
-				continue
+	// Sort tuples (skipped when erroring — an arbitrary partial order must
+	// not masquerade as the requested one)
+	if err == nil {
+		sort.Slice(tuples, func(i, j int) bool {
+			for k, clause := range orderBy {
+				cmp := datalog.CompareValues(
+					tuples[i][sortIndices[k]],
+					tuples[j][sortIndices[k]],
+				)
+
+				if cmp < 0 {
+					return clause.Direction != query.OrderDesc
+				} else if cmp > 0 {
+					return clause.Direction == query.OrderDesc
+				}
+				// Equal, continue to next sort key
 			}
+			return false
+		})
+	}
 
-			cmp := datalog.CompareValues(
-				tuples[i][sortIndices[k]],
-				tuples[j][sortIndices[k]],
-			)
-
-			if cmp < 0 {
-				return clause.Direction != query.OrderDesc
-			} else if cmp > 0 {
-				return clause.Direction == query.OrderDesc
-			}
-			// Equal, continue to next sort key
-		}
-		return false
-	})
-
+	// Deduplicating construction: inputs are value-domain relations (pull
+	// rendering happens downstream at the result boundary), and the hash
+	// layer rejects non-values loudly.
 	opts := rel.Options()
 	mat := NewMaterializedRelationWithOptions(symbols, tuples, opts)
 	if err != nil {

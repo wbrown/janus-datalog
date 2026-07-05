@@ -178,3 +178,126 @@ func TestOrderByFormatting(t *testing.T) {
 		})
 	}
 }
+
+// TestOrderByValidation pins the sort-key binding rules from
+// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md
+// (Design Decision section): a sort key must be bound by :where or be a
+// scalar/tuple :in constant; unbound variables, relation/collection input
+// columns not bound by :where, and non-group-key variables in aggregate
+// queries are parse errors.
+func TestOrderByValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		wantErr bool
+	}{
+		{
+			name: "where-bound non-projected variable is valid",
+			query: `[:find ?name
+			         :where [?e :user/name ?name]
+			                [?e :user/age ?age]
+			         :order-by [[?age :asc]]]`,
+			wantErr: false,
+		},
+		{
+			name: "scalar input constant is valid (no-op sort key)",
+			query: `[:find ?name
+			         :in $ ?status
+			         :where [?e :user/status ?status]
+			                [?e :user/name ?name]
+			         :order-by [[?status :asc]]]`,
+			wantErr: false,
+		},
+		{
+			name: "variable bound nowhere is an error (safety violation)",
+			query: `[:find ?name
+			         :where [?e :user/name ?name]
+			         :order-by [[?bogus :asc]]]`,
+			wantErr: true,
+		},
+		{
+			name: "relation input column not bound by :where is an error",
+			query: `[:find ?v
+			         :in $ [[?k ?tag] ...]
+			         :where [?e :item/key ?k]
+			                [?e :item/val ?v]
+			         :order-by [[?tag :asc]]]`,
+			wantErr: true,
+		},
+		{
+			name: "collection input not bound by :where is an error",
+			query: `[:find ?name
+			         :in $ [?c ...]
+			         :where [?e :user/name ?name]
+			         :order-by [[?c :asc]]]`,
+			wantErr: true,
+		},
+		{
+			name: "aggregate query ordering by non-group-key variable is an error",
+			query: `[:find ?city (count ?p)
+			         :where [?p :person/city ?city]
+			                [?p :person/age ?age]
+			         :order-by [[?age :desc]]]`,
+			wantErr: true,
+		},
+		{
+			name: "aggregate query ordering by group key is valid",
+			query: `[:find ?city (count ?p)
+			         :where [?p :person/city ?city]
+			         :order-by [[?city :asc]]]`,
+			wantErr: false,
+		},
+		{
+			name: "aggregate query ordering by scalar input constant is valid",
+			query: `[:find ?city (count ?p)
+			         :in $ ?country
+			         :where [?p :person/country ?country]
+			                [?p :person/city ?city]
+			         :order-by [[?country :asc]]]`,
+			wantErr: false,
+		},
+		{
+			name: "expression-bound variable is valid",
+			query: `[:find ?name
+			         :where [?e :user/name ?name]
+			                [?e :user/age ?age]
+			                [(+ ?age 10) ?agePlus]
+			         :order-by [[?agePlus :asc]]]`,
+			wantErr: false,
+		},
+		{
+			name: "variable bound by all or-branches is valid",
+			query: `[:find ?name
+			         :where [?e :user/name ?name]
+			                (or [?e :user/rank ?rank]
+			                    [(ground 0) ?rank])
+			         :order-by [[?rank :desc]]]`,
+			wantErr: false,
+		},
+		{
+			name: "subquery-bound variable inside or is valid",
+			query: `[:find ?scenario ?last
+			         :where [?scenario :entity/type :entity.type/scenario]
+			                (or [(q [:find (max ?ca)
+			                         :in $ ?s
+			                         :where [?t :task/root ?s]
+			                                [?t :task/completed-at ?ca]]
+			                        $ ?scenario) [[?last]]]
+			                    [(ground :none) ?last])
+			         :order-by [[?last :desc]]]`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseQuery(tt.query)
+			if tt.wantErr && err == nil {
+				t.Errorf("expected parse error, got success")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected parse error: %v", err)
+			}
+		})
+	}
+}

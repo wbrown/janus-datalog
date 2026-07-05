@@ -1,5 +1,16 @@
 # Order-By Implementation Plan
 
+> **Superseded (2026-07-04)** on one point: this plan specified that
+> order-by variables not in the find clause "should be ignored" (test case
+> 5 below, and the `idx < 0 → skip` branch in the sort sketch). That
+> designed-in silent skip returned arbitrary order as success and is the
+> subject of `docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md`.
+> The current contract (see that bug's Design Decision section): sort keys
+> may be any variable bound by `:where` (retained through the final
+> projection, sorted, then stripped); scalar/tuple `:in` constants are
+> accepted identity no-ops; anything else is a parse error, and an
+> unresolvable key at sort time is a deferred relation error, never a skip.
+
 ## Datomic Syntax
 
 Datomic supports `:order-by` as a query clause that specifies how to sort the result set. The syntax is:

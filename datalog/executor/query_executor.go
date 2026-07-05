@@ -258,11 +258,13 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		return []Relation{result}, nil
 
 	} else {
-		// Simple projection to :find symbols
+		// Simple projection to :find symbols. Pull find elements project
+		// their entity variable like any other column (Identity values):
+		// pull rendering is result presentation and happens at the result
+		// boundary in ExecuteRealized, after sort/strip/limit — never
+		// inside relational flow. See
+		// docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
 		findSymbols := extractFindSymbols(q.Find)
-
-		// Check if we have pulls to execute
-		needsPulls := hasPulls(q.Find)
 
 		// Check if all :find symbols are available across the groups
 		// If symbols span multiple groups, we need to Product() them first
@@ -323,17 +325,12 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 					}
 				}
 				if allFound {
-					// This group has all symbols - project it and return
+					// This group has all symbols - project it and return.
+					// Pull rendering happens at the result boundary
+					// (ExecuteRealized), downstream of every path here.
 					projected, err := group.Project(findSymbols)
 					if err != nil {
 						return nil, fmt.Errorf("projection failed: %w", err)
-					}
-					// Apply pulls if needed
-					if needsPulls {
-						projected, err = e.executePulls(projected, q.Find)
-						if err != nil {
-							return nil, err
-						}
 					}
 					return []Relation{projected}, nil
 				}
@@ -344,35 +341,26 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			needsProduct = true
 
 			if needsProduct {
-				// Take Product() of all groups to create a single relation
+				// Take Product() of all groups to create a single relation.
+				// Pull rendering happens at the result boundary
+				// (ExecuteRealized), downstream of every path here.
 				combined := Relations(groups).Product()
 				projected, err := combined.Project(findSymbols)
 				if err != nil {
 					return nil, fmt.Errorf("projection failed after product: %w", err)
 				}
-				// Apply pulls if needed
-				if needsPulls {
-					projected, err = e.executePulls(projected, q.Find)
-					if err != nil {
-						return nil, err
-					}
-				}
 				return []Relation{projected}, nil
 			}
 		}
 
-		// Single group or each group projects independently
+		// Single group or each group projects independently. Pull rendering
+		// happens at the result boundary (ExecuteRealized, after
+		// sort/strip/limit), not here: entity columns stay Identity through
+		// the relational pipeline.
 		for i, group := range groups {
 			projected, err := group.Project(findSymbols)
 			if err != nil {
 				return nil, fmt.Errorf("projection of group %d failed: %w", i, err)
-			}
-			// Apply pulls if needed
-			if needsPulls {
-				projected, err = e.executePulls(projected, q.Find)
-				if err != nil {
-					return nil, err
-				}
 			}
 			groups[i] = projected
 		}
@@ -1304,10 +1292,12 @@ func hasPulls(find []query.FindElement) bool {
 	return false
 }
 
-// executePulls executes pull expressions on a relation
-// For each tuple in the relation, it replaces entity values with pulled maps
-// based on the FindPull patterns in the find clause.
-func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindElement) (Relation, error) {
+// applyFindPulls renders pull expressions on a relation, replacing entity
+// values with pulled maps per the FindPull patterns in the find clause.
+// Pulled maps are result presentation, not datalog values; the approved
+// design (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md) runs this only at the
+// result boundary, after sort/strip/limit.
+func applyFindPulls(matcher PatternMatcher, entityResolver EntityResolver, rel Relation, find []query.FindElement) (Relation, error) {
 	// Build mapping: symbol index -> pull pattern
 	symbols := rel.Symbols()
 	pullSpecs := make(map[int]query.FindPull)
@@ -1329,7 +1319,7 @@ func (e *DefaultQueryExecutor) executePulls(rel Relation, find []query.FindEleme
 	}
 
 	// Create pull executor
-	puller := NewPullExecutor(e.matcher, e.entityResolver)
+	puller := NewPullExecutor(matcher, entityResolver)
 
 	// Process tuples and execute pulls
 	var resultTuples []Tuple

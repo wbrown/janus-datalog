@@ -407,8 +407,19 @@ func ValuesEqual(a, b interface{}) bool {
 		return true
 	}
 
-	// General fallback for any remaining comparable type (and both-nil).
-	// Safe: neither a nor b is a slice here, so == cannot panic.
+	// The value domain is closed: anything still here must be a comparable
+	// scalar (or both-nil). An uncomparable type reaching equality is a
+	// layering violation — e.g. a pulled map[string]interface{}, which is
+	// result presentation, never a relational value — so fail loudly naming
+	// the type (mirroring Type()'s panic convention) instead of letting ==
+	// panic cryptically. Slices were handled above; invalid (nil-interface)
+	// reflect.Values are skipped — a == b handles both-nil.
+	if ra.IsValid() && !ra.Comparable() {
+		panic(fmt.Sprintf("ValuesEqual: %T is not a datalog value type", a))
+	}
+	if rb.IsValid() && !rb.Comparable() {
+		panic(fmt.Sprintf("ValuesEqual: %T is not a datalog value type", b))
+	}
 	return a == b
 }
 

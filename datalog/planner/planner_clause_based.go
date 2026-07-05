@@ -107,6 +107,20 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 		}
 	}
 
+	// Retain effective :order-by symbols through phasing so the last phase's
+	// relation still carries them: the executor sorts the assembled result,
+	// then strips it back to the declared :find shape. Without this, a sort
+	// key bound only in :where is projected away at the first Keep boundary
+	// and the sort has nothing to resolve against. (Empty for aggregate
+	// queries and for constant-input keys — see query.RetainedSortSymbols.)
+	retainedSort := query.RetainedSortSymbols(q)
+	for _, sym := range retainedSort {
+		if !findSymbolSet[sym] {
+			findSymbols = append(findSymbols, sym)
+			findSymbolSet[sym] = true
+		}
+	}
+
 	// Stage C Architecture: Optimize FIRST, then phase ONCE
 
 	// Step 1: Start with the clause list from the query
@@ -152,7 +166,7 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 
 		// Build the query fragment for this phase
 		phaseQuery := &query.Query{
-			Find:  buildFindClause(cp.Provides, q.Find, isLastPhase),
+			Find:  buildFindClause(cp.Provides, q.Find, isLastPhase, retainedSort),
 			In:    buildInClause(cp.Available),
 			Where: cp.Clauses,
 		}
@@ -210,10 +224,20 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 // is the greedy phasing algorithm and optimize-first flow.
 
 // buildFindClause constructs the :find clause for a phase
-func buildFindClause(provides []query.Symbol, originalFind []query.FindElement, isLastPhase bool) []query.FindElement {
+func buildFindClause(provides []query.Symbol, originalFind []query.FindElement, isLastPhase bool, retainedSort []query.Symbol) []query.FindElement {
 	if isLastPhase {
-		// Last phase uses the original find clause
-		return originalFind
+		// Last phase uses the original find clause, plus any retained
+		// :order-by symbols so they survive the final projection for the
+		// executor's sort; the executor strips them after sorting.
+		if len(retainedSort) == 0 {
+			return originalFind
+		}
+		find := make([]query.FindElement, len(originalFind), len(originalFind)+len(retainedSort))
+		copy(find, originalFind)
+		for _, sym := range retainedSort {
+			find = append(find, query.FindVariable{Symbol: sym})
+		}
+		return find
 	}
 
 	// Intermediate phases find all symbols they provide
