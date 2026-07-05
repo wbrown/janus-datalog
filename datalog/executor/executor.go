@@ -229,10 +229,57 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		return nil, err
 	}
 	if len(plan.Query.OrderBy) > 0 {
-		result = result.Sort(plan.Query.OrderBy)
+		// Sort keys on constant inputs (scalar/tuple :in) are identity
+		// sorts — dropped here, observably rather than silently.
+		effective := query.EffectiveOrderBy(plan.Query)
+		if dropped := len(plan.Query.OrderBy) - len(effective); dropped > 0 {
+			if collector := ctx.Collector(); collector != nil {
+				collector.Add(annotations.Event{
+					Name: "sort/constant-keys-dropped",
+					Data: map[string]interface{}{
+						"count": dropped,
+					},
+				})
+			}
+		}
+		if len(effective) > 0 {
+			result = result.Sort(effective)
+			// The planner retained non-projected sort columns through the
+			// final projection so the sort above could resolve them; strip
+			// the result back to the declared :find shape. The projection
+			// deduplicates (set semantics), keeping each duplicate's first
+			// occurrence in sorted order.
+			if retained := query.RetainedSortSymbols(plan.Query); len(retained) > 0 {
+				result, err = result.Project(extractFindSymbols(plan.Query.Find))
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	if plan.Query.Limit != nil {
 		result = NewLimitRelation(result, *plan.Query.Limit)
+	}
+	// Pull rendering is result presentation, not a relational operation:
+	// pulled maps are not datalog values, so they are produced here, at the
+	// terminal boundary — after sort, strip, and limit — for exactly the
+	// rows the query returns. Entity columns are Identity values through
+	// every relational operation above. Aggregate find clauses do not apply
+	// pulls. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
+	if hasPulls(plan.Query.Find) {
+		hasAggregates := false
+		for _, elem := range plan.Query.Find {
+			if elem.IsAggregate() {
+				hasAggregates = true
+				break
+			}
+		}
+		if !hasAggregates {
+			result, err = applyFindPulls(e.matcher, e.entityResolver, result, plan.Query.Find)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return result, nil
 }
@@ -481,7 +528,7 @@ func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *
 
 	if iterationRelation == nil || iterationRelation.Size() == 0 {
 		// No iteration needed or empty input
-		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
+		return emptyRelationForQuery(plan.Query), nil
 	}
 
 	// Dispatch to parallel or sequential implementation
@@ -653,7 +700,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationSequential(
 
 	// Combine all results
 	if len(allResults) == 0 {
-		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
+		return emptyRelationForQuery(plan.Query), nil
 	}
 
 	// Union all results, propagating any per-tuple scan error rather than
@@ -813,7 +860,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 	}
 
 	if symbols == nil {
-		return NewMaterializedRelation(extractFindSymbols(plan.Query.Find), []Tuple{}), nil
+		return emptyRelationForQuery(plan.Query), nil
 	}
 	return NewMaterializedRelation(symbols, allTuples), nil
 }

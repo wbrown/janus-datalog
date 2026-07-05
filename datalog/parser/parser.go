@@ -160,7 +160,73 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 		return nil, fmt.Errorf("scalar find spec (.) is incompatible with :limit %d (limit must be 0 or 1)", *q.Limit)
 	}
 
+	if err := validateOrderByClauses(q); err != nil {
+		return nil, err
+	}
+
 	return q, nil
+}
+
+// validateOrderByClauses enforces the sort-key binding rules from the Design
+// Decision section of
+// docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md:
+// a sort key must be bound by :where (the result is sorted before the final
+// projection, so it need not be projected) or be a scalar/tuple :in constant
+// (a well-defined identity sort, dropped at execution). Variables bound
+// nowhere violate the safety condition; relation/collection input columns
+// not bound by :where are not columns of any relation the sort could see;
+// and aggregate queries collapse rows, so only their group keys can order
+// them.
+func validateOrderByClauses(q *query.Query) error {
+	if len(q.OrderBy) == 0 {
+		return nil
+	}
+
+	constants := query.ConstantInputSymbols(q.In)
+	iterated := query.IteratedInputSymbols(q.In)
+
+	whereVars := make(map[query.Symbol]bool)
+	for _, v := range ExtractVariables(q.Where) {
+		whereVars[v] = true
+	}
+
+	findVars := make(map[query.Symbol]bool)
+	hasAggregates := false
+	for _, elem := range q.Find {
+		switch e := elem.(type) {
+		case query.FindVariable:
+			findVars[e.Symbol] = true
+		case query.FindPull:
+			findVars[e.Variable] = true
+		case query.FindAggregate:
+			hasAggregates = true
+		}
+	}
+
+	for _, clause := range q.OrderBy {
+		v := clause.Variable
+		if constants[v] {
+			continue
+		}
+		if hasAggregates {
+			if !findVars[v] {
+				return fmt.Errorf("order-by variable %s is not a group key: aggregation collapses rows, so only :find variables can order an aggregate query", v)
+			}
+			continue
+		}
+		if findVars[v] {
+			// A projected column is always resolvable at sort time.
+			continue
+		}
+		if whereVars[v] {
+			continue
+		}
+		if iterated[v] {
+			return fmt.Errorf("order-by variable %s is an input column not bound in :where: bind it in a :where clause or add it to :find to sort by it", v)
+		}
+		return fmt.Errorf("order-by variable %s is not bound in the query", v)
+	}
+	return nil
 }
 
 // parseOrderByClause parses an order-by clause element
@@ -528,6 +594,17 @@ func parseSubqueryPattern(list *edn.Node, bindingNode *edn.Node) (*query.Subquer
 	// docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md.
 	if nestedQuery.Limit != nil {
 		return nil, fmt.Errorf(":limit is not supported inside a subquery; cap rows in the enclosing query, or use the (max ?x)/(min ?x) aggregate idiom for top-1-per-group")
+	}
+
+	// Pull output is result presentation (maps), not a datalog value. A
+	// subquery's result feeds the enclosing query's relational pipeline
+	// (joins, deduplication), which operates on values only — see
+	// docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md. Return the entity and
+	// pull it in the enclosing query's top-level :find instead.
+	for _, elem := range nestedQuery.Find {
+		if _, isPull := elem.(query.FindPull); isPull {
+			return nil, fmt.Errorf("(pull ...) is not supported inside a subquery find: pull output is result presentation, not a relational value; return the entity from the subquery and pull it in the enclosing query's :find")
+		}
 	}
 
 	// Parse inputs (everything between query and end)
@@ -1196,6 +1273,24 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 			}
 			// Note: Input variables are consumed, not provided
 
+		case *query.Expression:
+			// Expression outputs are provided (scalar or tuple binding);
+			// argument variables are consumed, not provided
+			switch b := p.Binding.(type) {
+			case query.Symbol:
+				if b != nil && !seen[b] {
+					seen[b] = true
+					vars = append(vars, b)
+				}
+			case query.TupleBinding:
+				for _, v := range b.Variables {
+					if !seen[v] {
+						seen[v] = true
+						vars = append(vars, v)
+					}
+				}
+			}
+
 		case *query.NotClause:
 			// NOT doesn't provide new variables, but recursively extract from inner clauses
 			// (to check they're all bound before NOT executes)
@@ -1245,6 +1340,41 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 						seen[v] = true
 						vars = append(vars, v)
 					}
+				}
+			}
+
+		case *query.OrDefaultClause:
+			// OR-DEFAULT provides the intersection of all branches, like OR
+			if len(p.Branches) > 0 {
+				branchVars := make(map[query.Symbol]bool)
+				for _, v := range ExtractVariables(p.Branches[0]) {
+					branchVars[v] = true
+				}
+				for _, branch := range p.Branches[1:] {
+					next := make(map[query.Symbol]bool)
+					for _, v := range ExtractVariables(branch) {
+						next[v] = true
+					}
+					for v := range branchVars {
+						if !next[v] {
+							delete(branchVars, v)
+						}
+					}
+				}
+				for v := range branchVars {
+					if !seen[v] {
+						seen[v] = true
+						vars = append(vars, v)
+					}
+				}
+			}
+
+		case *query.OrDefaultJoinClause:
+			// OR-DEFAULT-JOIN only exposes join vars, like OR-JOIN
+			for _, v := range p.JoinVars {
+				if !seen[v] {
+					seen[v] = true
+					vars = append(vars, v)
 				}
 			}
 

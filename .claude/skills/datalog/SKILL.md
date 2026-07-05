@@ -1,9 +1,14 @@
 ---
 name: datalog
 description: >
-  Query janus-datalog databases for debugging and data exploration.
-  Use when the user asks to inspect a .db database, explore datoms,
-  check entity attributes, debug query results, or examine CRDT storage state.
+  The janus-datalog query language itself (Datomic-style EAV), not just the CLI —
+  reach for it whenever you WRITE a datalog query, not only to inspect a .db. It is
+  the language much of the code is written in: store queries, rule clauses, N+1
+  fixes, ExecuteQueryWithInputs / QueryInto / PullInto in Go. Covers the EDN language
+  and its functions — data patterns, predicates, aggregates, get-else/missing?/get-some,
+  subqueries (tuple + relation binding), enumerate and vector fns, :in bindings,
+  order-by/limit, and time-travel (History/AsOf). Also use it to inspect/explore a
+  .db, check entity attributes, debug query results, or examine CRDT storage state.
 argument-hint: <database-path>
 allowed-tools: Bash(~/go/bin/datalog *)
 ---
@@ -252,6 +257,31 @@ Each `-in` value is parsed as EDN, so tagged literals work too: `-in '#inst "202
  :where [?p :person/name ?name]
         [?p :person/age ?age]]
 ```
+
+Sort keys may be **any variable bound by `:where`** — they do not need to
+appear in `:find`. The result is sorted before the final projection, then
+stripped back to the `:find` columns:
+
+```clojure
+;; Names ordered by age, without returning the age
+[:find ?name
+ :where [?p :person/name ?name]
+        [?p :person/age ?age]
+ :order-by [[?age :asc]]]
+```
+
+Keys that are scalar/tuple `:in` constants are accepted as no-ops (every row
+carries the same value). A key bound nowhere, a relation/collection input
+column not bound in `:where`, or a non-group-key variable in an aggregate
+query is a parse error — aggregate queries can only be ordered by their
+group keys.
+
+`:order-by` composes with `(pull ...)` in the find spec: sorting (and
+`:limit`) run over entity references, and pulls render only the returned
+rows. `(pull ...)` is valid in the **top-level** find only — inside a
+subquery find it is a parse error (a subquery's result feeds the enclosing
+query's joins, which operate on values; return the entity and pull it in
+the enclosing `:find`).
 
 ### Limiting Results and Pagination
 

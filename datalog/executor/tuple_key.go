@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -155,12 +157,43 @@ func hashValue(v interface{}) uint64 {
 		}
 		return val.Lamport ^ (val.ReplicaID * 1099511628211)
 
+	case []interface{}:
+		// Vectors are ordered (RGA semantics) — order-dependent content
+		// hash, consistent with datalog.ValuesEqual's element-wise
+		// comparison: equal vectors hash identically. See
+		// docs/bugs/resolved/BUG_VECTOR_VALUES_DEGENERATE_HASHING.md.
+		return hashValues(val)
+
 	case nil:
 		return 0
 
 	default:
-		// Fallback: use pointer as hash
-		return uint64(uintptr(unsafe.Pointer(&v)))
+		// Typed slices (e.g. []string, produced by the storage
+		// vector-matching path) are vectors by the equality layer's own
+		// definition: ValuesEqual compares every slice kind element-wise
+		// via reflection, so []string{"a"} equals []interface{}{"a"} and
+		// must hash identically. Same order-dependent FNV accumulation as
+		// hashValues, so cross-representation equal slices collide as
+		// required. ([]byte never reaches here — its content case above
+		// wins.)
+		if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice {
+			const prime = 1099511628211
+			hash := uint64(14695981039346656037)
+			for i := 0; i < rv.Len(); i++ {
+				hash ^= hashValue(rv.Index(i).Interface())
+				hash *= prime
+			}
+			return hash
+		}
+
+		// The value domain is closed (mirror datalog.Type()'s panic
+		// convention). A type reaching here is not a datalog value — e.g.
+		// a pulled map[string]interface{}, which is result presentation
+		// and must never enter relational flow. Fail loudly: any
+		// non-content fallback (address, identity) silently breaks joins
+		// and deduplication for whatever type it swallows. See
+		// docs/bugs/resolved/BUG_VECTOR_VALUES_DEGENERATE_HASHING.md.
+		panic(fmt.Sprintf("hashValue: %T is not a datalog value type", v))
 	}
 }
 
