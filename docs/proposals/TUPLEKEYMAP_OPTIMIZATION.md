@@ -1,6 +1,7 @@
 # TupleKeyMap Optimization for Set Membership
 
-**Status**: Proposal
+**Status**: `PutIfAbsent` adoption complete (2026-07-11); specialized set
+representation remains a proposal
 **Created**: 2025-12-24
 **Context**: Performance regression from set semantics fix
 
@@ -14,7 +15,12 @@ The set semantics fix for `StreamingRelation.Project()` added `DedupIterator` wh
 | Memory | 2,520 B/op | 16,744 B/op | +6.6× |
 | Allocs | 111 allocs/op | 224 allocs/op | +2× |
 
-The overhead comes from `TupleKeyMap` being designed for **key-value storage** when deduplication only needs **set membership**.
+The original implementation also performed separate `Exists` and `Put` calls.
+That redundant lookup is now removed across all production add-if-absent paths:
+deduplication is **7.3% faster geomean** with unchanged memory and allocations.
+
+The remaining overhead comes from `TupleKeyMap` being designed for **key-value
+storage** when deduplication only needs **set membership**.
 
 ## Current Implementation
 
@@ -29,16 +35,18 @@ type mapEntry struct {
     value  interface{}    // The stored value - NOT NEEDED FOR DEDUP
 }
 
-// DedupIterator uses it as a set
-it.seen.Put(key, true)      // Stores `true` but never retrieves it
-it.seen.Exists(key)         // Only checks membership
+// DedupIterator now uses the single-walk insertion API
+if !it.seen.PutIfAbsent(key, struct{}{}) {
+    return true
+}
 ```
 
-For every tuple:
+For every unique tuple:
 1. Compute FNV-1a hash over all values
 2. Look up hash in map
 3. If collision bucket exists, compare values using `datalog.ValuesEqual()`
-4. Store `mapEntry{values, true}` - wastes space on the `value` field
+4. Store `mapEntry{values, struct{}{}}` — the `value` field remains unnecessary
+   for set membership
 
 ## Proposed Optimizations
 
@@ -118,15 +126,16 @@ Use Bloom filter for approximate membership. **Rejected** because false positive
 
 ## Implementation Plan
 
-1. **Phase 1**: Create `TupleSet` (Option 1)
+1. ✅ **Phase 0**: Replace `Exists` + `Put` with `PutIfAbsent`
+   - 5.4–9.0% faster across unique/duplicate-heavy materialized/streaming paths
+   - 7.3% geomean; no memory or allocation change
+2. **Phase 1**: Create `TupleSet` (Option 1)
    - Simple change, no behavior difference
    - Measure improvement
-
-2. **Phase 2**: Add single-symbol fast path (Option 2)
+3. **Phase 2**: Add single-symbol fast path (Option 2)
    - Requires detecting projection symbol types
    - Only if Phase 1 shows insufficient improvement
-
-3. **Phase 3**: Adaptive strategy (Option 3)
+4. **Phase 3**: Adaptive strategy (Option 3)
    - Only if real-world profiling shows benefit
 
 ## Acceptance Criteria

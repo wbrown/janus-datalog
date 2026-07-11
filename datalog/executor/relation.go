@@ -429,8 +429,7 @@ func deduplicateTuples(tuples []Tuple) []Tuple {
 
 	for _, tuple := range tuples {
 		key := NewTupleKeyFull(tuple)
-		if !seen.Exists(key) {
-			seen.Put(key, true)
+		if !seen.PutIfAbsent(key, true) {
 			result = append(result, tuple)
 		}
 	}

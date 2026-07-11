@@ -479,8 +479,7 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) ([]ma
 		}
 
 		key := NewTupleKeyFull(keyValues)
-		if !seen.Exists(key) {
-			seen.Put(key, struct{}{})
+		if !seen.PutIfAbsent(key, struct{}{}) {
 			combinations = append(combinations, values)
 		}
 	}

@@ -250,9 +250,7 @@ func (it *UnionIterator) Next() bool {
 
 			// Check if we've seen this tuple before (deduplication)
 			key := NewTupleKeyFull(tuple)
-			if !it.seen.Exists(key) {
-				// New unique tuple - mark as seen
-				it.seen.Put(key, true)
+			if !it.seen.PutIfAbsent(key, true) {
 				it.currentTuple = tuple
 
 				// Accumulate into the local cache; published on completion.

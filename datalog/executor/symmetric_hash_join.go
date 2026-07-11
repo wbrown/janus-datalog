@@ -158,8 +158,7 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 
 				// Deduplicate
 				dedupKey := NewTupleKeyFull(joined)
-				if !it.seen.Exists(dedupKey) {
-					it.seen.Put(dedupKey, true)
+				if !it.seen.PutIfAbsent(dedupKey, true) {
 					it.resultQueue = append(it.resultQueue, joined)
 				}
 			}
@@ -206,8 +205,7 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 
 				// Deduplicate
 				dedupKey := NewTupleKeyFull(joined)
-				if !it.seen.Exists(dedupKey) {
-					it.seen.Put(dedupKey, true)
+				if !it.seen.PutIfAbsent(dedupKey, true) {
 					it.resultQueue = append(it.resultQueue, joined)
 				}
 			}

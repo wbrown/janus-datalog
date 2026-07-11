@@ -1,7 +1,7 @@
 # Janus Datalog Optimization Opportunities
 
 **Reviewed:** 2026-07-11  
-**Status:** Item 1 implemented and verified; remaining items require focused
+**Status:** Items 1–2 implemented and verified; remaining items require focused
 benchmarks before implementation
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
@@ -14,7 +14,7 @@ be omitted.
 | Rank | Opportunity | Layer | Evidence | Expected payoff | Effort |
 |---:|---|---|---|---|---|
 | 1 | Replace string aggregation keys with `TupleKeyMap` | Low-level | Implemented and benchmarked | 47.5% faster geomean | Complete |
-| 2 | Make duplicate elimination property-aware | Relational algebra | Measured tax and direct code path | High on projections and joins | Medium–high |
+| 2 | Use `PutIfAbsent` across deduplication paths | Low-level | Implemented and benchmarked | 7.3% faster geomean | Complete |
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Confirmed execution shape | Very high when N ≪ rows | Medium |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Single-column fusion already measured | High for EAV star joins | Medium |
 | 5 | Propagate statically provable relational properties | Relational algebra | Derivable from existing contracts | Cross-layer | Medium–high |
@@ -59,22 +59,49 @@ string renderings in both batch and streaming modes. The full
 
 Source: Go benchmark plus `benchstat`, darwin/arm64, 2026-07-11.
 
-## 2. Make Duplicate Elimination Property-Aware
+## 2. Use `PutIfAbsent` Across Deduplication Paths
 
-Projection always restores set semantics with a hash set, and hash join always
-deduplicates output. Many EAV plans preserve a known key, however, so duplicates
-are impossible. The projection set-semantics fix previously measured a 25% time
-increase and 6.6× memory increase.
+**Status:** Complete in the current working tree.
 
-Start locally by using `PutIfAbsent` in `DedupIterator`, removing its remaining
-double bucket walk. Then propagate candidate keys and uniqueness through
-`Scan`, `Select`, `Map`, `Project`, and `Join`. Skip deduplication only when the
-property proves that doing so preserves set semantics.
+Eight production paths implemented set insertion as `Exists` followed by `Put`,
+even though `TupleKeyMap.PutIfAbsent` already performs the operation in one
+bucket walk. They now call `PutIfAbsent` directly. This remains a local
+implementation optimization: it does not skip deduplication, change set
+semantics, or require relational property propagation.
+
+The changed paths cover materialized and streaming deduplication, union,
+subquery input combinations, relation operations, and symmetric hash joins.
+A direct contract test pins first-insert/repeated-insert behavior and verifies
+that a repeated call does not replace the original map value.
+
+### Measured evidence
+
+`BenchmarkDedupInsertionPaths`, 10,000 two-column Identity/string tuples,
+`benchtime=500ms`, `count=10`:
+
+| Workload | Mode | Time before | Time after | Delta |
+|---|---|---:|---:|---:|
+| Unique-heavy | Materialized | 504.3 µs | 460.2 µs | **-8.74%** |
+| Unique-heavy | Streaming | 492.1 µs | 447.9 µs | **-8.99%** |
+| Duplicate-heavy | Materialized | 260.6 µs | 246.6 µs | **-5.36%** |
+| Duplicate-heavy | Streaming | 270.3 µs | 253.5 µs | **-6.23%** |
+| **Geomean** | | 363.6 µs | 336.9 µs | **-7.34%** |
+
+Memory and allocation counts are unchanged, as expected: this step removes
+redundant lookup work without changing `TupleKeyMap` storage. Every timing
+comparison is statistically significant (`p≤0.019`, `n=10`). The full
+`go test -count=1 ./...` suite passes.
+
+A specialized `TupleSet` is not part of this step. Consider one only if a later
+memory profile shows that `mapEntry.value` materially contributes to the
+remaining cost.
 
 Relevant code and design:
 
 - `datalog/executor/iterator_composition.go:400-425`
-- `datalog/executor/join.go:80-92`
+- `datalog/executor/relation.go:420-438`
+- `datalog/executor/tuple_key.go:309-327`
+- `datalog/executor/dedup_put_if_absent_test.go`
 - `docs/proposals/TUPLEKEYMAP_OPTIMIZATION.md`
 
 ## 3. Introduce a Real Top-N Physical Operator
@@ -188,8 +215,10 @@ Relevant code:
 ## Suggested Sequence
 
 1. **Completed:** typed aggregation keys via `TupleKeyMap`.
-2. **Local and measurable:** `DedupIterator` `PutIfAbsent`, bounded Top-N heap.
-3. **Cross-layer gains:** multi-attribute fetch fusion, uniqueness propagation,
-   index-order Top-N.
-4. **Optimizer foundation:** derived ordering and key properties, pushdown
-   fixpoint, then structurally safe rewrites.
+2. **Completed:** `PutIfAbsent` across all add-if-absent deduplication paths.
+3. **Next query-local optimizations:** bounded Top-N and multi-attribute fetch
+   fusion.
+4. **Property propagation:** a separate architecture step for statically
+   derived ordering, uniqueness, candidate keys, and rewindability.
+5. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
+   safety follows from those properties.

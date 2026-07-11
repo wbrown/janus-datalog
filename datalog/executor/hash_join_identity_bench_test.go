@@ -214,9 +214,8 @@ func BenchmarkHashJoinIdentityHighFanout(b *testing.B) {
 // input).
 //
 // Stresses:
-//   - it.seen.Exists() with a non-empty bucket on the rejection path: one
-//     ValuesEqual call per rejection (finding #2 path) plus the
-//     double-lookup pattern from finding #5.
+//   - it.seen.PutIfAbsent() with a non-empty bucket on the rejection path:
+//     one ValuesEqual call per rejected duplicate.
 func BenchmarkHashJoinIdentityDuplicates(b *testing.B) {
 	shapes := []struct {
 		name string

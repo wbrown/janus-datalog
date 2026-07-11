@@ -495,8 +495,7 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
 			combo[i] = tuple[idx]
 		}
 		key := NewTupleKeyFull(combo)
-		if !seen.Exists(key) {
-			seen.Put(key, struct{}{})
+		if !seen.PutIfAbsent(key, struct{}{}) {
 			combos = append(combos, combo)
 		}
 	}
@@ -562,8 +561,7 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 				projected[i] = tuple[idx]
 			}
 			key := NewTupleKeyFull(projected)
-			if !seen.Exists(key) {
-				seen.Put(key, struct{}{})
+			if !seen.PutIfAbsent(key, struct{}{}) {
 				allTuples = append(allTuples, projected)
 			}
 		}
