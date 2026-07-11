@@ -273,11 +273,12 @@ not.
 
 ### Roadmap: index-order pushdown ("latest" / top-N as a true point read)
 
-The mechanical plan above makes `:limit` correct and makes the *unordered* case
-cheap, but it does **not** make the motivating query — `:order-by [[?tx :desc]]
-:limit 1` — a point read: the sort still materializes the full matching set
-first. Eliminating that over-fetch is a separate, larger optimization tracked
-here as a roadmap item, not part of the initial feature.
+The mechanical plan above made `:limit` correct. A bounded Top-N heap added on
+2026-07-11 now avoids materializing and sorting the full matching set when no
+post-sort deduplicating projection is required. It still does **not** make the
+motivating query — `:order-by [[?tx :desc]] :limit 1` — a point read: every
+source row is scanned to determine the best N. Eliminating that scan is the
+separate optimization tracked here.
 
 **Idea.** When the planner sees `:order-by [[?k <dir>]] :limit N` where `?k` is
 bound by a single data pattern and aligns with an index's physical key order,

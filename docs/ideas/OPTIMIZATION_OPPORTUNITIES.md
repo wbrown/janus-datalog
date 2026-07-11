@@ -1,7 +1,7 @@
 # Janus Datalog Optimization Opportunities
 
 **Reviewed:** 2026-07-11  
-**Status:** Items 1–2 implemented and verified; remaining items require focused
+**Status:** Items 1–3 implemented and verified; remaining items require focused
 benchmarks before implementation
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
@@ -15,11 +15,12 @@ be omitted.
 |---:|---|---|---|---|---|
 | 1 | Replace string aggregation keys with `TupleKeyMap` | Low-level | Implemented and benchmarked | 47.5% faster geomean | Complete |
 | 2 | Use `PutIfAbsent` across deduplication paths | Low-level | Implemented and benchmarked | 7.3% faster geomean | Complete |
-| 3 | Introduce a real Top-N physical operator | Relational algebra | Confirmed execution shape | Very high when N ≪ rows | Medium |
+| 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Single-column fusion already measured | High for EAV star joins | Medium |
 | 5 | Propagate statically provable relational properties | Relational algebra | Derivable from existing contracts | Cross-layer | Medium–high |
-| 6 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
-| 7 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
+| 6 | Push Top-N into proven index order | Relational algebra | Tx-descending indices exist | True scan reduction | High |
+| 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
+| 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
 
 ## 1. Replace String Aggregation Keys with `TupleKeyMap`
 
@@ -106,24 +107,65 @@ Relevant code and design:
 
 ## 3. Introduce a Real Top-N Physical Operator
 
+**Status:** Complete in the current working tree.
+
 `ORDER BY` currently collects every tuple and fully sorts it before `LIMIT`
-truncates the result. Latest-1 and top-10 workloads therefore remain
-O(M log M) time and O(M) memory.
+truncates the result. `TopNRelation` now replaces that path with a bounded
+worst-first heap when no non-projected sort symbols require a later
+deduplicating projection.
 
-Implement this in stages:
+The implementation:
 
-1. Use a bounded heap with input ordinal as a tie-breaker. This gives
-   O(M log N) time and O(N) memory for every ordered limit.
-2. Recognize index-aligned single-scan cases and stop EATV, ATEV, or TAEV scans
-   after N results.
-3. Decline pushdown across aggregation or joins that may filter higher-ranked
-   rows.
+1. Drain the source into a bounded worst-first heap containing the best N rows.
+2. Sort only those N rows before returning them.
+3. Preserve `RequiresCopy`, deferred iterator errors, multi-key ordering, global
+   `RelationInput` finalization, aggregation, and pull rendering.
+
+This changes CPU and memory complexity from O(M log M) time and O(M) memory to
+O(M log N) time and O(N) memory. It still scans all M rows; storage scan
+reduction remains the separate index-order optimization below.
+
+Queries with non-projected sort symbols retain the full-sort path. Their current
+sequence is sort, deduplicating projection, then limit; taking N before a
+projection that collapses rows can return fewer than N results and miss
+lower-ranked distinct rows.
+
+Test-first proof:
+
+- Differential tests against `SortRelation` followed by `LimitRelation`.
+- Ascending, descending, multi-key, ties, and N values of 0, 1, below/equal to/
+  above the input size.
+- Materialized and workspace-reusing streaming inputs.
+- Aggregated and global `RelationInput` results.
+- Deferred iterator errors after a clean prefix.
+- Benchmarks at 10K and 100K rows with N = 1, 10, and 100.
+
+### Measured evidence
+
+`BenchmarkOrderedLimit`, 10K/100K rows, N = 1/10/100, materialized and
+streaming,
+`benchtime=300ms`, `count=10`, darwin/arm64:
+
+| Rows | Limit | Mode | Time before | Time after | Delta |
+|---:|---:|---|---:|---:|---:|
+| 10,000 | 1 | Materialized | 2.233 ms | 62.91 µs | **-97.18%** |
+| 10,000 | 1 | Streaming | 2.947 ms | 75.06 µs | **-97.45%** |
+| 100,000 | 1 | Materialized | 26.10 ms | 631.6 µs | **-97.58%** |
+| 100,000 | 1 | Streaming | 34.16 ms | 776.6 µs | **-97.73%** |
+| **12-case geomean** | N = 1/10/100 | Both | **9.023 ms** | **259.8 µs** | **-97.12%** |
+
+Geomean memory falls from 10.79 MiB to 3.985 KiB (**-99.96%**), and
+allocations from 55.06K to 77.84 (**-99.86%**). Every comparison is significant
+at `p=0.000`, `n=10`. The full `go test -count=1 ./...` suite passes.
 
 Relevant code and design:
 
 - `datalog/executor/executor_utils.go:125-178`
+- `datalog/executor/executor.go:220-262`
 - `datalog/executor/limit_relation.go:34-61`
-- `docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md:274-316`
+- `datalog/executor/top_n.go`
+- `datalog/executor/top_n_test.go`
+- `datalog/executor/top_n_benchmark_test.go`
 
 ## 4. Fuse Whole Same-Entity Attribute Bundles
 
@@ -166,7 +208,32 @@ Relevant code:
 - `datalog/algebra/types.go:53-84`
 - `datalog/executor/relation.go`
 
-## 6. Compile Storage-Bound Hash Matching Once
+## 6. Push Top-N into Proven Index Order
+
+Bounded Top-N still consumes every source row. After property propagation can
+prove that a scan's physical order satisfies `ORDER BY`, the storage iterator
+can instead stop after N rows. This is the optimization that turns latest-1 and
+keyset-page queries into bounded range reads.
+
+Start narrowly:
+
+1. Single-pattern transaction ordering on EATV, ATEV, or TAEV.
+2. No joins that can filter a selected row.
+3. No aggregation between the scan and limit.
+4. CRDT resolution must preserve the claimed order.
+5. Requested ordering must be total, or the optimization is declined.
+
+Each supported shape requires differential tests against the existing
+materialize-sort-project-limit path with realistic data sizes. Extend to other
+index layouts only after the narrow transaction-order case is proven.
+
+Relevant code and design:
+
+- `docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md:274-316`
+- `datalog/storage/key_encoder_binary.go`
+- `datalog/storage/matcher_strategy.go`
+
+## 7. Compile Storage-Bound Hash Matching Once
 
 The storage hash path converts every probe key to a string, sometimes through
 `fmt`, and matches candidates by rebuilding a symbol-index map for every
@@ -183,7 +250,7 @@ Relevant code:
 - `datalog/storage/hash_join_matcher.go:516-572`
 - `datalog/storage/hash_join_matcher.go:777-821`
 
-## 7. Turn the Algebra Optimizer into a Compositional Optimizer
+## 8. Turn the Algebra Optimizer into a Compositional Optimizer
 
 The relational algebra IR is expressive, but the default optimizer currently
 registers only decorrelation and the `get-else` scan rewrite. It performs one
@@ -216,9 +283,12 @@ Relevant code:
 
 1. **Completed:** typed aggregation keys via `TupleKeyMap`.
 2. **Completed:** `PutIfAbsent` across all add-if-absent deduplication paths.
-3. **Next query-local optimizations:** bounded Top-N and multi-attribute fetch
-   fusion.
-4. **Property propagation:** a separate architecture step for statically
+3. **Completed:** bounded Top-N heap reducing CPU and memory while retaining the
+   full scan.
+4. **Next:** multi-attribute fetch fusion attaching same-entity bundles in one
+   pass.
+5. **Property propagation:** a separate architecture step for statically
    derived ordering, uniqueness, candidate keys, and rewindability.
-5. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
+6. **Index-order Top-N:** use proven physical order to stop storage after N.
+7. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
    safety follows from those properties.

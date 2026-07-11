@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
 **Last Updated**: 2026-07-11 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, same-entity attribute-fetch fusion, typed aggregation keys, and single-lookup dedup insertion via `TupleKeyMap`.
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, same-entity attribute-fetch fusion, typed aggregation keys, single-lookup dedup insertion, and bounded Top-N finalization.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, single-lookup dedup insertion).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, bounded Top-N finalization).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -30,6 +30,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` column attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
 - ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
 - ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Bounded Top-N finalization**: ordered limits without non-projected sort keys use an O(N)-memory heap instead of materializing and sorting every row. Across 10K/100K rows and N=1/10/100: **97.1% faster**, **99.96% less memory**, **99.86% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64). The source is still fully scanned; index-order pushdown remains separate.
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -905,6 +906,52 @@ passes.
 - `datalog/executor/union_relation.go`
 - `datalog/executor/symmetric_hash_join.go`
 
+### 20. Bounded Top-N Finalization (COMPLETE - July 2026)
+**Status**: ✅ Ordered limits use a bounded heap for structurally safe shapes
+
+**Problem**: `ORDER BY ... :limit N` materialized every result, sorted all M
+rows, then retained N. The cost remained O(M log M) time and O(M) memory even
+for latest-1 queries.
+
+**Change**:
+
+- Added `TopNRelation`, a worst-first heap retaining at most N tuples while it
+  drains the source, followed by a final sort of those N tuples.
+- Shared one tuple comparator between full sort and Top-N, preserving
+  ascending/descending and multi-key semantics.
+- Preserved workspace-copy requirements and deferred iterator errors.
+- Applied Top-N at the existing global finalization boundary, after aggregation
+  and RelationInput union and before pull rendering.
+- Kept full sort for non-projected sort keys. Their required
+  sort→deduplicating-projection→limit sequence is not equivalent to limiting
+  before projection.
+- This operator still scans every source row. Index-order pushdown is a
+  separate post-property-propagation optimization.
+
+**Measurement** (`BenchmarkOrderedLimit`, 10K/100K rows, N=1/10/100,
+materialized/streaming, `benchtime=300ms`, `count=10`, darwin/arm64):
+
+| Rows | N | Mode | Time before | Time after | Delta |
+|-----:|--:|------|------------:|-----------:|------:|
+| 10,000 | 1 | Materialized | 2.233 ms | 62.91 µs | **−97.18%** |
+| 10,000 | 1 | Streaming | 2.947 ms | 75.06 µs | **−97.45%** |
+| 100,000 | 1 | Materialized | 26.10 ms | 631.6 µs | **−97.58%** |
+| 100,000 | 1 | Streaming | 34.16 ms | 776.6 µs | **−97.73%** |
+| **Geomean (12 cases)** | | | **9.023 ms** | **259.8 µs** | **−97.12%** |
+
+Geomean memory falls from 10.79 MiB to 3.985 KiB (**−99.96%**) and
+allocations from 55.06K to 77.84 (**−99.86%**). Every comparison is
+significant at `p=0.000`, `n=10`. The full `go test -count=1 ./...` suite
+passes.
+
+**Files**:
+
+- `datalog/executor/top_n.go`
+- `datalog/executor/top_n_test.go`
+- `datalog/executor/top_n_benchmark_test.go`
+- `datalog/executor/executor.go`
+- `datalog/executor/executor_utils.go`
+
 ---
 
 ## Profiling Results (October 2025)
@@ -1022,6 +1069,7 @@ All items below are **measured** and **active** in production code:
 17. ✅ **CRDT allocation optimization** - **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main while adding full CRDT semantics (verified 2026-02-02)
 18. ✅ **Typed aggregation keys** - **47.5% faster, 25.8% less memory, 71.3% fewer allocations** while fixing cross-type and delimiter key collisions (verified 2026-07-11)
 19. ✅ **Single-lookup dedup insertion** - **5.4–9.0% faster, 7.3% geomean** across materialized and streaming deduplication with unchanged memory and allocations (verified 2026-07-11)
+20. ✅ **Bounded Top-N finalization** - **97.1% faster, 99.96% less memory, 99.86% fewer allocations** for ordered limits where no post-sort deduplicating projection is required (verified 2026-07-11)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:

@@ -129,40 +129,16 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 
 	// Get symbol indices for sort variables
 	symbols := rel.Symbols()
-	sortIndices := make([]int, len(orderBy))
-	for i, clause := range orderBy {
-		idx := -1
-		for j, sym := range symbols {
-			if sym == clause.Variable {
-				idx = j
-				break
-			}
-		}
-		if idx < 0 && err == nil {
-			err = fmt.Errorf("order-by variable %s is not a column of the relation (columns: %v)",
-				clause.Variable, symbols)
-		}
-		sortIndices[i] = idx
+	sortIndices, indexErr := orderBySymbolIndices(symbols, orderBy)
+	if err == nil {
+		err = indexErr
 	}
 
 	// Sort tuples (skipped when erroring — an arbitrary partial order must
 	// not masquerade as the requested one)
 	if err == nil {
 		sort.Slice(tuples, func(i, j int) bool {
-			for k, clause := range orderBy {
-				cmp := datalog.CompareValues(
-					tuples[i][sortIndices[k]],
-					tuples[j][sortIndices[k]],
-				)
-
-				if cmp < 0 {
-					return clause.Direction != query.OrderDesc
-				} else if cmp > 0 {
-					return clause.Direction == query.OrderDesc
-				}
-				// Equal, continue to next sort key
-			}
-			return false
+			return compareTuplesByOrder(tuples[i], tuples[j], orderBy, sortIndices) < 0
 		})
 	}
 
@@ -176,6 +152,39 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 		mat.err = err
 	}
 	return mat
+}
+
+func orderBySymbolIndices(symbols []query.Symbol, orderBy []query.OrderByClause) ([]int, error) {
+	indices := make([]int, len(orderBy))
+	for i, clause := range orderBy {
+		indices[i] = -1
+		for j, sym := range symbols {
+			if sym == clause.Variable {
+				indices[i] = j
+				break
+			}
+		}
+		if indices[i] < 0 {
+			return indices, fmt.Errorf("order-by variable %s is not a column of the relation (columns: %v)",
+				clause.Variable, symbols)
+		}
+	}
+	return indices, nil
+}
+
+// compareTuplesByOrder returns -1 when left precedes right, 1 when left follows
+// right, and 0 when all requested sort keys compare equal.
+func compareTuplesByOrder(left, right Tuple, orderBy []query.OrderByClause, indices []int) int {
+	for i, clause := range orderBy {
+		cmp := datalog.CompareValues(left[indices[i]], right[indices[i]])
+		if clause.Direction == query.OrderDesc {
+			cmp = -cmp
+		}
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
 }
 
 // computeAggregate computes an aggregate over all values in a symbol

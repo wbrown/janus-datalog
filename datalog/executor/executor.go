@@ -228,6 +228,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 	if err != nil {
 		return nil, err
 	}
+	limitApplied := false
 	if len(plan.Query.OrderBy) > 0 {
 		// Sort keys on constant inputs (scalar/tuple :in) are identity
 		// sorts — dropped here, observably rather than silently.
@@ -243,13 +244,21 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			}
 		}
 		if len(effective) > 0 {
-			result = result.Sort(effective)
+			retained := query.RetainedSortSymbols(plan.Query)
+			if plan.Query.Limit != nil && len(retained) == 0 {
+				// No post-sort projection can collapse rows, so bounded Top-N
+				// is equivalent to full sort followed by limit.
+				result = TopNRelation(result, effective, *plan.Query.Limit)
+				limitApplied = true
+			} else {
+				result = result.Sort(effective)
+			}
 			// The planner retained non-projected sort columns through the
 			// final projection so the sort above could resolve them; strip
 			// the result back to the declared :find shape. The projection
 			// deduplicates (set semantics), keeping each duplicate's first
 			// occurrence in sorted order.
-			if retained := query.RetainedSortSymbols(plan.Query); len(retained) > 0 {
+			if len(retained) > 0 {
 				result, err = result.Project(extractFindSymbols(plan.Query.Find))
 				if err != nil {
 					return nil, err
@@ -257,7 +266,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			}
 		}
 	}
-	if plan.Query.Limit != nil {
+	if plan.Query.Limit != nil && !limitApplied {
 		result = NewLimitRelation(result, *plan.Query.Limit)
 	}
 	// Pull rendering is result presentation, not a relational operation:
