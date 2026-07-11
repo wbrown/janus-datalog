@@ -307,24 +307,25 @@ func TestAggregationWithTimeValues(t *testing.T) {
 	}
 }
 
-func TestStringifyValue(t *testing.T) {
-	tests := []struct {
-		input    interface{}
-		expected string
-	}{
-		{nil, "<nil>"},
-		{"hello", "hello"},
-		{int64(42), "42"},
-		{3.14, "3.14"},
-		{true, "true"},
-		{time.Date(2023, 6, 15, 0, 0, 0, 0, time.UTC), "2023-06-15T00:00:00Z"},
-	}
+func TestAggregationTupleKeysPreserveTypes(t *testing.T) {
+	for _, pair := range adversarialTuplePairs {
+		t.Run(pair.name, func(t *testing.T) {
+			aKey := NewTupleKeyFull(pair.a)
+			bKey := NewTupleKeyFull(pair.b)
+			if aKey.Equal(bKey) {
+				t.Fatalf("distinct typed aggregation keys compare equal: %v and %v", pair.a, pair.b)
+			}
 
-	for _, tt := range tests {
-		result := stringifyValue(tt.input)
-		if result != tt.expected {
-			t.Errorf("stringifyValue(%v) = %q, want %q", tt.input, result, tt.expected)
-		}
+			groups := NewTupleKeyMap()
+			groups.Put(aKey, "a")
+			groups.Put(bKey, "b")
+			if got, ok := groups.Get(aKey); !ok || got != "a" {
+				t.Fatalf("first typed key was lost: got %v, found %v", got, ok)
+			}
+			if got, ok := groups.Get(bKey); !ok || got != "b" {
+				t.Fatalf("second typed key was lost: got %v, found %v", got, ok)
+			}
+		})
 	}
 }
 

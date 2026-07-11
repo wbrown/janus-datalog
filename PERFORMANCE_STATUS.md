@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2026-05-29 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, and same-entity attribute-fetch fusion.
+**Last Updated**: 2026-07-11 (v0.12.0)
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, same-entity attribute-fetch fusion, and typed aggregation keys via `TupleKeyMap`.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-05-29, same-entity attribute-fetch fusion).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, typed aggregation keys).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -28,6 +28,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
 - ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` column attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
+- ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -817,6 +818,47 @@ All seven pass against the final state on this branch. `go test -count=1
 blocking `rm` / `rmdir` / `unlink` in Bash commands (word-boundary
 match; `git rm` passes).
 
+### 18. Typed Aggregation Keys via `TupleKeyMap` (COMPLETE - July 2026)
+**Status**: ✅ Batch and streaming grouped aggregation use typed tuple keys
+
+**Problem**: Both aggregation paths formed group identity by formatting each
+value and joining the strings with `|`. The representation was expensive and
+not injective:
+
+- `(int64(5), "x")` and `("5", "x")` produced the same key.
+- `("a|b", "c")` and `("a", "b|c")` produced the same key.
+- Distinct groups silently merged and their aggregate values combined.
+
+**Change**:
+
+- Replaced both string-key maps with the existing `TupleKeyMap`, reusing the
+  same typed hashing and `ValuesEqual` semantics as joins and deduplication.
+- The map value is the aggregation state for that typed key:
+  `batchAggregateGroup` for batch mode and `streamingAggregateGroup` for
+  streaming mode.
+- A parallel first-seen-order slice provides result traversal because
+  `TupleKeyMap` is optimized for lookup rather than enumeration.
+- Added red/green tests covering delimiter shifts and int, bool, and float
+  values paired with their string renderings in both aggregation modes.
+
+**Measurement** (`BenchmarkGroupedAggregationKeying`, 10,000 rows, 100
+two-column groups, `benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Mode | Time before | Time after | Delta | Bytes delta | Allocs delta |
+|------|------------:|-----------:|------:|------------:|-------------:|
+| Batch | 1,369.6 µs | 681.4 µs | **−50.25%** | −14.43% | −70.02% |
+| Streaming | 926.0 µs | 512.5 µs | **−44.66%** | −35.60% | −72.48% |
+| **Geomean** | 1,126 µs | 590.9 µs | **−47.53%** | **−25.77%** | **−71.28%** |
+
+Every timing comparison is significant at `p=0.000`, `n=10`. The full
+`go test -count=1 ./...` suite passes.
+
+**Files**:
+
+- `datalog/executor/aggregation.go`
+- `datalog/executor/aggregation_key_test.go`
+- `datalog/executor/aggregation_test.go`
+
 ---
 
 ## Profiling Results (October 2025)
@@ -932,13 +974,13 @@ All items below are **measured** and **active** in production code:
 15. ✅ **Conditional aggregate rewriting** - **7.7× faster, 5.2× less memory** for correlated aggregate subqueries (verified 2026-01-16)
 16. ✅ **CRDT storage** - **~25-35µs writes**, **O(1) LWW resolution**, conflict-free replication (verified 2026-01-31)
 17. ✅ **CRDT allocation optimization** - **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main while adding full CRDT semantics (verified 2026-02-02)
+18. ✅ **Typed aggregation keys** - **47.5% faster, 25.8% less memory, 71.3% fewer allocations** while fixing cross-type and delimiter key collisions (verified 2026-07-11)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:
 
-1. Streaming aggregations - Reduce memory for large groups
-2. BadgerDB time range integration - Push time constraints to storage layer
-3. Composite index support - For multi-attribute filters
+1. BadgerDB time range integration - Push time constraints to storage layer
+2. Composite index support - For multi-attribute filters
 
 ### Known Performance Regressions (Correctness Fixes)
 
@@ -1022,7 +1064,7 @@ exec := executor.NewExecutorWithOptions(matcher, opts)
 1. Keep **simple, correct code** (complexity doesn't pay)
 2. Let **algorithms win** (relation collapsing, not tricks)
 3. Build **only what benchmarks prove** (no more speculation)
-4. Consider **streaming aggregations** for memory efficiency
+4. Reuse established typed-key primitives instead of inventing string encodings
 
 ---
 

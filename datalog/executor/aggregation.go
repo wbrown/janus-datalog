@@ -312,9 +312,11 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 		}
 	}
 
-	// Group tuples
-	groups := make(map[string]Tuple)
-	groupValues := make(map[string][][]interface{})
+	// Group tuples by their typed values. TupleKeyMap uses the same hashing and
+	// ValuesEqual semantics as joins and deduplication, so distinct datalog
+	// values cannot collapse through string formatting or delimiter ambiguity.
+	groups := NewTupleKeyMap()
+	var groupOrder []*batchAggregateGroup
 
 	it := rel.Iterator()
 	defer it.Close()
@@ -322,23 +324,18 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	for it.Next() {
 		tuple := it.Tuple()
 
-		// Extract group key
-		groupKey := ""
-		groupTuple := make(Tuple, len(groupIndices))
-		for i, idx := range groupIndices {
-			if idx < len(tuple) {
-				groupTuple[i] = tuple[idx]
-				groupKey += stringifyValue(tuple[idx]) + "|"
+		key := NewTupleKey(tuple, groupIndices)
+		groupValue, exists := groups.Get(key)
+		var group *batchAggregateGroup
+		if exists {
+			group = groupValue.(*batchAggregateGroup)
+		} else {
+			group = &batchAggregateGroup{
+				key:    Tuple(key.values),
+				values: make([][]interface{}, len(aggregates)),
 			}
-		}
-
-		// Store group tuple (first occurrence)
-		if _, exists := groups[groupKey]; !exists {
-			groups[groupKey] = groupTuple
-			groupValues[groupKey] = make([][]interface{}, len(aggregates))
-			for i := range groupValues[groupKey] {
-				groupValues[groupKey][i] = []interface{}{}
-			}
+			groups.Put(key, group)
+			groupOrder = append(groupOrder, group)
 		}
 
 		// Collect values for aggregation (with predicate filtering for conditional aggregates)
@@ -359,19 +356,19 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 				}
 
 				// Predicate passed (or no predicate), collect value
-				groupValues[groupKey][i] = append(groupValues[groupKey][i], tuple[idx])
+				group.values[i] = append(group.values[i], tuple[idx])
 			}
 		}
 	}
 
 	// Compute aggregates for each group
-	var resultTuples []Tuple
-	for groupKey, groupTuple := range groups {
+	resultTuples := make([]Tuple, 0, len(groupOrder))
+	for _, group := range groupOrder {
 		// Relational theory: if all aggregates for this group are empty
 		// (all values filtered by predicates), exclude this group from result
 		hasAnyValues := false
 		for i := range aggregates {
-			if len(groupValues[groupKey][i]) > 0 {
+			if len(group.values[i]) > 0 {
 				hasAnyValues = true
 				break
 			}
@@ -383,11 +380,11 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 		resultTuple := make(Tuple, len(groupByVars)+len(aggregates))
 
 		// Add group-by values
-		copy(resultTuple, groupTuple)
+		copy(resultTuple, group.key)
 
 		// Add aggregate results
 		for i, agg := range aggregates {
-			resultTuple[len(groupByVars)+i] = computeAggregateValues(groupValues[groupKey][i], agg.Function)
+			resultTuple[len(groupByVars)+i] = computeAggregateValues(group.values[i], agg.Function)
 		}
 
 		resultTuples = append(resultTuples, resultTuple)
@@ -414,22 +411,9 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	return result
 }
 
-// computeAggregateValues is already defined in executor.go
-// We'll leave it there for now and reference it
-
-// stringifyValue converts a value to string for grouping
-func stringifyValue(v interface{}) string {
-	if v == nil {
-		return "<nil>"
-	}
-	switch val := v.(type) {
-	case string:
-		return val
-	case time.Time:
-		return val.Format(time.RFC3339)
-	default:
-		return fmt.Sprintf("%v", v)
-	}
+type batchAggregateGroup struct {
+	key    Tuple
+	values [][]interface{}
 }
 
 // ============================================================================
@@ -519,20 +503,6 @@ func (s *AggregateState) GetResult(function string) interface{} {
 	default:
 		return nil
 	}
-}
-
-// GroupKey represents a unique group for aggregation
-type GroupKey struct {
-	values []interface{}
-}
-
-// String returns a string representation for map keying
-func (k GroupKey) String() string {
-	result := ""
-	for _, v := range k.values {
-		result += stringifyValue(v) + "|"
-	}
-	return result
 }
 
 // StreamingAggregateRelation computes aggregates incrementally in a single pass
@@ -762,10 +732,10 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 		}
 	}
 
-	// Single pass over source: group and aggregate incrementally
-	// Use separate AggregateState per aggregate to support conditional aggregates properly
-	groups := make(map[string][]*AggregateState)
-	groupKeys := make(map[string]GroupKey)
+	// Single pass over source: group and aggregate incrementally. TupleKeyMap
+	// preserves typed datalog equality without allocating formatted string keys.
+	groups := NewTupleKeyMap()
+	var groupOrder []*streamingAggregateGroup
 
 	it := r.source.Iterator()
 	defer it.Close()
@@ -779,28 +749,24 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 			fmt.Printf("[StreamingAggregateRelation.materialize] Tuple %d: %v (len=%d)\n", tupleCount, tuple, len(tuple))
 		}
 
-		// Extract group key
-		keyValues := make([]interface{}, len(groupIndices))
-		for i, idx := range groupIndices {
-			if idx >= 0 && idx < len(tuple) {
-				keyValues[i] = tuple[idx]
+		key := NewTupleKey(tuple, groupIndices)
+		groupValue, exists := groups.Get(key)
+		var group *streamingAggregateGroup
+		if exists {
+			group = groupValue.(*streamingAggregateGroup)
+		} else {
+			group = &streamingAggregateGroup{
+				key:    Tuple(key.values),
+				states: make([]*AggregateState, len(r.aggregates)),
 			}
-		}
-		key := GroupKey{values: keyValues}
-		keyStr := key.String()
-
-		// Get or create aggregate states (one per aggregate)
-		states, exists := groups[keyStr]
-		if !exists {
-			states = make([]*AggregateState, len(r.aggregates))
-			for i := range states {
-				states[i] = newAggregateState()
+			for i := range group.states {
+				group.states[i] = newAggregateState()
 			}
-			groups[keyStr] = states
-			groupKeys[keyStr] = key
+			groups.Put(key, group)
+			groupOrder = append(groupOrder, group)
 
 			if r.options.EnableStreamingAggregationDebug {
-				fmt.Printf("[StreamingAggregateRelation.materialize] Created new group: %s\n", keyStr)
+				fmt.Printf("[StreamingAggregateRelation.materialize] Created new group: %v\n", group.key)
 			}
 		}
 
@@ -827,7 +793,7 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 				if r.options.EnableStreamingAggregationDebug && tupleCount <= 3 {
 					fmt.Printf("[StreamingAggregateRelation.materialize] Updating aggregate %d (%s) with value: %v (type=%T)\n", i, agg.Function, value, value)
 				}
-				states[i].Update(agg.Function, value)
+				group.states[i].Update(agg.Function, value)
 			} else {
 				if r.options.EnableStreamingAggregationDebug && tupleCount <= 3 {
 					fmt.Printf("[StreamingAggregateRelation.materialize] Skipping aggregate %d: idx=%d, len(tuple)=%d\n", i, idx, len(tuple))
@@ -837,24 +803,23 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 	}
 
 	if r.options.EnableStreamingAggregationDebug {
-		fmt.Printf("[StreamingAggregateRelation.materialize] Processed %d tuples, %d groups\n", tupleCount, len(groups))
+		fmt.Printf("[StreamingAggregateRelation.materialize] Processed %d tuples, %d groups\n", tupleCount, len(groupOrder))
 	}
 
 	// Convert groups to result tuples
-	resultTuples := make([]Tuple, 0, len(groups))
-	for keyStr, states := range groups {
-		key := groupKeys[keyStr]
+	resultTuples := make([]Tuple, 0, len(groupOrder))
+	for _, group := range groupOrder {
 		resultTuple := make(Tuple, len(r.groupByVars)+len(r.aggregates))
 
 		// Add group-by values
-		copy(resultTuple, key.values)
+		copy(resultTuple, group.key)
 
 		// Add aggregate results (one per aggregate state)
 		for i, agg := range r.aggregates {
-			result := states[i].GetResult(agg.Function)
+			result := group.states[i].GetResult(agg.Function)
 			if r.options.EnableStreamingAggregationDebug {
 				fmt.Printf("[StreamingAggregateRelation.materialize] Aggregate %d (%s) GetResult: %v (type=%T), state.count=%d, state.min=%v, state.max=%v\n",
-					i, agg.Function, result, result, states[i].count, states[i].min, states[i].max)
+					i, agg.Function, result, result, group.states[i].count, group.states[i].min, group.states[i].max)
 			}
 			resultTuple[len(r.groupByVars)+i] = result
 		}
@@ -863,4 +828,9 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 	}
 
 	return NewMaterializedRelationWithOptions(r.Symbols(), resultTuples, r.options)
+}
+
+type streamingAggregateGroup struct {
+	key    Tuple
+	states []*AggregateState
 }
