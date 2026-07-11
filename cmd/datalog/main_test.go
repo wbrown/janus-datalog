@@ -411,3 +411,47 @@ func TestCLI_ImportNonexistentFile(t *testing.T) {
 		t.Errorf("Expected 'does not exist' error, got: %s", out)
 	}
 }
+
+// TestCLI_BareInvocationDoesNotWrite is the regression test for demo-mode
+// removal: invoking the CLI with no mode flags must never commit data.
+// (Demo mode used to auto-populate an empty database with sample datoms.)
+func TestCLI_BareInvocationDoesNotWrite(t *testing.T) {
+	binPath := buildCLI(t)
+
+	// Create an EMPTY database (directory exists, no datoms).
+	dbPath := filepath.Join(t.TempDir(), "empty.db")
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	db.Close()
+
+	cmd := exec.Command(binPath, "-db", dbPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Bare invocation failed: %v\n%s", err, out)
+	}
+
+	// Should print the usage hint, not load demo data.
+	if strings.Contains(string(out), "demo") || strings.Contains(string(out), "Demo") {
+		t.Errorf("Bare invocation mentions demo mode:\n%s", out)
+	}
+	if !strings.Contains(string(out), "-query") {
+		t.Errorf("Expected usage hint mentioning -query, got:\n%s", out)
+	}
+
+	// The database must still be empty.
+	db, err = storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer db.Close()
+
+	results, err := executor.CollectTuples(db.Query(`[:find ?e :where [?e _ _]]`))
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("Bare invocation wrote %d entities into an empty database", len(results))
+	}
+}
