@@ -18,7 +18,7 @@ be omitted.
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
 | 5 | Propagate statically provable relational properties | Relational algebra | Core contract implemented | 5.5% less memory | In progress |
-| 6 | Push Top-N into proven index order | Relational algebra | Tx-descending indices exist | True scan reduction | High |
+| 6 | Push Top-N into proven index order | Relational algebra | 6a implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
 
@@ -315,12 +315,46 @@ Relevant benchmark:
 
 ## 6. Push Top-N into Proven Index Order
 
+**Status:** 6a existing-order consumption complete; 6b order-aware index
+selection pending.
+
 Bounded Top-N still consumes every source row. After property propagation can
 prove that a scan's physical order satisfies `ORDER BY`, the storage iterator
 can instead stop after N rows. This is the optimization that turns latest-1 and
 keyset-page queries into bounded range reads.
 
-Start narrowly:
+### 6a. Consume existing ordering guarantees
+
+The first slice requires no planner or index-selection change. When the final
+relation already satisfies the Datalog `:order-by`, finalization now applies
+`LimitRelation` directly instead of bounded Top-N. The streaming limit closes
+the storage iterator after N rows. Non-projected sort keys still project and
+deduplicate before limiting.
+
+**Measurement** (`BenchmarkIndexOrderedLimit`, 10,000 CardinalityOne entities,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Direction | N | Time before | Time after | Time delta | Scans before | Scans after |
+|---|---:|---:|---:|---:|---:|---:|
+| E ascending | 1 | 2.057 ms | 7.295 µs | **-99.65%** | 10,000 | 1 |
+| E ascending | 10 | 2.065 ms | 10.95 µs | **-99.47%** | 10,000 | 10 |
+| E ascending | 100 | 2.077 ms | 38.93 µs | **-98.13%** | 10,000 | 100 |
+| E descending | 1 | 2.235 ms | full-scan control | — | 10,000 | 10,000 |
+| E descending | 10 | 2.914 ms | full-scan control | — | 10,000 | 10,000 |
+| E descending | 100 | 3.377 ms | full-scan control | — | 10,000 | 10,000 |
+
+For satisfied ascending order, memory falls 97.0–99.4% and allocations
+98.0–99.6%. Descending allocation counts are identical before/after; its
+wall-time samples remain noisy despite the unchanged full-scan path.
+
+Relevant benchmark:
+
+- `datalog/storage/index_order_limit_benchmark_test.go`
+
+### 6b. Order-aware index selection
+
+Only after 6a is proven should index selection change to satisfy additional
+orders. Start narrowly:
 
 1. Single-pattern transaction ordering on EATV, ATEV, or TAEV.
 2. No joins that can filter a selected row.
@@ -394,7 +428,7 @@ Relevant code:
 5. **Checkpointed:** core relation-property contract, initial conservative
    propagation, and key-aware projection. Join/OR and broader storage
    derivations remain.
-6. **Next — index-order Top-N:** use proven physical order to stop storage
-   after N.
+6. **In progress:** 6a consumes existing ordering guarantees and stops storage
+   after N; 6b order-aware index selection remains.
 7. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
    safety follows from those properties.

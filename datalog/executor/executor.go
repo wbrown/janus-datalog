@@ -245,7 +245,14 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 		}
 		if len(effective) > 0 {
 			retained := query.RetainedSortSymbols(plan.Query)
-			if plan.Query.Limit != nil && len(retained) == 0 {
+			orderSatisfied := plan.Query.Limit != nil &&
+				result.Properties().satisfiesOrdering(effective)
+			if orderSatisfied {
+				// The physical relation already supplies the requested Datalog
+				// order. Leave it streaming; the limit applied below can stop
+				// the source iterator after N rows. If retained sort symbols
+				// are projected away, projection/dedup runs before that limit.
+			} else if plan.Query.Limit != nil && len(retained) == 0 {
 				// No post-sort projection can collapse rows, so bounded Top-N
 				// is equivalent to full sort followed by limit.
 				result = TopNRelation(result, effective, *plan.Query.Limit)

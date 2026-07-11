@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
 **Last Updated**: 2026-07-11 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, and typed Relation property propagation.
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation, and existing-order scan termination.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, typed Relation property propagation).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, existing-order scan termination).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -32,7 +32,8 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Bounded Top-N finalization**: ordered limits without non-projected sort keys use an O(N)-memory heap instead of materializing and sorting every row. Across 10K/100K rows and N=1/10/100: **97.1% faster**, **99.96% less memory**, **99.86% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64). The source is still fully scanned; index-order pushdown remains separate.
 - ✅ **One-pass same-entity attribute bundles**: contiguous cardinality-one fetches sharing a bound entity now attach all output columns in one traversal and one materialization. **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 at 1,000 entities is **24.8% faster, 56.5% less memory, 36.5% fewer allocations** (n=10; verified 2026-07-11, darwin/arm64).
-- ⚠️ **Typed Relation properties (foundation)**: `Relation.Properties()` carries ordering and candidate-key guarantees using Datalog symbols. Initial conservative propagation plus key-aware streaming projection reduces the complex-query checkpoint by **5.45% memory** and **2.71% allocations** with statistically unchanged time. Join/OR derivations, broader storage coverage, and ordering consumption remain (n=10; verified 2026-07-11, darwin/arm64).
+- ⚠️ **Typed Relation properties (foundation)**: `Relation.Properties()` carries ordering and candidate-key guarantees using Datalog symbols. Initial conservative propagation plus key-aware streaming projection reduces the complex-query checkpoint by **5.45% memory** and **2.71% allocations** with statistically unchanged time. Join/OR derivations and broader storage coverage remain (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Existing-order scan termination (6a)**: when a relation already satisfies Datalog `:order-by`, ordered limits stream directly through `LimitRelation`. On 10K AETV-ordered entities, N=1/10/100 scans exactly N rows and is **98.1–99.7% faster**, with **97.0–99.4% less memory** and **98.0–99.6% fewer allocations**. Order-aware index selection (6b) remains separate (n=10; verified 2026-07-11, darwin/arm64).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -1046,14 +1047,14 @@ read and regressed time by about 2%. Profiling found no application hotspot but
 the regression reproduced. Moving immutability into the explicit interface
 contract removed that cost while preserving the memory/allocation win.
 
-Ordering is carried but not yet consumed for storage early termination.
-Index-order Top-N remains the next separate optimization.
+Ordering is now consumed when the final relation already satisfies the Datalog
+requirement. Order-aware index selection for additional shapes remains separate.
 
 **Remaining work**:
 
 - Prove property preservation for specific join and OR/fallback shapes.
 - Establish properties for additional storage index and binding strategies.
-- Consume ordering in index-order Top-N.
+- Add order-aware index selection only for CRDT-safe proven shapes.
 - Measure every added derivation against the complex-query checkpoint.
 
 **Files**:
@@ -1062,6 +1063,37 @@ Index-order Top-N remains the next separate optimization.
 - `datalog/executor/relation_properties_test.go`
 - `datalog/storage/relation_properties.go`
 - `datalog/storage/relation_properties_test.go`
+
+### 23. Existing-Order Scan Termination (6a COMPLETE - July 2026)
+**Status**: ✅ Ordered limits consume proven relation ordering
+
+When `Relation.Properties().Ordering` satisfies the effective Datalog
+`:order-by`, finalization now skips full sort and bounded Top-N. It leaves the
+relation streaming and applies `LimitRelation` after any required
+projection/deduplication, so closing after N results closes the storage iterator.
+
+This slice changes no planner behavior and no index selection. Unsatisfied
+ordering retains the existing bounded Top-N path.
+
+**Measurement** (`BenchmarkIndexOrderedLimit`, 10,000 AETV-ordered
+CardinalityOne entities, `benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Order | N | Time before | Time after | Delta | Datoms before | Datoms after |
+|-------|--:|------------:|-----------:|------:|--------------:|-------------:|
+| E asc | 1 | 2.057 ms | 7.295 µs | **−99.65%** | 10,000 | 1 |
+| E asc | 10 | 2.065 ms | 10.95 µs | **−99.47%** | 10,000 | 10 |
+| E asc | 100 | 2.077 ms | 38.93 µs | **−98.13%** | 10,000 | 100 |
+| E desc | 1/10/100 | full-scan control | full-scan control | — | 10,000 | 10,000 |
+
+For satisfied ascending order, memory falls 97.0–99.4% and allocations
+98.0–99.6%. Descending allocation counts are identical before/after; timing
+samples are noisy despite the unchanged execution path.
+
+**Files**:
+
+- `datalog/executor/executor.go`
+- `datalog/storage/index_order_limit_test.go`
+- `datalog/storage/index_order_limit_benchmark_test.go`
 
 ---
 
@@ -1226,7 +1258,8 @@ All items below are **measured** and **active** in production code:
 19. ✅ **Single-lookup dedup insertion** - **5.4–9.0% faster, 7.3% geomean** across materialized and streaming deduplication with unchanged memory and allocations (verified 2026-07-11)
 20. ✅ **Bounded Top-N finalization** - **97.1% faster, 99.96% less memory, 99.86% fewer allocations** for ordered limits where no post-sort deduplicating projection is required (verified 2026-07-11)
 21. ✅ **One-pass same-entity attribute bundles** - **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 improves up to 24.8% time and 56.5% memory (verified 2026-07-11)
-22. ⚠️ **Typed Relation properties (foundation)** - **5.45% less memory, 2.71% fewer allocations** on the complex checkpoint with statistically unchanged time; join/OR derivations, broader storage coverage, and ordering consumption remain (verified 2026-07-11)
+22. ⚠️ **Typed Relation properties (foundation)** - **5.45% less memory, 2.71% fewer allocations** on the complex checkpoint with statistically unchanged time; join/OR derivations and broader storage coverage remain (verified 2026-07-11)
+23. ✅ **Existing-order scan termination** - proven E-ascending limits scan exactly N rows and improve **98.1–99.7% time**, **97.0–99.4% memory**, and **98.0–99.6% allocations** on 10K entities (verified 2026-07-11)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:
