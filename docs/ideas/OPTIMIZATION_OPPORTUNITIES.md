@@ -1,8 +1,8 @@
 # Janus Datalog Optimization Opportunities
 
 **Reviewed:** 2026-07-11  
-**Status:** Items 1–4 implemented and verified; remaining items require focused
-benchmarks before implementation
+**Status:** Items 1–4 complete; item 5 core contract checkpointed with
+propagation coverage still in progress
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
 hash-join gains. The next meaningful improvements are concentrated in typed
@@ -17,7 +17,7 @@ be omitted.
 | 2 | Use `PutIfAbsent` across deduplication paths | Low-level | Implemented and benchmarked | 7.3% faster geomean | Complete |
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
-| 5 | Propagate statically provable relational properties | Relational algebra | Derivable from existing contracts | Cross-layer | Medium–high |
+| 5 | Propagate statically provable relational properties | Relational algebra | Core contract implemented | 5.5% less memory | In progress |
 | 6 | Push Top-N into proven index order | Relational algebra | Tx-descending indices exist | True scan reduction | High |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
@@ -230,26 +230,88 @@ Relevant code and benchmarks:
 
 ## 5. Propagate Statically Provable Relational Properties
 
+**Status:** Core interface contract and first storage guarantees complete;
+propagation coverage remains in progress.
+
 The query syntax, selected index, schema, and `Relation` type already establish
 facts such as candidate keys, uniqueness, ordering, and rewindability, but those
 facts are not carried explicitly. Preserving them can enable safe deduplication
 and sort elimination without collected statistics or cost-based planning.
 
-Derive properties only from existing contracts:
+`Relation.Properties()` now carries ordering and candidate keys using Datalog
+symbols and `OrderByClause` values. Constructors copy external property values;
+callers treat returned properties as immutable under the existing Relation
+contract.
 
-- `Scan` establishes properties from its pattern, selected index, and schema.
-- `Select` preserves them.
-- `Map` and `Project` update them conservatively.
-- `Join` combines them only where the result follows structurally.
+Implemented propagation:
 
-Do not add persistent cardinality statistics, a cost model, or heuristic
-overrides. The syntax-visible greedy planner remains the planning model.
+- Storage establishes E ordering and entity uniqueness for proven
+  CardinalityOne AETV and validated AVET scans.
+- Filters, limits, materialization, lazy wrapping, and same-entity bundle
+  attachment preserve properties.
+- Projection retains only the valid ordering prefix and keys whose symbols
+  survive.
+- Sort establishes its requested ordering.
+- Fresh expression outputs preserve properties; replacing a property-bearing
+  symbol clears affected guarantees.
+- Grouped aggregation establishes its group-by symbols as a candidate key.
+- Joins, unions, products, and fallback relations clear properties until a
+  derivation rule proves otherwise.
+- Streaming projection skips deduplication when a candidate key survives.
+
+No persistent cardinality statistics, cost model, heuristic override, or
+planner metadata was added. The syntax-visible greedy planner remains the
+planning model.
 
 Relevant code:
 
 - `datalog/planner/clause_utils.go:602-686`
 - `datalog/algebra/types.go:53-84`
 - `datalog/executor/relation.go`
+- `datalog/executor/relation_properties.go`
+- `datalog/storage/relation_properties.go`
+
+### Complex-query checkpoint
+
+The existing production-shaped optimization-matrix query is now a reusable
+schema-backed benchmark with `:limit 25`. It exercises phase planning, joins,
+same-entity bundles, correlated and nested subqueries, conditional aggregation,
+`get-else`, `or-default`, expressions, ordering, and bounded Top-N over 75
+scenarios × 100 tasks.
+
+`BenchmarkComplexQueryCheckpoint`, steady-state public query API,
+`benchtime=1s`, `count=10`, darwin/arm64:
+
+- **47.88 ms/op ±2%**
+- **87.57 MiB/op**
+- **1.118M allocations/op**
+
+The allocation profile is dominated cumulatively by `HashJoinWithOptions` and
+`OrFallbackIterator.nextShortCircuit` (overlapping call stacks). Direct
+allocation leaders are `TupleKeyMap.PutIfAbsent` (16.5%),
+`NewTupleKeyMapWithCapacity` (16.5%), and `TupleKeyMap.Put` (11.3%). This is the
+checkpoint against which property-driven work is measured.
+
+After property propagation and key-aware streaming projection:
+
+- Time: **48.48 ms/op**, statistically unchanged (`p=0.247`)
+- Memory: **82.80 MiB/op**, **-5.45%**
+- Allocations: **1.088M/op**, **-2.71%**
+
+Ordering is carried but not yet consumed for storage early termination; that
+remains the separate index-order Top-N step.
+
+Remaining property work:
+
+- Derive keys/order through specific joins and OR/fallback shapes only where
+  structural proofs exist.
+- Establish guarantees for additional storage index and binding strategies.
+- Consume ordering in index-order Top-N.
+- Re-run the complex checkpoint after each new derivation rule.
+
+Relevant benchmark:
+
+- `datalog/storage/optimization_matrix_test.go`
 
 ## 6. Push Top-N into Proven Index Order
 
@@ -329,8 +391,10 @@ Relevant code:
 3. **Completed:** bounded Top-N heap reducing CPU and memory while retaining the
    full scan.
 4. **Completed:** one-pass same-entity attribute bundle fusion.
-5. **Next architecture step — property propagation:** statically
-   derived ordering, uniqueness, candidate keys, and rewindability.
-6. **Index-order Top-N:** use proven physical order to stop storage after N.
+5. **Checkpointed:** core relation-property contract, initial conservative
+   propagation, and key-aware projection. Join/OR and broader storage
+   derivations remain.
+6. **Next — index-order Top-N:** use proven physical order to stop storage
+   after N.
 7. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
    safety follows from those properties.

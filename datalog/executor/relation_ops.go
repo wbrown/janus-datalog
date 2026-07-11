@@ -138,7 +138,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	result = NewMaterializedRelationWithOptions(symbols, filtered, opts)
+	result = NewMaterializedRelationWithProperties(symbols, filtered, opts, rel.Properties())
 	return
 }
 
@@ -351,7 +351,11 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	result = NewMaterializedRelationWithOptions(newColumns, newTuples, opts)
+	properties := rel.Properties()
+	for _, symbol := range bindingSymbols {
+		properties = properties.addSymbol(symbol)
+	}
+	result = NewMaterializedRelationWithProperties(newColumns, newTuples, opts, properties)
 	return
 }
 

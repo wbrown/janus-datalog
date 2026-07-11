@@ -260,6 +260,10 @@ func (r *OrFallbackRelation) Symbols() []query.Symbol {
 	return r.symbols
 }
 
+func (r *OrFallbackRelation) Properties() RelationProperties {
+	return RelationProperties{}
+}
+
 func (r *OrFallbackRelation) Size() int {
 	return -1 // Streaming - unknown size
 }

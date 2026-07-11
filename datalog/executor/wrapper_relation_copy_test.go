@@ -16,9 +16,10 @@ import (
 // Its iterator overwrites a shared workspace slice on each Next() call,
 // just like storage iterators do with BuildTupleInternedInto.
 type mockUnsafeRelation struct {
-	symbols []query.Symbol
-	data    [][]interface{} // Source data (will be copied into workspace)
-	options ExecutorOptions
+	symbols    []query.Symbol
+	data       [][]interface{} // Source data (will be copied into workspace)
+	options    ExecutorOptions
+	properties RelationProperties
 }
 
 func newMockUnsafeRelation(symbols []query.Symbol, data [][]interface{}) *mockUnsafeRelation {
@@ -29,6 +30,7 @@ func newMockUnsafeRelation(symbols []query.Symbol, data [][]interface{}) *mockUn
 }
 
 func (r *mockUnsafeRelation) Symbols() []query.Symbol                                { return r.symbols }
+func (r *mockUnsafeRelation) Properties() RelationProperties                         { return r.properties }
 func (r *mockUnsafeRelation) Size() int                                              { return len(r.data) }
 func (r *mockUnsafeRelation) IsEmpty() bool                                          { return len(r.data) == 0 }
 func (r *mockUnsafeRelation) Get(i int) Tuple                                        { return nil }

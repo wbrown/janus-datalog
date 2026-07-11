@@ -55,7 +55,12 @@ func (r *LimitRelation) ensure() *MaterializedRelation {
 			}
 		}
 
-		r.mat = NewMaterializedRelationWithOptions(r.source.Symbols(), tuples, r.source.Options())
+		r.mat = NewMaterializedRelationWithProperties(
+			r.source.Symbols(),
+			tuples,
+			r.source.Options(),
+			r.source.Properties(),
+		)
 		// Carry any deferred source error so it isn't laundered by materialization.
 		r.mat.err = err
 	})
@@ -63,12 +68,15 @@ func (r *LimitRelation) ensure() *MaterializedRelation {
 }
 
 func (r *LimitRelation) Symbols() []query.Symbol { return r.source.Symbols() }
-func (r *LimitRelation) Iterator() Iterator       { return r.ensure().Iterator() }
-func (r *LimitRelation) Size() int                { return r.ensure().Size() }
-func (r *LimitRelation) IsEmpty() bool            { return r.ensure().IsEmpty() }
-func (r *LimitRelation) Get(i int) Tuple          { return r.ensure().Get(i) }
-func (r *LimitRelation) String() string           { return r.ensure().String() }
-func (r *LimitRelation) Table() string            { return r.ensure().Table() }
+func (r *LimitRelation) Properties() RelationProperties {
+	return r.source.Properties()
+}
+func (r *LimitRelation) Iterator() Iterator { return r.ensure().Iterator() }
+func (r *LimitRelation) Size() int          { return r.ensure().Size() }
+func (r *LimitRelation) IsEmpty() bool      { return r.ensure().IsEmpty() }
+func (r *LimitRelation) Get(i int) Tuple    { return r.ensure().Get(i) }
+func (r *LimitRelation) String() string     { return r.ensure().String() }
+func (r *LimitRelation) Table() string      { return r.ensure().Table() }
 
 func (r *LimitRelation) ProjectFromPattern(pattern *query.DataPattern) Relation {
 	return r.ensure().ProjectFromPattern(pattern)

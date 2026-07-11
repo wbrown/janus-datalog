@@ -12,9 +12,10 @@ import (
 // shared cells — the first consumer realizes cells by advancing the
 // underlying storage iterator, subsequent consumers read cached cells.
 type LazySeqRelation struct {
-	seq     *LazySeq
-	symbols []query.Symbol
-	options ExecutorOptions
+	seq        *LazySeq
+	symbols    []query.Symbol
+	options    ExecutorOptions
+	properties RelationProperties
 }
 
 // NewLazySeqRelation creates a Relation backed by a LazySeq with the
@@ -34,10 +35,18 @@ func WrapStreamingAsLazy(rel Relation) Relation {
 		return rel
 	}
 	seq := NewTupleSeq(sr.Iterator(), sr.RequiresCopy())
-	return NewLazySeqRelation(seq, sr.Symbols())
+	return &LazySeqRelation{
+		seq:        seq,
+		symbols:    sr.Symbols(),
+		options:    sr.Options(),
+		properties: sr.Properties(),
+	}
 }
 
-func (r *LazySeqRelation) Symbols() []query.Symbol  { return r.symbols }
+func (r *LazySeqRelation) Symbols() []query.Symbol { return r.symbols }
+func (r *LazySeqRelation) Properties() RelationProperties {
+	return r.properties
+}
 func (r *LazySeqRelation) Size() int                { return -1 } // streaming
 func (r *LazySeqRelation) Get(i int) Tuple          { return nil }
 func (r *LazySeqRelation) RequiresCopy() bool       { return false }
@@ -62,7 +71,7 @@ func (r *LazySeqRelation) Materialize() Relation {
 		tuples = append(tuples, cp)
 	}
 	it.Close()
-	return NewMaterializedRelationWithOptions(r.symbols, tuples, r.options)
+	return NewMaterializedRelationWithProperties(r.symbols, tuples, r.options, r.properties)
 }
 
 func (r *LazySeqRelation) String() string {

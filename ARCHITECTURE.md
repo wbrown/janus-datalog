@@ -321,6 +321,7 @@ type PatternMatcher interface {
 ```go
 type Relation interface {
     Symbols() []query.Symbol
+    Properties() RelationProperties
     Iterator() Iterator
     Size() int
     IsEmpty() bool
@@ -332,6 +333,25 @@ type Relation interface {
 ```
 
 Everything in the executor works with Relations. Pattern matches produce them, joins combine them, expressions add symbols to them, predicates filter them.
+
+`RelationProperties` is the typed physical contract paired with Datalog's
+logical requirements. It carries guaranteed ordering as
+`[]query.OrderByClause` and candidate keys as `[][]query.Symbol`. Storage
+establishes only properties proven by the selected index and CRDT mode;
+operators preserve, transform, or conservatively clear them. The planner and
+algebra optimizer still accept and emit Datalog—properties do not travel
+through metadata maps or synthetic clauses.
+
+Current propagation rules:
+- Filters, limits, materialization, lazy wrapping, and functional attribute
+  attachment preserve properties
+- Projection preserves the valid ordering prefix and fully retained keys
+- Sort establishes ordering; grouped aggregation establishes its group key
+- Fresh expression outputs preserve properties
+- Joins, unions, products, and fallback relations clear properties until a
+  proof rule exists
+- A retained candidate key lets streaming projection skip redundant
+  deduplication
 
 **Key implementations**:
 - `MaterializedRelation` — tuples in memory, supports random access and re-iteration

@@ -58,9 +58,12 @@ func TestAttributeFetchBundleTraversesInputOnce(t *testing.T) {
 	}}
 	exec := newQueryExecutor(matcher, nil, ExecutorOptions{EnableAttributeFetchFusion: true})
 
-	input := &iteratorCountingRelation{Relation: NewMaterializedRelation(
+	inputProperties := RelationProperties{Keys: [][]query.Symbol{{entity}}}
+	input := &iteratorCountingRelation{Relation: NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, kind},
 		[]Tuple{{e1, "room"}, {e2, "room"}},
+		ExecutorOptions{},
+		inputProperties,
 	)}
 	clauses := []query.Clause{
 		&query.DataPattern{Elements: []query.PatternElement{
@@ -84,6 +87,7 @@ func TestAttributeFetchBundleTraversesInputOnce(t *testing.T) {
 	require.Equal(t, 2, consumed)
 	require.Equal(t, 1, input.iteratorCalls, "bundle must traverse the input relation once")
 	require.Len(t, groups, 1)
+	require.Equal(t, inputProperties, groups[0].Properties())
 
 	got, err := CollectTuples(groups[0], nil)
 	require.NoError(t, err)

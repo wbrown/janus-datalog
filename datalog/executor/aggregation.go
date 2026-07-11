@@ -543,6 +543,15 @@ func (r *StreamingAggregateRelation) Symbols() []query.Symbol {
 	return resultSymbols
 }
 
+func (r *StreamingAggregateRelation) Properties() RelationProperties {
+	if len(r.groupByVars) == 0 {
+		return RelationProperties{}
+	}
+	return RelationProperties{Keys: [][]query.Symbol{
+		append([]query.Symbol(nil), r.groupByVars...),
+	}}
+}
+
 // Options returns the executor options for this streaming aggregate relation
 func (r *StreamingAggregateRelation) Options() ExecutorOptions {
 	return r.options

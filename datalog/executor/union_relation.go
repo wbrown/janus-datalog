@@ -47,6 +47,10 @@ func (ur *UnionRelation) Symbols() []query.Symbol {
 	return ur.symbols
 }
 
+func (ur *UnionRelation) Properties() RelationProperties {
+	return RelationProperties{}
+}
+
 // Iterator returns an iterator that consumes from the channel (first call) or cache (subsequent calls)
 func (ur *UnionRelation) Iterator() Iterator {
 	ur.cacheMutex.Lock()

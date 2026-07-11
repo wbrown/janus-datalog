@@ -146,7 +146,9 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	// rendering happens downstream at the result boundary), and the hash
 	// layer rejects non-values loudly.
 	opts := rel.Options()
-	mat := NewMaterializedRelationWithOptions(symbols, tuples, opts)
+	properties := rel.Properties()
+	properties.Ordering = append([]query.OrderByClause(nil), orderBy...)
+	mat := NewMaterializedRelationWithProperties(symbols, tuples, opts, properties)
 	if err != nil {
 		// Carry a deferred source error so it isn't laundered by materialization.
 		mat.err = err

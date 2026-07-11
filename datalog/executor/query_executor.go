@@ -552,7 +552,16 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 
 	newGroups := make([]Relation, len(groups))
 	copy(newGroups, groups)
-	newGroups[entityGroup] = NewMaterializedRelationWithOptions(outputSymbols, output, e.options)
+	properties := input.Properties()
+	for _, fetch := range fetches {
+		properties = properties.addSymbol(fetch.output)
+	}
+	newGroups[entityGroup] = NewMaterializedRelationWithProperties(
+		outputSymbols,
+		output,
+		e.options,
+		properties,
+	)
 	return newGroups, len(fetches), nil
 }
 

@@ -437,7 +437,12 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 	// Return streaming relation with lazy materialization
 	// The iterator will be consumed and cached on first call to Iterator(),
 	// eliminating the 6.3 GB of upfront allocations while maintaining correctness
-	rel := executor.NewStreamingRelationWithOptions(symbols, regularIter, m.options)
+	rel := executor.NewStreamingRelationWithProperties(
+		symbols,
+		regularIter,
+		m.options,
+		unboundScanProperties(pattern, index, card, m.isHistoryMode()),
+	)
 	return rel, nil
 }
 
@@ -574,7 +579,12 @@ func (m *BadgerMatcher) matchWithVValidation(
 		tupleBuilder:     m.getTupleBuilder(pattern, symbols),
 	}
 
-	return executor.NewStreamingRelationWithOptions(symbols, iter, m.options), nil
+	return executor.NewStreamingRelationWithProperties(
+		symbols,
+		iter,
+		m.options,
+		validatedVBoundProperties(pattern, strategy),
+	), nil
 }
 
 // validatingVBoundIterator implements the semi-join pattern for V-bound queries.
