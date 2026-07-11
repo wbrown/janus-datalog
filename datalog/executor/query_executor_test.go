@@ -22,7 +22,11 @@ type MockMatcher struct {
 	matchFunc func(*query.DataPattern, Relations) (Relation, error)
 }
 
-func (m *MockMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *MockMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	if m.matchFunc != nil {
 		return m.matchFunc(pattern, bindings)
 	}
@@ -150,7 +154,7 @@ func TestExecutePattern(t *testing.T) {
 		},
 	}
 
-	result, err := executor.executePattern(ctx, pattern, nil)
+	result, err := executor.executePattern(ctx, query.PatternQuery(pattern), pattern, nil)
 	if err != nil {
 		t.Fatalf("executePattern failed: %v", err)
 	}

@@ -230,12 +230,12 @@ func TestIndexedMatcher_CorrectnessVsLinear(t *testing.T) {
 
 	for _, tt := range testPatterns {
 		t.Run(tt.name, func(t *testing.T) {
-			linearResult, err := linear.Match(tt.pattern, nil)
+			linearResult, err := linear.Match(query.PatternQuery(tt.pattern), nil)
 			if err != nil {
 				t.Fatalf("Linear match failed: %v", err)
 			}
 
-			indexedResult, err := indexed.Match(tt.pattern, nil)
+			indexedResult, err := indexed.Match(query.PatternQuery(tt.pattern), nil)
 			if err != nil {
 				t.Fatalf("Indexed match failed: %v", err)
 			}
@@ -283,7 +283,7 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := matcher.Match(pattern, nil)
+		result, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatalf("Match failed: %v", err)
 		}
@@ -307,7 +307,7 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := matcher.Match(pattern, nil)
+		result, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatalf("Match failed: %v", err)
 		}
@@ -344,7 +344,7 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 			},
 		}
 
-		result, err := matcher.Match(pattern, nil)
+		result, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatalf("Match failed: %v", err)
 		}
@@ -404,7 +404,7 @@ func TestIndexedMatcher_WithBindings(t *testing.T) {
 		},
 	}
 
-	result, err := matcher.Match(pattern, bindings)
+	result, err := matcher.Match(query.PatternQuery(pattern), bindings)
 	if err != nil {
 		t.Fatalf("Match with bindings failed: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestIndexedMatcher_WithConstraints(t *testing.T) {
 		},
 	}
 
-	result, err := matcher.MatchWithConstraints(pattern, nil, []StorageConstraint{constraint})
+	result, err := matcher.MatchWithConstraints(query.PatternQuery(pattern), nil, []StorageConstraint{constraint})
 	if err != nil {
 		t.Fatalf("Match with constraints failed: %v", err)
 	}

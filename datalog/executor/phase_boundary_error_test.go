@@ -18,7 +18,11 @@ type failingScanMatcher struct {
 	dataRel  Relation
 }
 
-func (m *failingScanMatcher) Match(pattern *query.DataPattern, _ Relations) (Relation, error) {
+func (m *failingScanMatcher) Match(q *query.Query, _ Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	var syms []query.Symbol
 	for _, el := range pattern.Elements {
 		if v, ok := el.(query.Variable); ok {

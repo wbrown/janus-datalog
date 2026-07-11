@@ -28,30 +28,34 @@ var _ executor.PatternMatcher = (*BadgerMatcher)(nil)
 var _ executor.PredicateAwareMatcher = (*BadgerMatcher)(nil)
 
 // Match implements PatternMatcher.Match - returns a Relation directly
-func (m *BadgerMatcher) Match(pattern *query.DataPattern, bindings executor.Relations) (executor.Relation, error) {
+func (m *BadgerMatcher) Match(q *query.Query, bindings executor.Relations) (executor.Relation, error) {
 	// Default implementation with no constraints
-	return m.MatchWithConstraints(pattern, bindings, nil)
+	return m.MatchWithConstraints(q, bindings, nil)
 }
 
 // MatchWithConstraints implements predicate-aware matching with storage-level filtering
 func (m *BadgerMatcher) MatchWithConstraints(
-	pattern *query.DataPattern,
+	q *query.Query,
 	bindings executor.Relations,
 	constraints []executor.StorageConstraint,
 ) (executor.Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	// Determine pattern symbols
 	symbols := pattern.ExtractColumns()
 
 	if bindings == nil || len(bindings) == 0 {
 		// Simple case - no bindings
-		return m.matchUnboundAsRelation(pattern, symbols, constraints)
+		return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
 	}
 
 	// Find best binding relation for this pattern
 	bindingRel := bindings.FindBestForPattern(pattern)
 	if bindingRel == nil {
 		// No relation binds any pattern variables
-		return m.matchUnboundAsRelation(pattern, symbols, constraints)
+		return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
 	}
 
 	// CRITICAL FIX: Don't call IsEmpty() on StreamingRelations - it consumes first tuple!
@@ -59,7 +63,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	// If relation is empty, subsequent iteration will discover that naturally.
 	if _, isStreaming := bindingRel.(*executor.StreamingRelation); !isStreaming {
 		if bindingRel.IsEmpty() {
-			return m.matchUnboundAsRelation(pattern, symbols, constraints)
+			return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
 		}
 	}
 
@@ -232,7 +236,12 @@ func (m *BadgerMatcher) MatchWithConstraints(
 }
 
 // matchUnboundAsRelation matches a pattern without bindings and returns a Relation
-func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbols []query.Symbol, constraints []executor.StorageConstraint) (executor.Relation, error) {
+func (m *BadgerMatcher) matchUnboundAsRelation(
+	q *query.Query,
+	pattern *query.DataPattern,
+	symbols []query.Symbol,
+	constraints []executor.StorageConstraint,
+) (executor.Relation, error) {
 	// Extract constant values from pattern
 	var e, a, v, tx interface{}
 
@@ -389,6 +398,15 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 
 	// Choose index and create scan range
 	index, start, end := m.chooseIndex(e, a, v, tx)
+	properties := unboundScanProperties(pattern, index, card, m.isHistoryMode())
+	if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
+		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
+			attr := ToStorageDatom(datalog.Datom{A: keyword}).A
+			index = ATEV
+			start, end = m.store.encoder.EncodePrefixRange(ATEV, attr[:])
+			properties = orderedProperties
+		}
+	}
 
 	// Emit index selection event if handler is available
 	if m.handler != nil {
@@ -441,7 +459,7 @@ func (m *BadgerMatcher) matchUnboundAsRelation(pattern *query.DataPattern, symbo
 		symbols,
 		regularIter,
 		m.options,
-		unboundScanProperties(pattern, index, card, m.isHistoryMode()),
+		properties,
 	)
 	return rel, nil
 }

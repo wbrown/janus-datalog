@@ -309,7 +309,7 @@ func TestEndToEndABoundTxBoundQuery(t *testing.T) {
 		},
 	}
 
-	result, err := matcher.Match(pattern, nil)
+	result, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("match: %v", err)
 	}

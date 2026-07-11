@@ -8,7 +8,10 @@ import (
 
 // PatternMatcher is the interface for matching patterns against the database
 type PatternMatcher interface {
-	Match(pattern *query.DataPattern, bindings Relations) (Relation, error)
+	// Match executes a Datalog fragment containing exactly one DataPattern.
+	// OrderBy and Limit carry structurally safe physical requirements; sources
+	// that cannot exploit them may ignore them and return no ordering guarantee.
+	Match(q *query.Query, bindings Relations) (Relation, error)
 }
 
 // StorageConstraint represents a constraint that can be pushed to storage
@@ -19,7 +22,7 @@ type StorageConstraint = constraints.StorageConstraint
 type PredicateAwareMatcher interface {
 	PatternMatcher
 	MatchWithConstraints(
-		pattern *query.DataPattern,
+		q *query.Query,
 		bindings Relations,
 		constraints []StorageConstraint,
 	) (Relation, error)
@@ -44,6 +47,7 @@ type EntityLookupMatcher interface {
 //     the join path), and
 //   - the matcher is NOT in history mode (history exposes every raw version,
 //     so a one-value attach would drop superseded datoms).
+//
 // The matcher owns both facts (schema + temporal mode), so the decision lives
 // there rather than being reconstructed by the executor.
 type AttributeFetchFusable interface {

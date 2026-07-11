@@ -41,7 +41,7 @@ func TestAETVCardinalityOneRelationProperties(t *testing.T) {
 		query.Variable{Name: value},
 	}}
 
-	rel, err := db.Matcher().Match(pattern, nil)
+	rel, err := db.Matcher().Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 	require.Equal(t, executor.RelationProperties{
 		Ordering: []query.OrderByClause{{
@@ -135,7 +135,7 @@ func TestAVETValidatedRelationProperties(t *testing.T) {
 		query.Constant{Value: typeAttr},
 		query.Constant{Value: personType},
 	}}
-	rel, err := db.Matcher().Match(pattern, nil)
+	rel, err := db.Matcher().Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 	require.Equal(t, executor.RelationProperties{
 		Ordering: []query.OrderByClause{{

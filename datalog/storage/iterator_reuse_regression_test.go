@@ -55,7 +55,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	testResult, err := testMatcher.Match(testPattern, nil)
+	testResult, err := testMatcher.Match(query.PatternQuery(testPattern), nil)
 	if err != nil {
 		t.Fatalf("Test query failed: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	symbolResult, err := testMatcher.Match(symbolPattern, nil)
+	symbolResult, err := testMatcher.Match(query.PatternQuery(symbolPattern), nil)
 	if err != nil {
 		t.Fatalf("Symbol query failed: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			query.Constant{Value: int64(570)},
 		},
 	}
-	test570Result, err := testMatcher.Match(test570Pattern, nil)
+	test570Result, err := testMatcher.Match(query.PatternQuery(test570Pattern), nil)
 	if err != nil {
 		t.Fatalf("Test 570 query failed: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 				query.Constant{Value: testVal},
 			},
 		}
-		result, _ := testMatcher.Match(testPattern, nil)
+		result, _ := testMatcher.Match(query.PatternQuery(testPattern), nil)
 		t.Logf("  minute-of-day = %d: found %d datoms", testVal, result.Size())
 	}
 
@@ -159,7 +159,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		// This pattern ignores the binding and finds ALL morning bars
 		// The binding relation is passed but not used since ?s isn't in the pattern
 		start := time.Now()
-		result, err := matcher.Match(pattern, executor.Relations{symbolRel})
+		result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{symbolRel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -234,7 +234,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		)
 
 		start := time.Now()
-		result, err := matcher.Match(pattern, executor.Relations{symbolRel})
+		result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{symbolRel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			},
 		}
 		regularMatcher := NewBadgerMatcherWithOptions(db.store, opts)
-		anyResult, err := regularMatcher.Match(anyPattern, nil)
+		anyResult, err := regularMatcher.Match(query.PatternQuery(anyPattern), nil)
 		if err != nil {
 			t.Fatalf("Any pattern failed: %v", err)
 		}
@@ -312,7 +312,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 				query.Constant{Value: datalog.NewIdentity("symbol:AAPL")},
 			},
 		}
-		checkResult, err := regularMatcher.Match(checkPattern, nil)
+		checkResult, err := regularMatcher.Match(query.PatternQuery(checkPattern), nil)
 		if err != nil {
 			t.Fatalf("Check pattern failed: %v", err)
 		}
@@ -331,7 +331,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 			[]query.Symbol{datalog.NewSymbol("?s")},
 			[]executor.Tuple{{testSymbol}},
 		)
-		testResult, err := regularMatcher.Match(testPattern, executor.Relations{testRel})
+		testResult, err := regularMatcher.Match(query.PatternQuery(testPattern), executor.Relations{testRel})
 		if err != nil {
 			t.Fatalf("Regular matcher failed: %v", err)
 		}
@@ -373,7 +373,7 @@ func TestIteratorReuseRegression(t *testing.T) {
 		)
 
 		start := time.Now()
-		result, err := matcher.Match(pattern, executor.Relations{symbolRel})
+		result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{symbolRel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -415,7 +415,11 @@ type matchStats struct {
 	datomsMatched int
 }
 
-func (m *instrumentedMatcher) Match(pattern *query.DataPattern, bindings executor.Relations) (executor.Relation, error) {
+func (m *instrumentedMatcher) Match(q *query.Query, bindings executor.Relations) (executor.Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	// Track iterator opens by intercepting the storage layer
 	// In real implementation, we'd hook into the actual iterator creation
 	// For now, we'll count 1 for unbound patterns, N for bound patterns
@@ -444,7 +448,7 @@ func (m *instrumentedMatcher) Match(pattern *query.DataPattern, bindings executo
 	}
 
 	// Call the real matcher
-	result, err := m.BadgerMatcher.Match(pattern, bindings)
+	result, err := m.BadgerMatcher.Match(q, bindings)
 	if err != nil {
 		return nil, err
 	}

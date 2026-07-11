@@ -94,7 +94,7 @@ func BenchmarkHashJoinIteration(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		result, _ := matcher.Match(pattern, executor.Relations{inputRel})
+		result, _ := matcher.Match(query.PatternQuery(pattern), executor.Relations{inputRel})
 		it := result.Iterator()
 		for it.Next() {
 			_ = it.Tuple()
@@ -141,7 +141,7 @@ func BenchmarkIteratorTupleAllocation(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				result, _ := matcher.Match(pattern, nil)
+				result, _ := matcher.Match(query.PatternQuery(pattern), nil)
 				count := 0
 				it := result.Iterator()
 				for it.Next() {

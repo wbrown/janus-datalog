@@ -18,7 +18,7 @@ be omitted.
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
 | 5 | Propagate statically provable relational properties | Relational algebra | Core contract implemented | 5.5% less memory | In progress |
-| 6 | Push Top-N into proven index order | Relational algebra | 6a implemented | Up to 99.7% faster | In progress |
+| 6 | Push Top-N into proven index order | Relational algebra | 6a + first 6b shape implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
 
@@ -315,8 +315,8 @@ Relevant benchmark:
 
 ## 6. Push Top-N into Proven Index Order
 
-**Status:** 6a existing-order consumption complete; 6b order-aware index
-selection pending.
+**Status:** 6a complete; first 6b history/ATEV shape complete; broader
+order-aware index selection pending.
 
 Bounded Top-N still consumes every source row. After property propagation can
 prove that a scan's physical order satisfies `ORDER BY`, the storage iterator
@@ -353,8 +353,34 @@ Relevant benchmark:
 
 ### 6b. Order-aware index selection
 
-Only after 6a is proven should index selection change to satisfy additional
-orders. Start narrowly:
+**Status:** Datalog-fragment matcher contract and first history/ATEV shape
+complete; additional index/order shapes pending.
+
+`PatternMatcher.Match` now accepts a one-pattern Datalog
+`query.Query` fragment rather than adding an order-specific interface or opaque
+request metadata. `OrderBy` and `Limit` appear on that fragment only after
+structural checks prove pushdown safe. Storage still validates index and CRDT
+semantics; custom sources may ignore the ordering request.
+
+The first supported shape is history mode with constant A and
+`[?tx :desc] [?e :asc]`, where ATEV physically provides
+`[A constant][Tx↓][E][V]`. Latest/as-of must decline because Tx-primary ATEV
+does not group E/A for current-state CRDT resolution.
+
+**Measurement** (`BenchmarkHistoryIndexOrderedLimit`, 10,000 raw history datoms,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| N | Time before | Time after | Time delta | Memory delta | Alloc delta | Scans before | Scans after |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 2.752 ms | 13.48 µs | **-99.51%** | -99.44% | -99.31% | 10,000 | 1 |
+| 10 | 2.842 ms | 17.91 µs | **-99.37%** | -99.30% | -99.14% | 10,000 | 10 |
+| 100 | 2.808 ms | 55.28 µs | **-98.03%** | -97.89% | -97.71% | 10,000 | 100 |
+| **Geomean** | **2.800 ms** | **23.72 µs** | **-99.15%** | **-99.07%** | **-98.89%** | | |
+
+The correctness test verifies ATEV selection, exact Datalog order, and at most
+N scans. A companion latest-mode test verifies Tx-primary ATEV is declined.
+
+Start narrowly:
 
 1. Single-pattern transaction ordering on EATV, ATEV, or TAEV.
 2. No joins that can filter a selected row.
@@ -371,6 +397,8 @@ Relevant code and design:
 - `docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md:274-316`
 - `datalog/storage/key_encoder_binary.go`
 - `datalog/storage/matcher_strategy.go`
+- `datalog/storage/history_index_order_limit_test.go`
+- `datalog/storage/history_index_order_limit_benchmark_test.go`
 
 ## 7. Compile Storage-Bound Hash Matching Once
 
@@ -428,7 +456,7 @@ Relevant code:
 5. **Checkpointed:** core relation-property contract, initial conservative
    propagation, and key-aware projection. Join/OR and broader storage
    derivations remain.
-6. **In progress:** 6a consumes existing ordering guarantees and stops storage
-   after N; 6b order-aware index selection remains.
+6. **In progress:** 6a and the first 6b history/ATEV shape are complete;
+   additional CRDT-safe order-aware index selections remain.
 7. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
    safety follows from those properties.

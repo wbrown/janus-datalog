@@ -123,7 +123,7 @@ func TestPatternMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results, err := matcher.Match(tt.pattern, nil)
+			results, err := matcher.Match(query.PatternQuery(tt.pattern), nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -286,7 +286,7 @@ func TestMatchWithStringConstants(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

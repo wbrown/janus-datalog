@@ -211,7 +211,7 @@ func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr 
 		},
 	}
 
-	rel, err := pe.matcher.Match(pattern, nil)
+	rel, err := pe.matcher.Match(&query.Query{Where: []query.Clause{pattern}}, nil)
 	if err != nil || rel == nil {
 		return nil, false
 	}
@@ -257,7 +257,7 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 		},
 	}
 
-	rel, err := pe.matcher.Match(pattern, nil)
+	rel, err := pe.matcher.Match(&query.Query{Where: []query.Clause{pattern}}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -529,7 +529,7 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 		},
 	}
 
-	rel, err := pe.matcher.Match(pattern, nil)
+	rel, err := pe.matcher.Match(&query.Query{Where: []query.Clause{pattern}}, nil)
 	if err != nil || rel == nil {
 		return nil
 	}

@@ -170,6 +170,25 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 			In:    buildInClause(cp.Available),
 			Where: cp.Clauses,
 		}
+		if len(clausePhases) == 1 &&
+			len(cp.Clauses) == 1 &&
+			len(cp.Available) == 0 &&
+			len(q.OrderBy) > 0 &&
+			q.Limit != nil {
+			_, isPattern := cp.Clauses[0].(*query.DataPattern)
+			hasAggregate := false
+			for _, element := range q.Find {
+				if element.IsAggregate() {
+					hasAggregate = true
+					break
+				}
+			}
+			if isPattern && !hasAggregate {
+				phaseQuery.OrderBy = append([]query.OrderByClause(nil), q.OrderBy...)
+				limit := *q.Limit
+				phaseQuery.Limit = &limit
+			}
+		}
 
 		realizedPhases[i] = RealizedPhase{
 			Query:     phaseQuery,

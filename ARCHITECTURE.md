@@ -304,11 +304,17 @@ Five interfaces define the boundaries between components. To extend the system, 
 
 ```go
 type PatternMatcher interface {
-    Match(pattern *query.DataPattern, bindings Relations) (Relation, error)
+    Match(q *query.Query, bindings Relations) (Relation, error)
 }
 ```
 
 **This is the most important interface in the system.** Every data source implements it. The executor only knows about `PatternMatcher` — it doesn't know if data comes from BadgerDB, an in-memory slice, or another database.
+
+The query fragment contains exactly one `DataPattern`. Its `OrderBy` and
+`Limit` fields are populated only when the planner proves physical pushdown is
+structurally safe. This keeps the matcher contract Datalog-in/Datalog-out:
+storage may use those requirements to choose an order-satisfying index, while
+custom sources may ignore them and return no ordering guarantee.
 
 **Implementors**: `BadgerMatcher` (storage), `SourceRouter` (multi-source routing), `SliceSource[T]` (Go slices), `MemoryPatternMatcher` (in-memory datoms), `IndexedMemoryMatcher` (optimized in-memory)
 

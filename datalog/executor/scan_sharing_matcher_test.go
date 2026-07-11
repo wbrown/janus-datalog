@@ -17,9 +17,9 @@ type countingMatcher struct {
 	callCount int32
 }
 
-func (m *countingMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *countingMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
 	atomic.AddInt32(&m.callCount, 1)
-	return m.inner.Match(pattern, bindings)
+	return m.inner.Match(q, bindings)
 }
 
 // fixedMatcher returns a fixed relation for any Match() call.
@@ -28,7 +28,7 @@ type fixedMatcher struct {
 	symbols []query.Symbol
 }
 
-func (m *fixedMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *fixedMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
 	return NewMaterializedRelation(m.symbols, m.tuples), nil
 }
 
@@ -51,14 +51,14 @@ func TestScanSharingMatcher_UnboundScanShared(t *testing.T) {
 	}
 
 	// First call — should hit inner matcher
-	rel1, err := matcher.Match(pattern, nil)
+	rel1, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 	tuples1, err := CollectTuples(rel1, nil)
 	require.NoError(t, err)
 	assert.Len(t, tuples1, 3)
 
 	// Second call — should hit registry, not inner matcher
-	rel2, err := matcher.Match(pattern, nil)
+	rel2, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 	tuples2, err := CollectTuples(rel2, nil)
 	require.NoError(t, err)
@@ -91,8 +91,8 @@ func TestScanSharingMatcher_BoundScanNotShared(t *testing.T) {
 		[]Tuple{{"e1"}},
 	)}
 
-	_, _ = matcher.Match(pattern, bindings)
-	_, _ = matcher.Match(pattern, bindings)
+	_, _ = matcher.Match(query.PatternQuery(pattern), bindings)
+	_, _ = matcher.Match(query.PatternQuery(pattern), bindings)
 
 	assert.Equal(t, int32(2), atomic.LoadInt32(&inner.callCount),
 		"bound scans should not be shared — inner called every time")
@@ -123,8 +123,8 @@ func TestScanSharingMatcher_DifferentPatternsIndependent(t *testing.T) {
 		},
 	}
 
-	_, _ = matcher.Match(p1, nil)
-	_, _ = matcher.Match(p2, nil)
+	_, _ = matcher.Match(query.PatternQuery(p1), nil)
+	_, _ = matcher.Match(query.PatternQuery(p2), nil)
 
 	assert.Equal(t, int32(2), atomic.LoadInt32(&inner.callCount),
 		"different patterns should each call inner matcher")
@@ -156,8 +156,8 @@ func TestScanSharingMatcher_SymbolRemapping(t *testing.T) {
 		},
 	}
 
-	rel1, _ := matcher.Match(p1, nil)
-	rel2, _ := matcher.Match(p2, nil)
+	rel1, _ := matcher.Match(query.PatternQuery(p1), nil)
+	rel2, _ := matcher.Match(query.PatternQuery(p2), nil)
 
 	assert.Equal(t, []query.Symbol{datalog.NewSymbol("?t"), datalog.NewSymbol("?s")}, rel1.Symbols())
 	assert.Equal(t, []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}, rel2.Symbols())
@@ -194,9 +194,9 @@ func TestScanSharingMatcher_ThreeConsumers(t *testing.T) {
 		},
 	}
 
-	rel1, _ := matcher.Match(pattern, nil)
-	rel2, _ := matcher.Match(pattern, nil)
-	rel3, _ := matcher.Match(pattern, nil)
+	rel1, _ := matcher.Match(query.PatternQuery(pattern), nil)
+	rel2, _ := matcher.Match(query.PatternQuery(pattern), nil)
+	rel3, _ := matcher.Match(query.PatternQuery(pattern), nil)
 
 	t1, _ := CollectTuples(rel1, nil)
 	t2, _ := CollectTuples(rel2, nil)
@@ -232,8 +232,8 @@ func TestScanSharingMatcher_AnnotationEvents(t *testing.T) {
 		},
 	}
 
-	_, _ = matcher.Match(pattern, nil)
-	_, _ = matcher.Match(pattern, nil)
+	_, _ = matcher.Match(query.PatternQuery(pattern), nil)
+	_, _ = matcher.Match(query.PatternQuery(pattern), nil)
 
 	assert.Contains(t, events, "scan-sharing/cache-miss")
 	assert.Contains(t, events, "scan-sharing/cache-hit")

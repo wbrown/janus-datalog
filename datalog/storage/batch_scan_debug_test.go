@@ -46,7 +46,7 @@ func TestBatchScanDebug(t *testing.T) {
 
 	// First get all entities without constraint
 	t.Run("WithoutConstraint", func(t *testing.T) {
-		rel, err := matcher.Match(pattern, nil)
+		rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatalf("Failed: %v", err)
 		}
@@ -66,7 +66,7 @@ func TestBatchScanDebug(t *testing.T) {
 	// Now test with constraint for day=2
 	t.Run("WithConstraint", func(t *testing.T) {
 		// First get entities (this simulates having bindings)
-		rel1, _ := matcher.Match(pattern, nil)
+		rel1, _ := matcher.Match(query.PatternQuery(pattern), nil)
 
 		// Create binding relation with just the entity symbol
 		var tuples []executor.Tuple
@@ -88,7 +88,7 @@ func TestBatchScanDebug(t *testing.T) {
 		}
 
 		rel2, err := matcher.MatchWithConstraints(
-			pattern,
+			query.PatternQuery(pattern),
 			executor.Relations{bindingRel},
 			[]executor.StorageConstraint{constraint},
 		)

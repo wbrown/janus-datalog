@@ -30,7 +30,7 @@ func vBoundMatchCountWithAnnotations(t *testing.T, db *Database, a datalog.Keywo
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	count := 0

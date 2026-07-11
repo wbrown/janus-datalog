@@ -409,7 +409,7 @@ func TestNilSchemaMatcher_ReadsSchemaData(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	// Should return data — CRDTResolvingIterator with nil schema defaults to

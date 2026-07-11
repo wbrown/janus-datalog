@@ -104,7 +104,7 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 		matcher := NewBadgerMatcher(db.store)
 
 		// Match pattern without constraints
-		rel, err := matcher.Match(pattern, nil)
+		rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatalf("Failed to match pattern: %v", err)
 		}
@@ -143,14 +143,14 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 		}
 
 		// First match bars for symbol
-		symbolRel, err := matcher.Match(pattern, nil)
+		symbolRel, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatalf("Failed to match symbol pattern: %v", err)
 		}
 
 		// Then match with time constraint using symbol results as binding
 		timeRel, err := matcher.MatchWithConstraints(
-			timePattern,
+			query.PatternQuery(timePattern),
 			executor.Relations{symbolRel},
 			[]executor.StorageConstraint{constraint},
 		)

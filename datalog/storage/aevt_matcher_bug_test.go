@@ -79,7 +79,7 @@ func TestAEVTMatcherBug(t *testing.T) {
 	)
 
 	// Call Match with bindings - this triggers the bug
-	result, err := matcher.Match(pattern, executor.Relations{bindingRel})
+	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}

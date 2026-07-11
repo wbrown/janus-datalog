@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
 **Last Updated**: 2026-07-11 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation, and existing-order scan termination.
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation, existing-order scan termination, and Datalog-fragment order-aware matching.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, existing-order scan termination).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, history ATEV order-aware matching).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -34,6 +34,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **One-pass same-entity attribute bundles**: contiguous cardinality-one fetches sharing a bound entity now attach all output columns in one traversal and one materialization. **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 at 1,000 entities is **24.8% faster, 56.5% less memory, 36.5% fewer allocations** (n=10; verified 2026-07-11, darwin/arm64).
 - ⚠️ **Typed Relation properties (foundation)**: `Relation.Properties()` carries ordering and candidate-key guarantees using Datalog symbols. Initial conservative propagation plus key-aware streaming projection reduces the complex-query checkpoint by **5.45% memory** and **2.71% allocations** with statistically unchanged time. Join/OR derivations and broader storage coverage remain (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Existing-order scan termination (6a)**: when a relation already satisfies Datalog `:order-by`, ordered limits stream directly through `LimitRelation`. On 10K AETV-ordered entities, N=1/10/100 scans exactly N rows and is **98.1–99.7% faster**, with **97.0–99.4% less memory** and **98.0–99.6% fewer allocations**. Order-aware index selection (6b) remains separate (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **History ATEV order-aware matching (6b first shape)**: `PatternMatcher.Match` now receives a one-pattern Datalog query fragment. Safe history queries with constant A and `Tx desc, E asc` select ATEV and scan exactly N raw datoms: **99.15% faster, 99.07% less memory, 98.89% fewer allocations** geomean. Latest/as-of explicitly decline Tx-primary ATEV (n=10; verified 2026-07-11, darwin/arm64).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -1095,6 +1096,44 @@ samples are noisy despite the unchanged execution path.
 - `datalog/storage/index_order_limit_test.go`
 - `datalog/storage/index_order_limit_benchmark_test.go`
 
+### 24. History ATEV Order-Aware Matching (6b FIRST SHAPE - July 2026)
+**Status**: ✅ Datalog matcher fragments select ATEV for a proven history shape
+
+`PatternMatcher.Match` now accepts a Datalog `query.Query` fragment containing
+exactly one `DataPattern`. The planner forwards `OrderBy` and `Limit` only for a
+single terminal pattern without aggregation or relation inputs. Wrappers and
+custom sources forward or ignore those requirements without side metadata.
+
+Storage's first order-aware choice is deliberately narrow:
+
+- History mode only
+- Constant A
+- Tx variable ordered descending
+- Optional E variable ordered ascending as the second key
+- Non-nil limit
+
+This maps exactly to ATEV `[A constant][Tx↓][E][V]`. Latest/as-of modes decline
+because Tx-primary ATEV cannot perform E/A-grouped current-state CRDT resolution.
+
+**Measurement** (`BenchmarkHistoryIndexOrderedLimit`, 10,000 raw datoms,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| N | Time before | Time after | Delta | Memory delta | Allocs delta | Scans before | Scans after |
+|--:|------------:|-----------:|------:|-------------:|-------------:|-------------:|------------:|
+| 1 | 2.752 ms | 13.48 µs | **−99.51%** | −99.44% | −99.31% | 10,000 | 1 |
+| 10 | 2.842 ms | 17.91 µs | **−99.37%** | −99.30% | −99.14% | 10,000 | 10 |
+| 100 | 2.808 ms | 55.28 µs | **−98.03%** | −97.89% | −97.71% | 10,000 | 100 |
+| **Geomean** | **2.800 ms** | **23.72 µs** | **−99.15%** | **−99.07%** | **−98.89%** | | |
+
+**Files**:
+
+- `datalog/query/types.go`
+- `datalog/executor/interfaces.go`
+- `datalog/planner/planner_clause_based.go`
+- `datalog/storage/matcher_relations.go`
+- `datalog/storage/history_index_order_limit_test.go`
+- `datalog/storage/history_index_order_limit_benchmark_test.go`
+
 ---
 
 ## Complex Query Checkpoint (July 2026)
@@ -1260,6 +1299,7 @@ All items below are **measured** and **active** in production code:
 21. ✅ **One-pass same-entity attribute bundles** - **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 improves up to 24.8% time and 56.5% memory (verified 2026-07-11)
 22. ⚠️ **Typed Relation properties (foundation)** - **5.45% less memory, 2.71% fewer allocations** on the complex checkpoint with statistically unchanged time; join/OR derivations and broader storage coverage remain (verified 2026-07-11)
 23. ✅ **Existing-order scan termination** - proven E-ascending limits scan exactly N rows and improve **98.1–99.7% time**, **97.0–99.4% memory**, and **98.0–99.6% allocations** on 10K entities (verified 2026-07-11)
+24. ✅ **History ATEV order-aware matching** - safe history queries scan exactly N raw datoms and improve **99.15% time, 99.07% memory, 98.89% allocations** geomean; latest/as-of explicitly decline (verified 2026-07-11)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:

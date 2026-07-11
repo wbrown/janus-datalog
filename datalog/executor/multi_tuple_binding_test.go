@@ -79,7 +79,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		}
 
 		// Match with the multi-tuple binding relation
-		results, err := matcher.Match(pattern, Relations{bindingRel})
+		results, err := matcher.Match(query.PatternQuery(pattern), Relations{bindingRel})
 		assert.NoError(t, err)
 
 		// Check symbols
@@ -133,7 +133,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		}
 
 		// Match with age bindings
-		results, err := matcher.Match(pattern, Relations{bindingRel})
+		results, err := matcher.Match(query.PatternQuery(pattern), Relations{bindingRel})
 		assert.NoError(t, err)
 
 		foundUsers := make(map[int64]string)
@@ -201,7 +201,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 		}
 
 		// Match categories with binding
-		catResults, err := productMatcher.Match(catPattern, Relations{bindingRel})
+		catResults, err := productMatcher.Match(query.PatternQuery(catPattern), Relations{bindingRel})
 		assert.NoError(t, err)
 
 		// Count category results
@@ -224,7 +224,7 @@ func TestMultiRowRelationBinding(t *testing.T) {
 			},
 		}
 
-		priceResults, err := productMatcher.Match(pricePattern, nil)
+		priceResults, err := productMatcher.Match(query.PatternQuery(pricePattern), nil)
 		assert.NoError(t, err)
 
 		// Count price results
@@ -260,7 +260,7 @@ func TestRelationBasedPatternMatching(t *testing.T) {
 	}
 
 	// Test with nil bindings
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	assert.NoError(t, err)
 
 	count1 := 0
@@ -272,7 +272,7 @@ func TestRelationBasedPatternMatching(t *testing.T) {
 	assert.Equal(t, 2, count1)
 
 	// Test with empty Relations
-	results2, err := matcher.Match(pattern, Relations{})
+	results2, err := matcher.Match(query.PatternQuery(pattern), Relations{})
 	assert.NoError(t, err)
 
 	count2 := 0

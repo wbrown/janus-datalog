@@ -87,7 +87,7 @@ func TestCompressedIntegration_WriteReadString(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -120,7 +120,7 @@ func TestCompressedIntegration_WriteReadBytes(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -151,7 +151,7 @@ func TestCompressedIntegration_ShortStringUncompressed(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -184,7 +184,7 @@ func TestCompressedIntegration_AVET_ExactMatch(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -219,7 +219,7 @@ func TestCompressedIntegration_AVET_NoFalsePositive(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -265,7 +265,7 @@ func TestCompressedIntegration_CRDT_CardinalityOne_LWW(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -309,7 +309,7 @@ func TestCompressedIntegration_CRDT_CardinalityMany(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	var values []string
@@ -373,7 +373,7 @@ func TestCompressedIntegration_CRDT_CardinalityMany_Remove(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	var values []string
@@ -425,7 +425,7 @@ func TestCompressedIntegration_MixedValues(t *testing.T) {
 					query.Blank{},
 				},
 			}
-			results, err := matcher.Match(pattern, nil)
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
 			require.NoError(t, err)
 
 			iter := results.Iterator()
@@ -464,7 +464,7 @@ func TestCompressedIntegration_MultipleEntities(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	count := 0
@@ -531,7 +531,7 @@ func TestCompressedIntegration_ValueEquality_CrossBoundary(t *testing.T) {
 				query.Blank{},
 			},
 		}
-		results, err := matcher.Match(pattern, nil)
+		results, err := matcher.Match(query.PatternQuery(pattern), nil)
 		require.NoError(t, err)
 		iter := results.Iterator()
 		require.True(t, iter.Next())
@@ -572,7 +572,7 @@ func TestCompressedIntegration_ScanEntity(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	seen := make(map[string]interface{})
@@ -630,7 +630,7 @@ func TestCompressedIntegration_Determinism(t *testing.T) {
 				query.Blank{},
 			},
 		}
-		results, err := matcher.Match(pattern, nil)
+		results, err := matcher.Match(query.PatternQuery(pattern), nil)
 		require.NoError(t, err)
 
 		iter := results.Iterator()

@@ -172,7 +172,7 @@ func TestTier3_WriteRead(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -237,7 +237,7 @@ func TestTier3_ContentDedup(t *testing.T) {
 				query.Blank{},
 			},
 		}
-		results, err := matcher.Match(pattern, nil)
+		results, err := matcher.Match(query.PatternQuery(pattern), nil)
 		require.NoError(t, err)
 		iter := results.Iterator()
 		require.True(t, iter.Next(), "entity %d should have the value", i)
@@ -306,7 +306,7 @@ func TestTier3_WriteRead_String(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -370,7 +370,7 @@ func TestTier3_AVET_ExactMatch(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -404,7 +404,7 @@ func TestTier3_AVET_NoFalsePositive(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -452,7 +452,7 @@ func TestTier3_CRDT_CardinalityOne_LWW(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -498,7 +498,7 @@ func TestTier3_CRDT_CardinalityMany_AddRetract(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	count := 0
@@ -515,7 +515,7 @@ func TestTier3_CRDT_CardinalityMany_AddRetract(t *testing.T) {
 	require.NoError(t, err)
 
 	// Only v1 should remain
-	results2, err := matcher.Match(pattern, nil)
+	results2, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	var remaining [][]byte
@@ -557,7 +557,7 @@ func TestTier3_EntityScan_MixedTiers(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	seen := make(map[string]interface{})

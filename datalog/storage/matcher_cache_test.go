@@ -520,7 +520,7 @@ func BenchmarkCachePathWithBindings(b *testing.B) {
 	b.Run("MatcherMatch_WithBindings", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			result, err := matcher.Match(agePattern, executor.Relations{bindingRel})
+			result, err := matcher.Match(query.PatternQuery(agePattern), executor.Relations{bindingRel})
 			if err != nil {
 				b.Fatal(err)
 			}

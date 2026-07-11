@@ -57,7 +57,7 @@ func TestCardinalityMany_ByteValues(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	count := 0
@@ -118,7 +118,7 @@ func TestCardinalityMany_ByteValues_Retract(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	var values [][]byte

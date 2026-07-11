@@ -62,7 +62,7 @@ func TestCommitWritesTxInstantOnSuccess(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()

@@ -44,7 +44,7 @@ func TestBatchIteratorSimple(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 
 	// First, get all entities directly
-	direct, _ := matcher.Match(pattern, nil)
+	direct, _ := matcher.Match(query.PatternQuery(pattern), nil)
 
 	t.Logf("Direct match results:")
 	it := direct.Iterator()
@@ -74,7 +74,7 @@ func TestBatchIteratorSimple(t *testing.T) {
 	}
 
 	// Match with bindings (should return only e1 and e3)
-	result, err := matcher.Match(pattern, executor.Relations{bindingRel})
+	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	if err != nil {
 		t.Fatal(err)
 	}

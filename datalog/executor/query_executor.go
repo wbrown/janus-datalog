@@ -84,7 +84,16 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				}
 			}
 			if fusedCount == 0 {
-				newRel, err := e.executePattern(ctx, c, groups)
+				patternQuery := &query.Query{
+					Find:  q.Find,
+					In:    q.In,
+					Where: []query.Clause{c},
+				}
+				if len(q.Where) == 1 {
+					patternQuery.OrderBy = q.OrderBy
+					patternQuery.Limit = q.Limit
+				}
+				newRel, err := e.executePattern(ctx, patternQuery, c, groups)
 				if err != nil {
 					return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
 				}
@@ -375,7 +384,12 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 
 // executePattern executes a data pattern using the PatternMatcher
 // Patterns produce new relations from storage that get joined with existing groups
-func (e *DefaultQueryExecutor) executePattern(ctx Context, pattern *query.DataPattern, groups []Relation) (Relation, error) {
+func (e *DefaultQueryExecutor) executePattern(
+	ctx Context,
+	q *query.Query,
+	pattern *query.DataPattern,
+	groups []Relation,
+) (Relation, error) {
 	// Materialize groups that share symbols with the pattern
 	// These groups will be: (1) used for binding-based filtering, (2) joined with the result
 	// Materializing allows them to be iterated multiple times without consuming the iterator
@@ -384,7 +398,7 @@ func (e *DefaultQueryExecutor) executePattern(ctx Context, pattern *query.DataPa
 	// Use PatternMatcher with current groups as bindings
 	// NOTE: bindings are used for pattern selection heuristics (FindBestForPattern)
 	// and potentially for batch scanning - they will also be joined with the result later
-	rel, err := e.matcher.Match(pattern, bindings)
+	rel, err := e.matcher.Match(q, bindings)
 	if err != nil {
 		return nil, err
 	}
@@ -2181,7 +2195,8 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 	for _, clause := range clauses {
 		switch c := clause.(type) {
 		case *query.DataPattern:
-			newRel, err := e.executePattern(ctx, c, groups)
+			patternQuery := &query.Query{Where: []query.Clause{c}}
+			newRel, err := e.executePattern(ctx, patternQuery, c, groups)
 			if err != nil {
 				return nil, err
 			}

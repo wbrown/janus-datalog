@@ -401,7 +401,7 @@ func TestCardinalityManyAddRemove(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestCardinalityManyAddRemove(t *testing.T) {
 	}
 
 	// Query should return only one value now
-	results2, err := matcher.Match(pattern, nil)
+	results2, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestCardinalityManyAddWins(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -624,7 +624,7 @@ func TestCardinalityManyReplicaIDTiebreaker(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -704,7 +704,7 @@ func TestCardinalityManyAddThenRemove(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -779,7 +779,7 @@ func TestCardinalityManyRemoveThenAdd(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -860,7 +860,7 @@ func TestCardinalityManyMultipleValues(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -941,7 +941,7 @@ func TestCardinalityManyEmptySet(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1072,7 +1072,7 @@ func TestCardinalityManyMembership(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1097,7 +1097,7 @@ func TestCardinalityManyMembership(t *testing.T) {
 		},
 	}
 
-	results2, err := matcher.Match(pattern2, nil)
+	results2, err := matcher.Match(query.PatternQuery(pattern2), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1383,7 +1383,7 @@ func TestCardinalityManySetSeesPendingOps(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1480,7 +1480,7 @@ func TestCardinalityManySetSeesCommittedAndPending(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1566,7 +1566,7 @@ func TestCardinalityManyUnboundEWithValue(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1647,7 +1647,7 @@ func TestCardinalityManyUnboundEUnboundV(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1739,7 +1739,7 @@ func TestCardinalityManySetWithDuplicates(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1821,7 +1821,7 @@ func TestCardinalityManyUnboundEWithRemovedValue(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1903,7 +1903,7 @@ func TestAVETOptimizationForCardinalityMany(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -1928,7 +1928,7 @@ func TestAVETOptimizationForCardinalityMany(t *testing.T) {
 		},
 	}
 
-	results2, err := matcher.Match(pattern2, nil)
+	results2, err := matcher.Match(query.PatternQuery(pattern2), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -2008,7 +2008,7 @@ func TestAVETAddWinsResolution(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -2103,7 +2103,7 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 
 	// Latest mode: add-wins resolution should show only "veteran"
 	latestMatcher := db.Matcher()
-	latestResults, err := latestMatcher.Match(pattern, nil)
+	latestResults, err := latestMatcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Latest Match failed: %v", err)
 	}
@@ -2118,7 +2118,7 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 
 	// History mode: should return ALL raw operations (2 adds + 1 remove = 3 datoms)
 	historyMatcher := db.History()
-	historyResults, err := historyMatcher.Match(pattern, nil)
+	historyResults, err := historyMatcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("History Match failed: %v", err)
 	}

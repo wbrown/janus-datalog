@@ -91,7 +91,7 @@ func BenchmarkJoinStrategyThreshold(b *testing.B) {
 
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					result, err := matcher.Match(pattern, executor.Relations{bindingRel})
+					result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 					if err != nil {
 						b.Fatalf("Match failed: %v", err)
 					}
@@ -126,7 +126,7 @@ func BenchmarkJoinStrategyThreshold(b *testing.B) {
 
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					result, err := matcher.Match(pattern, executor.Relations{bindingRel})
+					result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 					if err != nil {
 						b.Fatalf("Match failed: %v", err)
 					}

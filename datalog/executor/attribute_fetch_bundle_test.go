@@ -17,7 +17,7 @@ type bundleLookupMatcher struct {
 	values map[bundleLookupKey]interface{}
 }
 
-func (m *bundleLookupMatcher) Match(*query.DataPattern, Relations) (Relation, error) {
+func (m *bundleLookupMatcher) Match(*query.Query, Relations) (Relation, error) {
 	return nil, nil
 }
 

@@ -89,13 +89,13 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			// First get all bars for symbol
-			symbolRel, err := matcher.Match(symbolPattern, nil)
+			symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
 			if err != nil {
 				b.Fatalf("Failed to match symbol pattern: %v", err)
 			}
 
 			// Then get times for all bars
-			timeRel, err := matcher.Match(timePattern, executor.Relations{symbolRel})
+			timeRel, err := matcher.Match(query.PatternQuery(timePattern), executor.Relations{symbolRel})
 			if err != nil {
 				b.Fatalf("Failed to match time pattern: %v", err)
 			}
@@ -138,14 +138,14 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			// First get all bars for symbol
-			symbolRel, err := matcher.Match(symbolPattern, nil)
+			symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
 			if err != nil {
 				b.Fatalf("Failed to match symbol pattern: %v", err)
 			}
 
 			// Then match with time constraint pushed down
 			timeRel, err := matcher.MatchWithConstraints(
-				timePattern,
+				query.PatternQuery(timePattern),
 				executor.Relations{symbolRel},
 				[]executor.StorageConstraint{constraint},
 			)
@@ -174,12 +174,12 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				// Get ALL 3,900 bars
-				symbolRel, err := matcher.Match(symbolPattern, nil)
+				symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
 				if err != nil {
 					b.Fatal(err)
 				}
 
-				timeRel, err := matcher.Match(timePattern, executor.Relations{symbolRel})
+				timeRel, err := matcher.Match(query.PatternQuery(timePattern), executor.Relations{symbolRel})
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -217,14 +217,14 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				symbolRel, err := matcher.Match(symbolPattern, nil)
+				symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
 				if err != nil {
 					b.Fatal(err)
 				}
 
 				// Only fetch the 390 bars for day 5
 				timeRel, err := matcher.MatchWithConstraints(
-					timePattern,
+					query.PatternQuery(timePattern),
 					executor.Relations{symbolRel},
 					[]executor.StorageConstraint{constraint},
 				)
@@ -293,8 +293,8 @@ func BenchmarkPredicatePushdownAllocs(b *testing.B) {
 		b.ResetTimer()
 
 		for i := 0; i < b.N; i++ {
-			symbolRel, _ := matcher.Match(symbolPattern, nil)
-			timeRel, _ := matcher.Match(timePattern, executor.Relations{symbolRel})
+			symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
+			timeRel, _ := matcher.Match(query.PatternQuery(timePattern), executor.Relations{symbolRel})
 
 			// Filter all 3900 results in memory
 			it := timeRel.Iterator()
@@ -324,11 +324,11 @@ func BenchmarkPredicatePushdownAllocs(b *testing.B) {
 		b.ResetTimer()
 
 		for i := 0; i < b.N; i++ {
-			symbolRel, _ := matcher.Match(symbolPattern, nil)
+			symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
 
 			// Only fetch 390 results
 			timeRel, _ := matcher.MatchWithConstraints(
-				timePattern,
+				query.PatternQuery(timePattern),
 				executor.Relations{symbolRel},
 				[]executor.StorageConstraint{constraint},
 			)

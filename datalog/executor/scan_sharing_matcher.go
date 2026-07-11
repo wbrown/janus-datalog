@@ -33,10 +33,14 @@ func NewScanSharingMatcher(inner PatternMatcher, registry *ScanRegistry, handler
 
 // Match implements PatternMatcher. For unbound scans, checks the registry
 // first. For bound scans, delegates directly to the inner matcher.
-func (m *ScanSharingMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	// Only share unbound scans — bound scans are specialized to binding values
 	if bindings != nil && len(bindings) > 0 {
-		return m.inner.Match(pattern, bindings)
+		return m.inner.Match(q, bindings)
 	}
 
 	fp := ScanFingerprint(pattern)
@@ -58,7 +62,7 @@ func (m *ScanSharingMatcher) Match(pattern *query.DataPattern, bindings Relation
 	}
 
 	// First scan — delegate to inner matcher
-	rel, err := m.inner.Match(pattern, bindings)
+	rel, err := m.inner.Match(q, bindings)
 	if err != nil {
 		return nil, err
 	}
@@ -87,18 +91,18 @@ func (m *ScanSharingMatcher) Match(pattern *query.DataPattern, bindings Relation
 // MatchWithConstraints implements PredicateAwareMatcher if the inner matcher
 // supports it. Sharing only applies to unbound scans without constraints.
 func (m *ScanSharingMatcher) MatchWithConstraints(
-	pattern *query.DataPattern,
+	q *query.Query,
 	bindings Relations,
 	constraints []StorageConstraint,
 ) (Relation, error) {
 	// If there are constraints, don't share — the result depends on constraints
 	if len(constraints) > 0 {
 		if pm, ok := m.inner.(PredicateAwareMatcher); ok {
-			return pm.MatchWithConstraints(pattern, bindings, constraints)
+			return pm.MatchWithConstraints(q, bindings, constraints)
 		}
-		return m.inner.Match(pattern, bindings)
+		return m.inner.Match(q, bindings)
 	}
-	return m.Match(pattern, bindings)
+	return m.Match(q, bindings)
 }
 
 // LookupAttribute forwards to inner matcher if it supports entity lookup.

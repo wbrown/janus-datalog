@@ -227,7 +227,7 @@ func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	// Count results from Match
@@ -360,7 +360,7 @@ func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 			},
 		}
 
-		matchResults, err := matcher.Match(pattern, nil)
+		matchResults, err := matcher.Match(query.PatternQuery(pattern), nil)
 		require.NoError(t, err)
 
 		count := 0

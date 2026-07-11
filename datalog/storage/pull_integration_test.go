@@ -259,7 +259,7 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 			},
 		}
 
-		rel, err := matcher.Match(pattern, nil)
+		rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatalf("Match failed: %v", err)
 		}
@@ -295,7 +295,7 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 			},
 		}
 
-		rel, err := matcher.Match(pattern, nil)
+		rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatalf("Match failed: %v", err)
 		}

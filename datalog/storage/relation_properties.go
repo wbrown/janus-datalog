@@ -65,3 +65,32 @@ func validatedVBoundProperties(
 		Keys: [][]query.Symbol{{entity.Name}},
 	}
 }
+
+func historyATEVProperties(
+	q *query.Query,
+	pattern *query.DataPattern,
+	history bool,
+) (executor.RelationProperties, bool) {
+	if !history || q == nil || q.Limit == nil || len(q.OrderBy) < 1 || len(q.OrderBy) > 2 {
+		return executor.RelationProperties{}, false
+	}
+	if _, ok := pattern.GetA().(query.Constant); !ok {
+		return executor.RelationProperties{}, false
+	}
+	entity, entityOK := pattern.GetE().(query.Variable)
+	tx, txOK := pattern.GetT().(query.Variable)
+	if !entityOK || !txOK {
+		return executor.RelationProperties{}, false
+	}
+	if q.OrderBy[0] != (query.OrderByClause{Variable: tx.Name, Direction: query.OrderDesc}) {
+		return executor.RelationProperties{}, false
+	}
+	if len(q.OrderBy) == 2 &&
+		q.OrderBy[1] != (query.OrderByClause{Variable: entity.Name, Direction: query.OrderAsc}) {
+		return executor.RelationProperties{}, false
+	}
+
+	return executor.RelationProperties{
+		Ordering: append([]query.OrderByClause(nil), q.OrderBy...),
+	}, true
+}

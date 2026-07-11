@@ -371,7 +371,7 @@ func TestExecutorWithCustomPlannerOptions(t *testing.T) {
 // mockMatcher implements PatternMatcher for testing
 type mockMatcher struct{}
 
-func (m *mockMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *mockMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
 	// Return empty relation for testing
 	return NewMaterializedRelation([]query.Symbol{}, []Tuple{}), nil
 }

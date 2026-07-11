@@ -467,8 +467,8 @@ func (d *Database) Matcher() executor.PatternMatcher {
 
 // Match implements executor.PatternMatcher — the Database itself can answer pattern queries.
 // This delegates to the Database's Matcher(), which uses the full BadgerDB index infrastructure.
-func (d *Database) Match(pattern *query.DataPattern, bindings executor.Relations) (executor.Relation, error) {
-	return d.Matcher().Match(pattern, bindings)
+func (d *Database) Match(q *query.Query, bindings executor.Relations) (executor.Relation, error) {
+	return d.Matcher().Match(q, bindings)
 }
 
 // Compile-time verification that Database implements PatternMatcher
@@ -2653,7 +2653,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 			query.Blank{},
 		},
 	}
-	rel, err := matcher.Match(pattern, nil)
+	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		return nil, err
 	}

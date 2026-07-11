@@ -335,7 +335,7 @@ func TestCardinalityOneRemove_VBoundQuery(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	count := 0
@@ -566,7 +566,7 @@ func vBoundMatchCount(t *testing.T, db *Database, a datalog.Keyword, v interface
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	count := 0
