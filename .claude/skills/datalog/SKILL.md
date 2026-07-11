@@ -9,7 +9,7 @@ description: >
   subqueries (tuple + relation binding), enumerate and vector fns, :in bindings,
   order-by/limit, and time-travel (History/AsOf). Also use it to inspect/explore a
   .db, check entity attributes, debug query results, or examine CRDT storage state.
-argument-hint: <database-path>
+argument-hint: <database-or-edn-dump-path>
 allowed-tools: Bash(~/go/bin/datalog *)
 ---
 
@@ -17,7 +17,7 @@ allowed-tools: Bash(~/go/bin/datalog *)
 
 Query janus-datalog databases for debugging and data exploration.
 
-The user will provide a database path and describe what they want to know. Use the `datalog` CLI to run queries against the database.
+The user will provide a database path — a BadgerDB directory or an `.edn` dump — and describe what they want to know. Use the `datalog` CLI to run queries against the database. A path ending in `.edn` is loaded into a temporary database automatically (writes are discarded on exit).
 
 ## Data Model
 
@@ -46,6 +46,8 @@ go install github.com/wbrown/janus-datalog/cmd/datalog@latest
 
 ## Invocation
 
+`-db <path>` accepts either a BadgerDB database directory or an `.edn` dump file.
+
 ```bash
 # Run a query
 ~/go/bin/datalog -db <path> -query '<EDN query>'
@@ -58,6 +60,9 @@ go install github.com/wbrown/janus-datalog/cmd/datalog@latest
 
 # Export entire database to readable EDN (useful for small DBs)
 ~/go/bin/datalog -db <path> -export <output.edn>
+
+# Per-attribute statistics: cardinality, value sizes, duplication, CRDT ops
+~/go/bin/datalog -db <path> -stats
 ```
 
 Output is a markdown table. Errors go to stderr.
@@ -69,6 +74,7 @@ If the user says `/datalog <path>`, treat `$ARGUMENTS` as the database path. Sta
 - Prebuilt benchmark DB: `datalog/storage/testdata/ohlc_benchmark.db`
 - Default path when unspecified: `datalog.db` in current directory
 - Test databases are created in temp directories by tests (look for `t.TempDir()` calls)
+- EDN dumps (from `-export`) work directly: `-db dump.edn`
 - Ask the user if the path is unclear
 
 ## EDN Query Syntax
@@ -358,7 +364,15 @@ asOf.Query(`[:find ?name :where [?p :person/name ?name]]`)
 
 ### 1. Explore an unknown database
 
-Start by discovering the schema shape:
+Start with the statistics report — one command that shows every attribute with
+its datom count, distinct entities, distinct values, value types, size
+distribution, and duplication:
+
+```bash
+~/go/bin/datalog -db <path> -stats
+```
+
+Or discover the schema shape with queries:
 
 ```bash
 # What attributes exist?

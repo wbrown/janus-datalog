@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,10 +30,11 @@ func main() {
 	var exportPath string
 	var importPath string
 	var compressedExport bool
+	var showStats bool
 
 	var inputValues ednSliceFlag
 
-	flag.StringVar(&dbPath, "db", "", "database path")
+	flag.StringVar(&dbPath, "db", "", "database or EDN dump path (.edn dumps load into a temporary database)")
 	flag.BoolVar(&interactive, "i", false, "interactive mode")
 	flag.BoolVar(&help, "h", false, "show help")
 	flag.BoolVar(&verbose, "verbose", false, "verbose mode (show query annotations)")
@@ -41,15 +43,14 @@ func main() {
 	flag.StringVar(&exportPath, "export", "", "export database to EDN file")
 	flag.BoolVar(&compressedExport, "compressed", false, "use #lzj compressed tagged literals in export")
 	flag.StringVar(&importPath, "import", "", "import database from EDN file")
+	flag.BoolVar(&showStats, "stats", false, "print per-attribute cardinality, value size, and duplication statistics")
 	flag.Var(&inputValues, "in", "input parameter as EDN value (repeatable, one per :in binding)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] [database_path]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] [database_or_edn_dump_path]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "A Datalog query engine with persistent storage.\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  %s                    # Run demo with default database\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s mydata.db          # Run demo with specific database\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i                 # Interactive mode with default database\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -i mydata.db      # Interactive mode with specific database\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db /path/to/db   # Using -db flag\n", os.Args[0])
@@ -59,6 +60,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -query '[:find ?n :in $ ?age :where [?p :person/age ?age] [?p :person/name ?n]]' -in 30  # With input binding\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -export data.edn  # Export database to EDN file\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db newdata.db -import data.edn # Import EDN file into database\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -stats            # Print cardinality and value statistics\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -db dump.edn -query '...'       # Query an EDN dump directly (temporary database)\n", os.Args[0])
 	}
 	flag.Parse()
 
@@ -76,10 +79,19 @@ func main() {
 	if exportPath != "" && importPath != "" {
 		log.Fatalf("Cannot specify both -export and -import")
 	}
+	if showStats && (exportPath != "" || importPath != "") {
+		log.Fatalf("Cannot combine -stats with -export or -import")
+	}
 
 	// Default to datalog.db if no path specified
 	if dbPath == "" {
 		dbPath = "datalog.db"
+	}
+
+	// Handle stats mode
+	if showStats {
+		runStats(dbPath)
+		return
 	}
 
 	// Handle export mode
@@ -94,17 +106,12 @@ func main() {
 		return
 	}
 
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		log.Fatalf("Database does not exist: %s", dbPath)
-	}
-
-	// Open database
-	db, err := storage.NewDatabase(dbPath)
+	// Open database (BadgerDB directory or .edn dump)
+	db, cleanup, err := openDatabaseOrEDN(dbPath)
 	if err != nil {
-		log.Fatalf("Failed to open database: %v", err)
+		log.Fatalf("%v", err)
 	}
-	defer db.Close()
+	defer cleanup()
 
 	// Create annotation handler if verbose mode
 	var handler annotations.Handler
@@ -119,118 +126,7 @@ func main() {
 	} else if interactive {
 		runInteractive(db, handler, enableDecorrelation)
 	} else {
-		// Check if database is empty before running demo
-		if isDatabaseEmpty(db) {
-			fmt.Println("Database is empty, loading demo data...")
-			runDemo(db, handler, enableDecorrelation)
-		} else {
-			fmt.Println("Database contains data. Use -i for interactive mode or -query to run a query.")
-		}
-	}
-}
-
-func runDemo(db *storage.Database, handler annotations.Handler, enableDecorrelation bool) {
-	fmt.Println("=== Janus Datalog Demo ===")
-
-	// Create a transaction
-	tx := db.NewTransaction()
-
-	// Add some test data
-	fmt.Println("\nAdding test data...")
-
-	// Add people
-	alice, _ := tx.AddMap(map[string]interface{}{
-		":person/name": "Alice",
-		":person/age":  int64(30),
-		":person/city": "New York",
-	})
-
-	bob, _ := tx.AddMap(map[string]interface{}{
-		":person/name": "Bob",
-		":person/age":  int64(25),
-		":person/city": "Boston",
-	})
-
-	charlie, _ := tx.AddMap(map[string]interface{}{
-		":person/name": "Charlie",
-		":person/age":  int64(35),
-		":person/city": "New York",
-	})
-
-	// Add friendships
-	tx.Add(alice, datalog.NewKeyword(":person/friend"), bob)
-	tx.Add(alice, datalog.NewKeyword(":person/friend"), charlie)
-	tx.Add(bob, datalog.NewKeyword(":person/friend"), charlie)
-
-	// Commit transaction
-	txID, err := tx.Commit()
-	if err != nil {
-		log.Fatalf("Failed to commit: %v", err)
-	}
-	fmt.Printf("Committed transaction %v\n", txID)
-
-	// Run some queries
-	fmt.Println("\n=== Running Queries ===")
-
-	queries := []string{
-		// Find all people
-		`[:find ?name ?age
-		  :where [?p :person/name ?name]
-		         [?p :person/age ?age]]`,
-
-		// Find people in New York
-		`[:find ?name
-		  :where [?p :person/name ?name]
-		         [?p :person/city "New York"]]`,
-
-		// Find Alice's friends
-		`[:find ?friend-name
-		  :where [?alice :person/name "Alice"]
-		         [?alice :person/friend ?friend]
-		         [?friend :person/name ?friend-name]]`,
-
-		// Find people over 25
-		`[:find ?name ?age
-		  :where [?p :person/name ?name]
-		         [?p :person/age ?age]
-		         [(> ?age 25)]]`,
-
-		// Calculate age in 5 years
-		`[:find ?name ?age ?future-age
-		  :where [?p :person/name ?name]
-		         [?p :person/age ?age]
-		         [(+ ?age 5) ?future-age]]`,
-	}
-
-	// Create executor with optimizations
-	opts := storage.DefaultPlannerOptions()
-	exec := db.NewExecutorWithOptions(opts)
-
-	for _, queryStr := range queries {
-		fmt.Printf("\nQuery: %s\n", queryStr)
-
-		// Parse query
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			fmt.Printf("Parse error: %v\n", err)
-			continue
-		}
-
-		// Execute query
-		var result executor.Relation
-		if handler != nil {
-			ctx := executor.NewContext(handler)
-			result, err = exec.ExecuteWithContext(ctx, q)
-		} else {
-			result, err = exec.Execute(q)
-		}
-		if err != nil {
-			fmt.Printf("Execution error: %v\n", err)
-			continue
-		}
-
-		// Display results as markdown table
-		fmt.Println(result.Table())
+		fmt.Println("Use -i for interactive mode or -query to run a query.")
 	}
 }
 
@@ -378,38 +274,62 @@ func parseValue(s string) interface{} {
 	return s
 }
 
-// isDatabaseEmpty checks if the database contains any data
-func isDatabaseEmpty(db *storage.Database) bool {
-	// Try a simple query to see if there's any data
-	query := `[:find ?e :where [?e _ _]]`
-
-	exec := db.NewExecutor()
-	q, err := parser.ParseQuery(query)
-	if err != nil {
-		return true // Assume empty on error
+// openDatabaseOrEDN opens dbPath as a BadgerDB database, or — when the path
+// ends in .edn — imports the EDN dump into a database in a temporary
+// directory. The returned cleanup function closes the database and removes
+// the temporary directory; callers must invoke it. Writes to an EDN-backed
+// database are discarded when the process exits.
+func openDatabaseOrEDN(dbPath string) (*storage.Database, func(), error) {
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, nil, fmt.Errorf("database does not exist: %s", dbPath)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		return true // Assume empty on error
+	if !strings.HasSuffix(dbPath, ".edn") {
+		db, err := storage.NewDatabase(dbPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to open database: %w", err)
+		}
+		return db, func() { db.Close() }, nil
 	}
 
-	return result.Size() == 0
+	tmpDir, err := os.MkdirTemp("", "datalog-dump-*")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	db, err := storage.NewDatabase(filepath.Join(tmpDir, "temp.db"))
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return nil, nil, fmt.Errorf("failed to create temp database: %w", err)
+	}
+	cleanup := func() {
+		db.Close()
+		os.RemoveAll(tmpDir)
+	}
+
+	f, err := os.Open(dbPath)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("failed to open EDN file: %w", err)
+	}
+	defer f.Close()
+
+	if err := db.Import(f); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("failed to import EDN dump: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Loaded EDN dump %s into a temporary database (changes will be discarded)\n", dbPath)
+	return db, cleanup, nil
 }
 
-// runExport exports the database to an EDN file
+// runExport exports the database to an EDN file. The source may itself be an
+// EDN dump, which supports re-encoding (e.g. plain dump -> -compressed dump).
 func runExport(dbPath, exportPath string, compressed bool) {
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		log.Fatalf("Database does not exist: %s", dbPath)
-	}
-
-	// Open database
-	db, err := storage.NewDatabase(dbPath)
+	db, cleanup, err := openDatabaseOrEDN(dbPath)
 	if err != nil {
-		log.Fatalf("Failed to open database: %v", err)
+		log.Fatalf("%v", err)
 	}
-	defer db.Close()
+	defer cleanup()
 
 	// Create export file
 	f, err := os.Create(exportPath)
@@ -428,6 +348,12 @@ func runExport(dbPath, exportPath string, compressed bool) {
 
 // runImport imports an EDN file into the database
 func runImport(dbPath, importPath string) {
+	// Importing into an .edn path would load into a discarded temp database;
+	// the target must be a real database directory.
+	if strings.HasSuffix(dbPath, ".edn") {
+		log.Fatalf("Cannot import into %s: -db must be a database directory, not an EDN dump", dbPath)
+	}
+
 	// Check if import file exists
 	if _, err := os.Stat(importPath); os.IsNotExist(err) {
 		log.Fatalf("Import file does not exist: %s", importPath)
