@@ -1,7 +1,7 @@
 # Janus Datalog Optimization Opportunities
 
 **Reviewed:** 2026-07-11  
-**Status:** Items 1–3 implemented and verified; remaining items require focused
+**Status:** Items 1–4 implemented and verified; remaining items require focused
 benchmarks before implementation
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
@@ -16,7 +16,7 @@ be omitted.
 | 1 | Replace string aggregation keys with `TupleKeyMap` | Low-level | Implemented and benchmarked | 47.5% faster geomean | Complete |
 | 2 | Use `PutIfAbsent` across deduplication paths | Low-level | Implemented and benchmarked | 7.3% faster geomean | Complete |
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
-| 4 | Fuse whole same-entity attribute bundles | Relational algebra | Single-column fusion already measured | High for EAV star joins | Medium |
+| 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
 | 5 | Propagate statically provable relational properties | Relational algebra | Derivable from existing contracts | Cross-layer | Medium–high |
 | 6 | Push Top-N into proven index order | Relational algebra | Tx-descending indices exist | True scan reduction | High |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
@@ -169,20 +169,63 @@ Relevant code and design:
 
 ## 4. Fuse Whole Same-Entity Attribute Bundles
 
+**Status:** Complete in the current working tree.
+
 The existing cardinality-one fetch fusion is a strong specialization, but it
 handles one pattern at a time and materializes a fresh relation after every
 attached attribute. K attributes still require K passes and K intermediate
 tuple sets.
 
-Recognize a run of `[?e :constant ?fresh]` scans and compile one
-multi-attribute attach. Walk the outer tuples once, perform K cache lookups, and
-allocate one final-width tuple. Benchmark a crossover where an entity-wide scan
-becomes cheaper than K point lookups.
+The executor now recognizes only a contiguous run of already-fusable
+`[?e :constant ?fresh]` patterns. It walks the outer tuples once, performs the
+same K `LookupAttribute` calls, and allocates one final-width tuple. Existing
+cardinality/temporal gates and per-attribute `pattern/fused-fetch` events are
+preserved. No matcher interface, adaptive threshold, or entity-wide scan was
+added.
+
+### Measured evidence
+
+`BenchmarkAttrFetch`,
+`benchtime=500ms`, `count=10`, darwin/arm64:
+
+| Entities | Attributes | Time before | Time after | Time delta | Memory delta | Alloc delta |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 1 | 67.53 µs | 65.61 µs | -2.85% | ~ | +0.07% |
+| 100 | 3 | 101.0 µs | 86.50 µs | **-14.33%** | -32.99% | -19.37% |
+| 100 | 6 | 152.4 µs | 117.2 µs | **-23.09%** | -49.99% | -32.03% |
+| 1,000 | 1 | 517.3 µs | 528.8 µs | ~ | +0.02% | +0.01% |
+| 1,000 | 3 | 859.4 µs | 729.9 µs | **-15.06%** | -37.28% | -21.91% |
+| 1,000 | 6 | 1.352 ms | 1.016 ms | **-24.83%** | -56.50% | -36.46% |
+| **Geomean** | | **292.4 µs** | **252.8 µs** | **-13.54%** | **-32.88%** | **-19.50%** |
+
+K=1 remains effectively unchanged, while gains scale with bundle width as
+intended. The full `go test -count=1 ./...` suite passes.
+
+### Profile evidence
+
+For 1,000 entities and six attributes before bundling:
+
+- `tryFuseAttributeFetch` accounts for **16.5% cumulative CPU**.
+- It accounts for **82.6% cumulative allocated space** and **30.9% flat**.
+- Per-attribute tuple creation and result-slice growth allocate 6.29 GiB over
+  the profile run.
+- Repeated `NewMaterializedRelationWithOptions` calls contribute 7.34 GiB
+  cumulatively through deduplication.
+
+The profile directly confirms that repeated traversal, tuple widening, and
+materialization are the remaining costs. CPU is dominated by runtime scheduler
+signaling, consistent with the allocation pressure.
+
+After bundling, `tryFuseAttributeFetchBundle` drops to 63.2% cumulative and
+15.0% flat allocated space while total per-operation memory falls from
+2.365 MiB to 1.029 MiB.
 
 Relevant code and benchmarks:
 
 - `datalog/executor/query_executor.go:389-512`
+- `datalog/executor/attribute_fetch_bundle_test.go`
 - `datalog/storage/attr_fetch_bench_test.go`
+- `datalog/storage/same_entity_fusion_test.go`
 - `PERFORMANCE_STATUS.md:30`
 
 ## 5. Propagate Statically Provable Relational Properties
@@ -285,9 +328,8 @@ Relevant code:
 2. **Completed:** `PutIfAbsent` across all add-if-absent deduplication paths.
 3. **Completed:** bounded Top-N heap reducing CPU and memory while retaining the
    full scan.
-4. **Next:** multi-attribute fetch fusion attaching same-entity bundles in one
-   pass.
-5. **Property propagation:** a separate architecture step for statically
+4. **Completed:** one-pass same-entity attribute bundle fusion.
+5. **Next architecture step — property propagation:** statically
    derived ordering, uniqueness, candidate keys, and rewindability.
 6. **Index-order Top-N:** use proven physical order to stop storage after N.
 7. **Optimizer rewrites:** pushdown fixpoint and other transformations whose

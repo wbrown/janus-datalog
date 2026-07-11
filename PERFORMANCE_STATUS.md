@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
 **Last Updated**: 2026-07-11 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, same-entity attribute-fetch fusion, typed aggregation keys, single-lookup dedup insertion, and bounded Top-N finalization.
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, and bounded Top-N finalization.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, bounded Top-N finalization).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, one-pass same-entity attribute bundles).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -31,6 +31,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
 - ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Bounded Top-N finalization**: ordered limits without non-projected sort keys use an O(N)-memory heap instead of materializing and sorting every row. Across 10K/100K rows and N=1/10/100: **97.1% faster**, **99.96% less memory**, **99.86% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64). The source is still fully scanned; index-order pushdown remains separate.
+- ✅ **One-pass same-entity attribute bundles**: contiguous cardinality-one fetches sharing a bound entity now attach all output columns in one traversal and one materialization. **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 at 1,000 entities is **24.8% faster, 56.5% less memory, 36.5% fewer allocations** (n=10; verified 2026-07-11, darwin/arm64).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -952,6 +953,59 @@ passes.
 - `datalog/executor/executor.go`
 - `datalog/executor/executor_utils.go`
 
+### 21. One-Pass Same-Entity Attribute Bundles (COMPLETE - July 2026)
+**Status**: ✅ Contiguous fusable attributes attach in one relation traversal
+
+**Problem**: Existing attribute-fetch fusion handled one
+`[?e :constant ?fresh]` pattern at a time. K attributes repeated relation
+iteration, progressive tuple widening, materialization, and deduplication K
+times.
+
+**Profile evidence before the change** (1,000 entities, K=6):
+
+- `tryFuseAttributeFetch`: 16.5% cumulative CPU.
+- 82.6% cumulative and 30.9% flat allocated space.
+- Per-attribute tuple creation and result growth: 6.29 GiB over the profile.
+- Repeated materialization/deduplication: 7.34 GiB cumulative.
+
+**Change**:
+
+- Recognize only contiguous patterns that already satisfy every existing
+  fusion gate: default source, no transaction binding, same entity symbol,
+  fresh outputs, CardinalityOne, and latest/as-of mode.
+- Traverse the input relation once, perform the same K cache-backed
+  `LookupAttribute` calls, and allocate one final-width tuple.
+- Preserve per-attribute `pattern/fused-fetch` events and their sequential
+  input/output counts.
+- Stop bundling at predicates, expressions, cardinality-many attributes, named
+  sources, or any other non-fusable clause. Nothing is reordered.
+- Added no matcher API, configuration flag, adaptive threshold, or alternate
+  storage scan.
+
+**Measurement** (`BenchmarkAttrFetch`, N=100/1000, K=1/3/6,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Entities | K | Time before | Time after | Time delta | Memory delta | Allocs delta |
+|---------:|--:|------------:|-----------:|-----------:|-------------:|-------------:|
+| 100 | 1 | 67.53 µs | 65.61 µs | −2.85% | ~ | +0.07% |
+| 100 | 3 | 101.0 µs | 86.50 µs | **−14.33%** | −32.99% | −19.37% |
+| 100 | 6 | 152.4 µs | 117.2 µs | **−23.09%** | −49.99% | −32.03% |
+| 1,000 | 1 | 517.3 µs | 528.8 µs | ~ | +0.02% | +0.01% |
+| 1,000 | 3 | 859.4 µs | 729.9 µs | **−15.06%** | −37.28% | −21.91% |
+| 1,000 | 6 | 1.352 ms | 1.016 ms | **−24.83%** | −56.50% | −36.46% |
+| **Geomean** | | **292.4 µs** | **252.8 µs** | **−13.54%** | **−32.88%** | **−19.50%** |
+
+K=1 remains effectively unchanged, demonstrating that the win comes from
+removing repeated passes rather than changing lookup semantics. The full
+`go test -count=1 ./...` suite passes.
+
+**Files**:
+
+- `datalog/executor/query_executor.go`
+- `datalog/executor/attribute_fetch_bundle_test.go`
+- `datalog/storage/same_entity_fusion_test.go`
+- `datalog/storage/attr_fetch_bench_test.go`
+
 ---
 
 ## Profiling Results (October 2025)
@@ -1070,6 +1124,7 @@ All items below are **measured** and **active** in production code:
 18. ✅ **Typed aggregation keys** - **47.5% faster, 25.8% less memory, 71.3% fewer allocations** while fixing cross-type and delimiter key collisions (verified 2026-07-11)
 19. ✅ **Single-lookup dedup insertion** - **5.4–9.0% faster, 7.3% geomean** across materialized and streaming deduplication with unchanged memory and allocations (verified 2026-07-11)
 20. ✅ **Bounded Top-N finalization** - **97.1% faster, 99.96% less memory, 99.86% fewer allocations** for ordered limits where no post-sort deduplicating projection is required (verified 2026-07-11)
+21. ✅ **One-pass same-entity attribute bundles** - **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 improves up to 24.8% time and 56.5% memory (verified 2026-07-11)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:

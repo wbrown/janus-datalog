@@ -38,7 +38,7 @@ import (
 
 func fusionSchema() *schema.Schema {
 	s := schema.NewSchema()
-	for _, a := range []string{":place/type", ":place/code", ":place/name"} {
+	for _, a := range []string{":place/type", ":place/code", ":place/name", ":place/brief"} {
 		s.Add(&schema.AttributeDefinition{
 			Ident:       datalog.NewKeyword(a),
 			ValueType:   schema.TypeString,
@@ -104,6 +104,7 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 	typ := datalog.NewKeyword(":place/type")
 	code := datalog.NewKeyword(":place/code")
 	name := datalog.NewKeyword(":place/name")
+	brief := datalog.NewKeyword(":place/brief")
 	tags := datalog.NewKeyword(":place/tags")
 	e1 := datalog.NewIdentity("e1")
 	e2 := datalog.NewIdentity("e2")
@@ -173,6 +174,40 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 				require.NoError(t, tx.Set(e2, name, "N2"))
 			})
 		}, `[:find ?e ?c ?n :where [?e :place/type "room"] [?e :place/code ?c] [?e :place/name ?n]]`)
+	})
+
+	t.Run("missing middle attribute drops entity from bundle", func(t *testing.T) {
+		assertFusionEquivalent(t, func(db *Database) {
+			commit(db, func(tx *Transaction) {
+				require.NoError(t, tx.Set(e1, typ, "room"))
+				require.NoError(t, tx.Set(e1, code, "R1"))
+				require.NoError(t, tx.Set(e1, brief, "B1")) // no name
+				require.NoError(t, tx.Set(e2, typ, "room"))
+				require.NoError(t, tx.Set(e2, code, "R2"))
+				require.NoError(t, tx.Set(e2, name, "N2"))
+				require.NoError(t, tx.Set(e2, brief, "B2"))
+			})
+		}, `[:find ?e ?c ?n ?b
+		     :where [?e :place/type "room"]
+		            [?e :place/code ?c]
+		            [?e :place/name ?n]
+		            [?e :place/brief ?b]]`)
+	})
+
+	t.Run("cardinality-many pattern ends bundle", func(t *testing.T) {
+		assertFusionEquivalent(t, func(db *Database) {
+			commit(db, func(tx *Transaction) {
+				require.NoError(t, tx.Set(e1, typ, "room"))
+				require.NoError(t, tx.Set(e1, code, "R1"))
+				require.NoError(t, tx.Add(e1, tags, "a"))
+				require.NoError(t, tx.Add(e1, tags, "b"))
+				require.NoError(t, tx.Set(e1, name, "N1"))
+			})
+		}, `[:find ?e ?c ?tag ?n
+		     :where [?e :place/type "room"]
+		            [?e :place/code ?c]
+		            [?e :place/tags ?tag]
+		            [?e :place/name ?n]]`)
 	})
 
 	t.Run("cardinality-many fetch is not fused, still correct", func(t *testing.T) {
