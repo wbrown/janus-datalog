@@ -269,6 +269,9 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 
 		// Apply aggregations using existing function
 		result := ExecuteAggregationsWithContext(ctx, groups[0], q.Find)
+		if materialized, ok := result.(*MaterializedRelation); ok && materialized.err != nil {
+			return nil, materialized.err
+		}
 		return []Relation{result}, nil
 
 	} else {

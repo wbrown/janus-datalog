@@ -89,6 +89,13 @@ func hashValue(v interface{}) uint64 {
 			return 0
 		}
 		return uint64(uintptr(unsafe.Pointer(ptr)))
+	case datalog.Symbol:
+		// Symbols use the same interned-pointer identity contract as Identity
+		// and Keyword, so hashing remains O(1) with no string conversion.
+		if ptr == nil {
+			return 0
+		}
+		return uint64(uintptr(unsafe.Pointer(ptr)))
 	case *uint64:
 		if ptr == nil {
 			return 0
@@ -96,7 +103,7 @@ func hashValue(v interface{}) uint64 {
 		return *ptr
 	}
 
-	// Remaining value types (Identity/Keyword/*uint64 handled above).
+	// Remaining value types (Identity/Keyword/Symbol/*uint64 handled above).
 	switch val := v.(type) {
 	case string:
 		return hashString(val)
@@ -152,9 +159,6 @@ func hashValue(v interface{}) uint64 {
 			return 1
 		}
 		return 0
-
-	case datalog.Symbol:
-		return hashString(val.String())
 
 	case datalog.ElementID:
 		return val.Lamport ^ (val.ReplicaID * 1099511628211)

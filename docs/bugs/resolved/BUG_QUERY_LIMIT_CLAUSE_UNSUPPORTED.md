@@ -271,29 +271,31 @@ not.
    - Plan cache: two queries identical except for `:limit` do not share a cached
      limit (the L3 trap).
 
-### Roadmap: index-order pushdown ("latest" / top-N as a true point read)
+### Index-order pushdown status (implemented 2026-07-11)
 
-The mechanical plan above made `:limit` correct. A bounded Top-N heap added on
-2026-07-11 now avoids materializing and sorting the full matching set when no
-post-sort deduplicating projection is required. It still does **not** make the
-motivating query — `:order-by [[?tx :desc]] :limit 1` — a point read: every
-source row is scanned to determine the best N. Eliminating that scan is the
-separate optimization tracked here.
+The mechanical plan above made `:limit` correct. Bounded Top-N avoids sorting
+the complete result, and proven physical ordering now lets a streaming
+`LimitRelation` stop storage after N rows.
 
-**Idea.** When the planner sees `:order-by [[?k <dir>]] :limit N` where `?k` is
-bound by a single data pattern and aligns with an index's physical key order,
-push the ordering + bound into the index scan: scan in index order and stop after
-N, skipping the materialize-and-sort entirely. The cheapest, highest-value
-special case is "latest by transaction": the EATV / ATEV indices already store Tx
-in **descending** order (bitwise-NOT encoding — see `key_encoder_binary.go` and
-the CRDT notes in `CLAUDE.md`), so `:order-by [[?tx :desc]] :limit 1` is literally
-"take the first key the index yields." This dovetails with the keyset-pagination
-idiom above: `[(> ?tx ?last-tx)] :order-by [[?tx :asc]] :limit N` becomes a bounded
-range scan that stops after N.
+The implementation deliberately does **not** treat a latest/AsOf
+`:order-by [[?tx :desc]] :limit 1` query as "take the first key." EATV/AETV
+place descending Tx inside entity/attribute groups; current-state CRDT
+resolution must examine the relevant groups, so global Tx-primary early
+termination would be unsound.
 
-**Why it is staged, not done now.** Pushdown is only sound under structural
-preconditions, and getting them wrong silently returns wrong results (cf. the
-decorrelation-inside-Union learning in `CLAUDE.md`):
+The sound bounded index paths currently implemented are raw-History shapes:
+
+- ATEV: constant A, `Tx desc` with optional `E asc`.
+- TAEV: unfiltered transaction log, `Tx desc` with optional `A asc, E asc`.
+- AETV: constant A, `E asc, Tx desc`.
+- EATV: constant E, `A asc, Tx desc`.
+
+Each path receives ordering and limit through a one-pattern Datalog query
+fragment, validates the complete physical shape in storage, scans exactly N raw
+datoms, and has a differential full-sort reference. Latest and AsOf controls
+prove that raw-history ordering properties are declined.
+
+Broader pushdown remains subject to structural preconditions:
 
 - **Joins** — the limit may only be pushed onto the *driving* relation, and only
   when the join preserves that relation's order and cannot drop the top-N rows. A
@@ -302,16 +304,13 @@ decorrelation-inside-Union learning in `CLAUDE.md`):
   from the relation that survives the join unfiltered) must be detected explicitly.
 - **Aggregation** — `:limit` applies *after* aggregation, so it caps groups, not
   scanned rows; it cannot be pushed to the scan when an aggregate sits between.
-- **CRDT resolution** — the resolving iterator already consumes the index in Tx
-  order; "latest by tx" aligns with the existing physical order (the easy win),
-  but pushdown on other keys must compose with resolution, not bypass it.
+- **CRDT resolution** — latest/AsOf scans may use the same physical index but
+  cannot inherit a raw-history ordering/early-stop proof.
 - **Ordering totality** — index order is a total physical order; if the requested
   `:order-by` key has ties, the pushed result must match the materialize-and-sort
   result (or the optimization must be declined).
 
-Suggested staging: (1) recognize and push the `:order-by [[?tx :desc/:asc]]
-:limit N` single-pattern case down to a bounded index scan (covers "latest" and
-keyset pagination); (2) extend to other index-aligned sort keys on single
-patterns; (3) consider join-driving-side pushdown with explicit order-preservation
-checks. Each stage must carry semantic-preservation tests comparing pushed vs.
-materialize-and-sort results on realistic data sizes.
+Future stages may add other CRDT-safe, index-aligned single-pattern shapes, then
+consider join-driving-side pushdown with explicit order-preservation proofs.
+Every extension requires differential materialize/sort/limit tests at realistic
+sizes.

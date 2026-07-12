@@ -1,15 +1,12 @@
 // Tests for tuple-key collision behavior in NOT/OR/union dedup paths.
 //
-// Background: notOrTupleKey (relation_ops.go) builds dedup keys via
-// fmt.Sprintf("%v",...) joined by "|". This stringification is not
-// injective — distinct tuples can map to the same key — and the
-// dedup logic silently drops valid distinct tuples or matches the
-// wrong rows for anti-join filtering.
+// Background: the retired notOrTupleKey implementation built dedup keys via
+// fmt.Sprintf("%v",...) joined by "|". That stringification was not injective:
+// distinct tuples could map to the same key, silently dropping valid rows or
+// matching the wrong anti-join rows.
 //
-// These tests assert correct dedup semantics. They are expected to FAIL
-// against the current notOrTupleKey-based implementation and PASS once
-// the call sites in relation_ops.go and query_executor.go migrate to the
-// existing TupleKey / TupleKeyMap primitive.
+// These tests pin the migrated TupleKey/TupleKeyMap semantics and prevent the
+// string-key collision behavior from returning.
 //
 // Each adversarial pair is constructed so that
 //   fmt.Sprintf("%v", a[0]) + "|" + fmt.Sprintf("%v", a[1])

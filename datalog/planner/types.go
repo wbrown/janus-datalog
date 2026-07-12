@@ -119,7 +119,7 @@ type PlannerOptions struct {
 	EnableAlgebraOptimizer     bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
 	EnableScanSharing          bool // Share unbound scan results across subqueries via LazySeq (default: false)
 	EnableEntityPrefetch       bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
-	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into per-tuple column attach instead of match+join (default: false)
+	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into per-tuple column attach instead of match+join (default: true)
 
 	// Executor streaming options - control memory vs performance tradeoffs
 	EnableIteratorComposition bool // Use composed iterators for lazy evaluation (default: true)
@@ -128,7 +128,7 @@ type PlannerOptions struct {
 
 	// Executor parallel execution options
 	EnableParallelSubqueries bool // Execute subqueries in parallel (default: true)
-	MaxSubqueryWorkers       int  // Maximum parallel workers for subqueries (0 = runtime.NumCPU())
+	MaxSubqueryWorkers       int  // Maximum parallel workers for subqueries (0 = 4)
 
 	// Executor join/aggregation options
 	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing

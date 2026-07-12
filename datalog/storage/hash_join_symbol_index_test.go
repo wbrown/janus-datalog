@@ -283,7 +283,9 @@ func TestCompiledBindingMatchPlanAllDatomPositions(t *testing.T) {
 		assert.False(t, plan.matches(&BadgerMatcher{}, datom, changed),
 			"binding index %d must participate in matching", bindingIndex)
 	}
-	assert.False(t, plan.matches(&BadgerMatcher{}, datom, executor.Tuple{"short"}))
+	assert.Panics(t, func() {
+		plan.matches(&BadgerMatcher{}, datom, executor.Tuple{"short"})
+	}, "a binding tuple that violates its declared schema must fail loudly")
 }
 
 func TestCompiledBindingMatchPlanBytesByContent(t *testing.T) {

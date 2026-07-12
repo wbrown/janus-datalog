@@ -481,6 +481,132 @@ func TestHistoryOrderedLimitDifferentialRandomized(t *testing.T) {
 	}
 }
 
+func TestHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t *testing.T) {
+	capture := &historyOrderScanCapture{}
+	valueAttr := datalog.NewKeyword(":event/value")
+	otherAttr := datalog.NewKeyword(":event/other")
+	s := schema.NewSchema()
+	for _, attribute := range []datalog.Keyword{valueAttr, otherAttr} {
+		s.Add(&schema.AttributeDefinition{
+			Ident:       attribute,
+			ValueType:   schema.TypeLong,
+			Cardinality: schema.CardinalityOne,
+		})
+	}
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:              t.TempDir(),
+		Schema:            s,
+		AnnotationHandler: capture.handler,
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	entities := []datalog.Identity{
+		datalog.NewIdentity("replica-history-0"),
+		datalog.NewIdentity("replica-history-1"),
+		datalog.NewIdentity("replica-history-2"),
+	}
+	datoms := []datalog.Datom{
+		{E: entities[0], A: valueAttr, V: int64(1), Tx: datalog.ElementID{Lamport: 10, ReplicaID: 1}},
+		{E: entities[0], A: valueAttr, V: int64(2), Tx: datalog.ElementID{Lamport: 10, ReplicaID: 7}},
+		{E: entities[0], A: otherAttr, V: int64(3), Tx: datalog.ElementID{Lamport: 10, ReplicaID: 3}},
+		{E: entities[1], A: valueAttr, V: int64(4), Tx: datalog.ElementID{Lamport: 10, ReplicaID: 9}},
+		{E: entities[2], A: valueAttr, V: int64(5), Tx: datalog.ElementID{Lamport: 10, ReplicaID: 5}},
+		{E: entities[2], A: valueAttr, V: int64(6), Tx: datalog.ElementID{Lamport: 9, ReplicaID: 100}},
+	}
+	require.NoError(t, db.Store().Assert(datoms))
+
+	type shape struct {
+		name      string
+		fullQuery string
+		limited   string
+		less      func(left, right []interface{}) bool
+	}
+	shapes := []shape{
+		{
+			name:      "ATEV",
+			fullQuery: `[:find ?e ?v ?tx :where [?e :event/value ?v ?tx]]`,
+			limited:   historyOrderedLimitQuery(3),
+			less: func(left, right []interface{}) bool {
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				if comparison := leftTx.Compare(rightTx); comparison != 0 {
+					return comparison > 0
+				}
+				return left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)) < 0
+			},
+		},
+		{
+			name:      "TAEV",
+			fullQuery: `[:find ?e ?a ?v ?tx :where [?e ?a ?v ?tx]]`,
+			limited:   historyTransactionOrderedLimitQuery(3),
+			less: func(left, right []interface{}) bool {
+				leftTx, _ := datalog.DerefElementID(left[3])
+				rightTx, _ := datalog.DerefElementID(right[3])
+				if comparison := leftTx.Compare(rightTx); comparison != 0 {
+					return comparison > 0
+				}
+				if comparison := left[1].(datalog.Keyword).Compare(right[1].(datalog.Keyword)); comparison != 0 {
+					return comparison < 0
+				}
+				return left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)) < 0
+			},
+		},
+		{
+			name:      "AETV",
+			fullQuery: `[:find ?e ?v ?tx :where [?e :event/value ?v ?tx]]`,
+			limited:   historyEntityOrderedLimitQuery(3),
+			less: func(left, right []interface{}) bool {
+				if comparison := left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)); comparison != 0 {
+					return comparison < 0
+				}
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				return leftTx.Compare(rightTx) > 0
+			},
+		},
+		{
+			name: "EATV",
+			fullQuery: fmt.Sprintf(
+				`[:find ?a ?v ?tx :where [#identity %q ?a ?v ?tx]]`,
+				entities[0].L85(),
+			),
+			limited: historyAttributeOrderedLimitQuery(entities[0], 3),
+			less: func(left, right []interface{}) bool {
+				if comparison := left[0].(datalog.Keyword).Compare(right[0].(datalog.Keyword)); comparison != 0 {
+					return comparison < 0
+				}
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				return leftTx.Compare(rightTx) > 0
+			},
+		},
+	}
+
+	for _, testShape := range shapes {
+		t.Run(testShape.name, func(t *testing.T) {
+			reference, err := db.History().Query(testShape.fullQuery)
+			require.NoError(t, err)
+			expected, err := executor.CollectTuples(reference, nil)
+			require.NoError(t, err)
+			sort.Slice(expected, func(i, j int) bool {
+				return testShape.less(expected[i], expected[j])
+			})
+			expected = expected[:3]
+
+			capture.reset()
+			result, err := db.History().Query(testShape.limited)
+			require.NoError(t, err)
+			actual, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			requireHistoryRowsEqual(t, expected, actual, testShape.name, 3)
+			scanned, index := capture.snapshot()
+			require.Equal(t, testShape.name, index)
+			require.LessOrEqual(t, scanned, 3)
+		})
+	}
+}
+
 func requireHistoryRowsEqual(
 	t *testing.T,
 	expected, actual [][]interface{},

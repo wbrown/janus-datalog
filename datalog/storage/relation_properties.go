@@ -71,7 +71,7 @@ func historyATEVProperties(
 	pattern *query.DataPattern,
 	history bool,
 ) (executor.RelationProperties, bool) {
-	if !history || q == nil || q.Limit == nil || len(q.OrderBy) < 1 || len(q.OrderBy) > 2 {
+	if !history || q.Limit == nil || len(q.OrderBy) < 1 || len(q.OrderBy) > 2 {
 		return executor.RelationProperties{}, false
 	}
 	if _, ok := pattern.GetA().(query.Constant); !ok {
@@ -100,7 +100,7 @@ func historyTAEVProperties(
 	pattern *query.DataPattern,
 	history bool,
 ) (executor.RelationProperties, bool) {
-	if !history || q == nil || q.Limit == nil || len(q.OrderBy) < 1 || len(q.OrderBy) > 3 {
+	if !history || q.Limit == nil || len(q.OrderBy) < 1 || len(q.OrderBy) > 3 {
 		return executor.RelationProperties{}, false
 	}
 	entity, entityOK := pattern.GetE().(query.Variable)
@@ -135,7 +135,7 @@ func historyAETVProperties(
 	pattern *query.DataPattern,
 	history bool,
 ) (executor.RelationProperties, bool) {
-	if !history || q == nil || q.Limit == nil || len(q.OrderBy) != 2 {
+	if !history || q.Limit == nil || len(q.OrderBy) != 2 {
 		return executor.RelationProperties{}, false
 	}
 	if _, ok := pattern.GetA().(query.Constant); !ok {
@@ -165,7 +165,7 @@ func historyEATVProperties(
 	pattern *query.DataPattern,
 	history bool,
 ) (executor.RelationProperties, bool) {
-	if !history || q == nil || q.Limit == nil || len(q.OrderBy) != 2 {
+	if !history || q.Limit == nil || len(q.OrderBy) != 2 {
 		return executor.RelationProperties{}, false
 	}
 	if _, ok := pattern.GetE().(query.Constant); !ok {

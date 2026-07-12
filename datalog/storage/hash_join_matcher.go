@@ -550,9 +550,6 @@ func (p bindingMatchPlan) matches(
 		if slot.hasConstant {
 			values[i] = slot.constant
 		} else if slot.bindingIndex >= 0 {
-			if slot.bindingIndex >= len(bindingTuple) {
-				return false
-			}
 			values[i] = bindingTuple[slot.bindingIndex]
 		}
 	}

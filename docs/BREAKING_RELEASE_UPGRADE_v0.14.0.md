@@ -76,6 +76,19 @@ exposes lifecycle, join/collapse observation, collectors, and scan registries.
 `*storage.BinaryKeyEncoder`. `KeyEncoder`, encoding strategies, and
 `L85KeyEncoder` were removed.
 
+## Query behavior changes
+
+Grouped aggregation now uses typed Datalog equality instead of formatted string
+keys. Values such as `int64(5)` and `"5"`, `true` and `"true"`, and composite
+keys whose old delimiter-joined forms collided now produce separate groups.
+The previous merging was incorrect but applications that depended on it will
+observe additional result groups.
+
+Grouped aggregate queries whose grouping variables are absent from the source
+relation are now rejected during execution. This includes queries such as
+`[:find ?missing (count ?e) ...]`; they no longer reach aggregation with an
+undefined grouping column.
+
 ## Legacy L85 physical databases
 
 Normal databases created through `db.Open` or `storage.NewDatabase` already use

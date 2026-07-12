@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -45,6 +46,18 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 			return NewMaterializedRelationWithOptions(groupByVars, []Tuple{}, opts)
 		}
 		return result
+	}
+
+	for _, groupBy := range groupByVars {
+		if SymbolIndex(rel, groupBy) < 0 {
+			resultSymbols := append([]query.Symbol(nil), groupByVars...)
+			for _, aggregate := range aggregates {
+				resultSymbols = append(resultSymbols, datalog.NewSymbol(aggregate.String()))
+			}
+			result := NewMaterializedRelationWithOptions(resultSymbols, nil, rel.Options())
+			result.err = fmt.Errorf("group-by symbol %s is not present in source relation", groupBy)
+			return result
+		}
 	}
 
 	// Extract options from relation

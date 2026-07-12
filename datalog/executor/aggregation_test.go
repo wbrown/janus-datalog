@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wbrown/janus-datalog/datalog/query"
-
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 func TestExecuteAggregations(t *testing.T) {
@@ -275,6 +275,30 @@ func TestStreamingAggregationEmitsMaterializedAnnotation(t *testing.T) {
 	if !foundMaterialized {
 		t.Error("aggregation materialized annotation was not emitted through the context collector")
 	}
+}
+
+func TestAggregationRejectsMissingGroupSymbolWithoutPanic(t *testing.T) {
+	order := datalog.NewSymbol("?order")
+	missing := datalog.NewSymbol("?missing")
+	tuples := make([]Tuple, StreamingAggregationThreshold+1)
+	for i := range tuples {
+		tuples[i] = Tuple{int64(i)}
+	}
+	source := NewStreamingRelationWithOptions(
+		[]query.Symbol{order},
+		NewMaterializedRelationNoDedupe([]query.Symbol{order}, tuples).Iterator(),
+		ExecutorOptions{EnableStreamingAggregation: true},
+	)
+
+	var result Relation
+	require.NotPanics(t, func() {
+		result = ExecuteAggregations(source, []query.FindElement{
+			query.FindVariable{Symbol: missing},
+			query.FindAggregate{Function: "count", Arg: order},
+		})
+	})
+	require.Error(t, driveErr(result))
+	require.Contains(t, driveErr(result).Error(), "group-by symbol ?missing")
 }
 
 func TestProjectColumns(t *testing.T) {
