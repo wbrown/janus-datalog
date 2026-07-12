@@ -410,6 +410,13 @@ func (m *BadgerMatcher) matchUnboundAsRelation(
 			start, end = m.store.encoder.EncodePrefixRange(AETV, attr[:])
 			properties = orderedProperties
 		}
+	} else if orderedProperties, ok := historyEATVProperties(q, pattern, m.isHistoryMode()); ok {
+		if identity, identityOK := e.(datalog.Identity); identityOK {
+			entity := ToStorageDatom(datalog.Datom{E: identity}).E
+			index = EATV
+			start, end = m.store.encoder.EncodePrefixRange(EATV, entity[:])
+			properties = orderedProperties
+		}
 	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			attr := ToStorageDatom(datalog.Datom{A: keyword}).A

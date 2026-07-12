@@ -159,3 +159,33 @@ func historyAETVProperties(
 		Ordering: append([]query.OrderByClause(nil), q.OrderBy...),
 	}, true
 }
+
+func historyEATVProperties(
+	q *query.Query,
+	pattern *query.DataPattern,
+	history bool,
+) (executor.RelationProperties, bool) {
+	if !history || q == nil || q.Limit == nil || len(q.OrderBy) != 2 {
+		return executor.RelationProperties{}, false
+	}
+	if _, ok := pattern.GetE().(query.Constant); !ok {
+		return executor.RelationProperties{}, false
+	}
+	attribute, attributeOK := pattern.GetA().(query.Variable)
+	_, valueOK := pattern.GetV().(query.Variable)
+	tx, txOK := pattern.GetT().(query.Variable)
+	if !attributeOK || !valueOK || !txOK {
+		return executor.RelationProperties{}, false
+	}
+
+	if q.OrderBy[0] != (query.OrderByClause{Variable: attribute.Name, Direction: query.OrderAsc}) ||
+		q.OrderBy[1] != (query.OrderByClause{Variable: tx.Name, Direction: query.OrderDesc}) {
+		return executor.RelationProperties{}, false
+	}
+
+	// EATV is [E][A][Tx↓][V]. With E constant and no value filter, raw
+	// history rows are emitted in the requested total A/Tx order.
+	return executor.RelationProperties{
+		Ordering: append([]query.OrderByClause(nil), q.OrderBy...),
+	}, true
+}

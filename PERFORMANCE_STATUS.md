@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
 **Last Updated**: 2026-07-11 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation, existing-order scan termination, and ATEV/TAEV/AETV order-aware history matching.
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation, existing-order scan termination, and ATEV/TAEV/AETV/EATV order-aware history matching.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, history AETV order-aware matching).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, history EATV order-aware matching).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -37,6 +37,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **History ATEV order-aware matching (6b first shape)**: `PatternMatcher.Match` now receives a one-pattern Datalog query fragment. Safe history queries with constant A and `Tx desc, E asc` select ATEV and scan exactly N raw datoms: **99.15% faster, 99.07% less memory, 98.89% fewer allocations** geomean. Latest/as-of explicitly decline Tx-primary ATEV (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **History TAEV order-aware matching (6b second shape)**: unfiltered history transaction-log queries ordered by `Tx desc, A asc, E asc` select TAEV and scan exactly N raw datoms. Across N=1/10/100: **99.16% faster, 99.05% less memory, 98.86% fewer allocations** geomean; scans fall from 10,100 to exactly N. Latest/as-of and filtered patterns explicitly decline (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **History AETV order-aware matching (6b third shape)**: constant-attribute raw history ordered by `E asc, Tx desc` consumes AETV directly and scans exactly N datoms. Across N=1/10/100: **99.15% faster, 99.07% less memory, 98.89% fewer allocations** geomean; scans fall from 10,000 to exactly N. Latest/as-of keep their existing CRDT-resolved path without the raw-history property (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **History EATV order-aware matching (6b fourth shape)**: constant-entity raw history ordered by `A asc, Tx desc` consumes EATV directly and scans exactly N datoms. Across N=1/10/100: **99.13% faster, 99.00% less memory, 98.86% fewer allocations** geomean; scans fall from 10,000 to exactly N. Latest/as-of keep their existing CRDT-resolved path without the raw-history property (n=10; verified 2026-07-11, darwin/arm64).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -1304,6 +1305,7 @@ All items below are **measured** and **active** in production code:
 24. ✅ **History ATEV order-aware matching** - safe history queries scan exactly N raw datoms and improve **99.15% time, 99.07% memory, 98.89% allocations** geomean; latest/as-of explicitly decline (verified 2026-07-11)
 25. ✅ **History TAEV order-aware matching** - unfiltered transaction-log limits scan exactly N raw datoms and improve **99.16% time, 99.05% memory, 98.86% allocations** geomean; latest/as-of and filtered shapes decline (verified 2026-07-11)
 26. ✅ **History AETV order-aware matching** - constant-attribute entity-first history limits scan exactly N raw datoms and improve **99.15% time, 99.07% memory, 98.89% allocations** geomean (verified 2026-07-11)
+27. ✅ **History EATV order-aware matching** - constant-entity attribute-first history limits scan exactly N raw datoms and improve **99.13% time, 99.00% memory, 98.86% allocations** geomean (verified 2026-07-11)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:

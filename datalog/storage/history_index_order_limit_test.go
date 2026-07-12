@@ -88,6 +88,45 @@ func openHistoryOrderDatabase(tb testing.TB, capture *historyOrderScanCapture) *
 	return db
 }
 
+func openHistoryEntityOrderDatabase(
+	tb testing.TB,
+	capture *historyOrderScanCapture,
+) (*Database, datalog.Identity) {
+	tb.Helper()
+	attributes := make([]datalog.Keyword, historyOrderEntities)
+	s := schema.NewSchema()
+	for i := range attributes {
+		attributes[i] = datalog.NewKeyword(fmt.Sprintf(":event/value-%03d", i))
+		s.Add(&schema.AttributeDefinition{
+			Ident:       attributes[i],
+			ValueType:   schema.TypeLong,
+			Cardinality: schema.CardinalityOne,
+		})
+	}
+
+	options := DatabaseOptions{
+		Path:   tb.TempDir(),
+		Schema: s,
+	}
+	if capture != nil {
+		options.AnnotationHandler = capture.handler
+	}
+	db, err := NewDatabaseWithOptions(options)
+	require.NoError(tb, err)
+	tb.Cleanup(func() { db.Close() })
+
+	entity := datalog.NewIdentity("history-entity-order")
+	for version := 0; version < historyOrderVersions; version++ {
+		tx := db.NewTransaction()
+		for _, attribute := range attributes {
+			require.NoError(tb, tx.Set(entity, attribute, int64(version)))
+		}
+		_, err := tx.Commit()
+		require.NoError(tb, err)
+	}
+	return db, entity
+}
+
 func historyOrderedLimitQuery(limit int) string {
 	return fmt.Sprintf(
 		`[:find ?e ?v ?tx
@@ -114,6 +153,17 @@ func historyEntityOrderedLimitQuery(limit int) string {
 		  :where [?e :event/value ?v ?tx]
 		  :order-by [[?e :asc] [?tx :desc]]
 		  :limit %d]`,
+		limit,
+	)
+}
+
+func historyAttributeOrderedLimitQuery(entity datalog.Identity, limit int) string {
+	return fmt.Sprintf(
+		`[:find ?a ?v ?tx
+		  :where [#identity %q ?a ?v ?tx]
+		  :order-by [[?a :asc] [?tx :desc]]
+		  :limit %d]`,
+		entity.L85(),
 		limit,
 	)
 }
@@ -263,6 +313,54 @@ func TestLatestEntityOrderedLimitDoesNotUseHistoryAETVProperty(t *testing.T) {
 		"latest CRDT resolution must not inherit raw-history early termination")
 }
 
+func TestHistoryAttributeOrderedLimitUsesEATV(t *testing.T) {
+	const limit = 10
+	capture := &historyOrderScanCapture{}
+	db, entity := openHistoryEntityOrderDatabase(t, capture)
+
+	capture.reset()
+	result, err := db.History().Query(historyAttributeOrderedLimitQuery(entity, limit))
+	require.NoError(t, err)
+	rows, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, limit)
+	for i := 1; i < len(rows); i++ {
+		previousAttr := rows[i-1][0].(datalog.Keyword)
+		currentAttr := rows[i][0].(datalog.Keyword)
+		require.LessOrEqual(t, previousAttr.Compare(currentAttr), 0)
+		if previousAttr.Compare(currentAttr) == 0 {
+			previousTx, ok := datalog.DerefElementID(rows[i-1][2])
+			require.True(t, ok)
+			currentTx, ok := datalog.DerefElementID(rows[i][2])
+			require.True(t, ok)
+			require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
+		}
+	}
+
+	scanned, index := capture.snapshot()
+	require.Equal(t, "EATV", index)
+	require.LessOrEqual(t, scanned, limit,
+		"history EATV ordering must stop after the requested rows")
+}
+
+func TestLatestAttributeOrderedLimitDoesNotUseHistoryEATVProperty(t *testing.T) {
+	const limit = 10
+	capture := &historyOrderScanCapture{}
+	db, entity := openHistoryEntityOrderDatabase(t, capture)
+
+	capture.reset()
+	result, err := db.Query(historyAttributeOrderedLimitQuery(entity, limit))
+	require.NoError(t, err)
+	rows, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, limit)
+
+	scanned, index := capture.snapshot()
+	require.Equal(t, "EATV", index)
+	require.Greater(t, scanned, limit,
+		"latest CRDT resolution must not inherit raw-history early termination")
+}
+
 func TestHistoryATEVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	entity := datalog.NewSymbol("?e")
 	tx := datalog.NewSymbol("?tx")
@@ -396,4 +494,52 @@ func TestHistoryAETVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	q.OrderBy[1].Direction = query.OrderDesc
 	_, ok = historyAETVProperties(q, pattern, true)
 	require.False(t, ok, "filtered values are outside the exact-N AETV shape")
+}
+
+func TestHistoryEATVPropertiesRequireSafeDatalogShape(t *testing.T) {
+	attribute := datalog.NewSymbol("?a")
+	value := datalog.NewSymbol("?v")
+	tx := datalog.NewSymbol("?tx")
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Constant{Value: datalog.NewIdentity("history-entity")},
+		query.Variable{Name: attribute},
+		query.Variable{Name: value},
+		query.Variable{Name: tx},
+	}}
+	limit := 10
+	q := &query.Query{
+		Where: []query.Clause{pattern},
+		OrderBy: []query.OrderByClause{
+			{Variable: attribute, Direction: query.OrderAsc},
+			{Variable: tx, Direction: query.OrderDesc},
+		},
+		Limit: &limit,
+	}
+
+	properties, ok := historyEATVProperties(q, pattern, true)
+	require.True(t, ok)
+	require.Equal(t, executor.RelationProperties{Ordering: q.OrderBy}, properties)
+
+	_, ok = historyEATVProperties(q, pattern, false)
+	require.False(t, ok, "latest/as-of modes must not inherit raw EATV history ordering")
+
+	q.Limit = nil
+	_, ok = historyEATVProperties(q, pattern, true)
+	require.False(t, ok, "EATV order is useful for finalization only with a limit")
+	q.Limit = &limit
+
+	q.OrderBy = q.OrderBy[:1]
+	_, ok = historyEATVProperties(q, pattern, true)
+	require.False(t, ok, "attribute alone is not a total history order across versions")
+	q.OrderBy = []query.OrderByClause{
+		{Variable: attribute, Direction: query.OrderAsc},
+		{Variable: tx, Direction: query.OrderAsc},
+	}
+	_, ok = historyEATVProperties(q, pattern, true)
+	require.False(t, ok, "forward EATV cannot satisfy ascending Tx within an attribute")
+
+	pattern.Elements[2] = query.Constant{Value: int64(42)}
+	q.OrderBy[1].Direction = query.OrderDesc
+	_, ok = historyEATVProperties(q, pattern, true)
+	require.False(t, ok, "filtered values are outside the exact-N EATV shape")
 }
