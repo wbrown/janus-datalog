@@ -17,7 +17,7 @@ be omitted.
 | 2 | Use `PutIfAbsent` across deduplication paths | Low-level | Implemented and benchmarked | 7.3% faster geomean | Complete |
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
-| 5 | Propagate statically provable relational properties | Relational algebra | Key-preserving joins implemented | Up to 27.5% faster focused paths | In progress |
+| 5 | Propagate statically provable relational properties | Relational algebra | Keys consumed inside joins and projections | Up to 32.8% faster focused paths | In progress |
 | 6 | Push Top-N into proven index order | Relational algebra | 6a + four 6b history shapes implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
@@ -258,6 +258,8 @@ Implemented propagation:
 - Grouped aggregation establishes its group-by symbols as a candidate key.
 - Natural joins preserve one side's candidate keys when the opposite side's
   join symbols contain a candidate key. Join ordering remains unclaimed.
+- Hash joins omit their internal full-tuple `seen` table when the derived result
+  key already proves every output tuple unique.
 - Semi-joins and anti-joins preserve all left ordering and candidate keys
   because they only filter left rows.
 - Unions, products, and fallback relations clear properties until a derivation
@@ -327,6 +329,22 @@ unchanged: 47.54 → 48.90 ms/op (`p=0.075`), 82.80 MiB/op (`p=0.739`), and
 checkpoint does not currently contain a streaming key-preserving
 join-then-projection bottleneck.
 
+The second join-key step consumes the same proof inside the hash join itself.
+When a result candidate key exists, streaming, materialized, and symmetric hash
+joins omit the full-result `seen` table and per-row `NewTupleKeyFull` call.
+Against the already key-propagating focused baseline:
+
+| Rows | Time before | Time after | Time delta | Memory delta | Alloc delta |
+|---:|---:|---:|---:|---:|---:|
+| 10,000 | 2.564 ms | 1.782 ms | **-30.48%** | -33.61% | -10.05% |
+| 100,000 | 28.62 ms | 18.60 ms | **-35.00%** | -31.92% | -10.04% |
+| **Geomean** | **8.565 ms** | **5.758 ms** | **-32.77%** | **-32.77%** | **-10.05%** |
+
+The complex checkpoint remains statistically unchanged: 49.17 → 50.07 ms/op
+(`p=0.579`), 82.80 → 82.82 MiB/op (`p=0.247`), and 1.088M allocations/op
+(`p=0.268`). Its dominant joins do not currently carry candidate keys through
+the OR/fallback and subquery shapes that feed them.
+
 ### Semi/anti join checkpoint
 
 Semi-joins and anti-joins iterate the left relation in order and only choose
@@ -349,6 +367,28 @@ control path.
 The complex checkpoint is again statistically unchanged: 48.22 → 49.17 ms/op
 (`p=0.089`), with 82.80 MiB/op (`p=0.853`) and 1.088M allocations/op
 (`p=0.590`) unchanged.
+
+### Join materialization check
+
+`BenchmarkComplexQueryJoinMaterialization` runs the same production-shaped
+query with only `EnableStreamingJoins` changed:
+
+| Mode | Time | Memory | Allocations |
+|---|---:|---:|---:|
+| Materialized (default) | 48.57 ms | 82.78 MiB | 1.088M |
+| Streaming | 52.48 ms | 85.91 MiB | 1.179M |
+| Delta | **+8.04%** | **+3.78%** | **+8.34%** |
+
+Every difference is significant (`p=0.000`, `n=10`). Materialization is not an
+accidental regression for this workload: streaming adds iterator composition
+and caching costs without avoiding the join's own result deduplication. The
+streaming CPU profile attributes 12.15% cumulative time to
+`hashJoinIterator.Next`, 8.68% to `TupleKeyMap.PutIfAbsent`, 7.99% to
+`ProjectIterator.Next`, and 7.64% to `deduplicateTuples`.
+
+Keep materialized joins as the default. The narrower internal-`seen` elision is
+now implemented for proven keyed results; its focused gain does not change the
+default materialization conclusion.
 
 Ordering is carried but not yet consumed for storage early termination; that
 remains the separate index-order Top-N step.
@@ -550,6 +590,8 @@ Relevant code:
 - Scan sharing and entity prefetch are benchmarked as neutral in the default
   workload.
 - Symmetric hash join trades throughput for time-to-first-row.
+- Streaming hash joins are **8.04% slower**, use **3.78% more memory**, and
+  allocate **8.34% more** on the complex checkpoint; keep them opt-in.
 - Do not tune the current merge join before its ordering contract is explicit.
   It sorts full tuples lexicographically while extracting a join key by datom
   position. Physical properties should represent the required order first.

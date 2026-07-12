@@ -77,9 +77,9 @@ func (it *hashJoinIterator) Next() bool {
 				joined = combineTuplesIndexed(it.currentProbeTuple, buildTuple, it.rightNonJoinIndices, it.resultWidth)
 			}
 
-			// Check for duplicates using seen map (single bucket walk)
-			dedupKey := NewTupleKeyFull(joined)
-			if !it.seen.PutIfAbsent(dedupKey, true) {
+			// A nil seen map means a derived candidate key already proves every
+			// output tuple unique. Otherwise restore set semantics explicitly.
+			if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
 				// combineTuplesIndexed returns a fresh slice on every call and
 				// nothing mutates it, so no defensive copy is needed here. Any
 				// downstream consumer that retains tuples copies at its own
@@ -429,14 +429,18 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Check if streaming mode is enabled
 	if opts.EnableStreamingJoins {
 		// Return streaming relation with lazy evaluation
-		// Handle unknown sizes (-1) with reasonable default
-		expectedResults := probeRel.Size()
-		if expectedResults < 0 {
-			expectedResults = defaultCapacity
-		}
-		buildSize := buildRel.Size()
-		if buildSize > 0 && buildSize < expectedResults {
-			expectedResults = buildSize
+		var resultSeen *TupleKeyMap
+		if len(resultProperties.Keys) == 0 {
+			// Handle unknown sizes (-1) with reasonable default.
+			expectedResults := probeRel.Size()
+			if expectedResults < 0 {
+				expectedResults = defaultCapacity
+			}
+			buildSize := buildRel.Size()
+			if buildSize > 0 && buildSize < expectedResults {
+				expectedResults = buildSize
+			}
+			resultSeen = NewTupleKeyMapWithCapacity(expectedResults)
 		}
 
 		if opts.EnableDebugLogging {
@@ -456,7 +460,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			hashTable:           hashTable,
 			probeIt:             probeRel.Iterator(),
 			buildErr:            buildErr,
-			seen:                NewTupleKeyMapWithCapacity(expectedResults),
+			seen:                resultSeen,
 			buildIsLeft:         buildIsLeft,
 			probeNeedsCopy:      probeRel.RequiresCopy(),
 			probeIndices:        probeIndices,
@@ -477,18 +481,20 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 
 	// Materialized mode (original implementation)
 	// Use efficient TupleKeyMap for deduplication
-	// Pre-size seen map - worst case is probe size, but likely smaller due to filtering
-	// Use min(probeSize, buildSize) as estimate
-	// Handle unknown sizes (-1) with reasonable default
-	expectedResults := probeRel.Size()
-	if expectedResults < 0 {
-		expectedResults = defaultCapacity
+	var seen *TupleKeyMap
+	if len(resultProperties.Keys) == 0 {
+		// Pre-size seen map - worst case is probe size, but likely smaller due
+		// to filtering. Use min(probeSize, buildSize) as estimate.
+		expectedResults := probeRel.Size()
+		if expectedResults < 0 {
+			expectedResults = defaultCapacity
+		}
+		probeBuildSize := buildRel.Size()
+		if probeBuildSize > 0 && probeBuildSize < expectedResults {
+			expectedResults = probeBuildSize
+		}
+		seen = NewTupleKeyMapWithCapacity(expectedResults)
 	}
-	probeBuildSize := buildRel.Size()
-	if probeBuildSize > 0 && probeBuildSize < expectedResults {
-		expectedResults = probeBuildSize
-	}
-	seen := NewTupleKeyMapWithCapacity(expectedResults)
 	var results []Tuple
 
 	// CRITICAL: Check if probe relation was already consumed
@@ -534,10 +540,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 					joined = combineTuplesIndexed(probeTuple, buildTuple, rightNonJoinIndices, resultWidth)
 				}
 
-				// Create a key for deduplication based on all tuple values
-				// (single bucket walk via PutIfAbsent)
-				dedupKey := NewTupleKeyFull(joined)
-				if !seen.PutIfAbsent(dedupKey, true) {
+				// A nil seen map means the result candidate key proves this
+				// joined tuple cannot duplicate any prior output.
+				if seen == nil || !seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
 					results = append(results, joined)
 				}
 			}

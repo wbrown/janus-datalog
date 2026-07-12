@@ -112,18 +112,20 @@ off by default. Consumed in `executor/join.go`.
 ### Parallel execution
 
 #### EnableParallelSubqueries — **default-active**
-Executes subquery iterations in parallel via a bounded worker pool. Consumed in
-`executor/subquery_strategy.go`.
+Executes RelationInput query iterations in parallel via the executor's bounded
+worker loop. Consumed in `executor/executor.go`.
 
 #### MaxSubqueryWorkers — **default 0**
 Worker-pool size for parallel subqueries; `0` means `runtime.NumCPU()`. Consumed
-in `executor/query_executor.go`.
+in `executor/executor.go`.
 
 ### Joins / aggregation
 
 #### EnableStreamingJoins — **opt-in** (default false)
 Returns a `StreamingRelation` from joins instead of materializing the result.
-Consumed in `executor/join.go`.
+On `BenchmarkComplexQueryJoinMaterialization`, enabling it is 8.04% slower,
+uses 3.78% more memory, and performs 8.34% more allocations than the default
+(`n=10`). Keep it opt-in. Consumed in `executor/join.go`.
 
 #### EnableStreamingAggregation — **default-active**
 Streaming aggregation (no full materialization of the input). Consumed in

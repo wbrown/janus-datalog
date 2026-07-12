@@ -61,6 +61,7 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol,
 			outputSyms = append(outputSyms, sym)
 		}
 	}
+	resultProperties := joinProperties(left.Properties(), right.Properties(), joinSyms)
 
 	// Determine initial hash table size
 	// Use configurable DefaultHashTableSize for better cache locality
@@ -84,8 +85,10 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol,
 		rightSyms:    right.Symbols(),
 		outputSyms:   outputSyms,
 		resultQueue:  make([]Tuple, 0),
-		seen:         NewTupleKeyMapWithCapacity(tableSize),
 		batchSize:    100, // Process tuples in batches for efficiency
+	}
+	if len(resultProperties.Keys) == 0 {
+		iter.seen = NewTupleKeyMapWithCapacity(tableSize)
 	}
 
 	// Return a streaming relation with the symmetric join iterator
@@ -93,7 +96,7 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol,
 		outputSyms,
 		iter,
 		opts,
-		joinProperties(left.Properties(), right.Properties(), joinSyms),
+		resultProperties,
 	)
 }
 
@@ -161,9 +164,8 @@ func (it *symmetricHashJoinIterator) processLeftBatch() {
 				// Combine tuples
 				joined := it.combineTuples(leftTuple, rightTuple, true)
 
-				// Deduplicate
-				dedupKey := NewTupleKeyFull(joined)
-				if !it.seen.PutIfAbsent(dedupKey, true) {
+				// A nil seen map means a result key proves uniqueness.
+				if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
 					it.resultQueue = append(it.resultQueue, joined)
 				}
 			}
@@ -208,9 +210,8 @@ func (it *symmetricHashJoinIterator) processRightBatch() {
 				// Combine tuples
 				joined := it.combineTuples(leftTuple, rightTuple, true)
 
-				// Deduplicate
-				dedupKey := NewTupleKeyFull(joined)
-				if !it.seen.PutIfAbsent(dedupKey, true) {
+				// A nil seen map means a result key proves uniqueness.
+				if it.seen == nil || !it.seen.PutIfAbsent(NewTupleKeyFull(joined), true) {
 					it.resultQueue = append(it.resultQueue, joined)
 				}
 			}

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -182,6 +183,23 @@ func TestOptimizationMatrix(t *testing.T) {
 // correlated and nested subqueries, conditional aggregation, get-else,
 // or-default, expressions, ordering, and bounded Top-N finalization.
 func BenchmarkComplexQueryCheckpoint(b *testing.B) {
+	benchmarkComplexQueryCheckpoint(b, nil)
+}
+
+func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
+	b.Run("materialized", func(b *testing.B) {
+		options := DefaultPlannerOptions()
+		options.EnableStreamingJoins = false
+		benchmarkComplexQueryCheckpoint(b, &options)
+	})
+	b.Run("streaming", func(b *testing.B) {
+		options := DefaultPlannerOptions()
+		options.EnableStreamingJoins = true
+		benchmarkComplexQueryCheckpoint(b, &options)
+	})
+}
+
+func benchmarkComplexQueryCheckpoint(b *testing.B, options *planner.PlannerOptions) {
 	const (
 		numScenarios     = 75
 		tasksPerScenario = 100
@@ -189,8 +207,9 @@ func BenchmarkComplexQueryCheckpoint(b *testing.B) {
 	)
 
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   b.TempDir(),
-		Schema: optimizationMatrixSchema(),
+		Path:           b.TempDir(),
+		Schema:         optimizationMatrixSchema(),
+		PlannerOptions: options,
 	})
 	require.NoError(b, err)
 	defer db.Close()

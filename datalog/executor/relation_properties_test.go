@@ -207,6 +207,8 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Equal(t, RelationProperties{Keys: [][]query.Symbol{{id}}}, joined.Properties())
+	require.Nil(t, joined.(*StreamingRelation).iterator.(*hashJoinIterator).seen,
+		"a proven result key makes internal full-tuple join deduplication redundant")
 
 	projected, err := joined.Project([]query.Symbol{id, leftValue})
 	require.NoError(t, err)
@@ -242,6 +244,8 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Empty(t, joined.Properties().Keys)
+	require.NotNil(t, joined.(*StreamingRelation).iterator.(*hashJoinIterator).seen,
+		"an unkeyed join must retain internal full-tuple deduplication")
 
 	projected, err := joined.Project([]query.Symbol{id, leftValue})
 	require.NoError(t, err)
@@ -327,6 +331,8 @@ func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 	symmetricJoin := SymmetricHashJoinWithOptions(
 		streamingLeft, streamingRight, []query.Symbol{id}, opts)
 	require.Equal(t, properties, symmetricJoin.Properties())
+	require.Nil(t, symmetricJoin.(*StreamingRelation).iterator.(*symmetricHashJoinIterator).seen,
+		"a proven symmetric-join result key makes internal deduplication redundant")
 }
 
 func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
