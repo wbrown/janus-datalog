@@ -179,9 +179,11 @@ func TestExecuteExpression(t *testing.T) {
 		// Expression: [(+ ?x 100) ?y]
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
-				Op:    query.OpAdd,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
-				Right: query.ConstantTerm{Value: int64(100)},
+				Op: query.OpAdd,
+				Args: []query.Term{
+					query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					query.ConstantTerm{Value: int64(100)},
+				},
 			},
 			Binding: datalog.NewSymbol("?y"),
 		}
@@ -218,9 +220,11 @@ func TestExecuteExpression(t *testing.T) {
 		// Expression: [(+ ?x ?y) ?z] - requires both ?x and ?y
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
-				Op:    query.OpAdd,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
-				Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				Op: query.OpAdd,
+				Args: []query.Term{
+					query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				},
 			},
 			Binding: datalog.NewSymbol("?z"),
 		}

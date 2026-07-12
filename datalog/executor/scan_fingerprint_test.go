@@ -136,3 +136,52 @@ func TestScanFingerprint_Deterministic(t *testing.T) {
 	fp2 := ScanFingerprint(p)
 	assert.Equal(t, fp1, fp2, "same pattern should always produce same fingerprint")
 }
+
+func TestScanQueryFingerprintIncludesPhysicalRequirements(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	value := datalog.NewSymbol("?value")
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: entity},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: value},
+	}}
+	limitOne, limitTwo := 1, 2
+	base := &query.Query{Where: []query.Clause{pattern}}
+	ordered := &query.Query{
+		Where:   []query.Clause{pattern},
+		OrderBy: []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+	}
+	limitedOne := &query.Query{Where: []query.Clause{pattern}, Limit: &limitOne}
+	limitedTwo := &query.Query{Where: []query.Clause{pattern}, Limit: &limitTwo}
+
+	assert.NotEqual(t, ScanQueryFingerprint(base, pattern), ScanQueryFingerprint(ordered, pattern))
+	assert.NotEqual(t, ScanQueryFingerprint(limitedOne, pattern), ScanQueryFingerprint(limitedTwo, pattern))
+}
+
+func TestScanQueryFingerprintCanonicalizesRenamedOrderVariables(t *testing.T) {
+	leftEntity := datalog.NewSymbol("?left-entity")
+	rightEntity := datalog.NewSymbol("?right-entity")
+	left := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: leftEntity},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: datalog.NewSymbol("?left-value")},
+	}}
+	right := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: rightEntity},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: datalog.NewSymbol("?right-value")},
+	}}
+	leftQuery := &query.Query{
+		Where:   []query.Clause{left},
+		OrderBy: []query.OrderByClause{{Variable: leftEntity, Direction: query.OrderDesc}},
+	}
+	rightQuery := &query.Query{
+		Where:   []query.Clause{right},
+		OrderBy: []query.OrderByClause{{Variable: rightEntity, Direction: query.OrderDesc}},
+	}
+
+	assert.Equal(t,
+		ScanQueryFingerprint(leftQuery, left),
+		ScanQueryFingerprint(rightQuery, right),
+	)
+}

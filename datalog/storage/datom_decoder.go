@@ -90,6 +90,9 @@ type KeyOnlyIterator struct {
 
 // NewKeyOnlyIterator creates an iterator that decodes datoms from keys
 func NewKeyOnlyIterator(store *BadgerStore, index IndexType, start, end []byte) (Iterator, error) {
+	if store.db.IsClosed() {
+		return nil, badger.ErrDBClosed
+	}
 	txn := store.db.NewTransaction(false)
 
 	opts := badger.DefaultIteratorOptions

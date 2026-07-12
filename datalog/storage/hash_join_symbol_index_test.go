@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/planner"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // TestHashJoinColumnIndexBug tests the bug where HashJoinScan confused
@@ -207,4 +209,97 @@ func TestCompiledBindingMatchUsesPrecomputedSymbolSlots(t *testing.T) {
 		datom,
 		executor.Tuple{"unused", datalog.NewIdentity("different")},
 	))
+}
+
+func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
+	db, err := NewDatabase(t.TempDir())
+	assert.NoError(t, err)
+	defer db.Close()
+
+	leftEntity := datalog.NewIdentity("signed-zero-left")
+	rightEntity := datalog.NewIdentity("signed-zero-right")
+	leftAttr := datalog.NewKeyword(":number/left")
+	rightAttr := datalog.NewKeyword(":number/right")
+	tx := db.NewTransaction()
+	assert.NoError(t, tx.Add(leftEntity, leftAttr, float64(0)))
+	assert.NoError(t, tx.Add(rightEntity, rightAttr, math.Copysign(0, -1)))
+	_, err = tx.Commit()
+	assert.NoError(t, err)
+
+	parsed, err := parser.ParseQuery(
+		`[:find ?left ?right
+		  :where [?left :number/left ?value]
+		         [?right :number/right ?value]]`,
+	)
+	assert.NoError(t, err)
+	matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+		IndexNestedLoopThreshold: 0,
+	})
+	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
+
+	result, err := exec.Execute(parsed)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, result.Size())
+}
+
+func TestCompiledBindingMatchPlanAllDatomPositions(t *testing.T) {
+	e := datalog.NewSymbol("?e")
+	a := datalog.NewSymbol("?a")
+	v := datalog.NewSymbol("?v")
+	tx := datalog.NewSymbol("?tx")
+	bindingSymbols := []datalog.Symbol{
+		datalog.NewSymbol("?noise"),
+		tx,
+		v,
+		e,
+		a,
+	}
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: e},
+		query.Variable{Name: a},
+		query.Variable{Name: v},
+		query.Variable{Name: tx},
+	}}
+	entity := datalog.NewIdentity("all-slots")
+	attribute := datalog.NewKeyword(":all/slots")
+	elementID := datalog.ElementID{Lamport: 7, ReplicaID: 3}
+	datom := &datalog.Datom{E: entity, A: attribute, V: "", Tx: elementID}
+	tuple := executor.Tuple{"noise", elementID, "", entity, attribute}
+	plan := compileBindingMatchPlan(pattern, bindingSymbols)
+
+	assert.True(t, plan.matches(&BadgerMatcher{}, datom, tuple))
+	for bindingIndex := 1; bindingIndex < len(tuple); bindingIndex++ {
+		changed := append(executor.Tuple(nil), tuple...)
+		switch bindingIndex {
+		case 1:
+			changed[bindingIndex] = datalog.ElementID{Lamport: 8, ReplicaID: 3}
+		case 2:
+			changed[bindingIndex] = "different"
+		case 3:
+			changed[bindingIndex] = datalog.NewIdentity("different")
+		case 4:
+			changed[bindingIndex] = datalog.NewKeyword(":different")
+		}
+		assert.False(t, plan.matches(&BadgerMatcher{}, datom, changed),
+			"binding index %d must participate in matching", bindingIndex)
+	}
+	assert.False(t, plan.matches(&BadgerMatcher{}, datom, executor.Tuple{"short"}))
+}
+
+func TestCompiledBindingMatchPlanBytesByContent(t *testing.T) {
+	value := datalog.NewSymbol("?value")
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?e")},
+		query.Constant{Value: datalog.NewKeyword(":blob/value")},
+		query.Variable{Name: value},
+	}}
+	plan := compileBindingMatchPlan(pattern, []datalog.Symbol{value})
+	datom := &datalog.Datom{
+		E: datalog.NewIdentity("bytes"),
+		A: datalog.NewKeyword(":blob/value"),
+		V: []byte{1, 2, 3},
+	}
+
+	assert.True(t, plan.matches(&BadgerMatcher{}, datom, executor.Tuple{[]byte{1, 2, 3}}))
+	assert.False(t, plan.matches(&BadgerMatcher{}, datom, executor.Tuple{[]byte{1, 2, 4}}))
 }

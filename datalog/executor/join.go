@@ -606,12 +606,17 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 
 	// Filter left relation
 	var results []Tuple
+	leftNeedsCopy := left.RequiresCopy()
 	leftIt := left.Iterator()
 	for leftIt.Next() {
 		tuple := leftIt.Tuple()
 		key := NewTupleKey(tuple, leftIndices)
 		if rightKeys.Exists(key) {
-			results = append(results, tuple)
+			if leftNeedsCopy {
+				results = append(results, copyTuple(tuple))
+			} else {
+				results = append(results, tuple)
+			}
 		}
 	}
 	lerr := leftIt.Error()
@@ -664,12 +669,17 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 
 	// Filter left relation
 	var results []Tuple
+	leftNeedsCopy := left.RequiresCopy()
 	leftIt := left.Iterator()
 	for leftIt.Next() {
 		tuple := leftIt.Tuple()
 		key := NewTupleKey(tuple, leftIndices)
 		if !rightKeys.Exists(key) {
-			results = append(results, tuple)
+			if leftNeedsCopy {
+				results = append(results, copyTuple(tuple))
+			} else {
+				results = append(results, tuple)
+			}
 		}
 	}
 	lerr := leftIt.Error()

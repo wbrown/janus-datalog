@@ -26,13 +26,22 @@ func TestScanRegistry_PutThenGet(t *testing.T) {
 
 	seq := &LazySeq{}
 	syms := []query.Symbol{datalog.NewSymbol("?t"), datalog.NewSymbol("?s")}
+	properties := RelationProperties{Keys: [][]query.Symbol{{syms[0]}}}
+	options := ExecutorOptions{EnableTrueStreaming: true}
 
-	reg.Put("fp1", seq, syms)
+	reg.Put("fp1", &SharedScan{
+		Seq:        seq,
+		Symbols:    syms,
+		Options:    options,
+		Properties: properties,
+	})
 
 	shared := reg.Get("fp1")
 	require.NotNil(t, shared)
 	assert.Equal(t, seq, shared.Seq)
 	assert.Equal(t, syms, shared.Symbols)
+	assert.Equal(t, options, shared.Options)
+	assert.Equal(t, properties, shared.Properties)
 }
 
 // TestScanRegistry_DifferentKeysIndependent verifies that two different
@@ -45,8 +54,8 @@ func TestScanRegistry_DifferentKeysIndependent(t *testing.T) {
 	syms1 := []query.Symbol{datalog.NewSymbol("?a")}
 	syms2 := []query.Symbol{datalog.NewSymbol("?b")}
 
-	reg.Put("fp1", seq1, syms1)
-	reg.Put("fp2", seq2, syms2)
+	reg.Put("fp1", &SharedScan{Seq: seq1, Symbols: syms1})
+	reg.Put("fp2", &SharedScan{Seq: seq2, Symbols: syms2})
 
 	s1 := reg.Get("fp1")
 	s2 := reg.Get("fp2")
@@ -72,7 +81,7 @@ func TestScanRegistry_ConcurrentAccess(t *testing.T) {
 			fp := "fp_shared"
 
 			// All goroutines try to Put the same key and Get it
-			reg.Put(fp, seq, syms)
+			reg.Put(fp, &SharedScan{Seq: seq, Symbols: syms})
 			shared := reg.Get(fp)
 			assert.NotNil(t, shared)
 		}(i)
@@ -94,7 +103,7 @@ func TestScanRegistry_SymbolsPreserved(t *testing.T) {
 		datalog.NewSymbol("?value"),
 		datalog.NewSymbol("?tx"),
 	}
-	reg.Put("fp_symbols", &LazySeq{}, syms)
+	reg.Put("fp_symbols", &SharedScan{Seq: &LazySeq{}, Symbols: syms})
 
 	shared := reg.Get("fp_symbols")
 	require.NotNil(t, shared)

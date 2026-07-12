@@ -24,12 +24,19 @@ func (m *countingMatcher) Match(q *query.Query, bindings Relations) (Relation, e
 
 // fixedMatcher returns a fixed relation for any Match() call.
 type fixedMatcher struct {
-	tuples  []Tuple
-	symbols []query.Symbol
+	tuples     []Tuple
+	symbols    []query.Symbol
+	options    ExecutorOptions
+	properties RelationProperties
 }
 
 func (m *fixedMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
-	return NewMaterializedRelation(m.symbols, m.tuples), nil
+	return NewMaterializedRelationWithProperties(
+		m.symbols,
+		m.tuples,
+		m.options,
+		m.properties,
+	), nil
 }
 
 // TestScanSharingMatcher_UnboundScanShared verifies that calling Match()
@@ -237,4 +244,73 @@ func TestScanSharingMatcher_AnnotationEvents(t *testing.T) {
 
 	assert.Contains(t, events, "scan-sharing/cache-miss")
 	assert.Contains(t, events, "scan-sharing/cache-hit")
+}
+
+func TestScanSharingMatcherSeparatesPhysicalRequirements(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: entity},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: datalog.NewSymbol("?value")},
+	}}
+	inner := &countingMatcher{inner: &fixedMatcher{
+		tuples:  []Tuple{{"e1", int64(1)}, {"e2", int64(2)}},
+		symbols: pattern.Symbols(),
+	}}
+	matcher := NewScanSharingMatcher(inner, NewScanRegistry(), nil)
+	one, two := 1, 2
+
+	_, err := matcher.Match(&query.Query{Where: []query.Clause{pattern}, Limit: &one}, nil)
+	require.NoError(t, err)
+	_, err = matcher.Match(&query.Query{Where: []query.Clause{pattern}, Limit: &two}, nil)
+	require.NoError(t, err)
+	_, err = matcher.Match(&query.Query{
+		Where:   []query.Clause{pattern},
+		OrderBy: []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+		Limit:   &one,
+	}, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, int32(3), atomic.LoadInt32(&inner.callCount))
+}
+
+func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	value := datalog.NewSymbol("?value")
+	renamedEntity := datalog.NewSymbol("?renamed-entity")
+	renamedValue := datalog.NewSymbol("?renamed-value")
+	first := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: entity},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: value},
+	}}
+	second := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: renamedEntity},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: renamedValue},
+	}}
+	options := ExecutorOptions{EnableTrueStreaming: true}
+	inner := &fixedMatcher{
+		tuples:  []Tuple{{"e1", int64(1)}},
+		symbols: first.Symbols(),
+		options: options,
+		properties: RelationProperties{
+			Ordering: []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+			Keys:     [][]query.Symbol{{entity}},
+		},
+	}
+	matcher := NewScanSharingMatcher(inner, NewScanRegistry(), nil)
+
+	miss, err := matcher.Match(query.PatternQuery(first), nil)
+	require.NoError(t, err)
+	hit, err := matcher.Match(query.PatternQuery(second), nil)
+	require.NoError(t, err)
+
+	require.Equal(t, options, miss.Options())
+	require.Equal(t, options, hit.Options())
+	require.Equal(t, inner.properties, miss.Properties())
+	require.Equal(t, RelationProperties{
+		Ordering: []query.OrderByClause{{Variable: renamedEntity, Direction: query.OrderAsc}},
+		Keys:     [][]query.Symbol{{renamedEntity}},
+	}, hit.Properties())
 }

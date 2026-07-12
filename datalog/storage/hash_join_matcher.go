@@ -549,7 +549,10 @@ func (p bindingMatchPlan) matches(
 	for i, slot := range p.slots {
 		if slot.hasConstant {
 			values[i] = slot.constant
-		} else if slot.bindingIndex >= 0 && slot.bindingIndex < len(bindingTuple) {
+		} else if slot.bindingIndex >= 0 {
+			if slot.bindingIndex >= len(bindingTuple) {
+				return false
+			}
 			values[i] = bindingTuple[slot.bindingIndex]
 		}
 	}

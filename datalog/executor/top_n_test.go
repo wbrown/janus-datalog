@@ -1,6 +1,9 @@
 package executor
 
 import (
+	"errors"
+	"fmt"
+	"math/rand"
 	"strconv"
 	"testing"
 
@@ -122,6 +125,110 @@ func TestTopNRelationPropagatesDeferredIteratorError(t *testing.T) {
 		1,
 	)
 	require.ErrorIs(t, driveErr(result), errInjectedIterator)
+}
+
+func TestTopNRelationRandomizedDifferential(t *testing.T) {
+	random := rand.New(rand.NewSource(0x70f))
+	score := datalog.NewSymbol("?score")
+	name := datalog.NewSymbol("?name")
+	symbols := []query.Symbol{score, name}
+	for caseIndex := 0; caseIndex < 500; caseIndex++ {
+		count := random.Intn(40)
+		tuples := make([]Tuple, count)
+		for i := range tuples {
+			tuples[i] = Tuple{
+				int64(random.Intn(12) - 6),
+				fmt.Sprintf("case-%03d-row-%03d", caseIndex, i),
+			}
+		}
+		orderBy := []query.OrderByClause{
+			{Variable: score, Direction: query.OrderAsc},
+			{Variable: name, Direction: query.OrderAsc},
+		}
+		if random.Intn(2) == 0 {
+			orderBy[0].Direction = query.OrderDesc
+		}
+		if random.Intn(2) == 0 {
+			orderBy[1].Direction = query.OrderDesc
+		}
+		limit := random.Intn(count + 3)
+		expected, err := collectTypedTuples(NewLimitRelation(
+			SortRelation(NewMaterializedRelationNoDedupe(symbols, tuples), orderBy),
+			limit,
+		))
+		require.NoError(t, err)
+		actual, err := collectTypedTuples(TopNRelation(
+			NewMaterializedRelationNoDedupe(symbols, tuples),
+			orderBy,
+			limit,
+		))
+		require.NoError(t, err)
+		require.True(t, tupleSequencesEqualPairwise(expected, actual),
+			"case %d limit %d: expected %v, got %v", caseIndex, limit, expected, actual)
+	}
+}
+
+func TestTopNRelationCompleteTiesRemainValid(t *testing.T) {
+	score := datalog.NewSymbol("?score")
+	payload := datalog.NewSymbol("?payload")
+	var tuples []Tuple
+	for i := 0; i < 20; i++ {
+		tuples = append(tuples, Tuple{int64(1), fmt.Sprintf("payload-%d", i)})
+	}
+	result := TopNRelation(
+		NewMaterializedRelationNoDedupe([]query.Symbol{score, payload}, tuples),
+		[]query.OrderByClause{{Variable: score, Direction: query.OrderAsc}},
+		5,
+	)
+	rows, err := collectTypedTuples(result)
+	require.NoError(t, err)
+	require.Len(t, rows, 5)
+	for _, row := range rows {
+		require.Equal(t, int64(1), row[0])
+	}
+}
+
+func TestTopNRelationZeroAndMalformedOrderDoNotOpenSource(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	source := &iteratorCountingRelation{
+		Relation: newFailingRelation(0, Tuple{int64(1)}),
+	}
+	zero := TopNRelation(
+		source,
+		[]query.OrderByClause{{Variable: x, Direction: query.OrderAsc}},
+		0,
+	)
+	rows, err := collectTypedTuples(zero)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	require.Zero(t, source.iteratorCalls)
+
+	malformed := TopNRelation(
+		source,
+		[]query.OrderByClause{{Variable: datalog.NewSymbol("?missing"), Direction: query.OrderAsc}},
+		1,
+	)
+	require.Error(t, driveErr(malformed))
+	require.Zero(t, source.iteratorCalls)
+}
+
+func TestTopNRelationPropagatesCloseError(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	closeErr := errors.New("top-n close failure")
+	source := failingRelation{
+		Relation: NewMaterializedRelation(
+			[]query.Symbol{x},
+			[]Tuple{{int64(2)}, {int64(1)}},
+		),
+		failAfter: 100,
+		closeErr:  closeErr,
+	}
+	result := TopNRelation(
+		source,
+		[]query.OrderByClause{{Variable: x, Direction: query.OrderAsc}},
+		1,
+	)
+	require.ErrorIs(t, driveErr(result), closeErr)
 }
 
 func TestOrderedLimitWithNonProjectedKeyRetainsFullSortSemantics(t *testing.T) {

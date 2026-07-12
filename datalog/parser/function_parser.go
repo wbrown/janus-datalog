@@ -55,8 +55,8 @@ func parseFunction(fn string, args []query.PatternElement) (query.Function, erro
 
 // parseArithmetic handles arithmetic functions
 func parseArithmetic(fn string, args []query.PatternElement) (query.Function, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("%s requires exactly 2 arguments, got %d", fn, len(args))
+	if len(args) == 0 {
+		return nil, fmt.Errorf("%s requires at least 1 argument, got 0", fn)
 	}
 
 	var op query.ArithmeticOp
@@ -71,11 +71,11 @@ func parseArithmetic(fn string, args []query.PatternElement) (query.Function, er
 		op = query.OpDivide
 	}
 
-	return &query.ArithmeticFunction{
-		Op:    op,
-		Left:  elementToTerm(args[0]),
-		Right: elementToTerm(args[1]),
-	}, nil
+	terms := make([]query.Term, len(args))
+	for i, argument := range args {
+		terms[i] = elementToTerm(argument)
+	}
+	return &query.ArithmeticFunction{Op: op, Args: terms}, nil
 }
 
 // parseComparisonFunction handles comparison operators as functions with bindings

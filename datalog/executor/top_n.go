@@ -11,7 +11,7 @@ import (
 // materializing and sorting the complete relation. It still consumes the full
 // source: unlike index-order pushdown, this operator reduces CPU and retained
 // memory but does not reduce storage scanning.
-func TopNRelation(rel Relation, orderBy []query.OrderByClause, limit int) Relation {
+func TopNRelation(rel Relation, orderBy []query.OrderByClause, limit int) (result Relation) {
 	if len(orderBy) == 0 {
 		return NewLimitRelation(rel, limit)
 	}
@@ -41,6 +41,17 @@ func TopNRelation(rel Relation, orderBy []query.OrderByClause, limit int) Relati
 
 	needsCopy := rel.RequiresCopy()
 	it := rel.Iterator()
+	var iterErr error
+	defer func() {
+		if closeErr := it.Close(); iterErr == nil {
+			iterErr = closeErr
+		}
+		if iterErr != nil && result != nil {
+			if materialized, ok := result.(*MaterializedRelation); ok && materialized.err == nil {
+				materialized.err = iterErr
+			}
+		}
+	}()
 	for it.Next() {
 		tuple := it.Tuple()
 		if selected.Len() < limit {
@@ -61,10 +72,7 @@ func TopNRelation(rel Relation, orderBy []query.OrderByClause, limit int) Relati
 			heap.Fix(selected, 0)
 		}
 	}
-	iterErr := it.Error()
-	if closeErr := it.Close(); iterErr == nil {
-		iterErr = closeErr
-	}
+	iterErr = it.Error()
 
 	sort.Slice(selected.tuples, func(i, j int) bool {
 		return compareTuplesByOrder(selected.tuples[i], selected.tuples[j], orderBy, indices) < 0
@@ -72,8 +80,7 @@ func TopNRelation(rel Relation, orderBy []query.OrderByClause, limit int) Relati
 
 	properties := rel.Properties()
 	properties.Ordering = append([]query.OrderByClause(nil), orderBy...)
-	result := NewMaterializedRelationWithProperties(symbols, selected.tuples, rel.Options(), properties)
-	result.err = iterErr
+	result = NewMaterializedRelationWithProperties(symbols, selected.tuples, rel.Options(), properties)
 	return result
 }
 

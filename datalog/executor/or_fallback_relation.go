@@ -705,7 +705,12 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 		if !ok {
 			continue
 		}
-		value, found := lookupMatcher.LookupAttribute(entity, aKw)
+		value, found, err := lookupMatcher.LookupAttribute(entity, aKw)
+		if err != nil {
+			it.err = err
+			_ = outerIt.Close()
+			return nil
+		}
 		if !found {
 			continue
 		}
@@ -1198,7 +1203,12 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				// hasn't run yet, so fall back to the storage scan path.
 				eaCacheUsed := false
 				if isCacheable && isOrJoin && !isCacheableBranch(branch, false) && it.prefetched {
-					if cb := it.buildBranchFromEACache(branch); cb != nil {
+					cb := it.buildBranchFromEACache(branch)
+					if it.err != nil {
+						it.done = true
+						return false
+					}
+					if cb != nil {
 						if it.branchCache == nil {
 							it.branchCache = make(map[int]*cachedBranch)
 						}

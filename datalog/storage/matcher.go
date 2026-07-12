@@ -711,16 +711,19 @@ func indexName(idx IndexType) string {
 // single value a matched pattern would. Returns false for schemaless,
 // CardinalityMany/Vector, or history-mode matchers (raw multi-version reads).
 func (m *BadgerMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
-	if m.schema == nil || m.isHistoryMode() {
+	if m.schema == nil || m.txID != nil {
 		return false
 	}
 	def := m.schema.GetAttribute(attr)
 	return def != nil && def.Cardinality == schema.CardinalityOne
 }
 
-func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (m *BadgerMatcher) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (value interface{}, found bool, lookupErr error) {
 	if entity == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Convert to storage format
@@ -752,9 +755,9 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 			switch card {
 			case schema.CardinalityOne:
 				if entry.OneValue() != nil {
-					return entry.OneValue(), true
+					return entry.OneValue(), true, nil
 				}
-				return nil, false
+				return nil, false, nil
 			case schema.CardinalityMany:
 				set := entry.ManySet()
 				if len(set) > 0 {
@@ -763,15 +766,15 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 					for _, v := range set {
 						result = append(result, v)
 					}
-					return result, true
+					return result, true, nil
 				}
-				return nil, false
+				return nil, false, nil
 			case schema.CardinalityVector:
 				list := entry.VectorList()
 				if list == nil {
-					return nil, false // Never set
+					return nil, false, nil // Never set
 				}
-				return typedVector(list, valueType), true
+				return typedVector(list, valueType), true, nil
 			}
 		}
 	}
@@ -784,14 +787,18 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 
 		iter, err := m.store.ScanKeysOnly(EATV, start, end)
 		if err != nil {
-			return nil, false
+			return nil, false, err
 		}
-		defer iter.Close()
+		defer func() {
+			if closeErr := iter.Close(); lookupErr == nil {
+				lookupErr = closeErr
+			}
+		}()
 
 		for iter.Next() {
 			datom, err := iter.Datom()
 			if err != nil {
-				return nil, false
+				return nil, false, err
 			}
 
 			// Check transaction filter for as-of queries
@@ -802,25 +809,28 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 			// First entry with valid Tx is the LWW winner. If it is a
 			// Remove tombstone, the attribute does not currently exist.
 			if datom.Op == datalog.OpCRDTRemove {
-				return nil, false
+				return nil, false, nil
 			}
-			return datom.V, true
+			return datom.V, true, nil
 		}
-		return nil, false
+		if err := iter.Error(); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
 	}
 
 	if card == schema.CardinalityVector {
 		// For cardinality-vector, resolve the entire RGA and return as typed slice
 		result, err := m.resolveVector(eBytes[:], aStorage[:])
 		if err != nil {
-			return nil, false
+			return nil, false, err
 		}
 		if len(result.Elements) == 0 && result.Stats.TotalElements == 0 {
 			// Never-set: no datoms ever written for this (E, A)
-			return nil, false
+			return nil, false, nil
 		}
 		// Either has live elements, or was explicitly cleared (tombstones exist)
-		return typedVector(result.Elements, valueType), true
+		return typedVector(result.Elements, valueType), true, nil
 	}
 
 	// For cardinality-many, use AEVT and apply add-wins resolution
@@ -829,9 +839,13 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 
 	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
 	if err != nil {
-		return nil, false
+		return nil, false, err
 	}
-	defer iter.Close()
+	defer func() {
+		if closeErr := iter.Close(); lookupErr == nil {
+			lookupErr = closeErr
+		}
+	}()
 
 	// For cardinality-many, we need add-wins resolution
 	// Track the highest add and remove lamport for each value
@@ -841,7 +855,7 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			return nil, false
+			return nil, false, err
 		}
 
 		// Check transaction filter for as-of queries
@@ -860,6 +874,9 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 			}
 		}
 	}
+	if err := iter.Error(); err != nil {
+		return nil, false, err
+	}
 
 	// Build result: include values where add >= remove (add-wins on tie)
 	var result []interface{}
@@ -871,9 +888,9 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
 	}
 
 	if len(result) > 0 {
-		return result, true
+		return result, true, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // typedVector converts []any to a typed slice when the schema value type is known.

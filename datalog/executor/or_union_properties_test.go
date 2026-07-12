@@ -340,6 +340,57 @@ func TestOrFallbackMaterializationPreservesProperties(t *testing.T) {
 	require.Equal(t, 2, materialized.Size())
 }
 
+func TestNestedOrDefaultAndEmptyOuterSetSemantics(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	value := datalog.NewSymbol("?value")
+	ground := func(v int64) query.Clause {
+		return &query.Expression{Function: query.GroundFunction{Value: v}, Binding: value}
+	}
+	nested := &query.OrDefaultClause{Branches: [][]query.Clause{
+		{ground(1)},
+		{ground(2)},
+	}}
+	queryExecutor := newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{})
+
+	outer := NewMaterializedRelationWithProperties(
+		[]query.Symbol{entity},
+		[]Tuple{{int64(1)}},
+		ExecutorOptions{},
+		RelationProperties{Keys: [][]query.Symbol{{entity}}},
+	)
+	relation := NewOrFallbackRelation(
+		queryExecutor,
+		NewContext(nil),
+		[][]query.Clause{{nested}, {ground(3)}},
+		outer,
+		ExecutorOptions{},
+		true,
+	)
+	rows, err := collectTypedTuples(relation)
+	require.NoError(t, err)
+	require.Equal(t, []Tuple{{int64(1), int64(1)}}, rows)
+	assertRelationPropertiesHold(t, relation, rows, 0)
+
+	emptyOuter := NewMaterializedRelationWithProperties(
+		[]query.Symbol{entity},
+		nil,
+		ExecutorOptions{},
+		RelationProperties{Keys: [][]query.Symbol{{entity}}},
+	)
+	empty := NewOrFallbackRelation(
+		queryExecutor,
+		NewContext(nil),
+		[][]query.Clause{{nested}},
+		emptyOuter,
+		ExecutorOptions{},
+		true,
+	)
+	emptyRows, err := collectTypedTuples(empty)
+	require.NoError(t, err)
+	require.Empty(t, emptyRows)
+	assertRelationPropertiesHold(t, empty, emptyRows, 1)
+}
+
 func TestFilterBranchToOuterTupleComparesVectorValues(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	vector := datalog.NewSymbol("?vector")
@@ -459,7 +510,8 @@ func TestOrPropertyClassifierRandomized(t *testing.T) {
 			shortCircuit,
 		)
 		require.NoError(t, err, "case %d", caseIndex)
-		require.Equal(t, expected, actual, "case %d", caseIndex)
+		require.True(t, tupleSequencesEqualPairwise(expected, actual),
+			"case %d: expected %v, got %v", caseIndex, expected, actual)
 		assertRelationPropertiesHold(t, relation, actual, caseIndex)
 	}
 }
@@ -472,7 +524,6 @@ func evaluateOrReference(
 	outputSymbols []query.Symbol,
 	shortCircuit bool,
 ) ([]Tuple, error) {
-	seen := NewTupleKeyMap()
 	result := make([]Tuple, 0)
 	for _, outerTuple := range outerTuples {
 		input := NewMaterializedRelationNoDedupe(
@@ -503,7 +554,7 @@ func evaluateOrReference(
 					outerTuple,
 					outerSymbols,
 				)
-				if !seen.PutIfAbsent(NewTupleKeyFull(projected), struct{}{}) {
+				if !containsTuplePairwise(result, projected) {
 					result = append(result, projected)
 				}
 			}
@@ -513,6 +564,46 @@ func evaluateOrReference(
 		}
 	}
 	return result, nil
+}
+
+func tupleSequencesEqualPairwise(left, right []Tuple) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if !tuplesEqualPairwise(left[i], right[i], nil) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsTuplePairwise(tuples []Tuple, candidate Tuple) bool {
+	for _, tuple := range tuples {
+		if tuplesEqualPairwise(tuple, candidate, nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func tuplesEqualPairwise(left, right Tuple, indices []int) bool {
+	if len(indices) == 0 {
+		if len(left) != len(right) {
+			return false
+		}
+		indices = make([]int, len(left))
+		for i := range indices {
+			indices[i] = i
+		}
+	}
+	for _, index := range indices {
+		if index >= len(left) || index >= len(right) ||
+			!datalog.ValuesEqual(left[index], right[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 func collectTypedTuples(relation Relation) ([]Tuple, error) {
@@ -545,10 +636,12 @@ func assertRelationPropertiesHold(
 			require.True(t, ok, "case %d: key symbol %s missing", caseIndex, symbol)
 			indices[i] = position
 		}
-		seen := NewTupleKeyMap()
-		for _, tuple := range tuples {
-			existed := seen.PutIfAbsent(NewTupleKey(tuple, indices), struct{}{})
-			require.False(t, existed, "case %d: candidate key %v is not unique", caseIndex, key)
+		for i := range tuples {
+			for j := i + 1; j < len(tuples); j++ {
+				require.False(t, tuplesEqualPairwise(tuples[i], tuples[j], indices),
+					"case %d: candidate key %v is not unique for tuples %v and %v",
+					caseIndex, key, tuples[i], tuples[j])
+			}
 		}
 	}
 	if len(relation.Properties().Ordering) > 0 {

@@ -485,7 +485,7 @@ func TestVectorIndexUsableForTombstone(t *testing.T) {
 	// Verify "archery" is now gone
 	matcher2 := NewBadgerMatcher(db.store)
 	matcher2.SetSchema(s)
-	result, found := matcher2.LookupAttribute(e, a)
+	result, found := requireAttributeLookup(t, matcher2, e, a)
 	require.True(t, found)
 
 	vec := result.([]string)

@@ -21,9 +21,12 @@ func (m *bundleLookupMatcher) Match(*query.Query, Relations) (Relation, error) {
 	return nil, nil
 }
 
-func (m *bundleLookupMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (m *bundleLookupMatcher) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	value, ok := m.values[bundleLookupKey{entity: entity, attr: attr}]
-	return value, ok
+	return value, ok, nil
 }
 
 func (m *bundleLookupMatcher) CanFuseAttributeFetch(datalog.Keyword) bool {

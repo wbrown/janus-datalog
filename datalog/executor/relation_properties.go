@@ -168,6 +168,22 @@ func orProperties(
 	return result, true
 }
 
+func expansionProperties(
+	outer RelationProperties,
+	bindingSymbols []query.Symbol,
+	outputSymbols []query.Symbol,
+) RelationProperties {
+	result, _ := orProperties(
+		outer,
+		bindingSymbols,
+		bindingSymbols,
+		outputSymbols,
+		false,
+		false,
+	)
+	return result
+}
+
 func symbolInSlice(symbols []query.Symbol, candidate query.Symbol) bool {
 	for _, symbol := range symbols {
 		if symbol == candidate {

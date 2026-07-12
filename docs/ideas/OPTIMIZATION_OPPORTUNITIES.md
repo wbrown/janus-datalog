@@ -695,6 +695,53 @@ Relevant code:
 - `datalog/planner/clause_utils.go`
 - `datalog/storage/ready_predicate_scheduling_benchmark_test.go`
 
+## Branch-Wide Correctness Hardening
+
+The optimization branch received an independent test-hardening pass after the
+OR/union property work. The new gates are semantic differentials and relational
+laws, not performance thresholds:
+
+- 2,000 randomized equal-value pairs prove
+  `ValuesEqual(a,b) ⇒ TupleKeyHash(a)==TupleKeyHash(b)`, including signed zero,
+  integer widths, byte slices, vectors, typed slices, times, and identities.
+- 400 generated join cases compare property-specialized execution with the same
+  relations stripped of properties across materialized, streaming, symmetric,
+  composite-key, fanout, projection, and build-side shapes. Candidate keys are
+  validated pairwise without `TupleKeyMap`.
+- The 500-case OR differential now uses a pairwise `ValuesEqual` oracle rather
+  than the production hash map and includes nested fallback and empty outers.
+- Every history ordered-limit shape is compared against full
+  materialize/sort/limit output over randomized limits. Public AsOf snapshots
+  before updates, at updates, and after tombstones prove raw-history early
+  termination is declined.
+- Top-N and predicate scheduling each have 500-case generated checks, plus
+  zero-limit, malformed-key, complete-tie, close-error, and dependency-order
+  contracts.
+- Scan sharing now keys physical `OrderBy`/`Limit` requirements and preserves
+  remapped options, ordering, and candidate keys across cache hits.
+
+The tests exposed and fixed concrete correctness defects:
+
+1. `+0.0` and `-0.0` compared equal but hashed into different buckets.
+2. Expanding expressions retained an outer key after one input became multiple
+   rows.
+3. Semi/anti joins retained reused iterator workspaces without copying.
+4. Streaming and batch aggregation lost iterator/close errors.
+5. NOT/subquery combination extraction accepted successful partial inputs.
+6. AsOf matchers incorrectly advertised latest-value attribute-fetch fusion.
+7. Entity lookup represented storage/decode failures as attribute absence; the
+   original lookup contract now returns errors through executor, query
+   functions, Pull, and reflection writes.
+8. Closed Badger scans panicked instead of returning `ErrDBClosed`.
+9. Scan sharing conflated physically different query fragments and dropped
+   relation properties.
+10. Compiled binding plans treated missing tuple columns as unbound.
+
+The same review corrected Janus arithmetic to accept one or more operands:
+unary subtraction/division and variadic `+`, `-`, `*`, `/` use Clojure
+left-associative semantics. Zero-argument functions remain invalid Janus
+Datalog expressions.
+
 ## Do Not Prioritize Yet
 
 - Recent hash-join inner-loop changes are already measured and effective.

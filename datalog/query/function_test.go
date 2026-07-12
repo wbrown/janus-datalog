@@ -17,9 +17,11 @@ func TestArithmeticFunction(t *testing.T) {
 		{
 			name: "Addition int",
 			fn: ArithmeticFunction{
-				Op:    OpAdd,
-				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
-				Right: ConstantTerm{Value: int64(10)},
+				Op: OpAdd,
+				Args: []Term{
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					ConstantTerm{Value: int64(10)},
+				},
 			},
 			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5)},
 			expected: int64(15),
@@ -27,9 +29,11 @@ func TestArithmeticFunction(t *testing.T) {
 		{
 			name: "Subtraction float",
 			fn: ArithmeticFunction{
-				Op:    OpSubtract,
-				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
-				Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				Op: OpSubtract,
+				Args: []Term{
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				},
 			},
 			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): 10.5, datalog.NewSymbol("?y"): 3.5},
 			expected: 7.0,
@@ -37,9 +41,11 @@ func TestArithmeticFunction(t *testing.T) {
 		{
 			name: "Multiplication mixed",
 			fn: ArithmeticFunction{
-				Op:    OpMultiply,
-				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
-				Right: ConstantTerm{Value: 2.5},
+				Op: OpMultiply,
+				Args: []Term{
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					ConstantTerm{Value: 2.5},
+				},
 			},
 			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(4)},
 			expected: 10.0,
@@ -47,9 +53,11 @@ func TestArithmeticFunction(t *testing.T) {
 		{
 			name: "Division",
 			fn: ArithmeticFunction{
-				Op:    OpDivide,
-				Left:  ConstantTerm{Value: int64(10)},
-				Right: VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				Op: OpDivide,
+				Args: []Term{
+					ConstantTerm{Value: int64(10)},
+					VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				},
 			},
 			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(2)},
 			expected: 5.0,
@@ -67,6 +75,77 @@ func TestArithmeticFunction(t *testing.T) {
 					tt.expected, tt.expected, result, result)
 			}
 		})
+	}
+}
+
+func TestArithmeticFunctionsClojureArities(t *testing.T) {
+	testCases := []struct {
+		name string
+		fn   ArithmeticFunction
+		want interface{}
+	}{
+		{
+			name: "variadic addition",
+			fn: ArithmeticFunction{Op: OpAdd, Args: []Term{
+				ConstantTerm{Value: int64(1)},
+				ConstantTerm{Value: int64(2)},
+				ConstantTerm{Value: int64(3)},
+			}},
+			want: int64(6),
+		},
+		{
+			name: "unary subtraction",
+			fn: ArithmeticFunction{Op: OpSubtract, Args: []Term{
+				ConstantTerm{Value: int64(5)},
+			}},
+			want: int64(-5),
+		},
+		{
+			name: "variadic subtraction",
+			fn: ArithmeticFunction{Op: OpSubtract, Args: []Term{
+				ConstantTerm{Value: int64(10)},
+				ConstantTerm{Value: int64(3)},
+				ConstantTerm{Value: int64(2)},
+			}},
+			want: int64(5),
+		},
+		{
+			name: "unary division",
+			fn: ArithmeticFunction{Op: OpDivide, Args: []Term{
+				ConstantTerm{Value: int64(4)},
+			}},
+			want: float64(0.25),
+		},
+		{
+			name: "variadic division",
+			fn: ArithmeticFunction{Op: OpDivide, Args: []Term{
+				ConstantTerm{Value: int64(24)},
+				ConstantTerm{Value: int64(3)},
+				ConstantTerm{Value: int64(2)},
+			}},
+			want: float64(4),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := testCase.fn.Eval(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != testCase.want {
+				t.Fatalf("got %v (%T), want %v (%T)", got, got, testCase.want, testCase.want)
+			}
+		})
+	}
+}
+
+func TestArithmeticFunctionsRejectInvalidZeroArity(t *testing.T) {
+	for _, operator := range []ArithmeticOp{OpAdd, OpSubtract, OpMultiply, OpDivide} {
+		_, err := (ArithmeticFunction{Op: operator}).Eval(nil)
+		if err == nil {
+			t.Fatalf("%s must reject zero arguments", operator)
+		}
 	}
 }
 

@@ -20,9 +20,8 @@ func (e *Expression) toClause() query.Clause {
 
 // ArithBuilder builds an arithmetic expression.
 type ArithBuilder struct {
-	op    query.ArithmeticOp
-	left  interface{}
-	right interface{}
+	op   query.ArithmeticOp
+	args []interface{}
 }
 
 // Add creates an addition expression.
@@ -32,35 +31,38 @@ type ArithBuilder struct {
 //
 //	total := qb.NewVar("total")
 //	qb.Add(price, tax).As(total)  // [(+ ?price ?tax) ?total]
-func Add(left, right interface{}) *ArithBuilder {
-	return &ArithBuilder{op: query.OpAdd, left: left, right: right}
+func Add(first interface{}, rest ...interface{}) *ArithBuilder {
+	return &ArithBuilder{op: query.OpAdd, args: append([]interface{}{first}, rest...)}
 }
 
 // Sub creates a subtraction expression.
 // Call .As(resultVar) to bind the result.
-func Sub(left, right interface{}) *ArithBuilder {
-	return &ArithBuilder{op: query.OpSubtract, left: left, right: right}
+func Sub(first interface{}, rest ...interface{}) *ArithBuilder {
+	return &ArithBuilder{op: query.OpSubtract, args: append([]interface{}{first}, rest...)}
 }
 
 // Mul creates a multiplication expression.
 // Call .As(resultVar) to bind the result.
-func Mul(left, right interface{}) *ArithBuilder {
-	return &ArithBuilder{op: query.OpMultiply, left: left, right: right}
+func Mul(first interface{}, rest ...interface{}) *ArithBuilder {
+	return &ArithBuilder{op: query.OpMultiply, args: append([]interface{}{first}, rest...)}
 }
 
 // Div creates a division expression.
 // Call .As(resultVar) to bind the result.
-func Div(left, right interface{}) *ArithBuilder {
-	return &ArithBuilder{op: query.OpDivide, left: left, right: right}
+func Div(first interface{}, rest ...interface{}) *ArithBuilder {
+	return &ArithBuilder{op: query.OpDivide, args: append([]interface{}{first}, rest...)}
 }
 
 // As binds the arithmetic result to a variable, completing the expression.
 func (a *ArithBuilder) As(result *Var) *Expression {
+	terms := make([]query.Term, len(a.args))
+	for i, argument := range a.args {
+		terms[i] = toTerm(argument)
+	}
 	return &Expression{
 		fn: query.ArithmeticFunction{
-			Op:    a.op,
-			Left:  toTerm(a.left),
-			Right: toTerm(a.right),
+			Op:   a.op,
+			Args: terms,
 		},
 		binding: result,
 	}

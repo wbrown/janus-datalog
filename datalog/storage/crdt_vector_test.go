@@ -43,7 +43,7 @@ func TestVectorBasicAdd(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found, "should find skills")
 
 	vec, ok := result.([]string)
@@ -92,7 +92,7 @@ func TestVectorMultipleTransactions(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 
 	vec := result.([]string)
@@ -128,7 +128,7 @@ func TestVectorEmpty(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	assert.False(t, found, "never-set vector attribute should not be found")
 	assert.Nil(t, result, "never-set vector should return nil")
 }
@@ -161,7 +161,7 @@ func TestVectorWithDifferentTypes(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(game, scores)
+	result, found := requireAttributeLookup(t, matcher, game, scores)
 	require.True(t, found)
 
 	vec := result.([]int64)
@@ -361,7 +361,7 @@ func TestVectorSetReplacesEntireVector(t *testing.T) {
 	// Verify initial state
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3)
@@ -375,7 +375,7 @@ func TestVectorSetReplacesEntireVector(t *testing.T) {
 	// Verify the vector was replaced
 	matcher2 := NewBadgerMatcher(db.store)
 	matcher2.SetSchema(s)
-	result2, found2 := matcher2.LookupAttribute(alice, skills)
+	result2, found2 := requireAttributeLookup(t, matcher2, alice, skills)
 	require.True(t, found2)
 	vec2 := result2.([]string)
 	require.Len(t, vec2, 2, "vector should have 2 elements after Set()")
@@ -417,7 +417,7 @@ func TestVectorSetToEmpty(t *testing.T) {
 	// Verify vector is empty (but still "found" — empty is a value)
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	assert.True(t, found, "vector attribute always exists (empty is a value)")
 	assert.Equal(t, []string{}, result, "cleared vector should return typed empty slice")
 }
@@ -460,7 +460,7 @@ func TestVectorAddNoReadDatabase(t *testing.T) {
 	// Verify all three skills exist (stealth from tx1, archery+lockpicking from tx2)
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3, "should have all 3 skills")
@@ -556,7 +556,7 @@ func TestVectorQueryWithBoundEntity(t *testing.T) {
 	// Check if LookupAttribute still works
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	lookupResult, found := matcher.LookupAttribute(alice, skills)
+	lookupResult, found := requireAttributeLookup(t, matcher, alice, skills)
 	t.Logf("LookupAttribute found=%v, result=%v (type: %T)", found, lookupResult, lookupResult)
 
 	// Query with E bound via join - this binds ?e first, then queries skills
@@ -764,7 +764,7 @@ func TestVectorRemoveMostRecent(t *testing.T) {
 	// Verify initial state: ["stealth", "archery", "stealth"]
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3)
@@ -782,7 +782,7 @@ func TestVectorRemoveMostRecent(t *testing.T) {
 	// The first "stealth" remains, the second (most recent) is removed
 	matcher2 := NewBadgerMatcher(db.store)
 	matcher2.SetSchema(s)
-	result2, found2 := matcher2.LookupAttribute(alice, skills)
+	result2, found2 := requireAttributeLookup(t, matcher2, alice, skills)
 	require.True(t, found2)
 	vec2 := result2.([]string)
 	require.Len(t, vec2, 2, "should have 2 elements after Remove()")
@@ -824,7 +824,7 @@ func TestVectorRemoveNonExistent(t *testing.T) {
 	// Verify vector unchanged: ["stealth", "archery"]
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 2, "vector should be unchanged")
@@ -868,7 +868,7 @@ func TestVectorRemoveAllOccurrences(t *testing.T) {
 	// Verify result: ["archery"]
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 1, "should have 1 element after removing both stealths")
@@ -913,12 +913,12 @@ func TestAddSchemaAwareVector(t *testing.T) {
 	matcher.SetSchema(s)
 
 	// Cardinality-one: single value
-	nameVal, found := matcher.LookupAttribute(alice, name)
+	nameVal, found := requireAttributeLookup(t, matcher, alice, name)
 	require.True(t, found)
 	assert.Equal(t, "Alice", nameVal)
 
 	// Cardinality-many: returns slice of all set members
-	tagVal, found := matcher.LookupAttribute(alice, tags)
+	tagVal, found := requireAttributeLookup(t, matcher, alice, tags)
 	require.True(t, found)
 	tagSlice := tagVal.([]interface{})
 	require.Len(t, tagSlice, 2)
@@ -931,7 +931,7 @@ func TestAddSchemaAwareVector(t *testing.T) {
 	assert.True(t, tagSet["lead"])
 
 	// Cardinality-vector: returns ordered slice
-	skillsVal, found := matcher.LookupAttribute(alice, skills)
+	skillsVal, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := skillsVal.([]string)
 	require.Len(t, vec, 2)
@@ -992,7 +992,7 @@ func TestVectorSetAppend(t *testing.T) {
 	// Verify result
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 4)
@@ -1035,7 +1035,7 @@ func TestVectorSetAppendMultiple(t *testing.T) {
 	// Verify result
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3)
@@ -1079,7 +1079,7 @@ func TestVectorSetChangeEnd(t *testing.T) {
 	// Verify result
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3)
@@ -1123,7 +1123,7 @@ func TestVectorSetChangeMiddle(t *testing.T) {
 	// Verify result
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3)
@@ -1166,7 +1166,7 @@ func TestVectorSetPrepend(t *testing.T) {
 	// Verify result
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3)
@@ -1210,7 +1210,7 @@ func TestVectorSetNoChange(t *testing.T) {
 	// Verify result unchanged
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3)
@@ -1248,7 +1248,7 @@ func TestVectorSetFromEmpty(t *testing.T) {
 	// Verify result
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 3)
@@ -1663,7 +1663,7 @@ func TestVectorSetTruncate(t *testing.T) {
 	// Verify result
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 	require.Len(t, vec, 2)
@@ -1878,7 +1878,7 @@ func TestVectorTypeDouble(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(sensor, readings)
+	result, found := requireAttributeLookup(t, matcher, sensor, readings)
 	require.True(t, found)
 	vec, ok := result.([]float64)
 	require.True(t, ok, "expected []float64, got %T", result)
@@ -1928,7 +1928,7 @@ func TestVectorTypeBoolean(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(cfg, flags)
+	result, found := requireAttributeLookup(t, matcher, cfg, flags)
 	require.True(t, found)
 	vec, ok := result.([]bool)
 	require.True(t, ok, "expected []bool, got %T", result)
@@ -2015,7 +2015,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 
 		matcher := NewBadgerMatcher(db.store)
 		matcher.SetSchema(s)
-		result, found := matcher.LookupAttribute(e, datalog.NewKeyword(":character/skills"))
+		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":character/skills"))
 		require.True(t, found)
 		vec, ok := result.([]string)
 		require.True(t, ok, "expected []string, got %T", result)
@@ -2030,7 +2030,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 
 		matcher := NewBadgerMatcher(db.store)
 		matcher.SetSchema(s)
-		result, found := matcher.LookupAttribute(e, datalog.NewKeyword(":event/scores"))
+		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":event/scores"))
 		require.True(t, found)
 		vec, ok := result.([]int64)
 		require.True(t, ok, "expected []int64, got %T", result)
@@ -2045,7 +2045,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 
 		matcher := NewBadgerMatcher(db.store)
 		matcher.SetSchema(s)
-		result, found := matcher.LookupAttribute(e, datalog.NewKeyword(":sensor/readings"))
+		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":sensor/readings"))
 		require.True(t, found)
 		vec, ok := result.([]float64)
 		require.True(t, ok, "expected []float64, got %T", result)
@@ -2060,7 +2060,7 @@ func TestSetWithTypedSlices(t *testing.T) {
 
 		matcher := NewBadgerMatcher(db.store)
 		matcher.SetSchema(s)
-		result, found := matcher.LookupAttribute(e, datalog.NewKeyword(":person/tags"))
+		result, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":person/tags"))
 		require.True(t, found)
 		// Cardinality-many returns []interface{} (unordered set)
 		vals, ok := result.([]interface{})
@@ -2182,12 +2182,12 @@ func TestVectorClearedVsNeverSet(t *testing.T) {
 	matcher.SetSchema(s)
 
 	// Alice: explicitly cleared — tombstones exist, returns empty typed slice
-	aliceResult, aliceFound := matcher.LookupAttribute(alice, skills)
+	aliceResult, aliceFound := requireAttributeLookup(t, matcher, alice, skills)
 	assert.True(t, aliceFound, "cleared vector should be found (tombstones exist)")
 	assert.Equal(t, []string{}, aliceResult, "cleared vector should return typed empty slice")
 
 	// Bob: never set — no datoms at all
-	bobResult, bobFound := matcher.LookupAttribute(bob, skills)
+	bobResult, bobFound := requireAttributeLookup(t, matcher, bob, skills)
 	assert.False(t, bobFound, "never-set vector should not be found")
 	assert.Nil(t, bobResult, "never-set vector should return nil")
 }

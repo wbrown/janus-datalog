@@ -66,10 +66,18 @@ Basic Datalog queries work as expected:
 **Arithmetic operations:**
 ```clojure
 [(+ ?price ?tax) ?total]
+[(* ?quantity ?price ?multiplier) ?scaled]
+[(- ?balance ?debit ?fee) ?remaining]
+[(- ?delta) ?negated]
+[(/ ?value) ?reciprocal]
 [(- ?end ?start) ?duration]
 [(* ?quantity ?price) ?amount]
 [(/ ?total ?count) ?average]
 ```
+
+Arithmetic accepts one or more operands. Unary subtraction negates, unary
+division computes a reciprocal, and longer forms reduce left-to-right. Janus
+does not accept zero-argument function calls.
 
 **Comparisons (including variadic):**
 ```clojure

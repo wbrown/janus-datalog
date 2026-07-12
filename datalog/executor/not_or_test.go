@@ -694,9 +694,11 @@ func TestOrFallbackWithArithmeticExpression(t *testing.T) {
 					{
 						&query.Expression{
 							Function: &query.ArithmeticFunction{
-								Op:    query.OpAdd,
-								Left:  query.ConstantTerm{Value: int64(1)},
-								Right: query.ConstantTerm{Value: int64(1)},
+								Op: query.OpAdd,
+								Args: []query.Term{
+									query.ConstantTerm{Value: int64(1)},
+									query.ConstantTerm{Value: int64(1)},
+								},
 							},
 							Binding: datalog.NewSymbol("?x"),
 						},

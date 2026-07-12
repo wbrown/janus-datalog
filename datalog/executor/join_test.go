@@ -2,6 +2,8 @@ package executor
 
 import (
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -388,4 +390,127 @@ func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
 	require.Len(t, events, 1)
 	require.Equal(t, -1, events[0].Data["left_size"])
 	require.Equal(t, 1, events[0].Data["right_size"])
+}
+
+func TestStreamingJoinProbeAnnotationLifecycle(t *testing.T) {
+	join := datalog.NewSymbol("?join")
+	leftValue := datalog.NewSymbol("?left")
+	rightValue := datalog.NewSymbol("?right")
+	open := func(collector *annotations.Collector, probe Relation) Relation {
+		left := NewMaterializedRelation(
+			[]query.Symbol{join, leftValue},
+			[]Tuple{{int64(1), "left"}},
+		)
+		return HashJoinWithOptions(left, probe, []query.Symbol{join}, ExecutorOptions{
+			Collector:            collector,
+			EnableStreamingJoins: true,
+		})
+	}
+	probe := func() Relation {
+		return NewMaterializedRelation(
+			[]query.Symbol{join, rightValue},
+			[]Tuple{{int64(1), "a"}, {int64(1), "b"}, {int64(1), "c"}},
+		)
+	}
+
+	t.Run("partial close emits exactly once", func(t *testing.T) {
+		var events []annotations.Event
+		collector := annotations.NewCollector(func(event annotations.Event) {
+			if event.Name == annotations.JoinProbe {
+				events = append(events, event)
+			}
+		})
+		it := open(collector, probe()).Iterator()
+		require.True(t, it.Next())
+		require.NoError(t, it.Close())
+		require.NoError(t, it.Close())
+		require.Len(t, events, 1)
+		require.Equal(t, "streaming", events[0].Data["mode"])
+		require.IsType(t, 0, events[0].Data["tuple_count"])
+		require.IsType(t, 0, events[0].Data["matched_count"])
+		require.IsType(t, 0, events[0].Data["result_count"])
+		require.Equal(t, 1, events[0].Data["result_count"])
+	})
+
+	t.Run("exhaustion then close emits exactly once", func(t *testing.T) {
+		var events []annotations.Event
+		collector := annotations.NewCollector(func(event annotations.Event) {
+			if event.Name == annotations.JoinProbe {
+				events = append(events, event)
+			}
+		})
+		it := open(collector, probe()).Iterator()
+		for it.Next() {
+		}
+		require.NoError(t, it.Error())
+		require.NoError(t, it.Close())
+		require.Len(t, events, 1)
+		require.Equal(t, 3, events[0].Data["result_count"])
+	})
+
+	t.Run("probe failure is emitted once", func(t *testing.T) {
+		var events []annotations.Event
+		collector := annotations.NewCollector(func(event annotations.Event) {
+			if event.Name == annotations.JoinProbe {
+				events = append(events, event)
+			}
+		})
+		failingProbe := failingRelation{
+			Relation:  probe(),
+			failAfter: 1,
+		}
+		it := open(collector, failingProbe).Iterator()
+		for it.Next() {
+		}
+		require.ErrorIs(t, it.Error(), errInjectedIterator)
+		require.NoError(t, it.Close())
+		require.Len(t, events, 1)
+		require.Equal(t, 1, events[0].Data["result_count"])
+	})
+}
+
+func TestConcurrentStructuredJoinAnnotations(t *testing.T) {
+	var eventCount atomic.Int64
+	var fieldMu sync.Mutex
+	var malformed bool
+	collector := annotations.NewCollector(func(event annotations.Event) {
+		if event.Name != annotations.JoinStrategy &&
+			event.Name != annotations.JoinBuild &&
+			event.Name != annotations.JoinProbe {
+			return
+		}
+		eventCount.Add(1)
+		fieldMu.Lock()
+		defer fieldMu.Unlock()
+		if event.Data == nil {
+			malformed = true
+		}
+	})
+	join := datalog.NewSymbol("?join")
+
+	var wait sync.WaitGroup
+	for worker := 0; worker < 20; worker++ {
+		wait.Add(1)
+		go func(worker int) {
+			defer wait.Done()
+			left := NewMaterializedRelation(
+				[]query.Symbol{join},
+				[]Tuple{{int64(worker)}},
+			)
+			right := NewMaterializedRelation(
+				[]query.Symbol{join},
+				[]Tuple{{int64(worker)}},
+			)
+			result := HashJoinWithOptions(left, right, []query.Symbol{join}, ExecutorOptions{
+				Collector: collector,
+			})
+			_, err := collectTypedTuples(result)
+			require.NoError(t, err)
+		}(worker)
+	}
+	wait.Wait()
+	require.Equal(t, int64(60), eventCount.Load())
+	fieldMu.Lock()
+	require.False(t, malformed)
+	fieldMu.Unlock()
 }

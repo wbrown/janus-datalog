@@ -256,17 +256,19 @@ func TestAggregations(t *testing.T) {
 func TestArithmeticExpressions(t *testing.T) {
 	a := NewVar("a")
 	b := NewVar("b")
+	c := NewVar("c")
 	result := NewVar("result")
 
 	tests := []struct {
-		name string
-		expr *Expression
-		op   query.ArithmeticOp
+		name  string
+		expr  *Expression
+		op    query.ArithmeticOp
+		arity int
 	}{
-		{"Add", Add(a, b).As(result), query.OpAdd},
-		{"Sub", Sub(a, b).As(result), query.OpSubtract},
-		{"Mul", Mul(a, b).As(result), query.OpMultiply},
-		{"Div", Div(a, b).As(result), query.OpDivide},
+		{"Add", Add(a, b, c).As(result), query.OpAdd, 3},
+		{"Sub", Sub(a).As(result), query.OpSubtract, 1},
+		{"Mul", Mul(a, b, c).As(result), query.OpMultiply, 3},
+		{"Div", Div(a, b, c).As(result), query.OpDivide, 3},
 	}
 
 	for _, tt := range tests {
@@ -282,6 +284,9 @@ func TestArithmeticExpressions(t *testing.T) {
 			}
 			if arith.Op != tt.op {
 				t.Errorf("Expected %v, got %v", tt.op, arith.Op)
+			}
+			if len(arith.Args) != tt.arity {
+				t.Errorf("Expected arity %d, got %d", tt.arity, len(arith.Args))
 			}
 		})
 	}

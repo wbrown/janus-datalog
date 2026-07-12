@@ -50,6 +50,11 @@ func fusionSchema() *schema.Schema {
 		ValueType:   schema.TypeString,
 		Cardinality: schema.CardinalityMany,
 	})
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":place/steps"),
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityVector,
+	})
 	return s
 }
 
@@ -290,6 +295,8 @@ func TestFusionGate_ModeAndCardinality(t *testing.T) {
 		"latest-mode CardinalityOne is fusable")
 	assert.False(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/tags")),
 		"CardinalityMany is not fusable")
+	assert.False(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/steps")),
+		"CardinalityVector is not fusable")
 	assert.False(t, latest.CanFuseAttributeFetch(datalog.NewKeyword(":place/unknown")),
 		"schemaless attribute is not fusable")
 
@@ -297,4 +304,85 @@ func TestFusionGate_ModeAndCardinality(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, hist.CanFuseAttributeFetch(datalog.NewKeyword(":place/code")),
 		"history mode is never fusable (raw multi-version reads)")
+
+	asOf, ok := db.AsOf(datalog.ElementID{Lamport: 1, ReplicaID: 1}).Matcher().(*BadgerMatcher)
+	require.True(t, ok)
+	assert.False(t, asOf.CanFuseAttributeFetch(datalog.NewKeyword(":place/code")),
+		"as-of mode must use snapshot CRDT resolution, not latest-value fusion")
+}
+
+func TestFusionDifferentialAsOfUpdatesAndTombstones(t *testing.T) {
+	typ := datalog.NewKeyword(":place/type")
+	code := datalog.NewKeyword(":place/code")
+	entity := datalog.NewIdentity("asof-fusion")
+
+	type fixture struct {
+		db       *Database
+		firstTx  datalog.ElementID
+		secondTx datalog.ElementID
+		removeTx datalog.ElementID
+	}
+	open := func(fusion bool) fixture {
+		db := openFusionDB(t, fusion, nil)
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(entity, typ, "room"))
+		require.NoError(t, tx.Set(entity, code, "R1"))
+		first, err := tx.Commit()
+		require.NoError(t, err)
+
+		tx = db.NewTransaction()
+		require.NoError(t, tx.Set(entity, code, "R2"))
+		second, err := tx.Commit()
+		require.NoError(t, err)
+
+		tx = db.NewTransaction()
+		require.NoError(t, tx.Remove(entity, code, "R2"))
+		removed, err := tx.Commit()
+		require.NoError(t, err)
+		return fixture{db: db, firstTx: first, secondTx: second, removeTx: removed}
+	}
+
+	off := open(false)
+	on := open(true)
+	for _, snapshot := range []struct {
+		name string
+		off  datalog.ElementID
+		on   datalog.ElementID
+	}{
+		{name: "before update", off: off.firstTx, on: on.firstTx},
+		{name: "at update", off: off.secondTx, on: on.secondTx},
+		{name: "after tombstone", off: off.removeTx, on: on.removeTx},
+	} {
+		t.Run(snapshot.name, func(t *testing.T) {
+			want := fusionRows(t, off.db.AsOf(snapshot.off), fusionCodeQuery)
+			got := fusionRows(t, on.db.AsOf(snapshot.on), fusionCodeQuery)
+			require.Equal(t, want, got)
+		})
+	}
+}
+
+func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
+	entity := datalog.NewIdentity("fusion-lookup-error")
+	code := datalog.NewKeyword(":place/code")
+	queryText := `[:find ?code :in $ ?entity :where [?entity :place/code ?code]]`
+
+	for _, fusion := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fusion_%t", fusion), func(t *testing.T) {
+			db := openFusionDB(t, fusion, nil)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(entity, code, "R1"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+
+			// Force the bound lookup to reach storage rather than the write-
+			// warmed cache, then close the real Badger store. Both paths must
+			// return ErrDBClosed rather than panic or report attribute absence.
+			db.cache = NewCache()
+			require.NoError(t, db.store.Close())
+
+			_, err = db.Query(queryText, entity)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "DB Closed")
+		})
+	}
 }

@@ -238,6 +238,9 @@ func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 
 // Scan returns an iterator for a range of keys
 func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
+	if s.db.IsClosed() {
+		return nil, badger.ErrDBClosed
+	}
 	txn := s.db.NewTransaction(false)
 
 	opts := badger.DefaultIteratorOptions

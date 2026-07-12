@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"time"
 	"unsafe"
@@ -139,8 +140,12 @@ func hashValue(v interface{}) uint64 {
 		return val
 
 	case float64:
-		// Use unsafe to get float bits
-		return *(*uint64)(unsafe.Pointer(&val))
+		// Go equality treats +0 and -0 as equal, so they must share a hash
+		// bucket. Other floats hash by their canonical IEEE representation.
+		if val == 0 {
+			return 0
+		}
+		return math.Float64bits(val)
 
 	case bool:
 		if val {

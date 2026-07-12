@@ -75,16 +75,19 @@ func (sr *SourceRouter) MatchWithConstraints(q *query.Query, bindings Relations,
 // LookupAttribute implements EntityLookupMatcher. Delegates to the default
 // source ($) for entity attribute lookups used by database functions
 // (get-else, missing?, get-some).
-func (sr *SourceRouter) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (sr *SourceRouter) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	source, ok := sr.sources[datalog.SymDollar]
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 
 	if elm, ok := source.(EntityLookupMatcher); ok {
 		return elm.LookupAttribute(entity, attr)
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // CanFuseAttributeFetch implements AttributeFetchFusable by delegating to the

@@ -43,12 +43,13 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 		return m.inner.Match(q, bindings)
 	}
 
-	fp := ScanFingerprint(pattern)
+	fp := ScanQueryFingerprint(q, pattern)
 
 	// Check registry for an existing shared scan
 	if shared := m.registry.Get(fp); shared != nil {
 		// Build remapped symbols for this caller's variable names
 		remapped := remapSymbols(shared.Symbols, pattern)
+		properties := remapRelationProperties(shared.Properties, shared.Symbols, remapped)
 		if m.handler != nil {
 			m.handler(annotations.Event{
 				Name: "scan-sharing/cache-hit",
@@ -58,7 +59,12 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 				},
 			})
 		}
-		return NewLazySeqRelation(shared.Seq, remapped), nil
+		return &LazySeqRelation{
+			seq:        shared.Seq,
+			symbols:    remapped,
+			options:    shared.Options,
+			properties: properties,
+		}, nil
 	}
 
 	// First scan — delegate to inner matcher
@@ -73,7 +79,12 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 	seq := NewTupleSeq(it, needsCopy)
 	symbols := rel.Symbols()
 
-	m.registry.Put(fp, seq, symbols)
+	m.registry.Put(fp, &SharedScan{
+		Seq:        seq,
+		Symbols:    symbols,
+		Options:    rel.Options(),
+		Properties: rel.Properties(),
+	})
 
 	if m.handler != nil {
 		m.handler(annotations.Event{
@@ -85,7 +96,50 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 		})
 	}
 
-	return NewLazySeqRelation(seq, symbols), nil
+	return &LazySeqRelation{
+		seq:        seq,
+		symbols:    symbols,
+		options:    rel.Options(),
+		properties: rel.Properties(),
+	}, nil
+}
+
+func remapRelationProperties(
+	properties RelationProperties,
+	originalSymbols []query.Symbol,
+	remappedSymbols []query.Symbol,
+) RelationProperties {
+	renames := make(map[query.Symbol]query.Symbol, len(originalSymbols))
+	for i, original := range originalSymbols {
+		if i < len(remappedSymbols) {
+			renames[original] = remappedSymbols[i]
+		}
+	}
+	result := RelationProperties{}
+	for _, clause := range properties.Ordering {
+		renamed, ok := renames[clause.Variable]
+		if !ok {
+			break
+		}
+		clause.Variable = renamed
+		result.Ordering = append(result.Ordering, clause)
+	}
+	for _, key := range properties.Keys {
+		renamedKey := make([]query.Symbol, len(key))
+		valid := true
+		for i, symbol := range key {
+			renamed, ok := renames[symbol]
+			if !ok {
+				valid = false
+				break
+			}
+			renamedKey[i] = renamed
+		}
+		if valid {
+			result.Keys = append(result.Keys, renamedKey)
+		}
+	}
+	return result
 }
 
 // MatchWithConstraints implements PredicateAwareMatcher if the inner matcher
@@ -106,11 +160,14 @@ func (m *ScanSharingMatcher) MatchWithConstraints(
 }
 
 // LookupAttribute forwards to inner matcher if it supports entity lookup.
-func (m *ScanSharingMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (m *ScanSharingMatcher) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	if elm, ok := m.inner.(EntityLookupMatcher); ok {
 		return elm.LookupAttribute(entity, attr)
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // CanFuseAttributeFetch forwards to inner matcher if it supports fusion, so

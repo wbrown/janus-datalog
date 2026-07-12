@@ -41,7 +41,7 @@ func TestAsOfVectorResolution(t *testing.T) {
 
 	// Verify current content is the original
 	matcher1 := db.Matcher().(*BadgerMatcher)
-	val1, found := matcher1.LookupAttribute(entity, contentAttr)
+	val1, found := requireAttributeLookup(t, matcher1, entity, contentAttr)
 	require.True(t, found)
 	require.Equal(t, []string{"Original line one.", "Original line two."}, val1)
 
@@ -53,7 +53,7 @@ func TestAsOfVectorResolution(t *testing.T) {
 
 	// Verify current content is updated
 	matcher2 := db.Matcher().(*BadgerMatcher)
-	val2, found := matcher2.LookupAttribute(entity, contentAttr)
+	val2, found := requireAttributeLookup(t, matcher2, entity, contentAttr)
 	require.True(t, found)
 	require.Len(t, val2, 1, "current content should have 1 element")
 	assert.Equal(t, "Updated content after re-run.", val2.([]string)[0],
@@ -61,7 +61,7 @@ func TestAsOfVectorResolution(t *testing.T) {
 
 	// AsOf tx1: should see the ORIGINAL content, not the update
 	asOfMatcher := db.AsOf(tx1ID).Matcher().(*BadgerMatcher)
-	asOfVal, found := asOfMatcher.LookupAttribute(entity, contentAttr)
+	asOfVal, found := requireAttributeLookup(t, asOfMatcher, entity, contentAttr)
 	require.True(t, found, "entity should have content as-of tx1")
 	assert.Equal(t, []string{"Original line one.", "Original line two."}, asOfVal,
 		"as-of query should return historical vector content, not current")
@@ -104,20 +104,20 @@ func TestAsOfVectorResolution_AddOnly(t *testing.T) {
 
 	// Current: all four entries
 	matcher := db.Matcher().(*BadgerMatcher)
-	val, found := matcher.LookupAttribute(entity, logAttr)
+	val, found := requireAttributeLookup(t, matcher, entity, logAttr)
 	require.True(t, found)
 	assert.Equal(t, []string{"Entry A", "Entry B", "Entry C", "Entry D"}, val)
 
 	// AsOf tx1: only the first two entries
 	asOf1 := db.AsOf(tx1ID).Matcher().(*BadgerMatcher)
-	val1, found := asOf1.LookupAttribute(entity, logAttr)
+	val1, found := requireAttributeLookup(t, asOf1, entity, logAttr)
 	require.True(t, found)
 	assert.Equal(t, []string{"Entry A", "Entry B"}, val1,
 		"as-of tx1 should show only entries from tx1")
 
 	// AsOf tx2: first three entries
 	asOf2 := db.AsOf(tx2ID).Matcher().(*BadgerMatcher)
-	val2, found := asOf2.LookupAttribute(entity, logAttr)
+	val2, found := requireAttributeLookup(t, asOf2, entity, logAttr)
 	require.True(t, found)
 	assert.Equal(t, []string{"Entry A", "Entry B", "Entry C"}, val2,
 		"as-of tx2 should show entries from tx1 and tx2")

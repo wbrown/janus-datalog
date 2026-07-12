@@ -169,7 +169,7 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 	// Schema-aware truth.
 	schemaDB, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, Schema: vectorSchema(), ReplicaID: 1})
 	require.NoError(t, err)
-	sval, sfound := schemaDB.Matcher().(*BadgerMatcher).LookupAttribute(e, attr)
+	sval, sfound := requireAttributeLookup(t, schemaDB.Matcher().(*BadgerMatcher), e, attr)
 	require.True(t, sfound)
 	require.Equal(t, want, asStringList(t, sval), "schema-aware LookupAttribute must return full vector")
 	require.NoError(t, schemaDB.Close())
@@ -179,7 +179,7 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 	db, err := NewDatabase(dir)
 	require.NoError(t, err)
 	defer db.Close()
-	val, found := db.Matcher().(*BadgerMatcher).LookupAttribute(e, attr)
+	val, found := requireAttributeLookup(t, db.Matcher().(*BadgerMatcher), e, attr)
 	require.True(t, found)
 	require.Equal(t, want, asStringList(t, val),
 		"schemaless LookupAttribute must reconstruct the vector via the open-time schema, not collapse to the last element")

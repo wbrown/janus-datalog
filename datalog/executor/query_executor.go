@@ -512,6 +512,7 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	}
 	inputCounts := make([]int, len(fetches))
 	outputCounts := make([]int, len(fetches))
+	var lookupErr error
 
 	it := input.Iterator()
 	for it.Next() {
@@ -531,7 +532,12 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 		complete := true
 		for i, fetch := range fetches {
 			inputCounts[i]++
-			value, found := lookupMatcher.LookupAttribute(entity, fetch.attr)
+			value, found, err := lookupMatcher.LookupAttribute(entity, fetch.attr)
+			lookupErr = err
+			if lookupErr != nil {
+				complete = false
+				break
+			}
 			if !found {
 				complete = false
 				break
@@ -542,10 +548,19 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 		if complete {
 			output = append(output, expanded)
 		}
+		if lookupErr != nil {
+			break
+		}
 	}
-	iterErr := it.Error()
+	iterErr := lookupErr
+	if iterErr == nil {
+		iterErr = it.Error()
+	}
 	if closeErr := it.Close(); iterErr == nil {
 		iterErr = closeErr
+	}
+	if iterErr != nil {
+		return nil, 0, iterErr
 	}
 	if iterErr != nil {
 		return nil, 0, iterErr
@@ -864,7 +879,10 @@ type entityLookupAdapter struct {
 	matcher EntityLookupMatcher
 }
 
-func (a entityLookupAdapter) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (a entityLookupAdapter) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	return a.matcher.LookupAttribute(entity, attr)
 }
 
@@ -1825,7 +1843,10 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	}
 
 	// Get unique combinations of join variables from input
-	uniqueCombos := getUniqueCombinations(input, actualJoinVars)
+	uniqueCombos, err := getUniqueCombinations(input, actualJoinVars)
+	if err != nil {
+		return nil, fmt.Errorf("NOT input combinations failed: %w", err)
+	}
 
 	// Track which key combinations matched the inner clauses
 	matchedKeys := NewTupleKeyMap()
@@ -1903,7 +1924,10 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 	}
 
 	// Get unique combinations of join variables
-	uniqueCombos := getUniqueCombinations(input, clause.JoinVars)
+	uniqueCombos, err := getUniqueCombinations(input, clause.JoinVars)
+	if err != nil {
+		return nil, fmt.Errorf("NOT-JOIN input combinations failed: %w", err)
+	}
 
 	// Track matched keys
 	matchedKeys := NewTupleKeyMap()

@@ -10,7 +10,10 @@ import (
 
 // getUniqueInputCombinations extracts unique combinations of input values.
 // This is a pure function that performs data transformation.
-func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) ([]map[query.Symbol]interface{}, error) {
+func getUniqueInputCombinations(
+	rel Relation,
+	inputSymbols []query.Symbol,
+) (combinations []map[query.Symbol]interface{}, resultErr error) {
 	// Find symbol indices for input symbols
 	indices := make([]int, len(inputSymbols))
 	for i, sym := range inputSymbols {
@@ -32,10 +35,12 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) ([]ma
 	// Source markers are constant execution context, identical on every tuple, so
 	// they are excluded from the dedup key.
 	seen := NewTupleKeyMap()
-	var combinations []map[query.Symbol]interface{}
-
 	it := rel.Iterator()
-	defer it.Close()
+	defer func() {
+		if closeErr := it.Close(); resultErr == nil {
+			resultErr = closeErr
+		}
+	}()
 
 	for it.Next() {
 		tuple := it.Tuple()
@@ -63,7 +68,8 @@ func getUniqueInputCombinations(rel Relation, inputSymbols []query.Symbol) ([]ma
 		}
 	}
 
-	return combinations, nil
+	resultErr = it.Error()
+	return combinations, resultErr
 }
 
 func createInputRelationsFromPatternWithOptions(subq *query.SubqueryPattern, outerValues map[query.Symbol]interface{}, opts ExecutorOptions) ([]Relation, error) {

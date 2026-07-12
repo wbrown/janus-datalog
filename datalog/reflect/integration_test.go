@@ -900,7 +900,10 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 
 	// Lookup name
 	nameAttr := datalog.NewKeyword(":person/name")
-	val, found := matcher.LookupAttribute(id, nameAttr)
+	val, found, err := matcher.LookupAttribute(id, nameAttr)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !found {
 		t.Errorf("LookupAttribute failed to find :person/name for entity %s", id.L85())
 	} else {
@@ -912,7 +915,10 @@ func TestLookupAttributeWithStructAPI(t *testing.T) {
 
 	// Lookup age
 	ageAttr := datalog.NewKeyword(":person/age")
-	val, found = matcher.LookupAttribute(id, ageAttr)
+	val, found, err = matcher.LookupAttribute(id, ageAttr)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !found {
 		t.Errorf("LookupAttribute failed to find :person/age for entity %s", id.L85())
 	} else {

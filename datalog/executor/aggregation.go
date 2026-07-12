@@ -152,7 +152,7 @@ func shouldUseStreaming(rel Relation) bool {
 }
 
 // executeSingleAggregation computes aggregates over the entire relation
-func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Relation {
+func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (result Relation) {
 	// Collect all values for each aggregate
 	aggValues := make([][]interface{}, len(aggregates))
 	for i := range aggValues {
@@ -160,7 +160,17 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 	}
 
 	it := rel.Iterator()
-	defer it.Close()
+	var aggErr error
+	defer func() {
+		if closeErr := it.Close(); aggErr == nil {
+			aggErr = closeErr
+		}
+		if aggErr != nil && result != nil {
+			if materialized, ok := result.(*MaterializedRelation); ok && materialized.err == nil {
+				materialized.err = aggErr
+			}
+		}
+	}()
 
 	symbols := rel.Symbols()
 
@@ -209,7 +219,7 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 
 	// Capture any deferred error from the input scan: a failed scan must not be
 	// silently aggregated into an empty/zero result.
-	aggErr := it.Error()
+	aggErr = it.Error()
 
 	// Compute aggregates
 	results := make(Tuple, len(aggregates))
@@ -238,13 +248,16 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) Re
 		return empty
 	}
 
-	result := NewMaterializedRelationWithOptions(resultColumns, []Tuple{results}, opts)
-	result.err = aggErr
+	result = NewMaterializedRelationWithOptions(resultColumns, []Tuple{results}, opts)
 	return result
 }
 
 // executeGroupedAggregation performs aggregation with grouping
-func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggregates []query.FindAggregate) Relation {
+func executeGroupedAggregation(
+	rel Relation,
+	groupByVars []query.Symbol,
+	aggregates []query.FindAggregate,
+) (result Relation) {
 	// Create symbol mapping
 	symbols := rel.Symbols()
 	groupIndices := make([]int, len(groupByVars))
@@ -289,7 +302,17 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	var groupOrder []*batchAggregateGroup
 
 	it := rel.Iterator()
-	defer it.Close()
+	var aggregateErr error
+	defer func() {
+		if closeErr := it.Close(); aggregateErr == nil {
+			aggregateErr = closeErr
+		}
+		if aggregateErr != nil && result != nil {
+			if materialized, ok := result.(*MaterializedRelation); ok && materialized.err == nil {
+				materialized.err = aggregateErr
+			}
+		}
+	}()
 
 	for it.Next() {
 		tuple := it.Tuple()
@@ -369,10 +392,10 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	}
 
 	opts := rel.Options()
-	result := NewMaterializedRelationWithOptions(resultColumns, resultTuples, opts)
+	result = NewMaterializedRelationWithOptions(resultColumns, resultTuples, opts)
 	// Carry any deferred error from the grouped input scan so a failed scan
 	// isn't laundered into a partial/empty grouped result.
-	result.err = it.Error()
+	aggregateErr = it.Error()
 	return result
 }
 
@@ -651,7 +674,7 @@ func (r *StreamingAggregateRelation) Aggregate(findElements []query.FindElement)
 }
 
 // materialize performs the actual streaming aggregation
-func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
+func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation) {
 	// Build symbol index mappings
 	symbols := r.source.Symbols()
 
@@ -701,7 +724,15 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 	var groupOrder []*streamingAggregateGroup
 
 	it := r.source.Iterator()
-	defer it.Close()
+	var aggregateErr error
+	defer func() {
+		if closeErr := it.Close(); aggregateErr == nil {
+			aggregateErr = closeErr
+		}
+		if aggregateErr != nil && result != nil && result.err == nil {
+			result.err = aggregateErr
+		}
+	}()
 
 	tupleCount := 0
 	for it.Next() {
@@ -777,7 +808,9 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 			},
 		})
 	}
-	return NewMaterializedRelationWithOptions(r.Symbols(), resultTuples, r.options)
+	aggregateErr = it.Error()
+	result = NewMaterializedRelationWithOptions(r.Symbols(), resultTuples, r.options)
+	return result
 }
 
 type streamingAggregateGroup struct {

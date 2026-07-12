@@ -54,7 +54,7 @@ func TestQueryPathUsesCache(t *testing.T) {
 	db.Cache().Clear()
 
 	// First lookup should populate the cache
-	val, found := bm.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	val, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Alice", val)
 
@@ -101,7 +101,7 @@ func TestPullAPIUsesCache(t *testing.T) {
 	require.True(t, ok)
 
 	// Lookup name (cardinality-one)
-	name, found := bm.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	name, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Alice", name)
 
@@ -142,7 +142,7 @@ func TestCacheInvalidatedOnCommit(t *testing.T) {
 	// Get matcher and populate cache
 	matcher := db.Matcher()
 	bm := matcher.(*BadgerMatcher)
-	val, found := bm.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	val, found := requireAttributeLookup(t, bm, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Alice", val)
 
@@ -156,7 +156,7 @@ func TestCacheInvalidatedOnCommit(t *testing.T) {
 	// New matcher should see the updated value
 	matcher2 := db.Matcher()
 	bm2 := matcher2.(*BadgerMatcher)
-	val2, found := bm2.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	val2, found := requireAttributeLookup(t, bm2, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Bob", val2, "cache should reflect updated value after commit")
 }
@@ -191,12 +191,12 @@ func TestMultipleMatchersShareCache(t *testing.T) {
 	assert.Same(t, db.Cache(), matcher2.cache, "matcher2 should share database cache")
 
 	// Lookup via matcher1 populates cache
-	val, found := matcher1.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	val, found := requireAttributeLookup(t, matcher1, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Alice", val)
 
 	// Lookup via matcher2 should use the cached entry (same cache instance)
-	val2, found := matcher2.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	val2, found := requireAttributeLookup(t, matcher2, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Alice", val2)
 }
@@ -231,13 +231,13 @@ func TestAsOfDoesNotUseCache(t *testing.T) {
 
 	// Current value should be "Bob"
 	matcher := db.Matcher().(*BadgerMatcher)
-	val, found := matcher.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	val, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Bob", val)
 
 	// As-of tx1 should still return "Alice" (bypassing cache)
 	asOfMatcher := db.AsOf(tx1ID).Matcher().(*BadgerMatcher)
-	asOfVal, found := asOfMatcher.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	asOfVal, found := requireAttributeLookup(t, asOfMatcher, e, datalog.NewKeyword(":person/name"))
 	require.True(t, found)
 	assert.Equal(t, "Alice", asOfVal, "as-of query should bypass cache and return historical value")
 }
@@ -268,7 +268,7 @@ func TestVectorCacheIntegration(t *testing.T) {
 	matcher := db.Matcher().(*BadgerMatcher)
 
 	// Lookup vector via LookupAttribute
-	skills, found := matcher.LookupAttribute(e, datalog.NewKeyword(":character/skills"))
+	skills, found := requireAttributeLookup(t, matcher, e, datalog.NewKeyword(":character/skills"))
 	require.True(t, found)
 
 	skillSlice, ok := skills.([]string)

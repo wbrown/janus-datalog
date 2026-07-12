@@ -202,6 +202,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	// deferred Close() also runs on panic (expression Function.Eval is
 	// user-supplied code and can panic), without losing the Close error.
 	var iterErr error
+	expanded := false
 	iter := rel.Iterator()
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
@@ -260,6 +261,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
 		if multiRows, ok := evalResult.([][]interface{}); ok {
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
+				expanded = true
 				for _, subTuple := range multiRows {
 					if len(subTuple) != len(tb.Variables) {
 						continue
@@ -351,8 +353,12 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
 	properties := rel.Properties()
-	for _, symbol := range bindingSymbols {
-		properties = properties.addSymbol(symbol)
+	if expanded {
+		properties = expansionProperties(properties, bindingSymbols, newColumns)
+	} else {
+		for _, symbol := range bindingSymbols {
+			properties = properties.addSymbol(symbol)
+		}
 	}
 	result = NewMaterializedRelationWithProperties(newColumns, newTuples, opts, properties)
 	return
@@ -465,10 +471,10 @@ func collectInnerVars(clauses []query.Clause) []query.Symbol {
 	return vars
 }
 
-// getUniqueCombinations extracts unique value combinations for the given symbols
-func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
+// getUniqueCombinations extracts unique value combinations for the given symbols.
+func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, resultErr error) {
 	if rel == nil || len(syms) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	relSyms := rel.Symbols()
@@ -483,14 +489,17 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
 			}
 		}
 		if !found {
-			return nil
+			return nil, nil
 		}
 	}
 
 	seen := NewTupleKeyMap()
-	var combos []Tuple
-
 	iter := rel.Iterator()
+	defer func() {
+		if closeErr := iter.Close(); resultErr == nil {
+			resultErr = closeErr
+		}
+	}()
 	for iter.Next() {
 		tuple := iter.Tuple()
 		combo := make(Tuple, len(symIndices))
@@ -502,9 +511,8 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
 			combos = append(combos, combo)
 		}
 	}
-	iter.Close()
-
-	return combos
+	resultErr = iter.Error()
+	return combos, resultErr
 }
 
 // countOverlap counts how many symbols from targetSyms are present in refSyms

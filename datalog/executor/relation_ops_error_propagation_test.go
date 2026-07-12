@@ -146,3 +146,24 @@ func TestFunctionEvaluatorIterator_PropagatesEvalError(t *testing.T) {
 	require.ErrorIs(t, it.Error(), errInjectedEval)
 	_ = it.Close()
 }
+
+func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	closeErr := errors.New("combination close failure")
+	failing := newFailingRelation(1, Tuple{int64(1)}, Tuple{int64(2)})
+
+	_, err := getUniqueCombinations(failing, []query.Symbol{x})
+	require.ErrorIs(t, err, errInjectedIterator)
+	_, err = getUniqueInputCombinations(failing, []query.Symbol{x})
+	require.ErrorIs(t, err, errInjectedIterator)
+
+	closeFailing := failingRelation{
+		Relation:  NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}}),
+		failAfter: 100,
+		closeErr:  closeErr,
+	}
+	_, err = getUniqueCombinations(closeFailing, []query.Symbol{x})
+	require.ErrorIs(t, err, closeErr)
+	_, err = getUniqueInputCombinations(closeFailing, []query.Symbol{x})
+	require.ErrorIs(t, err, closeErr)
+}

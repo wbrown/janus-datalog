@@ -70,7 +70,10 @@ func TestGetUniqueCombinations_NoCollisionAcrossTupleBoundaries(t *testing.T) {
 	for _, tc := range adversarialTuplePairs {
 		t.Run(tc.name, func(t *testing.T) {
 			rel := NewMaterializedRelation(syms, []Tuple{tc.a, tc.b})
-			combos := getUniqueCombinations(rel, syms)
+			combos, err := getUniqueCombinations(rel, syms)
+			if err != nil {
+				t.Fatalf("getUniqueCombinations failed: %v", err)
+			}
 			if len(combos) != 2 {
 				t.Errorf("expected 2 distinct combos for %+v and %+v, got %d: %+v",
 					tc.a, tc.b, len(combos), combos)

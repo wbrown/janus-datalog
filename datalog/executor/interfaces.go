@@ -34,8 +34,12 @@ type PredicateAwareMatcher interface {
 type EntityLookupMatcher interface {
 	PatternMatcher
 	// LookupAttribute retrieves the value of an attribute for an entity.
-	// Returns (value, true) if the attribute exists, (nil, false) otherwise.
-	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool)
+	// An absent attribute returns (nil, false, nil); storage and decode failures
+	// return a non-nil error and must never masquerade as absence.
+	LookupAttribute(
+		entity datalog.Identity,
+		attr datalog.Keyword,
+	) (value interface{}, found bool, err error)
 }
 
 // AttributeFetchFusable reports whether a same-entity fetch of attr can be

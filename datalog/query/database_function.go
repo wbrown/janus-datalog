@@ -11,8 +11,8 @@ import (
 // with the full PatternMatcher interface.
 type EntityLookup interface {
 	// LookupAttribute retrieves the value of an attribute for an entity.
-	// Returns (value, true) if the attribute exists, (nil, false) otherwise.
-	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool)
+	// An absent attribute returns (nil, false, nil).
+	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error)
 }
 
 // TypedDefaulter is an optional interface that EntityLookup implementations
@@ -76,7 +76,11 @@ func (g *GetElseFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup
 	}
 
 	// Look up the attribute
-	if value, found := lookup.LookupAttribute(entity, g.Attr); found {
+	value, found, err := lookup.LookupAttribute(entity, g.Attr)
+	if err != nil {
+		return nil, err
+	}
+	if found {
 		return value, nil
 	}
 
@@ -129,7 +133,10 @@ func (m *MissingFunction) EvalWithLookup(bindings map[Symbol]interface{}, lookup
 	}
 
 	// Check if attribute is missing
-	_, found := lookup.LookupAttribute(entity, m.Attr)
+	_, found, err := lookup.LookupAttribute(entity, m.Attr)
+	if err != nil {
+		return nil, err
+	}
 	return !found, nil
 }
 
@@ -187,7 +194,11 @@ func (gs *GetSomeFunction) EvalWithLookup(bindings map[Symbol]interface{}, looku
 
 	// Try each attribute in order
 	for _, attr := range gs.Attrs {
-		if value, found := lookup.LookupAttribute(entity, attr); found {
+		value, found, err := lookup.LookupAttribute(entity, attr)
+		if err != nil {
+			return nil, err
+		}
+		if found {
 			return &GetSomeResult{Attr: attr, Value: value, Found: true}, nil
 		}
 	}

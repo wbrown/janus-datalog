@@ -157,8 +157,11 @@ func (m *mockTransaction) Set(e datalog.Identity, a datalog.Keyword, v interface
 	return nil
 }
 
-func (m *mockTransaction) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
-	return nil, false
+func (m *mockTransaction) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
+	return nil, false, nil
 }
 
 func (m *mockTransaction) LookupAllAttributes(entity datalog.Identity, attr datalog.Keyword) ([]interface{}, error) {

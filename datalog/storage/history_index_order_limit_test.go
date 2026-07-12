@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"math/rand"
+	"sort"
 	"sync"
 	"testing"
 
@@ -359,6 +361,307 @@ func TestLatestAttributeOrderedLimitDoesNotUseHistoryEATVProperty(t *testing.T) 
 	require.Equal(t, "EATV", index)
 	require.Greater(t, scanned, limit,
 		"latest CRDT resolution must not inherit raw-history early termination")
+}
+
+func TestHistoryOrderedLimitDifferentialRandomized(t *testing.T) {
+	random := rand.New(rand.NewSource(0x1d85))
+	capture := &historyOrderScanCapture{}
+	db := openHistoryOrderDatabase(t, capture)
+	entityDB, entity := openHistoryEntityOrderDatabase(t, capture)
+
+	type shape struct {
+		name      string
+		database  *Database
+		fullQuery string
+		limited   func(int) string
+		less      func(left, right []interface{}) bool
+	}
+	shapes := []shape{
+		{
+			name:      "ATEV",
+			database:  db.History(),
+			fullQuery: `[:find ?e ?v ?tx :where [?e :event/value ?v ?tx]]`,
+			limited:   historyOrderedLimitQuery,
+			less: func(left, right []interface{}) bool {
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				if comparison := leftTx.Compare(rightTx); comparison != 0 {
+					return comparison > 0
+				}
+				return left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)) < 0
+			},
+		},
+		{
+			name:      "TAEV",
+			database:  db.History(),
+			fullQuery: `[:find ?e ?a ?v ?tx :where [?e ?a ?v ?tx]]`,
+			limited:   historyTransactionOrderedLimitQuery,
+			less: func(left, right []interface{}) bool {
+				leftTx, _ := datalog.DerefElementID(left[3])
+				rightTx, _ := datalog.DerefElementID(right[3])
+				if comparison := leftTx.Compare(rightTx); comparison != 0 {
+					return comparison > 0
+				}
+				if comparison := left[1].(datalog.Keyword).Compare(right[1].(datalog.Keyword)); comparison != 0 {
+					return comparison < 0
+				}
+				return left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)) < 0
+			},
+		},
+		{
+			name:      "AETV",
+			database:  db.History(),
+			fullQuery: `[:find ?e ?v ?tx :where [?e :event/value ?v ?tx]]`,
+			limited:   historyEntityOrderedLimitQuery,
+			less: func(left, right []interface{}) bool {
+				if comparison := left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)); comparison != 0 {
+					return comparison < 0
+				}
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				return leftTx.Compare(rightTx) > 0
+			},
+		},
+		{
+			name:     "EATV",
+			database: entityDB.History(),
+			fullQuery: fmt.Sprintf(
+				`[:find ?a ?v ?tx :where [#identity %q ?a ?v ?tx]]`,
+				entity.L85(),
+			),
+			limited: func(limit int) string {
+				return historyAttributeOrderedLimitQuery(entity, limit)
+			},
+			less: func(left, right []interface{}) bool {
+				if comparison := left[0].(datalog.Keyword).Compare(right[0].(datalog.Keyword)); comparison != 0 {
+					return comparison < 0
+				}
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				return leftTx.Compare(rightTx) > 0
+			},
+		},
+	}
+
+	for _, testShape := range shapes {
+		t.Run(testShape.name, func(t *testing.T) {
+			reference, err := testShape.database.Query(testShape.fullQuery)
+			require.NoError(t, err)
+			allRows, err := executor.CollectTuples(reference, nil)
+			require.NoError(t, err)
+			sort.Slice(allRows, func(i, j int) bool {
+				return testShape.less(allRows[i], allRows[j])
+			})
+
+			limits := []int{0, 1, 2, 10, 99, 100, len(allRows), len(allRows) + 1}
+			for i := 0; i < 20; i++ {
+				limits = append(limits, random.Intn(len(allRows)+2))
+			}
+			for _, limit := range limits {
+				capture.reset()
+				result, err := testShape.database.Query(testShape.limited(limit))
+				require.NoError(t, err, "limit %d", limit)
+				actual, err := executor.CollectTuples(result, nil)
+				require.NoError(t, err, "limit %d", limit)
+				wantCount := limit
+				if wantCount > len(allRows) {
+					wantCount = len(allRows)
+				}
+				requireHistoryRowsEqual(t, allRows[:wantCount], actual, testShape.name, limit)
+				scanned, index := capture.snapshot()
+				if limit == 0 {
+					require.Zero(t, scanned)
+					require.Empty(t, index)
+					continue
+				}
+				require.Equal(t, testShape.name, index, "limit %d", limit)
+				require.LessOrEqual(t, scanned, wantCount, "limit %d", limit)
+			}
+		})
+	}
+}
+
+func requireHistoryRowsEqual(
+	t *testing.T,
+	expected, actual [][]interface{},
+	shape string,
+	limit int,
+) {
+	t.Helper()
+	require.Len(t, actual, len(expected), "%s limit %d", shape, limit)
+	for rowIndex := range expected {
+		require.Len(t, actual[rowIndex], len(expected[rowIndex]), "%s limit %d row %d", shape, limit, rowIndex)
+		for columnIndex := range expected[rowIndex] {
+			require.True(t,
+				datalog.ValuesEqual(expected[rowIndex][columnIndex], actual[rowIndex][columnIndex]),
+				"%s limit %d row %d column %d: expected %v, got %v",
+				shape, limit, rowIndex, columnIndex,
+				expected[rowIndex][columnIndex], actual[rowIndex][columnIndex],
+			)
+		}
+	}
+}
+
+func TestAsOfOrderedLimitDifferentialAroundTombstone(t *testing.T) {
+	capture := &historyOrderScanCapture{}
+	attributeA := datalog.NewKeyword(":boundary/a")
+	attributeB := datalog.NewKeyword(":boundary/b")
+	s := schema.NewSchema()
+	for _, attribute := range []datalog.Keyword{attributeA, attributeB} {
+		s.Add(&schema.AttributeDefinition{
+			Ident:       attribute,
+			ValueType:   schema.TypeLong,
+			Cardinality: schema.CardinalityOne,
+		})
+	}
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:              t.TempDir(),
+		Schema:            s,
+		AnnotationHandler: capture.handler,
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	entities := []datalog.Identity{
+		datalog.NewIdentity("boundary-0"),
+		datalog.NewIdentity("boundary-1"),
+		datalog.NewIdentity("boundary-2"),
+		datalog.NewIdentity("boundary-3"),
+	}
+	tx := db.NewTransaction()
+	for entityIndex, entity := range entities {
+		require.NoError(t, tx.Set(entity, attributeA, int64(entityIndex)))
+		require.NoError(t, tx.Set(entity, attributeB, int64(100+entityIndex)))
+	}
+	first, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx = db.NewTransaction()
+	for entityIndex, entity := range entities {
+		require.NoError(t, tx.Set(entity, attributeA, int64(10+entityIndex)))
+	}
+	second, err := tx.Commit()
+	require.NoError(t, err)
+
+	tx = db.NewTransaction()
+	require.NoError(t, tx.Remove(entities[0], attributeA, int64(10)))
+	require.NoError(t, tx.Remove(entities[0], attributeB, int64(100)))
+	third, err := tx.Commit()
+	require.NoError(t, err)
+
+	type asOfShape struct {
+		name      string
+		fullQuery string
+		limited   string
+		less      func(left, right []interface{}) bool
+	}
+	shapes := []asOfShape{
+		{
+			name: "ATEV",
+			fullQuery: fmt.Sprintf(
+				`[:find ?e ?v ?tx :where [?e %s ?v ?tx]]`,
+				attributeA,
+			),
+			limited: fmt.Sprintf(
+				`[:find ?e ?v ?tx :where [?e %s ?v ?tx]
+				 :order-by [[?tx :desc] [?e :asc]] :limit 1]`,
+				attributeA,
+			),
+			less: func(left, right []interface{}) bool {
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				if comparison := leftTx.Compare(rightTx); comparison != 0 {
+					return comparison > 0
+				}
+				return left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)) < 0
+			},
+		},
+		{
+			name:      "TAEV",
+			fullQuery: `[:find ?e ?a ?v ?tx :where [?e ?a ?v ?tx]]`,
+			limited: `[:find ?e ?a ?v ?tx :where [?e ?a ?v ?tx]
+			          :order-by [[?tx :desc] [?a :asc] [?e :asc]] :limit 1]`,
+			less: func(left, right []interface{}) bool {
+				leftTx, _ := datalog.DerefElementID(left[3])
+				rightTx, _ := datalog.DerefElementID(right[3])
+				if comparison := leftTx.Compare(rightTx); comparison != 0 {
+					return comparison > 0
+				}
+				if comparison := left[1].(datalog.Keyword).Compare(right[1].(datalog.Keyword)); comparison != 0 {
+					return comparison < 0
+				}
+				return left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)) < 0
+			},
+		},
+		{
+			name: "AETV",
+			fullQuery: fmt.Sprintf(
+				`[:find ?e ?v ?tx :where [?e %s ?v ?tx]]`,
+				attributeA,
+			),
+			limited: fmt.Sprintf(
+				`[:find ?e ?v ?tx :where [?e %s ?v ?tx]
+				 :order-by [[?e :asc] [?tx :desc]] :limit 1]`,
+				attributeA,
+			),
+			less: func(left, right []interface{}) bool {
+				if comparison := left[0].(datalog.Identity).Compare(right[0].(datalog.Identity)); comparison != 0 {
+					return comparison < 0
+				}
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				return leftTx.Compare(rightTx) > 0
+			},
+		},
+		{
+			name: "EATV",
+			fullQuery: fmt.Sprintf(
+				`[:find ?a ?v ?tx :where [#identity %q ?a ?v ?tx]]`,
+				entities[1].L85(),
+			),
+			limited: fmt.Sprintf(
+				`[:find ?a ?v ?tx :where [#identity %q ?a ?v ?tx]
+				 :order-by [[?a :asc] [?tx :desc]] :limit 1]`,
+				entities[1].L85(),
+			),
+			less: func(left, right []interface{}) bool {
+				if comparison := left[0].(datalog.Keyword).Compare(right[0].(datalog.Keyword)); comparison != 0 {
+					return comparison < 0
+				}
+				leftTx, _ := datalog.DerefElementID(left[2])
+				rightTx, _ := datalog.DerefElementID(right[2])
+				return leftTx.Compare(rightTx) > 0
+			},
+		},
+	}
+
+	for snapshotIndex, snapshot := range []datalog.ElementID{first, second, third} {
+		view := db.AsOf(snapshot)
+		for _, testShape := range shapes {
+			t.Run(fmt.Sprintf("snapshot_%d/%s", snapshotIndex, testShape.name), func(t *testing.T) {
+				reference, err := view.Query(testShape.fullQuery)
+				require.NoError(t, err)
+				expected, err := executor.CollectTuples(reference, nil)
+				require.NoError(t, err)
+				sort.Slice(expected, func(i, j int) bool {
+					return testShape.less(expected[i], expected[j])
+				})
+				if len(expected) > 1 {
+					expected = expected[:1]
+				}
+
+				capture.reset()
+				result, err := view.Query(testShape.limited)
+				require.NoError(t, err)
+				actual, err := executor.CollectTuples(result, nil)
+				require.NoError(t, err)
+				requireHistoryRowsEqual(t, expected, actual, testShape.name, 1)
+				scanned, _ := capture.snapshot()
+				require.Greater(t, scanned, 1,
+					"as-of CRDT resolution must decline raw-history early termination")
+			})
+		}
+	}
 }
 
 func TestHistoryATEVPropertiesRequireSafeDatalogShape(t *testing.T) {

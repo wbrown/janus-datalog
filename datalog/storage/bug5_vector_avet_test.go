@@ -119,7 +119,7 @@ func TestVectorAVETLookup(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	aliceSkills, found := matcher.LookupAttribute(alice, skills)
+	aliceSkills, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found, "alice should have skills")
 	t.Logf("Alice's skills via LookupAttribute: %v", aliceSkills)
 
@@ -227,7 +227,7 @@ func TestVectorAVETAfterTombstone(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(alice, skills)
+	result, found := requireAttributeLookup(t, matcher, alice, skills)
 	require.True(t, found)
 	vec := result.([]string)
 

@@ -3,6 +3,7 @@ package query
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,79 +35,106 @@ const (
 
 // ArithmeticFunction implements arithmetic operations
 type ArithmeticFunction struct {
-	Op    ArithmeticOp
-	Left  Term
-	Right Term
+	Op   ArithmeticOp
+	Args []Term
 }
 
 func (a ArithmeticFunction) RequiredSymbols() []Symbol {
-	symbols := a.Left.RequiredSymbols()
-	symbols = append(symbols, a.Right.RequiredSymbols()...)
+	var symbols []Symbol
+	for _, argument := range a.Args {
+		symbols = append(symbols, argument.RequiredSymbols()...)
+	}
 	return symbols
 }
 
 func (a ArithmeticFunction) Eval(bindings map[Symbol]interface{}) (interface{}, error) {
-	leftVal, leftOk := a.Left.Resolve(bindings)
-	if !leftOk {
-		return nil, fmt.Errorf("cannot resolve left operand %s", a.Left)
+	if len(a.Args) == 0 {
+		return nil, fmt.Errorf("%s requires at least one argument", a.Op)
 	}
 
-	rightVal, rightOk := a.Right.Resolve(bindings)
-	if !rightOk {
-		return nil, fmt.Errorf("cannot resolve right operand %s", a.Right)
+	values := make([]interface{}, len(a.Args))
+	useFloat := a.Op == OpDivide
+	for i, argument := range a.Args {
+		value, ok := argument.Resolve(bindings)
+		if !ok {
+			return nil, fmt.Errorf("cannot resolve arithmetic operand %s", argument)
+		}
+		number := toNumber(value)
+		values[i] = number
+		if _, ok := number.(float64); ok {
+			useFloat = true
+		}
 	}
-
-	// Convert to numbers
-	left := toNumber(leftVal)
-	right := toNumber(rightVal)
-
-	// Determine if we need float arithmetic
-	_, leftIsFloat := left.(float64)
-	_, rightIsFloat := right.(float64)
-	useFloat := leftIsFloat || rightIsFloat
 
 	if useFloat {
-		leftFloat := toFloat64(left)
-		rightFloat := toFloat64(right)
-
+		result := toFloat64(values[0])
 		switch a.Op {
 		case OpAdd:
-			return leftFloat + rightFloat, nil
-		case OpSubtract:
-			return leftFloat - rightFloat, nil
-		case OpMultiply:
-			return leftFloat * rightFloat, nil
-		case OpDivide:
-			if rightFloat == 0 {
-				return nil, fmt.Errorf("division by zero")
+			for _, value := range values[1:] {
+				result += toFloat64(value)
 			}
-			return leftFloat / rightFloat, nil
-		}
-	} else {
-		leftInt := toInt64(left)
-		rightInt := toInt64(right)
-
-		switch a.Op {
-		case OpAdd:
-			return leftInt + rightInt, nil
 		case OpSubtract:
-			return leftInt - rightInt, nil
-		case OpMultiply:
-			return leftInt * rightInt, nil
-		case OpDivide:
-			if rightInt == 0 {
-				return nil, fmt.Errorf("division by zero")
+			if len(values) == 1 {
+				return -result, nil
 			}
-			// Integer division returns float for compatibility
-			return float64(leftInt) / float64(rightInt), nil
+			for _, value := range values[1:] {
+				result -= toFloat64(value)
+			}
+		case OpMultiply:
+			for _, value := range values[1:] {
+				result *= toFloat64(value)
+			}
+		case OpDivide:
+			if len(values) == 1 {
+				if result == 0 {
+					return nil, fmt.Errorf("division by zero")
+				}
+				return 1 / result, nil
+			}
+			for _, value := range values[1:] {
+				divisor := toFloat64(value)
+				if divisor == 0 {
+					return nil, fmt.Errorf("division by zero")
+				}
+				result /= divisor
+			}
+		default:
+			return nil, fmt.Errorf("unknown arithmetic operator: %s", a.Op)
 		}
+		return result, nil
 	}
 
-	return nil, fmt.Errorf("unknown arithmetic operator: %s", a.Op)
+	result := toInt64(values[0])
+	switch a.Op {
+	case OpAdd:
+		for _, value := range values[1:] {
+			result += toInt64(value)
+		}
+	case OpSubtract:
+		if len(values) == 1 {
+			return -result, nil
+		}
+		for _, value := range values[1:] {
+			result -= toInt64(value)
+		}
+	case OpMultiply:
+		for _, value := range values[1:] {
+			result *= toInt64(value)
+		}
+	default:
+		return nil, fmt.Errorf("unknown arithmetic operator: %s", a.Op)
+	}
+	return result, nil
 }
 
 func (a ArithmeticFunction) String() string {
-	return fmt.Sprintf("(%s %s %s)", a.Op, a.Left, a.Right)
+	var b strings.Builder
+	fmt.Fprintf(&b, "(%s", a.Op)
+	for _, argument := range a.Args {
+		fmt.Fprintf(&b, " %s", argument)
+	}
+	b.WriteByte(')')
+	return b.String()
 }
 
 func (a ArithmeticFunction) ReturnType() string {

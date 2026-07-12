@@ -19,8 +19,10 @@ type ScanRegistry struct {
 
 // SharedScan holds a shared LazySeq and the original symbols from the first scan.
 type SharedScan struct {
-	Seq     *LazySeq       // shared lazy sequence over storage iterator
-	Symbols []query.Symbol // original symbols from first scan
+	Seq        *LazySeq       // shared lazy sequence over storage iterator
+	Symbols    []query.Symbol // original symbols from first scan
+	Options    ExecutorOptions
+	Properties RelationProperties
 }
 
 // NewScanRegistry creates a new empty scan registry.
@@ -38,11 +40,8 @@ func (r *ScanRegistry) Get(fingerprint string) *SharedScan {
 }
 
 // Put stores a shared scan for the given fingerprint.
-func (r *ScanRegistry) Put(fingerprint string, seq *LazySeq, symbols []query.Symbol) {
+func (r *ScanRegistry) Put(fingerprint string, scan *SharedScan) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.scans[fingerprint] = &SharedScan{
-		Seq:     seq,
-		Symbols: symbols,
-	}
+	r.scans[fingerprint] = scan
 }

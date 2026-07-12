@@ -1277,7 +1277,12 @@ func TestAddSchemaAware(t *testing.T) {
 	// Query should return the latest value (LWW)
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(s)
-	result, found := matcher.LookupAttribute(entityID, datalog.NewKeyword(":person/name"))
+	result, found := requireAttributeLookup(
+		t,
+		matcher,
+		entityID,
+		datalog.NewKeyword(":person/name"),
+	)
 	if !found {
 		t.Fatal("LookupAttribute returned not found")
 	}

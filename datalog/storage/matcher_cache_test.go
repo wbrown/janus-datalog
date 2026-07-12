@@ -174,7 +174,12 @@ func TestMatcherCacheConsistentWithDirectScan(t *testing.T) {
 	cachedValue := entry.OneValue()
 
 	// Get value via direct lookup (LookupAttribute)
-	directValue, found := matcher.LookupAttribute(e, datalog.NewKeyword(":person/name"))
+	directValue, found := requireAttributeLookup(
+		t,
+		matcher,
+		e,
+		datalog.NewKeyword(":person/name"),
+	)
 	require.True(t, found)
 
 	// Both should return the same value
@@ -434,7 +439,10 @@ func BenchmarkCacheResolutionOverhead(b *testing.B) {
 		b.ReportAllocs()
 		attr := datalog.NewKeyword(":person/name")
 		for i := 0; i < b.N; i++ {
-			val, found := matcher.LookupAttribute(e, attr)
+			val, found, err := matcher.LookupAttribute(e, attr)
+			if err != nil {
+				b.Fatal(err)
+			}
 			if !found {
 				b.Fatal("not found")
 			}

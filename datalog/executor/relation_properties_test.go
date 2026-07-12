@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -122,9 +123,11 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 
 	evaluated := open().EvaluateFunction(
 		&query.ArithmeticFunction{
-			Op:    query.OpAdd,
-			Left:  query.VariableTerm{Symbol: a},
-			Right: query.VariableTerm{Symbol: b},
+			Op: query.OpAdd,
+			Args: []query.Term{
+				query.VariableTerm{Symbol: a},
+				query.VariableTerm{Symbol: b},
+			},
 		},
 		fresh,
 	)
@@ -396,6 +399,90 @@ func TestSemiAndAntiJoinsDeduplicateUnkeyedLeftInput(t *testing.T) {
 
 	require.Equal(t, 1, SemiJoin(left, right, []query.Symbol{id}).Size())
 	require.Equal(t, 1, AntiJoin(left, right, []query.Symbol{id}).Size())
+}
+
+func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	vector := datalog.NewSymbol("?vector")
+	index := datalog.NewSymbol("?index")
+	value := datalog.NewSymbol("?value")
+	source := NewMaterializedRelationWithProperties(
+		[]query.Symbol{entity, vector},
+		[]Tuple{{int64(1), []interface{}{"same", "same", "other"}}},
+		ExecutorOptions{},
+		RelationProperties{Keys: [][]query.Symbol{{entity}}},
+	)
+	expanded := evaluateExpressionWithLookup(source, &query.Expression{
+		Function: query.EnumerateFunction{
+			VecTerm: query.VariableTerm{Symbol: vector},
+		},
+		Binding: query.TupleBinding{Variables: []query.Symbol{index, value}},
+	}, nil, nil)
+
+	require.False(t, containsSymbolSet(expanded.Properties().Keys, []query.Symbol{entity}),
+		"one entity expands to multiple rows, so the outer key is no longer unique")
+	require.True(t, containsSymbolSet(
+		expanded.Properties().Keys,
+		[]query.Symbol{entity, index, value},
+	))
+
+	projected, err := expanded.Project([]query.Symbol{entity, value})
+	require.NoError(t, err)
+	rows, err := CollectTuples(projected, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, [][]interface{}{
+		{int64(1), "same"},
+		{int64(1), "other"},
+	}, rows)
+}
+
+func TestSemiAndAntiJoinsCopyWorkspaceReusingLeftInput(t *testing.T) {
+	id := datalog.NewSymbol("?id")
+	value := datalog.NewSymbol("?value")
+	data := [][]interface{}{
+		{int64(1), "one"},
+		{int64(2), "two"},
+		{int64(3), "three"},
+	}
+	testCases := []struct {
+		name     string
+		rightIDs []Tuple
+		run      func(Relation, Relation, []query.Symbol) Relation
+		want     [][]interface{}
+	}{
+		{
+			name:     "semi",
+			rightIDs: []Tuple{{int64(1)}, {int64(3)}},
+			run:      SemiJoin,
+			want:     [][]interface{}{{int64(1), "one"}, {int64(3), "three"}},
+		},
+		{
+			name:     "anti",
+			rightIDs: []Tuple{{int64(2)}},
+			run:      AntiJoin,
+			want:     [][]interface{}{{int64(1), "one"}, {int64(3), "three"}},
+		},
+	}
+
+	for _, testCase := range testCases {
+		for _, keyed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/keyed_%t", testCase.name, keyed), func(t *testing.T) {
+				tuples := make([]Tuple, len(data))
+				for i := range data {
+					tuples[i] = Tuple(data[i])
+				}
+				left := newReusingWorkspaceStream([]query.Symbol{id, value}, tuples)
+				if keyed {
+					left.properties = RelationProperties{Keys: [][]query.Symbol{{id}}}
+				}
+				right := NewMaterializedRelation([]query.Symbol{id}, testCase.rightIDs)
+				result := testCase.run(left, right, []query.Symbol{id})
+				rows, err := CollectTuples(result, nil)
+				require.NoError(t, err)
+				require.Equal(t, testCase.want, rows)
+			})
+		}
+	}
 }
 
 func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
