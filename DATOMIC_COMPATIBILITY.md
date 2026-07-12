@@ -325,6 +325,7 @@ Every datom includes a full ElementID (Lamport + ReplicaID) for temporal orderin
 - `[]byte` for binary data
 - Entity references via Identity type
 - Keywords as first-class values
+- Symbols as first-class values
 
 ### 12. Pull API ✅
 
@@ -487,7 +488,7 @@ var count int64
 found, err := d.QueryOneInto(&count, `[:find (count ?e) :where [?e :person/name _]]`)
 ```
 
-**Scalar types supported:** `string`, `int64`, `float64`, `bool`, `time.Time`, `datalog.Identity`, `datalog.Keyword`, `[]byte`
+**Scalar types supported:** `string`, `int64`, `float64`, `bool`, `time.Time`, `datalog.Identity`, `datalog.Keyword`, `datalog.Symbol`, `[]byte`
 
 **Tag mapping:**
 - Variables: `datalog:"?symbol"` matches `:find ?symbol`

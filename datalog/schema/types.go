@@ -17,6 +17,7 @@ const (
 	TypeBytes   ValueType = "db.type/bytes"   // []byte
 	TypeRef     ValueType = "db.type/ref"     // datalog.Identity
 	TypeKeyword ValueType = "db.type/keyword" // datalog.Keyword
+	TypeSymbol  ValueType = "db.type/symbol"  // datalog.Symbol
 	TypeTx      ValueType = "db.type/tx"      // datalog.ElementID
 )
 

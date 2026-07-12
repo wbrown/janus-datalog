@@ -265,6 +265,7 @@ The codebase maintains a clean separation between user-facing types and storage 
   - Scalars: `string`, `int64`, `float64`, `bool`, `time.Time`, `[]byte`
   - References: `Identity` (aliased as `Reference` when used as a value)
   - Keywords: `Keyword` (can be used as values, e.g., `:status/active`)
+  - Symbols: `Symbol` (EDN symbols as first-class stored/query values)
 - **Join Keys**: Use typed hashing and equality through `TupleKeyMap`
 
 ### Storage Layer (`datalog/storage/`)

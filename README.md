@@ -924,6 +924,7 @@ time.Time           // Timestamps
 []byte              // Binary data
 Identity            // Entity references
 Keyword             // When keywords are values
+Symbol              // EDN symbols as first-class values
 ```
 
 This keeps the query engine simple and fast. Type conversions happen once at storage time.

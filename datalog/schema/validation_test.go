@@ -68,6 +68,13 @@ func TestValidateValueKeyword(t *testing.T) {
 	assert.Error(t, ValidateValue("keyword", TypeKeyword))
 }
 
+func TestValidateValueSymbol(t *testing.T) {
+	symbol := datalog.NewSymbol("state/active")
+	assert.NoError(t, ValidateValue(symbol, TypeSymbol))
+	assert.Error(t, ValidateValue("state/active", TypeSymbol))
+	assert.Error(t, ValidateValue(datalog.NewKeyword(":state/active"), TypeSymbol))
+}
+
 func TestValidateValueEmptyType(t *testing.T) {
 	// Empty type means no constraint
 	assert.NoError(t, ValidateValue("anything", ""))

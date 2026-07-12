@@ -62,11 +62,12 @@ func TestParseSchemaAllTypes(t *testing.T) {
  :test/instant {:db/valueType :db.type/instant}
  :test/bytes   {:db/valueType :db.type/bytes}
  :test/ref     {:db/valueType :db.type/ref}
- :test/keyword {:db/valueType :db.type/keyword}}`
+ :test/keyword {:db/valueType :db.type/keyword}
+ :test/symbol  {:db/valueType :db.type/symbol}}`
 
 	schema, err := ParseSchema(input)
 	require.NoError(t, err)
-	assert.Equal(t, 8, schema.Count())
+	assert.Equal(t, 9, schema.Count())
 
 	assert.Equal(t, TypeString, schema.GetAttribute(kw(":test/string")).ValueType)
 	assert.Equal(t, TypeLong, schema.GetAttribute(kw(":test/long")).ValueType)
@@ -76,6 +77,7 @@ func TestParseSchemaAllTypes(t *testing.T) {
 	assert.Equal(t, TypeBytes, schema.GetAttribute(kw(":test/bytes")).ValueType)
 	assert.Equal(t, TypeRef, schema.GetAttribute(kw(":test/ref")).ValueType)
 	assert.Equal(t, TypeKeyword, schema.GetAttribute(kw(":test/keyword")).ValueType)
+	assert.Equal(t, TypeSymbol, schema.GetAttribute(kw(":test/symbol")).ValueType)
 }
 
 func TestParseSchemaWithUnique(t *testing.T) {

@@ -32,6 +32,7 @@ var (
 	kwTypeBytes   = datalog.NewKeyword(":db.type/bytes")
 	kwTypeRef     = datalog.NewKeyword(":db.type/ref")
 	kwTypeKeyword = datalog.NewKeyword(":db.type/keyword")
+	kwTypeSymbol  = datalog.NewKeyword(":db.type/symbol")
 	kwTypeTx      = datalog.NewKeyword(":db.type/tx")
 )
 
@@ -199,6 +200,8 @@ func parseValueType(node *edn.Node) (ValueType, error) {
 		return TypeRef, nil
 	case kwTypeKeyword:
 		return TypeKeyword, nil
+	case kwTypeSymbol:
+		return TypeSymbol, nil
 	case kwTypeTx:
 		return TypeTx, nil
 	default:

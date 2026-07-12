@@ -56,6 +56,8 @@ func valueTypeFromValue(v interface{}) schema.ValueType {
 		return schema.TypeRef
 	case datalog.Keyword:
 		return schema.TypeKeyword
+	case datalog.Symbol:
+		return schema.TypeSymbol
 	case []byte:
 		return schema.TypeBytes
 	default:
@@ -110,8 +112,8 @@ func inferSchemaFromStore(store *BadgerStore) (*schema.Schema, error) {
 			curStr = aStr
 			haveA = true
 			decided = false
-			card = schema.CardinalityOne          // default if only removes appear
-			vt = valueTypeFromValue(d.V)          // sensible default; refined below
+			card = schema.CardinalityOne // default if only removes appear
+			vt = valueTypeFromValue(d.V) // sensible default; refined below
 		}
 		if decided {
 			continue // attribute already classified — skip to the next attribute
