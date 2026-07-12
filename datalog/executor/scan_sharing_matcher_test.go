@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -313,4 +314,45 @@ func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
 		Ordering: []query.OrderByClause{{Variable: renamedEntity, Direction: query.OrderAsc}},
 		Keys:     [][]query.Symbol{{renamedEntity}},
 	}, hit.Properties())
+}
+
+func TestScanSharingMatcherConcurrentSameFingerprintUsesOneScan(t *testing.T) {
+	inner := &countingMatcher{inner: &fixedMatcher{
+		tuples:  []Tuple{{"e1", int64(1)}, {"e2", int64(2)}, {"e3", int64(3)}},
+		symbols: []query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")},
+	}}
+	matcher := NewScanSharingMatcher(inner, NewScanRegistry(), nil)
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: datalog.NewSymbol("?entity")},
+		query.Constant{Value: datalog.NewKeyword(":item/value")},
+		query.Variable{Name: datalog.NewSymbol("?value")},
+	}}
+	q := query.PatternQuery(pattern)
+
+	const consumers = 20
+	start := make(chan struct{})
+	results := make([][][]interface{}, consumers)
+	errors := make([]error, consumers)
+	var wait sync.WaitGroup
+	for consumer := 0; consumer < consumers; consumer++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			relation, err := matcher.Match(q, nil)
+			if err != nil {
+				errors[index] = err
+				return
+			}
+			results[index], errors[index] = CollectTuples(relation, nil)
+		}(consumer)
+	}
+	close(start)
+	wait.Wait()
+
+	for consumer := 0; consumer < consumers; consumer++ {
+		require.NoError(t, errors[consumer])
+		require.Equal(t, results[0], results[consumer])
+	}
+	require.Equal(t, int32(1), atomic.LoadInt32(&inner.callCount))
 }

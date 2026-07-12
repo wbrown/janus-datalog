@@ -450,13 +450,13 @@ Naming something precisely forces you to think about what it does and where it b
 ```go
 // BAD: Java-style with manager class
 type PredicatePropagator struct {
-    phases []Phase
+    phases []RealizedPhase
 }
 func (pp *PredicatePropagator) Propagate() { ... }
 
-// GOOD: Methods on the types themselves
-func (p *Phase) PushPredicates() { ... }
-func (pp *PatternPlan) ApplyConstraints(predicates []PredicatePlan) { ... }
+// GOOD: Focused functions and methods on the data they transform
+func scheduleReadyClauses(clauses []query.Clause, available map[query.Symbol]bool) []query.Clause
+func (p RelationProperties) project(symbols []query.Symbol) RelationProperties
 ```
 
 ## Performance Considerations

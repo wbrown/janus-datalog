@@ -153,6 +153,9 @@ func hashValue(v interface{}) uint64 {
 		}
 		return 0
 
+	case datalog.Symbol:
+		return hashString(val.String())
+
 	case datalog.ElementID:
 		return val.Lamport ^ (val.ReplicaID * 1099511628211)
 

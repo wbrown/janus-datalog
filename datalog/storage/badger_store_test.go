@@ -201,6 +201,25 @@ func TestBadgerStore(t *testing.T) {
 	})
 }
 
+func TestBadgerStoreCloseFlushesCommittedWrites(t *testing.T) {
+	store, err := NewBadgerStore(t.TempDir(), &BinaryKeyEncoder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Assert([]datalog.Datom{{
+		E:  datalog.NewIdentity("close-after-write"),
+		A:  datalog.NewKeyword(":close/value"),
+		V:  "committed",
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestRetractWithDifferentTx tests that retraction works even when the caller
 // specifies a different Tx than what was used when the datom was asserted.
 // This is the common case when retracting during an update operation, where

@@ -214,7 +214,7 @@ Within the executor, each phase is a mini-query. The planner decided the orderin
 For each phase in plan:
   Input relations from previous phase's Keep symbols
   For each clause in phase.Query.Where (planner-ordered):
-    ├── DataPattern  → matcher.Match(pattern, bindings) → new StreamingRelation
+    ├── DataPattern  → matcher.Match(onePatternQuery, bindings) → new StreamingRelation
     ├── Expression   → evaluate over existing relations → add symbol (lazy)
     ├── Predicate    → filter existing relations (lazy)
     ├── Subquery     → recursive Query
@@ -320,7 +320,8 @@ custom sources may ignore them and return no ordering guarantee.
 
 **Extended variants**:
 - `PredicateAwareMatcher` adds `MatchWithConstraints()` — predicate pushdown into storage
-- `EntityLookupMatcher` adds `LookupAttribute()` — single-value lookups for database functions like `get-else`
+- `EntityLookupMatcher` adds error-returning `LookupAttribute()` — single-value
+  lookups distinguish absence from storage/decode failure
 
 ### Relation — Tuple Set Abstraction
 

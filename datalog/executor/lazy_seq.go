@@ -11,14 +11,35 @@ package executor
 import (
 	"runtime"
 	"sync"
-	"sync/atomic"
 )
 
 // iterGuard keeps an iterator alive via runtime.SetFinalizer.
 // Every cell in the chain holds a reference to the guard, so the
 // iterator stays open as long as any cell is reachable by the GC.
 type iterGuard struct {
-	closer func()
+	closer func() error
+}
+
+type tupleSeqState struct {
+	it        Iterator
+	closeOnce sync.Once
+	errMu     sync.Mutex
+	err       error
+}
+
+func (s *tupleSeqState) close() error {
+	s.closeOnce.Do(func() {
+		err := s.it.Error()
+		if closeErr := s.it.Close(); err == nil {
+			err = closeErr
+		}
+		s.errMu.Lock()
+		s.err = err
+		s.errMu.Unlock()
+	})
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	return s.err
 }
 
 // LazySeq is a cons cell with deferred realization. The thunk is called
@@ -26,13 +47,13 @@ type iterGuard struct {
 // Thread-safe via sync.Mutex.
 type LazySeq struct {
 	once     sync.Once
-	hasElems bool       // true when the seq has at least one element
-	first    any        // cached first element
-	rest     any        // nil, or *LazySeq
-	err      error      // cached error from thunk
-	thunk    func()     // sets hasElems/first/rest/err directly as side effects
-	closer   func()     // optional: closes underlying resource (iterator)
-	guard    *iterGuard // prevents GC of iterator while cells are reachable
+	hasElems bool         // true when the seq has at least one element
+	first    any          // cached first element
+	rest     any          // nil, or *LazySeq
+	err      error        // cached error from thunk
+	thunk    func()       // sets hasElems/first/rest/err directly as side effects
+	closer   func() error // optional: closes underlying resource (iterator)
+	guard    *iterGuard   // prevents GC of iterator while cells are reachable
 }
 
 // realize calls the thunk and caches first/rest. Thread-safe via sync.Once:
@@ -74,10 +95,11 @@ func (ls *LazySeq) Rest() (any, error) {
 
 // Close releases the underlying resource (e.g., iterator) if one exists.
 // Safe to call multiple times.
-func (ls *LazySeq) Close() {
+func (ls *LazySeq) Close() error {
 	if ls.closer != nil {
-		ls.closer()
+		return ls.closer()
 	}
+	return ls.err
 }
 
 // NewTupleSeq wraps an Iterator in a chain of LazySeqs.
@@ -85,31 +107,24 @@ func (ls *LazySeq) Close() {
 // a Tuple value. The iterator is closed automatically when exhausted
 // or when all LazySeq cells become unreachable (via finalizer).
 func NewTupleSeq(it Iterator, needsCopy bool) *LazySeq {
-	var closed atomic.Bool
-	closeOnce := func() {
-		if closed.CompareAndSwap(false, true) {
-			it.Close()
-		}
-	}
-	guard := &iterGuard{closer: closeOnce}
-	runtime.SetFinalizer(guard, func(g *iterGuard) { g.closer() })
-	ls := newTupleCell(it, needsCopy, &closed, guard)
-	ls.closer = closeOnce
+	state := &tupleSeqState{it: it}
+	guard := &iterGuard{closer: state.close}
+	runtime.SetFinalizer(guard, func(g *iterGuard) { _ = g.closer() })
+	ls := newTupleCell(state, needsCopy, guard)
+	ls.closer = state.close
 	return ls
 }
 
 // newTupleCell creates a single LazySeq cell that advances the iterator.
 // The thunk sets first/rest directly on the cell — no inner cell allocation.
-func newTupleCell(it Iterator, needsCopy bool, closed *atomic.Bool, guard *iterGuard) *LazySeq {
+func newTupleCell(state *tupleSeqState, needsCopy bool, guard *iterGuard) *LazySeq {
 	ls := &LazySeq{guard: guard}
 	ls.thunk = func() {
-		if !it.Next() {
-			if closed.CompareAndSwap(false, true) {
-				it.Close()
-			}
+		if !state.it.Next() {
+			ls.err = state.close()
 			return // hasElems stays false
 		}
-		tuple := it.Tuple()
+		tuple := state.it.Tuple()
 		if needsCopy {
 			cp := make(Tuple, len(tuple))
 			copy(cp, tuple)
@@ -117,7 +132,8 @@ func newTupleCell(it Iterator, needsCopy bool, closed *atomic.Bool, guard *iterG
 		}
 		ls.hasElems = true
 		ls.first = tuple
-		ls.rest = newTupleCell(it, needsCopy, closed, guard)
+		ls.rest = newTupleCell(state, needsCopy, guard)
+		ls.rest.(*LazySeq).closer = state.close
 	}
 	return ls
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strconv"
 	"testing"
 
@@ -128,7 +129,15 @@ func TestTopNRelationPropagatesDeferredIteratorError(t *testing.T) {
 }
 
 func TestTopNRelationRandomizedDifferential(t *testing.T) {
-	random := rand.New(rand.NewSource(0x70f))
+	for _, seed := range []int64{0x70f, 0x710, 0x711, 0x712, 0x713, 0x714, 0x715, 0x716} {
+		t.Run(fmt.Sprintf("seed_%x", seed), func(t *testing.T) {
+			runTopNDifferential(t, seed)
+		})
+	}
+}
+
+func runTopNDifferential(t *testing.T, seed int64) {
+	random := rand.New(rand.NewSource(seed))
 	score := datalog.NewSymbol("?score")
 	name := datalog.NewSymbol("?name")
 	symbols := []query.Symbol{score, name}
@@ -152,11 +161,7 @@ func TestTopNRelationRandomizedDifferential(t *testing.T) {
 			orderBy[1].Direction = query.OrderDesc
 		}
 		limit := random.Intn(count + 3)
-		expected, err := collectTypedTuples(NewLimitRelation(
-			SortRelation(NewMaterializedRelationNoDedupe(symbols, tuples), orderBy),
-			limit,
-		))
-		require.NoError(t, err)
+		expected := nativeTopNReference(tuples, orderBy, limit)
 		actual, err := collectTypedTuples(TopNRelation(
 			NewMaterializedRelationNoDedupe(symbols, tuples),
 			orderBy,
@@ -166,6 +171,37 @@ func TestTopNRelationRandomizedDifferential(t *testing.T) {
 		require.True(t, tupleSequencesEqualPairwise(expected, actual),
 			"case %d limit %d: expected %v, got %v", caseIndex, limit, expected, actual)
 	}
+}
+
+func nativeTopNReference(
+	tuples []Tuple,
+	orderBy []query.OrderByClause,
+	limit int,
+) []Tuple {
+	result := make([]Tuple, len(tuples))
+	for i, tuple := range tuples {
+		result[i] = copyTuple(tuple)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		leftScore := result[i][0].(int64)
+		rightScore := result[j][0].(int64)
+		if leftScore != rightScore {
+			if orderBy[0].Direction == query.OrderDesc {
+				return leftScore > rightScore
+			}
+			return leftScore < rightScore
+		}
+		leftName := result[i][1].(string)
+		rightName := result[j][1].(string)
+		if orderBy[1].Direction == query.OrderDesc {
+			return leftName > rightName
+		}
+		return leftName < rightName
+	})
+	if limit < len(result) {
+		result = result[:limit]
+	}
+	return result
 }
 
 func TestTopNRelationCompleteTiesRemainValid(t *testing.T) {

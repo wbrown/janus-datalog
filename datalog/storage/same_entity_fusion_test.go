@@ -375,10 +375,11 @@ func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
 			require.NoError(t, err)
 
 			// Force the bound lookup to reach storage rather than the write-
-			// warmed cache, then close the real Badger store. Both paths must
+			// warmed cache, then close through Janus. Both paths must
 			// return ErrDBClosed rather than panic or report attribute absence.
 			db.cache = NewCache()
-			require.NoError(t, db.store.Close())
+			require.NoError(t, db.Close())
+			require.NoError(t, db.Close(), "Database.Close must be idempotent")
 
 			_, err = db.Query(queryText, entity)
 			require.Error(t, err)

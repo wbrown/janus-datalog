@@ -33,6 +33,7 @@ type PlannerOptions struct {
     EnableAlgebraOptimizer    bool // default-active
     EnableScanSharing         bool // opt-in
     EnableEntityPrefetch      bool // opt-in
+    EnableAttributeFetchFusion bool // default-active
 
     EnableIteratorComposition bool // default-active
     EnableTrueStreaming       bool // default-active
@@ -57,6 +58,7 @@ zero value — i.e. off / nil / 0):
 EnableAlgebraOptimizer:     true
 EnableScanSharing:          false
 EnableEntityPrefetch:       false
+EnableAttributeFetchFusion: true
 EnableIteratorComposition:  true
 EnableTrueStreaming:        true
 EnableSymmetricHashJoin:    false
@@ -89,6 +91,11 @@ Benchmarked performance-neutral, hence off. Consumed in `executor/executor.go`.
 #### EnableEntityPrefetch — **opt-in** (default false)
 Warms the EA cache after the first data pattern via `PrefetchEntities`.
 Benchmarked performance-neutral, hence off. Consumed in `executor/query_executor.go`.
+
+#### EnableAttributeFetchFusion — **default-active**
+Fuses contiguous cardinality-one fetches sharing an already-bound entity into
+one tuple traversal. Latest mode only; History and AsOf decline the fusion.
+Consumed in `executor/query_executor.go`.
 
 ### Streaming
 
@@ -161,6 +168,8 @@ nothing:
 | `EnableConditionalAggregateRewriting` | The rewrite now runs unconditionally inside `EnableAlgebraOptimizer`; the standalone flag was inert. |
 | `EnableSemanticRewriting` | Removed in 2026-05. Folded `[(year ?t) ?y] [(= ?y N)]` into range predicates, but only worked when the bound time components formed a contiguous suffix from `year` (silently produced wrong results otherwise — e.g. `day(?t) = 5` alone became `1970-01-05`). Redundant in the default configuration because `EnableAlgebraOptimizer`'s decorrelation handles the same bottleneck. Write the range predicate directly if you need it: `[(>= ?t #inst "2025-01-01")] [(< ?t #inst "2026-01-01")]`. |
 | `EnableCSE` | Never shipped in `PlannerOptions`. |
+| `UseStreamingSubqueryUnion` | Removed with the retired componentized subquery executor. |
+| `UseComponentizedSubquery` | Removed with the retired componentized subquery executor. |
 | `EnableDebugLogging` | Removed in 2026-07. Join and relation diagnostics are structured annotation events. |
 | `EnableStreamingAggregationDebug` | Removed in 2026-07. Aggregation strategy and materialization diagnostics are structured annotation events. |
 

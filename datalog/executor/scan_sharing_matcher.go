@@ -44,63 +44,41 @@ func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation
 	}
 
 	fp := ScanQueryFingerprint(q, pattern)
-
-	// Check registry for an existing shared scan
-	if shared := m.registry.Get(fp); shared != nil {
-		// Build remapped symbols for this caller's variable names
-		remapped := remapSymbols(shared.Symbols, pattern)
-		properties := remapRelationProperties(shared.Properties, shared.Symbols, remapped)
-		if m.handler != nil {
-			m.handler(annotations.Event{
-				Name: "scan-sharing/cache-hit",
-				Data: map[string]interface{}{
-					"fingerprint": fp,
-					"symbols":     symStrings(remapped),
-				},
-			})
+	shared, hit, err := m.registry.GetOrCreate(fp, func() (*SharedScan, error) {
+		rel, err := m.inner.Match(q, bindings)
+		if err != nil {
+			return nil, err
 		}
-		return &LazySeqRelation{
-			seq:        shared.Seq,
-			symbols:    remapped,
-			options:    shared.Options,
-			properties: properties,
+		return &SharedScan{
+			Seq:        NewTupleSeq(rel.Iterator(), rel.RequiresCopy()),
+			Symbols:    rel.Symbols(),
+			Options:    rel.Options(),
+			Properties: rel.Properties(),
 		}, nil
-	}
-
-	// First scan — delegate to inner matcher
-	rel, err := m.inner.Match(q, bindings)
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	// Wrap the relation's iterator in a LazySeq and register
-	it := rel.Iterator()
-	needsCopy := rel.RequiresCopy()
-	seq := NewTupleSeq(it, needsCopy)
-	symbols := rel.Symbols()
-
-	m.registry.Put(fp, &SharedScan{
-		Seq:        seq,
-		Symbols:    symbols,
-		Options:    rel.Options(),
-		Properties: rel.Properties(),
-	})
-
+	remapped := remapSymbols(shared.Symbols, pattern)
+	properties := remapRelationProperties(shared.Properties, shared.Symbols, remapped)
 	if m.handler != nil {
+		eventName := "scan-sharing/cache-miss"
+		if hit {
+			eventName = "scan-sharing/cache-hit"
+		}
 		m.handler(annotations.Event{
-			Name: "scan-sharing/cache-miss",
+			Name: eventName,
 			Data: map[string]interface{}{
 				"fingerprint": fp,
-				"symbols":     symStrings(symbols),
+				"symbols":     symStrings(remapped),
 			},
 		})
 	}
-
 	return &LazySeqRelation{
-		seq:        seq,
-		symbols:    symbols,
-		options:    rel.Options(),
-		properties: rel.Properties(),
+		seq:        shared.Seq,
+		symbols:    remapped,
+		options:    shared.Options,
+		properties: properties,
 	}, nil
 }
 

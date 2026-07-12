@@ -219,10 +219,17 @@ Expressions compute values and bind them to variables:
 ```go
 total := qb.NewVar("total")
 qb.Add(price, tax).As(total)
-qb.Sub(gross, deductions).As(net)
-qb.Mul(quantity, unitPrice).As(lineTotal)
-qb.Div(total, count).As(average)
+qb.Sub(gross, deductions, fees).As(net)
+qb.Mul(quantity, unitPrice, multiplier).As(lineTotal)
+qb.Div(total, count, scale).As(average)
+qb.Sub(delta).As(negated)
+qb.Div(value).As(reciprocal)
 ```
+
+Arithmetic requires at least one operand and accepts additional operands.
+Longer forms reduce left-to-right. Direct AST construction now uses
+`query.ArithmeticFunction{Op: ..., Args: []query.Term{...}}`; the old
+`Left`/`Right` fields were removed.
 
 ### String Concatenation
 
@@ -888,9 +895,12 @@ func main() {
 | Function | EDN Equivalent |
 |----------|----------------|
 | `qb.Add(a, b).As(r)` | `[(+ ?a ?b) ?r]` |
+| `qb.Add(a, b, c).As(r)` | `[(+ ?a ?b ?c) ?r]` |
 | `qb.Sub(a, b).As(r)` | `[(- ?a ?b) ?r]` |
+| `qb.Sub(a).As(r)` | `[(- ?a) ?r]` |
 | `qb.Mul(a, b).As(r)` | `[(* ?a ?b) ?r]` |
 | `qb.Div(a, b).As(r)` | `[(/ ?a ?b) ?r]` |
+| `qb.Div(a).As(r)` | `[(/ ?a) ?r]` |
 | `qb.Str(a, b, c).As(r)` | `[(str ?a ?b ?c) ?r]` |
 | `qb.Ground(42).As(r)` | `[(ground 42) ?r]` |
 | `qb.Year(t).As(y)` | `[(year ?t) ?y]` |

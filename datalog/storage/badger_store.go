@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"runtime"
+	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/wbrown/janus-datalog/datalog"
@@ -16,8 +17,10 @@ const metadataPrefix = "_meta:"
 
 // BadgerStore implements Store using BadgerDB
 type BadgerStore struct {
-	db      *badger.DB
-	encoder *BinaryKeyEncoder
+	db        *badger.DB
+	encoder   *BinaryKeyEncoder
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewBadgerStore creates a new BadgerDB-backed store.
@@ -403,7 +406,16 @@ func (s *BadgerStore) BeginTx() (StoreTx, error) {
 
 // Close closes the store
 func (s *BadgerStore) Close() error {
-	return s.db.Close()
+	s.closeOnce.Do(func() {
+		syncErr := s.db.Sync()
+		closeErr := s.db.Close()
+		if syncErr != nil {
+			s.closeErr = syncErr
+		} else {
+			s.closeErr = closeErr
+		}
+	})
+	return s.closeErr
 }
 
 // GetMetadataUint64 retrieves a uint64 metadata value by key.

@@ -183,7 +183,31 @@ func TestSignedZeroHashesConsistentlyAcrossSetOperations(t *testing.T) {
 }
 
 func TestValuesEqualImpliesEqualTupleHashRandomized(t *testing.T) {
-	random := rand.New(rand.NewSource(0x51a9ed))
+	for _, seed := range []int64{0x51a9ed, 0x51a9ee, 0x51a9ef, 0x51a9f0, 0x51a9f1, 0x51a9f2, 0x51a9f3, 0x51a9f4} {
+		t.Run(fmt.Sprintf("seed_%x", seed), func(t *testing.T) {
+			runEqualValueHashLaw(t, seed)
+		})
+	}
+}
+
+func runEqualValueHashLaw(t *testing.T, seed int64) {
+	elementID := datalog.ElementID{Lamport: 9, ReplicaID: 4}
+	deterministic := [][2]interface{}{
+		{int8(-7), int64(-7)},
+		{int16(17), int64(17)},
+		{int32(23), int64(23)},
+		{int(29), int64(29)},
+		{elementID, &elementID},
+		{datalog.NewKeyword(":same/value"), datalog.NewKeyword(":same/value")},
+		{datalog.NewSymbol("same-value"), datalog.NewSymbol("same-value")},
+		{nil, nil},
+		{[]int64{1, 2, 3}, []interface{}{int64(1), int64(2), int64(3)}},
+	}
+	for caseIndex, pair := range deterministic {
+		assertEqualValuesHashEqually(t, caseIndex, pair[0], pair[1])
+	}
+
+	random := rand.New(rand.NewSource(seed))
 	for caseIndex := 0; caseIndex < 2_000; caseIndex++ {
 		var left, right interface{}
 		switch random.Intn(7) {
@@ -213,15 +237,25 @@ func TestValuesEqualImpliesEqualTupleHashRandomized(t *testing.T) {
 			seed := fmt.Sprintf("identity-%d", random.Intn(100))
 			left, right = datalog.NewIdentity(seed), datalog.NewIdentity(seed)
 		}
-		if !datalog.ValuesEqual(left, right) {
-			t.Fatalf("case %d: generated values are not equal: %T(%v), %T(%v)",
-				caseIndex, left, left, right, right)
-		}
-		leftHash := NewTupleKeyFull(Tuple{left}).hash
-		rightHash := NewTupleKeyFull(Tuple{right}).hash
-		if leftHash != rightHash {
-			t.Fatalf("case %d: equal values hash differently: %d != %d (%T, %T)",
-				caseIndex, leftHash, rightHash, left, right)
-		}
+		assertEqualValuesHashEqually(t, caseIndex+len(deterministic), left, right)
+	}
+}
+
+func assertEqualValuesHashEqually(
+	t *testing.T,
+	caseIndex int,
+	left interface{},
+	right interface{},
+) {
+	t.Helper()
+	if !datalog.ValuesEqual(left, right) {
+		t.Fatalf("case %d: generated values are not equal: %T(%v), %T(%v)",
+			caseIndex, left, left, right, right)
+	}
+	leftHash := NewTupleKeyFull(Tuple{left}).hash
+	rightHash := NewTupleKeyFull(Tuple{right}).hash
+	if leftHash != rightHash {
+		t.Fatalf("case %d: equal values hash differently: %d != %d (%T, %T)",
+			caseIndex, leftHash, rightHash, left, right)
 	}
 }

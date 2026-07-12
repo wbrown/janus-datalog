@@ -742,6 +742,24 @@ unary subtraction/division and variadic `+`, `-`, `*`, `/` use Clojure
 left-associative semantics. Zero-argument functions remain invalid Janus
 Datalog expressions.
 
+### Verification record
+
+Final confidence gates on 2026-07-12:
+
+- Full `go test -count=1 ./...` passed.
+- Package-wide executor/storage race testing passed, followed by focused race
+  repetitions for final scan-sharing and synchronized-close changes.
+- Executor and planner passed ten shuffled repetitions; storage passed eight
+  explicit full-package shuffled repetitions after splitting below Go's default
+  package timeout.
+- Independent matrices passed: 3,200 generated joins, 4,000 OR/union cases,
+  4,000 Top-N cases, 16,000 equality/hash cases, all 720 predicate clause
+  permutations, and all four history index-order shapes against full-sort
+  references.
+- The shuffled storage gate exposed an order-sensitive Badger close assertion;
+  `BadgerStore.Close` now synchronizes and closes exactly once, and repeated
+  close/fusion regression tests pass.
+
 ## Do Not Prioritize Yet
 
 - Recent hash-join inner-loop changes are already measured and effective.

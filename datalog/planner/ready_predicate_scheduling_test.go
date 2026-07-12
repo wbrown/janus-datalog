@@ -1,7 +1,6 @@
 package planner
 
 import (
-	"math/rand"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -63,8 +62,7 @@ func TestPredicateSpanningTwoScansWaitsForBothInputs(t *testing.T) {
 		"predicate must remain after the scans that provide both required symbols")
 }
 
-func TestReadyPredicateSchedulingRandomizedDependencyInvariant(t *testing.T) {
-	random := rand.New(rand.NewSource(0x9eed))
+func TestReadyPredicateSchedulingExhaustiveDependencyInvariant(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	score := datalog.NewSymbol("?score")
 	payload := datalog.NewSymbol("?payload")
@@ -109,13 +107,36 @@ func TestReadyPredicateSchedulingRandomizedDependencyInvariant(t *testing.T) {
 			Right: query.ConstantTerm{Value: datalog.NewKeyword(":category/blocked")},
 		}},
 	}
-
-	for caseIndex := 0; caseIndex < 500; caseIndex++ {
-		permutation := random.Perm(len(base))
-		clauses := make([]query.Clause, len(base))
-		for i, position := range permutation {
-			clauses[i] = base[position]
+	type dependency struct {
+		requires []query.Symbol
+		provides []query.Symbol
+	}
+	dependencies := map[query.Clause]dependency{
+		base[0]: {provides: []query.Symbol{entity, score}},
+		base[1]: {provides: []query.Symbol{entity, payload}},
+		base[2]: {provides: []query.Symbol{entity, category}},
+		base[3]: {requires: []query.Symbol{score}, provides: []query.Symbol{adjusted}},
+		base[4]: {requires: []query.Symbol{adjusted, minimum}},
+		base[5]: {requires: []query.Symbol{category}},
+	}
+	var permutations [][]query.Clause
+	var permute func(int)
+	clauses := append([]query.Clause(nil), base...)
+	permute = func(position int) {
+		if position == len(clauses) {
+			permutations = append(permutations, append([]query.Clause(nil), clauses...))
+			return
 		}
+		for i := position; i < len(clauses); i++ {
+			clauses[position], clauses[i] = clauses[i], clauses[position]
+			permute(position + 1)
+			clauses[position], clauses[i] = clauses[i], clauses[position]
+		}
+	}
+	permute(0)
+	require.Len(t, permutations, 720)
+
+	for caseIndex, clauses := range permutations {
 		phases, err := createPhasesGreedy(
 			clauses,
 			[]query.Symbol{entity, payload, adjusted, category},
@@ -129,15 +150,13 @@ func TestReadyPredicateSchedulingRandomizedDependencyInvariant(t *testing.T) {
 				available[symbol] = true
 			}
 			for clauseIndex, clause := range phase.Clauses {
-				symbols := extractClauseSymbols(clause)
-				if len(symbols.Provides) == 0 {
-					for _, required := range symbols.Requires {
-						require.True(t, available[required],
-							"case %d phase %d clause %d scheduled %T before %s was available",
-							caseIndex, phaseIndex, clauseIndex, clause, required)
-					}
+				dependency := dependencies[clause]
+				for _, required := range dependency.requires {
+					require.True(t, available[required],
+						"case %d phase %d clause %d scheduled %T before %s was available",
+						caseIndex, phaseIndex, clauseIndex, clause, required)
 				}
-				for _, provided := range symbols.Provides {
+				for _, provided := range dependency.provides {
 					available[provided] = true
 				}
 			}

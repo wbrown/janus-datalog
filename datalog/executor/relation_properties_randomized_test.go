@@ -11,8 +11,16 @@ import (
 )
 
 func TestJoinPropertyPropagationRandomizedDifferential(t *testing.T) {
+	for _, seed := range []int64{0x4a01, 0x4a02, 0x4a03, 0x4a04, 0x4a05, 0x4a06, 0x4a07, 0x4a08} {
+		t.Run(fmt.Sprintf("seed_%x", seed), func(t *testing.T) {
+			runJoinPropertyDifferential(t, seed)
+		})
+	}
+}
+
+func runJoinPropertyDifferential(t *testing.T, seed int64) {
 	const cases = 400
-	random := rand.New(rand.NewSource(0x4a01))
+	random := rand.New(rand.NewSource(seed))
 	joinA := datalog.NewSymbol("?join-a")
 	joinB := datalog.NewSymbol("?join-b")
 	leftID := datalog.NewSymbol("?left-id")
@@ -86,27 +94,110 @@ func TestJoinPropertyPropagationRandomizedDifferential(t *testing.T) {
 		require.NoError(t, err, "case %d", caseIndex)
 		require.Equal(t, propertiesBeforeMaterialization, specialized.Properties(),
 			"case %d: materialization changed properties", caseIndex)
-		baseline, err := collectTypedTuples(execute(false))
-		require.NoError(t, err, "case %d", caseIndex)
-		require.True(t, tupleSetsEqualPairwise(actual, baseline),
-			"case %d mode %d: specialized=%v baseline=%v",
-			caseIndex, mode, actual, baseline)
+		referenceSymbols, reference := nestedLoopJoinReference(
+			leftSymbols,
+			leftTuples,
+			rightSymbols,
+			rightTuples,
+			joinSymbols,
+		)
+		require.Equal(t, specialized.Symbols(), referenceSymbols)
+		require.True(t, tupleSetsEqualPairwise(actual, reference),
+			"case %d mode %d: specialized=%v reference=%v",
+			caseIndex, mode, actual, reference)
 		assertRelationPropertiesHold(t, specialized, actual, caseIndex)
 
 		projectSymbols := randomizedProjection(random, specialized.Symbols())
 		projectedSpecialized, err := execute(true).Project(projectSymbols)
 		require.NoError(t, err, "case %d", caseIndex)
-		projectedBaseline, err := execute(false).Project(projectSymbols)
-		require.NoError(t, err, "case %d", caseIndex)
 		projectedActual, err := collectTypedTuples(projectedSpecialized)
 		require.NoError(t, err, "case %d", caseIndex)
-		projectedExpected, err := collectTypedTuples(projectedBaseline)
-		require.NoError(t, err, "case %d", caseIndex)
+		projectedExpected := projectTuplesReference(referenceSymbols, reference, projectSymbols)
 		require.True(t, tupleSetsEqualPairwise(projectedActual, projectedExpected),
 			"case %d projection %v: specialized=%v baseline=%v",
 			caseIndex, projectSymbols, projectedActual, projectedExpected)
 		assertRelationPropertiesHold(t, projectedSpecialized, projectedActual, caseIndex)
 	}
+}
+
+func nestedLoopJoinReference(
+	leftSymbols []query.Symbol,
+	leftTuples []Tuple,
+	rightSymbols []query.Symbol,
+	rightTuples []Tuple,
+	joinSymbols []query.Symbol,
+) ([]query.Symbol, []Tuple) {
+	leftPositions := make(map[query.Symbol]int, len(leftSymbols))
+	rightPositions := make(map[query.Symbol]int, len(rightSymbols))
+	for i, symbol := range leftSymbols {
+		leftPositions[symbol] = i
+	}
+	for i, symbol := range rightSymbols {
+		rightPositions[symbol] = i
+	}
+	joinSet := make(map[query.Symbol]bool, len(joinSymbols))
+	for _, symbol := range joinSymbols {
+		joinSet[symbol] = true
+	}
+	outputSymbols := append([]query.Symbol(nil), leftSymbols...)
+	var rightNonJoin []int
+	for i, symbol := range rightSymbols {
+		if !joinSet[symbol] {
+			outputSymbols = append(outputSymbols, symbol)
+			rightNonJoin = append(rightNonJoin, i)
+		}
+	}
+
+	var result []Tuple
+	for _, left := range leftTuples {
+		for _, right := range rightTuples {
+			matches := true
+			for _, symbol := range joinSymbols {
+				if !datalog.ValuesEqual(left[leftPositions[symbol]], right[rightPositions[symbol]]) {
+					matches = false
+					break
+				}
+			}
+			if !matches {
+				continue
+			}
+			joined := append(Tuple(nil), left...)
+			for _, position := range rightNonJoin {
+				joined = append(joined, right[position])
+			}
+			if !containsTuplePairwise(result, joined) {
+				result = append(result, joined)
+			}
+		}
+	}
+	return outputSymbols, result
+}
+
+func projectTuplesReference(
+	sourceSymbols []query.Symbol,
+	tuples []Tuple,
+	projectSymbols []query.Symbol,
+) []Tuple {
+	positions := make([]int, len(projectSymbols))
+	for i, wanted := range projectSymbols {
+		for j, symbol := range sourceSymbols {
+			if symbol == wanted {
+				positions[i] = j
+				break
+			}
+		}
+	}
+	var result []Tuple
+	for _, tuple := range tuples {
+		projected := make(Tuple, len(positions))
+		for i, position := range positions {
+			projected[i] = tuple[position]
+		}
+		if !containsTuplePairwise(result, projected) {
+			result = append(result, projected)
+		}
+	}
+	return result
 }
 
 func generatedJoinTuples(

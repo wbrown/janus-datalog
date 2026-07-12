@@ -64,14 +64,10 @@ func (r *LazySeqRelation) Iterator() Iterator {
 
 func (r *LazySeqRelation) Materialize() Relation {
 	var tuples []Tuple
-	it := r.Iterator()
-	for it.Next() {
-		cp := make(Tuple, len(it.Tuple()))
-		copy(cp, it.Tuple())
-		tuples = append(tuples, cp)
-	}
-	it.Close()
-	return NewMaterializedRelationWithProperties(r.symbols, tuples, r.options, r.properties)
+	err := collectTuplesInto(&tuples, r)
+	result := NewMaterializedRelationWithProperties(r.symbols, tuples, r.options, r.properties)
+	result.err = err
+	return result
 }
 
 func (r *LazySeqRelation) String() string {
@@ -176,7 +172,10 @@ func (it *lazySeqIterator) Tuple() Tuple {
 
 func (it *lazySeqIterator) Close() error {
 	it.done = true
-	return nil
+	if it.cur != nil {
+		return it.cur.Close()
+	}
+	return it.err
 }
 
 func (it *lazySeqIterator) Error() error { return it.err }

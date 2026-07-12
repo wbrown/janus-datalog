@@ -412,8 +412,16 @@ func TestFilterBranchToOuterTupleComparesVectorValues(t *testing.T) {
 }
 
 func TestOrPropertyClassifierRandomized(t *testing.T) {
+	for _, seed := range []int64{0x5eed, 0x5eee, 0x5eef, 0x5ef0, 0x5ef1, 0x5ef2, 0x5ef3, 0x5ef4} {
+		t.Run(fmt.Sprintf("seed_%x", seed), func(t *testing.T) {
+			runOrPropertyDifferential(t, seed)
+		})
+	}
+}
+
+func runOrPropertyDifferential(t *testing.T, seed int64) {
 	const cases = 500
-	random := rand.New(rand.NewSource(0x5eed))
+	random := rand.New(rand.NewSource(seed))
 	entity := datalog.NewSymbol("?entity")
 	vector := datalog.NewSymbol("?vector")
 	index := datalog.NewSymbol("?index")
@@ -501,15 +509,14 @@ func TestOrPropertyClassifierRandomized(t *testing.T) {
 
 		actual, err := collectTypedTuples(relation)
 		require.NoError(t, err, "case %d", caseIndex)
-		expected, err := evaluateOrReference(
-			queryExecutor,
+		expected := evaluateOrReference(
 			branches,
 			outerSymbols,
 			outerTuples,
 			relation.Symbols(),
 			shortCircuit,
+			datoms,
 		)
-		require.NoError(t, err, "case %d", caseIndex)
 		require.True(t, tupleSequencesEqualPairwise(expected, actual),
 			"case %d: expected %v, got %v", caseIndex, expected, actual)
 		assertRelationPropertiesHold(t, relation, actual, caseIndex)
@@ -517,43 +524,24 @@ func TestOrPropertyClassifierRandomized(t *testing.T) {
 }
 
 func evaluateOrReference(
-	queryExecutor *DefaultQueryExecutor,
 	branches [][]query.Clause,
 	outerSymbols []query.Symbol,
 	outerTuples []Tuple,
 	outputSymbols []query.Symbol,
 	shortCircuit bool,
-) ([]Tuple, error) {
+	datoms []datalog.Datom,
+) []Tuple {
 	result := make([]Tuple, 0)
 	for _, outerTuple := range outerTuples {
-		input := NewMaterializedRelationNoDedupe(
-			outerSymbols,
-			[]Tuple{copyTuple(outerTuple)},
-		)
 		for _, branch := range branches {
-			branchResult, err := queryExecutor.executeInnerClauses(
-				NewContext(nil),
+			branchSymbols, branchTuples := evaluateGeneratedOrBranch(
 				branch,
-				input,
+				outerSymbols,
+				outerTuple,
+				datoms,
 			)
-			if err != nil {
-				return nil, err
-			}
-			if branchResult == nil {
-				continue
-			}
-			branchTuples, err := collectTypedTuples(branchResult)
-			if err != nil {
-				return nil, err
-			}
 			for _, branchTuple := range branchTuples {
-				projected := projectTupleWithFallback(
-					branchTuple,
-					branchResult.Symbols(),
-					outputSymbols,
-					outerTuple,
-					outerSymbols,
-				)
+				projected := projectGeneratedTuple(branchTuple, branchSymbols, outputSymbols)
 				if !containsTuplePairwise(result, projected) {
 					result = append(result, projected)
 				}
@@ -563,7 +551,69 @@ func evaluateOrReference(
 			}
 		}
 	}
-	return result, nil
+	return result
+}
+
+func evaluateGeneratedOrBranch(
+	branch []query.Clause,
+	outerSymbols []query.Symbol,
+	outerTuple Tuple,
+	datoms []datalog.Datom,
+) ([]query.Symbol, []Tuple) {
+	if len(branch) != 1 {
+		panic("generated OR branch must contain exactly one clause")
+	}
+	switch clause := branch[0].(type) {
+	case *query.Expression:
+		switch function := clause.Function.(type) {
+		case query.GroundFunction:
+			binding := clause.Binding.(query.Symbol)
+			symbols := append(append([]query.Symbol(nil), outerSymbols...), binding)
+			tuple := append(copyTuple(outerTuple), function.Value)
+			return symbols, []Tuple{tuple}
+		case query.EnumerateFunction:
+			binding := clause.Binding.(query.TupleBinding)
+			symbols := append(append([]query.Symbol(nil), outerSymbols...), binding.Variables...)
+			vectorValue := outerTuple[1].([]interface{})
+			tuples := make([]Tuple, len(vectorValue))
+			for i, value := range vectorValue {
+				tuples[i] = append(copyTuple(outerTuple), int64(i), value)
+			}
+			return symbols, tuples
+		default:
+			panic(fmt.Sprintf("unsupported generated expression %T", function))
+		}
+	case *query.DataPattern:
+		entity := outerTuple[0].(datalog.Identity)
+		attribute := clause.GetA().(query.Constant).Value.(datalog.Keyword)
+		valueSymbol := clause.GetV().(query.Variable).Name
+		symbols := append(append([]query.Symbol(nil), outerSymbols...), valueSymbol)
+		var tuples []Tuple
+		for _, datom := range datoms {
+			if datom.E.Equal(entity) && datom.A.Equal(attribute) {
+				tuples = append(tuples, append(copyTuple(outerTuple), datom.V))
+			}
+		}
+		return symbols, tuples
+	default:
+		panic(fmt.Sprintf("unsupported generated OR clause %T", clause))
+	}
+}
+
+func projectGeneratedTuple(
+	tuple Tuple,
+	sourceSymbols []query.Symbol,
+	outputSymbols []query.Symbol,
+) Tuple {
+	positions := make(map[query.Symbol]int, len(sourceSymbols))
+	for i, symbol := range sourceSymbols {
+		positions[symbol] = i
+	}
+	result := make(Tuple, len(outputSymbols))
+	for i, symbol := range outputSymbols {
+		result[i] = tuple[positions[symbol]]
+	}
+	return result
 }
 
 func tupleSequencesEqualPairwise(left, right []Tuple) bool {

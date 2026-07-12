@@ -185,3 +185,71 @@ func TestScanQueryFingerprintCanonicalizesRenamedOrderVariables(t *testing.T) {
 		ScanQueryFingerprint(rightQuery, right),
 	)
 }
+
+func TestScanFingerprintTypedConstantsAndSentinelsDoNotCollide(t *testing.T) {
+	pattern := func(elements ...query.PatternElement) *query.DataPattern {
+		return &query.DataPattern{Elements: elements}
+	}
+	testCases := []struct {
+		name  string
+		left  *query.DataPattern
+		right *query.DataPattern
+	}{
+		{
+			name: "variable versus string sentinel",
+			left: pattern(
+				query.Variable{Name: datalog.NewSymbol("?entity")},
+				query.Constant{Value: datalog.NewKeyword(":item/value")},
+				query.Constant{Value: "VAR"},
+			),
+			right: pattern(
+				query.Constant{Value: "VAR"},
+				query.Constant{Value: datalog.NewKeyword(":item/value")},
+				query.Variable{Name: datalog.NewSymbol("?value")},
+			),
+		},
+		{
+			name: "blank versus string sentinel",
+			left: pattern(
+				query.Blank{},
+				query.Constant{Value: datalog.NewKeyword(":item/value")},
+				query.Constant{Value: "_"},
+			),
+			right: pattern(
+				query.Constant{Value: "_"},
+				query.Constant{Value: datalog.NewKeyword(":item/value")},
+				query.Blank{},
+			),
+		},
+		{
+			name: "integer versus string",
+			left: pattern(
+				query.Variable{Name: datalog.NewSymbol("?entity")},
+				query.Constant{Value: datalog.NewKeyword(":item/value")},
+				query.Constant{Value: int64(1)},
+			),
+			right: pattern(
+				query.Variable{Name: datalog.NewSymbol("?entity")},
+				query.Constant{Value: datalog.NewKeyword(":item/value")},
+				query.Constant{Value: "1"},
+			),
+		},
+		{
+			name: "delimiter placement",
+			left: pattern(
+				query.Constant{Value: "a|b"},
+				query.Constant{Value: "c"},
+			),
+			right: pattern(
+				query.Constant{Value: "a"},
+				query.Constant{Value: "b|c"},
+			),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.NotEqual(t, ScanFingerprint(testCase.left), ScanFingerprint(testCase.right))
+		})
+	}
+}

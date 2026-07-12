@@ -1,7 +1,9 @@
 package executor
 
 import (
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -111,4 +113,47 @@ func TestScanRegistry_SymbolsPreserved(t *testing.T) {
 	assert.Equal(t, datalog.NewSymbol("?entity"), shared.Symbols[0])
 	assert.Equal(t, datalog.NewSymbol("?value"), shared.Symbols[1])
 	assert.Equal(t, datalog.NewSymbol("?tx"), shared.Symbols[2])
+}
+
+func TestScanRegistryGetOrCreateConcurrent(t *testing.T) {
+	registry := NewScanRegistry()
+	var creates atomic.Int64
+	const callers = 20
+	results := make([]*SharedScan, callers)
+	errors := make([]error, callers)
+	var wait sync.WaitGroup
+	for caller := 0; caller < callers; caller++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			results[index], _, errors[index] = registry.GetOrCreate("same", func() (*SharedScan, error) {
+				creates.Add(1)
+				return &SharedScan{Seq: &LazySeq{}}, nil
+			})
+		}(caller)
+	}
+	wait.Wait()
+
+	require.Equal(t, int64(1), creates.Load())
+	for caller := 0; caller < callers; caller++ {
+		require.NoError(t, errors[caller])
+		require.Same(t, results[0], results[caller])
+	}
+}
+
+func TestScanRegistryCloseReleasesPartialScans(t *testing.T) {
+	closeErr := errors.New("registry close failure")
+	source := failingRelation{
+		Relation:  NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}}),
+		failAfter: 100,
+		closeErr:  closeErr,
+	}
+	registry := NewScanRegistry()
+	registry.Put("partial", &SharedScan{
+		Seq:     NewTupleSeq(source.Iterator(), false),
+		Symbols: testSymbols(),
+	})
+
+	require.ErrorIs(t, registry.Close(), closeErr)
+	require.ErrorIs(t, registry.Close(), closeErr)
 }

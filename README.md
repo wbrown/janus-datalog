@@ -942,14 +942,19 @@ Every step produces a `Relation` (a set of tuples with named symbols). The entir
 
 ```go
 type Relation interface {
-    Schema() []Symbol                    // Symbol names
-    Iterator(ctx Context) Iterator       // Streaming access
-    Project(cols []Symbol) Relation      // π (projection)
-    Filter(filter Filter) Relation       // σ (selection)
-    Join(other Relation) Relation        // ⋈ (natural join)
-    Aggregate(...) Relation              // γ (aggregation)
+    Symbols() []query.Symbol
+    Properties() executor.RelationProperties
+    Iterator() executor.Iterator
+    Project(symbols []query.Symbol) (executor.Relation, error)
+    Filter(filter executor.Filter) executor.Relation
+    Join(other executor.Relation) executor.Relation
+    Materialize() executor.Relation
+    // ... sorting, predicates, functions, semi/anti joins, aggregation
 }
 ```
+
+External relation implementations may return an empty `RelationProperties`
+value when they cannot prove ordering or candidate-key guarantees.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete system architecture.
 
