@@ -322,17 +322,17 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		currentGroups = []Relation{boundRelation}
 	}
 
-	// Extract constant-bindable scalar inputs from phase metadata.
-	// These are scalar inputs that only appear in predicates/expressions, not data patterns.
-	// Resolving them as constants prevents disjoint relation groups and Product() panics.
+	// Extract constant-only scalar inputs from the phase Datalog :in clauses.
+	// Resolving them as constants prevents disjoint relation groups.
 	if len(currentGroups) > 0 {
 		allConstBindable := make(map[query.Symbol]bool)
 		for _, phase := range plan.Phases {
-			if cbInputs, ok := phase.Metadata["constant_bindable_inputs"]; ok {
-				if syms, ok := cbInputs.([]query.Symbol); ok {
-					for _, sym := range syms {
-						allConstBindable[sym] = true
-					}
+			if phase.Query == nil {
+				continue
+			}
+			for _, input := range phase.Query.In {
+				if scalar, ok := input.(query.ScalarInput); ok {
+					allConstBindable[scalar.Symbol] = true
 				}
 			}
 		}

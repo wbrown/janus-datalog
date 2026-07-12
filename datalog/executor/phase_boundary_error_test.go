@@ -83,7 +83,6 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 				},
 				Provides: []query.Symbol{symE, symV},
 				Keep:     []query.Symbol{symE},
-				Metadata: map[string]interface{}{},
 			},
 			{
 				// Last phase: joins phase 0's ?e with :doc/b.
@@ -94,7 +93,6 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 				},
 				Available: []query.Symbol{symE},
 				Provides:  []query.Symbol{symE, symW},
-				Metadata:  map[string]interface{}{},
 			},
 		},
 	}

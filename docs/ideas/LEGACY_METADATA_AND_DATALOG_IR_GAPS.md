@@ -1,7 +1,7 @@
 # Legacy Metadata and Datalog IR Gaps
 
 **Reviewed:** 2026-07-11  
-**Status:** Cleanup in progress; active design decisions deferred
+**Status:** Cleanup complete
 **Scope:** Planner/executor control flow, not persisted data compatibility
 
 ## Summary
@@ -28,7 +28,7 @@ the complex-query checkpoint, and direct call-site evidence.
 
 ## Inventory
 
-### 1. `RealizedPhase.Metadata`
+### 1. `RealizedPhase.Metadata` — removed
 
 `RealizedPhase` is the active planner/executor interchange type:
 
@@ -38,32 +38,13 @@ type RealizedPhase struct {
     Available []query.Symbol
     Provides  []query.Symbol
     Keep      []query.Symbol
-    Metadata  map[string]interface{}
 }
 ```
 
-Known keys:
-
-#### `constant_bindable_inputs` — active
-
-- Written by `planner/planner_clause_based.go`
-- Read by `executor/executor.go`
-- Structurally tested by `storage/predicate_product_test.go`
-- Affects execution semantics by deciding which scalar inputs become constants
-  rather than relation groups
-
-This is real behavior hidden behind an untyped string key. It should not be
-deleted without a replacement.
-
-Preferred cleanup options:
-
-1. Add a typed `ConstantBindableInputs []query.Symbol` field to
-   `RealizedPhase`.
-2. Derive the classification directly from the Datalog phase fragment at the
-   executor boundary.
-
-Option 2 better preserves Datalog as the IR, but it must not duplicate planner
-dependency analysis. This requires an explicit design decision.
+Constant-bindable scalar inputs are now represented directly as
+`query.ScalarInput` entries in each phase's Datalog `:in` clause. Symbols that
+must participate in pattern matching remain in the phase `RelationInput`.
+The executor reads this distinction without repeating planner analysis.
 
 #### `conditional_aggregates` — removed
 
@@ -73,29 +54,14 @@ Conditional aggregate semantics and rewrite observability now both derive from
 were removed. A structural executor test pins the annotation count to the
 Datalog representation.
 
-### 2. `Context` metadata map
+### 2. `Context` metadata and dormant annotation surface — removed
 
-`executor.Context` exposes:
-
-```go
-SetMetadata(key string, value interface{})
-GetMetadata(key string) (interface{}, bool)
-```
-
-Current production code contains no metadata writer or reader outside context
-delegation. The only direct users are metadata microbenchmarks.
-
-This is a high-confidence dormant infrastructure candidate, with one caveat:
-`Context` is exported from the executor package and may be used by advanced
-external callers.
-
-Suggested sequence:
-
-1. Search downstream users before removal.
-2. Deprecate the methods if external compatibility matters.
-3. Remove the map and delegation only after one release boundary.
-
-Do not replace it with another generic context-value mechanism.
+The generic metadata map and its benchmark had no production users. They were
+removed without replacement. Dormant annotation methods for old phase,
+matching, combination, filtering, and expression paths were removed from the
+exported interface at the same breaking cleanup boundary. `Context` now exposes
+only lifecycle, active join/collapse annotation, collector, and scan-registry
+operations.
 
 ### 3. Legacy `QueryPlan` / `Phase` graph — removed
 
@@ -115,7 +81,6 @@ There are two distinct subquery families:
 
 `query_executor.go` executes nested Datalog recursively and supports:
 
-- Default per-combination execution
 - Default per-combination execution
 - Parallel RelationInput iteration through the executor worker loop
 
@@ -185,22 +150,17 @@ It is categorically different from dead in-process execution code.
 
 Risk: low.
 
-### Stage 2: Replace `constant_bindable_inputs`
+### Stage 2: Replace `constant_bindable_inputs` — complete
 
-Choose between:
+- Preserve scalar binding mode in each phase's Datalog `:in`
+- Keep pattern-participating inputs in `RelationInput`
+- Remove `RealizedPhase.Metadata`
 
-- Typed `RealizedPhase` field
-- Deterministic derivation from the Datalog phase fragment
+### Stage 3: Retire generic `Context` metadata — complete
 
-Risk: medium; this affects parameter/environment semantics.
-
-### Stage 3: Retire generic `Context` metadata
-
-- Verify external users
-- Deprecate if necessary
-- Remove map and delegation
-
-Risk: low internally, compatibility-dependent externally.
+- Removed the metadata map and benchmark
+- Removed dormant exported annotation methods
+- Retained only operations used by current execution
 
 ### Stage 4: Retire the old plan/subquery cluster — complete
 

@@ -503,7 +503,6 @@ type RealizedPhase struct {
     Available []query.Symbol    // Symbols from inputs + previous phases
     Provides  []query.Symbol    // Symbols this phase produces
     Keep      []query.Symbol    // Symbols to pass to next phase
-    Metadata  map[string]interface{}
 }
 ```
 

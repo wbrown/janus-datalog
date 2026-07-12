@@ -164,10 +164,28 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 		// Compute keep symbols
 		keep := computeKeepSymbols(cp, remainingClauses, findSymbols)
 
+		// Preserve constant-only scalar bindings as ScalarInput entries in the
+		// phase Datalog. Other available symbols flow through RelationInput.
+		var phaseConstBindable []query.Symbol
+		if len(constantBindable) > 0 {
+			phaseSyms := make(map[query.Symbol]bool)
+			for _, clause := range cp.Clauses {
+				cs := extractClauseSymbols(clause)
+				for _, sym := range cs.Requires {
+					phaseSyms[sym] = true
+				}
+			}
+			for _, sym := range constantBindable {
+				if phaseSyms[sym] {
+					phaseConstBindable = append(phaseConstBindable, sym)
+				}
+			}
+		}
+
 		// Build the query fragment for this phase
 		phaseQuery := &query.Query{
 			Find:  buildFindClause(cp.Provides, q.Find, isLastPhase, retainedSort),
-			In:    buildInClause(cp.Available),
+			In:    buildInClause(cp.Available, phaseConstBindable),
 			Where: cp.Clauses,
 		}
 		if len(clausePhases) == 1 &&
@@ -195,28 +213,6 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 			Available: cp.Available,
 			Provides:  cp.Provides,
 			Keep:      keep,
-			Metadata:  make(map[string]interface{}),
-		}
-
-		// Store constant-bindable scalars for phases that reference them
-		if len(constantBindable) > 0 {
-			// Check which constant-bindable symbols this phase's clauses use
-			phaseSyms := make(map[query.Symbol]bool)
-			for _, clause := range cp.Clauses {
-				cs := extractClauseSymbols(clause)
-				for _, sym := range cs.Requires {
-					phaseSyms[sym] = true
-				}
-			}
-			var phaseConstBindable []query.Symbol
-			for _, sym := range constantBindable {
-				if phaseSyms[sym] {
-					phaseConstBindable = append(phaseConstBindable, sym)
-				}
-			}
-			if len(phaseConstBindable) > 0 {
-				realizedPhases[i].Metadata["constant_bindable_inputs"] = phaseConstBindable
-			}
 		}
 
 		// Populate explain fields for detailed plan output
@@ -267,17 +263,25 @@ func buildFindClause(provides []query.Symbol, originalFind []query.FindElement, 
 	return findElems
 }
 
-// buildInClause constructs the :in clause for a phase
-func buildInClause(available []query.Symbol) []query.InputSpec {
-	if len(available) == 0 {
-		// First phase with no inputs - just database
-		return []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}}
+// buildInClause preserves the binding modes required by a phase. Scalar inputs
+// are execution-environment constants; all other available symbols flow through
+// the phase relation.
+func buildInClause(available, scalarInputs []query.Symbol) []query.InputSpec {
+	inClause := []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}}
+	scalarSet := make(map[query.Symbol]bool, len(scalarInputs))
+	for _, sym := range scalarInputs {
+		scalarSet[sym] = true
+		inClause = append(inClause, query.ScalarInput{Symbol: sym})
 	}
 
-	// Create relation input with all available symbols
-	inClause := []query.InputSpec{
-		query.DatabaseInput{Name: datalog.SymDollar},
-		query.RelationInput{Symbols: available},
+	relationSymbols := make([]query.Symbol, 0, len(available))
+	for _, sym := range available {
+		if !scalarSet[sym] {
+			relationSymbols = append(relationSymbols, sym)
+		}
+	}
+	if len(relationSymbols) > 0 {
+		inClause = append(inClause, query.RelationInput{Symbols: relationSymbols})
 	}
 	return inClause
 }

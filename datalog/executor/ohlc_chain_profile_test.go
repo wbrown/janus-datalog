@@ -220,49 +220,16 @@ func createOHLCData(numDays, numHours int) []datalog.Datom {
 	return datoms
 }
 
-// BenchmarkMetadataPropagation specifically profiles the metadata propagation overhead
-func BenchmarkMetadataPropagation(b *testing.B) {
-	// Create a context and benchmark Set/Get metadata operations
+// BenchmarkScanRegistryAccess measures access to the remaining mutable
+// per-query context state.
+func BenchmarkScanRegistryAccess(b *testing.B) {
 	ctx := NewContext(nil)
 
-	// Sample payload slice for the metadata Set/Get benchmark (the element type
-	// is arbitrary — this exercises Context metadata, not time ranges).
-	type interval struct{ Start, End time.Time }
-	ranges := make([]interval, 260)
-	startTime := time.Date(2025, 6, 20, 9, 0, 0, 0, time.UTC)
-	for i := 0; i < 260; i++ {
-		ranges[i] = interval{
-			Start: startTime.Add(time.Duration(i) * time.Hour),
-			End:   startTime.Add(time.Duration(i+1) * time.Hour),
-		}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ctx.ScanRegistry()
 	}
-
-	b.Run("SetMetadata", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			ctx.SetMetadata("time_ranges", ranges)
-		}
-	})
-
-	b.Run("GetMetadata", func(b *testing.B) {
-		ctx.SetMetadata("time_ranges", ranges)
-		b.ResetTimer()
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			_, _ = ctx.GetMetadata("time_ranges")
-		}
-	})
-
-	b.Run("GetAndTypeAssert", func(b *testing.B) {
-		ctx.SetMetadata("time_ranges", ranges)
-		b.ResetTimer()
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			if val, ok := ctx.GetMetadata("time_ranges"); ok {
-				_ = val.([]interval)
-			}
-		}
-	})
 }
 
 // BenchmarkTimeExtractionFunctions profiles time extraction function performance

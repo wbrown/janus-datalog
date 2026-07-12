@@ -164,11 +164,10 @@ func indexName(idx IndexType) string {
 // RealizedPhase is the clean interchange format between planner and executor.
 // It contains a Datalog query fragment instead of subdivided operation types.
 type RealizedPhase struct {
-	Query     *query.Query           // Datalog query fragment for this phase
-	Available []query.Symbol         // Symbols available from previous phases
-	Provides  []query.Symbol         // Symbols this phase provides
-	Keep      []query.Symbol         // Symbols to keep for next phase
-	Metadata  map[string]interface{} // Phase metadata (decorrelation hints, etc.)
+	Query     *query.Query   // Datalog query fragment for this phase
+	Available []query.Symbol // Symbols available from previous phases
+	Provides  []query.Symbol // Symbols this phase provides
+	Keep      []query.Symbol // Symbols to keep for next phase
 
 	// Explain fields - populated for detailed plan output, nil during normal execution
 	Patterns    []PatternPlan    // Pattern plans with index selection and selectivity

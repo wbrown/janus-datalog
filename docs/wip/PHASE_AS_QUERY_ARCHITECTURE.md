@@ -388,9 +388,6 @@ type Phase struct {
     Available []query.Symbol  // What's available from previous phases
     Provides  []query.Symbol  // What this query produces
     Keep      []query.Symbol  // What to project for next phase
-
-    // Optional metadata for optimizations
-    Metadata  map[string]interface{}
 }
 ```
 

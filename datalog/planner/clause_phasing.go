@@ -60,6 +60,10 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 	var selectedClauses []query.Clause
 	var providedSymbols []query.Symbol
 	providedSet := make(map[query.Symbol]bool)
+	availableAtStart := make(map[query.Symbol]bool, len(available))
+	for sym := range available {
+		availableAtStart[sym] = true
+	}
 
 	// Track which clauses we've selected
 	selected := make(map[int]bool)
@@ -128,17 +132,16 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 		}
 	}
 
-	// Capture symbols that were available at phase start (before we added provides)
+	// Capture symbols that were available at phase start. A bound input can also
+	// appear in a pattern position and therefore be reported as provided; it
+	// remains an input to the phase and must not disappear from its Datalog :in.
 	var availableList []query.Symbol
-	for sym := range available {
-		if !providedSet[sym] {
-			availableList = append(availableList, sym)
-		}
+	for sym := range availableAtStart {
+		availableList = append(availableList, sym)
 	}
 	// Sort for deterministic ordering. Available is used only as a set
-	// (membership) and to build the phase's :in clause, which the executor
-	// ignores — so order has no effect on results. Sorting keeps EXPLAIN/plan
-	// output stable across runs (map iteration is otherwise nondeterministic).
+	// (membership) and to build the phase's :in clause. Sorting keeps
+	// EXPLAIN/plan output stable across runs.
 	sort.Slice(availableList, func(i, j int) bool {
 		return availableList[i].Compare(availableList[j]) < 0
 	})
