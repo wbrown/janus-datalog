@@ -34,6 +34,6 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 	require.False(t, hasAggregationDebugFlag, "aggregation diagnostics must use annotations, not a debug flag")
 
 	// Numeric defaults.
-	require.Equal(t, 0, opts.MaxSubqueryWorkers, "MaxSubqueryWorkers default is 0 (= runtime.NumCPU())")
+	require.Equal(t, 0, opts.MaxSubqueryWorkers, "MaxSubqueryWorkers default is 0 (= 4 executor workers)")
 	require.Equal(t, 0, opts.IndexNestedLoopThreshold, "IndexNestedLoopThreshold default is 0 (always HashJoinScan)")
 }

@@ -533,7 +533,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 
 		// Executor parallel options
 		EnableParallelSubqueries: true, // Parallel subquery execution
-		MaxSubqueryWorkers:       0,    // 0 = runtime.NumCPU()
+		MaxSubqueryWorkers:       0,    // 0 = 4 workers
 
 		// Other executor options
 		EnableStreamingJoins:       false, // Keep false for stability

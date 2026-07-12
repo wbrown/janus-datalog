@@ -40,7 +40,7 @@ type PlannerOptions struct {
     EnableSymmetricHashJoin   bool // opt-in
 
     EnableParallelSubqueries bool // default-active
-    MaxSubqueryWorkers       int  // 0 = runtime.NumCPU()
+    MaxSubqueryWorkers       int  // 0 = 4 workers
 
     EnableStreamingJoins       bool // opt-in
     EnableStreamingAggregation bool // default-active
@@ -63,7 +63,7 @@ EnableIteratorComposition:  true
 EnableTrueStreaming:        true
 EnableSymmetricHashJoin:    false
 EnableParallelSubqueries:   true
-MaxSubqueryWorkers:         0      // runtime.NumCPU()
+MaxSubqueryWorkers:         0      // executor default: 4 workers
 EnableStreamingJoins:       false
 EnableStreamingAggregation: true
 IndexNestedLoopThreshold:   0      // always HashJoinScan
