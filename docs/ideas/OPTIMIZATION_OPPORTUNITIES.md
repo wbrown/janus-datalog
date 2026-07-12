@@ -261,6 +261,8 @@ Implemented propagation:
   join symbols contain a candidate key. Join ordering remains unclaimed.
 - Hash joins omit their internal full-tuple `seen` table when the derived result
   key already proves every output tuple unique.
+- Hash joins store a single tuple directly when the build join symbols contain
+  a candidate key; non-unique build keys retain fanout slices.
 - Semi-joins and anti-joins preserve all left ordering and candidate keys
   because they only filter left rows.
 - Unions, products, and fallback relations clear properties until a derivation
@@ -345,6 +347,23 @@ The complex checkpoint remains statistically unchanged: 49.17 → 50.07 ms/op
 (`p=0.579`), 82.80 → 82.82 MiB/op (`p=0.247`), and 1.088M allocations/op
 (`p=0.268`). Its dominant joins do not currently carry candidate keys through
 the OR/fallback and subquery shapes that feed them.
+
+The third join-key step specializes the build hash table itself. When the build
+side's join symbols contain a candidate key, each hash entry stores one `Tuple`
+directly instead of allocating a one-element `[]Tuple`; non-unique builds retain
+the fanout slice and duplicate-key control path. Against the keyed,
+dedup-eliding focused baseline:
+
+| Rows | Time before | Time after | Time delta | Memory delta | Alloc delta |
+|---:|---:|---:|---:|---:|---:|
+| 10,000 | 1.782 ms | 1.680 ms | **-5.72%** | -7.10% | -11.10% |
+| 100,000 | 18.60 ms | 17.62 ms | **-5.30%** | -7.40% | -11.11% |
+| **Geomean** | **5.758 ms** | **5.441 ms** | **-5.51%** | **-7.25%** | **-11.11%** |
+
+The complex checkpoint remains statistically unchanged: 47.94 → 48.66 ms/op
+(`p=0.218`), 82.80 → 82.81 MiB/op (`p=0.912`), and 1.088M allocations/op
+(`p=0.535`). This confirms that the dominant fallback/subquery joins still lack
+candidate-key proofs at their build boundaries.
 
 ### Semi/anti join checkpoint
 

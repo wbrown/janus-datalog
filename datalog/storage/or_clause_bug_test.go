@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
@@ -121,16 +120,15 @@ func TestOrClauseBugTraced(t *testing.T) {
 	_, err = tx.Commit()
 	assert.NoError(t, err)
 
-	// Create annotation handler that logs events
+	var events []annotations.Event
 	handler := func(event annotations.Event) {
-		fmt.Printf("[TRACE] %s: %v\n", event.Name, event.Data)
+		events = append(events, event)
 	}
 
 	// Create executor with tracing - use same options as Database defaults
 	baseMatcher := NewBadgerMatcher(db.Store())
 	wrappedMatcher := executor.WrapMatcher(baseMatcher, handler)
 	opts := DefaultPlannerOptions()
-	opts.EnableDebugLogging = true
 	exec := executor.NewExecutorWithOptions(wrappedMatcher, db, opts)
 
 	// First, test what the OR branches return individually
@@ -196,4 +194,5 @@ func TestOrClauseBugTraced(t *testing.T) {
 	itOr.Close()
 
 	assert.Equal(t, 2, resultOr.Size(), "Full OR query should return 2 tuples")
+	assert.NotEmpty(t, events, "structured annotation handler should receive execution events")
 }

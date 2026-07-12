@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -313,4 +314,78 @@ func TestJoinBuildCopyAnnotation(t *testing.T) {
 	}
 
 	t.Logf("Copy stats: copied=%d, passthru=%d, requires_copy=%v", copyCount, skipCount, requiresCopy)
+}
+
+func TestHashJoinEmitsStructuredStrategyBuildAndProbeAnnotations(t *testing.T) {
+	var events []annotations.Event
+	collector := annotations.NewCollector(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	opts := ExecutorOptions{Collector: collector}
+	joinSymbol := datalog.NewSymbol("?id")
+	left := NewMaterializedRelationWithOptions(
+		[]query.Symbol{joinSymbol, datalog.NewSymbol("?left")},
+		[]Tuple{{int64(1), "a"}, {int64(2), "b"}, {int64(3), "c"}},
+		opts,
+	)
+	right := NewMaterializedRelationWithOptions(
+		[]query.Symbol{joinSymbol, datalog.NewSymbol("?right")},
+		[]Tuple{{int64(1), "x"}, {int64(2), "y"}, {int64(4), "z"}},
+		opts,
+	)
+
+	result := HashJoinWithOptions(left, right, []query.Symbol{joinSymbol}, opts)
+	require.Len(t, collectTuples(result), 2)
+
+	byName := make(map[string]annotations.Event)
+	for _, event := range events {
+		byName[event.Name] = event
+	}
+	strategy, ok := byName[annotations.JoinStrategy]
+	require.True(t, ok)
+	require.Equal(t, "materialized", strategy.Data["mode"])
+	require.Equal(t, "right", strategy.Data["build_side"])
+
+	build, ok := byName[annotations.JoinBuild]
+	require.True(t, ok)
+	require.Equal(t, 3, build.Data["tuple_count"])
+	require.Equal(t, false, build.Data["join_key_unique"])
+
+	probe, ok := byName[annotations.JoinProbe]
+	require.True(t, ok)
+	require.Equal(t, 3, probe.Data["tuple_count"])
+	require.Equal(t, 2, probe.Data["result_count"])
+}
+
+func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
+	var events []annotations.Event
+	collector := annotations.NewCollector(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	joinSymbol := datalog.NewSymbol("?id")
+	base := NewMaterializedRelationNoDedupe(
+		[]query.Symbol{joinSymbol},
+		[]Tuple{{int64(1)}},
+	)
+	stream := NewStreamingRelationWithOptions(
+		base.Symbols(),
+		base.Iterator(),
+		ExecutorOptions{Collector: collector},
+	)
+
+	emitJoinStrategyAnnotation(
+		ExecutorOptions{Collector: collector},
+		stream,
+		base,
+		[]query.Symbol{joinSymbol},
+		"streaming",
+		"right",
+		false,
+	)
+
+	require.False(t, stream.iteratorCalled,
+		"emitting a join annotation must not consume a streaming relation")
+	require.Len(t, events, 1)
+	require.Equal(t, -1, events[0].Data["left_size"])
+	require.Equal(t, 1, events[0].Data["right_size"])
 }

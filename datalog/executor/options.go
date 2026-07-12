@@ -20,7 +20,6 @@ type ExecutorOptions struct {
 
 	// Join options
 	EnableStreamingJoins bool
-	EnableDebugLogging   bool
 	DefaultHashTableSize int // Default hash table size for streaming relations (Size() = -1). If 0, uses 256.
 
 	// Storage join strategy: IndexNestedLoop threshold
@@ -31,8 +30,7 @@ type ExecutorOptions struct {
 	IndexNestedLoopThreshold int
 
 	// Aggregation options
-	EnableStreamingAggregation      bool
-	EnableStreamingAggregationDebug bool
+	EnableStreamingAggregation bool
 
 	// Scan sharing: deduplicate unbound scans across subqueries via LazySeq
 	EnableScanSharing bool

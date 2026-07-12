@@ -6,6 +6,11 @@
 
 ## Status
 
+**2026-07 update:** `EnableDebugLogging` and direct join `fmt.Printf` diagnostics
+were removed. Strategy, build, probe, and copy statistics now flow exclusively
+through structured `join/*` annotation events. Historical discussion below
+describes the intermediate gated-debug implementation.
+
 | # | Finding | Status |
 |---|---------|--------|
 | 1 | `combineTuples` projection plan hoist | ✅ Applied (`397e39f`); verified clean on M3 Ultra |

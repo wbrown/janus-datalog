@@ -131,10 +131,8 @@ type PlannerOptions struct {
 	MaxSubqueryWorkers       int  // Maximum parallel workers for subqueries (0 = runtime.NumCPU())
 
 	// Executor join/aggregation options
-	EnableStreamingJoins            bool // Return StreamingRelation from joins instead of materializing
-	EnableStreamingAggregation      bool // Enable streaming aggregation (default: true)
-	EnableStreamingAggregationDebug bool // Debug logging for streaming aggregation (default: false)
-	EnableDebugLogging              bool // Enable debug logging for joins (default: false)
+	EnableStreamingJoins       bool // Return StreamingRelation from joins instead of materializing
+	EnableStreamingAggregation bool // Enable streaming aggregation (default: true)
 
 	// Storage join strategy options
 	IndexNestedLoopThreshold int // Threshold for choosing IndexNestedLoop vs HashJoinScan (default: 0)

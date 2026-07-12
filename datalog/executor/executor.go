@@ -29,7 +29,6 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 		MaxSubqueryWorkers:         0,
 		EnableStreamingJoins:       false,
 		EnableStreamingAggregation: true,
-		EnableDebugLogging:         false,
 		EnableAttributeFetchFusion: true,
 	}
 	return NewExecutorWithOptions(matcher, resolver, defaultOpts)
@@ -68,19 +67,17 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 // their zero value.
 func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
-		EnableIteratorComposition:       opts.EnableIteratorComposition,
-		EnableTrueStreaming:             opts.EnableTrueStreaming,
-		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
-		EnableStreamingJoins:            opts.EnableStreamingJoins,
-		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
-		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
-		EnableDebugLogging:              opts.EnableDebugLogging,
-		EnableScanSharing:               opts.EnableScanSharing,
-		EnableEntityPrefetch:            opts.EnableEntityPrefetch,
-		EnableAttributeFetchFusion:      opts.EnableAttributeFetchFusion,
-		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
+		EnableIteratorComposition:  opts.EnableIteratorComposition,
+		EnableTrueStreaming:        opts.EnableTrueStreaming,
+		EnableSymmetricHashJoin:    opts.EnableSymmetricHashJoin,
+		EnableParallelSubqueries:   opts.EnableParallelSubqueries,
+		MaxSubqueryWorkers:         opts.MaxSubqueryWorkers,
+		EnableStreamingJoins:       opts.EnableStreamingJoins,
+		EnableStreamingAggregation: opts.EnableStreamingAggregation,
+		EnableScanSharing:          opts.EnableScanSharing,
+		EnableEntityPrefetch:       opts.EnableEntityPrefetch,
+		EnableAttributeFetchFusion: opts.EnableAttributeFetchFusion,
+		IndexNestedLoopThreshold:   opts.IndexNestedLoopThreshold,
 	}
 }
 

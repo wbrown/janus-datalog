@@ -7,6 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 )
 
 func TestExecuteAggregations(t *testing.T) {
@@ -174,6 +175,105 @@ func TestExecuteAggregations(t *testing.T) {
 				tt.validate(t, result)
 			}
 		})
+	}
+}
+
+func TestAggregationEmitsStructuredStrategyAnnotation(t *testing.T) {
+	var events []annotations.Event
+	ctx := NewContext(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	value := datalog.NewSymbol("?value")
+	rel := NewMaterializedRelationWithOptions(
+		[]query.Symbol{value},
+		[]Tuple{{int64(1)}, {int64(2)}, {int64(3)}},
+		ExecutorOptions{Collector: ctx.Collector()},
+	)
+
+	result := ExecuteAggregationsWithContext(ctx, rel, []query.FindElement{
+		query.FindAggregate{Function: "sum", Arg: value},
+	})
+	if result.Size() != 1 {
+		t.Fatalf("aggregation result size = %d, want 1", result.Size())
+	}
+
+	var strategy annotations.Event
+	found := false
+	for _, event := range events {
+		if event.Name == annotations.AggregationStrategy {
+			strategy = event
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("aggregation strategy annotation was not emitted")
+	}
+	if strategy.Data["strategy"] != "batch" {
+		t.Fatalf("aggregation strategy = %v, want batch", strategy.Data["strategy"])
+	}
+	if strategy.Data["aggregate_count"] != 1 {
+		t.Fatalf("aggregate_count = %v, want 1", strategy.Data["aggregate_count"])
+	}
+	if strategy.Data["group_by_count"] != 0 {
+		t.Fatalf("group_by_count = %v, want 0", strategy.Data["group_by_count"])
+	}
+}
+
+func TestStreamingAggregationEmitsMaterializedAnnotation(t *testing.T) {
+	var events []annotations.Event
+	ctx := NewContext(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	value := datalog.NewSymbol("?value")
+	tuples := make([]Tuple, StreamingAggregationThreshold+1)
+	for i := range tuples {
+		tuples[i] = Tuple{int64(i)}
+	}
+	base := NewMaterializedRelationNoDedupe([]query.Symbol{value}, tuples)
+	stream := NewStreamingRelationWithOptions(
+		base.Symbols(),
+		base.Iterator(),
+		ExecutorOptions{
+			EnableStreamingAggregation: true,
+		},
+	)
+
+	result := ExecuteAggregationsWithContext(ctx, stream, []query.FindElement{
+		query.FindAggregate{Function: "sum", Arg: value},
+	})
+	if stream.iteratorCalled {
+		t.Fatal("emitting the aggregation strategy annotation consumed the streaming input")
+	}
+	if result.Size() != 1 {
+		t.Fatalf("streaming aggregation result size = %d, want 1", result.Size())
+	}
+
+	foundStrategy := false
+	foundMaterialized := false
+	for _, event := range events {
+		if event.Name == annotations.AggregationStrategy {
+			foundStrategy = true
+			if event.Data["input_size"] != -1 {
+				t.Fatalf("streaming input_size = %v, want -1", event.Data["input_size"])
+			}
+		}
+		if event.Name == annotations.AggregationMaterialized {
+			foundMaterialized = true
+			if event.Data["input_count"] != StreamingAggregationThreshold+1 {
+				t.Fatalf("input_count = %v, want %d",
+					event.Data["input_count"], StreamingAggregationThreshold+1)
+			}
+			if event.Data["result_count"] != 1 {
+				t.Fatalf("result_count = %v, want 1", event.Data["result_count"])
+			}
+		}
+	}
+	if !foundStrategy {
+		t.Error("aggregation strategy annotation was not emitted")
+	}
+	if !foundMaterialized {
+		t.Error("aggregation materialized annotation was not emitted through the context collector")
 	}
 }
 

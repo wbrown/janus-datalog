@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,8 +27,11 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 	require.False(t, opts.EnableEntityPrefetch, "EnableEntityPrefetch is documented opt-in")
 	require.False(t, opts.EnableSymmetricHashJoin, "EnableSymmetricHashJoin is documented opt-in")
 	require.False(t, opts.EnableStreamingJoins, "EnableStreamingJoins is documented opt-in")
-	require.False(t, opts.EnableStreamingAggregationDebug, "EnableStreamingAggregationDebug is documented opt-in")
-	require.False(t, opts.EnableDebugLogging, "EnableDebugLogging is documented opt-in")
+	optionsType := reflect.TypeOf(opts)
+	_, hasJoinDebugFlag := optionsType.FieldByName("EnableDebugLogging")
+	require.False(t, hasJoinDebugFlag, "join diagnostics must use annotations, not a debug flag")
+	_, hasAggregationDebugFlag := optionsType.FieldByName("EnableStreamingAggregationDebug")
+	require.False(t, hasAggregationDebugFlag, "aggregation diagnostics must use annotations, not a debug flag")
 
 	// Numeric defaults.
 	require.Equal(t, 0, opts.MaxSubqueryWorkers, "MaxSubqueryWorkers default is 0 (= runtime.NumCPU())")

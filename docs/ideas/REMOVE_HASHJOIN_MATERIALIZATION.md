@@ -1,8 +1,13 @@
 # Plan: Remove Unnecessary HashJoin Materialization
 
-**Status**: Proposed
+**Status**: Rejected by measurement (2026-07)
 **Date**: 2025-10-26
 **Priority**: Medium (Performance + Architecture)
+
+`BenchmarkComplexQueryJoinMaterialization` shows streaming joins are 8.04%
+slower, use 3.78% more memory, and allocate 8.34% more on the production-shaped
+checkpoint. Materialized joins remain the default. The direct debug-print
+examples below are historical; current diagnostics use structured annotations.
 
 ## Problem
 

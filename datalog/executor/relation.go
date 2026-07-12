@@ -8,6 +8,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -187,6 +188,15 @@ type Relation interface {
 
 	// Note: Relations are IMMUTABLE and DEDUPLICATED at creation
 	// All operations return NEW Relations
+}
+
+// materializedSize returns a relation's tuple count only when reading it cannot
+// advance or cache an iterator. Unknown and streaming sizes are reported as -1.
+func materializedSize(rel Relation) int {
+	if materialized, ok := rel.(*MaterializedRelation); ok {
+		return materialized.Size()
+	}
+	return -1
 }
 
 // Iterator provides streaming access to tuples
@@ -1013,14 +1023,27 @@ func (r *StreamingRelation) Iterator() Iterator {
 	r.iteratorCalled = true
 
 	// If Materialize() was called, enable caching
+	var cacheCollector *annotations.Collector
+	var cacheEvent annotations.Event
 	if r.shouldCache {
 		r.cachingInProgress = true
-		if r.options.EnableDebugLogging {
-			fmt.Printf("[StreamingRelation.Iterator] First call with caching enabled\n")
+		if r.options.Collector != nil {
+			cacheCollector = r.options.Collector
+			cacheEvent = annotations.Event{
+				Name: annotations.RelationCacheEnabled,
+				Data: map[string]interface{}{
+					"symbols":            append([]query.Symbol(nil), r.symbols...),
+					"symbol_count":       len(r.symbols),
+					"cached_tuple_count": len(r.cache),
+				},
+			}
 		}
 	}
 
 	r.mu.Unlock()
+	if cacheCollector != nil {
+		cacheCollector.Add(cacheEvent)
+	}
 
 	// Create base iterator
 	baseIter := r.iterator

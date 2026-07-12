@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -207,7 +208,13 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Equal(t, RelationProperties{Keys: [][]query.Symbol{{id}}}, joined.Properties())
-	require.Nil(t, joined.(*StreamingRelation).iterator.(*hashJoinIterator).seen,
+	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
+	require.True(t, joinIterator.buildKeysUnique)
+	buildValue, found := joinIterator.hashTable.Get(NewTupleKey(Tuple{int64(1)}, []int{0}))
+	require.True(t, found)
+	require.IsType(t, Tuple{}, buildValue,
+		"a unique build key should store one tuple directly rather than []Tuple")
+	require.Nil(t, joinIterator.seen,
 		"a proven result key makes internal full-tuple join deduplication redundant")
 
 	projected, err := joined.Project([]query.Symbol{id, leftValue})
@@ -244,7 +251,13 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 
 	joined := HashJoinWithOptions(left, right, []query.Symbol{id}, opts)
 	require.Empty(t, joined.Properties().Keys)
-	require.NotNil(t, joined.(*StreamingRelation).iterator.(*hashJoinIterator).seen,
+	joinIterator := joined.(*StreamingRelation).iterator.(*hashJoinIterator)
+	require.False(t, joinIterator.buildKeysUnique)
+	buildValue, found := joinIterator.hashTable.Get(NewTupleKey(Tuple{int64(1)}, []int{0}))
+	require.True(t, found)
+	require.Len(t, buildValue.([]Tuple), 2,
+		"a non-unique build key must retain every fanout tuple")
+	require.NotNil(t, joinIterator.seen,
 		"an unkeyed join must retain internal full-tuple deduplication")
 
 	projected, err := joined.Project([]query.Symbol{id, leftValue})
@@ -383,4 +396,38 @@ func TestSemiAndAntiJoinsDeduplicateUnkeyedLeftInput(t *testing.T) {
 
 	require.Equal(t, 1, SemiJoin(left, right, []query.Symbol{id}).Size())
 	require.Equal(t, 1, AntiJoin(left, right, []query.Symbol{id}).Size())
+}
+
+func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
+	var events []annotations.Event
+	collector := annotations.NewCollector(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	symbol := datalog.NewSymbol("?value")
+	base := NewMaterializedRelationNoDedupe(
+		[]query.Symbol{symbol},
+		[]Tuple{{int64(1)}, {int64(2)}},
+	)
+	stream := NewStreamingRelationWithOptions(
+		base.Symbols(),
+		base.Iterator(),
+		ExecutorOptions{Collector: collector},
+	)
+
+	stream.Materialize()
+	it := stream.Iterator()
+	for it.Next() {
+	}
+	require.NoError(t, it.Error())
+	require.NoError(t, it.Close())
+
+	found := false
+	for _, event := range events {
+		if event.Name == annotations.RelationCacheEnabled {
+			found = true
+			require.Equal(t, 1, event.Data["symbol_count"])
+			break
+		}
+	}
+	require.True(t, found, "relation cache annotation was not emitted")
 }

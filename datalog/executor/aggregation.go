@@ -1,18 +1,15 @@
 package executor
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // Note: Streaming aggregation settings are now managed by ExecutorOptions
-
-// Debug flag for aggregation logging
-const debugAggregation = false
 
 // StreamingAggregationThreshold is the minimum relation size to use streaming
 // For small relations, batch aggregation is faster due to lower overhead
@@ -26,22 +23,6 @@ func ExecuteAggregations(rel Relation, findElements []query.FindElement) Relatio
 
 // ExecuteAggregationsWithContext applies aggregation operations with annotation support
 func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []query.FindElement) Relation {
-	if debugAggregation {
-		fmt.Printf("[ExecuteAggregations] Called with %d find elements, rel symbols: %v\n", len(findElements), rel.Symbols())
-		for i, elem := range findElements {
-			switch e := elem.(type) {
-			case query.FindAggregate:
-				fmt.Printf("[ExecuteAggregations] Element %d: FindAggregate - Function=%s, Arg=%s\n",
-					i, e.Function, e.Arg)
-			case query.FindVariable:
-				fmt.Printf("[ExecuteAggregations] Element %d: FindVariable - Symbol=%s\n",
-					i, e.Symbol)
-			default:
-				fmt.Printf("[ExecuteAggregations] Element %d: Unknown type %T\n", i, elem)
-			}
-		}
-	}
-
 	// Separate variables and aggregates
 	var groupByVars []query.Symbol
 	var aggregates []query.FindAggregate
@@ -51,19 +32,7 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		case query.FindVariable:
 			groupByVars = append(groupByVars, e.Symbol)
 		case query.FindAggregate:
-			if debugAggregation {
-				fmt.Printf("[ExecuteAggregations] Adding aggregate: Function=%s, Arg=%s, Predicate=%s, IsConditional=%v\n",
-					e.Function, e.Arg, e.Predicate, e.IsConditional())
-			}
 			aggregates = append(aggregates, e)
-		}
-	}
-
-	if debugAggregation {
-		fmt.Printf("[ExecuteAggregations] Extracted %d aggregates, %d groupByVars: %v\n", len(aggregates), len(groupByVars), groupByVars)
-		for i, agg := range aggregates {
-			fmt.Printf("[ExecuteAggregations] Aggregate %d AFTER extraction: Function=%s, Arg=%s, Predicate=%s, IsConditional=%v\n",
-				i, agg.Function, agg.Arg, agg.Predicate, agg.IsConditional())
 		}
 	}
 
@@ -87,9 +56,25 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		isStreamingEligible(aggregates) &&
 		shouldUseStreaming(rel)
 
-	if opts.EnableStreamingAggregationDebug {
-		fmt.Printf("[ExecuteAggregations] aggregates=%d, eligible=%v, shouldUse=%v, useStreaming=%v, relType=%T, relSize=%d\n",
-			len(aggregates), isStreamingEligible(aggregates), shouldUseStreaming(rel), useStreaming, rel, rel.Size())
+	collector := opts.Collector
+	if ctx != nil && ctx.Collector() != nil {
+		collector = ctx.Collector()
+	}
+	if collector != nil {
+		strategy := "batch"
+		if useStreaming {
+			strategy = "streaming"
+		}
+		collector.Add(annotations.Event{
+			Name: annotations.AggregationStrategy,
+			Data: map[string]interface{}{
+				"strategy":        strategy,
+				"aggregate_count": len(aggregates),
+				"group_by_count":  len(groupByVars),
+				"stream_eligible": isStreamingEligible(aggregates),
+				"input_size":      materializedSize(rel),
+			},
+		})
 	}
 
 	// Emit aggregation annotation with find clause details
@@ -113,36 +98,21 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 			data["aggregation_mode"] = "batch"
 		}
 
-		ctx.Collector().AddTiming("aggregation/executed", time.Now(), data)
+		ctx.Collector().AddTiming(annotations.AggregationExecuted, time.Now(), data)
 	}
 
 	// If streaming is enabled and beneficial, use it
 	if useStreaming {
-		if opts.EnableStreamingAggregationDebug {
-			fmt.Printf("[ExecuteAggregations] Using STREAMING aggregation (groupByVars=%v)\n", groupByVars)
-		}
 		// If no group-by variables, pass empty slice (single global group)
-		return NewStreamingAggregateRelation(rel, groupByVars, aggregates)
-	}
-
-	if opts.EnableStreamingAggregationDebug {
-		fmt.Printf("[ExecuteAggregations] Using BATCH aggregation\n")
+		result := NewStreamingAggregateRelation(rel, groupByVars, aggregates)
+		result.options.Collector = collector
+		return result
 	}
 
 	// Otherwise, use batch aggregation (current implementation)
 	// If no group-by variables, it's a single aggregation
 	if len(groupByVars) == 0 {
-		if debugAggregation {
-			fmt.Printf("[ExecuteAggregations] Calling executeSingleAggregation with %d aggregates, rel.Size()=%d\n", len(aggregates), rel.Size())
-		}
-		result := executeSingleAggregation(rel, aggregates)
-		if debugAggregation {
-			fmt.Printf("[ExecuteAggregations] executeSingleAggregation returned: Size=%d, Symbols=%v\n", result.Size(), result.Symbols())
-			if result.Size() > 0 {
-				fmt.Printf("[ExecuteAggregations] First tuple: %v\n", result.Get(0))
-			}
-		}
-		return result
+		return executeSingleAggregation(rel, aggregates)
 	}
 
 	// Otherwise, group by the variables and aggregate within groups
@@ -394,11 +364,6 @@ func executeGroupedAggregation(rel Relation, groupByVars []query.Symbol, aggrega
 	resultColumns := make([]query.Symbol, len(groupByVars)+len(aggregates))
 	copy(resultColumns, groupByVars)
 	for i, agg := range aggregates {
-		// DEBUG: Print aggregate details
-		if debugAggregation {
-			fmt.Printf("[ExecuteAggregations] Aggregate %d: Function=%s, Arg=%s, Predicate=%s, IsConditional=%v, String()=%s\n",
-				i, agg.Function, agg.Arg, agg.Predicate, agg.IsConditional(), agg.String())
-		}
 		// Use String() method which handles conditional vs unconditional formatting
 		resultColumns[len(groupByVars)+i] = datalog.NewSymbol(agg.String())
 	}
@@ -690,12 +655,6 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 	// Build symbol index mappings
 	symbols := r.source.Symbols()
 
-	if r.options.EnableStreamingAggregationDebug {
-		fmt.Printf("[StreamingAggregateRelation.materialize] Source symbols: %v\n", symbols)
-		fmt.Printf("[StreamingAggregateRelation.materialize] Group-by vars: %v\n", r.groupByVars)
-		fmt.Printf("[StreamingAggregateRelation.materialize] Aggregates: %v\n", r.aggregates)
-	}
-
 	groupIndices := make([]int, len(r.groupByVars))
 	for i := range groupIndices {
 		groupIndices[i] = -1 // Initialize to -1 (not found)
@@ -720,11 +679,6 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 				break
 			}
 		}
-	}
-
-	if r.options.EnableStreamingAggregationDebug {
-		fmt.Printf("[StreamingAggregateRelation.materialize] Group indices: %v\n", groupIndices)
-		fmt.Printf("[StreamingAggregateRelation.materialize] Agg indices: %v\n", aggIndices)
 	}
 
 	// Find predicate indices for conditional aggregates
@@ -754,10 +708,6 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 		tuple := it.Tuple()
 		tupleCount++
 
-		if r.options.EnableStreamingAggregationDebug && tupleCount <= 3 {
-			fmt.Printf("[StreamingAggregateRelation.materialize] Tuple %d: %v (len=%d)\n", tupleCount, tuple, len(tuple))
-		}
-
 		key := NewTupleKey(tuple, groupIndices)
 		groupValue, exists := groups.Get(key)
 		var group *streamingAggregateGroup
@@ -773,10 +723,6 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 			}
 			groups.Put(key, group)
 			groupOrder = append(groupOrder, group)
-
-			if r.options.EnableStreamingAggregationDebug {
-				fmt.Printf("[StreamingAggregateRelation.materialize] Created new group: %v\n", group.key)
-			}
 		}
 
 		// Update aggregates incrementally (with predicate filtering for conditional aggregates)
@@ -799,20 +745,9 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 
 				// Predicate passed (or no predicate), update aggregate
 				value := tuple[idx]
-				if r.options.EnableStreamingAggregationDebug && tupleCount <= 3 {
-					fmt.Printf("[StreamingAggregateRelation.materialize] Updating aggregate %d (%s) with value: %v (type=%T)\n", i, agg.Function, value, value)
-				}
 				group.states[i].Update(agg.Function, value)
-			} else {
-				if r.options.EnableStreamingAggregationDebug && tupleCount <= 3 {
-					fmt.Printf("[StreamingAggregateRelation.materialize] Skipping aggregate %d: idx=%d, len(tuple)=%d\n", i, idx, len(tuple))
-				}
 			}
 		}
-	}
-
-	if r.options.EnableStreamingAggregationDebug {
-		fmt.Printf("[StreamingAggregateRelation.materialize] Processed %d tuples, %d groups\n", tupleCount, len(groupOrder))
 	}
 
 	// Convert groups to result tuples
@@ -826,16 +761,22 @@ func (r *StreamingAggregateRelation) materialize() *MaterializedRelation {
 		// Add aggregate results (one per aggregate state)
 		for i, agg := range r.aggregates {
 			result := group.states[i].GetResult(agg.Function)
-			if r.options.EnableStreamingAggregationDebug {
-				fmt.Printf("[StreamingAggregateRelation.materialize] Aggregate %d (%s) GetResult: %v (type=%T), state.count=%d, state.min=%v, state.max=%v\n",
-					i, agg.Function, result, result, group.states[i].count, group.states[i].min, group.states[i].max)
-			}
 			resultTuple[len(r.groupByVars)+i] = result
 		}
 
 		resultTuples = append(resultTuples, resultTuple)
 	}
 
+	if r.options.Collector != nil {
+		r.options.Collector.Add(annotations.Event{
+			Name: annotations.AggregationMaterialized,
+			Data: map[string]interface{}{
+				"input_count":  tupleCount,
+				"group_count":  len(groupOrder),
+				"result_count": len(resultTuples),
+			},
+		})
+	}
 	return NewMaterializedRelationWithOptions(r.Symbols(), resultTuples, r.options)
 }
 

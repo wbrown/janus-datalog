@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -127,14 +128,17 @@ func TestEntityJoinBug(t *testing.T) {
 	joinQuery := `[:find ?bar :where [?bar :price/high ?h] [?bar :price/low ?l]]`
 	jq, _ := parser.ParseQuery(joinQuery)
 
-	// Create executor with annotations
-	opts := executor.ExecutorOptions{
-		EnableDebugLogging: true,
-	}
+	var joinEvents []annotations.Event
+	ctx := executor.NewContext(func(event annotations.Event) {
+		if event.Name == annotations.JoinStrategy {
+			joinEvents = append(joinEvents, event)
+		}
+	})
+	opts := executor.ExecutorOptions{Collector: ctx.Collector()}
 	annotatedMatcher := storage.NewBadgerMatcherWithOptions(db.Store(), opts)
 	annotatedExec := executor.NewExecutor(annotatedMatcher, nil)
 
-	jresult, _ := annotatedExec.Execute(jq)
+	jresult, _ := annotatedExec.ExecuteWithContext(ctx, jq)
 
 	// Collect results by iterating
 	var jtuples []executor.Tuple
@@ -152,5 +156,8 @@ func TestEntityJoinBug(t *testing.T) {
 			t.Logf("  Got bar: %v", tuple[0])
 			_ = i
 		}
+	}
+	if len(joinEvents) == 0 {
+		t.Error("expected structured join strategy annotations")
 	}
 }

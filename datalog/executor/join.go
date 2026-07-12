@@ -40,22 +40,21 @@ type hashJoinIterator struct {
 	currentProbeTuple Tuple
 	currentJoined     Tuple
 	matches           []Tuple
+	singleMatch       [1]Tuple
 	matchIdx          int
 	closed            bool
+	buildKeysUnique   bool
 
-	// debug is non-nil only when EnableDebugLogging is set; the per-row
-	// counters live behind it so the hot path neither writes them nor carries
-	// them in the iterator struct when debug is off.
-	debug *hashJoinDebug
+	// metrics is non-nil only when annotations are enabled, keeping counters
+	// off the hot path otherwise.
+	metrics *hashJoinMetrics
 }
 
-// hashJoinDebug holds per-row counters used only for debug logging. It is
-// allocated and incremented only when ExecutorOptions.EnableDebugLogging is
-// set, keeping these writes off the hot path entirely.
-type hashJoinDebug struct {
+type hashJoinMetrics struct {
 	probeCount  int
 	matchCount  int
 	resultCount int
+	emitted     bool
 }
 
 func (it *hashJoinIterator) Next() bool {
@@ -85,8 +84,8 @@ func (it *hashJoinIterator) Next() bool {
 				// downstream consumer that retains tuples copies at its own
 				// boundary (this join's StreamingRelation has RequiresCopy()==true).
 				it.currentJoined = joined // Store for Tuple() to return
-				if it.debug != nil {
-					it.debug.resultCount++
+				if it.metrics != nil {
+					it.metrics.resultCount++
 				}
 				return true
 			}
@@ -96,15 +95,12 @@ func (it *hashJoinIterator) Next() bool {
 
 		// Need next probe tuple
 		if !it.probeIt.Next() {
-			if it.debug != nil {
-				fmt.Printf("[hashJoinIterator] Probe exhausted after %d tuples, %d matched, produced %d results\n",
-					it.debug.probeCount, it.debug.matchCount, it.debug.resultCount)
-			}
+			it.emitProbeAnnotation()
 			return false
 		}
 
-		if it.debug != nil {
-			it.debug.probeCount++
+		if it.metrics != nil {
+			it.metrics.probeCount++
 		}
 		it.currentProbeTuple = it.probeIt.Tuple()
 
@@ -122,16 +118,17 @@ func (it *hashJoinIterator) Next() bool {
 
 		key := NewTupleKey(it.currentProbeTuple, it.probeIndices)
 
-		if it.debug != nil && it.debug.probeCount == 1 {
-			fmt.Printf("[hashJoinIterator] First probe key: %v\n", key)
-		}
-
 		// Look up matches in hash table
 		if matchesVal, ok := it.hashTable.Get(key); ok {
-			it.matches = matchesVal.([]Tuple)
+			if it.buildKeysUnique {
+				it.singleMatch[0] = matchesVal.(Tuple)
+				it.matches = it.singleMatch[:]
+			} else {
+				it.matches = matchesVal.([]Tuple)
+			}
 			it.matchIdx = 0
-			if it.debug != nil {
-				it.debug.matchCount++
+			if it.metrics != nil {
+				it.metrics.matchCount++
 			}
 			continue
 		}
@@ -147,6 +144,7 @@ func (it *hashJoinIterator) Tuple() Tuple {
 func (it *hashJoinIterator) Close() error {
 	if !it.closed {
 		it.closed = true
+		it.emitProbeAnnotation()
 		if it.probeIt != nil {
 			return it.probeIt.Close()
 		}
@@ -162,6 +160,47 @@ func (it *hashJoinIterator) Error() error {
 		return it.probeIt.Error()
 	}
 	return nil
+}
+
+func (it *hashJoinIterator) emitProbeAnnotation() {
+	if it.metrics == nil || it.metrics.emitted || it.options.Collector == nil {
+		return
+	}
+	it.metrics.emitted = true
+	it.options.Collector.Add(annotations.Event{
+		Name: annotations.JoinProbe,
+		Data: map[string]interface{}{
+			"tuple_count":   it.metrics.probeCount,
+			"matched_count": it.metrics.matchCount,
+			"result_count":  it.metrics.resultCount,
+			"mode":          "streaming",
+		},
+	})
+}
+
+func emitJoinStrategyAnnotation(
+	opts ExecutorOptions,
+	left, right Relation,
+	joinSymbols []query.Symbol,
+	mode, buildSide string,
+	buildKeyUnique bool,
+) {
+	if opts.Collector == nil {
+		return
+	}
+	opts.Collector.Add(annotations.Event{
+		Name: annotations.JoinStrategy,
+		Data: map[string]interface{}{
+			"mode":             mode,
+			"build_side":       buildSide,
+			"build_key_unique": buildKeyUnique,
+			"left_type":        fmt.Sprintf("%T", left),
+			"right_type":       fmt.Sprintf("%T", right),
+			"left_size":        materializedSize(left),
+			"right_size":       materializedSize(right),
+			"join_symbols":     append([]query.Symbol(nil), joinSymbols...),
+		},
+	})
 }
 
 // HashJoin performs a hash join on specified symbols
@@ -184,34 +223,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	if opts.EnableSymmetricHashJoin {
 		strategy := ChooseJoinStrategy(left, right, joinSyms, opts)
 		if strategy == "symmetric" {
-			if opts.EnableDebugLogging {
-				fmt.Printf("[HashJoin] Using symmetric hash join for streaming-to-streaming\n")
-			}
 			return SymmetricHashJoinWithOptions(left, right, joinSyms, opts)
-		}
-	}
-
-	if opts.EnableDebugLogging {
-		// Be careful with Size() calls - they force materialization!
-		leftSize := -1
-		rightSize := -1
-		if !isStreaming(left) {
-			leftSize = left.Size()
-		}
-		if !isStreaming(right) {
-			rightSize = right.Size()
-		}
-		if opts.EnableDebugLogging {
-			fmt.Printf("[HashJoin] Called with left (type=%T, size=%d), right (type=%T, size=%d), joinSyms=%v, EnableStreamingJoins=%v\n",
-				left, leftSize, right, rightSize, joinSyms, opts.EnableStreamingJoins)
-			fmt.Printf("[HashJoin] Left symbols: %v\n", left.Symbols())
-			fmt.Printf("[HashJoin] Right symbols: %v\n", right.Symbols())
-
-			// Debug: check left relation's shouldCache flag if it's a StreamingRelation
-			if sr, ok := left.(*StreamingRelation); ok {
-				fmt.Printf("[HashJoin] Left is StreamingRelation: shouldCache=%v, iteratorCalled=%v, cache len=%d\n",
-					sr.shouldCache, sr.iteratorCalled, len(sr.cache))
-			}
 		}
 	}
 
@@ -268,26 +280,17 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		buildRel, probeRel = right, left
 		buildIndices, probeIndices = rightIndices, leftIndices
 		buildIsLeft = false
-		if opts.EnableDebugLogging {
-			fmt.Printf("[HashJoin] Left is streaming, using materialized right as build\n")
-		}
 	} else if rightStreaming && !leftStreaming {
 		// Right is streaming, left is materialized - use left as build
 		buildRel, probeRel = left, right
 		buildIndices, probeIndices = leftIndices, rightIndices
 		buildIsLeft = true
-		if opts.EnableDebugLogging {
-			fmt.Printf("[HashJoin] Right is streaming, using materialized left as build\n")
-		}
 	} else if leftStreaming && rightStreaming {
 		// Both streaming - should have used symmetric join, but fallback to
 		// arbitrarily choosing left as build (will force materialization)
 		buildRel, probeRel = left, right
 		buildIndices, probeIndices = leftIndices, rightIndices
 		buildIsLeft = true
-		if opts.EnableDebugLogging {
-			fmt.Printf("[HashJoin] WARNING: Both relations streaming, will materialize left as build\n")
-		}
 	} else {
 		// Both materialized - use size-based optimization
 		leftSize := left.Size()
@@ -296,18 +299,22 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			buildRel, probeRel = left, right
 			buildIndices, probeIndices = leftIndices, rightIndices
 			buildIsLeft = true
-			if opts.EnableDebugLogging {
-				fmt.Printf("[HashJoin] Using left as build (smaller: %d < %d)\n", leftSize, rightSize)
-			}
 		} else {
 			buildRel, probeRel = right, left
 			buildIndices, probeIndices = rightIndices, leftIndices
 			buildIsLeft = false
-			if opts.EnableDebugLogging {
-				fmt.Printf("[HashJoin] Using right as build (size: left=%d, right=%d)\n", leftSize, rightSize)
-			}
 		}
 	}
+	buildKeysUnique := hasKeyWithin(buildRel.Properties().Keys, joinSymSet)
+	mode := "materialized"
+	if opts.EnableStreamingJoins {
+		mode = "streaming"
+	}
+	buildSide := "right"
+	if buildIsLeft {
+		buildSide = "left"
+	}
+	emitJoinStrategyAnnotation(opts, left, right, joinSyms, mode, buildSide, buildKeysUnique)
 
 	// Build phase - create hash table using efficient TupleKeyMap.
 	// This is a pure relational join: every build row is preserved. CRDT/temporal
@@ -325,10 +332,6 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 	}
 	hashTable := NewTupleKeyMapWithCapacity(buildSize)
-
-	if opts.EnableDebugLogging {
-		fmt.Printf("[HashJoin] Building hash table from relation with Size()=%d\n", buildRel.Size())
-	}
 
 	// CRITICAL: Check if build relation was already consumed
 	// This should never happen - it indicates a bug in the executor
@@ -365,8 +368,6 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// handled by the storage layer (EATV index ordering), never inferred from a
 	// column's name.
 	buildCount := 0
-	var firstBuildKey *TupleKey
-	var firstBuildTuple Tuple
 	for buildIt.Next() {
 		tuple := buildIt.Tuple()
 		// Copy only when the build relation reuses its tuple workspace; the
@@ -381,24 +382,16 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			passthruCount++
 		}
 		key := NewTupleKey(tuple, buildIndices)
-		if buildCount == 0 && opts.EnableDebugLogging {
-			firstBuildKey = &key
-			firstBuildTuple = tuple
-		}
-		if existing, ok := hashTable.Get(key); ok {
+		if buildKeysUnique {
+			if existed := hashTable.PutIfAbsent(key, tuple); existed {
+				panic("hash join build relation violated its candidate-key guarantee")
+			}
+		} else if existing, ok := hashTable.Get(key); ok {
 			hashTable.Put(key, append(existing.([]Tuple), tuple))
 		} else {
 			hashTable.Put(key, []Tuple{tuple})
 		}
 		buildCount++
-	}
-	if opts.EnableDebugLogging {
-		if firstBuildKey != nil {
-			fmt.Printf("[HashJoin] Built hash table with %d tuples, first key: %v, first tuple: %v\n",
-				buildCount, firstBuildKey, firstBuildTuple)
-		} else {
-			fmt.Printf("[HashJoin] Built hash table with %d tuples from iterator\n", buildCount)
-		}
 	}
 
 	// Capture any deferred error from the build scan before closing it, so a
@@ -424,6 +417,19 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			},
 		})
 	}
+	if opts.Collector != nil {
+		opts.Collector.Add(annotations.Event{
+			Name: annotations.JoinBuild,
+			Data: map[string]interface{}{
+				"tuple_count":     buildCount,
+				"join_key_unique": buildKeysUnique,
+				"build_side":      buildSide,
+				"copied":          copyCount,
+				"passthru":        passthruCount,
+				"requires_copy":   needsCopy,
+			},
+		})
+	}
 
 	// Probe phase - find matches
 	// Check if streaming mode is enabled
@@ -443,25 +449,13 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			resultSeen = NewTupleKeyMapWithCapacity(expectedResults)
 		}
 
-		if opts.EnableDebugLogging {
-			probeSize := probeRel.Size()
-			if probeSize < 0 {
-				probeSize = -1 // Keep as unknown for logging
-			}
-			buildSizeLog := buildRel.Size()
-			if buildSizeLog < 0 {
-				buildSizeLog = -1
-			}
-			fmt.Printf("[HashJoin STREAMING] Creating hashJoinIterator with buildSize=%d, probeSize=%d\n",
-				buildSizeLog, probeSize)
-		}
-
 		iter := &hashJoinIterator{
 			hashTable:           hashTable,
 			probeIt:             probeRel.Iterator(),
 			buildErr:            buildErr,
 			seen:                resultSeen,
 			buildIsLeft:         buildIsLeft,
+			buildKeysUnique:     buildKeysUnique,
 			probeNeedsCopy:      probeRel.RequiresCopy(),
 			probeIndices:        probeIndices,
 			rightNonJoinIndices: rightNonJoinIndices,
@@ -469,8 +463,8 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			options:             opts,
 			matchIdx:            0,
 		}
-		if opts.EnableDebugLogging {
-			iter.debug = &hashJoinDebug{}
+		if opts.Collector != nil {
+			iter.metrics = &hashJoinMetrics{}
 		}
 
 		// Return streaming result - no forced materialization
@@ -521,16 +515,16 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		key := NewTupleKey(probeTuple, probeIndices)
 		probeCount++
 
-		if opts.EnableDebugLogging && probeCount == 1 {
-			fmt.Printf("[HashJoin] First probe tuple: %v, key: %v\n", probeTuple, key)
-		}
-
 		if matchesVal, ok := hashTable.Get(key); ok {
 			matchCount++
-			if opts.EnableDebugLogging && matchCount == 1 {
-				fmt.Printf("[HashJoin] Found match! probe key matched, matches count: %d\n", len(matchesVal.([]Tuple)))
+			var matches []Tuple
+			var singleMatch [1]Tuple
+			if buildKeysUnique {
+				singleMatch[0] = matchesVal.(Tuple)
+				matches = singleMatch[:]
+			} else {
+				matches = matchesVal.([]Tuple)
 			}
-			matches := matchesVal.([]Tuple)
 			for _, buildTuple := range matches {
 				// Combine tuples via the precomputed projection plan.
 				var joined Tuple
@@ -548,10 +542,16 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			}
 		}
 	}
-
-	if opts.EnableDebugLogging {
-		fmt.Printf("[HashJoin] Probe phase complete: probed %d tuples, found %d matches, produced %d results\n",
-			probeCount, matchCount, len(results))
+	if opts.Collector != nil {
+		opts.Collector.Add(annotations.Event{
+			Name: annotations.JoinProbe,
+			Data: map[string]interface{}{
+				"tuple_count":   probeCount,
+				"matched_count": matchCount,
+				"result_count":  len(results),
+				"mode":          "materialized",
+			},
+		})
 	}
 
 	// We already deduplicated with 'seen', no need to do it again.

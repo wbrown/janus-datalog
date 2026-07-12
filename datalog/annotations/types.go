@@ -42,6 +42,9 @@ const (
 	JoinNested    = "join/nested"
 	JoinMerge     = "join/merge"
 	JoinBuildCopy = "join/build.copy" // Tuple copy statistics during hash join build phase
+	JoinStrategy  = "join/strategy.selected"
+	JoinBuild     = "join/build.complete"
+	JoinProbe     = "join/probe.complete"
 
 	// OR clause operations
 	OrClauseBegin          = "or/begin"
@@ -54,7 +57,12 @@ const (
 	OrSubqueryResult       = "or/subquery.result"
 
 	// Aggregation operations
-	AggregationExecuted = "aggregation/executed"
+	AggregationExecuted     = "aggregation/executed"
+	AggregationStrategy     = "aggregation/strategy.selected"
+	AggregationMaterialized = "aggregation/materialized"
+
+	// Relation lifecycle
+	RelationCacheEnabled = "relation/cache.enabled"
 
 	// Pull API operations
 	PullBegin           = "pull/begin"
