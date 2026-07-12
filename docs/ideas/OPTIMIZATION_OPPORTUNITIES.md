@@ -695,28 +695,76 @@ Relevant code:
 - `datalog/planner/clause_utils.go`
 - `datalog/storage/ready_predicate_scheduling_benchmark_test.go`
 
+### Next investigation: complex-query execution structure
+
+The focused optimizations above reduce CPU, memory, and allocations in the
+operators they target, but the production-shaped complex checkpoint remains
+statistically flat in wall time. Its final order key is derived only after
+three fallback/subquery branches, so bounded Top-N cannot avoid the expensive
+upstream work. The remaining investigation should focus on the algebra-to-plan
+bridge and the physical execution shape around correlated fallback—not on more
+inner-loop tuning.
+
+Measurement prerequisite: capture steady-state CPU and allocation profiles for
+the warmed complex query without fixture creation or cache warmup in the
+profile. Use annotations to count subquery executions, fallback branch
+evaluations, joins, materializations, and tuples at every phase boundary. Do
+not call any item below a bottleneck until that evidence identifies it.
+
+Candidate investigations:
+
+1. Emit phased Datalog directly from the algebra tree, or otherwise preserve
+   parent/child dependencies through `RealizedPlan`, so rewrites survive greedy
+   clause scheduling.
+2. Push `Project` and ready `Select` operators through joins, subqueries, and
+   fallback branches when symbol and cardinality proofs make the rewrite safe.
+3. Batch or decorrelate additional correlated subqueries, especially the
+   tuple-bound argmax branch, while preserving exactly-one binding errors and
+   tie semantics.
+4. Represent `or-default` as a keyed outer/default join where possible instead
+   of repeated per-outer-tuple branch execution.
+5. Reuse decorrelated subquery scans/results by correlation key and avoid
+   rebuilding equivalent hash tables across fallback branches.
+6. Carry candidate keys through subquery binding forms so the resulting outer
+   joins can use dedup elision and unique-build specialization.
+7. Eliminate phase-boundary materialization where the next operator can consume
+   the relation once while preserving iterator error and close semantics.
+
+Correctness gates for every experiment:
+
+- Differential results with the optimization disabled.
+- Structural assertions proving the intended algebra/plan rewrite occurred.
+- Empty, singleton, duplicate-key, argmax-tie, missing-default, iterator-error,
+  and close-error cases.
+- Realistic data sizes plus `BenchmarkComplexQueryCheckpoint`; focused
+  microbenchmarks alone are insufficient.
+
+Do not start join associativity or DAG common-subexpression elimination until
+phased algebra output, projection pushdown, and fixpoint/cycle protection are
+proven.
+
 ## Branch-Wide Correctness Hardening
 
 The optimization branch received an independent test-hardening pass after the
 OR/union property work. The new gates are semantic differentials and relational
 laws, not performance thresholds:
 
-- 2,000 randomized equal-value pairs prove
+- 16,000 randomized equal-value pairs prove
   `ValuesEqual(a,b) ⇒ TupleKeyHash(a)==TupleKeyHash(b)`, including signed zero,
   integer widths, byte slices, vectors, typed slices, times, and identities.
-- 400 generated join cases compare property-specialized execution with the same
-  relations stripped of properties across materialized, streaming, symmetric,
-  composite-key, fanout, projection, and build-side shapes. Candidate keys are
-  validated pairwise without `TupleKeyMap`.
-- The 500-case OR differential now uses a pairwise `ValuesEqual` oracle rather
-  than the production hash map and includes nested fallback and empty outers.
+- 3,200 generated join cases compare execution with a test-local O(n²)
+  pairwise oracle across materialized, streaming, symmetric, composite-key,
+  fanout, projection, and build-side shapes.
+- The 4,000-case OR differential uses a direct interpreter and pairwise
+  `ValuesEqual` set semantics, including nested fallback and empty outers.
 - Every history ordered-limit shape is compared against full
   materialize/sort/limit output over randomized limits. Public AsOf snapshots
   before updates, at updates, and after tombstones prove raw-history early
   termination is declined.
-- Top-N and predicate scheduling each have 500-case generated checks, plus
-  zero-limit, malformed-key, complete-tie, close-error, and dependency-order
-  contracts.
+- Top-N has 4,000 generated checks against a native typed comparator; predicate
+  scheduling covers all 720 clause permutations with manually declared
+  dependencies. Zero-limit, malformed-key, complete-tie, close-error, and
+  dependency-order contracts are included.
 - Scan sharing now keys physical `OrderBy`/`Limit` requirements and preserves
   remapped options, ordering, and candidate keys across cache hits.
 
