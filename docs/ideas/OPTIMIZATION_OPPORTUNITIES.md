@@ -2,7 +2,8 @@
 
 **Reviewed:** 2026-07-11  
 **Status:** Items 1–4 and 7 complete; item 5 core contract checkpointed; item 6
-has 6a and four proven 6b history shapes complete
+has 6a and four proven 6b history shapes complete; item 8 ready-predicate
+scheduling complete
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
 hash-join gains. The next meaningful improvements are concentrated in typed
@@ -20,7 +21,7 @@ be omitted.
 | 5 | Propagate statically provable relational properties | Relational algebra | Keys consumed inside joins and projections | Up to 32.8% faster focused paths | In progress |
 | 6 | Push Top-N into proven index order | Relational algebra | 6a + four 6b history shapes implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Implemented and benchmarked | 32.8% fewer allocations | Complete |
-| 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
+| 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Ready-predicate scheduling implemented | 62.9% faster focused path | In progress |
 
 ## 1. Replace String Aggregation Keys with `TupleKeyMap`
 
@@ -592,16 +593,40 @@ registers only decorrelation and the `get-else` scan rewrite. It performs one
 bottom-up application per pass, then decompiles to clauses for heuristic
 phasing.
 
-Add dependency-safe `Select` and `Project` pushdown first. Re-run passes to a
-structural fixpoint with cycle protection. Only then consider join
-associativity or DAG-based common-subexpression elimination where safety follows
-from statically derived properties and explicit structural preconditions.
+The first attempted `Select` rewrite exposed an interface boundary: algebra
+decompiles `Select(Join(...))` to a predicate immediately after its dependency,
+but greedy phasing then scored another data pattern (~210) above the ready
+predicate (5), erasing the rewrite's execution effect. The selected prerequisite
+keeps the single `RealizedPlan` architecture and changes only clause scheduling:
+once every required symbol is available, a predicate is placed before unrelated
+remaining scans. Predicates spanning two scans still wait for both.
+
+`BenchmarkReadyPredicateScheduling`, 10,000 entities with a 99-row selective
+filter before a payload scan, `benchtime=500ms`, `count=10`, darwin/arm64:
+
+| Metric | Before | After | Delta |
+|---|---:|---:|---:|
+| Time | 6.865 ms | 2.550 ms | **-62.85%** |
+| Memory | 10.003 MiB | 1.288 MiB | **-87.12%** |
+| Allocations | 150.65K | 31.81K | **-78.88%** |
+
+All differences are significant (`p=0.000`, `n=10`). The complex checkpoint is
+statistically unchanged: 48.37 → 47.94 ms/op (`p=0.143`), with memory
+(`p=0.912`) and allocations (`p=0.810`) unchanged.
+
+True compositional algebra work remains: emit phased Datalog directly or
+otherwise preserve tree dependencies across the bridge, add dependency-safe
+`Project` pushdown, and run passes to a structural fixpoint with cycle
+protection. Only then consider join associativity or DAG-based
+common-subexpression elimination.
 
 Relevant code:
 
 - `datalog/algebra/optimize.go:33-84`
 - `datalog/algebra/rewrite_decorrelate.go`
 - `datalog/planner/algebra_bridge.go:11-56`
+- `datalog/planner/clause_utils.go`
+- `datalog/storage/ready_predicate_scheduling_benchmark_test.go`
 
 ## Do Not Prioritize Yet
 
@@ -630,5 +655,5 @@ Relevant code:
    history/EATV 6b shapes are complete; additional CRDT-safe order-aware index
    selections remain.
 7. **Completed:** typed storage hash keys and precompiled pattern/binding slots.
-8. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
-   safety follows from those properties.
+8. **In progress:** ready predicates now run before unrelated scans; phased
+   algebra output, `Project` pushdown, and fixpoint rewriting remain.
