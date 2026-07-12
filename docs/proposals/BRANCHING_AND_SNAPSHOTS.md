@@ -880,8 +880,8 @@ other's). Three ways to supply that identity were considered:
 
 - **W2 — widen `ElementID` to `(Lamport, NodeID, BranchID)` (rejected unless W1 proves
   insufficient).** This cleanly separates physical node from branch, but it grows the
-  ID from 16 to 24 bytes, which ripples through the fixed 69-byte key layout, the L85
-  encoding, and every one of the eight indices — a storage-core change. It is
+  ID from 16 to 24 bytes, which ripples through the fixed 69-byte binary key layout
+  and every one of the eight indices — a storage-core change. It is
   unnecessary if W1 holds, because W1 already gets the separation by treating
   `(node, branch)` as a single derived write-stream id without touching the key format.
 
@@ -1869,8 +1869,8 @@ so the friendly "rollback" name never has to flip from destructive to non-destru
 - **Stage 0 — Snapshots (tags) over AsOf.** Persist `name → Tx`; `AsOfSnapshot(name)`
   wraps existing `AsOf`. Pure metadata, no resolution change. Immediately useful and
   independent of the encoding choice.
-- **Stage 1 — Arena-prefix as the branch axis.** Add the leading tree-path prefix to
-  keys (L85 `EncodeFixed32`, sort-preserving); scope reads to an ancestor-chain range
+- **Stage 1 — Arena-prefix as the branch axis.** Add the leading raw 32-byte tree-path
+  prefix to keys (binary byte order is sort-preserving); scope reads to an ancestor-chain range
   set; reuse Lamport-Tx `AsOf` as the time axis. The world root is the empty prefix —
   with one root and no forks, behavior is identical to today (regression-test that
   equivalence).

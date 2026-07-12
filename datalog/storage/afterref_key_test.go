@@ -19,7 +19,7 @@ import (
 
 // TestAfterRefKeyEncodingEAVT verifies AfterRef is correctly encoded/decoded in EAVT index
 func TestAfterRefKeyEncodingEAVT(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	elemID := datalog.ElementID{Lamport: 1000, ReplicaID: 100}
 	afterRef := datalog.ElementID{Lamport: 500, ReplicaID: 100}
@@ -71,7 +71,7 @@ func TestAfterRefKeyEncodingEAVT(t *testing.T) {
 
 // TestAfterRefKeyEncodingAllIndices verifies AfterRef works in all 6 indices
 func TestAfterRefKeyEncodingAllIndices(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	elemID := datalog.ElementID{Lamport: 2000, ReplicaID: 200}
 	afterRef := datalog.ElementID{Lamport: 1000, ReplicaID: 200}
@@ -115,7 +115,7 @@ func TestAfterRefKeyEncodingAllIndices(t *testing.T) {
 
 // TestOpRGAInsertKeyEncoding verifies OpRGAInsert triggers AfterRef encoding
 func TestOpRGAInsertKeyEncoding(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	elemID := datalog.ElementID{Lamport: 100, ReplicaID: 1}
 	afterRef := datalog.ElementID{Lamport: 50, ReplicaID: 1}
@@ -167,7 +167,7 @@ func TestOpRGAInsertKeyEncoding(t *testing.T) {
 
 // TestOpRGATombstoneKeyEncoding verifies OpRGATombstone triggers AfterRef encoding
 func TestOpRGATombstoneKeyEncoding(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	tombstoneID := datalog.ElementID{Lamport: 200, ReplicaID: 1}
 	targetElemID := datalog.ElementID{Lamport: 100, ReplicaID: 1} // Element being deleted
@@ -203,7 +203,7 @@ func TestOpRGATombstoneKeyEncoding(t *testing.T) {
 
 // TestAfterRefHEADSentinel verifies HEAD (zero ElementID) is correctly encoded
 func TestAfterRefHEADSentinel(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	// HEAD is zero ElementID - first element in vector
 	head := datalog.ElementID{Lamport: 0, ReplicaID: 0}
@@ -230,7 +230,7 @@ func TestAfterRefHEADSentinel(t *testing.T) {
 
 // TestAfterRefSortOrder verifies keys with same prefix sort by Tx then AfterRef
 func TestAfterRefSortOrder(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	entity := datalog.NewIdentity("entity")
 	attr := datalog.NewKeyword(":attr")
@@ -265,7 +265,7 @@ func TestAfterRefSortOrder(t *testing.T) {
 
 // TestAfterRefWithDifferentValueTypes verifies AfterRef works with various value types
 func TestAfterRefWithDifferentValueTypes(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	testCases := []struct {
 		name  string

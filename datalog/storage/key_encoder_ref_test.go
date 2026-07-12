@@ -1,19 +1,17 @@
 package storage
 
 import (
+	"bytes"
 	"crypto/sha1"
-	"encoding/hex"
-	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-func TestL85RefValueEncoding(t *testing.T) {
+func TestBinaryRefValueEncoding(t *testing.T) {
 	// Create test entities
 	alice := sha1.Sum([]byte("alice"))
 	bob := sha1.Sum([]byte("bob"))
-	followsAttr := sha1.Sum([]byte("follows"))
 
 	// Create datom with RefValue
 	datom := &datalog.Datom{
@@ -23,42 +21,35 @@ func TestL85RefValueEncoding(t *testing.T) {
 		Tx: datalog.ElementID{Lamport: uint64(1)},
 	}
 
-	encoder := NewKeyEncoder(L85Strategy)
+	encoder := &BinaryKeyEncoder{}
 
 	// Test AVET encoding (where RefValue is in value position)
 	avetKey := encoder.EncodeKey(AVET, datom)
 
-	// Convert to string and check structure
-	keyStr := string(avetKey)
-	t.Logf("AVET key: %s", hex.EncodeToString(avetKey))
-	t.Logf("AVET key (string): %s", keyStr)
-
 	// Key should have:
 	// - 1 byte prefix
-	// - 40 chars for attribute (L85 for 32 bytes)
-	// - 26 chars for ref value (1 type byte + 25 L85 chars)
-	// - 1 byte for Op (CRDT operation)
-	// - 25 chars for entity (L85 for 20 bytes)
-	// - 20 chars for tx (L85 for 16 bytes = ElementID)
-	expectedLen := 1 + 40 + 26 + 1 + 25 + 20
+	// - 32 bytes for attribute
+	// - 21 bytes for ref value (1 type byte + 20 raw hash bytes)
+	// - 20 bytes for entity
+	// - 16 bytes for Tx
+	// - 1 byte for Op
+	expectedLen := 1 + 32 + 21 + 20 + 16 + 1
 	if len(avetKey) != expectedLen {
 		t.Errorf("AVET key length = %d, want %d", len(avetKey), expectedLen)
 	}
 
-	// The RefValue should have type prefix + L85-encoded data
+	// The RefValue has its type prefix followed by the raw identity hash.
 	// Extract the value portion (after prefix and attribute)
-	valueStart := 1 + 40        // 40 chars for 32-byte attribute
-	valueEnd := valueStart + 26 // 1 type byte + 25 L85 chars
-	valueSection := keyStr[valueStart:valueEnd]
+	valueStart := 1 + 32
+	valueEnd := valueStart + 21
+	valueSection := avetKey[valueStart:valueEnd]
 
 	// First byte is type (0x06 for reference)
 	if valueSection[0] != 0x06 {
 		t.Errorf("RefValue type byte = %02x, want 0x06", valueSection[0])
 	}
-
-	// Rest should be L85 encoded
-	if !isL85String(valueSection[1:]) {
-		t.Errorf("RefValue not L85-encoded in AVET index: %s", hex.EncodeToString([]byte(valueSection[1:])))
+	if !bytes.Equal(valueSection[1:], bob[:]) {
+		t.Errorf("RefValue bytes = %x, want %x", valueSection[1:], bob)
 	}
 
 	// Test decoding
@@ -78,46 +69,27 @@ func TestL85RefValueEncoding(t *testing.T) {
 		t.Errorf("Decoded ref value length = %d, want 20", len(vData))
 	}
 
-	if hex.EncodeToString(vData) != hex.EncodeToString(bob[:]) {
+	if !bytes.Equal(vData, bob[:]) {
 		t.Errorf("Decoded ref value = %x, want %x", vData, bob)
 	}
 
 	// Also test VAET index where RefValue is first
 	vaetKey := encoder.EncodeKey(VAET, datom)
-	t.Logf("VAET key: %s", hex.EncodeToString(vaetKey))
 
-	// In VAET, ref value should have type + L85-encoded at position 1-27
-	vaetValueSection := string(vaetKey)[1:27] // 1 type byte + 25 L85 chars
+	// In VAET, the raw reference value immediately follows the index prefix.
+	vaetValueSection := vaetKey[1:22]
 	if vaetValueSection[0] != 0x06 {
 		t.Errorf("VAET RefValue type byte = %02x, want 0x06", vaetValueSection[0])
 	}
-	if !isL85String(vaetValueSection[1:]) {
-		t.Errorf("RefValue not L85-encoded in VAET index")
+	if !bytes.Equal(vaetValueSection[1:], bob[:]) {
+		t.Errorf("VAET RefValue bytes = %x, want %x", vaetValueSection[1:], bob)
 	}
 
 	// Test prefix encoding with RefValue
-	prefix := encoder.EncodePrefix(AVET, followsAttr[:], bob[:])
-	t.Logf("AVET prefix with ref: %s", hex.EncodeToString(prefix))
-
-	// Prefix should have L85-encoded ref value
-	prefixStr := string(prefix)
-	refStart := 1 + 25 // After prefix byte and attribute
-	if len(prefixStr) >= refStart+25 {
-		refSection := prefixStr[refStart : refStart+25]
-		if !isL85String(refSection) {
-			t.Errorf("RefValue not L85-encoded in prefix")
-		}
+	sd := ToStorageDatom(*datom)
+	vBytes, _ := encoder.EncodeValueBytes(datom.V)
+	prefix := encoder.EncodePrefix(AVET, sd.A[:], vBytes)
+	if !bytes.Equal(prefix[1+32:], vBytes) {
+		t.Errorf("AVET prefix RefValue bytes = %x, want %x", prefix[1+32:], vBytes)
 	}
-}
-
-func isL85String(s string) bool {
-	// L85 alphabet from codec
-	l85Alphabet := `!$%&()+,-./0123456789:;<=>@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_` + "`" + `abcdefghijklmnopqrstuvwxyz{}`
-
-	for _, c := range s {
-		if !strings.ContainsRune(l85Alphabet, c) {
-			return false
-		}
-	}
-	return true
 }

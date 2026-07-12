@@ -6,13 +6,12 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/codec"
 )
 
 // DatomFromKey reconstructs a datom from an index key.
 // For Tier 3 (hashed) values, db is required to fetch compressed data from the blob store.
 // Pass nil for db when Tier 3 values are not expected.
-func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder, db *badger.DB) (datalog.Datom, error) {
+func DatomFromKey(index IndexType, key []byte, encoder *BinaryKeyEncoder, db *badger.DB) (datalog.Datom, error) {
 	// DecodeKey returns fixed-size arrays directly (no heap escape)
 	entity, attr, vBytes, tx, op, afterRef, err := encoder.DecodeKey(index, key)
 	if err != nil {
@@ -25,14 +24,6 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder, db *badger.DB
 	}
 	vType := datalog.ValueType(vBytes[0])
 	vData := vBytes[1:]
-
-	// Special handling for references which might be L85-encoded
-	if vType == datalog.TypeReference && len(vData) == 25 {
-		// L85-encoded reference - decode it first
-		if refBytes, err := codec.DecodeFixed20(string(vData)); err == nil {
-			vData = refBytes[:]
-		}
-	}
 
 	// Tier 3: hashed values need blob store lookup
 	if vType == datalog.TypeHashedString || vType == datalog.TypeHashedBytes {
@@ -90,7 +81,7 @@ func DatomFromKey(index IndexType, key []byte, encoder KeyEncoder, db *badger.DB
 // This avoids fetching values entirely (except for Tier 3 blob lookups)
 type KeyOnlyIterator struct {
 	*BadgerIterator
-	encoder      KeyEncoder
+	encoder      *BinaryKeyEncoder
 	db           *badger.DB
 	currentDatom datalog.Datom
 	hasDatom     bool

@@ -142,7 +142,7 @@ This is mostly a problem of *exposure and layout*; the consistency model already
   snapshot API**, pointed at an arena instead of Badger.
 - **Deterministic CRDT resolution.** LWW / add-wins / RGA are pure functions of
   the datom set under the `ElementID` order (Lemma R1) — locus-independent.
-- **Eight indexes, sort-order-preserving L85 keys.** EAVT, EATV, AEVT, AETV,
+- **Eight indexes with sort-order-preserving binary keys.** EAVT, EATV, AEVT, AETV,
   ATEV, AVET, VAET, TAEV; the E/A/Tx-keyed orderings use 69-byte fixed-stride keys
   (`E[20]+A[32]+Tx[16]+Op[1]`), lexicographic order = byte order. Sorted keys ⇒
   binary search ⇒ over RDMA, `O(log n)` *bounded* reads with no pointer chasing
@@ -430,8 +430,8 @@ rules and the `(A,V)` uniqueness walk — is a pure function of the datom set un
 **Lemma S0 (backing substitutability over all eight indexes).** For every index
 `i` and range `[a,b)`, `B_arena(W).scan(i,[a,b)) = { d ∈ D|W : key_i(d) ∈ [a,b) }`
 in key order `= B_badger.scan(i,[a,b))` restricted to `D|W`. *Proof.* The arena
-holds exactly `D|W`'s datoms in the same eight L85 key orderings (immutable sorted
-segments merged in key order); the L85 encoding is identical to Badger's, so key
+holds exactly `D|W`'s datoms in the same eight binary key orderings (immutable sorted
+segments merged in key order); the binary encoding is identical to Badger's, so key
 order and range membership coincide. ∎
 
 **Lemma W1 (resolved-cache invariant; owner maintains it).** Induction over

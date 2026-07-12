@@ -6,7 +6,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/codec"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
@@ -28,22 +27,13 @@ type BadgerMatcher struct {
 // encodeValueForSearch encodes a value for use in index lookups, applying
 // compression if the encoder has it enabled. This ensures the search prefix
 // matches the stored key's value encoding.
-func encodeValueForSearch(v interface{}, encoder KeyEncoder) []byte {
-	// Check if the encoder has compression enabled
-	if be, ok := encoder.(*BinaryKeyEncoder); ok && be.CompressionThreshold > 0 {
-		vType, vData, _ := datalog.EncodeValue(v, be.CompressionThreshold)
+func encodeValueForSearch(v interface{}, encoder *BinaryKeyEncoder) []byte {
+	if encoder.CompressionThreshold > 0 {
+		vType, vData, _ := datalog.EncodeValue(v, encoder.CompressionThreshold)
 		return append([]byte{byte(vType)}, vData...)
 	}
 
-	// L85 reference handling
 	vType := byte(datalog.Type(v))
-	if _, isL85 := encoder.(*L85KeyEncoder); isL85 && vType == byte(datalog.TypeReference) {
-		var vArr [20]byte
-		copy(vArr[:], datalog.ValueBytes(v))
-		return append([]byte{vType}, []byte(codec.EncodeFixed20(vArr))...)
-	}
-
-	// Default: type + raw bytes
 	vData := datalog.ValueBytes(v)
 	return append([]byte{vType}, vData...)
 }
@@ -150,7 +140,6 @@ func (m *BadgerMatcher) SetSchema(s schema.SchemaProvider) {
 func (m *BadgerMatcher) SetCache(c *Cache) {
 	m.cache = c
 }
-
 
 // getTupleBuilder returns a cached tuple builder or creates a new one
 func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *query.InternedTupleBuilder {

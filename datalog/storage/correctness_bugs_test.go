@@ -110,7 +110,7 @@ func TestLookupAttribute_StorageFallback_Tombstone(t *testing.T) {
 // Pre-fix: reads key[len-16:], which is Tx bytes shifted by one (Op
 // byte at tail) or 16 bytes of AfterRef. Result: garbled ElementID.
 func TestExtractElementIDFromKey_TailIndices(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	expectedTx := datalog.ElementID{Lamport: 0x1234567890ABCDEF, ReplicaID: 0xFEDCBA9876543210}
 	datom := datalog.Datom{
@@ -137,7 +137,7 @@ func TestExtractElementIDFromKey_TailIndices(t *testing.T) {
 //
 // Pre-fix: returns AfterRef bytes (or garbage) instead of Tx.
 func TestExtractElementIDFromKey_TailIndicesWithAfterRef(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	expectedTx := datalog.ElementID{Lamport: 100, ReplicaID: 200}
 	afterRef := datalog.ElementID{Lamport: 50, ReplicaID: 75}

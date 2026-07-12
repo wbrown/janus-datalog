@@ -28,7 +28,7 @@ func BenchmarkDatomDecoding(b *testing.B) {
 	dir, _ := os.MkdirTemp("", "bench-decode-*")
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func BenchmarkIteratorTupleAllocation(b *testing.B) {
 // This is the hot path for all storage-backed iteration.
 func BenchmarkDatomFromKeyToTuple(b *testing.B) {
 	dir := b.TempDir()
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		b.Fatal(err)
 	}

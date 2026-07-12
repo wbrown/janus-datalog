@@ -19,7 +19,7 @@ func TestBadgerStore(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	// Create store
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestRetractWithDifferentTx(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestKeyOnlyScanning(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)
@@ -471,7 +471,7 @@ func TestKeyOnlyScanningAllTypes(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)
@@ -626,7 +626,7 @@ func TestTimeBasedQueries(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)
@@ -711,7 +711,7 @@ func TestMaxElementIDForAttribute(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)
@@ -779,7 +779,7 @@ func TestMaxElementIDForAttributeEmpty(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)
@@ -812,7 +812,7 @@ func TestMaxElementIDForAttributeAfterWrites(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)

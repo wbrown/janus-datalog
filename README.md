@@ -953,7 +953,7 @@ type Relation interface {
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete system architecture.
 
-### L85 Encoding: Human-Readable Storage Keys
+### L85 Encoding: Human-Readable External Representation
 
 Janus includes **L85 encoding** – a custom Base85 variant that preserves sort order:
 
@@ -963,12 +963,13 @@ Space efficient + sort preserving + human readable
 ```
 
 This enables:
-- Debug storage without binary tools
-- Copy/paste keys between systems
-- Range scans work correctly
+- Stable identity and byte representation in EDN
+- Copy/paste values between systems
+- Lexicographic sorting without decoding
 - URL and JSON safe
 
-The default encoder uses binary keys for performance. L85 is available for debugging and interoperability.
+Physical storage keys use one binary format. L85 is reserved for external text
+representations such as identities and export/import data.
 
 See implementation in `datalog/codec/l85.go`.
 

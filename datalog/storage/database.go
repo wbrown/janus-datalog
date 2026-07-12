@@ -115,7 +115,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		return nil, fmt.Errorf("database path is required")
 	}
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	// Default compression threshold is 512 bytes. Use -1 to disable.
 	// Values below ~500 bytes rarely compress due to ~300 bytes of
 	// FSE table + block header overhead in the compressed format.
@@ -124,9 +124,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		threshold = 512
 	}
 	if threshold > 0 {
-		if be, ok := encoder.(*BinaryKeyEncoder); ok {
-			be.CompressionThreshold = threshold
-		}
+		encoder.CompressionThreshold = threshold
 	}
 	store, err := NewBadgerStore(opts.Path, encoder)
 	if err != nil {

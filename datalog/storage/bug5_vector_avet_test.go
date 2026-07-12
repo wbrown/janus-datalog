@@ -66,7 +66,7 @@ func TestVectorAVETLookup(t *testing.T) {
 
 	// Use AVET scan to find all entities with "stealth" skill
 	// This mimics what a query like [?e :skills "stealth"] would do
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	// Encode the value with type prefix
 	vType := byte(datalog.TypeString)

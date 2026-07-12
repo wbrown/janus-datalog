@@ -7,7 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
-// BinaryKeyEncoder implements KeyEncoder using raw binary for space efficiency
+// BinaryKeyEncoder builds and parses the binary keys used by every physical index.
 type BinaryKeyEncoder struct {
 	CompressionThreshold int // 0 = disabled; values >= this size are compressed
 }

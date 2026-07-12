@@ -306,7 +306,7 @@ Every datom includes a full ElementID (Lamport + ReplicaID) for temporal orderin
 - **EAVT model** with Entity-Attribute-Value-Transaction tuples
 - **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution; ATEV gives O(1) attribute high-water mark and AsOf-by-attribute access)
 - **BadgerDB backend** for persistence
-- **L85 encoding** for sortable, efficient keys
+- **Raw binary encoding** for sortable, compact physical keys
 - **Export/Import** to EDN format for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md))
 
 ### 11. Type System
@@ -725,7 +725,7 @@ No advanced database operations:
 
 ### 1. Storage Design
 - Uses BadgerDB instead of Datomic's segmented storage
-- L85 encoding (custom Base85) for sortable keys
+- Raw binary physical keys; L85 is used only for external text representations
 - Fixed 69-byte keys: E(20) + A(32) + Tx(16) + Op(1)
 - Eight indices: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV
 

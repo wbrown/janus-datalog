@@ -14,16 +14,15 @@ func BenchmarkKeyOnlyScanning(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			strategies := []struct {
-				name     string
-				strategy KeyEncodingStrategy
+			encoders := []struct {
+				name    string
+				encoder *BinaryKeyEncoder
 			}{
-				{"Binary", BinaryStrategy},
-				{"L85", L85Strategy},
+				{"Binary", &BinaryKeyEncoder{}},
 			}
 
-			for _, strat := range strategies {
-				b.Run(strat.name, func(b *testing.B) {
+			for _, tc := range encoders {
+				b.Run(tc.name, func(b *testing.B) {
 					// Create temp database
 					dir, err := os.MkdirTemp("", "bench-keyonly-*")
 					if err != nil {
@@ -31,7 +30,7 @@ func BenchmarkKeyOnlyScanning(b *testing.B) {
 					}
 					defer os.RemoveAll(dir)
 
-					encoder := NewKeyEncoder(strat.strategy)
+					encoder := tc.encoder
 					store, err := NewBadgerStore(dir, encoder)
 					if err != nil {
 						b.Fatal(err)
@@ -96,17 +95,16 @@ func BenchmarkDatomFromKeyDirect(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			strategies := []struct {
-				name     string
-				strategy KeyEncodingStrategy
+			encoders := []struct {
+				name    string
+				encoder *BinaryKeyEncoder
 			}{
-				{"Binary", BinaryStrategy},
-				{"L85", L85Strategy},
+				{"Binary", &BinaryKeyEncoder{}},
 			}
 
-			for _, strat := range strategies {
-				b.Run(strat.name, func(b *testing.B) {
-					encoder := NewKeyEncoder(strat.strategy)
+			for _, tc := range encoders {
+				b.Run(tc.name, func(b *testing.B) {
+					encoder := tc.encoder
 
 					// Pre-generate keys
 					keys := make([][]byte, size)
@@ -153,7 +151,7 @@ func BenchmarkValueDeserializationVsKeyDecoding(b *testing.B) {
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		b.Fatal(err)

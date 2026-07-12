@@ -36,7 +36,7 @@ import (
 
 // TestAETVKeyEncoding verifies AETV keys encode and decode correctly.
 func TestAETVKeyEncoding(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	datom := &datalog.Datom{
 		E:  datalog.NewIdentity("test-entity"),
@@ -82,7 +82,7 @@ func TestAETVKeyEncoding(t *testing.T) {
 
 // TestAETVKeyEncodingWithAfterRef verifies AfterRef is encoded for RGA ops.
 func TestAETVKeyEncodingWithAfterRef(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	elemID := datalog.ElementID{Lamport: 1000, ReplicaID: 100}
 	afterRef := datalog.ElementID{Lamport: 500, ReplicaID: 100}
@@ -118,7 +118,7 @@ func TestAETVKeyEncodingWithAfterRef(t *testing.T) {
 
 // TestAETVKeyEncodingAllValueTypes verifies AETV works with all value types.
 func TestAETVKeyEncodingAllValueTypes(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	testCases := []struct {
 		name  string
@@ -159,7 +159,7 @@ func TestAETVKeyEncodingAllValueTypes(t *testing.T) {
 
 // TestAETVSortOrderAttributeFirst verifies A is the primary sort key.
 func TestAETVSortOrderAttributeFirst(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	entity := datalog.NewIdentity("same-entity")
 	tx := datalog.ElementID{Lamport: 100, ReplicaID: 1}
@@ -191,7 +191,7 @@ func TestAETVSortOrderAttributeFirst(t *testing.T) {
 // TestAETVSortOrderTxDescending verifies Tx sorts in descending order.
 // This is THE critical property for CRDT resolution.
 func TestAETVSortOrderTxDescending(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	entity := datalog.NewIdentity("same-entity")
 	attr := datalog.NewKeyword(":same/attr")
@@ -223,7 +223,7 @@ func TestAETVSortOrderTxDescending(t *testing.T) {
 
 // TestAETVSortOrderEntitySecondary verifies E is secondary sort key within A.
 func TestAETVSortOrderEntitySecondary(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	attr := datalog.NewKeyword(":same/attr")
 	tx := datalog.ElementID{Lamport: 100, ReplicaID: 1}
@@ -262,7 +262,7 @@ func TestAETVSortOrderEntitySecondary(t *testing.T) {
 
 // TestAETVPrefixRangeAttribute verifies prefix range for attribute-only scan.
 func TestAETVPrefixRangeAttribute(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	attr := datalog.NewKeyword(":test/attribute")
 	var attrBytes Attribute
@@ -280,7 +280,7 @@ func TestAETVPrefixRangeAttribute(t *testing.T) {
 
 // TestAETVPrefixRangeAttributeEntity verifies prefix range for (A, E) scan.
 func TestAETVPrefixRangeAttributeEntity(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	attr := datalog.NewKeyword(":test/attribute")
 	entity := datalog.NewIdentity("test-entity")
@@ -691,7 +691,7 @@ func TestAETVCrossProductInputs(t *testing.T) {
 
 // TestAETVSymmetryWithEATV verifies AETV is the A-primary equivalent of EATV.
 func TestAETVSymmetryWithEATV(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	entity := datalog.NewIdentity("test-entity")
 	attr := datalog.NewKeyword(":test/attr")
@@ -726,7 +726,7 @@ func TestAETVSymmetryWithEATV(t *testing.T) {
 // =============================================================================
 
 func BenchmarkAETVKeyEncoding(b *testing.B) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	datom := &datalog.Datom{
 		E:  datalog.NewIdentity("benchmark-entity"),
@@ -743,7 +743,7 @@ func BenchmarkAETVKeyEncoding(b *testing.B) {
 }
 
 func BenchmarkAETVKeyDecoding(b *testing.B) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	datom := &datalog.Datom{
 		E:  datalog.NewIdentity("benchmark-entity"),

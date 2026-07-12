@@ -17,11 +17,11 @@ const metadataPrefix = "_meta:"
 // BadgerStore implements Store using BadgerDB
 type BadgerStore struct {
 	db      *badger.DB
-	encoder KeyEncoder
+	encoder *BinaryKeyEncoder
 }
 
-// NewBadgerStore creates a new BadgerDB-backed store with the specified encoder
-func NewBadgerStore(path string, encoder KeyEncoder) (*BadgerStore, error) {
+// NewBadgerStore creates a new BadgerDB-backed store.
+func NewBadgerStore(path string, encoder *BinaryKeyEncoder) (*BadgerStore, error) {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil // Disable BadgerDB logs for now
 
@@ -38,9 +38,9 @@ func NewBadgerStore(path string, encoder KeyEncoder) (*BadgerStore, error) {
 		return nil, fmt.Errorf("failed to open badger: %w", err)
 	}
 
-	// Default to Binary encoding for performance
+	// Physical storage keys always use the binary format.
 	if encoder == nil {
-		encoder = NewKeyEncoder(BinaryStrategy)
+		encoder = &BinaryKeyEncoder{}
 	}
 
 	return &BadgerStore{
@@ -64,32 +64,20 @@ func (s *BadgerStore) Assert(datoms []datalog.Datom) error {
 // assertDatom adds a single datom to all indices
 func (s *BadgerStore) assertDatom(txn *badger.Txn, d *datalog.Datom) error {
 	// Pre-encode value bytes once (avoids recomputing compression 7 times)
-	var vBytes []byte
-	if be, ok := s.encoder.(*BinaryKeyEncoder); ok {
-		var blobData *datalog.BlobData
-		vBytes, blobData = be.EncodeValueBytes(d.V)
+	vBytes, blobData := s.encoder.EncodeValueBytes(d.V)
 
-		// Tier 3: write compressed data to blob store
-		if blobData != nil {
-			if err := putBlob(txn, blobData.Hash, blobData.CompressedBytes); err != nil {
-				return fmt.Errorf("failed to write blob: %w", err)
-			}
+	// Tier 3: write compressed data to blob store
+	if blobData != nil {
+		if err := putBlob(txn, blobData.Hash, blobData.CompressedBytes); err != nil {
+			return fmt.Errorf("failed to write blob: %w", err)
 		}
+	}
 
-		// Write to all indices using pre-encoded value bytes
-		for _, idx := range Indices {
-			key := be.EncodeKeyWithValueBytes(idx, d, vBytes)
-			if err := txn.Set(key, nil); err != nil {
-				return fmt.Errorf("failed to write to %v index: %w", idx, err)
-			}
-		}
-	} else {
-		// Non-binary encoder (L85): use standard path
-		for _, idx := range Indices {
-			key := s.encoder.EncodeKey(idx, d)
-			if err := txn.Set(key, nil); err != nil {
-				return fmt.Errorf("failed to write to %v index: %w", idx, err)
-			}
+	// Write to all indices using pre-encoded value bytes
+	for _, idx := range Indices {
+		key := s.encoder.EncodeKeyWithValueBytes(idx, d, vBytes)
+		if err := txn.Set(key, nil); err != nil {
+			return fmt.Errorf("failed to write to %v index: %w", idx, err)
 		}
 	}
 
@@ -495,8 +483,8 @@ type BadgerIterator struct {
 	end     []byte
 	index   IndexType
 	valid   bool
-	encoder KeyEncoder // For decoding Op from key
-	db      *badger.DB // For Tier 3 blob lookups in Datom()
+	encoder *BinaryKeyEncoder // For decoding Op from key
+	db      *badger.DB        // For Tier 3 blob lookups in Datom()
 }
 
 // Next advances the iterator
@@ -654,7 +642,7 @@ func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {
 		// Programmer error: a new IndexType was added without teaching this
 		// switch where Tx lives in its layout. Silent zero return here once
 		// hid a missing ATEV case — surface it loudly instead. Matches the
-		// encoder switches in key_encoder_{binary,l85}.go.
+		// encoder switch in key_encoder_binary.go.
 		panic(fmt.Sprintf("extractElementIDFromKey: unknown index type %v", index))
 	}
 

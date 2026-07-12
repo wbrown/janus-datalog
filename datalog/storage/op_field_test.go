@@ -23,7 +23,7 @@ import (
 
 // TestOpFieldInKeyEncoding verifies Op is correctly encoded/decoded in keys
 func TestOpFieldInKeyEncoding(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	// Create datom with OpCRDTAdd
 	datom := &datalog.Datom{
@@ -64,7 +64,7 @@ func TestOpFieldInKeyEncoding(t *testing.T) {
 
 // TestOpFieldPreservesRawValueType verifies V stores raw type, not TypeBytes
 func TestOpFieldPreservesRawValueType(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	// Create datom with string value
 	datom := &datalog.Datom{
