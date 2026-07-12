@@ -93,3 +93,78 @@ func (p RelationProperties) satisfiesOrdering(required []query.OrderByClause) bo
 	}
 	return true
 }
+
+func joinProperties(
+	left RelationProperties,
+	right RelationProperties,
+	joinSymbols []query.Symbol,
+) RelationProperties {
+	joinSet := make(map[query.Symbol]bool, len(joinSymbols))
+	for _, symbol := range joinSymbols {
+		joinSet[symbol] = true
+	}
+
+	result := RelationProperties{}
+	if hasKeyWithin(right.Keys, joinSet) {
+		result.Keys = appendDistinctKeys(result.Keys, left.Keys)
+	}
+	if hasKeyWithin(left.Keys, joinSet) {
+		result.Keys = appendDistinctKeys(result.Keys, right.Keys)
+	}
+	return result
+}
+
+func hasKeyWithin(keys [][]query.Symbol, symbols map[query.Symbol]bool) bool {
+	for _, key := range keys {
+		if len(key) == 0 {
+			continue
+		}
+		contained := true
+		for _, symbol := range key {
+			if !symbols[symbol] {
+				contained = false
+				break
+			}
+		}
+		if contained {
+			return true
+		}
+	}
+	return false
+}
+
+func appendDistinctKeys(existing, additions [][]query.Symbol) [][]query.Symbol {
+	for _, addition := range additions {
+		if len(addition) == 0 || containsSymbolSet(existing, addition) {
+			continue
+		}
+		existing = append(existing, append([]query.Symbol(nil), addition...))
+	}
+	return existing
+}
+
+func containsSymbolSet(keys [][]query.Symbol, candidate []query.Symbol) bool {
+	for _, key := range keys {
+		if len(key) != len(candidate) {
+			continue
+		}
+		matches := true
+		for _, symbol := range candidate {
+			found := false
+			for _, keySymbol := range key {
+				if keySymbol == symbol {
+					found = true
+					break
+				}
+			}
+			if !found {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}

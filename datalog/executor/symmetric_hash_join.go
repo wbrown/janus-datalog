@@ -89,7 +89,12 @@ func SymmetricHashJoinWithOptions(left, right Relation, joinSyms []query.Symbol,
 	}
 
 	// Return a streaming relation with the symmetric join iterator
-	return NewStreamingRelationWithOptions(outputSyms, iter, opts)
+	return NewStreamingRelationWithProperties(
+		outputSyms,
+		iter,
+		opts,
+		joinProperties(left.Properties(), right.Properties(), joinSyms),
+	)
 }
 
 // symmetricHashJoinIterator implements Iterator for symmetric hash join

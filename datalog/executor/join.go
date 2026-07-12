@@ -17,11 +17,11 @@ import (
 // by concurrent access. Each goroutine must create its own iterator by calling
 // Relation.Iterator(), which returns independent iterator instances.
 type hashJoinIterator struct {
-	hashTable    *TupleKeyMap
-	probeIt      Iterator
-	buildErr     error // deferred error captured from the (eagerly consumed) build relation
-	seen         *TupleKeyMap
-	buildIsLeft  bool
+	hashTable   *TupleKeyMap
+	probeIt     Iterator
+	buildErr    error // deferred error captured from the (eagerly consumed) build relation
+	seen        *TupleKeyMap
+	buildIsLeft bool
 	// probeNeedsCopy is true when the probe relation's iterator reuses its
 	// tuple workspace (RequiresCopy()); only then must currentProbeTuple be
 	// copied before use. Materialized probes return stable tuples and skip it.
@@ -252,6 +252,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		}
 	}
 	resultWidth := len(leftSyms) + len(rightNonJoinIndices)
+	resultProperties := joinProperties(left.Properties(), right.Properties(), joinSyms)
 
 	// Choose smaller relation to build hash table
 	var buildRel, probeRel Relation
@@ -471,12 +472,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 		// Return streaming result - no forced materialization
 		// StreamingRelation enforces single-use semantics via panic if Iterator() called twice
 		// Caller can explicitly call Materialize() if multiple iterations needed
-		return &StreamingRelation{
-			symbols:  outputSyms,
-			iterator: iter,
-			size:     -1, // unknown size until consumed
-			options:  opts,
-		}
+		return NewStreamingRelationWithProperties(outputSyms, iter, opts, resultProperties)
 	}
 
 	// Materialized mode (original implementation)
@@ -557,6 +553,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Carry any deferred build/probe error onto the result so a failed scan
 	// isn't laundered into an empty/partial join.
 	result := NewMaterializedRelationNoDedupeWithOptions(outputSyms, results, opts)
+	result.properties = resultProperties.clone()
 	if buildErr != nil {
 		result.err = buildErr
 	} else if pe := probeIt.Error(); pe != nil {

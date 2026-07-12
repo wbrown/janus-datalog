@@ -17,7 +17,7 @@ be omitted.
 | 2 | Use `PutIfAbsent` across deduplication paths | Low-level | Implemented and benchmarked | 7.3% faster geomean | Complete |
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
-| 5 | Propagate statically provable relational properties | Relational algebra | Core contract implemented | 5.5% less memory | In progress |
+| 5 | Propagate statically provable relational properties | Relational algebra | Key-preserving joins implemented | 24.4% faster focused path | In progress |
 | 6 | Push Top-N into proven index order | Relational algebra | 6a + four 6b history shapes implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
@@ -230,8 +230,8 @@ Relevant code and benchmarks:
 
 ## 5. Propagate Statically Provable Relational Properties
 
-**Status:** Core interface contract and first storage guarantees complete;
-propagation coverage remains in progress.
+**Status:** Core interface contract, first storage guarantees, and
+key-preserving join rules complete; propagation coverage remains in progress.
 
 The query syntax, selected index, schema, and `Relation` type already establish
 facts such as candidate keys, uniqueness, ordering, and rewindability, but those
@@ -255,8 +255,10 @@ Implemented propagation:
 - Fresh expression outputs preserve properties; replacing a property-bearing
   symbol clears affected guarantees.
 - Grouped aggregation establishes its group-by symbols as a candidate key.
-- Joins, unions, products, and fallback relations clear properties until a
-  derivation rule proves otherwise.
+- Natural joins preserve one side's candidate keys when the opposite side's
+  join symbols contain a candidate key. Join ordering remains unclaimed.
+- Unions, products, and fallback relations clear properties until a derivation
+  rule proves otherwise.
 - Streaming projection skips deduplication when a candidate key survives.
 
 No persistent cardinality statistics, cost model, heuristic override, or
@@ -298,13 +300,38 @@ After property propagation and key-aware streaming projection:
 - Memory: **82.80 MiB/op**, **-5.45%**
 - Allocations: **1.088M/op**, **-2.71%**
 
+### Key-preserving join checkpoint
+
+When the right join symbols contain a candidate key, each left row can match at
+most one right row, so left candidate keys remain valid after the join. The
+mirror rule preserves right keys when the left join symbols contain a candidate
+key. Streaming, materialized, and symmetric hash joins apply the same rule;
+ordering remains empty because hash-join output order is not a contract.
+
+`BenchmarkKeyPreservingJoinProjection`, streaming one-to-one hash join followed
+by projection retaining the left key, `benchtime=300ms`, `count=10`,
+darwin/arm64:
+
+| Rows | Time before | Time after | Time delta | Memory delta | Alloc delta |
+|---:|---:|---:|---:|---:|---:|
+| 10,000 | 3.337 ms | 2.564 ms | **-23.19%** | -26.01% | -9.14% |
+| 100,000 | 38.48 ms | 28.62 ms | **-25.63%** | -24.29% | -9.13% |
+| **Geomean** | **11.33 ms** | **8.565 ms** | **-24.42%** | **-25.15%** | **-9.13%** |
+
+The production-shaped `BenchmarkComplexQueryCheckpoint` is statistically
+unchanged: 47.54 → 48.90 ms/op (`p=0.075`), 82.80 MiB/op (`p=0.739`), and
+1.088M allocations/op (`p=0.648`). The focused win is real, but the default
+checkpoint does not currently contain a streaming key-preserving
+join-then-projection bottleneck.
+
 Ordering is carried but not yet consumed for storage early termination; that
 remains the separate index-order Top-N step.
 
 Remaining property work:
 
-- Derive keys/order through specific joins and OR/fallback shapes only where
-  structural proofs exist.
+- Derive properties through semi/anti joins and specific OR/fallback shapes
+  only where structural proofs exist.
+- Propagate join ordering only if an execution strategy establishes it.
 - Establish guarantees for additional storage index and binding strategies.
 - Consume ordering in index-order Top-N.
 - Re-run the complex checkpoint after each new derivation rule.
@@ -508,9 +535,9 @@ Relevant code:
 3. **Completed:** bounded Top-N heap reducing CPU and memory while retaining the
    full scan.
 4. **Completed:** one-pass same-entity attribute bundle fusion.
-5. **Checkpointed:** core relation-property contract, initial conservative
-   propagation, and key-aware projection. Join/OR and broader storage
-   derivations remain.
+5. **Checkpointed:** core relation-property contract, key-aware projection, and
+   key-preserving natural joins. Semi/anti join, OR/fallback, ordering, and
+   broader storage derivations remain.
 6. **In progress:** 6a plus history/ATEV, history/TAEV, history/AETV, and
    history/EATV 6b shapes are complete; additional CRDT-safe order-aware index
    selections remain.
