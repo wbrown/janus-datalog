@@ -614,7 +614,7 @@ func SemiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		lerr = cerr
 	}
 
-	res := NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
+	res := materializeFilteredLeft(left, results, opts)
 	res.err = lerr
 	return res
 }
@@ -672,9 +672,23 @@ func AntiJoin(left, right Relation, joinSyms []query.Symbol) Relation {
 		lerr = cerr
 	}
 
-	res := NewMaterializedRelationWithOptions(left.Symbols(), results, opts)
+	res := materializeFilteredLeft(left, results, opts)
 	res.err = lerr
 	return res
+}
+
+func materializeFilteredLeft(
+	left Relation,
+	tuples []Tuple,
+	opts ExecutorOptions,
+) *MaterializedRelation {
+	properties := left.Properties()
+	if len(properties.Keys) > 0 {
+		result := NewMaterializedRelationNoDedupeWithOptions(left.Symbols(), tuples, opts)
+		result.properties = properties.clone()
+		return result
+	}
+	return NewMaterializedRelationWithProperties(left.Symbols(), tuples, opts, properties)
 }
 
 // Join utility functions

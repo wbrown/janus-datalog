@@ -328,3 +328,53 @@ func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 		streamingLeft, streamingRight, []query.Symbol{id}, opts)
 	require.Equal(t, properties, symmetricJoin.Properties())
 }
+
+func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
+	id := datalog.NewSymbol("?id")
+	value := datalog.NewSymbol("?value")
+	properties := RelationProperties{
+		Ordering: []query.OrderByClause{{Variable: id, Direction: query.OrderAsc}},
+		Keys:     [][]query.Symbol{{id}},
+	}
+	left := NewMaterializedRelationWithProperties(
+		[]query.Symbol{id, value},
+		[]Tuple{
+			{int64(1), "one"},
+			{int64(2), "two"},
+			{int64(3), "three"},
+		},
+		ExecutorOptions{},
+		properties,
+	)
+	right := NewMaterializedRelation(
+		[]query.Symbol{id},
+		[]Tuple{{int64(1)}, {int64(3)}},
+	)
+
+	semi := SemiJoin(left, right, []query.Symbol{id})
+	require.Equal(t, properties, semi.Properties())
+	semiRows, err := CollectTuples(semi, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1), "one"}, {int64(3), "three"}}, semiRows)
+
+	anti := AntiJoin(left, right, []query.Symbol{id})
+	require.Equal(t, properties, anti.Properties())
+	antiRows, err := CollectTuples(anti, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2), "two"}}, antiRows)
+}
+
+func TestSemiAndAntiJoinsDeduplicateUnkeyedLeftInput(t *testing.T) {
+	id := datalog.NewSymbol("?id")
+	left := NewMaterializedRelationNoDedupe(
+		[]query.Symbol{id},
+		[]Tuple{{int64(1)}, {int64(1)}, {int64(2)}, {int64(2)}},
+	)
+	right := NewMaterializedRelation(
+		[]query.Symbol{id},
+		[]Tuple{{int64(1)}},
+	)
+
+	require.Equal(t, 1, SemiJoin(left, right, []query.Symbol{id}).Size())
+	require.Equal(t, 1, AntiJoin(left, right, []query.Symbol{id}).Size())
+}

@@ -68,3 +68,53 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkSemiAntiJoinPropertyPropagation(b *testing.B) {
+	id := datalog.NewSymbol("?id")
+	value := datalog.NewSymbol("?value")
+	leftSymbols := []query.Symbol{id, value}
+	rightSymbols := []query.Symbol{id}
+	properties := RelationProperties{
+		Ordering: []query.OrderByClause{{Variable: id, Direction: query.OrderAsc}},
+		Keys:     [][]query.Symbol{{id}},
+	}
+
+	for _, rowCount := range []int{10_000, 100_000} {
+		leftTuples := make([]Tuple, rowCount)
+		rightTuples := make([]Tuple, 0, rowCount/2)
+		for i := range rowCount {
+			leftTuples[i] = Tuple{int64(i), int64(i * 2)}
+			if i%2 == 0 {
+				rightTuples = append(rightTuples, Tuple{int64(i)})
+			}
+		}
+		left := NewMaterializedRelationWithProperties(
+			leftSymbols,
+			leftTuples,
+			ExecutorOptions{},
+			properties,
+		)
+		right := NewMaterializedRelation(rightSymbols, rightTuples)
+		expectedRows := rowCount / 2
+
+		b.Run(fmt.Sprintf("semi/rows_%d", rowCount), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				result := SemiJoin(left, right, []query.Symbol{id})
+				if result.Size() != expectedRows {
+					b.Fatalf("got %d rows, want %d", result.Size(), expectedRows)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("anti/rows_%d", rowCount), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				result := AntiJoin(left, right, []query.Symbol{id})
+				if result.Size() != expectedRows {
+					b.Fatalf("got %d rows, want %d", result.Size(), expectedRows)
+				}
+			}
+		})
+	}
+}

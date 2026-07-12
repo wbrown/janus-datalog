@@ -17,7 +17,7 @@ be omitted.
 | 2 | Use `PutIfAbsent` across deduplication paths | Low-level | Implemented and benchmarked | 7.3% faster geomean | Complete |
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
-| 5 | Propagate statically provable relational properties | Relational algebra | Key-preserving joins implemented | 24.4% faster focused path | In progress |
+| 5 | Propagate statically provable relational properties | Relational algebra | Key-preserving joins implemented | Up to 27.5% faster focused paths | In progress |
 | 6 | Push Top-N into proven index order | Relational algebra | 6a + four 6b history shapes implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
@@ -230,8 +230,9 @@ Relevant code and benchmarks:
 
 ## 5. Propagate Statically Provable Relational Properties
 
-**Status:** Core interface contract, first storage guarantees, and
-key-preserving join rules complete; propagation coverage remains in progress.
+**Status:** Core interface contract, first storage guarantees, key-preserving
+natural joins, and semi/anti filtering rules complete; propagation coverage
+remains in progress.
 
 The query syntax, selected index, schema, and `Relation` type already establish
 facts such as candidate keys, uniqueness, ordering, and rewindability, but those
@@ -257,6 +258,8 @@ Implemented propagation:
 - Grouped aggregation establishes its group-by symbols as a candidate key.
 - Natural joins preserve one side's candidate keys when the opposite side's
   join symbols contain a candidate key. Join ordering remains unclaimed.
+- Semi-joins and anti-joins preserve all left ordering and candidate keys
+  because they only filter left rows.
 - Unions, products, and fallback relations clear properties until a derivation
   rule proves otherwise.
 - Streaming projection skips deduplication when a candidate key survives.
@@ -324,13 +327,36 @@ unchanged: 47.54 → 48.90 ms/op (`p=0.075`), 82.80 MiB/op (`p=0.739`), and
 checkpoint does not currently contain a streaming key-preserving
 join-then-projection bottleneck.
 
+### Semi/anti join checkpoint
+
+Semi-joins and anti-joins iterate the left relation in order and only choose
+whether to emit each row. They therefore preserve every left property. When a
+left candidate key exists, the result materialization also skips redundant
+deduplication; unkeyed internal relations retain the existing deduplicating
+control path.
+
+`BenchmarkSemiAntiJoinPropertyPropagation`, 50%-selective keyed left input,
+`benchtime=300ms`, `count=10`, darwin/arm64:
+
+| Operation | Rows | Time before | Time after | Time delta | Memory delta | Alloc delta |
+|---|---:|---:|---:|---:|---:|---:|
+| Semi | 10,000 | 786.4 µs | 550.0 µs | **-30.07%** | -34.38% | -20.01% |
+| Anti | 10,000 | 782.2 µs | 550.4 µs | **-29.63%** | -34.38% | -20.01% |
+| Semi | 100,000 | 8.376 ms | 6.087 ms | **-27.33%** | -31.19% | -20.03% |
+| Anti | 100,000 | 8.162 ms | 6.292 ms | **-22.91%** | -31.19% | -20.03% |
+| **Geomean** | | **2.547 ms** | **1.845 ms** | **-27.54%** | **-32.80%** | **-20.02%** |
+
+The complex checkpoint is again statistically unchanged: 48.22 → 49.17 ms/op
+(`p=0.089`), with 82.80 MiB/op (`p=0.853`) and 1.088M allocations/op
+(`p=0.590`) unchanged.
+
 Ordering is carried but not yet consumed for storage early termination; that
 remains the separate index-order Top-N step.
 
 Remaining property work:
 
-- Derive properties through semi/anti joins and specific OR/fallback shapes
-  only where structural proofs exist.
+- Derive properties through specific OR/fallback shapes only where structural
+  proofs exist.
 - Propagate join ordering only if an execution strategy establishes it.
 - Establish guarantees for additional storage index and binding strategies.
 - Consume ordering in index-order Top-N.
@@ -535,8 +561,8 @@ Relevant code:
 3. **Completed:** bounded Top-N heap reducing CPU and memory while retaining the
    full scan.
 4. **Completed:** one-pass same-entity attribute bundle fusion.
-5. **Checkpointed:** core relation-property contract, key-aware projection, and
-   key-preserving natural joins. Semi/anti join, OR/fallback, ordering, and
+5. **Checkpointed:** core relation-property contract, key-aware projection,
+   key-preserving natural joins, and semi/anti joins. OR/fallback, ordering, and
    broader storage derivations remain.
 6. **In progress:** 6a plus history/ATEV, history/TAEV, history/AETV, and
    history/EATV 6b shapes are complete; additional CRDT-safe order-aware index
