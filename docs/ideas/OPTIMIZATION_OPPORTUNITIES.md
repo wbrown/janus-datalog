@@ -1,8 +1,8 @@
 # Janus Datalog Optimization Opportunities
 
 **Reviewed:** 2026-07-11  
-**Status:** Items 1–4 complete; item 5 core contract checkpointed with
-propagation coverage still in progress
+**Status:** Items 1–4 complete; item 5 core contract checkpointed; item 6 has
+6a and two proven 6b history shapes complete
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
 hash-join gains. The next meaningful improvements are concentrated in typed
@@ -18,7 +18,7 @@ be omitted.
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
 | 5 | Propagate statically provable relational properties | Relational algebra | Core contract implemented | 5.5% less memory | In progress |
-| 6 | Push Top-N into proven index order | Relational algebra | 6a + first 6b shape implemented | Up to 99.7% faster | In progress |
+| 6 | Push Top-N into proven index order | Relational algebra | 6a + two 6b history shapes implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
 
@@ -315,7 +315,7 @@ Relevant benchmark:
 
 ## 6. Push Top-N into Proven Index Order
 
-**Status:** 6a complete; first 6b history/ATEV shape complete; broader
+**Status:** 6a complete; history/ATEV and history/TAEV 6b shapes complete; broader
 order-aware index selection pending.
 
 Bounded Top-N still consumes every source row. After property propagation can
@@ -353,8 +353,8 @@ Relevant benchmark:
 
 ### 6b. Order-aware index selection
 
-**Status:** Datalog-fragment matcher contract and first history/ATEV shape
-complete; additional index/order shapes pending.
+**Status:** Datalog-fragment matcher contract plus history/ATEV and
+history/TAEV shapes complete; additional index/order shapes pending.
 
 `PatternMatcher.Match` now accepts a one-pattern Datalog
 `query.Query` fragment rather than adding an order-specific interface or opaque
@@ -379,6 +379,24 @@ does not group E/A for current-state CRDT resolution.
 
 The correctness test verifies ATEV selection, exact Datalog order, and at most
 N scans. A companion latest-mode test verifies Tx-primary ATEV is declined.
+
+The second supported shape is the unfiltered history transaction log:
+`[?e ?a ?v ?tx]` ordered by `[?tx :desc] [?a :asc] [?e :asc]`. TAEV physically
+provides `[Tx↓][A][E][V]`; per-operation ElementIDs make Tx itself a total
+ordering key. Requiring all four pattern positions to be variables excludes
+post-scan filtering, so a limit of N consumes exactly N storage datoms.
+Latest/as-of again decline because global Tx order cannot perform current-state
+CRDT resolution.
+
+**Measurement** (`BenchmarkHistoryTAEVOrderedLimit`, 10,100 raw history datoms,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| N | Time before | Time after | Time delta | Memory delta | Alloc delta | Scans before | Scans after |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 2.916 ms | 15.46 µs | **-99.47%** | -99.44% | -99.27% | 10,100 | 1 |
+| 10 | 2.907 ms | 19.53 µs | **-99.33%** | -99.30% | -99.11% | 10,100 | 10 |
+| 100 | 3.445 ms | 57.23 µs | **-98.34%** | -97.86% | -97.70% | 10,100 | 100 |
+| **Geomean** | **3.079 ms** | **25.85 µs** | **-99.16%** | **-99.05%** | **-98.86%** | | |
 
 Start narrowly:
 
@@ -456,7 +474,7 @@ Relevant code:
 5. **Checkpointed:** core relation-property contract, initial conservative
    propagation, and key-aware projection. Join/OR and broader storage
    derivations remain.
-6. **In progress:** 6a and the first 6b history/ATEV shape are complete;
+6. **In progress:** 6a plus history/ATEV and history/TAEV 6b shapes are complete;
    additional CRDT-safe order-aware index selections remain.
 7. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
    safety follows from those properties.

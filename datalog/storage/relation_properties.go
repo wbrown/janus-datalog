@@ -94,3 +94,38 @@ func historyATEVProperties(
 		Ordering: append([]query.OrderByClause(nil), q.OrderBy...),
 	}, true
 }
+
+func historyTAEVProperties(
+	q *query.Query,
+	pattern *query.DataPattern,
+	history bool,
+) (executor.RelationProperties, bool) {
+	if !history || q == nil || q.Limit == nil || len(q.OrderBy) < 1 || len(q.OrderBy) > 3 {
+		return executor.RelationProperties{}, false
+	}
+	entity, entityOK := pattern.GetE().(query.Variable)
+	attribute, attributeOK := pattern.GetA().(query.Variable)
+	_, valueOK := pattern.GetV().(query.Variable)
+	tx, txOK := pattern.GetT().(query.Variable)
+	if !entityOK || !attributeOK || !valueOK || !txOK {
+		return executor.RelationProperties{}, false
+	}
+
+	physicalOrder := []query.OrderByClause{
+		{Variable: tx.Name, Direction: query.OrderDesc},
+		{Variable: attribute.Name, Direction: query.OrderAsc},
+		{Variable: entity.Name, Direction: query.OrderAsc},
+	}
+	for i, order := range q.OrderBy {
+		if order != physicalOrder[i] {
+			return executor.RelationProperties{}, false
+		}
+	}
+
+	// TAEV is [Tx↓][A][E][V]. ElementIDs identify individual operations, so
+	// Tx descending is already a total order; A and E are valid optional
+	// physical tie-break prefixes.
+	return executor.RelationProperties{
+		Ordering: append([]query.OrderByClause(nil), q.OrderBy...),
+	}, true
+}

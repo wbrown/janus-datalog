@@ -399,7 +399,11 @@ func (m *BadgerMatcher) matchUnboundAsRelation(
 	// Choose index and create scan range
 	index, start, end := m.chooseIndex(e, a, v, tx)
 	properties := unboundScanProperties(pattern, index, card, m.isHistoryMode())
-	if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
+	if orderedProperties, ok := historyTAEVProperties(q, pattern, m.isHistoryMode()); ok {
+		index = TAEV
+		start, end = m.store.encoder.EncodePrefixRange(TAEV)
+		properties = orderedProperties
+	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			attr := ToStorageDatom(datalog.Datom{A: keyword}).A
 			index = ATEV
