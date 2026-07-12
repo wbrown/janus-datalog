@@ -2,7 +2,7 @@
 
 **Reviewed:** 2026-07-11  
 **Status:** Items 1–4 complete; item 5 core contract checkpointed; item 6 has
-6a and two proven 6b history shapes complete
+6a and three proven 6b history shapes complete
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
 hash-join gains. The next meaningful improvements are concentrated in typed
@@ -18,7 +18,7 @@ be omitted.
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
 | 5 | Propagate statically provable relational properties | Relational algebra | Core contract implemented | 5.5% less memory | In progress |
-| 6 | Push Top-N into proven index order | Relational algebra | 6a + two 6b history shapes implemented | Up to 99.7% faster | In progress |
+| 6 | Push Top-N into proven index order | Relational algebra | 6a + three 6b history shapes implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
 
@@ -315,8 +315,8 @@ Relevant benchmark:
 
 ## 6. Push Top-N into Proven Index Order
 
-**Status:** 6a complete; history/ATEV and history/TAEV 6b shapes complete; broader
-order-aware index selection pending.
+**Status:** 6a complete; history/ATEV, history/TAEV, and history/AETV 6b shapes
+complete; broader order-aware index selection pending.
 
 Bounded Top-N still consumes every source row. After property propagation can
 prove that a scan's physical order satisfies `ORDER BY`, the storage iterator
@@ -353,8 +353,8 @@ Relevant benchmark:
 
 ### 6b. Order-aware index selection
 
-**Status:** Datalog-fragment matcher contract plus history/ATEV and
-history/TAEV shapes complete; additional index/order shapes pending.
+**Status:** Datalog-fragment matcher contract plus history/ATEV, history/TAEV,
+and history/AETV shapes complete; additional index/order shapes pending.
 
 `PatternMatcher.Match` now accepts a one-pattern Datalog
 `query.Query` fragment rather than adding an order-specific interface or opaque
@@ -397,6 +397,25 @@ CRDT resolution.
 | 10 | 2.907 ms | 19.53 µs | **-99.33%** | -99.30% | -99.11% | 10,100 | 10 |
 | 100 | 3.445 ms | 57.23 µs | **-98.34%** | -97.86% | -97.70% | 10,100 | 100 |
 | **Geomean** | **3.079 ms** | **25.85 µs** | **-99.16%** | **-99.05%** | **-98.86%** | | |
+
+The third supported shape is constant-attribute raw history ordered by entity
+and operation: `[?e :event/value ?v ?tx]` with
+`[?e :asc] [?tx :desc]`. AETV already provides
+`[A constant][E][Tx↓][V]`, so this extension proves and consumes the existing
+physical property rather than changing the ordinary index choice. Requiring E,
+V, and Tx to remain variables excludes value filtering. Latest/as-of continue
+to use AETV for CRDT resolution but do not inherit the raw-history two-key
+property.
+
+**Measurement** (`BenchmarkHistoryAETVOrderedLimit`, 10,000 raw attribute
+history datoms, `benchtime=500ms`, `count=10`, darwin/arm64):
+
+| N | Time before | Time after | Time delta | Memory delta | Alloc delta | Scans before | Scans after |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 2.713 ms | 14.42 µs | **-99.47%** | -99.45% | -99.31% | 10,000 | 1 |
+| 10 | 2.714 ms | 18.11 µs | **-99.33%** | -99.31% | -99.14% | 10,000 | 10 |
+| 100 | 2.983 ms | 51.72 µs | **-98.27%** | -97.89% | -97.70% | 10,000 | 100 |
+| **Geomean** | **2.801 ms** | **23.82 µs** | **-99.15%** | **-99.07%** | **-98.89%** | | |
 
 Start narrowly:
 
@@ -474,7 +493,7 @@ Relevant code:
 5. **Checkpointed:** core relation-property contract, initial conservative
    propagation, and key-aware projection. Join/OR and broader storage
    derivations remain.
-6. **In progress:** 6a plus history/ATEV and history/TAEV 6b shapes are complete;
-   additional CRDT-safe order-aware index selections remain.
+6. **In progress:** 6a plus history/ATEV, history/TAEV, and history/AETV 6b
+   shapes are complete; additional CRDT-safe order-aware index selections remain.
 7. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
    safety follows from those properties.

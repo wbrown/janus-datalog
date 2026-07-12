@@ -8,22 +8,34 @@ import (
 )
 
 func BenchmarkHistoryIndexOrderedLimit(b *testing.B) {
-	benchmarkHistoryIndexOrderedLimit(b, false)
+	benchmarkHistoryOrderedLimitQuery(b, false, historyOrderedLimitQuery)
 }
 
 func BenchmarkHistoryIndexOrderedLimitScanCount(b *testing.B) {
-	benchmarkHistoryIndexOrderedLimit(b, true)
+	benchmarkHistoryOrderedLimitQuery(b, true, historyOrderedLimitQuery)
 }
 
 func BenchmarkHistoryTAEVOrderedLimit(b *testing.B) {
-	benchmarkHistoryTAEVOrderedLimit(b, false)
+	benchmarkHistoryOrderedLimitQuery(b, false, historyTransactionOrderedLimitQuery)
 }
 
 func BenchmarkHistoryTAEVOrderedLimitScanCount(b *testing.B) {
-	benchmarkHistoryTAEVOrderedLimit(b, true)
+	benchmarkHistoryOrderedLimitQuery(b, true, historyTransactionOrderedLimitQuery)
 }
 
-func benchmarkHistoryIndexOrderedLimit(b *testing.B, countScans bool) {
+func BenchmarkHistoryAETVOrderedLimit(b *testing.B) {
+	benchmarkHistoryOrderedLimitQuery(b, false, historyEntityOrderedLimitQuery)
+}
+
+func BenchmarkHistoryAETVOrderedLimitScanCount(b *testing.B) {
+	benchmarkHistoryOrderedLimitQuery(b, true, historyEntityOrderedLimitQuery)
+}
+
+func benchmarkHistoryOrderedLimitQuery(
+	b *testing.B,
+	countScans bool,
+	queryForLimit func(int) string,
+) {
 	var capture *historyOrderScanCapture
 	if countScans {
 		capture = &historyOrderScanCapture{}
@@ -33,59 +45,7 @@ func benchmarkHistoryIndexOrderedLimit(b *testing.B, countScans bool) {
 
 	for _, limit := range []int{1, 10, 100} {
 		b.Run(fmt.Sprintf("limit_%d", limit), func(b *testing.B) {
-			queryText := historyOrderedLimitQuery(limit)
-			warm, err := history.Query(queryText)
-			if err != nil {
-				b.Fatal(err)
-			}
-			warmRows, err := executor.CollectTuples(warm, nil)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if len(warmRows) != limit {
-				b.Fatalf("warmup got %d rows, want %d", len(warmRows), limit)
-			}
-
-			if capture != nil {
-				capture.reset()
-			}
-			operations := 0
-			b.ReportAllocs()
-			b.ResetTimer()
-			for b.Loop() {
-				result, err := history.Query(queryText)
-				if err != nil {
-					b.Fatal(err)
-				}
-				rows, err := executor.CollectTuples(result, nil)
-				if err != nil {
-					b.Fatal(err)
-				}
-				if len(rows) != limit {
-					b.Fatalf("got %d rows, want %d", len(rows), limit)
-				}
-				operations++
-			}
-			b.StopTimer()
-			if capture != nil && operations > 0 {
-				scanned, _ := capture.snapshot()
-				b.ReportMetric(float64(scanned)/float64(operations), "datoms/op")
-			}
-		})
-	}
-}
-
-func benchmarkHistoryTAEVOrderedLimit(b *testing.B, countScans bool) {
-	var capture *historyOrderScanCapture
-	if countScans {
-		capture = &historyOrderScanCapture{}
-	}
-	db := openHistoryOrderDatabase(b, capture)
-	history := db.History()
-
-	for _, limit := range []int{1, 10, 100} {
-		b.Run(fmt.Sprintf("limit_%d", limit), func(b *testing.B) {
-			queryText := historyTransactionOrderedLimitQuery(limit)
+			queryText := queryForLimit(limit)
 			warm, err := history.Query(queryText)
 			if err != nil {
 				b.Fatal(err)

@@ -403,6 +403,13 @@ func (m *BadgerMatcher) matchUnboundAsRelation(
 		index = TAEV
 		start, end = m.store.encoder.EncodePrefixRange(TAEV)
 		properties = orderedProperties
+	} else if orderedProperties, ok := historyAETVProperties(q, pattern, m.isHistoryMode()); ok {
+		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
+			attr := ToStorageDatom(datalog.Datom{A: keyword}).A
+			index = AETV
+			start, end = m.store.encoder.EncodePrefixRange(AETV, attr[:])
+			properties = orderedProperties
+		}
 	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			attr := ToStorageDatom(datalog.Datom{A: keyword}).A

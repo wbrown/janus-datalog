@@ -108,6 +108,16 @@ func historyTransactionOrderedLimitQuery(limit int) string {
 	)
 }
 
+func historyEntityOrderedLimitQuery(limit int) string {
+	return fmt.Sprintf(
+		`[:find ?e ?v ?tx
+		  :where [?e :event/value ?v ?tx]
+		  :order-by [[?e :asc] [?tx :desc]]
+		  :limit %d]`,
+		limit,
+	)
+}
+
 func TestHistoryOrderedLimitUsesATEV(t *testing.T) {
 	const limit = 10
 	capture := &historyOrderScanCapture{}
@@ -205,6 +215,54 @@ func TestLatestTransactionOrderedLimitDeclinesTAEV(t *testing.T) {
 		"latest CRDT resolution must not use global Tx-primary TAEV")
 }
 
+func TestHistoryEntityOrderedLimitUsesAETV(t *testing.T) {
+	const limit = 10
+	capture := &historyOrderScanCapture{}
+	db := openHistoryOrderDatabase(t, capture)
+
+	capture.reset()
+	result, err := db.History().Query(historyEntityOrderedLimitQuery(limit))
+	require.NoError(t, err)
+	rows, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, limit)
+	for i := 1; i < len(rows); i++ {
+		previousEntity := rows[i-1][0].(datalog.Identity)
+		currentEntity := rows[i][0].(datalog.Identity)
+		require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
+		if previousEntity.Equal(currentEntity) {
+			previousTx, ok := datalog.DerefElementID(rows[i-1][2])
+			require.True(t, ok)
+			currentTx, ok := datalog.DerefElementID(rows[i][2])
+			require.True(t, ok)
+			require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
+		}
+	}
+
+	scanned, index := capture.snapshot()
+	require.Equal(t, "AETV", index)
+	require.LessOrEqual(t, scanned, limit,
+		"history AETV ordering must stop after the requested rows")
+}
+
+func TestLatestEntityOrderedLimitDoesNotUseHistoryAETVProperty(t *testing.T) {
+	const limit = 10
+	capture := &historyOrderScanCapture{}
+	db := openHistoryOrderDatabase(t, capture)
+
+	capture.reset()
+	result, err := db.Query(historyEntityOrderedLimitQuery(limit))
+	require.NoError(t, err)
+	rows, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, limit)
+
+	scanned, index := capture.snapshot()
+	require.Equal(t, "AETV", index)
+	require.Greater(t, scanned, limit,
+		"latest CRDT resolution must not inherit raw-history early termination")
+}
+
 func TestHistoryATEVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	entity := datalog.NewSymbol("?e")
 	tx := datalog.NewSymbol("?tx")
@@ -290,4 +348,52 @@ func TestHistoryTAEVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	pattern.Elements[1] = query.Constant{Value: datalog.NewKeyword(":event/value")}
 	_, ok = historyTAEVProperties(q, pattern, true)
 	require.False(t, ok, "filtered patterns are outside the exact-N global TAEV shape")
+}
+
+func TestHistoryAETVPropertiesRequireSafeDatalogShape(t *testing.T) {
+	entity := datalog.NewSymbol("?e")
+	value := datalog.NewSymbol("?v")
+	tx := datalog.NewSymbol("?tx")
+	pattern := &query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: entity},
+		query.Constant{Value: datalog.NewKeyword(":event/value")},
+		query.Variable{Name: value},
+		query.Variable{Name: tx},
+	}}
+	limit := 10
+	q := &query.Query{
+		Where: []query.Clause{pattern},
+		OrderBy: []query.OrderByClause{
+			{Variable: entity, Direction: query.OrderAsc},
+			{Variable: tx, Direction: query.OrderDesc},
+		},
+		Limit: &limit,
+	}
+
+	properties, ok := historyAETVProperties(q, pattern, true)
+	require.True(t, ok)
+	require.Equal(t, executor.RelationProperties{Ordering: q.OrderBy}, properties)
+
+	_, ok = historyAETVProperties(q, pattern, false)
+	require.False(t, ok, "latest/as-of modes must not inherit raw AETV history ordering")
+
+	q.Limit = nil
+	_, ok = historyAETVProperties(q, pattern, true)
+	require.False(t, ok, "AETV order is useful for finalization only with a limit")
+	q.Limit = &limit
+
+	q.OrderBy = q.OrderBy[:1]
+	_, ok = historyAETVProperties(q, pattern, true)
+	require.False(t, ok, "entity alone is not a total history order across versions")
+	q.OrderBy = []query.OrderByClause{
+		{Variable: entity, Direction: query.OrderAsc},
+		{Variable: tx, Direction: query.OrderAsc},
+	}
+	_, ok = historyAETVProperties(q, pattern, true)
+	require.False(t, ok, "forward AETV cannot satisfy ascending Tx within an entity")
+
+	pattern.Elements[2] = query.Constant{Value: int64(42)}
+	q.OrderBy[1].Direction = query.OrderDesc
+	_, ok = historyAETVProperties(q, pattern, true)
+	require.False(t, ok, "filtered values are outside the exact-N AETV shape")
 }
