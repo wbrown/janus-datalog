@@ -179,3 +179,32 @@ func TestHashJoinColumnIndexMultiColumn(t *testing.T) {
 	// Both entities should be present and different
 	// (we can't easily compare against "A" and "B" since Identity uses hashes)
 }
+
+func TestCompiledBindingMatchUsesPrecomputedSymbolSlots(t *testing.T) {
+	parsed, err := parser.ParseQuery(
+		`[:find ?e
+		  :in $ ?noise ?bound
+		  :where [?e :thing/ref ?bound]]`,
+	)
+	assert.NoError(t, err)
+	pattern, err := parsed.SingleDataPattern()
+	assert.NoError(t, err)
+
+	noise := datalog.NewSymbol("?noise")
+	bound := datalog.NewSymbol("?bound")
+	target := datalog.NewIdentity("target")
+	plan := compileBindingMatchPlan(pattern, []datalog.Symbol{noise, bound})
+	datom := &datalog.Datom{
+		E:  datalog.NewIdentity("source"),
+		A:  datalog.NewKeyword(":thing/ref"),
+		V:  target,
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
+	}
+
+	assert.True(t, plan.matches(&BadgerMatcher{}, datom, executor.Tuple{"unused", target}))
+	assert.False(t, plan.matches(
+		&BadgerMatcher{},
+		datom,
+		executor.Tuple{"unused", datalog.NewIdentity("different")},
+	))
+}

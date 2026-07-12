@@ -306,6 +306,23 @@ func (m *TupleKeyMap) Put(key TupleKey, value interface{}) {
 	})
 }
 
+// PutValue adds or replaces a single-value key without constructing a
+// one-element TupleKey values slice on lookup-heavy paths.
+func (m *TupleKeyMap) PutValue(keyValue, value interface{}) {
+	hash := hashValue(keyValue)
+	entries := m.m[hash]
+	for i := range entries {
+		if len(entries[i].values) == 1 && datalog.ValuesEqual(entries[i].values[0], keyValue) {
+			entries[i].value = value
+			return
+		}
+	}
+	m.m[hash] = append(entries, mapEntry{
+		values: []interface{}{keyValue},
+		value:  value,
+	})
+}
+
 // PutIfAbsent inserts key with the given value only if the key is not
 // already present, and reports whether it already existed. It walks the
 // hash bucket exactly once, where a separate Exists+Put pair would walk it
@@ -339,6 +356,20 @@ func (m *TupleKeyMap) Get(key TupleKey) (interface{}, bool) {
 		}
 	}
 
+	return nil, false
+}
+
+// GetValue retrieves a single-value key without allocating a TupleKey.
+func (m *TupleKeyMap) GetValue(keyValue interface{}) (interface{}, bool) {
+	entries, ok := m.m[hashValue(keyValue)]
+	if !ok {
+		return nil, false
+	}
+	for _, entry := range entries {
+		if len(entry.values) == 1 && datalog.ValuesEqual(entry.values[0], keyValue) {
+			return entry.value, true
+		}
+	}
 	return nil, false
 }
 

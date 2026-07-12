@@ -166,24 +166,20 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	}
 
 	// Build hash set using symbol index (not datom position)
-	hashSet := m.buildHashSet(bindingRel, symbolIndex)
+	hashSet, keyCount, boundValue, err := m.buildHashSet(bindingRel, symbolIndex)
+	if err != nil {
+		return nil, fmt.Errorf("hash join bindings failed: %w", err)
+	}
 
-	if len(hashSet) == 0 {
+	if keyCount == 0 {
 		// No bindings - return empty result
 		return executor.NewMaterializedRelationNoDedupeWithOptions(symbols, nil, m.options), nil
 	}
 
 	// PHASE 2: Determine scan range for the pattern
 	// For single bindings, use the bound value to narrow the scan range
-	var boundValue interface{}
-	if len(hashSet) == 1 {
-		// Extract the single bound value from the hash set
-		for _, tuples := range hashSet {
-			if len(tuples) > 0 && symbolIndex < len(tuples[0]) {
-				boundValue = tuples[0][symbolIndex]
-			}
-			break
-		}
+	if keyCount != 1 {
+		boundValue = nil
 	}
 	scanRange := m.calculatePatternScanRangeWithBinding(pattern, index, position, boundValue)
 
@@ -203,17 +199,18 @@ func (m *BadgerMatcher) matchWithHashJoin(
 
 	// PHASE 4: Create streaming hash join iterator
 	iter := &hashJoinIterator{
-		matcher:      m,
-		pattern:      pattern,
-		bindingRel:   bindingRel,
-		symbols:      symbols,
-		position:     position,
-		index:        index,
-		constraints:  constraints,
-		hashSet:      hashSet,
-		iter:         resolvedIter,
-		workspace:    make(executor.Tuple, len(symbols)),
-		tupleBuilder: m.getTupleBuilder(pattern, symbols),
+		matcher:         m,
+		patternString:   pattern.String(),
+		matchPlan:       compileBindingMatchPlan(pattern, bindingRel.Symbols()),
+		symbols:         symbols,
+		position:        position,
+		index:           index,
+		constraints:     constraints,
+		hashSet:         hashSet,
+		bindingKeyCount: keyCount,
+		iter:            resolvedIter,
+		workspace:       make(executor.Tuple, len(symbols)),
+		tupleBuilder:    m.getTupleBuilder(pattern, symbols),
 	}
 
 	// Return streaming relation
@@ -440,10 +437,20 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 	return index, start, end
 }
 
-// buildHashSet creates a hash set from binding relation for O(1) lookup
-// Returns map from key to ALL tuples with that key value (supporting multi-symbol bindings)
-func (m *BadgerMatcher) buildHashSet(bindingRel executor.Relation, position int) map[string][]executor.Tuple {
-	hashSet := make(map[string][]executor.Tuple)
+// buildHashSet creates a typed hash set from the binding relation. It returns
+// all tuples per key plus the distinct-key count and sole key value, when one
+// exists, so a single binding can narrow the storage scan.
+func (m *BadgerMatcher) buildHashSet(
+	bindingRel executor.Relation,
+	position int,
+) (*executor.TupleKeyMap, int, interface{}, error) {
+	capacity := bindingRel.Size()
+	if capacity < 0 {
+		capacity = 0
+	}
+	hashSet := executor.NewTupleKeyMapWithCapacity(capacity)
+	keyCount := 0
+	var soleValue interface{}
 
 	iter := bindingRel.Iterator()
 	for iter.Next() {
@@ -452,22 +459,29 @@ func (m *BadgerMatcher) buildHashSet(bindingRel executor.Relation, position int)
 			continue
 		}
 
-		// Extract value at position and convert to hash key
 		value := tuple[position]
-		key := valueToHashKey(value)
-
-		if key != "" {
-			// No copy needed: binding relations are materialized (materializeRelationsForPattern)
-			// and sliceIterator returns distinct slice references without reusing storage
-			hashSet[key] = append(hashSet[key], tuple)
+		if existing, found := hashSet.GetValue(value); found {
+			hashSet.PutValue(value, append(existing.([]executor.Tuple), tuple))
+		} else {
+			// No copy needed: binding relations are materialized
+			// (materializeRelationsForPattern), and sliceIterator returns
+			// distinct slice references without reusing storage.
+			hashSet.PutValue(value, []executor.Tuple{tuple})
+			keyCount++
+			soleValue = value
 		}
 	}
-	iter.Close()
-
-	return hashSet
+	iterErr := iter.Error()
+	if closeErr := iter.Close(); iterErr == nil {
+		iterErr = closeErr
+	}
+	if iterErr != nil {
+		return nil, 0, nil, iterErr
+	}
+	return hashSet, keyCount, soleValue, nil
 }
 
-// extractProbeKey extracts the value from datom at the specified position
+// extractProbeKey extracts the value from datom at the specified position.
 func extractProbeKey(datom *datalog.Datom, position int) interface{} {
 	switch position {
 	case 0:
@@ -483,34 +497,63 @@ func extractProbeKey(datom *datalog.Datom, position int) interface{} {
 	}
 }
 
-// valueToHashKey converts a value to a string key for hashing
-func valueToHashKey(v interface{}) string {
-	// Note: Identity is always a pointer type now, no dereferencing needed
-	// Note: Do NOT dereference *Keyword - they must stay as interned pointers
-	if ptr, ok := v.(*uint64); ok {
-		v = *ptr
-	}
-	if eid, ok := datalog.DerefElementID(v); ok {
-		return eid.String()
+type bindingMatchSlot struct {
+	constant     interface{}
+	hasConstant  bool
+	bindingIndex int
+}
+
+type bindingMatchPlan struct {
+	slots [4]bindingMatchSlot
+}
+
+func compileBindingMatchPlan(
+	pattern *query.DataPattern,
+	bindingSymbols []query.Symbol,
+) bindingMatchPlan {
+	symbolIndex := make(map[query.Symbol]int, len(bindingSymbols))
+	for i, symbol := range bindingSymbols {
+		symbolIndex[symbol] = i
 	}
 
-	switch val := v.(type) {
-	case datalog.Identity:
-		// Use hash for consistent comparison
-		if val == nil {
-			return ""
-		}
-		hash := val.Hash()
-		return string(hash[:])
-	case datalog.Keyword:
-		return fmt.Sprintf("%p", val) // Use pointer address for interned keywords
-	case string:
-		return val
-	case uint64:
-		return fmt.Sprintf("%d", val)
-	default:
-		return fmt.Sprintf("%v", v)
+	var plan bindingMatchPlan
+	for i := range plan.slots {
+		plan.slots[i].bindingIndex = -1
 	}
+	elements := []query.PatternElement{
+		pattern.GetE(),
+		pattern.GetA(),
+		pattern.GetV(),
+		pattern.GetT(),
+	}
+	for i, element := range elements {
+		switch value := element.(type) {
+		case query.Constant:
+			plan.slots[i].constant = value.Value
+			plan.slots[i].hasConstant = true
+		case query.Variable:
+			if index, found := symbolIndex[value.Name]; found {
+				plan.slots[i].bindingIndex = index
+			}
+		}
+	}
+	return plan
+}
+
+func (p bindingMatchPlan) matches(
+	matcher *BadgerMatcher,
+	datom *datalog.Datom,
+	bindingTuple executor.Tuple,
+) bool {
+	var values [4]interface{}
+	for i, slot := range p.slots {
+		if slot.hasConstant {
+			values[i] = slot.constant
+		} else if slot.bindingIndex >= 0 && slot.bindingIndex < len(bindingTuple) {
+			values[i] = bindingTuple[slot.bindingIndex]
+		}
+	}
+	return matcher.matchesDatom(datom, values[0], values[1], values[2], values[3])
 }
 
 // matchesWithBindingTuple checks if datom matches pattern with the given binding tuple
@@ -757,21 +800,22 @@ func compareJoinKeys(a, b interface{}) int {
 
 // hashJoinIterator performs lazy hash join iteration
 type hashJoinIterator struct {
-	matcher       *BadgerMatcher
-	pattern       *query.DataPattern
-	bindingRel    executor.Relation
-	symbols       []query.Symbol
-	position      int
-	index         IndexType
-	constraints   []executor.StorageConstraint
-	hashSet       map[string][]executor.Tuple // Built upfront - maps key to ALL matching tuples
-	iter          Iterator                    // Storage iterator
-	tupleBuilder  *query.InternedTupleBuilder
-	current       executor.Tuple
-	workspace     executor.Tuple // Reusable workspace for tuple building
-	datomsScanned int            // Track number of datoms scanned for event reporting
-	matchesFound  int            // Track number of matches for event reporting
-	err           error          // First error from storage operations
+	matcher         *BadgerMatcher
+	patternString   string
+	matchPlan       bindingMatchPlan
+	symbols         []query.Symbol
+	position        int
+	index           IndexType
+	constraints     []executor.StorageConstraint
+	hashSet         *executor.TupleKeyMap // Built upfront - maps key to all matching tuples
+	bindingKeyCount int
+	iter            Iterator // Storage iterator
+	tupleBuilder    *query.InternedTupleBuilder
+	current         executor.Tuple
+	workspace       executor.Tuple // Reusable workspace for tuple building
+	datomsScanned   int            // Track number of datoms scanned for event reporting
+	matchesFound    int            // Track number of matches for event reporting
+	err             error          // First error from storage operations
 }
 
 func (it *hashJoinIterator) Next() bool {
@@ -792,15 +836,15 @@ func (it *hashJoinIterator) Next() bool {
 
 		// Extract probe key based on position
 		probeKey := extractProbeKey(datom, it.position)
-		probeKeyStr := valueToHashKey(probeKey)
 
 		// Probe hash set (O(1) lookup)
-		if bindingTuples, found := it.hashSet[probeKeyStr]; found {
+		if bindingTuplesValue, found := it.hashSet.GetValue(probeKey); found {
+			bindingTuples := bindingTuplesValue.([]executor.Tuple)
 			// Check against ALL binding tuples with this key
 			// (for multi-symbol bindings, there may be multiple tuples per key)
 			for _, bindingTuple := range bindingTuples {
 				// Verify full pattern match
-				if it.matcher.matchesWithBindingTuple(datom, it.pattern, it.bindingRel, bindingTuple) {
+				if it.matchPlan.matches(it.matcher, datom, bindingTuple) {
 					// Apply storage constraints
 					satisfiesAll := true
 					for _, constraint := range it.constraints {
@@ -840,9 +884,9 @@ func (it *hashJoinIterator) Close() error {
 		it.matcher.handler(annotations.Event{
 			Name: "pattern/hash-join-complete",
 			Data: map[string]interface{}{
-				"pattern":        it.pattern.String(),
+				"pattern":        it.patternString,
 				"index":          indexName(it.index),
-				"binding.size":   len(it.hashSet),
+				"binding.size":   it.bindingKeyCount,
 				"datoms.scanned": it.datomsScanned,
 				"matches.found":  it.matchesFound,
 			},

@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
 **Last Updated**: 2026-07-11 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation including keyed join dedup elision and natural/semi/anti joins, existing-order scan termination, and ATEV/TAEV/AETV/EATV order-aware history matching.
+**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, compiled storage hash matching, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation including keyed join dedup elision and natural/semi/anti joins, existing-order scan termination, and ATEV/TAEV/AETV/EATV order-aware history matching.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, keyed hash-join dedup elision).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-11, compiled storage hash matching).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -41,6 +41,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Key-preserving join properties**: natural joins preserve one side's candidate keys when the opposite join symbols contain a candidate key, allowing retained-key streaming projections to omit redundant deduplication. The focused 10K/100K join-projection path is **24.42% faster, uses 25.15% less memory, and performs 9.13% fewer allocations** geomean. The default complex-query checkpoint is statistically unchanged (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Semi/anti join properties**: semi-joins and anti-joins preserve all left properties and skip redundant result deduplication when a left candidate key proves uniqueness. Focused 10K/100K filters are **27.54% faster, use 32.80% less memory, and perform 20.02% fewer allocations** geomean. The default complex-query checkpoint remains statistically unchanged (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Keyed hash-join dedup elision**: when a derived result candidate key proves uniqueness, streaming, materialized, and symmetric hash joins omit their internal full-tuple `seen` table. Against the already key-propagating focused baseline this is **32.77% faster, uses 32.77% less memory, and performs 10.05% fewer allocations** geomean. The default complex-query checkpoint remains statistically unchanged because its dominant OR/fallback-fed joins do not carry candidate keys (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Compiled storage hash matching**: cache-disabled hash-join scans now use typed `TupleKeyMap` probes and precompiled pattern/binding slots instead of per-probe strings and per-candidate symbol maps. The 10K-datom focused path is **7.16% faster, uses 15.65% less memory, and performs 32.83% fewer allocations** (`n=10`; verified 2026-07-11, darwin/arm64).
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
@@ -1316,6 +1317,7 @@ All items below are **measured** and **active** in production code:
 28. ✅ **Key-preserving join properties** - retained-key streaming join projections improve **24.42% time, 25.15% memory, 9.13% allocations** geomean; complex default checkpoint remains statistically unchanged (verified 2026-07-11)
 29. ✅ **Semi/anti join properties** - keyed filtering improves **27.54% time, 32.80% memory, 20.02% allocations** geomean; unkeyed controls retain deduplication and the complex checkpoint remains unchanged (verified 2026-07-11)
 30. ✅ **Keyed hash-join dedup elision** - proven keyed joins omit the internal result `seen` table for **32.77% faster time, 32.77% less memory, 10.05% fewer allocations** geomean; complex checkpoint remains unchanged (verified 2026-07-11)
+31. ✅ **Compiled storage hash matching** - typed probes and precomputed binding slots improve cache-disabled hash scans by **7.16% time, 15.65% memory, 32.83% allocations** (verified 2026-07-11)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:

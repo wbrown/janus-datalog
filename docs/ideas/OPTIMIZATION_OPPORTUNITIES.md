@@ -1,8 +1,8 @@
 # Janus Datalog Optimization Opportunities
 
 **Reviewed:** 2026-07-11  
-**Status:** Items 1–4 complete; item 5 core contract checkpointed; item 6 has
-6a and four proven 6b history shapes complete
+**Status:** Items 1–4 and 7 complete; item 5 core contract checkpointed; item 6
+has 6a and four proven 6b history shapes complete
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
 hash-join gains. The next meaningful improvements are concentrated in typed
@@ -19,7 +19,7 @@ be omitted.
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
 | 5 | Propagate statically provable relational properties | Relational algebra | Keys consumed inside joins and projections | Up to 32.8% faster focused paths | In progress |
 | 6 | Push Top-N into proven index order | Relational algebra | 6a + four 6b history shapes implemented | Up to 99.7% faster | In progress |
-| 7 | Compile storage-bound hash matching once | Low-level | Code-audit candidate | Medium on cold or uncached joins | Low–medium |
+| 7 | Compile storage-bound hash matching once | Low-level | Implemented and benchmarked | 32.8% fewer allocations | Complete |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Pass inventory confirmed | Long-term high | High |
 
 ## 1. Replace String Aggregation Keys with `TupleKeyMap`
@@ -550,20 +550,40 @@ Relevant code and design:
 
 ## 7. Compile Storage-Bound Hash Matching Once
 
-The storage hash path converts every probe key to a string, sometimes through
-`fmt`, and matches candidates by rebuilding a symbol-index map for every
-candidate tuple. Both decisions are invariant for the iterator lifetime.
+**Status:** Complete.
 
-Select a typed key strategy once from the bound datom position, precompute
-pattern-to-binding slots, and evaluate candidates with indexed loads. Profile a
-cache-disabled storage workload first because warm-cache queries bypass this
-path.
+The storage hash path previously converted every build and probe key to a
+string, sometimes through `fmt`, and rebuilt a symbol-index map plus
+pattern-position bindings for every candidate tuple. It now:
+
+- Uses `TupleKeyMap.PutValue`/`GetValue` for typed, allocation-free probe keys.
+- Compiles constants and binding tuple indices into a `bindingMatchPlan` once
+  per iterator.
+- Propagates binding iterator errors instead of silently accepting a partial
+  hash set.
+- Correctly supports empty strings and content-hashed byte slices as keys.
+
+`BenchmarkStorageHashJoinCompiledMatching` uses a cache-disabled 10,000-datom
+AVET scan with 50 bound reference values, `benchtime=500ms`, `count=10`,
+darwin/arm64:
+
+| Metric | Before | After | Delta |
+|---|---:|---:|---:|
+| Time | 2.010 ms | 1.867 ms | **-7.16%** |
+| Memory | 1.460 MiB | 1.231 MiB | **-15.65%** |
+| Allocations | 30.15K | 20.25K | **-32.83%** |
+
+All differences are significant (`time p=0.001`; memory/allocations `p=0.000`,
+`n=10`). The baseline CPU profile attributed 3.98% cumulative time to
+`valueToHashKey` and 3.10% to per-candidate `matchesWithBindingTuple`; both
+disappear from the post-change profile. Storage decoding, CRDT iteration, and
+scheduler wakeups now dominate this cache-disabled workload.
 
 Relevant code:
 
-- `datalog/storage/hash_join_matcher.go:443-513`
-- `datalog/storage/hash_join_matcher.go:516-572`
-- `datalog/storage/hash_join_matcher.go:777-821`
+- `datalog/executor/tuple_key.go`
+- `datalog/storage/hash_join_matcher.go`
+- `datalog/storage/storage_hash_join_compiled_benchmark_test.go`
 
 ## 8. Turn the Algebra Optimizer into a Compositional Optimizer
 
@@ -609,5 +629,6 @@ Relevant code:
 6. **In progress:** 6a plus history/ATEV, history/TAEV, history/AETV, and
    history/EATV 6b shapes are complete; additional CRDT-safe order-aware index
    selections remain.
-7. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
+7. **Completed:** typed storage hash keys and precompiled pattern/binding slots.
+8. **Optimizer rewrites:** pushdown fixpoint and other transformations whose
    safety follows from those properties.

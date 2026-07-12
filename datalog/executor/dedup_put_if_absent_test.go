@@ -27,6 +27,30 @@ func TestTupleKeyMapPutIfAbsent(t *testing.T) {
 	}
 }
 
+func TestTupleKeyMapSingleValueOperations(t *testing.T) {
+	m := NewTupleKeyMap()
+	m.PutValue(int64(5), "integer")
+	m.PutValue("5", "string")
+	m.PutValue([]byte{1, 2, 3}, "bytes")
+
+	for _, test := range []struct {
+		key  interface{}
+		want string
+	}{
+		{key: int64(5), want: "integer"},
+		{key: "5", want: "string"},
+		{key: []byte{1, 2, 3}, want: "bytes"},
+	} {
+		got, ok := m.GetValue(test.key)
+		if !ok {
+			t.Fatalf("single-value key %v was not found", test.key)
+		}
+		if got != test.want {
+			t.Fatalf("single-value key %v returned %v, want %v", test.key, got, test.want)
+		}
+	}
+}
+
 func BenchmarkDedupInsertionPaths(b *testing.B) {
 	const tupleCount = 10_000
 
