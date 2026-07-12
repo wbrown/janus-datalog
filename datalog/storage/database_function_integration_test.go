@@ -983,7 +983,7 @@ func TestLookupAttributeDirectly(t *testing.T) {
 	}
 
 	// Test string attribute
-	val, found := badgerMatcher.LookupAttribute(alice, datalog.NewKeyword(":person/name"))
+	val, found := requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/name"))
 	if !found {
 		t.Error(":person/name should be found")
 	} else if val != "Alice Smith" {
@@ -991,7 +991,7 @@ func TestLookupAttributeDirectly(t *testing.T) {
 	}
 
 	// Test int64 attribute
-	val, found = badgerMatcher.LookupAttribute(alice, datalog.NewKeyword(":person/age"))
+	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/age"))
 	if !found {
 		t.Error(":person/age should be found")
 	} else if val != int64(30) {
@@ -999,7 +999,7 @@ func TestLookupAttributeDirectly(t *testing.T) {
 	}
 
 	// Test bool attribute
-	val, found = badgerMatcher.LookupAttribute(alice, datalog.NewKeyword(":person/active"))
+	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/active"))
 	if !found {
 		t.Error(":person/active should be found")
 	} else if val != true {
@@ -1007,14 +1007,14 @@ func TestLookupAttributeDirectly(t *testing.T) {
 	}
 
 	// Test missing attribute
-	val, found = badgerMatcher.LookupAttribute(alice, datalog.NewKeyword(":person/email"))
+	val, found = requireAttributeLookup(t, badgerMatcher, alice, datalog.NewKeyword(":person/email"))
 	if found {
 		t.Errorf(":person/email should NOT be found, got %v", val)
 	}
 
 	// Test non-existent entity
 	noone := datalog.NewIdentity("noone")
-	val, found = badgerMatcher.LookupAttribute(noone, datalog.NewKeyword(":person/name"))
+	val, found = requireAttributeLookup(t, badgerMatcher, noone, datalog.NewKeyword(":person/name"))
 	if found {
 		t.Errorf("Non-existent entity should return not found, got %v", val)
 	}

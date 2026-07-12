@@ -58,7 +58,7 @@ func TestPredicatePushdownTrace(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 
 	// Get all bars (300 total)
-	symbolRel, _ := matcher.Match(symbolPattern, nil)
+	symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
 	t.Logf("Symbol relation size: %d", symbolRel.Size())
 
 	// Check what strategy is selected
@@ -76,7 +76,7 @@ func TestPredicatePushdownTrace(t *testing.T) {
 	// Measure with constraint
 	start := time.Now()
 	timeRel, err := matcher.MatchWithConstraints(
-		timePattern,
+		query.PatternQuery(timePattern),
 		executor.Relations{symbolRel},
 		[]executor.StorageConstraint{constraint},
 	)

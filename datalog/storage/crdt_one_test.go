@@ -63,7 +63,7 @@ func TestCardinalityOneCurrentValue(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestCardinalityOneConcurrentWrites(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestSchemalessDefaultsToCardinalityOne(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -554,7 +554,7 @@ func TestHistoryMode(t *testing.T) {
 
 	// Latest mode: should return only 1 result (LWW winner)
 	latestMatcher := db.Matcher()
-	latestResults, err := latestMatcher.Match(pattern, nil)
+	latestResults, err := latestMatcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Latest Match failed: %v", err)
 	}
@@ -569,7 +569,7 @@ func TestHistoryMode(t *testing.T) {
 
 	// History mode: should return ALL 3 raw datoms
 	historyMatcher := db.History()
-	historyResults, err := historyMatcher.Match(pattern, nil)
+	historyResults, err := historyMatcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("History Match failed: %v", err)
 	}
@@ -591,7 +591,7 @@ func TestHistoryMode(t *testing.T) {
 
 	// As-of mode: should return 1 result (LWW winner at that point)
 	asOfMatcher := db.AsOf(txIDs[1])
-	asOfResults, err := asOfMatcher.Match(pattern, nil)
+	asOfResults, err := asOfMatcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("AsOf Match failed: %v", err)
 	}

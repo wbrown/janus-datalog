@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -218,6 +219,13 @@ func compareValuesForConstraints(a, b interface{}) int {
 }
 
 func valuesEqual(a, b interface{}) bool {
+	aValue := reflect.ValueOf(a)
+	bValue := reflect.ValueOf(b)
+	if (aValue.IsValid() && aValue.Kind() == reflect.Slice) ||
+		(bValue.IsValid() && bValue.Kind() == reflect.Slice) {
+		return datalog.ValuesEqual(a, b)
+	}
+
 	// Handle Identity comparison
 	if id1, ok := a.(datalog.Identity); ok {
 		if id2, ok := b.(datalog.Identity); ok {

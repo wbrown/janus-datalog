@@ -47,7 +47,7 @@ func TestDatabaseMatcher_HonorsCustomPlannerOptions(t *testing.T) {
 			query.Variable{Name: datalog.NewSymbol("?v")},
 		},
 	}
-	rel, err := m.Match(pattern, nil)
+	rel, err := m.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	opts := rel.Options()

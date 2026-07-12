@@ -5,54 +5,8 @@ import (
 	"sort"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
-
-// injectConditionalAggregates replaces find variables with conditional aggregates
-// from the query rewriter.
-func injectConditionalAggregates(findClause []query.FindElement, condAggs []planner.ConditionalAggregate) []query.FindElement {
-	// Build a map from variable symbols to conditional aggregates
-	varToAgg := make(map[query.Symbol]query.FindAggregate)
-
-	for _, condAgg := range condAggs {
-		// Extract variable(s) from the binding
-		switch b := condAgg.Binding.(type) {
-		case query.TupleBinding:
-			// For tuple bindings, we expect exactly one variable for single aggregates
-			if len(b.Variables) == 1 {
-				varToAgg[b.Variables[0]] = condAgg.Aggregate
-			}
-			// If multiple variables, we'd need to handle differently (not yet implemented)
-		case query.ScalarBinding:
-			// Scalar binding: single value to single variable
-			varToAgg[b.Variable] = condAgg.Aggregate
-		case query.CollectionBinding:
-			varToAgg[b.Variable] = condAgg.Aggregate
-		case query.RelationBinding:
-			// For relation bindings with single variable (rare for aggregates)
-			if len(b.Variables) == 1 {
-				varToAgg[b.Variables[0]] = condAgg.Aggregate
-			}
-		}
-	}
-
-	// Replace find variables with conditional aggregates
-	result := make([]query.FindElement, len(findClause))
-	for i, elem := range findClause {
-		if v, ok := elem.(query.FindVariable); ok {
-			if agg, exists := varToAgg[v.Symbol]; exists {
-				result[i] = agg
-			} else {
-				result[i] = elem
-			}
-		} else {
-			result[i] = elem
-		}
-	}
-
-	return result
-}
 
 // emptyRelationForQuery returns an empty MaterializedRelation with the correct
 // symbols for the given query's :find clause, plus any retained :order-by
@@ -129,40 +83,16 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 
 	// Get symbol indices for sort variables
 	symbols := rel.Symbols()
-	sortIndices := make([]int, len(orderBy))
-	for i, clause := range orderBy {
-		idx := -1
-		for j, sym := range symbols {
-			if sym == clause.Variable {
-				idx = j
-				break
-			}
-		}
-		if idx < 0 && err == nil {
-			err = fmt.Errorf("order-by variable %s is not a column of the relation (columns: %v)",
-				clause.Variable, symbols)
-		}
-		sortIndices[i] = idx
+	sortIndices, indexErr := orderBySymbolIndices(symbols, orderBy)
+	if err == nil {
+		err = indexErr
 	}
 
 	// Sort tuples (skipped when erroring — an arbitrary partial order must
 	// not masquerade as the requested one)
 	if err == nil {
 		sort.Slice(tuples, func(i, j int) bool {
-			for k, clause := range orderBy {
-				cmp := datalog.CompareValues(
-					tuples[i][sortIndices[k]],
-					tuples[j][sortIndices[k]],
-				)
-
-				if cmp < 0 {
-					return clause.Direction != query.OrderDesc
-				} else if cmp > 0 {
-					return clause.Direction == query.OrderDesc
-				}
-				// Equal, continue to next sort key
-			}
-			return false
+			return compareTuplesByOrder(tuples[i], tuples[j], orderBy, sortIndices) < 0
 		})
 	}
 
@@ -170,12 +100,47 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 	// rendering happens downstream at the result boundary), and the hash
 	// layer rejects non-values loudly.
 	opts := rel.Options()
-	mat := NewMaterializedRelationWithOptions(symbols, tuples, opts)
+	properties := rel.Properties()
+	properties.Ordering = append([]query.OrderByClause(nil), orderBy...)
+	mat := NewMaterializedRelationWithProperties(symbols, tuples, opts, properties)
 	if err != nil {
 		// Carry a deferred source error so it isn't laundered by materialization.
 		mat.err = err
 	}
 	return mat
+}
+
+func orderBySymbolIndices(symbols []query.Symbol, orderBy []query.OrderByClause) ([]int, error) {
+	indices := make([]int, len(orderBy))
+	for i, clause := range orderBy {
+		indices[i] = -1
+		for j, sym := range symbols {
+			if sym == clause.Variable {
+				indices[i] = j
+				break
+			}
+		}
+		if indices[i] < 0 {
+			return indices, fmt.Errorf("order-by variable %s is not a column of the relation (columns: %v)",
+				clause.Variable, symbols)
+		}
+	}
+	return indices, nil
+}
+
+// compareTuplesByOrder returns -1 when left precedes right, 1 when left follows
+// right, and 0 when all requested sort keys compare equal.
+func compareTuplesByOrder(left, right Tuple, orderBy []query.OrderByClause, indices []int) int {
+	for i, clause := range orderBy {
+		cmp := datalog.CompareValues(left[indices[i]], right[indices[i]])
+		if clause.Direction == query.OrderDesc {
+			cmp = -cmp
+		}
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
 }
 
 // computeAggregate computes an aggregate over all values in a symbol

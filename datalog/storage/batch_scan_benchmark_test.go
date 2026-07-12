@@ -79,7 +79,7 @@ func BenchmarkBatchScanning(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			// Get all 2,500 bars
-			symbolRel, _ := matcher.Match(symbolPattern, nil)
+			symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
 
 			// Force regular iterator reuse by modifying the matcher temporarily
 			// This simulates the old behavior
@@ -87,7 +87,7 @@ func BenchmarkBatchScanning(b *testing.B) {
 			_ = oldThreshold      // Use it to avoid compiler warning
 
 			timeRel, _ := matcher.MatchWithConstraints(
-				timePattern,
+				query.PatternQuery(timePattern),
 				executor.Relations{symbolRel},
 				[]executor.StorageConstraint{constraint},
 			)
@@ -112,11 +112,11 @@ func BenchmarkBatchScanning(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			// Get all 2,500 bars
-			symbolRel, _ := matcher.Match(symbolPattern, nil)
+			symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
 
 			// Should automatically use batch scanning (threshold is 100)
 			timeRel, _ := matcher.MatchWithConstraints(
-				timePattern,
+				query.PatternQuery(timePattern),
 				executor.Relations{symbolRel},
 				[]executor.StorageConstraint{constraint},
 			)
@@ -140,8 +140,8 @@ func BenchmarkBatchScanning(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			symbolRel, _ := matcher.Match(symbolPattern, nil)
-			timeRel, _ := matcher.Match(timePattern, executor.Relations{symbolRel})
+			symbolRel, _ := matcher.Match(query.PatternQuery(symbolPattern), nil)
+			timeRel, _ := matcher.Match(query.PatternQuery(timePattern), executor.Relations{symbolRel})
 
 			count := 0
 			it := timeRel.Iterator()
@@ -199,8 +199,8 @@ func BenchmarkBatchScanScaling(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				rel1, _ := matcher.Match(pattern1, nil)
-				rel2, _ := matcher.Match(pattern2, executor.Relations{rel1})
+				rel1, _ := matcher.Match(query.PatternQuery(pattern1), nil)
+				rel2, _ := matcher.Match(query.PatternQuery(pattern2), executor.Relations{rel1})
 
 				// Consume results
 				it := rel2.Iterator()

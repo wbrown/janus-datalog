@@ -30,7 +30,11 @@ func NewSourceRouter(sources map[query.Symbol]PatternMatcher) *SourceRouter {
 
 // Match implements PatternMatcher. Routes to the appropriate PatternMatcher
 // based on pattern.Source. Empty source routes to "$" (the default).
-func (sr *SourceRouter) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (sr *SourceRouter) Match(q *query.Query, bindings Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	sourceSym := pattern.Source
 	if sourceSym == nil {
 		sourceSym = datalog.SymDollar
@@ -41,13 +45,17 @@ func (sr *SourceRouter) Match(pattern *query.DataPattern, bindings Relations) (R
 		return nil, fmt.Errorf("unknown source: %s", sourceSym)
 	}
 
-	return source.Match(pattern, bindings)
+	return source.Match(q, bindings)
 }
 
 // MatchWithConstraints implements PredicateAwareMatcher. Routes to the appropriate
 // source based on pattern.Source, then delegates to that source's MatchWithConstraints
 // if it supports predicate pushdown. Falls back to Match if it doesn't.
-func (sr *SourceRouter) MatchWithConstraints(pattern *query.DataPattern, bindings Relations, constraints []StorageConstraint) (Relation, error) {
+func (sr *SourceRouter) MatchWithConstraints(q *query.Query, bindings Relations, constraints []StorageConstraint) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	sourceSym := pattern.Source
 	if sourceSym == nil {
 		sourceSym = datalog.SymDollar
@@ -59,24 +67,27 @@ func (sr *SourceRouter) MatchWithConstraints(pattern *query.DataPattern, binding
 	}
 
 	if pam, ok := source.(PredicateAwareMatcher); ok {
-		return pam.MatchWithConstraints(pattern, bindings, constraints)
+		return pam.MatchWithConstraints(q, bindings, constraints)
 	}
-	return source.Match(pattern, bindings)
+	return source.Match(q, bindings)
 }
 
 // LookupAttribute implements EntityLookupMatcher. Delegates to the default
 // source ($) for entity attribute lookups used by database functions
 // (get-else, missing?, get-some).
-func (sr *SourceRouter) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (sr *SourceRouter) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	source, ok := sr.sources[datalog.SymDollar]
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 
 	if elm, ok := source.(EntityLookupMatcher); ok {
 		return elm.LookupAttribute(entity, attr)
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // CanFuseAttributeFetch implements AttributeFetchFusable by delegating to the

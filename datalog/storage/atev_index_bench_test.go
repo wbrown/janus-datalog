@@ -83,7 +83,7 @@ func BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan(b *testing.B) {
 				b.Fatal(err)
 			}
 			defer os.RemoveAll(dir)
-			store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+			store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -109,7 +109,7 @@ func BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan(b *testing.B) {
 				b.Fatal(err)
 			}
 			defer os.RemoveAll(dir)
-			store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+			store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -146,7 +146,7 @@ func BenchmarkAssert_WriteCost(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+				store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -110,11 +110,11 @@
 
        PullInto Path (pull.go lines 184-201):
 
-       func (pe *PullExecutor) lookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+       func (pe *PullExecutor) lookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error) {
            // Use EntityLookupMatcher interface if available
            if lookupMatcher, ok := pe.matcher.(EntityLookupMatcher); ok {
-               val, found = lookupMatcher.LookupAttribute(entity, attr)  // DIRECT INTERFACE
-               return val, found
+               val, found, err = lookupMatcher.LookupAttribute(entity, attr)
+               return val, found, err
            }
 
            // Fallback: uses pattern matching
@@ -125,7 +125,7 @@
                    query.Variable{Name: datalog.NewSymbol("?v")},
                },
            }
-           rel, err := pe.matcher.Match(pattern, nil)  // Calls Match() on matcher
+           rel, err := pe.matcher.Match(query.PatternQuery(pattern), nil)
        }
 
        Key Difference: PullInto can use the LookupAttribute() interface (matcher.go lines 789-936) for direct cache access.

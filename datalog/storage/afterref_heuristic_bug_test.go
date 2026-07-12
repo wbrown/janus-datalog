@@ -381,7 +381,7 @@ func TestAfterRefHeuristicBug_FullDBRoundTrip(t *testing.T) {
 		anyMissing := false
 
 		for j, attr := range refAttrs {
-			val, found := matcher.LookupAttribute(rec.entity, attr)
+			val, found := requireAttributeLookup(t, matcher, rec.entity, attr)
 			if !found || val == nil {
 				fieldLosses++
 				anyMissing = true
@@ -391,7 +391,7 @@ func TestAfterRefHeuristicBug_FullDBRoundTrip(t *testing.T) {
 		}
 
 		// Keyword field should never be lost
-		kwVal, kwFound := matcher.LookupAttribute(rec.entity, kwAttr)
+		kwVal, kwFound := requireAttributeLookup(t, matcher, rec.entity, kwAttr)
 		require.True(t, kwFound, "keyword field should always be found (entity %d)", i)
 		require.NotNil(t, kwVal, "keyword value should not be nil (entity %d)", i)
 

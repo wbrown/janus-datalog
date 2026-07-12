@@ -9,3 +9,18 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test -count=1 ./...
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Executor concurrency contracts
+        run: >-
+          go test -race -count=1 ./datalog/executor
+          -run '^(TestScanRegistry_ConcurrentAccess|TestScanRegistryGetOrCreateConcurrent|TestScanSharingMatcherConcurrentSameFingerprintUsesOneScan|TestLazySeq_ThreadSafe|TestConcurrentStructuredJoinAnnotations|TestRelationInputParallel_HandlesWorkspaceReuseIterator|TestRelationInputParallel_ConcurrentInvocationCorrectness|TestUnionRelation_ConcurrentIteratorWhileBuilding|TestConcurrentStreamingMaterialization)$'
+      - name: Storage concurrency contracts
+        run: >-
+          go test -race -count=1 ./datalog/storage
+          -run '^(TestTupleBuilderCacheConcurrency|TestIteratorWorkspaceConcurrency|TestCacheConcurrency|TestCommit_ConcurrentReadersSeeCommittedValue|TestTruncateToConcurrentWritersNoCollision)$'

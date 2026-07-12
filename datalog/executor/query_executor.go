@@ -64,25 +64,36 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 	// Execute each clause in the :where section
 	// Patterns/Subqueries produce NEW relations (append + collapse)
 	// Expressions/Predicates TRANSFORM relations (replace groups + collapse)
-	for i, clause := range q.Where {
+	for i := 0; i < len(q.Where); i++ {
+		clause := q.Where[i]
 		switch c := clause.(type) {
 		case *query.DataPattern:
-			// Same-entity attribute fetch: a [?e :const-attr ?fresh] on an
-			// already-bound ?e is a per-tuple column attach, not a new relation
-			// to hash-join. Recognized from the clause structure + binding state.
-			fused := false
+			// Same-entity attribute fetches on an already-bound ?e are
+			// per-tuple column attaches, not new relations to hash-join.
+			// Consume a contiguous run in one traversal when every pattern
+			// satisfies the existing cardinality and temporal gates.
+			fusedCount := 0
 			if e.options.EnableAttributeFetchFusion {
-				newGroups, ok, err := e.tryFuseAttributeFetch(ctx, c, groups)
+				newGroups, count, err := e.tryFuseAttributeFetchBundle(ctx, q.Where[i:], groups)
 				if err != nil {
-					return nil, fmt.Errorf("clause %d (attribute fetch) failed: %w", i, err)
+					return nil, fmt.Errorf("clause %d (attribute fetch bundle) failed: %w", i, err)
 				}
-				if ok {
+				if count > 0 {
 					groups = Relations(newGroups)
-					fused = true
+					fusedCount = count
 				}
 			}
-			if !fused {
-				newRel, err := e.executePattern(ctx, c, groups)
+			if fusedCount == 0 {
+				patternQuery := &query.Query{
+					Find:  q.Find,
+					In:    q.In,
+					Where: []query.Clause{c},
+				}
+				if len(q.Where) == 1 {
+					patternQuery.OrderBy = q.OrderBy
+					patternQuery.Limit = q.Limit
+				}
+				newRel, err := e.executePattern(ctx, patternQuery, c, groups)
 				if err != nil {
 					return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
 				}
@@ -123,6 +134,9 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 						prefetcher.PrefetchEntities(entities)
 					}
 				}
+			}
+			if fusedCount > 1 {
+				i += fusedCount - 1
 			}
 
 		case *query.Expression:
@@ -255,6 +269,9 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 
 		// Apply aggregations using existing function
 		result := ExecuteAggregationsWithContext(ctx, groups[0], q.Find)
+		if materialized, ok := result.(*MaterializedRelation); ok && materialized.err != nil {
+			return nil, materialized.err
+		}
 		return []Relation{result}, nil
 
 	} else {
@@ -370,7 +387,12 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 
 // executePattern executes a data pattern using the PatternMatcher
 // Patterns produce new relations from storage that get joined with existing groups
-func (e *DefaultQueryExecutor) executePattern(ctx Context, pattern *query.DataPattern, groups []Relation) (Relation, error) {
+func (e *DefaultQueryExecutor) executePattern(
+	ctx Context,
+	q *query.Query,
+	pattern *query.DataPattern,
+	groups []Relation,
+) (Relation, error) {
 	// Materialize groups that share symbols with the pattern
 	// These groups will be: (1) used for binding-based filtering, (2) joined with the result
 	// Materializing allows them to be iterated multiple times without consuming the iterator
@@ -379,137 +401,200 @@ func (e *DefaultQueryExecutor) executePattern(ctx Context, pattern *query.DataPa
 	// Use PatternMatcher with current groups as bindings
 	// NOTE: bindings are used for pattern selection heuristics (FindBestForPattern)
 	// and potentially for batch scanning - they will also be joined with the result later
-	rel, err := e.matcher.Match(pattern, bindings)
+	rel, err := e.matcher.Match(q, bindings)
 	if err != nil {
 		return nil, err
 	}
 	return rel, nil
 }
 
-// tryFuseAttributeFetch recognizes a same-entity attribute fetch directly from
-// the Datalog clause and executes it as a per-tuple column attach instead of a
-// pattern match + hash join. It fires when:
-//   - the pattern is [?e :const-attr ?v] on the default source, 3 elements;
-//   - ?e is already bound in exactly one current group;
-//   - ?v is a fresh variable (bound here, not yet present in any group);
-//   - :const-attr is schema CardinalityOne (one value per entity);
-//   - the matcher supports per-entity LookupAttribute.
+type attributeFetchSpec struct {
+	attr   datalog.Keyword
+	output query.Symbol
+}
+
+// tryFuseAttributeFetchBundle recognizes a contiguous run of same-entity
+// cardinality-one patterns and executes all of them as one per-tuple column
+// attach. It preserves the existing single-pattern gates and event stream while
+// avoiding one relation traversal and materialization per additional attribute.
 //
-// For each entity it looks up the attribute (CRDT-resolved, cache-backed via
-// LookupAttribute) and attaches the value as a new column, dropping the tuple
-// when the attribute is absent or tombstoned — the same inner-join semantics a
-// matched pattern has. This is the get-else execution model (LookupAttribute
-// column attach) applied to a required attribute pattern, so it avoids the
-// hashtable build/probe and combineTuples a join would pay.
-//
-// Returns (newGroups, true, nil) when fused; (nil, false, nil) when the clause
-// doesn't qualify — the caller then runs the normal match + collapse path.
-func (e *DefaultQueryExecutor) tryFuseAttributeFetch(ctx Context, pattern *query.DataPattern, groups []Relation) ([]Relation, bool, error) {
-	if pattern.Source != nil || pattern.GetT() != nil {
-		return nil, false, nil
+// Returns the replacement groups and number of consumed clauses. A zero count
+// means the first clause does not qualify and must use normal pattern matching.
+func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
+	ctx Context,
+	clauses []query.Clause,
+	groups []Relation,
+) ([]Relation, int, error) {
+	if len(clauses) == 0 {
+		return nil, 0, nil
 	}
-	eVar, ok := pattern.GetE().(query.Variable)
-	if !ok {
-		return nil, false, nil
+	first, ok := clauses[0].(*query.DataPattern)
+	if !ok || len(first.Elements) != 3 || first.Source != nil || first.GetT() != nil {
+		return nil, 0, nil
 	}
-	aConst, ok := pattern.GetA().(query.Constant)
+	entityVar, ok := first.GetE().(query.Variable)
 	if !ok {
-		return nil, false, nil
-	}
-	attr, ok := aConst.Value.(datalog.Keyword)
-	if !ok {
-		return nil, false, nil
-	}
-	vVar, ok := pattern.GetV().(query.Variable)
-	if !ok {
-		return nil, false, nil
+		return nil, 0, nil
 	}
 
 	lookupMatcher, ok := e.matcher.(EntityLookupMatcher)
 	if !ok {
-		return nil, false, nil
+		return nil, 0, nil
 	}
 	fusable, ok := e.matcher.(AttributeFetchFusable)
-	if !ok || !fusable.CanFuseAttributeFetch(attr) {
-		return nil, false, nil
+	if !ok {
+		return nil, 0, nil
 	}
 
-	// ?e must be bound in exactly one group; ?v must not be bound anywhere.
-	eGroupIdx := -1
-	for gi, g := range groups {
-		for _, s := range g.Symbols() {
-			if s == vVar.Name {
-				return nil, false, nil // ?v already bound: a join condition, not a fetch
-			}
-			if s == eVar.Name {
-				if eGroupIdx >= 0 {
-					return nil, false, nil // ?e spans multiple groups: leave to the join
+	boundSymbols := make(map[query.Symbol]bool)
+	entityGroup := -1
+	for groupIndex, group := range groups {
+		for _, symbol := range group.Symbols() {
+			boundSymbols[symbol] = true
+			if symbol == entityVar.Name {
+				if entityGroup >= 0 {
+					return nil, 0, nil
 				}
-				eGroupIdx = gi
+				entityGroup = groupIndex
 			}
 		}
 	}
-	if eGroupIdx < 0 {
-		return nil, false, nil // ?e not bound yet: this is the anchor, match normally
+	if entityGroup < 0 {
+		return nil, 0, nil
 	}
 
-	g := groups[eGroupIdx]
-	relSyms := g.Symbols()
-	eIdx := -1
-	for i, s := range relSyms {
-		if s == eVar.Name {
-			eIdx = i
+	var fetches []attributeFetchSpec
+	for _, clause := range clauses {
+		pattern, ok := clause.(*query.DataPattern)
+		if !ok || len(pattern.Elements) != 3 || pattern.Source != nil || pattern.GetT() != nil {
+			break
+		}
+		candidateEntity, ok := pattern.GetE().(query.Variable)
+		if !ok || candidateEntity.Name != entityVar.Name {
+			break
+		}
+		attrConstant, ok := pattern.GetA().(query.Constant)
+		if !ok {
+			break
+		}
+		attr, ok := attrConstant.Value.(datalog.Keyword)
+		if !ok || !fusable.CanFuseAttributeFetch(attr) {
+			break
+		}
+		valueVar, ok := pattern.GetV().(query.Variable)
+		if !ok || boundSymbols[valueVar.Name] {
+			break
+		}
+
+		fetches = append(fetches, attributeFetchSpec{attr: attr, output: valueVar.Name})
+		boundSymbols[valueVar.Name] = true
+	}
+	if len(fetches) == 0 {
+		return nil, 0, nil
+	}
+
+	input := groups[entityGroup]
+	inputSymbols := input.Symbols()
+	entityIndex := -1
+	for i, symbol := range inputSymbols {
+		if symbol == entityVar.Name {
+			entityIndex = i
 			break
 		}
 	}
 
-	outputSyms := make([]query.Symbol, len(relSyms)+1)
-	copy(outputSyms, relSyms)
-	outputSyms[len(relSyms)] = vVar.Name
+	outputSymbols := make([]query.Symbol, 0, len(inputSymbols)+len(fetches))
+	outputSymbols = append(outputSymbols, inputSymbols...)
+	for _, fetch := range fetches {
+		outputSymbols = append(outputSymbols, fetch.output)
+	}
 
-	var out []Tuple
-	in := 0
-	it := g.Iterator()
+	var output []Tuple
+	if size := input.Size(); size > 0 {
+		output = make([]Tuple, 0, size)
+	}
+	inputCounts := make([]int, len(fetches))
+	outputCounts := make([]int, len(fetches))
+	var lookupErr error
+
+	it := input.Iterator()
 	for it.Next() {
-		t := it.Tuple()
-		in++
-		if eIdx >= len(t) {
+		tuple := it.Tuple()
+		if entityIndex >= len(tuple) {
+			inputCounts[0]++
 			continue
 		}
-		entity, ok := t[eIdx].(datalog.Identity)
+		entity, ok := tuple[entityIndex].(datalog.Identity)
 		if !ok {
+			inputCounts[0]++
 			continue
 		}
-		val, found := lookupMatcher.LookupAttribute(entity, attr)
-		if !found {
-			continue // required attribute absent/tombstoned — drop, as a match would
+
+		expanded := make(Tuple, len(outputSymbols))
+		copy(expanded, tuple)
+		complete := true
+		for i, fetch := range fetches {
+			inputCounts[i]++
+			value, found, err := lookupMatcher.LookupAttribute(entity, fetch.attr)
+			lookupErr = err
+			if lookupErr != nil {
+				complete = false
+				break
+			}
+			if !found {
+				complete = false
+				break
+			}
+			outputCounts[i]++
+			expanded[len(inputSymbols)+i] = value
 		}
-		nt := make(Tuple, len(outputSyms))
-		copy(nt, t)
-		nt[len(relSyms)] = val
-		out = append(out, nt)
+		if complete {
+			output = append(output, expanded)
+		}
+		if lookupErr != nil {
+			break
+		}
 	}
-	if err := it.Error(); err != nil {
-		it.Close()
-		return nil, false, err
+	iterErr := lookupErr
+	if iterErr == nil {
+		iterErr = it.Error()
 	}
-	it.Close()
+	if closeErr := it.Close(); iterErr == nil {
+		iterErr = closeErr
+	}
+	if iterErr != nil {
+		return nil, 0, iterErr
+	}
+	if iterErr != nil {
+		return nil, 0, iterErr
+	}
 
 	if collector := ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
-			Name: "pattern/fused-fetch",
-			Data: map[string]interface{}{
-				"attr": attr.String(),
-				"in":   in,
-				"out":  len(out),
-			},
-		})
+		for i, fetch := range fetches {
+			collector.Add(annotations.Event{
+				Name: "pattern/fused-fetch",
+				Data: map[string]interface{}{
+					"attr": fetch.attr.String(),
+					"in":   inputCounts[i],
+					"out":  outputCounts[i],
+				},
+			})
+		}
 	}
 
 	newGroups := make([]Relation, len(groups))
 	copy(newGroups, groups)
-	newGroups[eGroupIdx] = NewMaterializedRelationWithOptions(outputSyms, out, e.options)
-	return newGroups, true, nil
+	properties := input.Properties()
+	for _, fetch := range fetches {
+		properties = properties.addSymbol(fetch.output)
+	}
+	newGroups[entityGroup] = NewMaterializedRelationWithProperties(
+		outputSymbols,
+		output,
+		e.options,
+		properties,
+	)
+	return newGroups, len(fetches), nil
 }
 
 // executeExpression evaluates an expression clause
@@ -797,7 +882,10 @@ type entityLookupAdapter struct {
 	matcher EntityLookupMatcher
 }
 
-func (a entityLookupAdapter) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (a entityLookupAdapter) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	return a.matcher.LookupAttribute(entity, attr)
 }
 
@@ -875,17 +963,12 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 // executeSubquery executes a nested subquery
 // Subqueries produce new relations from nested query execution
 func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.SubqueryPattern, groups []Relation) (Relation, error) {
-	// Check if componentized path is enabled
-	if e.options.UseComponentizedSubquery {
-		return e.executeSubqueryComponentized(ctx, subq, groups)
-	}
-
-	// Log that we're using the legacy path
+	// Record the per-input-combination execution path.
 	if collector := ctx.Collector(); collector != nil {
 		collector.Add(annotations.Event{
 			Name: "subquery/executor-path",
 			Data: map[string]interface{}{
-				"path":         "Legacy QueryExecutor",
+				"path":         "Per-combination QueryExecutor",
 				"query":        subq.Query.String(),
 				"input_count":  len(subq.Inputs),
 				"groups_count": len(groups),
@@ -1072,214 +1155,6 @@ func extractBindingSymbols(binding query.BindingForm) []query.Symbol {
 	default:
 		return nil
 	}
-}
-
-// executeSubqueryComponentized executes subquery using component-based optimization
-// This uses: SubqueryStrategySelector, SubqueryBatcher, WorkerPool, StreamingUnionBuilder
-
-func (e *DefaultQueryExecutor) executeSubqueryComponentized(ctx Context, subq *query.SubqueryPattern, groups []Relation) (Relation, error) {
-	// Initialize components (could be cached on executor for reuse)
-	selector := NewSubqueryStrategySelector(100) // Default threshold
-	batcher := NewSubqueryBatcher()
-	workerPool := NewWorkerPool(e.options.MaxSubqueryWorkers)
-	unionBuilder := NewStreamingUnionBuilder(e.options)
-
-	// Combine all groups into a single relation
-	var combinedRel Relation
-	if len(groups) == 0 {
-		return nil, fmt.Errorf("no input groups for subquery")
-	} else if len(groups) == 1 {
-		combinedRel = groups[0]
-	} else {
-		combinedRel = Relations(groups).Product()
-	}
-
-	// Extract input symbols using batcher
-	inputSymbols := batcher.ExtractInputSymbols(subq.Query.In)
-
-	// Get unique input combinations
-	inputCombinations, err := getUniqueInputCombinations(combinedRel, inputSymbols)
-	if err != nil {
-		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
-	}
-
-	// Select execution strategy
-	strategy := selector.SelectStrategy(subq.Query, len(inputCombinations), e.options)
-
-	// Log strategy selection
-	if collector := ctx.Collector(); collector != nil {
-		collector.Add(annotations.Event{
-			Name: "subquery/componentized-strategy",
-			Data: map[string]interface{}{
-				"strategy":           strategy.String(),
-				"input_combinations": len(inputCombinations),
-				"query":              subq.Query.String(),
-			},
-		})
-	}
-
-	// Execute based on strategy
-	switch strategy {
-	case StrategyBatched:
-		return e.executeSubqueryBatched(ctx, subq, inputCombinations, inputSymbols, batcher)
-
-	case StrategyParallel:
-		return e.executeSubqueryParallel(ctx, subq, inputCombinations, inputSymbols, workerPool, unionBuilder)
-
-	case StrategySequential:
-		return e.executeSubquerySequential(ctx, subq, inputCombinations, inputSymbols, unionBuilder)
-
-	default:
-		return nil, fmt.Errorf("unknown strategy: %v", strategy)
-	}
-}
-
-// executeSubqueryBatched executes subquery once with all inputs as RelationInput
-func (e *DefaultQueryExecutor) executeSubqueryBatched(
-	ctx Context,
-	subq *query.SubqueryPattern,
-	combinations []map[query.Symbol]interface{},
-	inputSymbols []query.Symbol,
-	batcher *SubqueryBatcher,
-) (Relation, error) {
-	if len(combinations) == 0 {
-		return NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{}), nil
-	}
-
-	// Build batched input relation
-	batchedInput := batcher.BuildBatchedInput(combinations, inputSymbols)
-
-	// Create input relations for the subquery
-	inputRelations := []Relation{batchedInput}
-
-	// Execute once with batched input
-	nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
-	if err != nil {
-		return nil, fmt.Errorf("batched subquery execution failed: %w", err)
-	}
-
-	if len(nestedGroups) == 0 {
-		return NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{}), nil
-	}
-	if len(nestedGroups) > 1 {
-		return nil, fmt.Errorf("batched subquery returned %d groups, expected 1", len(nestedGroups))
-	}
-
-	// Apply binding form (no per-tuple input values for batched)
-	return applyBindingForm(nestedGroups[0], subq.Binding, nil, inputSymbols)
-}
-
-// executeSubqueryParallel executes subquery iterations in parallel using WorkerPool
-func (e *DefaultQueryExecutor) executeSubqueryParallel(
-	ctx Context,
-	subq *query.SubqueryPattern,
-	combinations []map[query.Symbol]interface{},
-	inputSymbols []query.Symbol,
-	workerPool *WorkerPool,
-	unionBuilder *StreamingUnionBuilder,
-) (Relation, error) {
-	if len(combinations) == 0 {
-		return NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{}), nil
-	}
-
-	// Convert combinations to []interface{} for worker pool
-	inputs := make([]interface{}, len(combinations))
-	for i, combo := range combinations {
-		inputs[i] = combo
-	}
-
-	// Execute in parallel using worker pool
-	results, err := workerPool.ExecuteParallel(
-		ctx,
-		inputs,
-		func(ctx Context, input interface{}) (interface{}, error) {
-			inputValues := input.(map[query.Symbol]interface{})
-
-			// Create input relations and execute
-			inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
-			if err != nil {
-				return nil, fmt.Errorf("subquery input binding failed: %w", err)
-			}
-			nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
-			if err != nil {
-				return nil, err
-			}
-
-			if len(nestedGroups) == 0 {
-				// Empty result - return empty relation
-				return NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{}), nil
-			}
-			if len(nestedGroups) > 1 {
-				return nil, fmt.Errorf("subquery returned %d groups, expected 1", len(nestedGroups))
-			}
-
-			// Apply binding form
-			return applyBindingForm(nestedGroups[0], subq.Binding, inputValues, inputSymbols)
-		},
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("parallel subquery execution failed: %w", err)
-	}
-
-	// Convert results back to []Relation
-	relations := make([]Relation, len(results))
-	for i, r := range results {
-		relations[i] = r.(Relation)
-	}
-
-	// Union results using StreamingUnionBuilder
-	return unionBuilder.Union(relations), nil
-}
-
-// executeSubquerySequential executes subquery iterations sequentially
-func (e *DefaultQueryExecutor) executeSubquerySequential(
-	ctx Context,
-	subq *query.SubqueryPattern,
-	combinations []map[query.Symbol]interface{},
-	inputSymbols []query.Symbol,
-	unionBuilder *StreamingUnionBuilder,
-) (Relation, error) {
-	if len(combinations) == 0 {
-		return NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{}), nil
-	}
-
-	var allResults []Relation
-
-	for _, inputValues := range combinations {
-		// Create input relations and execute
-		inputRelations, err := createInputRelationsForSubqueryWithOptions(subq, inputValues, e.options)
-		if err != nil {
-			return nil, fmt.Errorf("subquery input binding failed: %w", err)
-		}
-		nestedGroups, err := e.Execute(ctx, subq.Query, inputRelations)
-		if err != nil {
-			return nil, fmt.Errorf("sequential subquery execution failed: %w", err)
-		}
-
-		if len(nestedGroups) == 0 {
-			// Empty result - skip this combination
-			continue
-		}
-		if len(nestedGroups) > 1 {
-			return nil, fmt.Errorf("subquery returned %d groups, expected 1", len(nestedGroups))
-		}
-
-		// Apply binding form
-		boundResult, err := applyBindingForm(nestedGroups[0], subq.Binding, inputValues, inputSymbols)
-		if err != nil {
-			return nil, fmt.Errorf("binding form application failed: %w", err)
-		}
-
-		allResults = append(allResults, boundResult)
-	}
-
-	if len(allResults) == 0 {
-		return NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{}), nil
-	}
-
-	// Union results using StreamingUnionBuilder
-	return unionBuilder.Union(allResults), nil
 }
 
 // hasPulls checks if any find element is a pull expression
@@ -1971,7 +1846,10 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	}
 
 	// Get unique combinations of join variables from input
-	uniqueCombos := getUniqueCombinations(input, actualJoinVars)
+	uniqueCombos, err := getUniqueCombinations(input, actualJoinVars)
+	if err != nil {
+		return nil, fmt.Errorf("NOT input combinations failed: %w", err)
+	}
 
 	// Track which key combinations matched the inner clauses
 	matchedKeys := NewTupleKeyMap()
@@ -2049,7 +1927,10 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 	}
 
 	// Get unique combinations of join variables
-	uniqueCombos := getUniqueCombinations(input, clause.JoinVars)
+	uniqueCombos, err := getUniqueCombinations(input, clause.JoinVars)
+	if err != nil {
+		return nil, fmt.Errorf("NOT-JOIN input combinations failed: %w", err)
+	}
 
 	// Track matched keys
 	matchedKeys := NewTupleKeyMap()
@@ -2128,7 +2009,8 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 	for _, clause := range clauses {
 		switch c := clause.(type) {
 		case *query.DataPattern:
-			newRel, err := e.executePattern(ctx, c, groups)
+			patternQuery := &query.Query{Where: []query.Clause{c}}
+			newRel, err := e.executePattern(ctx, patternQuery, c, groups)
 			if err != nil {
 				return nil, err
 			}

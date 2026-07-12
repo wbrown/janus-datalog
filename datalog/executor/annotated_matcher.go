@@ -46,7 +46,11 @@ func WrapMatcher(m PatternMatcher, handler annotations.Handler) PatternMatcher {
 }
 
 // Match implements PatternMatcher with transparent annotation.
-func (m *AnnotatedMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *AnnotatedMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	pattern, queryErr := q.SingleDataPattern()
+	if queryErr != nil {
+		return nil, queryErr
+	}
 	start := time.Now()
 
 	// Collect binding information if present
@@ -67,7 +71,7 @@ func (m *AnnotatedMatcher) Match(pattern *query.DataPattern, bindings Relations)
 	}
 
 	// Execute the underlying match
-	result, err := m.underlying.Match(pattern, bindings)
+	result, err := m.underlying.Match(q, bindings)
 
 	// Record completion with grouped metrics
 	data := m.collector.GetDataMap()
@@ -104,10 +108,14 @@ func (m *AnnotatedMatcher) Match(pattern *query.DataPattern, bindings Relations)
 // MatchWithConstraints implements PredicateAwareMatcher if the underlying matcher supports it.
 // This allows the decorator to be transparent even for extended interfaces.
 func (m *AnnotatedMatcher) MatchWithConstraints(
-	pattern *query.DataPattern,
+	q *query.Query,
 	bindings Relations,
 	constraints []StorageConstraint,
 ) (Relation, error) {
+	pattern, queryErr := q.SingleDataPattern()
+	if queryErr != nil {
+		return nil, queryErr
+	}
 	// Check if underlying matcher supports constraints
 	if pm, ok := m.underlying.(PredicateAwareMatcher); ok {
 		start := time.Now()
@@ -129,7 +137,7 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 		}
 
 		// Execute with constraints
-		result, err := pm.MatchWithConstraints(pattern, bindings, constraints)
+		result, err := pm.MatchWithConstraints(q, bindings, constraints)
 
 		// Record completion
 		data := m.collector.GetDataMap()
@@ -164,7 +172,7 @@ func (m *AnnotatedMatcher) MatchWithConstraints(
 	}
 
 	// Fall back to regular Match if constraints not supported
-	return m.Match(pattern, bindings)
+	return m.Match(q, bindings)
 }
 
 // Collector returns the underlying collector for context integration.
@@ -192,11 +200,14 @@ func (m *AnnotatedMatcher) WithCollector(collector *annotations.Collector) Colle
 
 // LookupAttribute implements EntityLookupMatcher if the underlying matcher supports it.
 // This ensures get-else, missing?, and get-some work through the annotation wrapper.
-func (m *AnnotatedMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (m *AnnotatedMatcher) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	if elm, ok := m.underlying.(EntityLookupMatcher); ok {
 		return elm.LookupAttribute(entity, attr)
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // CanFuseAttributeFetch implements AttributeFetchFusable if the underlying
@@ -215,4 +226,3 @@ func (m *AnnotatedMatcher) PrefetchEntities(entities []datalog.Identity) {
 		ep.PrefetchEntities(entities)
 	}
 }
-

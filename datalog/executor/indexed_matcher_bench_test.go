@@ -112,7 +112,7 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 				b.ReportAllocs()
 
 				for i := 0; i < b.N; i++ {
-					result, err := matcher.Match(pattern.pattern, nil)
+					result, err := matcher.Match(query.PatternQuery(pattern.pattern), nil)
 					if err != nil {
 						b.Fatalf("Match failed: %v", err)
 					}
@@ -129,7 +129,7 @@ func BenchmarkPatternMatch_LinearVsIndexed(b *testing.B) {
 				b.ReportAllocs()
 
 				for i := 0; i < b.N; i++ {
-					result, err := matcher.Match(pattern.pattern, nil)
+					result, err := matcher.Match(query.PatternQuery(pattern.pattern), nil)
 					if err != nil {
 						b.Fatalf("Match failed: %v", err)
 					}
@@ -194,7 +194,7 @@ func BenchmarkOHLCStyle_LinearVsIndexed(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(pattern, nil)
+				result, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
@@ -210,7 +210,7 @@ func BenchmarkOHLCStyle_LinearVsIndexed(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(pattern, nil)
+				result, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
@@ -244,7 +244,7 @@ func BenchmarkSingleEntityLookup(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(pattern, nil)
+				result, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
@@ -260,7 +260,7 @@ func BenchmarkSingleEntityLookup(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(pattern, nil)
+				result, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
@@ -294,7 +294,7 @@ func BenchmarkAttributeScan(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(pattern, nil)
+				result, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
@@ -310,7 +310,7 @@ func BenchmarkAttributeScan(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(pattern, nil)
+				result, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
@@ -344,7 +344,7 @@ func BenchmarkWorstCase_FullScan(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(pattern, nil)
+				result, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
@@ -360,7 +360,7 @@ func BenchmarkWorstCase_FullScan(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(pattern, nil)
+				result, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}

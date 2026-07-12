@@ -53,7 +53,11 @@ type failingMatcher struct {
 	shouldFail func(callCount int, p *query.DataPattern) error
 }
 
-func (m *failingMatcher) Match(p *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *failingMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	p, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	m.callCount++
 	n := m.callCount
@@ -63,7 +67,7 @@ func (m *failingMatcher) Match(p *query.DataPattern, bindings Relations) (Relati
 			return nil, err
 		}
 	}
-	return m.delegate.Match(p, bindings)
+	return m.delegate.Match(q, bindings)
 }
 
 // deferredFailMatcher wraps a delegate and on the failOnCall-th Match() it
@@ -78,8 +82,8 @@ type deferredFailMatcher struct {
 	failOnCall int // 1-indexed; 0 = never
 }
 
-func (m *deferredFailMatcher) Match(p *query.DataPattern, bindings Relations) (Relation, error) {
-	rel, err := m.delegate.Match(p, bindings)
+func (m *deferredFailMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	rel, err := m.delegate.Match(q, bindings)
 	if err != nil || rel == nil {
 		return rel, err
 	}

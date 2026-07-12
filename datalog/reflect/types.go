@@ -15,6 +15,7 @@ var (
 	timeType      = reflect.TypeOf(time.Time{})
 	identityType  = reflect.TypeOf((datalog.Identity)(nil))
 	keywordType   = reflect.TypeOf((datalog.Keyword)(nil)) // Keyword is *keyword, no .Elem()
+	symbolType    = reflect.TypeOf((datalog.Symbol)(nil))
 	elementIDType = reflect.TypeOf(datalog.ElementID{})
 )
 
@@ -52,6 +53,9 @@ func GoTypeToSchemaType(t reflect.Type) (schema.ValueType, error) {
 	}
 	if t == keywordType {
 		return schema.TypeKeyword, nil
+	}
+	if t == symbolType {
+		return schema.TypeSymbol, nil
 	}
 
 	// Handle pointers by dereferencing

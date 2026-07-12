@@ -248,7 +248,7 @@ func TestVBoundCardinalityOneBytes_DirectMatcher(t *testing.T) {
 		[]query.Symbol{datalog.NewSymbol("?v")},
 		[]executor.Tuple{{v}},
 	)
-	result, err := db.Matcher().Match(pattern, executor.Relations{bindingRel})
+	result, err := db.Matcher().Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 
 	it := result.Iterator()

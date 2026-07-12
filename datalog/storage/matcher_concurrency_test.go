@@ -125,11 +125,11 @@ func TestIteratorWorkspaceIsolation(t *testing.T) {
 	}
 
 	// Create two iterators on the same pattern
-	rel1, err := matcher.Match(pattern, nil)
+	rel1, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rel2, err := matcher.Match(pattern, nil)
+	rel2, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestIteratorWorkspaceConcurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 
-			rel, err := matcher.Match(pattern, nil)
+			rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 			if err != nil {
 				errors <- fmt.Errorf("goroutine %d: Match failed: %v", id, err)
 				return

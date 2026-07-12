@@ -3,10 +3,7 @@ package executor
 import (
 	"time"
 
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
-	"github.com/wbrown/janus-datalog/datalog/planner"
-	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 // Context provides clean annotation points for query execution tracking.
@@ -16,30 +13,12 @@ type Context interface {
 	QueryPlanCreated(plan string)
 	QueryComplete(relationCount, tupleCount int, err error)
 
-	// Phase operations
-	ExecutePhase(name string, phase interface{}, fn func() (Relation, error)) (Relation, error)
-
-	// Pattern matching
-	MatchPatterns(patterns []query.Pattern, fn func() ([]Relation, error)) ([]Relation, error)
-	MatchPattern(pattern query.Pattern, fn func() ([]datalog.Datom, error)) ([]datalog.Datom, error)
-	MatchPatternWithBindings(pattern query.Pattern, inputBindings map[query.Symbol]int, fn func() ([]datalog.Datom, error)) ([]datalog.Datom, error)
-
 	// Relation operations
-	CombineRelations(oldRels, newRels []Relation, fn func() []Relation) []Relation
 	JoinRelations(left, right Relation, fn func() Relation) Relation
-	FilterRelation(rel Relation, predicate string, fn func() Relation) Relation
 	CollapseRelations(rels []Relation, fn func() []Relation) []Relation
-
-	// Expression evaluation
-	EvaluateExpression(expr string, tupleCount int, fn func() error) error
-	EvaluateExpressionRelation(rel Relation, expr string, fn func() Relation) Relation
 
 	// Get underlying collector
 	Collector() *annotations.Collector
-
-	// Metadata operations for passing optimization hints
-	SetMetadata(key string, value interface{})
-	GetMetadata(key string) (interface{}, bool)
 
 	// ScanRegistry returns the per-query scan registry for sharing unbound
 	// scan results across subqueries. Lazy-initialized on first call.
@@ -48,7 +27,6 @@ type Context interface {
 
 // BaseContext provides a no-op implementation with zero overhead.
 type BaseContext struct {
-	metadata     map[string]interface{}
 	scanRegistry *ScanRegistry
 }
 
@@ -64,7 +42,7 @@ func NewContext(handler annotations.Handler) Context {
 
 // forkContext returns an independent Context for a concurrent worker. A Context
 // carries per-query mutable state — AnnotatedContext.queryStart and the lazily
-// created BaseContext.metadata map / scanRegistry — none of which is safe for
+// created BaseContext scanRegistry — neither of which is safe for
 // concurrent use. Parallel workers must therefore each get their own context.
 // The annotation collector is shared (it is internally synchronized), so events
 // still aggregate into one place.
@@ -74,12 +52,6 @@ func forkContext(ctx Context) Context {
 		return &AnnotatedContext{collector: c.collector}
 	case *BaseContext:
 		return &BaseContext{}
-	case *subqueryContext:
-		return &subqueryContext{
-			parent:      forkContext(c.parent),
-			inputValues: c.inputValues, // read-only during execution
-			inputs:      c.inputs,
-		}
 	default:
 		return ctx
 	}
@@ -93,31 +65,7 @@ func (c *BaseContext) QueryPlanCreated(plan string) {}
 
 func (c *BaseContext) QueryComplete(relationCount, tupleCount int, err error) {}
 
-func (c *BaseContext) ExecutePhase(name string, phase interface{}, fn func() (Relation, error)) (Relation, error) {
-	return fn()
-}
-
-func (c *BaseContext) MatchPatterns(patterns []query.Pattern, fn func() ([]Relation, error)) ([]Relation, error) {
-	return fn()
-}
-
-func (c *BaseContext) MatchPattern(pattern query.Pattern, fn func() ([]datalog.Datom, error)) ([]datalog.Datom, error) {
-	return fn()
-}
-
-func (c *BaseContext) MatchPatternWithBindings(pattern query.Pattern, inputBindings map[query.Symbol]int, fn func() ([]datalog.Datom, error)) ([]datalog.Datom, error) {
-	return fn()
-}
-
-func (c *BaseContext) CombineRelations(oldRels, newRels []Relation, fn func() []Relation) []Relation {
-	return fn()
-}
-
 func (c *BaseContext) JoinRelations(left, right Relation, fn func() Relation) Relation {
-	return fn()
-}
-
-func (c *BaseContext) FilterRelation(rel Relation, predicate string, fn func() Relation) Relation {
 	return fn()
 }
 
@@ -125,31 +73,8 @@ func (c *BaseContext) CollapseRelations(rels []Relation, fn func() []Relation) [
 	return fn()
 }
 
-func (c *BaseContext) EvaluateExpression(expr string, tupleCount int, fn func() error) error {
-	return fn()
-}
-
-func (c *BaseContext) EvaluateExpressionRelation(rel Relation, expr string, fn func() Relation) Relation {
-	return fn()
-}
-
 func (c *BaseContext) Collector() *annotations.Collector {
 	return nil
-}
-
-func (c *BaseContext) SetMetadata(key string, value interface{}) {
-	if c.metadata == nil {
-		c.metadata = make(map[string]interface{})
-	}
-	c.metadata[key] = value
-}
-
-func (c *BaseContext) GetMetadata(key string) (interface{}, bool) {
-	if c.metadata == nil {
-		return nil, false
-	}
-	val, ok := c.metadata[key]
-	return val, ok
 }
 
 // ScanRegistry returns the per-query scan registry, initializing lazily.
@@ -200,202 +125,6 @@ func (c *AnnotatedContext) QueryComplete(relationCount, tupleCount int, err erro
 	}
 
 	c.collector.AddTiming(annotations.QueryComplete, c.queryStart, data)
-}
-
-func (c *AnnotatedContext) ExecutePhase(name string, phase interface{}, fn func() (Relation, error)) (Relation, error) {
-	start := time.Now()
-
-	// Log phase details with pattern information
-	data := map[string]interface{}{
-		"phase": name,
-	}
-
-	// Add phase-specific information if available
-	if phaseInfo, ok := phase.(planner.Phase); ok {
-		data["pattern.count"] = len(phaseInfo.Patterns)
-	}
-
-	c.collector.Add(annotations.Event{
-		Name:  annotations.PhaseBegin,
-		Start: start,
-		Data:  data,
-	})
-
-	result, err := fn()
-
-	// Complete event with results
-	completeData := map[string]interface{}{
-		"phase":       name,
-		"tuple.count": 0,
-		"success":     err == nil,
-	}
-
-	if result != nil {
-		completeData["tuple.count"] = result.Size()
-	}
-
-	if err != nil {
-		completeData["error"] = err.Error()
-	}
-
-	c.collector.AddTiming(annotations.PhaseComplete, start, completeData)
-	return result, err
-}
-
-func (c *AnnotatedContext) MatchPatterns(patterns []query.Pattern, fn func() ([]Relation, error)) ([]Relation, error) {
-	start := time.Now()
-
-	c.collector.Add(annotations.Event{
-		Name:  annotations.PatternsToRelationsBegin,
-		Start: start,
-		Data: map[string]interface{}{
-			"pattern.count": len(patterns),
-		},
-	})
-
-	matches, err := fn()
-
-	totalTuples := 0
-	for _, rel := range matches {
-		if rel != nil {
-			totalTuples += rel.Size()
-		}
-	}
-
-	c.collector.AddTiming(annotations.PatternsToRelationsRealized, start, map[string]interface{}{
-		"pattern.count": len(patterns),
-		"match.count":   len(matches),
-		"tuple.count":   totalTuples,
-		"success":       err == nil,
-	})
-
-	return matches, err
-}
-
-func (c *AnnotatedContext) MatchPattern(pattern query.Pattern, fn func() ([]datalog.Datom, error)) ([]datalog.Datom, error) {
-	start := time.Now()
-	datoms, err := fn()
-
-	// Extract binding information
-	data := map[string]interface{}{
-		"pattern":     pattern.String(),
-		"match.count": len(datoms),
-		"success":     err == nil,
-	}
-
-	// Add symbol binding information for data patterns
-	if dp, ok := pattern.(*query.DataPattern); ok {
-		var symbolOrder []string // Preserve order
-
-		// Check each element for variables
-		for _, elem := range dp.Elements {
-			if v, ok := elem.(query.Variable); ok {
-				symbolOrder = append(symbolOrder, v.Name.String())
-			}
-		}
-
-		if len(symbolOrder) > 0 {
-			data["symbol.order"] = symbolOrder
-		}
-	}
-
-	c.collector.AddTiming(annotations.MatchesToRelations, start, data)
-
-	return datoms, err
-}
-
-func (c *AnnotatedContext) MatchPatternWithBindings(pattern query.Pattern, inputBindings map[query.Symbol]int, fn func() ([]datalog.Datom, error)) ([]datalog.Datom, error) {
-	start := time.Now()
-	datoms, err := fn()
-
-	// Extract binding information
-	data := map[string]interface{}{
-		"pattern":     pattern.String(),
-		"match.count": len(datoms),
-		"success":     err == nil,
-	}
-
-	// Add input bindings
-	if len(inputBindings) > 0 {
-		data["input.binds"] = inputBindings
-	}
-
-	// Add symbol binding information for data patterns
-	if dp, ok := pattern.(*query.DataPattern); ok {
-		var symbolOrder []string // Preserve order
-
-		// Check each element for variables
-		for _, elem := range dp.Elements {
-			if v, ok := elem.(query.Variable); ok {
-				symbolOrder = append(symbolOrder, v.Name.String())
-			}
-		}
-
-		if len(symbolOrder) > 0 {
-			data["symbol.order"] = symbolOrder
-		}
-	}
-
-	c.collector.AddTiming(annotations.MatchesToRelations, start, data)
-
-	return datoms, err
-}
-
-func (c *AnnotatedContext) CombineRelations(oldRels, newRels []Relation, fn func() []Relation) []Relation {
-	// Begin event with counts
-	beginData := map[string]interface{}{
-		"relations/count-old": len(oldRels),
-		"relations/count-new": len(newRels),
-	}
-
-	// Add sizes if available
-	oldTuples := 0
-	for _, rel := range oldRels {
-		if rel != nil {
-			oldTuples += rel.Size()
-		}
-	}
-	newTuples := 0
-	for _, rel := range newRels {
-		if rel != nil {
-			newTuples += rel.Size()
-		}
-	}
-
-	beginData["tuples/count-old"] = oldTuples
-	beginData["tuples/count-new"] = newTuples
-
-	c.collector.Add(annotations.Event{
-		Name:  annotations.CombineRelsBegin,
-		Start: time.Now(),
-		Data:  beginData,
-	})
-
-	start := time.Now()
-	result := fn()
-
-	// Track collapse if reduction occurred
-	totalInput := len(oldRels) + len(newRels)
-	if totalInput > 0 && len(result) < totalInput {
-		resultTuples := 0
-		for _, rel := range result {
-			if rel != nil {
-				resultTuples += rel.Size()
-			}
-		}
-
-		collapseData := map[string]interface{}{
-			"relations/before": totalInput,
-			"relations/after":  len(result),
-			"tuples/before":    oldTuples + newTuples,
-			"tuples/after":     resultTuples,
-			"reduction.pct":    float64(totalInput-len(result)) / float64(totalInput) * 100,
-		}
-
-		c.collector.AddTiming(annotations.CombineRelsCollapsed, start, collapseData)
-	}
-
-	return result
 }
 
 func (c *AnnotatedContext) JoinRelations(left, right Relation, fn func() Relation) Relation {
@@ -469,31 +198,6 @@ func (c *AnnotatedContext) JoinRelations(left, right Relation, fn func() Relatio
 	return result
 }
 
-func (c *AnnotatedContext) FilterRelation(rel Relation, predicate string, fn func() Relation) Relation {
-	start := time.Now()
-	inputSize := 0
-	if rel != nil {
-		inputSize = rel.Size()
-	}
-
-	result := fn()
-
-	outputSize := 0
-	if result != nil {
-		outputSize = result.Size()
-	}
-
-	c.collector.AddTiming("filter/predicate", start, map[string]interface{}{
-		"predicate":   predicate,
-		"input.size":  inputSize,
-		"output.size": outputSize,
-		"filtered":    inputSize - outputSize,
-		"selectivity": float64(outputSize) / float64(inputSize),
-	})
-
-	return result
-}
-
 func (c *AnnotatedContext) CollapseRelations(rels []Relation, fn func() []Relation) []Relation {
 	start := time.Now()
 
@@ -524,43 +228,6 @@ func (c *AnnotatedContext) CollapseRelations(rels []Relation, fn func() []Relati
 			"reduction.pct":    (1.0 - float64(outputTuples)/float64(inputTuples)) * 100,
 		})
 	}
-
-	return result
-}
-
-func (c *AnnotatedContext) EvaluateExpression(expr string, tupleCount int, fn func() error) error {
-	start := time.Now()
-	err := fn()
-
-	c.collector.AddTiming("expression/evaluate", start, map[string]interface{}{
-		"expression":  expr,
-		"tuple.count": tupleCount,
-		"success":     err == nil,
-	})
-
-	return err
-}
-
-func (c *AnnotatedContext) EvaluateExpressionRelation(rel Relation, expr string, fn func() Relation) Relation {
-	start := time.Now()
-
-	inputSize := 0
-	if rel != nil {
-		inputSize = rel.Size()
-	}
-
-	result := fn()
-
-	resultSize := 0
-	if result != nil {
-		resultSize = result.Size()
-	}
-
-	c.collector.AddTiming("expression/evaluate", start, map[string]interface{}{
-		"expression":  expr,
-		"input.size":  inputSize,
-		"result.size": resultSize,
-	})
 
 	return result
 }

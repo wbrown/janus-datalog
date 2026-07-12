@@ -844,7 +844,7 @@ Phase 1: Pattern [?t :task/root ?s] → scan AETV → {t1, t2, ..., t8000}
 
 Phase 2 (concurrent with Phase 1 join processing):
          → open EATV iterator
-         → for each entity (sorted by L85 byte order = disk order):
+         → for each entity (sorted by raw hash byte order = disk order):
               Seek(EATV_prefix + E_bytes)
               iterate all (E, A, T, V) entries for this entity
               CRDT-resolve each (E, A) pair
@@ -858,9 +858,9 @@ Phase 3: Pattern [?t :task/status :status/complete]
 ```
 
 **Why sorted order matters**: BadgerDB stores keys sorted. EATV keys are
-`prefix(1) + E(20) + A(32) + T(16) + V(...)`. Entity IDs are L85-encoded
-SHA1 hashes — L85 preserves sort order. Sorting entities by their 20-byte
-hash before scanning means the EATV iterator only moves forward. Each
+`prefix(1) + E(20) + A(32) + T(16) + V(...)`. Entity IDs are stored as raw
+20-byte hashes. Sorting entities by that hash before scanning means the EATV
+iterator only moves forward. Each
 `Seek()` is cheap (already near the target). Empty ranges between entities
 are skipped instantly.
 

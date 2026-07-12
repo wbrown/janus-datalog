@@ -29,11 +29,12 @@ type Relation interface {
     FilterWithPredicate(pred Predicate) Relation
 
     // Metadata & Access
-    Symbols() []Symbol          // Schema
-    Iterator() Iterator         // Streaming access
-    Size() int                 // Cardinality
-    IsEmpty() bool             // Empty check
-    Materialize() Relation     // Force materialization
+    Symbols() []Symbol                    // Schema
+    Properties() RelationProperties       // Proven ordering and candidate keys
+    Iterator() Iterator                   // Streaming access
+    Size() int                            // Cardinality
+    IsEmpty() bool                        // Empty check
+    Materialize() Relation                // Force materialization
 }
 ```
 
@@ -250,33 +251,14 @@ Phase 3: [(year ?t) ?y]                      // Uses ?t, provides ?y
 6. **Final Operations**: Sorting, aggregation, projection
 
 ```go
-func ExecutePhase(phase *Phase, input Relation) Relation {
-    relations := []Relation{input}
-
-    // 1. Execute patterns
-    for _, pattern := range phase.Patterns {
-        rel := matcher.Match(pattern, input)
-        relations = append(relations, rel)
+func ExecutePhase(phase *planner.RealizedPhase, inputs []executor.Relation) ([]executor.Relation, error) {
+    // phase.Query is an executable Datalog fragment. One-pattern fragments
+    // preserve safe OrderBy/Limit requirements at the matcher boundary.
+    groups, err := queryExecutor.Execute(ctx, phase.Query, inputs)
+    if err != nil {
+        return nil, err
     }
-
-    // 2. Collapse relations (dynamic join ordering)
-    groups := relations.Collapse()
-    if len(groups) > 1 {
-        return error("disjoint relations")
-    }
-    result := groups[0]
-
-    // 3. Apply expressions
-    for _, expr := range phase.Expressions {
-        result = result.EvaluateFunction(expr.Function, expr.Output)
-    }
-
-    // 4. Apply predicates
-    for _, pred := range phase.Predicates {
-        result = result.FilterWithPredicate(pred)
-    }
-
-    return result
+    return executor.Relations(groups).Collapse(ctx), nil
 }
 ```
 

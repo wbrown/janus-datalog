@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
@@ -75,7 +77,7 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("decode RGA element: %w", err)
 		}
 
 		// Only process RGA operations

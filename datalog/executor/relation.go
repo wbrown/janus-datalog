@@ -8,6 +8,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -105,6 +106,10 @@ type Relation interface {
 	// In relational theory, a tuple is a map from symbols to values
 	Symbols() []query.Symbol
 
+	// Properties returns ordering and candidate-key guarantees. Callers must
+	// treat the returned value as immutable.
+	Properties() RelationProperties
+
 	// Iterator returns an iterator over tuples
 	Iterator() Iterator
 
@@ -183,6 +188,15 @@ type Relation interface {
 
 	// Note: Relations are IMMUTABLE and DEDUPLICATED at creation
 	// All operations return NEW Relations
+}
+
+// materializedSize returns a relation's tuple count only when reading it cannot
+// advance or cache an iterator. Unknown and streaming sizes are reported as -1.
+func materializedSize(rel Relation) int {
+	if materialized, ok := rel.(*MaterializedRelation); ok {
+		return materialized.Size()
+	}
+	return -1
 }
 
 // Iterator provides streaming access to tuples
@@ -354,9 +368,10 @@ func (ci *CachingIterator) signalComplete() {
 
 // MaterializedRelation holds all tuples in memory
 type MaterializedRelation struct {
-	symbols []query.Symbol
-	tuples  []Tuple
-	options ExecutorOptions
+	symbols    []query.Symbol
+	tuples     []Tuple
+	options    ExecutorOptions
+	properties RelationProperties
 	// err is the deferred error from the source iteration that produced these
 	// tuples (e.g., a stream that failed partway while being cached). It is
 	// replayed by Iterator().Error() so a failure isn't laundered by
@@ -384,6 +399,22 @@ func NewMaterializedRelationWithOptions(symbols []query.Symbol, tuples []Tuple, 
 		symbols: symbols,
 		tuples:  dedupedTuples,
 		options: opts,
+	}
+}
+
+// NewMaterializedRelationWithProperties creates a deduplicated materialized
+// relation with explicit ordering and candidate-key guarantees.
+func NewMaterializedRelationWithProperties(
+	symbols []query.Symbol,
+	tuples []Tuple,
+	opts ExecutorOptions,
+	properties RelationProperties,
+) *MaterializedRelation {
+	return &MaterializedRelation{
+		symbols:    symbols,
+		tuples:     deduplicateTuples(tuples),
+		options:    opts,
+		properties: properties.clone(),
 	}
 }
 
@@ -429,8 +460,7 @@ func deduplicateTuples(tuples []Tuple) []Tuple {
 
 	for _, tuple := range tuples {
 		key := NewTupleKeyFull(tuple)
-		if !seen.Exists(key) {
-			seen.Put(key, true)
+		if !seen.PutIfAbsent(key, true) {
 			result = append(result, tuple)
 		}
 	}
@@ -440,6 +470,10 @@ func deduplicateTuples(tuples []Tuple) []Tuple {
 
 func (r *MaterializedRelation) Symbols() []query.Symbol {
 	return r.symbols
+}
+
+func (r *MaterializedRelation) Properties() RelationProperties {
+	return r.properties
 }
 
 func (r *MaterializedRelation) Iterator() Iterator {
@@ -671,7 +705,12 @@ func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error)
 		projected[i] = projTuple
 	}
 
-	result := NewMaterializedRelationWithOptions(symbols, projected, r.options)
+	result := NewMaterializedRelationWithProperties(
+		symbols,
+		projected,
+		r.options,
+		r.properties.project(symbols),
+	)
 	result.err = r.err // a projection of tainted data is still tainted
 	return result, nil
 }
@@ -712,7 +751,7 @@ func (r *MaterializedRelation) Filter(filter Filter) Relation {
 		}
 	}
 
-	return NewMaterializedRelationWithOptions(r.symbols, filtered, r.options)
+	return NewMaterializedRelationWithProperties(r.symbols, filtered, r.options, r.properties)
 }
 
 // FilterWithPredicate filters the relation using a query.Predicate
@@ -731,7 +770,7 @@ func (r *MaterializedRelation) FilterWithPredicate(pred query.Predicate) Relatio
 		}
 	}
 
-	return NewMaterializedRelationWithOptions(r.symbols, filtered, r.options)
+	return NewMaterializedRelationWithProperties(r.symbols, filtered, r.options, r.properties)
 }
 
 // Select returns a new relation with only tuples that satisfy the predicate
@@ -808,7 +847,12 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 		newTuples = append(newTuples, newTuple)
 	}
 
-	mat := NewMaterializedRelation(newSymbols, newTuples)
+	mat := NewMaterializedRelationWithProperties(
+		newSymbols,
+		newTuples,
+		r.options,
+		r.properties.addSymbol(outputSymbol),
+	)
 	if evalErr != nil {
 		mat.err = evalErr
 	} else if r.err != nil {
@@ -857,10 +901,11 @@ func (it *sliceIterator) Error() error { return it.err }
 
 // StreamingRelation wraps an iterator as a relation
 type StreamingRelation struct {
-	symbols  []query.Symbol
-	iterator Iterator
-	size     int             // -1 if unknown
-	options  ExecutorOptions // Options from the factory that created this relation
+	symbols    []query.Symbol
+	iterator   Iterator
+	size       int             // -1 if unknown
+	options    ExecutorOptions // Options from the factory that created this relation
+	properties RelationProperties
 
 	// Lazy materialization: consume iterator once and cache result
 	// sync.Once provides all necessary concurrency safety - ensures materialization
@@ -907,8 +952,29 @@ func NewStreamingRelationWithOptions(symbols []query.Symbol, iterator Iterator, 
 	}
 }
 
+// NewStreamingRelationWithProperties creates a streaming relation with explicit
+// ordering and candidate-key guarantees.
+func NewStreamingRelationWithProperties(
+	symbols []query.Symbol,
+	iterator Iterator,
+	opts ExecutorOptions,
+	properties RelationProperties,
+) *StreamingRelation {
+	return &StreamingRelation{
+		symbols:    symbols,
+		iterator:   iterator,
+		size:       -1,
+		options:    opts,
+		properties: properties.clone(),
+	}
+}
+
 func (r *StreamingRelation) Symbols() []query.Symbol {
 	return r.symbols
+}
+
+func (r *StreamingRelation) Properties() RelationProperties {
+	return r.properties
 }
 
 func (r *StreamingRelation) Iterator() Iterator {
@@ -957,14 +1023,27 @@ func (r *StreamingRelation) Iterator() Iterator {
 	r.iteratorCalled = true
 
 	// If Materialize() was called, enable caching
+	var cacheCollector *annotations.Collector
+	var cacheEvent annotations.Event
 	if r.shouldCache {
 		r.cachingInProgress = true
-		if r.options.EnableDebugLogging {
-			fmt.Printf("[StreamingRelation.Iterator] First call with caching enabled\n")
+		if r.options.Collector != nil {
+			cacheCollector = r.options.Collector
+			cacheEvent = annotations.Event{
+				Name: annotations.RelationCacheEnabled,
+				Data: map[string]interface{}{
+					"symbols":            append([]query.Symbol(nil), r.symbols...),
+					"symbol_count":       len(r.symbols),
+					"cached_tuple_count": len(r.cache),
+				},
+			}
 		}
 	}
 
 	r.mu.Unlock()
+	if cacheCollector != nil {
+		cacheCollector.Add(cacheEvent)
+	}
 
 	// Create base iterator
 	baseIter := r.iterator
@@ -1244,12 +1323,20 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// When r.shouldCache=true, the first Iterator() call builds the cache, and both the
 	// original relation and the projection can iterate from cached data
 	projIter := NewProjectIterator(r, r.symbols, symbols)
-	// SET SEMANTICS: Wrap with DedupIterator to ensure projection maintains set semantics.
-	// Projection can produce duplicates when multiple distinct input tuples map to the same
-	// projected tuple (e.g., [(1,a), (2,a)] projected to symbol 2 yields [a, a]).
-	dedupIter := NewDedupIterator(projIter, 0)
+	properties := r.properties.project(symbols)
+	var resultIterator Iterator = projIter
+	if len(properties.Keys) == 0 {
+		// Without a retained candidate key, projection can map distinct input
+		// tuples to the same output tuple and must restore set semantics.
+		resultIterator = NewDedupIterator(projIter, 0)
+	}
 	// BUGFIX: Preserve options (especially EnableTrueStreaming) to prevent re-scanning
-	return NewStreamingRelationWithOptions(symbols, dedupIter, r.options), nil
+	return NewStreamingRelationWithProperties(
+		symbols,
+		resultIterator,
+		r.options,
+		properties,
+	), nil
 }
 
 // Materialize converts this streaming relation to a materialized one
@@ -1286,7 +1373,7 @@ func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	var tuples []Tuple
 	err := collectTuplesInto(&tuples, r)
 
-	mat := NewMaterializedRelationWithOptions(r.symbols, tuples, r.options)
+	mat := NewMaterializedRelationWithProperties(r.symbols, tuples, r.options, r.properties)
 	if err != nil {
 		// Source failed mid-iteration: carry the error so the boundary sees it
 		// and discards the (incomplete) data. Sorting tainted data is moot.
@@ -1301,7 +1388,7 @@ func (r *StreamingRelation) Filter(filter Filter) Relation {
 	if r.options.EnableIteratorComposition {
 		// Use iterator composition for true streaming
 		filterIter := NewFilterIterator(r.iterator, r.symbols, filter)
-		return NewStreamingRelationWithOptions(r.symbols, filterIter, r.options)
+		return NewStreamingRelationWithProperties(r.symbols, filterIter, r.options, r.properties)
 	}
 	// Fall back to current behavior
 	return FilterRelation(r, filter)
@@ -1312,7 +1399,7 @@ func (r *StreamingRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	if r.options.EnableIteratorComposition {
 		// Use iterator composition for true streaming
 		predIter := NewPredicateFilterIterator(r.iterator, r.symbols, pred)
-		return NewStreamingRelationWithOptions(r.symbols, predIter, r.options)
+		return NewStreamingRelationWithProperties(r.symbols, predIter, r.options, r.properties)
 	}
 	// Fall back to current behavior - materialize then filter
 	materialized := r.Materialize()
@@ -1325,7 +1412,12 @@ func (r *StreamingRelation) EvaluateFunction(fn query.Function, outputSymbol que
 		// Use iterator composition for true streaming
 		evalIter := NewFunctionEvaluatorIterator(r.iterator, r.symbols, fn, outputSymbol)
 		newSymbols := append(r.symbols, outputSymbol)
-		return NewStreamingRelationWithOptions(newSymbols, evalIter, r.options)
+		return NewStreamingRelationWithProperties(
+			newSymbols,
+			evalIter,
+			r.options,
+			r.properties.addSymbol(outputSymbol),
+		)
 	}
 	// Fall back to current behavior - materialize then evaluate
 	materialized := r.Materialize()
@@ -1424,7 +1516,12 @@ func Select(rel Relation, pred func(Tuple) bool) Relation {
 		}
 	}
 
-	return NewMaterializedRelation(rel.Symbols(), selected)
+	return NewMaterializedRelationWithProperties(
+		rel.Symbols(),
+		selected,
+		rel.Options(),
+		rel.Properties(),
+	)
 }
 
 // ProductRelation represents a streaming Cartesian product of multiple relations
@@ -1475,6 +1572,10 @@ func NewProductRelation(relations []Relation) *ProductRelation {
 
 func (p *ProductRelation) Symbols() []query.Symbol {
 	return p.symbols
+}
+
+func (p *ProductRelation) Properties() RelationProperties {
+	return RelationProperties{}
 }
 
 func (p *ProductRelation) Iterator() Iterator {

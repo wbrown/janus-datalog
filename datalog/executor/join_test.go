@@ -2,8 +2,11 @@ package executor
 
 import (
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -313,4 +316,201 @@ func TestJoinBuildCopyAnnotation(t *testing.T) {
 	}
 
 	t.Logf("Copy stats: copied=%d, passthru=%d, requires_copy=%v", copyCount, skipCount, requiresCopy)
+}
+
+func TestHashJoinEmitsStructuredStrategyBuildAndProbeAnnotations(t *testing.T) {
+	var events []annotations.Event
+	collector := annotations.NewCollector(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	opts := ExecutorOptions{Collector: collector}
+	joinSymbol := datalog.NewSymbol("?id")
+	left := NewMaterializedRelationWithOptions(
+		[]query.Symbol{joinSymbol, datalog.NewSymbol("?left")},
+		[]Tuple{{int64(1), "a"}, {int64(2), "b"}, {int64(3), "c"}},
+		opts,
+	)
+	right := NewMaterializedRelationWithOptions(
+		[]query.Symbol{joinSymbol, datalog.NewSymbol("?right")},
+		[]Tuple{{int64(1), "x"}, {int64(2), "y"}, {int64(4), "z"}},
+		opts,
+	)
+
+	result := HashJoinWithOptions(left, right, []query.Symbol{joinSymbol}, opts)
+	require.Len(t, collectTuples(result), 2)
+
+	byName := make(map[string]annotations.Event)
+	for _, event := range events {
+		byName[event.Name] = event
+	}
+	strategy, ok := byName[annotations.JoinStrategy]
+	require.True(t, ok)
+	require.Equal(t, "materialized", strategy.Data["mode"])
+	require.Equal(t, "right", strategy.Data["build_side"])
+
+	build, ok := byName[annotations.JoinBuild]
+	require.True(t, ok)
+	require.Equal(t, 3, build.Data["tuple_count"])
+	require.Equal(t, false, build.Data["join_key_unique"])
+
+	probe, ok := byName[annotations.JoinProbe]
+	require.True(t, ok)
+	require.Equal(t, 3, probe.Data["tuple_count"])
+	require.Equal(t, 2, probe.Data["result_count"])
+}
+
+func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
+	var events []annotations.Event
+	collector := annotations.NewCollector(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	joinSymbol := datalog.NewSymbol("?id")
+	base := NewMaterializedRelationNoDedupe(
+		[]query.Symbol{joinSymbol},
+		[]Tuple{{int64(1)}},
+	)
+	stream := NewStreamingRelationWithOptions(
+		base.Symbols(),
+		base.Iterator(),
+		ExecutorOptions{Collector: collector},
+	)
+
+	emitJoinStrategyAnnotation(
+		ExecutorOptions{Collector: collector},
+		stream,
+		base,
+		[]query.Symbol{joinSymbol},
+		"streaming",
+		"right",
+		false,
+	)
+
+	require.False(t, stream.iteratorCalled,
+		"emitting a join annotation must not consume a streaming relation")
+	require.Len(t, events, 1)
+	require.Equal(t, -1, events[0].Data["left_size"])
+	require.Equal(t, 1, events[0].Data["right_size"])
+}
+
+func TestStreamingJoinProbeAnnotationLifecycle(t *testing.T) {
+	join := datalog.NewSymbol("?join")
+	leftValue := datalog.NewSymbol("?left")
+	rightValue := datalog.NewSymbol("?right")
+	open := func(collector *annotations.Collector, probe Relation) Relation {
+		left := NewMaterializedRelation(
+			[]query.Symbol{join, leftValue},
+			[]Tuple{{int64(1), "left"}},
+		)
+		return HashJoinWithOptions(left, probe, []query.Symbol{join}, ExecutorOptions{
+			Collector:            collector,
+			EnableStreamingJoins: true,
+		})
+	}
+	probe := func() Relation {
+		return NewMaterializedRelation(
+			[]query.Symbol{join, rightValue},
+			[]Tuple{{int64(1), "a"}, {int64(1), "b"}, {int64(1), "c"}},
+		)
+	}
+
+	t.Run("partial close emits exactly once", func(t *testing.T) {
+		var events []annotations.Event
+		collector := annotations.NewCollector(func(event annotations.Event) {
+			if event.Name == annotations.JoinProbe {
+				events = append(events, event)
+			}
+		})
+		it := open(collector, probe()).Iterator()
+		require.True(t, it.Next())
+		require.NoError(t, it.Close())
+		require.NoError(t, it.Close())
+		require.Len(t, events, 1)
+		require.Equal(t, "streaming", events[0].Data["mode"])
+		require.IsType(t, 0, events[0].Data["tuple_count"])
+		require.IsType(t, 0, events[0].Data["matched_count"])
+		require.IsType(t, 0, events[0].Data["result_count"])
+		require.Equal(t, 1, events[0].Data["result_count"])
+	})
+
+	t.Run("exhaustion then close emits exactly once", func(t *testing.T) {
+		var events []annotations.Event
+		collector := annotations.NewCollector(func(event annotations.Event) {
+			if event.Name == annotations.JoinProbe {
+				events = append(events, event)
+			}
+		})
+		it := open(collector, probe()).Iterator()
+		for it.Next() {
+		}
+		require.NoError(t, it.Error())
+		require.NoError(t, it.Close())
+		require.Len(t, events, 1)
+		require.Equal(t, 3, events[0].Data["result_count"])
+	})
+
+	t.Run("probe failure is emitted once", func(t *testing.T) {
+		var events []annotations.Event
+		collector := annotations.NewCollector(func(event annotations.Event) {
+			if event.Name == annotations.JoinProbe {
+				events = append(events, event)
+			}
+		})
+		failingProbe := failingRelation{
+			Relation:  probe(),
+			failAfter: 1,
+		}
+		it := open(collector, failingProbe).Iterator()
+		for it.Next() {
+		}
+		require.ErrorIs(t, it.Error(), errInjectedIterator)
+		require.NoError(t, it.Close())
+		require.Len(t, events, 1)
+		require.Equal(t, 1, events[0].Data["result_count"])
+	})
+}
+
+func TestConcurrentStructuredJoinAnnotations(t *testing.T) {
+	var eventCount atomic.Int64
+	var fieldMu sync.Mutex
+	var malformed bool
+	collector := annotations.NewCollector(func(event annotations.Event) {
+		if event.Name != annotations.JoinStrategy &&
+			event.Name != annotations.JoinBuild &&
+			event.Name != annotations.JoinProbe {
+			return
+		}
+		eventCount.Add(1)
+		fieldMu.Lock()
+		defer fieldMu.Unlock()
+		if event.Data == nil {
+			malformed = true
+		}
+	})
+	join := datalog.NewSymbol("?join")
+
+	var wait sync.WaitGroup
+	for worker := 0; worker < 20; worker++ {
+		wait.Add(1)
+		go func(worker int) {
+			defer wait.Done()
+			left := NewMaterializedRelation(
+				[]query.Symbol{join},
+				[]Tuple{{int64(worker)}},
+			)
+			right := NewMaterializedRelation(
+				[]query.Symbol{join},
+				[]Tuple{{int64(worker)}},
+			)
+			result := HashJoinWithOptions(left, right, []query.Symbol{join}, ExecutorOptions{
+				Collector: collector,
+			})
+			_, err := collectTypedTuples(result)
+			require.NoError(t, err)
+		}(worker)
+	}
+	wait.Wait()
+	require.Equal(t, int64(60), eventCount.Load())
+	fieldMu.Lock()
+	require.False(t, malformed)
+	fieldMu.Unlock()
 }

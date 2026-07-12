@@ -180,17 +180,18 @@ This is **standard database query optimization** (similar to Selinger's algorith
 ### Storage Design
 - **Fixed 69-byte keys**: E(20) + A(32) + Tx(16) + Op(1) for efficient indexing
 - **Unbounded values**: Stored last with 2-byte size prefix and 1-byte type
-- **L85 encoding**: Custom Base85 variant preserving sort order (see below)
+- **Binary physical encoding**: Raw fixed-width E/A/Tx components preserve byte order without text expansion
 - **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV for different access patterns and cardinalities. ATEV's `[A][Tx↓][E][V]` layout gives O(1) attribute high-water mark for cache freshness and direct AsOf-by-attribute scans.
 - **CRDT semantics**: LWW for cardinality-one, add-wins for cardinality-many, RGA for cardinality-vector
 - **Keyword interning**: Keywords hashed once and reused
-- **RefValues**: 20-byte entity references are L85-encoded like E/Tx components
+- **RefValues**: Entity references are stored as raw 20-byte identity hashes
 - **Attribute size**: Increased from 20 to 32 bytes to support longer attribute names (e.g., `:option/open-interest`)
 - **Tx as ElementID**: 16-byte transaction ID with Lamport clock (8 bytes) + ReplicaID (8 bytes) for CRDT ordering
 
 ### L85 Encoding Details
 
-L85 is a custom Base85 encoding that is critical to the storage layer's performance:
+L85 is a custom Base85 encoding for stable, human-readable external values. It
+is not a physical storage-key format.
 
 **Key Properties**:
 - **Space Efficient**: 25% overhead (better than Base64's 33%)
@@ -205,18 +206,18 @@ L85 is a custom Base85 encoding that is critical to the storage layer's performa
 ```
 
 **Why This Matters**:
-- Enables efficient range scans without decoding
-- Keys can be debugged, logged, and copied without binary issues
+- Identities and binary values can be logged and copied without binary tooling
+- Export/import values have stable text representations
 - URLs and JSON safe without escaping
-- 3 fewer characters per key than Base64 (scales to millions of keys)
+- A 20-byte value uses 25 characters instead of Base64's 28
 
 **Implementation Notes**:
 - Located in `datalog/codec/l85.go`
 - Inspired by Base85 encoding patterns with sort-preservation
 - Decode table uses i+1 (0 = invalid) for cleaner validation
 - Big-endian encoding preserves numeric sort order
-- RefValues (entity references) are L85-encoded in storage keys
-- Other value types remain as raw bytes for flexibility
+- Physical storage keys use `BinaryKeyEncoder` exclusively
+- Identity references in physical keys remain raw 20-byte hashes
 - Added `EncodeFixed32` and `DecodeFixed32` functions for 32-byte attributes
 
 ### Scale-Up vs Scale-Out
@@ -264,13 +265,14 @@ The codebase maintains a clean separation between user-facing types and storage 
   - Scalars: `string`, `int64`, `float64`, `bool`, `time.Time`, `[]byte`
   - References: `Identity` (aliased as `Reference` when used as a value)
   - Keywords: `Keyword` (can be used as values, e.g., `:status/active`)
-- **Join Keys**: Use L85 encoding for efficient comparison
+  - Symbols: `Symbol` (EDN symbols as first-class stored/query values)
+- **Join Keys**: Use typed hashing and equality through `TupleKeyMap`
 
 ### Storage Layer (`datalog/storage/`)
 - **Purpose**: Internal storage representation only
 - **StorageDatom**: Uses fixed byte arrays for efficient indexing ([20]byte for E/Tx, [32]byte for A)
 - **Conversion**: Storage layer converts between user types and storage types internally
-- **L85 Encoding**: Used for sortable storage keys
+- **Binary Encoding**: Raw fixed-width components provide sortable storage keys
 - **Invisible to Query Engine**: The query engine never sees these types
 
 This separation ensures the query engine remains simple and focused on logic, while the storage layer handles all encoding/decoding complexity.
@@ -282,7 +284,7 @@ The storage layer connects the query engine to BadgerDB:
 - **BadgerMatcher**: Implements PatternMatcher interface for the executor
   - Chooses optimal index based on bound values in patterns
   - Converts between user types (Identity, Keyword) and storage types ([20]byte for E/Tx, [32]byte for A)
-  - Handles L85 encoding for index keys with proper size handling
+  - Builds binary index prefixes with the same encoding used for writes
 - **Value Encoding**: Serializes all value types with proper type tags
   - Special handling for Identity references to preserve join semantics
   - Fixed bugs where entity IDs were decoded incorrectly
@@ -449,13 +451,13 @@ Naming something precisely forces you to think about what it does and where it b
 ```go
 // BAD: Java-style with manager class
 type PredicatePropagator struct {
-    phases []Phase
+    phases []RealizedPhase
 }
 func (pp *PredicatePropagator) Propagate() { ... }
 
-// GOOD: Methods on the types themselves
-func (p *Phase) PushPredicates() { ... }
-func (pp *PatternPlan) ApplyConstraints(predicates []PredicatePlan) { ... }
+// GOOD: Focused functions and methods on the data they transform
+func scheduleReadyClauses(clauses []query.Clause, available map[query.Symbol]bool) []query.Clause
+func (p RelationProperties) project(symbols []query.Symbol) RelationProperties
 ```
 
 ## Performance Considerations
@@ -502,7 +504,6 @@ type RealizedPhase struct {
     Available []query.Symbol    // Symbols from inputs + previous phases
     Provides  []query.Symbol    // Symbols this phase produces
     Keep      []query.Symbol    // Symbols to pass to next phase
-    Metadata  map[string]interface{}
 }
 ```
 

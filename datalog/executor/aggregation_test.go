@@ -4,9 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wbrown/janus-datalog/datalog/query"
-
+	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
 func TestExecuteAggregations(t *testing.T) {
@@ -177,6 +178,129 @@ func TestExecuteAggregations(t *testing.T) {
 	}
 }
 
+func TestAggregationEmitsStructuredStrategyAnnotation(t *testing.T) {
+	var events []annotations.Event
+	ctx := NewContext(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	value := datalog.NewSymbol("?value")
+	rel := NewMaterializedRelationWithOptions(
+		[]query.Symbol{value},
+		[]Tuple{{int64(1)}, {int64(2)}, {int64(3)}},
+		ExecutorOptions{Collector: ctx.Collector()},
+	)
+
+	result := ExecuteAggregationsWithContext(ctx, rel, []query.FindElement{
+		query.FindAggregate{Function: "sum", Arg: value},
+	})
+	if result.Size() != 1 {
+		t.Fatalf("aggregation result size = %d, want 1", result.Size())
+	}
+
+	var strategy annotations.Event
+	found := false
+	for _, event := range events {
+		if event.Name == annotations.AggregationStrategy {
+			strategy = event
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("aggregation strategy annotation was not emitted")
+	}
+	if strategy.Data["strategy"] != "batch" {
+		t.Fatalf("aggregation strategy = %v, want batch", strategy.Data["strategy"])
+	}
+	if strategy.Data["aggregate_count"] != 1 {
+		t.Fatalf("aggregate_count = %v, want 1", strategy.Data["aggregate_count"])
+	}
+	if strategy.Data["group_by_count"] != 0 {
+		t.Fatalf("group_by_count = %v, want 0", strategy.Data["group_by_count"])
+	}
+}
+
+func TestStreamingAggregationEmitsMaterializedAnnotation(t *testing.T) {
+	var events []annotations.Event
+	ctx := NewContext(func(event annotations.Event) {
+		events = append(events, event)
+	})
+	value := datalog.NewSymbol("?value")
+	tuples := make([]Tuple, StreamingAggregationThreshold+1)
+	for i := range tuples {
+		tuples[i] = Tuple{int64(i)}
+	}
+	base := NewMaterializedRelationNoDedupe([]query.Symbol{value}, tuples)
+	stream := NewStreamingRelationWithOptions(
+		base.Symbols(),
+		base.Iterator(),
+		ExecutorOptions{
+			EnableStreamingAggregation: true,
+		},
+	)
+
+	result := ExecuteAggregationsWithContext(ctx, stream, []query.FindElement{
+		query.FindAggregate{Function: "sum", Arg: value},
+	})
+	if stream.iteratorCalled {
+		t.Fatal("emitting the aggregation strategy annotation consumed the streaming input")
+	}
+	if result.Size() != 1 {
+		t.Fatalf("streaming aggregation result size = %d, want 1", result.Size())
+	}
+
+	foundStrategy := false
+	foundMaterialized := false
+	for _, event := range events {
+		if event.Name == annotations.AggregationStrategy {
+			foundStrategy = true
+			if event.Data["input_size"] != -1 {
+				t.Fatalf("streaming input_size = %v, want -1", event.Data["input_size"])
+			}
+		}
+		if event.Name == annotations.AggregationMaterialized {
+			foundMaterialized = true
+			if event.Data["input_count"] != StreamingAggregationThreshold+1 {
+				t.Fatalf("input_count = %v, want %d",
+					event.Data["input_count"], StreamingAggregationThreshold+1)
+			}
+			if event.Data["result_count"] != 1 {
+				t.Fatalf("result_count = %v, want 1", event.Data["result_count"])
+			}
+		}
+	}
+	if !foundStrategy {
+		t.Error("aggregation strategy annotation was not emitted")
+	}
+	if !foundMaterialized {
+		t.Error("aggregation materialized annotation was not emitted through the context collector")
+	}
+}
+
+func TestAggregationRejectsMissingGroupSymbolWithoutPanic(t *testing.T) {
+	order := datalog.NewSymbol("?order")
+	missing := datalog.NewSymbol("?missing")
+	tuples := make([]Tuple, StreamingAggregationThreshold+1)
+	for i := range tuples {
+		tuples[i] = Tuple{int64(i)}
+	}
+	source := NewStreamingRelationWithOptions(
+		[]query.Symbol{order},
+		NewMaterializedRelationNoDedupe([]query.Symbol{order}, tuples).Iterator(),
+		ExecutorOptions{EnableStreamingAggregation: true},
+	)
+
+	var result Relation
+	require.NotPanics(t, func() {
+		result = ExecuteAggregations(source, []query.FindElement{
+			query.FindVariable{Symbol: missing},
+			query.FindAggregate{Function: "count", Arg: order},
+		})
+	})
+	require.Error(t, driveErr(result))
+	require.Contains(t, driveErr(result).Error(), "group-by symbol ?missing")
+}
+
 func TestProjectColumns(t *testing.T) {
 	symbols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")}
 	tuples := []Tuple{
@@ -307,24 +431,25 @@ func TestAggregationWithTimeValues(t *testing.T) {
 	}
 }
 
-func TestStringifyValue(t *testing.T) {
-	tests := []struct {
-		input    interface{}
-		expected string
-	}{
-		{nil, "<nil>"},
-		{"hello", "hello"},
-		{int64(42), "42"},
-		{3.14, "3.14"},
-		{true, "true"},
-		{time.Date(2023, 6, 15, 0, 0, 0, 0, time.UTC), "2023-06-15T00:00:00Z"},
-	}
+func TestAggregationTupleKeysPreserveTypes(t *testing.T) {
+	for _, pair := range adversarialTuplePairs {
+		t.Run(pair.name, func(t *testing.T) {
+			aKey := NewTupleKeyFull(pair.a)
+			bKey := NewTupleKeyFull(pair.b)
+			if aKey.Equal(bKey) {
+				t.Fatalf("distinct typed aggregation keys compare equal: %v and %v", pair.a, pair.b)
+			}
 
-	for _, tt := range tests {
-		result := stringifyValue(tt.input)
-		if result != tt.expected {
-			t.Errorf("stringifyValue(%v) = %q, want %q", tt.input, result, tt.expected)
-		}
+			groups := NewTupleKeyMap()
+			groups.Put(aKey, "a")
+			groups.Put(bKey, "b")
+			if got, ok := groups.Get(aKey); !ok || got != "a" {
+				t.Fatalf("first typed key was lost: got %v, found %v", got, ok)
+			}
+			if got, ok := groups.Get(bKey); !ok || got != "b" {
+				t.Fatalf("second typed key was lost: got %v, found %v", got, ok)
+			}
+		})
 	}
 }
 

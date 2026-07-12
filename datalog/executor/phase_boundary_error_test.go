@@ -18,7 +18,11 @@ type failingScanMatcher struct {
 	dataRel  Relation
 }
 
-func (m *failingScanMatcher) Match(pattern *query.DataPattern, _ Relations) (Relation, error) {
+func (m *failingScanMatcher) Match(q *query.Query, _ Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	var syms []query.Symbol
 	for _, el := range pattern.Elements {
 		if v, ok := el.(query.Variable); ok {
@@ -79,7 +83,6 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 				},
 				Provides: []query.Symbol{symE, symV},
 				Keep:     []query.Symbol{symE},
-				Metadata: map[string]interface{}{},
 			},
 			{
 				// Last phase: joins phase 0's ?e with :doc/b.
@@ -90,7 +93,6 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 				},
 				Available: []query.Symbol{symE},
 				Provides:  []query.Symbol{symE, symW},
-				Metadata:  map[string]interface{}{},
 			},
 		},
 	}

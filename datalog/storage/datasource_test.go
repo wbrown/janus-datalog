@@ -51,7 +51,7 @@ func TestDatabaseMatch(t *testing.T) {
 		},
 	}
 
-	result, err := db.Match(pattern, nil)
+	result, err := db.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Database.Match: unexpected error: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestDatabaseMatchWithConstantEntity(t *testing.T) {
 		},
 	}
 
-	result, err := db.Match(pattern, nil)
+	result, err := db.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Database.Match: unexpected error: %v", err)
 	}

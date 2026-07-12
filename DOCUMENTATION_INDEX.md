@@ -5,6 +5,7 @@
 ### Getting Started
 - **[README.md](README.md)** - Project overview, features, and quick start
 - **[DATOMIC_COMPATIBILITY.md](DATOMIC_COMPATIBILITY.md)** - Feature compatibility matrix with Datomic
+- **[v0.14.0 Upgrade Guide](docs/BREAKING_RELEASE_UPGRADE_v0.14.0.md)** - Required API and legacy physical-storage migrations
 
 ### Architecture & Implementation
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture overview

@@ -21,9 +21,11 @@ func BenchmarkExpressionEvaluation(b *testing.B) {
 
 	expr := &query.Expression{
 		Function: &query.ArithmeticFunction{
-			Op:    query.OpAdd,
-			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
-			Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+			Op: query.OpAdd,
+			Args: []query.Term{
+				query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+			},
 		},
 		Binding: datalog.NewSymbol("?sum"),
 	}

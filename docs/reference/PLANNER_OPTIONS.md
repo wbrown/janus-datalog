@@ -33,20 +33,17 @@ type PlannerOptions struct {
     EnableAlgebraOptimizer    bool // default-active
     EnableScanSharing         bool // opt-in
     EnableEntityPrefetch      bool // opt-in
-    UseStreamingSubqueryUnion bool // opt-in
-    UseComponentizedSubquery  bool // opt-in
+    EnableAttributeFetchFusion bool // default-active
 
     EnableIteratorComposition bool // default-active
     EnableTrueStreaming       bool // default-active
     EnableSymmetricHashJoin   bool // opt-in
 
     EnableParallelSubqueries bool // default-active
-    MaxSubqueryWorkers       int  // 0 = runtime.NumCPU()
+    MaxSubqueryWorkers       int  // 0 = 4 workers
 
-    EnableStreamingJoins            bool // opt-in
-    EnableStreamingAggregation      bool // default-active
-    EnableStreamingAggregationDebug bool // opt-in
-    EnableDebugLogging              bool // opt-in
+    EnableStreamingJoins       bool // opt-in
+    EnableStreamingAggregation bool // default-active
 
     IndexNestedLoopThreshold int // default 0
 }
@@ -61,20 +58,19 @@ zero value — i.e. off / nil / 0):
 EnableAlgebraOptimizer:     true
 EnableScanSharing:          false
 EnableEntityPrefetch:       false
+EnableAttributeFetchFusion: true
 EnableIteratorComposition:  true
 EnableTrueStreaming:        true
 EnableSymmetricHashJoin:    false
 EnableParallelSubqueries:   true
-MaxSubqueryWorkers:         0      // runtime.NumCPU()
+MaxSubqueryWorkers:         0      // executor default: 4 workers
 EnableStreamingJoins:       false
 EnableStreamingAggregation: true
-EnableDebugLogging:         false
 IndexNestedLoopThreshold:   0      // always HashJoinScan
 ```
 
-So, off by default (opt-in): `UseStreamingSubqueryUnion`,
-`UseComponentizedSubquery`, `EnableScanSharing`, `EnableEntityPrefetch`,
-`EnableSymmetricHashJoin`, `EnableStreamingJoins`, `EnableStreamingAggregationDebug`.
+So, off by default (opt-in): `EnableScanSharing`, `EnableEntityPrefetch`,
+`EnableSymmetricHashJoin`, and `EnableStreamingJoins`.
 
 ---
 
@@ -96,13 +92,10 @@ Benchmarked performance-neutral, hence off. Consumed in `executor/executor.go`.
 Warms the EA cache after the first data pattern via `PrefetchEntities`.
 Benchmarked performance-neutral, hence off. Consumed in `executor/query_executor.go`.
 
-#### UseStreamingSubqueryUnion — **opt-in** (default false)
-Streams subquery-union results instead of materializing them. Consumed in
-`executor/streaming_union.go` and `executor/subquery.go`.
-
-#### UseComponentizedSubquery — **opt-in** (default false)
-Routes subquery execution through the component-based path (strategy selector,
-batcher, worker pool). Consumed in `executor/query_executor.go`.
+#### EnableAttributeFetchFusion — **default-active**
+Fuses contiguous cardinality-one fetches sharing an already-bound entity into
+one tuple traversal. Latest mode only; History and AsOf decline the fusion.
+Consumed in `executor/query_executor.go`.
 
 ### Streaming
 
@@ -122,30 +115,24 @@ off by default. Consumed in `executor/join.go`.
 ### Parallel execution
 
 #### EnableParallelSubqueries — **default-active**
-Executes subquery iterations in parallel via a bounded worker pool. Consumed in
-`executor/subquery_strategy.go`.
+Executes RelationInput query iterations in parallel via the executor's bounded
+worker loop. Consumed in `executor/executor.go`.
 
 #### MaxSubqueryWorkers — **default 0**
 Worker-pool size for parallel subqueries; `0` means `runtime.NumCPU()`. Consumed
-in `executor/query_executor.go`.
+in `executor/executor.go`.
 
 ### Joins / aggregation
 
 #### EnableStreamingJoins — **opt-in** (default false)
 Returns a `StreamingRelation` from joins instead of materializing the result.
-Consumed in `executor/join.go`.
+On `BenchmarkComplexQueryJoinMaterialization`, enabling it is 8.04% slower,
+uses 3.78% more memory, and performs 8.34% more allocations than the default
+(`n=10`). Keep it opt-in. Consumed in `executor/join.go`.
 
 #### EnableStreamingAggregation — **default-active**
 Streaming aggregation (no full materialization of the input). Consumed in
 `executor/aggregation.go`.
-
-#### EnableStreamingAggregationDebug — **opt-in** (default false)
-Debug logging for the streaming aggregation path. Consumed in
-`executor/aggregation.go`.
-
-#### EnableDebugLogging — **opt-in** (default false)
-Debug logging for joins and related execution. Consumed in `executor/join.go`,
-`executor/relation.go`.
 
 ### Storage join strategy
 
@@ -181,6 +168,10 @@ nothing:
 | `EnableConditionalAggregateRewriting` | The rewrite now runs unconditionally inside `EnableAlgebraOptimizer`; the standalone flag was inert. |
 | `EnableSemanticRewriting` | Removed in 2026-05. Folded `[(year ?t) ?y] [(= ?y N)]` into range predicates, but only worked when the bound time components formed a contiguous suffix from `year` (silently produced wrong results otherwise — e.g. `day(?t) = 5` alone became `1970-01-05`). Redundant in the default configuration because `EnableAlgebraOptimizer`'s decorrelation handles the same bottleneck. Write the range predicate directly if you need it: `[(>= ?t #inst "2025-01-01")] [(< ?t #inst "2026-01-01")]`. |
 | `EnableCSE` | Never shipped in `PlannerOptions`. |
+| `UseStreamingSubqueryUnion` | Removed with the retired componentized subquery executor. |
+| `UseComponentizedSubquery` | Removed with the retired componentized subquery executor. |
+| `EnableDebugLogging` | Removed in 2026-07. Join and relation diagnostics are structured annotation events. |
+| `EnableStreamingAggregationDebug` | Removed in 2026-07. Aggregation strategy and materialization diagnostics are structured annotation events. |
 
 If your code sets any of these, delete the lines — the fields no longer exist.
 
@@ -201,9 +192,12 @@ opts := storage.DefaultPlannerOptions()
 ### Debugging execution
 
 ```go
-opts := storage.DefaultPlannerOptions()
-opts.EnableDebugLogging = true
-opts.EnableStreamingAggregationDebug = true
+db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+    Path: "path/to/db",
+    AnnotationHandler: func(event annotations.Event) {
+        // Handle join/*, aggregation/*, relation/*, and other events.
+    },
+})
 ```
 
 ### Force index-nested-loop (testing)

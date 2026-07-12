@@ -65,8 +65,8 @@ func NewSliceSource[T any](items []T, schema AttributeSchema[T]) *SliceSource[T]
 }
 
 // Match implements PatternMatcher.
-func (s *SliceSource[T]) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
-	return s.matcher.Match(pattern, bindings)
+func (s *SliceSource[T]) Match(q *query.Query, bindings Relations) (Relation, error) {
+	return s.matcher.Match(q, bindings)
 }
 
 // Compile-time verification that SliceSource implements PatternMatcher

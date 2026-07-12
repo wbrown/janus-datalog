@@ -44,7 +44,7 @@ func TestOrderedSet_UniqueElementsEnforcement(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(alice, prefs)
+	result, found := requireAttributeLookup(t, matcher, alice, prefs)
 	require.True(t, found)
 
 	vec, ok := result.([]string)
@@ -94,7 +94,7 @@ func TestOrderedSet_UniqueAcrossTransactions(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(alice, prefs)
+	result, found := requireAttributeLookup(t, matcher, alice, prefs)
 	require.True(t, found)
 
 	vec, ok := result.([]string)
@@ -141,7 +141,7 @@ func TestOrderedSet_SetReplacement(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(alice, prefs)
+	result, found := requireAttributeLookup(t, matcher, alice, prefs)
 	require.True(t, found)
 
 	vec, ok := result.([]string)
@@ -227,7 +227,7 @@ func TestOrderedSet_RefType(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 	matcher.SetSchema(s)
 
-	result, found := matcher.LookupAttribute(alice, follows)
+	result, found := requireAttributeLookup(t, matcher, alice, follows)
 	require.True(t, found)
 
 	vec, ok := result.([]any)
@@ -270,7 +270,7 @@ func TestOrderedSet_VsRegularVector(t *testing.T) {
 	matcher.SetSchema(s)
 
 	// OrderedSet should have 3 unique values
-	osResult, found := matcher.LookupAttribute(entity, orderedSetAttr)
+	osResult, found := requireAttributeLookup(t, matcher, entity, orderedSetAttr)
 	require.True(t, found)
 	osVec, ok := osResult.([]string)
 	require.True(t, ok)
@@ -278,7 +278,7 @@ func TestOrderedSet_VsRegularVector(t *testing.T) {
 	assert.Len(t, osVec, 3, "OrderedSet should have 3 unique values")
 
 	// Regular Vector should have all 5 values (duplicates allowed)
-	vecResult, found := matcher.LookupAttribute(entity, vectorAttr)
+	vecResult, found := requireAttributeLookup(t, matcher, entity, vectorAttr)
 	require.True(t, found)
 	vecVec, ok := vecResult.([]string)
 	require.True(t, ok)

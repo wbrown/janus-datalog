@@ -33,80 +33,119 @@ func NewScanSharingMatcher(inner PatternMatcher, registry *ScanRegistry, handler
 
 // Match implements PatternMatcher. For unbound scans, checks the registry
 // first. For bound scans, delegates directly to the inner matcher.
-func (m *ScanSharingMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
-	// Only share unbound scans — bound scans are specialized to binding values
-	if bindings != nil && len(bindings) > 0 {
-		return m.inner.Match(pattern, bindings)
-	}
-
-	fp := ScanFingerprint(pattern)
-
-	// Check registry for an existing shared scan
-	if shared := m.registry.Get(fp); shared != nil {
-		// Build remapped symbols for this caller's variable names
-		remapped := remapSymbols(shared.Symbols, pattern)
-		if m.handler != nil {
-			m.handler(annotations.Event{
-				Name: "scan-sharing/cache-hit",
-				Data: map[string]interface{}{
-					"fingerprint": fp,
-					"symbols":     symStrings(remapped),
-				},
-			})
-		}
-		return NewLazySeqRelation(shared.Seq, remapped), nil
-	}
-
-	// First scan — delegate to inner matcher
-	rel, err := m.inner.Match(pattern, bindings)
+func (m *ScanSharingMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
 	if err != nil {
 		return nil, err
 	}
+	// Only share unbound scans — bound scans are specialized to binding values
+	if bindings != nil && len(bindings) > 0 {
+		return m.inner.Match(q, bindings)
+	}
 
-	// Wrap the relation's iterator in a LazySeq and register
-	it := rel.Iterator()
-	needsCopy := rel.RequiresCopy()
-	seq := NewTupleSeq(it, needsCopy)
-	symbols := rel.Symbols()
-
-	m.registry.Put(fp, seq, symbols)
-
+	fp := ScanQueryFingerprint(q, pattern)
+	shared, hit, err := m.registry.GetOrCreate(fp, func() (*SharedScan, error) {
+		rel, err := m.inner.Match(q, bindings)
+		if err != nil {
+			return nil, err
+		}
+		return &SharedScan{
+			Seq:        NewTupleSeq(rel.Iterator(), rel.RequiresCopy()),
+			Symbols:    rel.Symbols(),
+			Options:    rel.Options(),
+			Properties: rel.Properties(),
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	remapped := remapSymbols(shared.Symbols, pattern)
+	properties := remapRelationProperties(shared.Properties, shared.Symbols, remapped)
 	if m.handler != nil {
+		eventName := "scan-sharing/cache-miss"
+		if hit {
+			eventName = "scan-sharing/cache-hit"
+		}
 		m.handler(annotations.Event{
-			Name: "scan-sharing/cache-miss",
+			Name: eventName,
 			Data: map[string]interface{}{
 				"fingerprint": fp,
-				"symbols":     symStrings(symbols),
+				"symbols":     symStrings(remapped),
 			},
 		})
 	}
+	return &LazySeqRelation{
+		seq:        shared.Seq,
+		symbols:    remapped,
+		options:    shared.Options,
+		properties: properties,
+	}, nil
+}
 
-	return NewLazySeqRelation(seq, symbols), nil
+func remapRelationProperties(
+	properties RelationProperties,
+	originalSymbols []query.Symbol,
+	remappedSymbols []query.Symbol,
+) RelationProperties {
+	renames := make(map[query.Symbol]query.Symbol, len(originalSymbols))
+	for i, original := range originalSymbols {
+		if i < len(remappedSymbols) {
+			renames[original] = remappedSymbols[i]
+		}
+	}
+	result := RelationProperties{}
+	for _, clause := range properties.Ordering {
+		renamed, ok := renames[clause.Variable]
+		if !ok {
+			break
+		}
+		clause.Variable = renamed
+		result.Ordering = append(result.Ordering, clause)
+	}
+	for _, key := range properties.Keys {
+		renamedKey := make([]query.Symbol, len(key))
+		valid := true
+		for i, symbol := range key {
+			renamed, ok := renames[symbol]
+			if !ok {
+				valid = false
+				break
+			}
+			renamedKey[i] = renamed
+		}
+		if valid {
+			result.Keys = append(result.Keys, renamedKey)
+		}
+	}
+	return result
 }
 
 // MatchWithConstraints implements PredicateAwareMatcher if the inner matcher
 // supports it. Sharing only applies to unbound scans without constraints.
 func (m *ScanSharingMatcher) MatchWithConstraints(
-	pattern *query.DataPattern,
+	q *query.Query,
 	bindings Relations,
 	constraints []StorageConstraint,
 ) (Relation, error) {
 	// If there are constraints, don't share — the result depends on constraints
 	if len(constraints) > 0 {
 		if pm, ok := m.inner.(PredicateAwareMatcher); ok {
-			return pm.MatchWithConstraints(pattern, bindings, constraints)
+			return pm.MatchWithConstraints(q, bindings, constraints)
 		}
-		return m.inner.Match(pattern, bindings)
+		return m.inner.Match(q, bindings)
 	}
-	return m.Match(pattern, bindings)
+	return m.Match(q, bindings)
 }
 
 // LookupAttribute forwards to inner matcher if it supports entity lookup.
-func (m *ScanSharingMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (m *ScanSharingMatcher) LookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	if elm, ok := m.inner.(EntityLookupMatcher); ok {
 		return elm.LookupAttribute(entity, attr)
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // CanFuseAttributeFetch forwards to inner matcher if it supports fusion, so

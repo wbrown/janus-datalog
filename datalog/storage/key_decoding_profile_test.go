@@ -15,19 +15,10 @@ func TestProfileBinaryDecoding(t *testing.T) {
 		t.Skip("Skipping profile in short mode")
 	}
 
-	profileQueryExecution(t, BinaryStrategy, "cpu_binary_decode.prof", 10000)
+	profileQueryExecution(t, "cpu_binary_decode.prof", 10000)
 }
 
-// TestProfileL85Decoding profiles query execution with L85 encoding
-func TestProfileL85Decoding(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping profile in short mode")
-	}
-
-	profileQueryExecution(t, L85Strategy, "cpu_l85_decode.prof", 10000)
-}
-
-func profileQueryExecution(t *testing.T, strategy KeyEncodingStrategy, profileName string, datasetSize int) {
+func profileQueryExecution(t *testing.T, profileName string, datasetSize int) {
 	// Create temp database
 	dir, err := os.MkdirTemp("", "profile-*")
 	if err != nil {
@@ -35,7 +26,7 @@ func profileQueryExecution(t *testing.T, strategy KeyEncodingStrategy, profileNa
 	}
 	defer os.RemoveAll(dir)
 
-	encoder := NewKeyEncoder(strategy)
+	encoder := &BinaryKeyEncoder{}
 	store, err := NewBadgerStore(dir, encoder)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +42,7 @@ func profileQueryExecution(t *testing.T, strategy KeyEncodingStrategy, profileNa
 		datoms[i] = datalog.Datom{
 			E:  entity,
 			A:  attr,
-			V:  int64(i % 1000), // Modulo to get some duplicate values
+			V:  int64(i % 1000),                                           // Modulo to get some duplicate values
 			Tx: datalog.ElementID{Lamport: uint64(i / 100), ReplicaID: 1}, // Group into transactions
 		}
 	}
@@ -109,16 +100,15 @@ func BenchmarkDecodingInPipeline(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			strategies := []struct {
-				name     string
-				strategy KeyEncodingStrategy
+			encoders := []struct {
+				name    string
+				encoder *BinaryKeyEncoder
 			}{
-				{"Binary", BinaryStrategy},
-				{"L85", L85Strategy},
+				{"Binary", &BinaryKeyEncoder{}},
 			}
 
-			for _, strat := range strategies {
-				b.Run(strat.name, func(b *testing.B) {
+			for _, tc := range encoders {
+				b.Run(tc.name, func(b *testing.B) {
 					// Create temp database
 					dir, err := os.MkdirTemp("", "bench-*")
 					if err != nil {
@@ -126,7 +116,7 @@ func BenchmarkDecodingInPipeline(b *testing.B) {
 					}
 					defer os.RemoveAll(dir)
 
-					encoder := NewKeyEncoder(strat.strategy)
+					encoder := tc.encoder
 					store, err := NewBadgerStore(dir, encoder)
 					if err != nil {
 						b.Fatal(err)

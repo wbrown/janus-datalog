@@ -51,8 +51,8 @@ type TransactionUpdater interface {
 // This is used for upsert operations to find existing values to retract
 type EntityLookup interface {
 	// LookupAttribute returns the current value of an attribute for an entity
-	// Returns (value, true) if found, (nil, false) if not found
-	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool)
+	// Returns (nil, false, nil) when absent.
+	LookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool, error)
 
 	// LookupAllAttributes returns all values for a cardinality-many attribute
 	// Returns empty slice if attribute not found
@@ -263,7 +263,10 @@ func (sw *StructWriter) updateField(tx TransactionUpdater, lookup EntityLookup, 
 	}
 
 	// Optimization: skip write if value hasn't changed
-	existingVal, found := lookup.LookupAttribute(entity, kw)
+	existingVal, found, err := lookup.LookupAttribute(entity, kw)
+	if err != nil {
+		return err
+	}
 	if found && datalog.ValuesEqual(existingVal, newVal) {
 		return nil
 	}

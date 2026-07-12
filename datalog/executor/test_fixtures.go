@@ -11,7 +11,11 @@ type MockPatternMatcher struct {
 }
 
 // Match implements the new PatternMatcher interface
-func (m *MockPatternMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	// First get all matching datoms
 	var allDatoms []datalog.Datom
 

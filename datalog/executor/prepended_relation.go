@@ -46,6 +46,10 @@ func (r *PrependedRelation) Symbols() []query.Symbol {
 	return r.symbols
 }
 
+func (r *PrependedRelation) Properties() RelationProperties {
+	return r.restRelation.Properties()
+}
+
 func (r *PrependedRelation) Size() int {
 	return -1 // Streaming
 }
@@ -96,7 +100,7 @@ func (r *PrependedRelation) Materialize() Relation {
 	}
 	it.Close()
 
-	return NewMaterializedRelationWithOptions(r.symbols, tuples, r.options)
+	return NewMaterializedRelationWithProperties(r.symbols, tuples, r.options, r.Properties())
 }
 
 func (r *PrependedRelation) Sort(orderBy []query.OrderByClause) Relation {

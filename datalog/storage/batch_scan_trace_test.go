@@ -60,7 +60,7 @@ func TestBatchScanTrace(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 
 	// Get all bars
-	symbolRel, err := matcher.Match(symbolPattern, nil)
+	symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
 	if err != nil {
 		t.Fatalf("Failed to get symbol bars: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestBatchScanTrace(t *testing.T) {
 
 	// Test without bindings first
 	t.Logf("Testing pattern without bindings...")
-	timeRelDirect, err := matcher.Match(timePattern, nil)
+	timeRelDirect, err := matcher.Match(query.PatternQuery(timePattern), nil)
 	if err != nil {
 		t.Fatalf("Failed direct match: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestBatchScanTrace(t *testing.T) {
 	t.Logf("Calling MatchWithConstraints with %d bindings (should use batch scanning)", barCount)
 
 	timeRel, err := matcher.MatchWithConstraints(
-		timePattern,
+		query.PatternQuery(timePattern),
 		executor.Relations{symbolRel},
 		[]executor.StorageConstraint{constraint},
 	)
@@ -125,7 +125,7 @@ func TestBatchScanTrace(t *testing.T) {
 
 		// Try without batch scanning to compare
 		t.Logf("Trying without constraints to debug...")
-		timeRel2, _ := matcher.Match(timePattern, executor.Relations{symbolRel})
+		timeRel2, _ := matcher.Match(query.PatternQuery(timePattern), executor.Relations{symbolRel})
 
 		debugCount := 0
 		totalDebug := 0

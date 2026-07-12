@@ -2,8 +2,11 @@ package executor
 
 import (
 	"fmt"
+	"math"
+	"math/rand"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -130,5 +133,129 @@ func TestEqualVectorValuesHashConsistently(t *testing.T) {
 	keyB := NewTupleKeyFull(Tuple{vecB})
 	if keyA.hash != keyB.hash {
 		t.Fatalf("ValuesEqual values must hash equally: %d != %d", keyA.hash, keyB.hash)
+	}
+}
+
+func TestSignedZeroHashesConsistentlyAcrossSetOperations(t *testing.T) {
+	positive := float64(0)
+	negative := math.Copysign(0, -1)
+	if !datalog.ValuesEqual(positive, negative) {
+		t.Fatal("precondition: signed zero values must be equal")
+	}
+
+	positiveKey := NewTupleKeyFull(Tuple{positive})
+	negativeKey := NewTupleKeyFull(Tuple{negative})
+	if positiveKey.hash != negativeKey.hash {
+		t.Fatalf("equal signed zeros must hash equally: %d != %d", positiveKey.hash, negativeKey.hash)
+	}
+
+	value := datalog.NewSymbol("?value")
+	if got := NewMaterializedRelation(
+		[]query.Symbol{value},
+		[]Tuple{{positive}, {negative}},
+	).Size(); got != 1 {
+		t.Fatalf("signed zeros must deduplicate to one tuple, got %d", got)
+	}
+
+	left := NewMaterializedRelation(
+		[]query.Symbol{value, datalog.NewSymbol("?left")},
+		[]Tuple{{positive, "left"}},
+	)
+	right := NewMaterializedRelation(
+		[]query.Symbol{value, datalog.NewSymbol("?right")},
+		[]Tuple{{negative, "right"}},
+	)
+	if got := HashJoin(left, right, []query.Symbol{value}).Size(); got != 1 {
+		t.Fatalf("signed-zero join keys must match, got %d rows", got)
+	}
+
+	grouped := executeGroupedAggregation(
+		NewMaterializedRelation(
+			[]query.Symbol{value},
+			[]Tuple{{positive}, {negative}},
+		),
+		[]query.Symbol{value},
+		[]query.FindAggregate{{Function: "count", Arg: value}},
+	)
+	if got := grouped.Size(); got != 1 {
+		t.Fatalf("signed zeros must form one aggregate group, got %d", got)
+	}
+}
+
+func TestValuesEqualImpliesEqualTupleHashRandomized(t *testing.T) {
+	for _, seed := range []int64{0x51a9ed, 0x51a9ee, 0x51a9ef, 0x51a9f0, 0x51a9f1, 0x51a9f2, 0x51a9f3, 0x51a9f4} {
+		t.Run(fmt.Sprintf("seed_%x", seed), func(t *testing.T) {
+			runEqualValueHashLaw(t, seed)
+		})
+	}
+}
+
+func runEqualValueHashLaw(t *testing.T, seed int64) {
+	elementID := datalog.ElementID{Lamport: 9, ReplicaID: 4}
+	deterministic := [][2]interface{}{
+		{int8(-7), int64(-7)},
+		{int16(17), int64(17)},
+		{int32(23), int64(23)},
+		{int(29), int64(29)},
+		{elementID, &elementID},
+		{datalog.NewKeyword(":same/value"), datalog.NewKeyword(":same/value")},
+		{datalog.NewSymbol("same-value"), datalog.NewSymbol("same-value")},
+		{nil, nil},
+		{[]int64{1, 2, 3}, []interface{}{int64(1), int64(2), int64(3)}},
+	}
+	for caseIndex, pair := range deterministic {
+		assertEqualValuesHashEqually(t, caseIndex, pair[0], pair[1])
+	}
+
+	random := rand.New(rand.NewSource(seed))
+	for caseIndex := 0; caseIndex < 2_000; caseIndex++ {
+		var left, right interface{}
+		switch random.Intn(7) {
+		case 0:
+			value := int64(random.Intn(2_000) - 1_000)
+			left, right = value, int(value)
+		case 1:
+			value := make([]byte, 1+random.Intn(32))
+			_, _ = random.Read(value)
+			left, right = value, append([]byte(nil), value...)
+		case 2:
+			values := []interface{}{int64(random.Intn(50)), fmt.Sprintf("v-%d", random.Intn(50))}
+			left = values
+			right = []interface{}{values[0], values[1]}
+		case 3:
+			values := []string{fmt.Sprintf("v-%d", random.Intn(50)), "tail"}
+			left = values
+			right = []interface{}{values[0], values[1]}
+		case 4:
+			instant := time.Unix(int64(random.Intn(10_000)), int64(random.Intn(1_000))).UTC()
+			left = instant
+			right = instant.In(time.FixedZone("random", random.Intn(12)*3600))
+		case 5:
+			left = float64(0)
+			right = math.Copysign(0, -1)
+		case 6:
+			seed := fmt.Sprintf("identity-%d", random.Intn(100))
+			left, right = datalog.NewIdentity(seed), datalog.NewIdentity(seed)
+		}
+		assertEqualValuesHashEqually(t, caseIndex+len(deterministic), left, right)
+	}
+}
+
+func assertEqualValuesHashEqually(
+	t *testing.T,
+	caseIndex int,
+	left interface{},
+	right interface{},
+) {
+	t.Helper()
+	if !datalog.ValuesEqual(left, right) {
+		t.Fatalf("case %d: generated values are not equal: %T(%v), %T(%v)",
+			caseIndex, left, left, right, right)
+	}
+	leftHash := NewTupleKeyFull(Tuple{left}).hash
+	rightHash := NewTupleKeyFull(Tuple{right}).hash
+	if leftHash != rightHash {
+		t.Fatalf("case %d: equal values hash differently: %d != %d (%T, %T)",
+			caseIndex, leftHash, rightHash, left, right)
 	}
 }

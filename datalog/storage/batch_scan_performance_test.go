@@ -96,7 +96,7 @@ func TestBatchScanPerformance(t *testing.T) {
 
 		start := time.Now()
 		// Note: This now uses batch scanning automatically for >100 bindings
-		result, err := matcher2.Match(timePattern, executor.Relations{bindingRel})
+		result, err := matcher2.Match(query.PatternQuery(timePattern), executor.Relations{bindingRel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func TestBatchScanPerformance(t *testing.T) {
 		// Use normal threshold (100) which will trigger batch scanning
 		// The new Match method uses batch scanning when appropriate
 		start := time.Now()
-		result, err := matcher.Match(timePattern, executor.Relations{bindingRel})
+		result, err := matcher.Match(query.PatternQuery(timePattern), executor.Relations{bindingRel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -154,7 +154,7 @@ func TestBatchScanPerformance(t *testing.T) {
 
 		start := time.Now()
 		result, err := matcher.MatchWithConstraints(
-			timePattern,
+			query.PatternQuery(timePattern),
 			executor.Relations{bindingRel},
 			[]executor.StorageConstraint{constraint},
 		)

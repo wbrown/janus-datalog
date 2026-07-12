@@ -158,17 +158,21 @@ func (m *IndexedMemoryMatcher) WithOptions(opts ExecutorOptions) *IndexedMemoryM
 }
 
 // Match implements PatternMatcher.Match
-func (m *IndexedMemoryMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *IndexedMemoryMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
 	// Delegate to MatchWithConstraints with no constraints
-	return m.MatchWithConstraints(pattern, bindings, nil)
+	return m.MatchWithConstraints(q, bindings, nil)
 }
 
 // MatchWithConstraints implements PredicateAwareMatcher.MatchWithConstraints
 func (m *IndexedMemoryMatcher) MatchWithConstraints(
-	pattern *query.DataPattern,
+	q *query.Query,
 	bindings Relations,
 	constraints []StorageConstraint,
 ) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	// Build indices on first use (lazy initialization)
 	m.buildIndices()
 

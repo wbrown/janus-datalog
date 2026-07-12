@@ -642,9 +642,15 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 		score += 10 * len(symbols.Provides)
 	}
 
-	// Predicates that filter are less valuable (should come after data loading)
+	// A predicate is eligible only after every required symbol is available.
+	// Once ready, apply it before loading unrelated data so later scans and
+	// joins receive the smallest relation possible.
 	if len(symbols.Requires) > 0 && len(symbols.Provides) == 0 {
-		score += 5
+		if _, ok := clause.(query.Predicate); ok {
+			score += 1000
+		} else {
+			score += 5
+		}
 	}
 
 	// NOT clauses filter - defer until all required symbols are available

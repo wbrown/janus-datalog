@@ -61,6 +61,10 @@ func ValidateValue(value interface{}, expected ValueType) error {
 		}
 		actualType = "Keyword"
 
+	case TypeSymbol:
+		_, ok = value.(datalog.Symbol)
+		actualType = "Symbol"
+
 	case TypeTx:
 		switch value.(type) {
 		case datalog.ElementID:

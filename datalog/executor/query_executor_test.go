@@ -22,7 +22,11 @@ type MockMatcher struct {
 	matchFunc func(*query.DataPattern, Relations) (Relation, error)
 }
 
-func (m *MockMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *MockMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	if m.matchFunc != nil {
 		return m.matchFunc(pattern, bindings)
 	}
@@ -150,7 +154,7 @@ func TestExecutePattern(t *testing.T) {
 		},
 	}
 
-	result, err := executor.executePattern(ctx, pattern, nil)
+	result, err := executor.executePattern(ctx, query.PatternQuery(pattern), pattern, nil)
 	if err != nil {
 		t.Fatalf("executePattern failed: %v", err)
 	}
@@ -175,9 +179,11 @@ func TestExecuteExpression(t *testing.T) {
 		// Expression: [(+ ?x 100) ?y]
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
-				Op:    query.OpAdd,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
-				Right: query.ConstantTerm{Value: int64(100)},
+				Op: query.OpAdd,
+				Args: []query.Term{
+					query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					query.ConstantTerm{Value: int64(100)},
+				},
 			},
 			Binding: datalog.NewSymbol("?y"),
 		}
@@ -214,9 +220,11 @@ func TestExecuteExpression(t *testing.T) {
 		// Expression: [(+ ?x ?y) ?z] - requires both ?x and ?y
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
-				Op:    query.OpAdd,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
-				Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				Op: query.OpAdd,
+				Args: []query.Term{
+					query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+					query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				},
 			},
 			Binding: datalog.NewSymbol("?z"),
 		}

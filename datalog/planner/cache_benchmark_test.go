@@ -132,9 +132,11 @@ func createComplexQuery() *query.Query {
 			// Add an expression
 			&query.Expression{
 				Function: query.ArithmeticFunction{
-					Op:    query.OpAdd,
-					Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
-					Right: query.ConstantTerm{Value: int64(10)},
+					Op: query.OpAdd,
+					Args: []query.Term{
+						query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
+						query.ConstantTerm{Value: int64(10)},
+					},
 				},
 				Binding: datalog.NewSymbol("?future_age"),
 			},

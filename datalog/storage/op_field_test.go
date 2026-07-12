@@ -23,7 +23,7 @@ import (
 
 // TestOpFieldInKeyEncoding verifies Op is correctly encoded/decoded in keys
 func TestOpFieldInKeyEncoding(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	// Create datom with OpCRDTAdd
 	datom := &datalog.Datom{
@@ -64,7 +64,7 @@ func TestOpFieldInKeyEncoding(t *testing.T) {
 
 // TestOpFieldPreservesRawValueType verifies V stores raw type, not TypeBytes
 func TestOpFieldPreservesRawValueType(t *testing.T) {
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 
 	// Create datom with string value
 	datom := &datalog.Datom{
@@ -145,7 +145,7 @@ func TestAddMethodUsesOpField(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestRemoveMethodUsesOpField(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestAVETLookupWithOpField(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestSetMethodGeneratesCorrectOps(t *testing.T) {
 		},
 	}
 
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -473,7 +473,7 @@ func TestSetMethodGeneratesCorrectOps(t *testing.T) {
 	}
 
 	// Verify replacement
-	results2, err := matcher.Match(pattern, nil)
+	results2, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}

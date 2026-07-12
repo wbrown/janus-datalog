@@ -47,6 +47,10 @@ func (ur *UnionRelation) Symbols() []query.Symbol {
 	return ur.symbols
 }
 
+func (ur *UnionRelation) Properties() RelationProperties {
+	return deduplicatedProperties(ur.symbols)
+}
+
 // Iterator returns an iterator that consumes from the channel (first call) or cache (subsequent calls)
 func (ur *UnionRelation) Iterator() Iterator {
 	ur.cacheMutex.Lock()
@@ -140,7 +144,12 @@ func (ur *UnionRelation) Project(symbols []query.Symbol) (Relation, error) {
 func (ur *UnionRelation) Materialize() Relation {
 	var allTuples []Tuple
 	err := collectTuplesInto(&allTuples, ur)
-	mat := NewMaterializedRelation(ur.symbols, allTuples)
+	mat := NewMaterializedRelationWithProperties(
+		ur.symbols,
+		allTuples,
+		ur.opts,
+		ur.Properties(),
+	)
 	mat.err = err
 	return mat
 }
@@ -250,9 +259,7 @@ func (it *UnionIterator) Next() bool {
 
 			// Check if we've seen this tuple before (deduplication)
 			key := NewTupleKeyFull(tuple)
-			if !it.seen.Exists(key) {
-				// New unique tuple - mark as seen
-				it.seen.Put(key, true)
+			if !it.seen.PutIfAbsent(key, true) {
 				it.currentTuple = tuple
 
 				// Accumulate into the local cache; published on completion.

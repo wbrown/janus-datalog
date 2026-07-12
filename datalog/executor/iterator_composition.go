@@ -417,8 +417,7 @@ func (it *DedupIterator) Next() bool {
 	for it.source.Next() {
 		it.current = it.source.Tuple()
 		key := NewTupleKeyFull(it.current)
-		if !it.seen.Exists(key) {
-			it.seen.Put(key, true)
+		if !it.seen.PutIfAbsent(key, true) {
 			return true
 		}
 	}

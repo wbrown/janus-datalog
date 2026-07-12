@@ -60,7 +60,7 @@ func TestProductionQueryPattern(t *testing.T) {
 
 		// No bindings - just find all morning bars
 		start := time.Now()
-		result, err := matcher.Match(pattern, nil)
+		result, err := matcher.Match(query.PatternQuery(pattern), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +107,7 @@ func TestProductionQueryPattern(t *testing.T) {
 		)
 
 		start := time.Now()
-		result, err := matcher.Match(pattern, executor.Relations{symbolRel})
+		result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{symbolRel})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -161,7 +161,7 @@ func TestProductionQueryPattern(t *testing.T) {
 			)
 
 			start := time.Now()
-			result, _ := matcher.Match(pattern, executor.Relations{symbolRel})
+			result, _ := matcher.Match(query.PatternQuery(pattern), executor.Relations{symbolRel})
 
 			// Iterate and count results
 			it := result.Iterator()

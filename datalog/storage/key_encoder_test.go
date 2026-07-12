@@ -30,13 +30,12 @@ func TestKeyEncoders(t *testing.T) {
 		Tx: datalog.ElementID{Lamport: uint64(1)},
 	}
 
-	// Test both encoders
+	// Physical storage keys use the binary encoder.
 	encoders := []struct {
 		name    string
-		encoder KeyEncoder
+		encoder *BinaryKeyEncoder
 	}{
-		{"L85", NewKeyEncoder(L85Strategy)},
-		{"Binary", NewKeyEncoder(BinaryStrategy)},
+		{"Binary", &BinaryKeyEncoder{}},
 	}
 
 	for _, tc := range encoders {
@@ -116,13 +115,12 @@ func TestKeyEncoderSortOrder(t *testing.T) {
 		datoms = append(datoms, datom)
 	}
 
-	// Test both encoders maintain sort order
+	// Verify the physical encoder maintains sort order.
 	encoders := []struct {
 		name    string
-		encoder KeyEncoder
+		encoder *BinaryKeyEncoder
 	}{
-		{"L85", NewKeyEncoder(L85Strategy)},
-		{"Binary", NewKeyEncoder(BinaryStrategy)},
+		{"Binary", &BinaryKeyEncoder{}},
 	}
 
 	for _, tc := range encoders {

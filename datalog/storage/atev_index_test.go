@@ -11,7 +11,7 @@ import (
 )
 
 // TestATEVEncoderRoundTrip verifies that the ATEV index key encodes and decodes
-// to the same datom components for both the binary and L85 encoders.
+// to the same datom components.
 func TestATEVEncoderRoundTrip(t *testing.T) {
 	entity := sha1.Sum([]byte("atev-entity"))
 	datom := &datalog.Datom{
@@ -23,10 +23,9 @@ func TestATEVEncoderRoundTrip(t *testing.T) {
 
 	encoders := []struct {
 		name    string
-		encoder KeyEncoder
+		encoder *BinaryKeyEncoder
 	}{
-		{"Binary", NewKeyEncoder(BinaryStrategy)},
-		{"L85", NewKeyEncoder(L85Strategy)},
+		{"Binary", &BinaryKeyEncoder{}},
 	}
 
 	for _, tc := range encoders {
@@ -99,7 +98,7 @@ func TestATEVIsPopulatedOnCommit(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +155,7 @@ func TestMaxElementIDForAttributeUsesATEV(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +207,7 @@ func TestChooseIndex_ABoundPlusTxBound_PicksATEV(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +243,7 @@ func TestChooseIndex_ABoundPlusTxBoundPlusVBound_DoesNotPickATEV(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +274,7 @@ func TestEndToEndABoundTxBoundQuery(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +308,7 @@ func TestEndToEndABoundTxBoundQuery(t *testing.T) {
 		},
 	}
 
-	result, err := matcher.Match(pattern, nil)
+	result, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("match: %v", err)
 	}
@@ -353,7 +352,7 @@ func TestMaxElementIDForAttribute_AfterRetraction(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +428,7 @@ func TestMaxElementIDForAttribute_MultipleWritesToSameEA(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +478,7 @@ func TestCache_IsAttributeFresh_Integration(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +529,7 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +580,7 @@ func TestSimpleBatchScanner_BuildKey_ATEV_VVaries(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +623,7 @@ func TestChooseIndex_TxOnly_TAEV_WithElementID(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := NewBadgerStore(dir, NewKeyEncoder(BinaryStrategy))
+	store, err := NewBadgerStore(dir, &BinaryKeyEncoder{})
 	if err != nil {
 		t.Fatal(err)
 	}

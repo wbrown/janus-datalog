@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"time"
 	"unsafe"
@@ -88,6 +89,13 @@ func hashValue(v interface{}) uint64 {
 			return 0
 		}
 		return uint64(uintptr(unsafe.Pointer(ptr)))
+	case datalog.Symbol:
+		// Symbols use the same interned-pointer identity contract as Identity
+		// and Keyword, so hashing remains O(1) with no string conversion.
+		if ptr == nil {
+			return 0
+		}
+		return uint64(uintptr(unsafe.Pointer(ptr)))
 	case *uint64:
 		if ptr == nil {
 			return 0
@@ -95,7 +103,7 @@ func hashValue(v interface{}) uint64 {
 		return *ptr
 	}
 
-	// Remaining value types (Identity/Keyword/*uint64 handled above).
+	// Remaining value types (Identity/Keyword/Symbol/*uint64 handled above).
 	switch val := v.(type) {
 	case string:
 		return hashString(val)
@@ -139,8 +147,12 @@ func hashValue(v interface{}) uint64 {
 		return val
 
 	case float64:
-		// Use unsafe to get float bits
-		return *(*uint64)(unsafe.Pointer(&val))
+		// Go equality treats +0 and -0 as equal, so they must share a hash
+		// bucket. Other floats hash by their canonical IEEE representation.
+		if val == 0 {
+			return 0
+		}
+		return math.Float64bits(val)
 
 	case bool:
 		if val {
@@ -306,6 +318,23 @@ func (m *TupleKeyMap) Put(key TupleKey, value interface{}) {
 	})
 }
 
+// PutValue adds or replaces a single-value key without constructing a
+// one-element TupleKey values slice on lookup-heavy paths.
+func (m *TupleKeyMap) PutValue(keyValue, value interface{}) {
+	hash := hashValue(keyValue)
+	entries := m.m[hash]
+	for i := range entries {
+		if len(entries[i].values) == 1 && datalog.ValuesEqual(entries[i].values[0], keyValue) {
+			entries[i].value = value
+			return
+		}
+	}
+	m.m[hash] = append(entries, mapEntry{
+		values: []interface{}{keyValue},
+		value:  value,
+	})
+}
+
 // PutIfAbsent inserts key with the given value only if the key is not
 // already present, and reports whether it already existed. It walks the
 // hash bucket exactly once, where a separate Exists+Put pair would walk it
@@ -339,6 +368,20 @@ func (m *TupleKeyMap) Get(key TupleKey) (interface{}, bool) {
 		}
 	}
 
+	return nil, false
+}
+
+// GetValue retrieves a single-value key without allocating a TupleKey.
+func (m *TupleKeyMap) GetValue(keyValue interface{}) (interface{}, bool) {
+	entries, ok := m.m[hashValue(keyValue)]
+	if !ok {
+		return nil, false
+	}
+	for _, entry := range entries {
+		if len(entry.values) == 1 && datalog.ValuesEqual(entry.values[0], keyValue) {
+			return entry.value, true
+		}
+	}
 	return nil, false
 }
 

@@ -118,7 +118,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			val, _ := matcher.LookupAttribute(entity, attr)
+			val, _ := requireAttributeLookup(b, matcher, entity, attr)
 			if val == nil {
 				b.Fatal("Expected value")
 			}
@@ -147,7 +147,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			val, _ := matcher.LookupAttribute(entity, attr)
+			val, _ := requireAttributeLookup(b, matcher, entity, attr)
 			if val == nil {
 				b.Fatal("Expected value")
 			}
@@ -176,7 +176,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			val, _ := matcher.LookupAttribute(entity, attr)
+			val, _ := requireAttributeLookup(b, matcher, entity, attr)
 			if val == nil {
 				b.Fatal("Expected value")
 			}
@@ -205,7 +205,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			val, _ := matcher.LookupAttribute(entity, attr)
+			val, _ := requireAttributeLookup(b, matcher, entity, attr)
 			if val == nil {
 				b.Fatal("Expected value")
 			}
@@ -234,7 +234,7 @@ func BenchmarkCRDTRead(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			val, _ := matcher.LookupAttribute(entity, attr)
+			val, _ := requireAttributeLookup(b, matcher, entity, attr)
 			if val == nil {
 				b.Fatal("Expected value")
 			}
@@ -268,7 +268,7 @@ func BenchmarkCRDTResolution(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			val, _ := matcher.LookupAttribute(entity, attr)
+			val, _ := requireAttributeLookup(b, matcher, entity, attr)
 			slice := val.([]interface{})
 			if len(slice) != 50 {
 				b.Fatalf("Expected 50 members, got %d", len(slice))
@@ -306,7 +306,7 @@ func BenchmarkCRDTResolution(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			val, _ := matcher.LookupAttribute(entity, attr)
+			val, _ := requireAttributeLookup(b, matcher, entity, attr)
 			slice := val.([]interface{})
 			if len(slice) != 50 {
 				b.Fatalf("Expected 50 members, got %d", len(slice))
@@ -338,7 +338,7 @@ func BenchmarkCRDTResolution(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			val, _ := matcher.LookupAttribute(entity, attr)
+			val, _ := requireAttributeLookup(b, matcher, entity, attr)
 			if val != "Name999" {
 				b.Fatalf("Expected Name999, got %v", val)
 			}

@@ -8,8 +8,8 @@ import (
 )
 
 // PrefetchEntities loads all attributes for a set of entities into the EA cache
-// in a single-pass EATV scan per entity. Entities are sorted by L85 byte order
-// (= disk order) for efficient forward-only iteration through BadgerDB.
+// in a single-pass EATV scan per entity. Entities are sorted by raw hash byte
+// order (= disk order) for efficient forward-only iteration through BadgerDB.
 //
 // CRDT resolution happens inline as attribute boundaries are crossed during
 // iteration — no second pass. Each (E, A) group is dispatched to
@@ -21,7 +21,7 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 		return
 	}
 
-	// Sort entities by their 20-byte hash (= L85 sort order = disk order)
+	// Sort entities by their 20-byte hash (= disk order)
 	sort.Slice(entities, func(i, j int) bool {
 		return bytes.Compare(entities[i].Bytes(), entities[j].Bytes()) < 0
 	})

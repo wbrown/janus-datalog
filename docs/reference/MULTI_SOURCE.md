@@ -297,18 +297,21 @@ To create a custom data source, implement `PatternMatcher`:
 
 ```go
 type PatternMatcher interface {
-    Match(pattern *query.DataPattern, bindings Relations) (Relation, error)
+    Match(q *query.Query, bindings Relations) (Relation, error)
 }
 ```
 
-The `Match` method receives a pattern (with entity, attribute, value elements that may be variables or constants) and existing bindings from prior joins. It returns a `Relation` containing all matching tuples.
+The query fragment contains exactly one data pattern. Extract it with
+`q.SingleDataPattern()`. `q.OrderBy` and `q.Limit` may carry physical
+requirements after the executor has proven pushdown safe. A custom source may
+ignore those requirements, but must not claim properties it does not satisfy.
 
 Optionally implement `PredicateAwareMatcher` for predicate pushdown:
 
 ```go
 type PredicateAwareMatcher interface {
     PatternMatcher
-    MatchWithConstraints(pattern *query.DataPattern, bindings Relations, constraints []StorageConstraint) (Relation, error)
+    MatchWithConstraints(q *query.Query, bindings Relations, constraints []StorageConstraint) (Relation, error)
 }
 ```
 

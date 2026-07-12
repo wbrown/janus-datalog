@@ -116,7 +116,7 @@ func BenchmarkPrebuiltDatabase_PatternMatching(b *testing.B) {
 
 			// Run benchmark
 			for i := 0; i < b.N; i++ {
-				result, err := matcher.Match(tc.pattern, bindings)
+				result, err := matcher.Match(query.PatternQuery(tc.pattern), bindings)
 				if err != nil {
 					b.Fatalf("Match failed: %v", err)
 				}
@@ -165,7 +165,7 @@ func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 
 		for i := 0; i < b.N; i++ {
 			// Get all bars for symbol
-			barsResult, err := matcher.Match(symbolPattern, nil)
+			barsResult, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
 			if err != nil {
 				b.Fatalf("Symbol match failed: %v", err)
 			}
@@ -184,7 +184,7 @@ func BenchmarkPrebuiltDatabase_FullQuery(b *testing.B) {
 						query.Variable{Name: datalog.NewSymbol("?open")},
 					},
 				}
-				openResult, _ := matcher.Match(openPattern, nil)
+				openResult, _ := matcher.Match(query.PatternQuery(openPattern), nil)
 				// Check if result has any tuples by iterating
 				openIt := openResult.Iterator()
 				if openIt.Next() {

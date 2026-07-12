@@ -22,7 +22,6 @@ type Executor struct {
 // NewExecutor creates a new query executor with default options
 func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 	defaultOpts := planner.PlannerOptions{
-		UseStreamingSubqueryUnion:  false,
 		EnableIteratorComposition:  true,
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
@@ -30,7 +29,6 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 		MaxSubqueryWorkers:         0,
 		EnableStreamingJoins:       false,
 		EnableStreamingAggregation: true,
-		EnableDebugLogging:         false,
 		EnableAttributeFetchFusion: true,
 	}
 	return NewExecutorWithOptions(matcher, resolver, defaultOpts)
@@ -69,21 +67,17 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 // their zero value.
 func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
-		EnableIteratorComposition:       opts.EnableIteratorComposition,
-		EnableTrueStreaming:             opts.EnableTrueStreaming,
-		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
-		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
-		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
-		UseStreamingSubqueryUnion:       opts.UseStreamingSubqueryUnion,
-		UseComponentizedSubquery:        opts.UseComponentizedSubquery,
-		EnableStreamingJoins:            opts.EnableStreamingJoins,
-		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
-		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
-		EnableDebugLogging:              opts.EnableDebugLogging,
-		EnableScanSharing:               opts.EnableScanSharing,
-		EnableEntityPrefetch:            opts.EnableEntityPrefetch,
-		EnableAttributeFetchFusion:      opts.EnableAttributeFetchFusion,
-		IndexNestedLoopThreshold:        opts.IndexNestedLoopThreshold,
+		EnableIteratorComposition:  opts.EnableIteratorComposition,
+		EnableTrueStreaming:        opts.EnableTrueStreaming,
+		EnableSymmetricHashJoin:    opts.EnableSymmetricHashJoin,
+		EnableParallelSubqueries:   opts.EnableParallelSubqueries,
+		MaxSubqueryWorkers:         opts.MaxSubqueryWorkers,
+		EnableStreamingJoins:       opts.EnableStreamingJoins,
+		EnableStreamingAggregation: opts.EnableStreamingAggregation,
+		EnableScanSharing:          opts.EnableScanSharing,
+		EnableEntityPrefetch:       opts.EnableEntityPrefetch,
+		EnableAttributeFetchFusion: opts.EnableAttributeFetchFusion,
+		IndexNestedLoopThreshold:   opts.IndexNestedLoopThreshold,
 	}
 }
 
@@ -228,6 +222,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 	if err != nil {
 		return nil, err
 	}
+	limitApplied := false
 	if len(plan.Query.OrderBy) > 0 {
 		// Sort keys on constant inputs (scalar/tuple :in) are identity
 		// sorts — dropped here, observably rather than silently.
@@ -243,13 +238,28 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			}
 		}
 		if len(effective) > 0 {
-			result = result.Sort(effective)
+			retained := query.RetainedSortSymbols(plan.Query)
+			orderSatisfied := plan.Query.Limit != nil &&
+				result.Properties().satisfiesOrdering(effective)
+			if orderSatisfied {
+				// The physical relation already supplies the requested Datalog
+				// order. Leave it streaming; the limit applied below can stop
+				// the source iterator after N rows. If retained sort symbols
+				// are projected away, projection/dedup runs before that limit.
+			} else if plan.Query.Limit != nil && len(retained) == 0 {
+				// No post-sort projection can collapse rows, so bounded Top-N
+				// is equivalent to full sort followed by limit.
+				result = TopNRelation(result, effective, *plan.Query.Limit)
+				limitApplied = true
+			} else {
+				result = result.Sort(effective)
+			}
 			// The planner retained non-projected sort columns through the
 			// final projection so the sort above could resolve them; strip
 			// the result back to the declared :find shape. The projection
 			// deduplicates (set semantics), keeping each duplicate's first
 			// occurrence in sorted order.
-			if retained := query.RetainedSortSymbols(plan.Query); len(retained) > 0 {
+			if len(retained) > 0 {
 				result, err = result.Project(extractFindSymbols(plan.Query.Find))
 				if err != nil {
 					return nil, err
@@ -257,7 +267,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			}
 		}
 	}
-	if plan.Query.Limit != nil {
+	if plan.Query.Limit != nil && !limitApplied {
 		result = NewLimitRelation(result, *plan.Query.Limit)
 	}
 	// Pull rendering is result presentation, not a relational operation:
@@ -309,17 +319,17 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		currentGroups = []Relation{boundRelation}
 	}
 
-	// Extract constant-bindable scalar inputs from phase metadata.
-	// These are scalar inputs that only appear in predicates/expressions, not data patterns.
-	// Resolving them as constants prevents disjoint relation groups and Product() panics.
+	// Extract constant-only scalar inputs from the phase Datalog :in clauses.
+	// Resolving them as constants prevents disjoint relation groups.
 	if len(currentGroups) > 0 {
 		allConstBindable := make(map[query.Symbol]bool)
 		for _, phase := range plan.Phases {
-			if cbInputs, ok := phase.Metadata["constant_bindable_inputs"]; ok {
-				if syms, ok := cbInputs.([]query.Symbol); ok {
-					for _, sym := range syms {
-						allConstBindable[sym] = true
-					}
+			if phase.Query == nil {
+				continue
+			}
+			for _, input := range phase.Query.In {
+				if scalar, ok := input.(query.ScalarInput); ok {
+					allConstBindable[scalar.Symbol] = true
 				}
 			}
 		}
@@ -377,16 +387,15 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		}
 	}
 
-	// Check for conditional aggregates and emit annotation for observability
-	// The planner emits two representations of conditional aggregates:
-	// 1. Metadata: phase.Metadata["conditional_aggregates"] - used by legacy executor
-	// 2. Find clause: phase.Find contains FindAggregate with Predicate - used by QueryExecutor
-	// This dual approach maintains backward compatibility while following "Datalog is the IR"
+	// Count conditional aggregates directly from the Datalog phase fragments.
 	var condAggCount int
 	for _, phase := range plan.Phases {
-		if phase.Metadata != nil {
-			if condAggs, ok := phase.Metadata["conditional_aggregates"].([]planner.ConditionalAggregate); ok {
-				condAggCount += len(condAggs)
+		if phase.Query == nil {
+			continue
+		}
+		for _, findElement := range phase.Query.Find {
+			if aggregate, ok := findElement.(query.FindAggregate); ok && aggregate.IsConditional() {
+				condAggCount++
 			}
 		}
 	}
@@ -451,7 +460,12 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 				keepErr := collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
-				materialized := NewMaterializedRelationWithOptions(group.Symbols(), tuples, opts)
+				materialized := NewMaterializedRelationWithProperties(
+					group.Symbols(),
+					tuples,
+					opts,
+					group.Properties(),
+				)
 				materialized.err = keepErr
 
 				projected, err := materialized.Project(phase.Keep)
@@ -1150,7 +1164,12 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 				keepErr := collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
-				materialized := NewMaterializedRelationWithOptions(group.Symbols(), tuples, opts)
+				materialized := NewMaterializedRelationWithProperties(
+					group.Symbols(),
+					tuples,
+					opts,
+					group.Properties(),
+				)
 				materialized.err = keepErr
 
 				projected, err := materialized.Project(phase.Keep)

@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2026-05-29 (v0.12.0)
-**Version**: Clause-based planner, QueryExecutor, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations, and same-entity attribute-fetch fusion.
+**Last Updated**: 2026-07-12 (v0.12.0)
+**Version**: Clause-based planner, QueryExecutor, ready-predicate scheduling, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations including unique-key build specialization, compiled storage hash matching, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation including keyed join dedup elision, natural/semi/anti joins, and OR/fallback/union derivation, existing-order scan termination, ATEV/TAEV/AETV/EATV order-aware history matching, and branch-wide randomized correctness hardening.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-05-29, same-entity attribute-fetch fusion).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-12, OR/fallback/union property propagation).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -28,10 +28,32 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
 - ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` column attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
+- ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
+- ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Bounded Top-N finalization**: ordered limits without non-projected sort keys use an O(N)-memory heap instead of materializing and sorting every row. Across 10K/100K rows and N=1/10/100: **97.1% faster**, **99.96% less memory**, **99.86% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64). The source is still fully scanned; index-order pushdown remains separate.
+- ✅ **One-pass same-entity attribute bundles**: contiguous cardinality-one fetches sharing a bound entity now attach all output columns in one traversal and one materialization. **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 at 1,000 entities is **24.8% faster, 56.5% less memory, 36.5% fewer allocations** (n=10; verified 2026-07-11, darwin/arm64).
+- ⚠️ **Typed Relation properties (foundation)**: `Relation.Properties()` carries ordering and candidate-key guarantees using Datalog symbols. Initial conservative propagation plus key-aware streaming projection reduces the complex-query checkpoint by **5.45% memory** and **2.71% allocations** with statistically unchanged time. Join/OR derivations and broader storage coverage remain (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Existing-order scan termination (6a)**: when a relation already satisfies Datalog `:order-by`, ordered limits stream directly through `LimitRelation`. On 10K AETV-ordered entities, N=1/10/100 scans exactly N rows and is **98.1–99.7% faster**, with **97.0–99.4% less memory** and **98.0–99.6% fewer allocations**. Order-aware index selection (6b) remains separate (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **History ATEV order-aware matching (6b first shape)**: `PatternMatcher.Match` now receives a one-pattern Datalog query fragment. Safe history queries with constant A and `Tx desc, E asc` select ATEV and scan exactly N raw datoms: **99.15% faster, 99.07% less memory, 98.89% fewer allocations** geomean. Latest/as-of explicitly decline Tx-primary ATEV (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **History TAEV order-aware matching (6b second shape)**: unfiltered history transaction-log queries ordered by `Tx desc, A asc, E asc` select TAEV and scan exactly N raw datoms. Across N=1/10/100: **99.16% faster, 99.05% less memory, 98.86% fewer allocations** geomean; scans fall from 10,100 to exactly N. Latest/as-of and filtered patterns explicitly decline (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **History AETV order-aware matching (6b third shape)**: constant-attribute raw history ordered by `E asc, Tx desc` consumes AETV directly and scans exactly N datoms. Across N=1/10/100: **99.15% faster, 99.07% less memory, 98.89% fewer allocations** geomean; scans fall from 10,000 to exactly N. Latest/as-of keep their existing CRDT-resolved path without the raw-history property (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **History EATV order-aware matching (6b fourth shape)**: constant-entity raw history ordered by `A asc, Tx desc` consumes EATV directly and scans exactly N datoms. Across N=1/10/100: **99.13% faster, 99.00% less memory, 98.86% fewer allocations** geomean; scans fall from 10,000 to exactly N. Latest/as-of keep their existing CRDT-resolved path without the raw-history property (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Key-preserving join properties**: natural joins preserve one side's candidate keys when the opposite join symbols contain a candidate key, allowing retained-key streaming projections to omit redundant deduplication. The focused 10K/100K join-projection path is **24.42% faster, uses 25.15% less memory, and performs 9.13% fewer allocations** geomean. The default complex-query checkpoint is statistically unchanged (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Semi/anti join properties**: semi-joins and anti-joins preserve all left properties and skip redundant result deduplication when a left candidate key proves uniqueness. Focused 10K/100K filters are **27.54% faster, use 32.80% less memory, and perform 20.02% fewer allocations** geomean. The default complex-query checkpoint remains statistically unchanged (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Keyed hash-join dedup elision**: when a derived result candidate key proves uniqueness, streaming, materialized, and symmetric hash joins omit their internal full-tuple `seen` table. Against the already key-propagating focused baseline this is **32.77% faster, uses 32.77% less memory, and performs 10.05% fewer allocations** geomean. The default complex-query checkpoint remains statistically unchanged because its dominant OR/fallback-fed joins do not carry candidate keys (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **Compiled storage hash matching**: cache-disabled hash-join scans now use typed `TupleKeyMap` probes and precompiled pattern/binding slots instead of per-probe strings and per-candidate symbol maps. The 10K-datom focused path is **7.16% faster, uses 15.65% less memory, and performs 32.83% fewer allocations** (`n=10`; verified 2026-07-11, darwin/arm64).
+- ✅ **Ready-predicate scheduling**: once all required symbols are available, the planner places a predicate before unrelated remaining scans in the same emitted `RealizedPlan`. A 10K-entity selective filter before payload retrieval is **62.85% faster, uses 87.12% less memory, and performs 78.88% fewer allocations**. The complex checkpoint is statistically unchanged (`n=10`; verified 2026-07-12, darwin/arm64).
+- ✅ **Unique-key hash-build specialization**: when build-side join symbols contain a candidate key, hash joins store one tuple directly instead of allocating a one-element fanout slice. Against the already keyed and dedup-eliding focused baseline this is **5.51% faster, uses 7.25% less memory, and performs 11.11% fewer allocations** geomean. The complex checkpoint remains unchanged because its dominant fallback/subquery build sides lack candidate-key proofs (`n=10`; verified 2026-07-12, darwin/arm64).
+- ✅ **OR/fallback/union properties**: singleton `or-default` branches preserve unaffected outer keys, multi-row fallback and correlated union derive conservative composite keys under typed set deduplication, and ordinary unions expose only their full output key absent a branch-disjointness proof. The focused 10K/100K fallback-projection path is **15.09% faster, uses 8.62% less memory, and performs 3.59% fewer allocations** geomean (median of `n=10`; verified 2026-07-12, darwin/arm64). A 500-case randomized differential matrix validates results, candidate keys, and ordering across singleton, pattern, and expanding-expression branches. The complex checkpoint drops to **1.043M allocations/op**; separate runs do not establish a wall-time gain.
+- ✅ **Optimization correctness hardening**: independent randomized/property gates now cover value equality/hash consistency (16,000 cases), natural joins and projections against an O(n²) oracle (3,200), OR/union against a direct branch interpreter (4,000), Top-N against a native typed comparator (4,000), all 720 predicate clause permutations, and all four history ordered-limit shapes against full-sort references. Package-wide and focused race gates, repeated shuffled-order execution, typed scan fingerprints, and LazySeq error/close replay are also pinned. The pass fixed signed-zero hash mismatches, expanding-expression key claims, workspace aliasing in semi/anti joins, dropped iterator errors, unsafe AsOf fusion, swallowed lookup errors, scan-sharing physical-fragment collisions, and malformed compiled bindings. These are correctness gates; no new performance claim is attached.
 
 ### Claims Requiring Qualification
 - ⚠️ **Plan quality**: "13% better plans" not supported by current benchmarks (planners perform identically)
 - ⚠️ **In-memory indexing**: "49-4802×" not reproducible (optimizations became pervasive, both paths now fast)
+- ⚠️ **Streaming joins**: On the production-shaped complex checkpoint,
+  `EnableStreamingJoins=true` is **8.04% slower**, uses **3.78% more memory**,
+  and performs **8.34% more allocations** than the materialized default
+  (`p=0.000`, `n=10`). Keep streaming joins opt-in.
 
 ---
 
@@ -817,6 +839,360 @@ All seven pass against the final state on this branch. `go test -count=1
 blocking `rm` / `rmdir` / `unlink` in Bash commands (word-boundary
 match; `git rm` passes).
 
+### 18. Typed Aggregation Keys via `TupleKeyMap` (COMPLETE - July 2026)
+**Status**: ✅ Batch and streaming grouped aggregation use typed tuple keys
+
+**Problem**: Both aggregation paths formed group identity by formatting each
+value and joining the strings with `|`. The representation was expensive and
+not injective:
+
+- `(int64(5), "x")` and `("5", "x")` produced the same key.
+- `("a|b", "c")` and `("a", "b|c")` produced the same key.
+- Distinct groups silently merged and their aggregate values combined.
+
+**Change**:
+
+- Replaced both string-key maps with the existing `TupleKeyMap`, reusing the
+  same typed hashing and `ValuesEqual` semantics as joins and deduplication.
+- The map value is the aggregation state for that typed key:
+  `batchAggregateGroup` for batch mode and `streamingAggregateGroup` for
+  streaming mode.
+- A parallel first-seen-order slice provides result traversal because
+  `TupleKeyMap` is optimized for lookup rather than enumeration.
+- Added red/green tests covering delimiter shifts and int, bool, and float
+  values paired with their string renderings in both aggregation modes.
+
+**Measurement** (`BenchmarkGroupedAggregationKeying`, 10,000 rows, 100
+two-column groups, `benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Mode | Time before | Time after | Delta | Bytes delta | Allocs delta |
+|------|------------:|-----------:|------:|------------:|-------------:|
+| Batch | 1,369.6 µs | 681.4 µs | **−50.25%** | −14.43% | −70.02% |
+| Streaming | 926.0 µs | 512.5 µs | **−44.66%** | −35.60% | −72.48% |
+| **Geomean** | 1,126 µs | 590.9 µs | **−47.53%** | **−25.77%** | **−71.28%** |
+
+Every timing comparison is significant at `p=0.000`, `n=10`. The full
+`go test -count=1 ./...` suite passes.
+
+**Files**:
+
+- `datalog/executor/aggregation.go`
+- `datalog/executor/aggregation_key_test.go`
+- `datalog/executor/aggregation_test.go`
+
+### 19. Single-Lookup Dedup Insertion (COMPLETE - July 2026)
+**Status**: ✅ All add-if-absent dedup paths use `TupleKeyMap.PutIfAbsent`
+
+**Problem**: Eight production paths implemented set insertion as
+`if !seen.Exists(key) { seen.Put(key, value) }`. For each new key this repeats
+the map lookup and collision-bucket comparison even though `TupleKeyMap`
+already provides a single-walk `PutIfAbsent` operation.
+
+**Change**:
+
+- Replaced the eight add-if-absent sequences in materialized and streaming
+  deduplication, unions, relation operations, subquery input collection, and
+  symmetric hash joins.
+- Kept membership-only `Exists` calls in semi/anti joins and NOT filtering.
+- Added a direct contract test proving first-insert/repeated-insert reporting
+  and preservation of the original map value.
+- Set semantics are unchanged; this does not skip deduplication or introduce
+  relational property propagation.
+
+**Measurement** (`BenchmarkDedupInsertionPaths`, 10,000 two-column
+Identity/string tuples, `benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Workload | Mode | Time before | Time after | Delta |
+|----------|------|------------:|-----------:|------:|
+| Unique-heavy | Materialized | 504.3 µs | 460.2 µs | **−8.74%** |
+| Unique-heavy | Streaming | 492.1 µs | 447.9 µs | **−8.99%** |
+| Duplicate-heavy | Materialized | 260.6 µs | 246.6 µs | **−5.36%** |
+| Duplicate-heavy | Streaming | 270.3 µs | 253.5 µs | **−6.23%** |
+| **Geomean** | | 363.6 µs | 336.9 µs | **−7.34%** |
+
+Memory and allocation counts are unchanged, as expected for removal of
+redundant lookup work without a storage-layout change. Every timing comparison
+is significant at `p≤0.019`, `n=10`. The full `go test -count=1 ./...` suite
+passes.
+
+**Files**:
+
+- `datalog/executor/dedup_put_if_absent_test.go`
+- `datalog/executor/iterator_composition.go`
+- `datalog/executor/relation.go`
+- `datalog/executor/relation_ops.go`
+- `datalog/executor/subquery.go`
+- `datalog/executor/union_relation.go`
+- `datalog/executor/symmetric_hash_join.go`
+
+### 20. Bounded Top-N Finalization (COMPLETE - July 2026)
+**Status**: ✅ Ordered limits use a bounded heap for structurally safe shapes
+
+**Problem**: `ORDER BY ... :limit N` materialized every result, sorted all M
+rows, then retained N. The cost remained O(M log M) time and O(M) memory even
+for latest-1 queries.
+
+**Change**:
+
+- Added `TopNRelation`, a worst-first heap retaining at most N tuples while it
+  drains the source, followed by a final sort of those N tuples.
+- Shared one tuple comparator between full sort and Top-N, preserving
+  ascending/descending and multi-key semantics.
+- Preserved workspace-copy requirements and deferred iterator errors.
+- Applied Top-N at the existing global finalization boundary, after aggregation
+  and RelationInput union and before pull rendering.
+- Kept full sort for non-projected sort keys. Their required
+  sort→deduplicating-projection→limit sequence is not equivalent to limiting
+  before projection.
+- This operator still scans every source row. Index-order pushdown is a
+  separate post-property-propagation optimization.
+
+**Measurement** (`BenchmarkOrderedLimit`, 10K/100K rows, N=1/10/100,
+materialized/streaming, `benchtime=300ms`, `count=10`, darwin/arm64):
+
+| Rows | N | Mode | Time before | Time after | Delta |
+|-----:|--:|------|------------:|-----------:|------:|
+| 10,000 | 1 | Materialized | 2.233 ms | 62.91 µs | **−97.18%** |
+| 10,000 | 1 | Streaming | 2.947 ms | 75.06 µs | **−97.45%** |
+| 100,000 | 1 | Materialized | 26.10 ms | 631.6 µs | **−97.58%** |
+| 100,000 | 1 | Streaming | 34.16 ms | 776.6 µs | **−97.73%** |
+| **Geomean (12 cases)** | | | **9.023 ms** | **259.8 µs** | **−97.12%** |
+
+Geomean memory falls from 10.79 MiB to 3.985 KiB (**−99.96%**) and
+allocations from 55.06K to 77.84 (**−99.86%**). Every comparison is
+significant at `p=0.000`, `n=10`. The full `go test -count=1 ./...` suite
+passes.
+
+**Files**:
+
+- `datalog/executor/top_n.go`
+- `datalog/executor/top_n_test.go`
+- `datalog/executor/top_n_benchmark_test.go`
+- `datalog/executor/executor.go`
+- `datalog/executor/executor_utils.go`
+
+### 21. One-Pass Same-Entity Attribute Bundles (COMPLETE - July 2026)
+**Status**: ✅ Contiguous fusable attributes attach in one relation traversal
+
+**Problem**: Existing attribute-fetch fusion handled one
+`[?e :constant ?fresh]` pattern at a time. K attributes repeated relation
+iteration, progressive tuple widening, materialization, and deduplication K
+times.
+
+**Profile evidence before the change** (1,000 entities, K=6):
+
+- `tryFuseAttributeFetch`: 16.5% cumulative CPU.
+- 82.6% cumulative and 30.9% flat allocated space.
+- Per-attribute tuple creation and result growth: 6.29 GiB over the profile.
+- Repeated materialization/deduplication: 7.34 GiB cumulative.
+
+**Change**:
+
+- Recognize only contiguous patterns that already satisfy every existing
+  fusion gate: default source, no transaction binding, same entity symbol,
+  fresh outputs, CardinalityOne, and latest/as-of mode.
+- Traverse the input relation once, perform the same K cache-backed
+  `LookupAttribute` calls, and allocate one final-width tuple.
+- Preserve per-attribute `pattern/fused-fetch` events and their sequential
+  input/output counts.
+- Stop bundling at predicates, expressions, cardinality-many attributes, named
+  sources, or any other non-fusable clause. Nothing is reordered.
+- Added no matcher API, configuration flag, adaptive threshold, or alternate
+  storage scan.
+
+**Measurement** (`BenchmarkAttrFetch`, N=100/1000, K=1/3/6,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Entities | K | Time before | Time after | Time delta | Memory delta | Allocs delta |
+|---------:|--:|------------:|-----------:|-----------:|-------------:|-------------:|
+| 100 | 1 | 67.53 µs | 65.61 µs | −2.85% | ~ | +0.07% |
+| 100 | 3 | 101.0 µs | 86.50 µs | **−14.33%** | −32.99% | −19.37% |
+| 100 | 6 | 152.4 µs | 117.2 µs | **−23.09%** | −49.99% | −32.03% |
+| 1,000 | 1 | 517.3 µs | 528.8 µs | ~ | +0.02% | +0.01% |
+| 1,000 | 3 | 859.4 µs | 729.9 µs | **−15.06%** | −37.28% | −21.91% |
+| 1,000 | 6 | 1.352 ms | 1.016 ms | **−24.83%** | −56.50% | −36.46% |
+| **Geomean** | | **292.4 µs** | **252.8 µs** | **−13.54%** | **−32.88%** | **−19.50%** |
+
+K=1 remains effectively unchanged, demonstrating that the win comes from
+removing repeated passes rather than changing lookup semantics. The full
+`go test -count=1 ./...` suite passes.
+
+**Files**:
+
+- `datalog/executor/query_executor.go`
+- `datalog/executor/attribute_fetch_bundle_test.go`
+- `datalog/storage/same_entity_fusion_test.go`
+- `datalog/storage/attr_fetch_bench_test.go`
+
+### 22. Typed Relation Property Propagation (FOUNDATION - July 2026)
+**Status**: ⚠️ Core contract active; derivation and consumption coverage incomplete
+
+**Architecture**:
+
+- Added `Relation.Properties()` as a required interface method.
+- Properties use Datalog vocabulary: `[]query.OrderByClause` for guaranteed
+  physical ordering and `[][]query.Symbol` for candidate keys.
+- The planner and algebra optimizer remain Datalog-in/Datalog-out; no property
+  metadata map or synthetic query clause was added.
+- Constructors copy external properties. Interface callers treat returned
+  values as immutable, matching the Relation contract and avoiding defensive
+  copies in the hot path.
+
+**Propagation**:
+
+- Proven CardinalityOne AETV and validated AVET scans establish E ordering and
+  entity uniqueness.
+- Filters, limits, materialization, lazy wrapping, and same-entity attachment
+  preserve properties.
+- Projection retains valid ordering prefixes and fully retained keys.
+- Sort establishes ordering; grouped aggregation establishes its group key.
+- Fresh expression outputs preserve guarantees.
+- Joins, unions, products, and fallback relations conservatively clear them.
+- Streaming projection skips deduplication when a candidate key survives.
+
+**Complex-query checkpoint** (`count=10`, darwin/arm64):
+
+| Metric | Before | After | Delta |
+|--------|-------:|------:|------:|
+| Time | 47.88 ms | 48.48 ms | statistically unchanged (`p=0.247`) |
+| Memory | 87.57 MiB | 82.80 MiB | **−5.45%** |
+| Allocations | 1.118M | 1.088M | **−2.71%** |
+
+An initial implementation defensively copied properties at every interface
+read and regressed time by about 2%. Profiling found no application hotspot but
+the regression reproduced. Moving immutability into the explicit interface
+contract removed that cost while preserving the memory/allocation win.
+
+Ordering is now consumed when the final relation already satisfies the Datalog
+requirement. Order-aware index selection for additional shapes remains separate.
+
+**Remaining work**:
+
+- Prove property preservation for specific join and OR/fallback shapes.
+- Establish properties for additional storage index and binding strategies.
+- Add order-aware index selection only for CRDT-safe proven shapes.
+- Measure every added derivation against the complex-query checkpoint.
+
+**Files**:
+
+- `datalog/executor/relation_properties.go`
+- `datalog/executor/relation_properties_test.go`
+- `datalog/storage/relation_properties.go`
+- `datalog/storage/relation_properties_test.go`
+
+### 23. Existing-Order Scan Termination (6a COMPLETE - July 2026)
+**Status**: ✅ Ordered limits consume proven relation ordering
+
+When `Relation.Properties().Ordering` satisfies the effective Datalog
+`:order-by`, finalization now skips full sort and bounded Top-N. It leaves the
+relation streaming and applies `LimitRelation` after any required
+projection/deduplication, so closing after N results closes the storage iterator.
+
+This slice changes no planner behavior and no index selection. Unsatisfied
+ordering retains the existing bounded Top-N path.
+
+**Measurement** (`BenchmarkIndexOrderedLimit`, 10,000 AETV-ordered
+CardinalityOne entities, `benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Order | N | Time before | Time after | Delta | Datoms before | Datoms after |
+|-------|--:|------------:|-----------:|------:|--------------:|-------------:|
+| E asc | 1 | 2.057 ms | 7.295 µs | **−99.65%** | 10,000 | 1 |
+| E asc | 10 | 2.065 ms | 10.95 µs | **−99.47%** | 10,000 | 10 |
+| E asc | 100 | 2.077 ms | 38.93 µs | **−98.13%** | 10,000 | 100 |
+| E desc | 1/10/100 | full-scan control | full-scan control | — | 10,000 | 10,000 |
+
+For satisfied ascending order, memory falls 97.0–99.4% and allocations
+98.0–99.6%. Descending allocation counts are identical before/after; timing
+samples are noisy despite the unchanged execution path.
+
+**Files**:
+
+- `datalog/executor/executor.go`
+- `datalog/storage/index_order_limit_test.go`
+- `datalog/storage/index_order_limit_benchmark_test.go`
+
+### 24. History ATEV Order-Aware Matching (6b FIRST SHAPE - July 2026)
+**Status**: ✅ Datalog matcher fragments select ATEV for a proven history shape
+
+`PatternMatcher.Match` now accepts a Datalog `query.Query` fragment containing
+exactly one `DataPattern`. The planner forwards `OrderBy` and `Limit` only for a
+single terminal pattern without aggregation or relation inputs. Wrappers and
+custom sources forward or ignore those requirements without side metadata.
+
+Storage's first order-aware choice is deliberately narrow:
+
+- History mode only
+- Constant A
+- Tx variable ordered descending
+- Optional E variable ordered ascending as the second key
+- Non-nil limit
+
+This maps exactly to ATEV `[A constant][Tx↓][E][V]`. Latest/as-of modes decline
+because Tx-primary ATEV cannot perform E/A-grouped current-state CRDT resolution.
+
+**Measurement** (`BenchmarkHistoryIndexOrderedLimit`, 10,000 raw datoms,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| N | Time before | Time after | Delta | Memory delta | Allocs delta | Scans before | Scans after |
+|--:|------------:|-----------:|------:|-------------:|-------------:|-------------:|------------:|
+| 1 | 2.752 ms | 13.48 µs | **−99.51%** | −99.44% | −99.31% | 10,000 | 1 |
+| 10 | 2.842 ms | 17.91 µs | **−99.37%** | −99.30% | −99.14% | 10,000 | 10 |
+| 100 | 2.808 ms | 55.28 µs | **−98.03%** | −97.89% | −97.71% | 10,000 | 100 |
+| **Geomean** | **2.800 ms** | **23.72 µs** | **−99.15%** | **−99.07%** | **−98.89%** | | |
+
+**Files**:
+
+- `datalog/query/types.go`
+- `datalog/executor/interfaces.go`
+- `datalog/planner/planner_clause_based.go`
+- `datalog/storage/matcher_relations.go`
+- `datalog/storage/history_index_order_limit_test.go`
+- `datalog/storage/history_index_order_limit_benchmark_test.go`
+
+---
+
+## Complex Query Checkpoint (July 2026)
+
+`BenchmarkComplexQueryCheckpoint` promotes the existing production-shaped
+optimization-matrix query into a repeatable steady-state benchmark. Its fixture
+contains 75 scenarios × 100 tasks with a CardinalityOne schema, and the query
+exercises:
+
+- Phase planning and multi-relation joins
+- Same-entity attribute bundles
+- Correlated and nested subqueries
+- Conditional aggregation and typed group keys
+- `get-else`, `or-default`, and expressions
+- Multi-key ordering and bounded `:limit 25`
+- Public query, parse-cache, plan-cache, and result-collection boundaries
+
+**Checkpoint** (`benchtime=1s`, `count=10`, darwin/arm64):
+
+| Metric | Result |
+|--------|-------:|
+| Time | **47.88 ms/op ±2%** |
+| Memory | **87.57 MiB/op** |
+| Allocations | **1.118M/op** |
+
+**CPU profile**: scheduler signaling is the largest flat runtime cost (15.4%);
+the intern `HashTrieMap.Load` path is 13.2% cumulative. No single application
+function dominates CPU.
+
+**Allocation profile**: `HashJoinWithOptions` and
+`OrFallbackIterator.nextShortCircuit` each cover about 94% cumulatively on
+overlapping stacks. Direct allocation leaders are:
+
+- `TupleKeyMap.PutIfAbsent`: 16.5%
+- `NewTupleKeyMapWithCapacity`: 16.5%
+- `TupleKeyMap.Put`: 11.3%
+- `NewTupleKey`: 3.7%
+
+This is the checkpoint for the next architecture step: statically provable
+relation properties. Any claimed sort, deduplication, or join elimination must
+improve this benchmark without changing its result.
+
+**File**: `datalog/storage/optimization_matrix_test.go`
+
 ---
 
 ## Profiling Results (October 2025)
@@ -932,13 +1308,28 @@ All items below are **measured** and **active** in production code:
 15. ✅ **Conditional aggregate rewriting** - **7.7× faster, 5.2× less memory** for correlated aggregate subqueries (verified 2026-01-16)
 16. ✅ **CRDT storage** - **~25-35µs writes**, **O(1) LWW resolution**, conflict-free replication (verified 2026-01-31)
 17. ✅ **CRDT allocation optimization** - **90% faster** (1.9×), **2.2× less memory** than pre-CRDT main while adding full CRDT semantics (verified 2026-02-02)
+18. ✅ **Typed aggregation keys** - **47.5% faster, 25.8% less memory, 71.3% fewer allocations** while fixing cross-type and delimiter key collisions (verified 2026-07-11)
+19. ✅ **Single-lookup dedup insertion** - **5.4–9.0% faster, 7.3% geomean** across materialized and streaming deduplication with unchanged memory and allocations (verified 2026-07-11)
+20. ✅ **Bounded Top-N finalization** - **97.1% faster, 99.96% less memory, 99.86% fewer allocations** for ordered limits where no post-sort deduplicating projection is required (verified 2026-07-11)
+21. ✅ **One-pass same-entity attribute bundles** - **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 improves up to 24.8% time and 56.5% memory (verified 2026-07-11)
+22. ⚠️ **Typed Relation properties (foundation)** - **5.45% less memory, 2.71% fewer allocations** on the complex checkpoint with statistically unchanged time; join/OR derivations and broader storage coverage remain (verified 2026-07-11)
+23. ✅ **Existing-order scan termination** - proven E-ascending limits scan exactly N rows and improve **98.1–99.7% time**, **97.0–99.4% memory**, and **98.0–99.6% allocations** on 10K entities (verified 2026-07-11)
+24. ✅ **History ATEV order-aware matching** - safe history queries scan exactly N raw datoms and improve **99.15% time, 99.07% memory, 98.89% allocations** geomean; latest/as-of explicitly decline (verified 2026-07-11)
+25. ✅ **History TAEV order-aware matching** - unfiltered transaction-log limits scan exactly N raw datoms and improve **99.16% time, 99.05% memory, 98.86% allocations** geomean; latest/as-of and filtered shapes decline (verified 2026-07-11)
+26. ✅ **History AETV order-aware matching** - constant-attribute entity-first history limits scan exactly N raw datoms and improve **99.15% time, 99.07% memory, 98.89% allocations** geomean (verified 2026-07-11)
+27. ✅ **History EATV order-aware matching** - constant-entity attribute-first history limits scan exactly N raw datoms and improve **99.13% time, 99.00% memory, 98.86% allocations** geomean (verified 2026-07-11)
+28. ✅ **Key-preserving join properties** - retained-key streaming join projections improve **24.42% time, 25.15% memory, 9.13% allocations** geomean; complex default checkpoint remains statistically unchanged (verified 2026-07-11)
+29. ✅ **Semi/anti join properties** - keyed filtering improves **27.54% time, 32.80% memory, 20.02% allocations** geomean; unkeyed controls retain deduplication and the complex checkpoint remains unchanged (verified 2026-07-11)
+30. ✅ **Keyed hash-join dedup elision** - proven keyed joins omit the internal result `seen` table for **32.77% faster time, 32.77% less memory, 10.05% fewer allocations** geomean; complex checkpoint remains unchanged (verified 2026-07-11)
+31. ✅ **Compiled storage hash matching** - typed probes and precomputed binding slots improve cache-disabled hash scans by **7.16% time, 15.65% memory, 32.83% allocations** (verified 2026-07-11)
+32. ✅ **Ready-predicate scheduling** - selective filters run before unrelated scans for **62.85% faster time, 87.12% less memory, 78.88% fewer allocations** on the focused 10K-entity path; complex checkpoint remains unchanged (verified 2026-07-12)
+33. ✅ **Unique-key hash-build specialization** - direct tuple storage improves keyed builds by **5.51% time, 7.25% memory, 11.11% allocations** geomean; non-unique fanout and complex checkpoint behavior remain unchanged (verified 2026-07-12)
 
 ### Potential Future Work 🎯
 These are **ideas**, not commitments. Would require benchmarking before implementation:
 
-1. Streaming aggregations - Reduce memory for large groups
-2. BadgerDB time range integration - Push time constraints to storage layer
-3. Composite index support - For multi-attribute filters
+1. BadgerDB time range integration - Push time constraints to storage layer
+2. Composite index support - For multi-attribute filters
 
 ### Known Performance Regressions (Correctness Fixes)
 
@@ -1022,7 +1413,7 @@ exec := executor.NewExecutorWithOptions(matcher, opts)
 1. Keep **simple, correct code** (complexity doesn't pay)
 2. Let **algorithms win** (relation collapsing, not tricks)
 3. Build **only what benchmarks prove** (no more speculation)
-4. Consider **streaming aggregations** for memory efficiency
+4. Reuse established typed-key primitives instead of inventing string encodings
 
 ---
 

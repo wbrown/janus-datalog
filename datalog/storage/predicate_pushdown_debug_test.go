@@ -68,7 +68,7 @@ func TestPredicatePushdownDebug(t *testing.T) {
 	matcher := NewBadgerMatcher(db.store)
 
 	// First get all bars for symbol
-	symbolRel, err := matcher.Match(symbolPattern, nil)
+	symbolRel, err := matcher.Match(query.PatternQuery(symbolPattern), nil)
 	if err != nil {
 		t.Fatalf("Failed to match symbol pattern: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestPredicatePushdownDebug(t *testing.T) {
 	t.Run("WithoutConstraint", func(t *testing.T) {
 		start := time.Now()
 
-		timeRel, err := matcher.Match(timePattern, executor.Relations{symbolRel})
+		timeRel, err := matcher.Match(query.PatternQuery(timePattern), executor.Relations{symbolRel})
 		if err != nil {
 			t.Fatalf("Failed to match time pattern: %v", err)
 		}
@@ -119,7 +119,7 @@ func TestPredicatePushdownDebug(t *testing.T) {
 		t.Logf("  Constraint: %s", constraint)
 
 		timeRel, err := matcher.MatchWithConstraints(
-			timePattern,
+			query.PatternQuery(timePattern),
 			executor.Relations{symbolRel},
 			[]executor.StorageConstraint{constraint},
 		)

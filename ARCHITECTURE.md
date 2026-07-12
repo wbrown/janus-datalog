@@ -214,7 +214,7 @@ Within the executor, each phase is a mini-query. The planner decided the orderin
 For each phase in plan:
   Input relations from previous phase's Keep symbols
   For each clause in phase.Query.Where (planner-ordered):
-    ├── DataPattern  → matcher.Match(pattern, bindings) → new StreamingRelation
+    ├── DataPattern  → matcher.Match(onePatternQuery, bindings) → new StreamingRelation
     ├── Expression   → evaluate over existing relations → add symbol (lazy)
     ├── Predicate    → filter existing relations (lazy)
     ├── Subquery     → recursive Query
@@ -304,23 +304,31 @@ Five interfaces define the boundaries between components. To extend the system, 
 
 ```go
 type PatternMatcher interface {
-    Match(pattern *query.DataPattern, bindings Relations) (Relation, error)
+    Match(q *query.Query, bindings Relations) (Relation, error)
 }
 ```
 
 **This is the most important interface in the system.** Every data source implements it. The executor only knows about `PatternMatcher` — it doesn't know if data comes from BadgerDB, an in-memory slice, or another database.
 
+The query fragment contains exactly one `DataPattern`. Its `OrderBy` and
+`Limit` fields are populated only when the planner proves physical pushdown is
+structurally safe. This keeps the matcher contract Datalog-in/Datalog-out:
+storage may use those requirements to choose an order-satisfying index, while
+custom sources may ignore them and return no ordering guarantee.
+
 **Implementors**: `BadgerMatcher` (storage), `SourceRouter` (multi-source routing), `SliceSource[T]` (Go slices), `MemoryPatternMatcher` (in-memory datoms), `IndexedMemoryMatcher` (optimized in-memory)
 
 **Extended variants**:
 - `PredicateAwareMatcher` adds `MatchWithConstraints()` — predicate pushdown into storage
-- `EntityLookupMatcher` adds `LookupAttribute()` — single-value lookups for database functions like `get-else`
+- `EntityLookupMatcher` adds error-returning `LookupAttribute()` — single-value
+  lookups distinguish absence from storage/decode failure
 
 ### Relation — Tuple Set Abstraction
 
 ```go
 type Relation interface {
     Symbols() []query.Symbol
+    Properties() RelationProperties
     Iterator() Iterator
     Size() int
     IsEmpty() bool
@@ -332,6 +340,25 @@ type Relation interface {
 ```
 
 Everything in the executor works with Relations. Pattern matches produce them, joins combine them, expressions add symbols to them, predicates filter them.
+
+`RelationProperties` is the typed physical contract paired with Datalog's
+logical requirements. It carries guaranteed ordering as
+`[]query.OrderByClause` and candidate keys as `[][]query.Symbol`. Storage
+establishes only properties proven by the selected index and CRDT mode;
+operators preserve, transform, or conservatively clear them. The planner and
+algebra optimizer still accept and emit Datalog—properties do not travel
+through metadata maps or synthetic clauses.
+
+Current propagation rules:
+- Filters, limits, materialization, lazy wrapping, and functional attribute
+  attachment preserve properties
+- Projection preserves the valid ordering prefix and fully retained keys
+- Sort establishes ordering; grouped aggregation establishes its group key
+- Fresh expression outputs preserve properties
+- Joins, unions, products, and fallback relations clear properties until a
+  proof rule exists
+- A retained candidate key lets streaming projection skip redundant
+  deduplication
 
 **Key implementations**:
 - `MaterializedRelation` — tuples in memory, supports random access and re-iteration
@@ -565,9 +592,8 @@ Multi-phase: T(query) = Σ T(phase_i), executed sequentially.
 
 | Mode | Time | When |
 |------|------|------|
-| Sequential | O(\|combos\| x T(sub)) | Default |
-| Batched | O(T(sub)) | `UseComponentizedSubquery=true` |
-| Parallel | O(T(sub) / workers) | `EnableParallelSubqueries=true` |
+| Per-combination | O(\|combos\| x T(sub)) | Nested `(q ...)` clauses |
+| Parallel RelationInput iteration | O(\|inputs\| x T(query) / workers) | `EnableParallelSubqueries=true` |
 
 ### Pull API
 

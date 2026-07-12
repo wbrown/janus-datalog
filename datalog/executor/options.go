@@ -18,13 +18,8 @@ type ExecutorOptions struct {
 	EnableParallelSubqueries bool
 	MaxSubqueryWorkers       int
 
-	// Subquery optimization options
-	UseStreamingSubqueryUnion bool // If true, use streaming union for subquery results (default: false; opt-in)
-	UseComponentizedSubquery  bool // If true, use component-based subquery execution (default: false; opt-in)
-
 	// Join options
 	EnableStreamingJoins bool
-	EnableDebugLogging   bool
 	DefaultHashTableSize int // Default hash table size for streaming relations (Size() = -1). If 0, uses 256.
 
 	// Storage join strategy: IndexNestedLoop threshold
@@ -35,8 +30,7 @@ type ExecutorOptions struct {
 	IndexNestedLoopThreshold int
 
 	// Aggregation options
-	EnableStreamingAggregation      bool
-	EnableStreamingAggregationDebug bool
+	EnableStreamingAggregation bool
 
 	// Scan sharing: deduplicate unbound scans across subqueries via LazySeq
 	EnableScanSharing bool

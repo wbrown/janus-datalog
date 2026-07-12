@@ -222,10 +222,11 @@ func TestBuilderAllTypes(t *testing.T) {
 		Attribute(":test/bytes").Type(TypeBytes).Add().
 		Attribute(":test/ref").Type(TypeRef).Add().
 		Attribute(":test/keyword").Type(TypeKeyword).Add().
+		Attribute(":test/symbol").Type(TypeSymbol).Add().
 		Build()
 
 	require.NoError(t, err)
-	assert.Equal(t, 8, schema.Count())
+	assert.Equal(t, 9, schema.Count())
 
 	// Verify each type
 	assert.Equal(t, TypeString, schema.GetAttribute(kw(":test/string")).ValueType)
@@ -236,6 +237,7 @@ func TestBuilderAllTypes(t *testing.T) {
 	assert.Equal(t, TypeBytes, schema.GetAttribute(kw(":test/bytes")).ValueType)
 	assert.Equal(t, TypeRef, schema.GetAttribute(kw(":test/ref")).ValueType)
 	assert.Equal(t, TypeKeyword, schema.GetAttribute(kw(":test/keyword")).ValueType)
+	assert.Equal(t, TypeSymbol, schema.GetAttribute(kw(":test/symbol")).ValueType)
 }
 
 func TestBuilderChaining(t *testing.T) {

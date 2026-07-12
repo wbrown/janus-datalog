@@ -401,16 +401,19 @@ const L85Alphabet = "!$%&()+,-./" +
 
 - `Identity.L85()` method for human-readable display
 - Export/import format: `#identity "L85hash"`
-- Available as alternative encoder for debugging (`L85Strategy`)
+- Other external text encodings such as `#bytes` and compressed export payloads
 
-### What Production Actually Uses
+### What Physical Storage Uses
 
 ```go
-// From database.go:103
-store, err := NewBadgerStore(opts.Path, NewKeyEncoder(BinaryStrategy))
+encoder := &BinaryKeyEncoder{CompressionThreshold: threshold}
+store, err := NewBadgerStore(opts.Path, encoder)
 ```
 
-**Production uses raw binary (`BinaryStrategy`)** - 25% smaller keys, faster comparisons, no encode/decode overhead in hot paths.
+Physical index keys have one format: raw binary. There is no alternate L85
+storage strategy or format-selection factory. This keeps keys smaller, removes
+encode/decode overhead from hot paths, and prevents the two physical formats
+from drifting as index semantics evolve.
 
 ### The CRDT Benefits Come From
 

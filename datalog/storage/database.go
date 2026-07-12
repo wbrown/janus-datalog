@@ -115,7 +115,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		return nil, fmt.Errorf("database path is required")
 	}
 
-	encoder := NewKeyEncoder(BinaryStrategy)
+	encoder := &BinaryKeyEncoder{}
 	// Default compression threshold is 512 bytes. Use -1 to disable.
 	// Values below ~500 bytes rarely compress due to ~300 bytes of
 	// FSE table + block header overhead in the compressed format.
@@ -124,9 +124,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		threshold = 512
 	}
 	if threshold > 0 {
-		if be, ok := encoder.(*BinaryKeyEncoder); ok {
-			be.CompressionThreshold = threshold
-		}
+		encoder.CompressionThreshold = threshold
 	}
 	store, err := NewBadgerStore(opts.Path, encoder)
 	if err != nil {
@@ -467,8 +465,8 @@ func (d *Database) Matcher() executor.PatternMatcher {
 
 // Match implements executor.PatternMatcher — the Database itself can answer pattern queries.
 // This delegates to the Database's Matcher(), which uses the full BadgerDB index infrastructure.
-func (d *Database) Match(pattern *query.DataPattern, bindings executor.Relations) (executor.Relation, error) {
-	return d.Matcher().Match(pattern, bindings)
+func (d *Database) Match(q *query.Query, bindings executor.Relations) (executor.Relation, error) {
+	return d.Matcher().Match(q, bindings)
 }
 
 // Compile-time verification that Database implements PatternMatcher
@@ -535,12 +533,11 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 
 		// Executor parallel options
 		EnableParallelSubqueries: true, // Parallel subquery execution
-		MaxSubqueryWorkers:       0,    // 0 = runtime.NumCPU()
+		MaxSubqueryWorkers:       0,    // 0 = 4 workers
 
 		// Other executor options
 		EnableStreamingJoins:       false, // Keep false for stability
 		EnableStreamingAggregation: true,  // Streaming aggregation
-		EnableDebugLogging:         false,
 
 		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple
 		// LookupAttribute column attach instead of match + hash join.
@@ -2653,7 +2650,7 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 			query.Blank{},
 		},
 	}
-	rel, err := matcher.Match(pattern, nil)
+	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		return nil, err
 	}

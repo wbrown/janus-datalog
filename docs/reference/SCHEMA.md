@@ -69,6 +69,7 @@ d.SetSchema(s)
 | `:db.type/bytes` | `[]byte` | `schema.TypeBytes` |
 | `:db.type/ref` | `datalog.Identity` | `schema.TypeRef` |
 | `:db.type/keyword` | `datalog.Keyword` | `schema.TypeKeyword` |
+| `:db.type/symbol` | `datalog.Symbol` | `schema.TypeSymbol` |
 
 ### `:db/cardinality`
 

@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,4 +40,56 @@ func TestCombineSubqueryResultsSimple_PropagatesIteratorError(t *testing.T) {
 	failing := newFailingStream(0, Tuple{int64(2)})
 	rel := combineSubqueryResultsSimple([]Relation{clean, failing})
 	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+}
+
+func TestAggregationPropagatesIteratorAndCloseErrors(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	aggregate := []query.FindAggregate{{Function: "count", Arg: x}}
+	closeErr := errors.New("aggregate close failure")
+
+	for _, failAfter := range []int{0, 2} {
+		t.Run(fmt.Sprintf("streaming/fail_after_%d", failAfter), func(t *testing.T) {
+			source := newFailingStream(
+				failAfter,
+				Tuple{int64(1)},
+				Tuple{int64(2)},
+				Tuple{int64(3)},
+			)
+			result := NewStreamingAggregateRelation(source, []query.Symbol{x}, aggregate)
+			require.ErrorIs(t, driveErr(result), errInjectedIterator)
+		})
+		t.Run(fmt.Sprintf("batch/fail_after_%d", failAfter), func(t *testing.T) {
+			source := newFailingRelation(
+				failAfter,
+				Tuple{int64(1)},
+				Tuple{int64(2)},
+				Tuple{int64(3)},
+			)
+			result := executeGroupedAggregation(source, []query.Symbol{x}, aggregate)
+			require.ErrorIs(t, driveErr(result), errInjectedIterator)
+		})
+	}
+
+	for _, mode := range []string{"single", "grouped", "streaming"} {
+		t.Run(mode+"/close_error", func(t *testing.T) {
+			source := failingRelation{
+				Relation: NewMaterializedRelation(
+					[]query.Symbol{x},
+					[]Tuple{{int64(1)}, {int64(2)}},
+				),
+				failAfter: 100,
+				closeErr:  closeErr,
+			}
+			var result Relation
+			switch mode {
+			case "single":
+				result = executeSingleAggregation(source, aggregate)
+			case "grouped":
+				result = executeGroupedAggregation(source, []query.Symbol{x}, aggregate)
+			case "streaming":
+				result = NewStreamingAggregateRelation(source, []query.Symbol{x}, aggregate)
+			}
+			require.ErrorIs(t, driveErr(result), closeErr)
+		})
+	}
 }

@@ -184,7 +184,7 @@ func BenchmarkPull_VsManualQuery(b *testing.B) {
 						query.Variable{Name: datalog.NewSymbol("?v")},
 					},
 				}
-				rel, err := matcher.Match(pattern, nil)
+				rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 				if err == nil && rel != nil {
 					it := rel.Iterator()
 					if it.Next() {

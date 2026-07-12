@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -69,7 +70,7 @@ func TestEntityJoinBug(t *testing.T) {
 
 	// Now test the Relation directly from the matcher (before executor)
 	highPattern := hq.Where[0].(*query.DataPattern)
-	highRel, _ := matcher.Match(highPattern, nil)
+	highRel, _ := matcher.Match(query.PatternQuery(highPattern), nil)
 	t.Logf("High pattern Match() returned type=%T, columns=%v", highRel, highRel.Symbols())
 
 	// Iterate directly to see all tuples
@@ -107,7 +108,7 @@ func TestEntityJoinBug(t *testing.T) {
 
 	// Now test the low pattern directly
 	lowPattern := lq.Where[0].(*query.DataPattern)
-	lowRel, _ := matcher.Match(lowPattern, nil)
+	lowRel, _ := matcher.Match(query.PatternQuery(lowPattern), nil)
 	t.Logf("Low pattern Match() returned type=%T, columns=%v", lowRel, lowRel.Symbols())
 
 	// Iterate directly to see all tuples
@@ -127,14 +128,17 @@ func TestEntityJoinBug(t *testing.T) {
 	joinQuery := `[:find ?bar :where [?bar :price/high ?h] [?bar :price/low ?l]]`
 	jq, _ := parser.ParseQuery(joinQuery)
 
-	// Create executor with annotations
-	opts := executor.ExecutorOptions{
-		EnableDebugLogging: true,
-	}
+	var joinEvents []annotations.Event
+	ctx := executor.NewContext(func(event annotations.Event) {
+		if event.Name == annotations.JoinStrategy {
+			joinEvents = append(joinEvents, event)
+		}
+	})
+	opts := executor.ExecutorOptions{Collector: ctx.Collector()}
 	annotatedMatcher := storage.NewBadgerMatcherWithOptions(db.Store(), opts)
 	annotatedExec := executor.NewExecutor(annotatedMatcher, nil)
 
-	jresult, _ := annotatedExec.Execute(jq)
+	jresult, _ := annotatedExec.ExecuteWithContext(ctx, jq)
 
 	// Collect results by iterating
 	var jtuples []executor.Tuple
@@ -152,5 +156,8 @@ func TestEntityJoinBug(t *testing.T) {
 			t.Logf("  Got bar: %v", tuple[0])
 			_ = i
 		}
+	}
+	if len(joinEvents) == 0 {
+		t.Error("expected structured join strategy annotations")
 	}
 }

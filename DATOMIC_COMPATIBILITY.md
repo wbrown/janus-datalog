@@ -66,10 +66,18 @@ Basic Datalog queries work as expected:
 **Arithmetic operations:**
 ```clojure
 [(+ ?price ?tax) ?total]
+[(* ?quantity ?price ?multiplier) ?scaled]
+[(- ?balance ?debit ?fee) ?remaining]
+[(- ?delta) ?negated]
+[(/ ?value) ?reciprocal]
 [(- ?end ?start) ?duration]
 [(* ?quantity ?price) ?amount]
 [(/ ?total ?count) ?average]
 ```
+
+Arithmetic accepts one or more operands. Unary subtraction negates, unary
+division computes a reciprocal, and longer forms reduce left-to-right. Janus
+does not accept zero-argument function calls.
 
 **Comparisons (including variadic):**
 ```clojure
@@ -306,7 +314,7 @@ Every datom includes a full ElementID (Lamport + ReplicaID) for temporal orderin
 - **EAVT model** with Entity-Attribute-Value-Transaction tuples
 - **Eight indices**: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV (EATV/AETV use Tx-descending for CRDT resolution; ATEV gives O(1) attribute high-water mark and AsOf-by-attribute access)
 - **BadgerDB backend** for persistence
-- **L85 encoding** for sortable, efficient keys
+- **Raw binary encoding** for sortable, compact physical keys
 - **Export/Import** to EDN format for backup and migration (see [docs/reference/EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md))
 
 ### 11. Type System
@@ -317,6 +325,7 @@ Every datom includes a full ElementID (Lamport + ReplicaID) for temporal orderin
 - `[]byte` for binary data
 - Entity references via Identity type
 - Keywords as first-class values
+- Symbols as first-class values
 
 ### 12. Pull API ✅
 
@@ -479,7 +488,7 @@ var count int64
 found, err := d.QueryOneInto(&count, `[:find (count ?e) :where [?e :person/name _]]`)
 ```
 
-**Scalar types supported:** `string`, `int64`, `float64`, `bool`, `time.Time`, `datalog.Identity`, `datalog.Keyword`, `[]byte`
+**Scalar types supported:** `string`, `int64`, `float64`, `bool`, `time.Time`, `datalog.Identity`, `datalog.Keyword`, `datalog.Symbol`, `[]byte`
 
 **Tag mapping:**
 - Variables: `datalog:"?symbol"` matches `:find ?symbol`
@@ -725,7 +734,7 @@ No advanced database operations:
 
 ### 1. Storage Design
 - Uses BadgerDB instead of Datomic's segmented storage
-- L85 encoding (custom Base85) for sortable keys
+- Raw binary physical keys; L85 is used only for external text representations
 - Fixed 69-byte keys: E(20) + A(32) + Tx(16) + Op(1)
 - Eight indices: EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV
 

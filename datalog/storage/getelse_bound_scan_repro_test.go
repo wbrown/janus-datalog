@@ -136,7 +136,7 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 
 	// The plain pattern, on a bound ?e, must NOT full-scan :repro/note. In
 	// practice it emits no :repro/note scan event at all (empty index) because
-	// the executor's tryFuseAttributeFetch serves it as a per-entity, cache-
+	// the executor's attribute-fetch fusion serves it as a per-entity, cache-
 	// backed LookupAttribute — a pure point lookup. That (or an EATV-narrowed
 	// scan) is the cost get-else should match.
 	attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}

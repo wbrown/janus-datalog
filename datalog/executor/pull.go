@@ -93,7 +93,11 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 	switch s := spec.(type) {
 	case *query.PullAttribute:
 		// Simple attribute lookup
-		if val, ok := pe.lookupAttribute(entity, s.Attr); ok {
+		val, ok, err := pe.lookupAttribute(entity, s.Attr)
+		if err != nil {
+			return err
+		}
+		if ok {
 			result[query.KeyName(s.Attr)] = val
 		}
 		// Missing attributes are omitted (not included as nil)
@@ -132,7 +136,11 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 
 	case *query.PullMapSpec:
 		// Follow reference and pull nested pattern
-		if refVal, ok := pe.lookupAttribute(entity, s.Attr); ok {
+		refVal, ok, err := pe.lookupAttribute(entity, s.Attr)
+		if err != nil {
+			return err
+		}
+		if ok {
 			if refEntity, ok := refVal.(datalog.Identity); ok {
 				pe.ctx.NestedBegin(entity, s.Attr, refEntity, depth+1, false)
 
@@ -167,7 +175,11 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 
 	case *query.PullDefaultExpr:
 		// Lookup with default value
-		if val, ok := pe.lookupAttribute(entity, s.Attr); ok {
+		val, ok, err := pe.lookupAttribute(entity, s.Attr)
+		if err != nil {
+			return err
+		}
+		if ok {
 			result[query.KeyName(s.Attr)] = val
 		} else {
 			result[query.KeyName(s.Attr)] = s.Default
@@ -181,28 +193,36 @@ func (pe *PullExecutor) processSpec(entity datalog.Identity, spec query.PullAttr
 }
 
 // lookupAttribute retrieves a single attribute value using the matcher
-func (pe *PullExecutor) lookupAttribute(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (pe *PullExecutor) lookupAttribute(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (interface{}, bool, error) {
 	// Use EntityLookupMatcher interface if available
 	if lookupMatcher, ok := pe.matcher.(EntityLookupMatcher); ok {
 		var val interface{}
 		var found bool
+		var lookupErr error
 		pe.ctx.AttributeLookup(entity, attr, found, "direct", func() {
-			val, found = lookupMatcher.LookupAttribute(entity, attr)
+			val, found, lookupErr = lookupMatcher.LookupAttribute(entity, attr)
 		})
-		return val, found
+		return val, found, lookupErr
 	}
 
 	// Fallback: use pattern matching
 	var val interface{}
 	var found bool
+	var lookupErr error
 	pe.ctx.AttributeLookup(entity, attr, found, "pattern", func() {
-		val, found = pe.lookupAttributeViaPattern(entity, attr)
+		val, found, lookupErr = pe.lookupAttributeViaPattern(entity, attr)
 	})
-	return val, found
+	return val, found, lookupErr
 }
 
 // lookupAttributeViaPattern is the fallback path using pattern matching
-func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr datalog.Keyword) (interface{}, bool) {
+func (pe *PullExecutor) lookupAttributeViaPattern(
+	entity datalog.Identity,
+	attr datalog.Keyword,
+) (value interface{}, found bool, resultErr error) {
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -211,14 +231,21 @@ func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr 
 		},
 	}
 
-	rel, err := pe.matcher.Match(pattern, nil)
-	if err != nil || rel == nil {
-		return nil, false
+	rel, err := pe.matcher.Match(&query.Query{Where: []query.Clause{pattern}}, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	if rel == nil {
+		return nil, false, nil
 	}
 
 	// Get the first result
 	it := rel.Iterator()
-	defer it.Close()
+	defer func() {
+		if closeErr := it.Close(); resultErr == nil {
+			resultErr = closeErr
+		}
+	}()
 
 	if it.Next() {
 		tuple := it.Tuple()
@@ -226,12 +253,14 @@ func (pe *PullExecutor) lookupAttributeViaPattern(entity datalog.Identity, attr 
 		symV := datalog.NewSymbol("?v")
 		for i, sym := range syms {
 			if sym == symV && i < len(tuple) {
-				return tuple[i], true
+				resultErr = it.Error()
+				return tuple[i], true, resultErr
 			}
 		}
 	}
 
-	return nil, false
+	resultErr = it.Error()
+	return nil, false, resultErr
 }
 
 // getAllAttributes retrieves all datoms for an entity (for wildcard pull)
@@ -257,7 +286,7 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 		},
 	}
 
-	rel, err := pe.matcher.Match(pattern, nil)
+	rel, err := pe.matcher.Match(&query.Query{Where: []query.Clause{pattern}}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +425,11 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 			}
 		} else {
 			// Cardinality-one: get single value
-			if val, ok := pe.lookupAttribute(entity, s.Attr); ok {
+			val, ok, err := pe.lookupAttribute(entity, s.Attr)
+			if err != nil {
+				return err
+			}
+			if ok {
 				result[query.KeyName(s.Attr)] = val
 			}
 		}
@@ -443,7 +476,11 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 			}
 		} else {
 			// Cardinality-one reference: follow single ref
-			if refVal, ok := pe.lookupAttribute(entity, s.Attr); ok {
+			refVal, ok, err := pe.lookupAttribute(entity, s.Attr)
+			if err != nil {
+				return err
+			}
+			if ok {
 				if refEntity, ok := getIdentity(refVal); ok {
 					pe.ctx.NestedBegin(entity, s.Attr, refEntity, depth+1, false)
 
@@ -477,7 +514,11 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 			}
 		} else {
 			// Cardinality-one: limit doesn't really apply
-			if val, ok := pe.lookupAttribute(entity, s.Attr); ok {
+			val, ok, err := pe.lookupAttribute(entity, s.Attr)
+			if err != nil {
+				return err
+			}
+			if ok {
 				result[query.KeyName(s.Attr)] = val
 			}
 		}
@@ -493,7 +534,11 @@ func (pe *PullExecutor) processResolvedSpec(entity datalog.Identity, spec query.
 			}
 		} else {
 			// Cardinality-one with default
-			if val, ok := pe.lookupAttribute(entity, s.Attr); ok {
+			val, ok, err := pe.lookupAttribute(entity, s.Attr)
+			if err != nil {
+				return err
+			}
+			if ok {
 				result[query.KeyName(s.Attr)] = val
 			} else {
 				result[query.KeyName(s.Attr)] = s.Default
@@ -529,7 +574,7 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 		},
 	}
 
-	rel, err := pe.matcher.Match(pattern, nil)
+	rel, err := pe.matcher.Match(&query.Query{Where: []query.Clause{pattern}}, nil)
 	if err != nil || rel == nil {
 		return nil
 	}

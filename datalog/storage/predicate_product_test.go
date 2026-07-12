@@ -556,10 +556,10 @@ func TestScalarInput_SingleEntitySelfExclusion(t *testing.T) {
 	}
 }
 
-// --- Group 6: Planner metadata verification ---
+// --- Group 6: Planner Datalog input-shape verification ---
 
-// TestPlanner_ConstantBindableDetection verifies the planner marks scalar inputs
-// that only appear in predicates (not data patterns) as constant-bindable.
+// TestPlanner_ConstantBindableDetection verifies the planner preserves scalar
+// input semantics for values used only by predicates.
 func TestPlanner_ConstantBindableDetection(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
@@ -576,31 +576,27 @@ func TestPlanner_ConstantBindableDetection(t *testing.T) {
 		t.Fatalf("Explain failed: %v", err)
 	}
 
-	// The planner should mark ?parent as constant-bindable because it only
-	// appears in the predicate [(not= ?e ?parent)], not in any data pattern.
+	// ?parent only appears in the predicate, so phase Datalog should retain it
+	// as a ScalarInput rather than folding it into the relation input.
 	found := false
 	parentSym := datalog.NewSymbol("?parent")
 	for _, phase := range plan.Phases {
-		if cbInputs, ok := phase.Metadata["constant_bindable_inputs"]; ok {
-			if syms, ok := cbInputs.([]query.Symbol); ok {
-				for _, sym := range syms {
-					if sym == parentSym {
-						found = true
-					}
-				}
+		for _, input := range phase.Query.In {
+			if scalar, ok := input.(query.ScalarInput); ok && scalar.Symbol == parentSym {
+				found = true
 			}
 		}
 	}
 	if !found {
-		t.Errorf("Expected planner to mark ?parent as constant-bindable, but metadata did not contain it")
+		t.Errorf("expected phase Datalog to preserve ?parent as a scalar input")
 		for i, phase := range plan.Phases {
-			t.Logf("Phase %d metadata: %v", i, phase.Metadata)
+			t.Logf("Phase %d :in: %v", i, phase.Query.In)
 		}
 	}
 }
 
 // TestPlanner_ScalarInPatternNotConstantBindable verifies the planner does NOT
-// mark a scalar input as constant-bindable when it appears in a data pattern.
+// preserve a scalar input as constant-only when it appears in a data pattern.
 func TestPlanner_ScalarInPatternNotConstantBindable(t *testing.T) {
 	tdb := setupBridgeTestDB(t)
 	defer tdb.cleanup()
@@ -617,18 +613,27 @@ func TestPlanner_ScalarInPatternNotConstantBindable(t *testing.T) {
 		t.Fatalf("Explain failed: %v", err)
 	}
 
-	// ?target appears in data pattern [?e :person/name ?target], so it should
-	// NOT be marked as constant-bindable.
+	// ?target appears in data pattern [?e :person/name ?target], so it must flow
+	// through the phase relation rather than as a constant ScalarInput.
 	targetSym := datalog.NewSymbol("?target")
+	foundInRelation := false
 	for _, phase := range plan.Phases {
-		if cbInputs, ok := phase.Metadata["constant_bindable_inputs"]; ok {
-			if syms, ok := cbInputs.([]query.Symbol); ok {
-				for _, sym := range syms {
+		for _, input := range phase.Query.In {
+			switch in := input.(type) {
+			case query.ScalarInput:
+				if in.Symbol == targetSym {
+					t.Errorf("?target should not be a phase ScalarInput because it appears in a data pattern")
+				}
+			case query.RelationInput:
+				for _, sym := range in.Symbols {
 					if sym == targetSym {
-						t.Errorf("?target should NOT be constant-bindable (it appears in a data pattern)")
+						foundInRelation = true
 					}
 				}
 			}
 		}
+	}
+	if !foundInRelation {
+		t.Errorf("expected ?target to flow through a phase RelationInput")
 	}
 }

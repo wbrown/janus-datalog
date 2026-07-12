@@ -131,7 +131,7 @@ func TestImport_LZJLiteral(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -190,7 +190,7 @@ func TestImport_MixedFile(t *testing.T) {
 				query.Blank{},
 			},
 		}
-		results, err := matcher.Match(pattern, nil)
+		results, err := matcher.Match(query.PatternQuery(pattern), nil)
 		require.NoError(t, err)
 		iter := results.Iterator()
 		require.True(t, iter.Next(), "should find %s", tc.attr)
@@ -284,7 +284,7 @@ func TestImport_AVET_AfterImport(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -344,7 +344,7 @@ func TestImport_Tier3_InlineExport(t *testing.T) {
 			query.Blank{},
 		},
 	}
-	results, err := matcher.Match(pattern, nil)
+	results, err := matcher.Match(query.PatternQuery(pattern), nil)
 	require.NoError(t, err)
 
 	iter := results.Iterator()
@@ -400,7 +400,7 @@ func TestImport_ValueEquality_AcrossBoundary(t *testing.T) {
 				query.Blank{},
 			},
 		}
-		results, err := matcher.Match(pattern, nil)
+		results, err := matcher.Match(query.PatternQuery(pattern), nil)
 		require.NoError(t, err)
 		iter := results.Iterator()
 		require.True(t, iter.Next())

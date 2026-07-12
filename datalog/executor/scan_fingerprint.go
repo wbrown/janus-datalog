@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -25,25 +26,63 @@ func ScanFingerprint(pattern *query.DataPattern) string {
 	if src == nil {
 		src = datalog.SymDollar
 	}
-	b.WriteString(src.String())
-	b.WriteByte('|')
+	writeFingerprintText(&b, "source", src.String())
 
-	// Each element: VAR for variables, value string for constants
-	for i, elem := range pattern.Elements {
-		if i > 0 {
-			b.WriteByte('|')
-		}
+	// Every component is typed and length-delimited. Human formatting is not
+	// injective ("1" vs int64(1), sentinels, and embedded delimiters).
+	for _, elem := range pattern.Elements {
 		switch e := elem.(type) {
 		case query.Variable:
-			b.WriteString("VAR")
+			writeFingerprintText(&b, "variable", "")
 		case query.Constant:
-			fmt.Fprintf(&b, "%v", e.Value)
+			valueType := datalog.Type(e.Value)
+			data := datalog.ValueBytes(e.Value)
+			writeFingerprintText(
+				&b,
+				fmt.Sprintf("constant-%d", valueType),
+				hex.EncodeToString(data),
+			)
 		case query.Blank:
-			b.WriteString("_")
+			writeFingerprintText(&b, "blank", "")
 		default:
-			fmt.Fprintf(&b, "%v", e)
+			writeFingerprintText(&b, fmt.Sprintf("%T", e), fmt.Sprint(e))
 		}
 	}
 
+	return b.String()
+}
+
+func writeFingerprintText(b *strings.Builder, kind, value string) {
+	fmt.Fprintf(b, "%d:%s:%d:%s;", len(kind), kind, len(value), value)
+}
+
+// ScanQueryFingerprint extends the logical pattern fingerprint with physical
+// ordering and limit requirements. Variable names remain canonicalized by
+// pattern position so equivalent renamed scans can still share.
+func ScanQueryFingerprint(q *query.Query, pattern *query.DataPattern) string {
+	var b strings.Builder
+	b.WriteString(ScanFingerprint(pattern))
+	positions := make(map[query.Symbol]int)
+	for i, element := range pattern.Elements {
+		if variable, ok := element.(query.Variable); ok {
+			positions[variable.Name] = i
+		}
+	}
+	b.WriteString("|order:")
+	for _, clause := range q.OrderBy {
+		position, ok := positions[clause.Variable]
+		if !ok {
+			fmt.Fprintf(&b, "external:%s", clause.Variable)
+		} else {
+			fmt.Fprintf(&b, "var%d", position)
+		}
+		fmt.Fprintf(&b, ":%s;", clause.Direction)
+	}
+	b.WriteString("|limit:")
+	if q.Limit == nil {
+		b.WriteString("none")
+	} else {
+		fmt.Fprintf(&b, "%d", *q.Limit)
+	}
 	return b.String()
 }

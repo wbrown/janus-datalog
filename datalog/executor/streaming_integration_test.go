@@ -222,9 +222,11 @@ func TestStreamingIntegration(t *testing.T) {
 
 		// Apply function evaluation (x + y)
 		fn := query.ArithmeticFunction{
-			Op:    query.OpAdd,
-			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
-			Right: query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+			Op: query.OpAdd,
+			Args: []query.Term{
+				query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
+				query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+			},
 		}
 
 		withFunction := rel.EvaluateFunction(fn, datalog.NewSymbol("?sum"))

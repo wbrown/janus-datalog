@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -138,7 +137,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	result = NewMaterializedRelationWithOptions(symbols, filtered, opts)
+	result = NewMaterializedRelationWithProperties(symbols, filtered, opts, rel.Properties())
 	return
 }
 
@@ -203,6 +202,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	// deferred Close() also runs on panic (expression Function.Eval is
 	// user-supplied code and can panic), without losing the Close error.
 	var iterErr error
+	expanded := false
 	iter := rel.Iterator()
 	defer func() {
 		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
@@ -261,6 +261,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
 		if multiRows, ok := evalResult.([][]interface{}); ok {
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
+				expanded = true
 				for _, subTuple := range multiRows {
 					if len(subTuple) != len(tb.Variables) {
 						continue
@@ -351,7 +352,15 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	result = NewMaterializedRelationWithOptions(newColumns, newTuples, opts)
+	properties := rel.Properties()
+	if expanded {
+		properties = expansionProperties(properties, bindingSymbols, newColumns)
+	} else {
+		for _, symbol := range bindingSymbols {
+			properties = properties.addSymbol(symbol)
+		}
+	}
+	result = NewMaterializedRelationWithProperties(newColumns, newTuples, opts, properties)
 	return
 }
 
@@ -462,10 +471,10 @@ func collectInnerVars(clauses []query.Clause) []query.Symbol {
 	return vars
 }
 
-// getUniqueCombinations extracts unique value combinations for the given symbols
-func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
+// getUniqueCombinations extracts unique value combinations for the given symbols.
+func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, resultErr error) {
 	if rel == nil || len(syms) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	relSyms := rel.Symbols()
@@ -480,14 +489,17 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
 			}
 		}
 		if !found {
-			return nil
+			return nil, nil
 		}
 	}
 
 	seen := NewTupleKeyMap()
-	var combos []Tuple
-
 	iter := rel.Iterator()
+	defer func() {
+		if closeErr := iter.Close(); resultErr == nil {
+			resultErr = closeErr
+		}
+	}()
 	for iter.Next() {
 		tuple := iter.Tuple()
 		combo := make(Tuple, len(symIndices))
@@ -495,14 +507,12 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) []Tuple {
 			combo[i] = tuple[idx]
 		}
 		key := NewTupleKeyFull(combo)
-		if !seen.Exists(key) {
-			seen.Put(key, struct{}{})
+		if !seen.PutIfAbsent(key, struct{}{}) {
 			combos = append(combos, combo)
 		}
 	}
-	iter.Close()
-
-	return combos
+	resultErr = iter.Error()
+	return combos, resultErr
 }
 
 // countOverlap counts how many symbols from targetSyms are present in refSyms
@@ -562,8 +572,7 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 				projected[i] = tuple[idx]
 			}
 			key := NewTupleKeyFull(projected)
-			if !seen.Exists(key) {
-				seen.Put(key, struct{}{})
+			if !seen.PutIfAbsent(key, struct{}{}) {
 				allTuples = append(allTuples, projected)
 			}
 		}
@@ -574,70 +583,13 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 		iter.Close()
 	}
 
-	result := NewMaterializedRelationWithOptions(syms, allTuples, opts)
+	result := NewMaterializedRelationWithProperties(
+		syms,
+		allTuples,
+		opts,
+		deduplicatedProperties(syms),
+	)
 	result.err = firstErr
-	return result
-}
-
-// convertPlannerConstraints converts planner-level storage constraints to executor-level constraints
-func convertPlannerConstraints(pattern *query.DataPattern, plannerConstraints []planner.StorageConstraint) []StorageConstraint {
-	var result []StorageConstraint
-
-	// Map pattern variables to positions
-	varPositions := make(map[query.Symbol]int)
-	if v, ok := pattern.GetE().(query.Variable); ok {
-		varPositions[v.Name] = 0
-	}
-	if v, ok := pattern.GetA().(query.Variable); ok {
-		varPositions[v.Name] = 1
-	}
-	if v, ok := pattern.GetV().(query.Variable); ok {
-		varPositions[v.Name] = 2
-	}
-	if len(pattern.Elements) > 3 {
-		if v, ok := pattern.GetT().(query.Variable); ok {
-			varPositions[v.Name] = 3
-		}
-	}
-
-	for _, pc := range plannerConstraints {
-		switch pc.Type {
-		case planner.ConstraintEquality:
-			// Position 2 (value) is the common case
-			result = append(result, &equalityConstraint{
-				position: 2,
-				value:    pc.Value,
-			})
-
-		case planner.ConstraintRange:
-			// Build range constraint based on operator
-			rc := &rangeConstraint{position: 2}
-			switch pc.Operator {
-			case query.OpGT:
-				rc.min = pc.Value
-				rc.includeMin = false
-			case query.OpGTE:
-				rc.min = pc.Value
-				rc.includeMin = true
-			case query.OpLT:
-				rc.max = pc.Value
-				rc.includeMax = false
-			case query.OpLTE:
-				rc.max = pc.Value
-				rc.includeMax = true
-			}
-			result = append(result, rc)
-
-		case planner.ConstraintTimeExtraction:
-			// Time extraction with expected value
-			result = append(result, &timeExtractionConstraint{
-				position:  2, // Value position for time
-				extractFn: pc.TimeField,
-				expected:  pc.Value,
-			})
-		}
-	}
-
 	return result
 }
 

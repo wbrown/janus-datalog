@@ -74,7 +74,7 @@ func TestWorkspaceRegression_RawIterator(t *testing.T) {
 	}
 
 	matcher := db.Matcher().(*BadgerMatcher)
-	rel, err := matcher.Match(pattern, nil)
+	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
 	}
 
 	matcher := db.Matcher().(*BadgerMatcher)
-	rel, err := matcher.Match(pattern, nil)
+	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
 	}
 
 	// Now verify that stored references share memory (workspace reuse is active)
-	rel2, _ := matcher.Match(pattern, nil)
+	rel2, _ := matcher.Match(query.PatternQuery(pattern), nil)
 	var storedTuples []executor.Tuple
 	it2 := rel2.Iterator()
 	for it2.Next() {
@@ -347,7 +347,7 @@ func TestWorkspaceRegression_StreamingRelationCache(t *testing.T) {
 	}
 
 	matcher := db.Matcher().(*BadgerMatcher)
-	rel, err := matcher.Match(pattern, nil)
+	rel, err := matcher.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestWorkspaceRegression_BufferedIterator(t *testing.T) {
 	}
 
 	matcher := db.Matcher().(*BadgerMatcher)
-	rel, _ := matcher.Match(agePattern, nil)
+	rel, _ := matcher.Match(query.PatternQuery(agePattern), nil)
 
 	// Wrap streaming iterator in BufferedIterator
 	buffered := executor.NewBufferedIterator(rel.Iterator())

@@ -79,7 +79,7 @@ func BenchmarkAVETReuse(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		result, err := matcher.Match(pattern, executor.Relations{symbolRel})
+		result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{symbolRel})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -169,7 +169,7 @@ func BenchmarkAVETNoReuse(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// TODO: Need to force no-reuse strategy
-		result, err := matcher.Match(pattern, executor.Relations{symbolRel})
+		result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{symbolRel})
 		if err != nil {
 			b.Fatal(err)
 		}

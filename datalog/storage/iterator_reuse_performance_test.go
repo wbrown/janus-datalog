@@ -80,7 +80,7 @@ func TestIteratorReusePerformance(t *testing.T) {
 				// For now, we'll measure with current settings
 
 				start := time.Now()
-				result, err := matcher.Match(pattern, executor.Relations{bindingRel})
+				result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -111,7 +111,7 @@ func TestIteratorReusePerformance(t *testing.T) {
 				matcher := NewBadgerMatcherWithOptions(store, opts)
 
 				start := time.Now()
-				result, err := matcher.Match(pattern, executor.Relations{bindingRel})
+				result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 				if err != nil {
 					t.Fatal(err)
 				}

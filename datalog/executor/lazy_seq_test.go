@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"errors"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,29 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTupleSeqPropagatesIteratorAndCloseErrors(t *testing.T) {
+	t.Run("iterator error", func(t *testing.T) {
+		seq := NewTupleSeq(
+			newFailingRelation(1, Tuple{int64(1)}, Tuple{int64(2)}).Iterator(),
+			false,
+		)
+		_, err := LazySeqToSlice(seq)
+		require.ErrorIs(t, err, errInjectedIterator)
+	})
+
+	t.Run("close error", func(t *testing.T) {
+		closeErr := errors.New("lazy sequence close failure")
+		source := failingRelation{
+			Relation:  NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}}),
+			failAfter: 100,
+			closeErr:  closeErr,
+		}
+		seq := NewTupleSeq(source.Iterator(), false)
+		require.ErrorIs(t, seq.Close(), closeErr)
+		require.ErrorIs(t, seq.Close(), closeErr)
+	})
+}
 
 // TestLazySeq_ThunkCalledOnce verifies that the thunk executes exactly once
 // regardless of how many times First()/Rest()/Empty() are called.

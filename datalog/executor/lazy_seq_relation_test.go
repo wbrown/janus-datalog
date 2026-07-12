@@ -235,6 +235,17 @@ func TestLazySeqRelation_FromStreamingRelation(t *testing.T) {
 	}
 }
 
+func TestLazySeqRelationMaterializeReplaysSourceError(t *testing.T) {
+	source := newFailingRelation(1, Tuple{int64(1)}, Tuple{int64(2)})
+	relation := NewLazySeqRelation(
+		NewTupleSeq(source.Iterator(), false),
+		testSymbols(),
+	)
+
+	materialized := relation.Materialize()
+	require.ErrorIs(t, driveErr(materialized), errInjectedIterator)
+}
+
 // countingSliceIterator tracks how many times Next() is called.
 type countingSliceIterator struct {
 	tuples    []Tuple

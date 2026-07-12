@@ -109,6 +109,7 @@ Queries are EDN vectors. The basic form:
 ```clojure
 [?entity :attribute ?value]          ;; basic pattern
 [?entity :attribute "literal"]       ;; match literal value
+[?entity :workflow/state workflow/active] ;; symbol value (unquoted EDN symbol)
 [?entity :attribute _]               ;; wildcard (attribute exists)
 [?entity :attribute ?value ?tx]      ;; with transaction ID
 ```

@@ -161,7 +161,7 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 			opts,
 		)
 
-		result, err := matcher.Match(pattern, executor.Relations{inputRel})
+		result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{inputRel})
 		if err != nil {
 			t.Fatalf("Match failed: %v", err)
 		}

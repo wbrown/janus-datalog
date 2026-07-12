@@ -104,7 +104,7 @@ func TestSliceSource_Match(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := source.Match(tt.pattern, nil)
+			result, err := source.Match(query.PatternQuery(tt.pattern), nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -133,7 +133,7 @@ func TestSliceSource_EmptySlice(t *testing.T) {
 		},
 	}
 
-	result, err := source.Match(pattern, nil)
+	result, err := source.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestSliceSourceImplementsPatternMatcher(t *testing.T) {
 		},
 	}
 
-	result, err := pm.Match(pattern, nil)
+	result, err := pm.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

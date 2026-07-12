@@ -358,6 +358,30 @@ type Query struct {
 	ScalarReturn bool            // If true, return scalar value (find spec ends with .)
 }
 
+// SingleDataPattern returns the sole data pattern in a physical query fragment.
+// PatternMatcher implementations use this invariant while receiving the full
+// Datalog fragment so they can inspect safe ordering and limit requirements.
+func (q *Query) SingleDataPattern() (*DataPattern, error) {
+	if q == nil || len(q.Where) != 1 {
+		count := 0
+		if q != nil {
+			count = len(q.Where)
+		}
+		return nil, fmt.Errorf("pattern query requires exactly one where clause, got %d", count)
+	}
+	pattern, ok := q.Where[0].(*DataPattern)
+	if !ok {
+		return nil, fmt.Errorf("pattern query requires a DataPattern, got %T", q.Where[0])
+	}
+	return pattern, nil
+}
+
+// PatternQuery wraps a DataPattern as the minimal Datalog query fragment
+// accepted by PatternMatcher.
+func PatternQuery(pattern *DataPattern) *Query {
+	return &Query{Where: []Clause{pattern}}
+}
+
 // InputSpec represents an input specification in the :in clause
 type InputSpec interface {
 	isInputSpec()

@@ -14,7 +14,11 @@ type mockPatternMatcher struct {
 	wasCalled bool
 }
 
-func (m *mockPatternMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *mockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
+	pattern, err := q.SingleDataPattern()
+	if err != nil {
+		return nil, err
+	}
 	m.wasCalled = true
 	if m.matchFunc != nil {
 		return m.matchFunc(pattern, bindings)
@@ -42,7 +46,7 @@ func TestSourceRouterRoutes(t *testing.T) {
 		},
 	}
 
-	_, err := router.Match(pattern, nil)
+	_, err := router.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,7 +68,7 @@ func TestSourceRouterRoutes(t *testing.T) {
 		},
 	}
 
-	_, err = router.Match(pattern, nil)
+	_, err = router.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +97,7 @@ func TestSourceRouterDefaultSource(t *testing.T) {
 		},
 	}
 
-	_, err := router.Match(pattern, nil)
+	_, err := router.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +120,7 @@ func TestSourceRouterUnknownSource(t *testing.T) {
 		},
 	}
 
-	_, err := router.Match(pattern, nil)
+	_, err := router.Match(query.PatternQuery(pattern), nil)
 	if err == nil {
 		t.Fatal("expected error for unknown source, got nil")
 	}
@@ -138,7 +142,7 @@ func TestSourceRouterImplementsPatternMatcher(t *testing.T) {
 		},
 	}
 
-	_, err := pm.Match(pattern, nil)
+	_, err := pm.Match(query.PatternQuery(pattern), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

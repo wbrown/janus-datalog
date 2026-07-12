@@ -26,6 +26,7 @@ Potential optimizations and features under consideration.
 ### Infrastructure
 
 - **TEST_COVERAGE_PLAN.md** - 🎯 Test coverage improvements (always relevant)
+- **LEGACY_METADATA_AND_DATALOG_IR_GAPS.md** - 🎯 Inventory and staged cleanup plan for opaque metadata, old plan types, parallel subquery paths, and intentional compatibility surfaces
 
 ## Guidelines
 

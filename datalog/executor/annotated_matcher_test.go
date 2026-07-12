@@ -17,7 +17,7 @@ type testMatcher struct {
 	callCount   int
 }
 
-func (m *testMatcher) Match(pattern *query.DataPattern, bindings Relations) (Relation, error) {
+func (m *testMatcher) Match(q *query.Query, bindings Relations) (Relation, error) {
 	m.callCount++
 	return m.matchResult, m.matchError
 }
@@ -29,7 +29,7 @@ type testPredicateMatcher struct {
 }
 
 func (m *testPredicateMatcher) MatchWithConstraints(
-	pattern *query.DataPattern,
+	q *query.Query,
 	bindings Relations,
 	constraints []StorageConstraint,
 ) (Relation, error) {
@@ -75,7 +75,7 @@ func TestWrapMatcher_ZeroOverheadWhenDisabled(t *testing.T) {
 		},
 	}
 
-	result, err := wrapped.Match(pattern, nil)
+	result, err := wrapped.Match(query.PatternQuery(pattern), nil)
 
 	// Assert
 	if err != nil {
@@ -124,7 +124,7 @@ func TestWrapMatcher_BasicAnnotation(t *testing.T) {
 		},
 	}
 
-	result, err := wrapped.Match(pattern, nil)
+	result, err := wrapped.Match(query.PatternQuery(pattern), nil)
 
 	// Assert
 	if err != nil {
@@ -191,7 +191,7 @@ func TestWrapMatcher_WithError(t *testing.T) {
 		},
 	}
 
-	result, err := wrapped.Match(pattern, nil)
+	result, err := wrapped.Match(query.PatternQuery(pattern), nil)
 
 	// Assert
 	if err != testError {
@@ -251,7 +251,7 @@ func TestWrapMatcher_WithBindings(t *testing.T) {
 		[]Tuple{{1}, {2}, {3}},
 	)
 
-	result, err := wrapped.Match(pattern, Relations{bindingRel})
+	result, err := wrapped.Match(query.PatternQuery(pattern), Relations{bindingRel})
 
 	// Assert
 	if err != nil {
@@ -317,7 +317,7 @@ func TestWrapMatcher_PredicateAwareInterface(t *testing.T) {
 
 	// Call MatchWithConstraints
 	constraints := []StorageConstraint{} // empty for test
-	result, err := predicateMatcher.MatchWithConstraints(pattern, nil, constraints)
+	result, err := predicateMatcher.MatchWithConstraints(query.PatternQuery(pattern), nil, constraints)
 
 	// Assert
 	if err != nil {
@@ -391,21 +391,21 @@ func BenchmarkWrapMatcher_Overhead(b *testing.B) {
 
 	b.Run("Unwrapped", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			mock.Match(pattern, nil)
+			mock.Match(query.PatternQuery(pattern), nil)
 		}
 	})
 
 	b.Run("Wrapped-Disabled", func(b *testing.B) {
 		wrapped := WrapMatcher(mock, nil) // Zero overhead
 		for i := 0; i < b.N; i++ {
-			wrapped.Match(pattern, nil)
+			wrapped.Match(query.PatternQuery(pattern), nil)
 		}
 	})
 
 	b.Run("Wrapped-Enabled", func(b *testing.B) {
 		wrapped := WrapMatcher(mock, func(annotations.Event) {}) // With annotation
 		for i := 0; i < b.N; i++ {
-			wrapped.Match(pattern, nil)
+			wrapped.Match(query.PatternQuery(pattern), nil)
 		}
 	})
 }

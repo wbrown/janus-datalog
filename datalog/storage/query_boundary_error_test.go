@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"crypto/rand"
 	"testing"
 
@@ -169,7 +170,7 @@ func TestIndexNestedLoop_SurfacesBlobDecodeError(t *testing.T) {
 	matcher := NewBadgerMatcherWithOptions(db.store, executor.ExecutorOptions{IndexNestedLoopThreshold: 999999})
 	bindingRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?e")}, []executor.Tuple{{e}})
 
-	result, err := matcher.Match(pattern, executor.Relations{bindingRel})
+	result, err := matcher.Match(query.PatternQuery(pattern), executor.Relations{bindingRel})
 	require.NoError(t, err)
 	it := result.Iterator()
 	for it.Next() {
@@ -244,9 +245,9 @@ func TestQueryMultiPhase_SurfacesBlobDecodeError(t *testing.T) {
 
 // writeValidThenCorruptBlob writes two :doc/blob datoms so an unbound scan yields
 // a VALID row first and a FAILING row second. The attr-bound, E/V-unbound scan is
-// E-primary (AETV for cardinality-one, AEVT for cardinality-many), and L85 is
-// sort-order-preserving and IS the E key component, so the entity with the lower
-// L85 is scanned first. That entity gets a small inline value (always decodes);
+// E-primary (AETV for cardinality-one, AEVT for cardinality-many), and the raw
+// identity hash is the E key component, so the entity with the lower hash is
+// scanned first. That entity gets a small inline value (always decodes);
 // the other gets a large Tier-3 value whose blob is then deleted. Deleting every
 // blob key corrupts only the Tier-3 entity, so the failure lands on the SECOND
 // Next() — exercising the truncation / second-Next() boundary paths.
@@ -263,7 +264,7 @@ func writeValidThenCorruptBlob(t *testing.T) *Database {
 
 	a := datalog.NewKeyword(":doc/blob")
 	low, high := datalog.NewIdentity("doc-1"), datalog.NewIdentity("doc-2")
-	if high.L85() < low.L85() {
+	if bytes.Compare(high.Bytes(), low.Bytes()) < 0 {
 		low, high = high, low // ensure `low` sorts first in the E-primary scan
 	}
 
