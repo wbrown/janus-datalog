@@ -7,7 +7,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -171,55 +170,6 @@ func TestPredicatePushdownIntegration(t *testing.T) {
 		}
 	})
 
-	// Test 3: Verify predicate pushdown with executor integration
-	t.Run("ExecutorIntegration", func(t *testing.T) {
-		// This tests the full integration through the executor
-
-		// Create a phase with pattern and predicate
-		phase := &planner.Phase{
-			Patterns: []planner.PatternPlan{
-				{Pattern: pattern},
-				{Pattern: &query.DataPattern{
-					Elements: []query.PatternElement{
-						query.Variable{Name: datalog.NewSymbol("?b")},
-						query.Constant{Value: datalog.NewKeyword(":price/time")},
-						query.Variable{Name: datalog.NewSymbol("?t")},
-					},
-				}},
-			},
-			Predicates: []planner.PredicatePlan{
-				{
-					Predicate: &query.FunctionPredicate{
-						Fn: "day",
-						Args: []query.PatternElement{
-							query.Variable{Name: datalog.NewSymbol("?t")},
-							query.Constant{Value: int64(20)},
-						},
-					},
-				},
-			},
-			Provides: []query.Symbol{datalog.NewSymbol("?b"), datalog.NewSymbol("?t")},
-		}
-
-		// Use the predicate classifier
-		classifier := executor.NewPredicateClassifier(
-			phase.Patterns[1].Pattern.(*query.DataPattern),
-			phase,
-		)
-
-		pushable, remaining := classifier.ClassifyAndConvert()
-
-		// Should identify the day predicate as pushable
-		if len(pushable) != 1 {
-			t.Errorf("Expected 1 pushable predicate, got %d", len(pushable))
-		}
-
-		if len(remaining) != 0 {
-			t.Errorf("Expected 0 remaining predicates, got %d", len(remaining))
-		}
-
-		t.Logf("Successfully classified predicate as pushable: %s", pushable[0].String())
-	})
 }
 
 // createTimeExtractionConstraint creates a time extraction constraint

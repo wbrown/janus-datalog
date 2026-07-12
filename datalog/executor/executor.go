@@ -22,7 +22,6 @@ type Executor struct {
 // NewExecutor creates a new query executor with default options
 func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 	defaultOpts := planner.PlannerOptions{
-		UseStreamingSubqueryUnion:  false,
 		EnableIteratorComposition:  true,
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
@@ -74,8 +73,6 @@ func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 		EnableSymmetricHashJoin:         opts.EnableSymmetricHashJoin,
 		EnableParallelSubqueries:        opts.EnableParallelSubqueries,
 		MaxSubqueryWorkers:              opts.MaxSubqueryWorkers,
-		UseStreamingSubqueryUnion:       opts.UseStreamingSubqueryUnion,
-		UseComponentizedSubquery:        opts.UseComponentizedSubquery,
 		EnableStreamingJoins:            opts.EnableStreamingJoins,
 		EnableStreamingAggregation:      opts.EnableStreamingAggregation,
 		EnableStreamingAggregationDebug: opts.EnableStreamingAggregationDebug,
@@ -393,16 +390,15 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		}
 	}
 
-	// Check for conditional aggregates and emit annotation for observability
-	// The planner emits two representations of conditional aggregates:
-	// 1. Metadata: phase.Metadata["conditional_aggregates"] - used by legacy executor
-	// 2. Find clause: phase.Find contains FindAggregate with Predicate - used by QueryExecutor
-	// This dual approach maintains backward compatibility while following "Datalog is the IR"
+	// Count conditional aggregates directly from the Datalog phase fragments.
 	var condAggCount int
 	for _, phase := range plan.Phases {
-		if phase.Metadata != nil {
-			if condAggs, ok := phase.Metadata["conditional_aggregates"].([]planner.ConditionalAggregate); ok {
-				condAggCount += len(condAggs)
+		if phase.Query == nil {
+			continue
+		}
+		for _, findElement := range phase.Query.Find {
+			if aggregate, ok := findElement.(query.FindAggregate); ok && aggregate.IsConditional() {
+				condAggCount++
 			}
 		}
 	}

@@ -74,12 +74,6 @@ func forkContext(ctx Context) Context {
 		return &AnnotatedContext{collector: c.collector}
 	case *BaseContext:
 		return &BaseContext{}
-	case *subqueryContext:
-		return &subqueryContext{
-			parent:      forkContext(c.parent),
-			inputValues: c.inputValues, // read-only during execution
-			inputs:      c.inputs,
-		}
 	default:
 		return ctx
 	}
@@ -210,8 +204,11 @@ func (c *AnnotatedContext) ExecutePhase(name string, phase interface{}, fn func(
 		"phase": name,
 	}
 
-	// Add phase-specific information if available
-	if phaseInfo, ok := phase.(planner.Phase); ok {
+	// Add phase-specific information if available.
+	switch phaseInfo := phase.(type) {
+	case planner.RealizedPhase:
+		data["pattern.count"] = len(phaseInfo.Patterns)
+	case *planner.RealizedPhase:
 		data["pattern.count"] = len(phaseInfo.Patterns)
 	}
 

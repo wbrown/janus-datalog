@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -28,231 +27,13 @@ const (
 	TAEV                  // Tx-Attribute-Entity-Value  (clock recovery / audit log)
 )
 
-// QueryPlan represents an optimized execution plan for a query
-type QueryPlan struct {
-	Query    *query.Query
-	Phases   []Phase
-	Metadata map[string]interface{} // Query-level metadata (e.g., time range constraints)
-}
-
-// Phase represents a phase of query execution
-type Phase struct {
-	Patterns               []PatternPlan                // Patterns to execute in this phase
-	Predicates             []PredicatePlan              // Predicates to apply after patterns
-	Expressions            []ExpressionPlan             // Expressions to evaluate in this phase
-	Subqueries             []SubqueryPlan               // Subqueries to execute in this phase
-	DecorrelatedSubqueries []DecorrelatedSubqueryPlan   // Decorrelated subquery groups
-	NotClauses             []*query.NotClause           // NOT clauses to apply (anti-join filtering)
-	NotJoinClauses         []*query.NotJoinClause       // NOT-JOIN clauses to apply
-	OrClauses              []*query.OrClause            // OR clauses to execute (union)
-	OrJoinClauses          []*query.OrJoinClause        // OR-JOIN clauses to execute
-	OrDefaultClauses       []*query.OrDefaultClause     // OR-DEFAULT clauses (fallback)
-	OrDefaultJoinClauses   []*query.OrDefaultJoinClause // OR-DEFAULT-JOIN clauses (fallback)
-	Available              []query.Symbol               // Symbols available from previous phases (including bindings)
-	Provides               []query.Symbol               // Symbols this phase provides
-	Keep                   []query.Symbol               // Symbols to keep for later phases
-	Find                   []query.FindElement          // Find clause elements (preserves aggregates)
-	Metadata               map[string]interface{}       // Phase metadata (e.g., decorrelation analysis)
-}
-
-// combineTimeExtractions merges time extraction expressions with predicates
-// Example: [(day ?t) ?d] + [(= ?d 20)] -> time extraction constraint
-func (p *Phase) combineTimeExtractions() {
-	// Map output variables to time extraction expressions
-	timeExtractionOutputs := make(map[query.Symbol]string)      // variable -> time field (day, month, etc.)
-	timeExtractionInputs := make(map[query.Symbol]query.Symbol) // output var -> input var
-
-	// Check expressions for time extraction functions
-	for _, exprPlan := range p.Expressions {
-		if exprPlan.Expression != nil {
-			// Check if this is a time extraction function
-			if tef, ok := exprPlan.Expression.Function.(*query.TimeExtractionFunction); ok {
-				// Time extraction only supports scalar binding
-				if outputSym, ok := exprPlan.Output.(query.Symbol); ok && outputSym != nil {
-					timeExtractionOutputs[outputSym] = tef.Field
-					// The input is typically the first argument
-					if len(exprPlan.Inputs) > 0 {
-						timeExtractionInputs[outputSym] = exprPlan.Inputs[0]
-					}
-				}
-			}
-		}
-	}
-
-	// Now process predicates
-	var result []PredicatePlan
-
-	for _, pred := range p.Predicates {
-		// Check if this is an equality or comparison predicate on a time extraction output
-		if pred.Type == PredicateEquality && len(pred.RequiredVars) == 2 {
-			// Variable equality - these are filters between two variables
-			// Don't try to optimize these as time extraction predicates
-			// Examples: [(= ?year ?year-open)], [(= ?month ?month-close)]
-			result = append(result, pred)
-
-		} else if (pred.Type == PredicateEquality || pred.Type == PredicateComparison) && pred.Variable != nil {
-			// Single variable with constant - check if it's a time extraction output
-			if timeField, found := timeExtractionOutputs[pred.Variable]; found {
-				// Create a time extraction predicate
-				inputVar := timeExtractionInputs[pred.Variable]
-				operator := pred.Operator
-				if pred.Type == PredicateEquality {
-					operator = query.OpEQ
-				}
-				result = append(result, PredicatePlan{
-					Type:         PredicateTimeExtraction,
-					Variable:     inputVar,
-					TimeField:    timeField,
-					Value:        pred.Value,
-					Operator:     operator,
-					RequiredVars: []query.Symbol{inputVar},
-					Predicate:    pred.Predicate, // Keep original for reference
-				})
-			} else {
-				result = append(result, pred)
-			}
-		} else {
-			result = append(result, pred)
-		}
-	}
-
-	p.Predicates = result
-}
-
-// ConstraintType represents the type of storage constraint
-type ConstraintType uint8
-
-const (
-	ConstraintEquality ConstraintType = iota
-	ConstraintRange
-	ConstraintTimeExtraction
-)
-
-// String returns the string representation of ConstraintType
-func (t ConstraintType) String() string {
-	switch t {
-	case ConstraintEquality:
-		return "equality"
-	case ConstraintRange:
-		return "range"
-	case ConstraintTimeExtraction:
-		return "time_extraction"
-	default:
-		return "unknown"
-	}
-}
-
-// StorageConstraint represents a constraint that can be evaluated at storage level
-type StorageConstraint struct {
-	Type      ConstraintType  // Type of constraint
-	Attribute string          // The attribute to constrain
-	Value     interface{}     // The value or range
-	Operator  query.CompareOp // For comparisons: OpEQ, OpLT, OpGT, OpLTE, OpGTE
-	TimeField string          // For time extraction: "year", "month", "day", etc.
-}
-
 // PatternPlan represents a planned pattern with index selection
 type PatternPlan struct {
-	Pattern            query.Pattern          // Original pattern
-	Index              IndexType              // Selected index
-	BoundMask          BoundMask              // Which elements are bound
-	Selectivity        int                    // Estimated selectivity (lower = more selective)
-	Bindings           map[query.Symbol]bool  // Variables that will be bound after execution
-	PushablePredicates []PredicatePlan        // Predicates that can be pushed to storage for this pattern
-	Metadata           map[string]interface{} // Additional metadata (storage constraints, etc.)
-}
-
-// ApplyConstraints analyzes predicates and applies relevant constraints to this pattern
-func (pp *PatternPlan) ApplyConstraints(predicates []PredicatePlan, phase Phase) {
-	var constraints []StorageConstraint
-
-	for _, pred := range predicates {
-		if constraint := pp.toConstraint(pred, phase); constraint != nil {
-			constraints = append(constraints, *constraint)
-		}
-	}
-
-	// Add constraints to metadata
-	if len(constraints) > 0 {
-		if pp.Metadata == nil {
-			pp.Metadata = make(map[string]interface{})
-		}
-		pp.Metadata["storage_constraints"] = constraints
-	}
-}
-
-// toConstraint converts a predicate to a storage constraint if applicable to this pattern
-func (pp *PatternPlan) toConstraint(pred PredicatePlan, phase Phase) *StorageConstraint {
-	dp, ok := pp.Pattern.(*query.DataPattern)
-	if !ok {
-		return nil
-	}
-
-	// Check if this is a time extraction predicate
-	if pred.Type == PredicateTimeExtraction {
-		// Check if this pattern provides the time variable (pred.Variable contains the time var)
-		for i, elem := range dp.Elements {
-			if v, ok := elem.(query.Variable); ok && v.Name == pred.Variable {
-				// This pattern provides the time variable
-				if i == 2 { // Value position - the time is in the value
-					// Get the attribute
-					if attrElem, ok := dp.Elements[1].(query.Constant); ok {
-						attrStr := fmt.Sprintf("%v", attrElem.Value)
-						// Check if this is a time attribute
-						if attrStr == ":price/time" || attrStr == ":bar/time" {
-							return &StorageConstraint{
-								Type:      ConstraintTimeExtraction,
-								Attribute: attrStr,
-								Value:     pred.Value,
-								TimeField: pred.TimeField,
-								Operator:  pred.Operator,
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Check if this is a value comparison predicate
-	if pred.Type == PredicateComparison {
-		// Check if this pattern has the variable in value position
-		if len(dp.Elements) > 2 {
-			if v, ok := dp.Elements[2].(query.Variable); ok {
-				if v.Name == pred.Variable {
-					// This pattern provides the variable in value position
-					// Get the attribute
-					if attrElem, ok := dp.Elements[1].(query.Constant); ok {
-						return &StorageConstraint{
-							Type:      ConstraintRange,
-							Attribute: fmt.Sprintf("%v", attrElem.Value),
-							Value:     pred.Value,
-							Operator:  pred.Operator,
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Check for equality predicates on the value position
-	if pred.Type == PredicateEquality && len(dp.Elements) > 2 && dp.Elements[2] != nil {
-		if v, ok := dp.Elements[2].(query.Variable); ok {
-			if v.Name == pred.Variable {
-				// Pattern's value variable has an equality constraint
-				if attrElem, ok := dp.Elements[1].(query.Constant); ok {
-					return &StorageConstraint{
-						Type:      ConstraintEquality,
-						Attribute: fmt.Sprintf("%v", attrElem.Value),
-						Value:     pred.Value,
-						Operator:  query.OpEQ,
-					}
-				}
-			}
-		}
-	}
-
-	return nil
+	Pattern     query.Pattern         // Original pattern
+	Index       IndexType             // Selected index
+	BoundMask   BoundMask             // Which elements are bound
+	Selectivity int                   // Estimated selectivity (lower = more selective)
+	Bindings    map[query.Symbol]bool // Variables that will be bound after execution
 }
 
 // PredicatePlanType represents the type of predicate plan
@@ -299,82 +80,20 @@ type PredicatePlan struct {
 	Predicate    query.Predicate   // The predicate interface
 	RequiredVars []query.Symbol    // All variables required for evaluation
 	Type         PredicatePlanType // Type of predicate plan
-	CanPushDown  bool              // Can be pushed to storage layer
-
-	// Metadata for predicate pushdown optimization
-	Variable  query.Symbol           // Main variable (if applicable)
-	Value     interface{}            // Constant value (if applicable)
-	Operator  query.CompareOp        // Operator (OpEQ, OpLT, OpGT, etc.)
-	TimeField string                 // For time extraction predicates
-	Metadata  map[string]interface{} // Additional metadata (e.g., optimized_by_constraint)
 }
 
 // ExpressionPlan represents a planned expression to evaluate in a phase
 type ExpressionPlan struct {
-	Expression *query.Expression      // Use the new Expression type
-	Inputs     []query.Symbol         // Symbols this expression needs
-	Output     interface{}            // Symbol (scalar) or TupleBinding (tuple)
-	IsEquality bool                   // True if this is an equality check (no binding)
-	Metadata   map[string]interface{} // Additional metadata (e.g., optimized_by_constraint)
+	Expression *query.Expression // Use the new Expression type
+	Inputs     []query.Symbol    // Symbols this expression needs
+	Output     interface{}       // Symbol (scalar) or TupleBinding (tuple)
+	IsEquality bool              // True if this is an equality check (no binding)
 }
 
 // SubqueryPlan represents a planned subquery to execute in a phase
 type SubqueryPlan struct {
-	Subquery     *query.SubqueryPattern // The subquery pattern
-	Inputs       []query.Symbol         // Symbols this subquery needs from outer query
-	NestedPlan   *QueryPlan             // The planned nested query
-	Decorrelated bool                   // True if this subquery is part of a decorrelated group
-}
-
-// ConditionalAggregate pairs a subquery binding with its rewritten conditional aggregate
-// (Used by experimental conditional aggregate rewriting - currently disabled)
-type ConditionalAggregate struct {
-	Binding   query.BindingForm
-	Aggregate query.FindAggregate
-}
-
-// DecorrelatedSubqueryPlan represents a group of subqueries optimized together
-type DecorrelatedSubqueryPlan struct {
-	OriginalSubqueries []int             // Indices in Phase.Subqueries
-	FilterGroups       []FilterGroup     // Groups of subqueries by filter
-	MergedPlans        []*QueryPlan      // One plan per filter group
-	CorrelationKeys    []query.Symbol    // Keys to join on from outer query (e.g., ?year, ?month, ?day, ?hour)
-	GroupingVars       [][]query.Symbol  // Actual grouping variables in merged queries (per filter group)
-	SymbolMapping      map[int]ResultMap // Original subquery -> result symbols
-
-	// Metadata for annotations (captured at plan time, reported at execution time)
-	SignatureHash     string // Hash of the correlation signature
-	TotalSubqueries   int    // Total subqueries considered for this group
-	DecorrelatedCount int    // How many were actually decorrelated
-}
-
-// ResultMap maps original subquery to symbols in merged result
-type ResultMap struct {
-	FilterGroupIdx int            // Which merged query produced this result
-	SymbolIndices  []int          // Which symbols in that result
-	BindingVars    []query.Symbol // Variable names from the binding form
-}
-
-// FilterGroup represents subqueries with the same filter predicates
-type FilterGroup struct {
-	CommonPatterns     []query.Pattern   // Patterns shared by all subqueries
-	FilterPredicates   []query.Predicate // Distinguishing filter predicates
-	AccessedAttributes []string          // Attributes accessed by subqueries (for grouping)
-	Subqueries         []int             // Indices of subqueries in this group
-	AggFunctions       map[int][]string  // SubqIdx -> aggregate functions
-}
-
-// CorrelationSignature identifies subqueries that can be decorrelated together
-type CorrelationSignature struct {
-	BasePatterns    []PatternFingerprint // Simplified pattern structure
-	CorrelationVars []query.Symbol       // Input variables from :in clause
-	IsAggregate     bool                 // Must have aggregation functions
-}
-
-// PatternFingerprint is a simplified representation of patterns for matching
-type PatternFingerprint struct {
-	Attributes []string       // Attributes accessed (e.g., ":price/high")
-	Bound      []query.Symbol // Which variables are bound
+	Subquery *query.SubqueryPattern // The subquery pattern
+	Inputs   []query.Symbol         // Symbols this subquery needs from outer query
 }
 
 // BoundMask indicates which elements of a pattern are bound
@@ -397,12 +116,10 @@ type PlannerOptions struct {
 	Cache *PlanCache // Shared query plan cache (optional)
 
 	// Subquery / algebra optimization
-	EnableAlgebraOptimizer    bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
-	EnableScanSharing         bool // Share unbound scan results across subqueries via LazySeq (default: false)
-	EnableEntityPrefetch      bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
+	EnableAlgebraOptimizer     bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
+	EnableScanSharing          bool // Share unbound scan results across subqueries via LazySeq (default: false)
+	EnableEntityPrefetch       bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
 	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into per-tuple column attach instead of match+join (default: false)
-	UseStreamingSubqueryUnion bool // Use streaming union for subquery results (default: false; opt-in)
-	UseComponentizedSubquery  bool // Use component-based subquery execution (default: false; opt-in)
 
 	// Executor streaming options - control memory vs performance tradeoffs
 	EnableIteratorComposition bool // Use composed iterators for lazy evaluation (default: true)
@@ -421,98 +138,6 @@ type PlannerOptions struct {
 
 	// Storage join strategy options
 	IndexNestedLoopThreshold int // Threshold for choosing IndexNestedLoop vs HashJoinScan (default: 0)
-}
-
-// String returns a human-readable representation of the query plan
-func (qp *QueryPlan) String() string {
-	var sb strings.Builder
-	sb.WriteString("Query Plan:\n")
-	sb.WriteString(fmt.Sprintf("  Find: %v\n", qp.Query.Find))
-	sb.WriteString(fmt.Sprintf("  Phases: %d\n", len(qp.Phases)))
-
-	for i, phase := range qp.Phases {
-		sb.WriteString(fmt.Sprintf("\nPhase %d:\n", i+1))
-		sb.WriteString(phase.String())
-	}
-
-	return sb.String()
-}
-
-// String returns a human-readable representation of a phase
-func (p *Phase) String() string {
-	var sb strings.Builder
-
-	if len(p.Available) > 0 {
-		sb.WriteString(fmt.Sprintf("  Available: %v\n", p.Available))
-	}
-
-	if len(p.Patterns) > 0 {
-		sb.WriteString("  Patterns:\n")
-		for _, pat := range p.Patterns {
-			sb.WriteString(fmt.Sprintf("    %s [%s index, selectivity=%d]\n",
-				pat.Pattern.String(), indexName(pat.Index), pat.Selectivity))
-			if pat.BoundMask.E || pat.BoundMask.A || pat.BoundMask.V || pat.BoundMask.T {
-				sb.WriteString(fmt.Sprintf("      Bound: E=%v A=%v V=%v T=%v\n",
-					pat.BoundMask.E, pat.BoundMask.A, pat.BoundMask.V, pat.BoundMask.T))
-			}
-			if len(pat.Bindings) > 0 {
-				sb.WriteString(fmt.Sprintf("      Binds: %v\n", pat.Bindings))
-			}
-		}
-	}
-
-	if len(p.Predicates) > 0 {
-		sb.WriteString("  Predicates:\n")
-		for _, pred := range p.Predicates {
-			sb.WriteString(fmt.Sprintf("    %s\n", pred.Predicate.String()))
-		}
-	}
-
-	if len(p.Expressions) > 0 {
-		sb.WriteString("  Expressions:\n")
-		for _, expr := range p.Expressions {
-			if expr.IsEquality {
-				sb.WriteString(fmt.Sprintf("    %s (equality filter)\n", expr.Expression.String()))
-			} else {
-				sb.WriteString(fmt.Sprintf("    %s\n", expr.Expression.String()))
-			}
-			if len(expr.Inputs) > 0 {
-				sb.WriteString(fmt.Sprintf("      Inputs: %v\n", expr.Inputs))
-			}
-		}
-	}
-
-	if len(p.Subqueries) > 0 {
-		sb.WriteString("  Subqueries:\n")
-		for _, subq := range p.Subqueries {
-			sb.WriteString(fmt.Sprintf("    %s\n", subq.Subquery.String()))
-			if len(subq.Inputs) > 0 {
-				sb.WriteString(fmt.Sprintf("      Inputs: %v\n", subq.Inputs))
-			}
-			// Show the nested query plan
-			if subq.NestedPlan != nil {
-				sb.WriteString("      Nested Plan:\n")
-				nestedPlanStr := subq.NestedPlan.String()
-				// Indent each line of the nested plan
-				lines := strings.Split(nestedPlanStr, "\n")
-				for _, line := range lines {
-					if line != "" {
-						sb.WriteString("        " + line + "\n")
-					}
-				}
-			}
-		}
-	}
-
-	if len(p.Provides) > 0 {
-		sb.WriteString(fmt.Sprintf("  Provides: %v\n", p.Provides))
-	}
-
-	if len(p.Keep) > 0 {
-		sb.WriteString(fmt.Sprintf("  Keep: %v\n", p.Keep))
-	}
-
-	return sb.String()
 }
 
 func indexName(idx IndexType) string {
@@ -553,252 +178,10 @@ type RealizedPhase struct {
 }
 
 // RealizedPlan is the output of the planner in the realized format.
-// The executor operates on RealizedPlan instead of QueryPlan.
+// The executor operates on RealizedPlan directly.
 type RealizedPlan struct {
 	Query  *query.Query    // Original user query
 	Phases []RealizedPhase // Phases as Datalog query fragments
-}
-
-// Realize converts a QueryPlan (with Phase structures) into a RealizedPlan
-// (with Query fragments). This is the interchange format between planner and executor.
-//
-// The realized queries preserve EXACT execution order from the current executor:
-//  1. Patterns (pattern matching)
-//  2. Expressions (function evaluation)
-//  3. Predicates (filtering)
-//  4. Subqueries (nested query execution)
-//
-// This ensures identical results for validation during migration.
-func (qp *QueryPlan) Realize() *RealizedPlan {
-	realizedPhases := make([]RealizedPhase, len(qp.Phases))
-	for i, phase := range qp.Phases {
-		isLastPhase := (i == len(qp.Phases)-1)
-		// For phases after the first, get previous phase's Keep for :in clause
-		var prevKeep []query.Symbol
-		if i > 0 {
-			prevKeep = qp.Phases[i-1].Keep
-		}
-		realizedPhases[i] = realizePhase(phase, isLastPhase, prevKeep)
-	}
-	return &RealizedPlan{
-		Query:  qp.Query,
-		Phases: realizedPhases,
-	}
-}
-
-// reconstructPredicatesFromConstraints rebuilds predicates from storage constraints.
-// When predicates are pushed to storage, they're removed from phase.Predicates but stored
-// as storage constraints in pattern metadata. This function reconstructs them for the
-// realized query to ensure semantic completeness.
-func reconstructPredicatesFromConstraints(phase Phase) []query.Clause {
-	var predicates []query.Clause
-
-	// Build a map of time extraction expression outputs
-	// For time extraction constraints, we need to know which variable represents the extraction
-	timeExtractionVars := make(map[string]map[query.Symbol]query.Symbol) // timeField -> inputVar -> output variable
-	for _, expr := range phase.Expressions {
-		if expr.Expression != nil && expr.Output != "" {
-			if tef, ok := expr.Expression.Function.(*query.TimeExtractionFunction); ok {
-				// Found time extraction expression: [(day ?t) ?d]
-				// We need to map field="day" + input var ?t -> output var ?d
-				// Time extraction only supports scalar binding
-				if outputSym, ok := expr.Output.(query.Symbol); ok && len(expr.Inputs) > 0 {
-					inputVar := expr.Inputs[0]
-					if timeExtractionVars[tef.Field] == nil {
-						timeExtractionVars[tef.Field] = make(map[query.Symbol]query.Symbol)
-					}
-					timeExtractionVars[tef.Field][inputVar] = outputSym
-				}
-			}
-		}
-	}
-
-	// Collect all constraints from patterns
-	for _, pattern := range phase.Patterns {
-		if pattern.Metadata == nil {
-			continue
-		}
-
-		constraints, ok := pattern.Metadata["storage_constraints"].([]StorageConstraint)
-		if !ok {
-			continue
-		}
-
-		for _, constraint := range constraints {
-			switch constraint.Type {
-			case ConstraintEquality:
-				// Reconstruct equality predicate: [(= ?var value)]
-				// The variable comes from the pattern's value position
-				if dp, ok := pattern.Pattern.(*query.DataPattern); ok && len(dp.Elements) >= 3 {
-					if v, ok := dp.Elements[2].(query.Variable); ok {
-						predicates = append(predicates, &query.Comparison{
-							Left:  query.VariableTerm{Symbol: v.Name},
-							Right: query.ConstantTerm{Value: constraint.Value},
-							Op:    query.OpEQ,
-						})
-					}
-				}
-
-			case ConstraintRange:
-				// Reconstruct range predicate: [(> ?var value)] or similar
-				if dp, ok := pattern.Pattern.(*query.DataPattern); ok && len(dp.Elements) >= 3 {
-					if v, ok := dp.Elements[2].(query.Variable); ok {
-						predicates = append(predicates, &query.Comparison{
-							Left:  query.VariableTerm{Symbol: v.Name},
-							Right: query.ConstantTerm{Value: constraint.Value},
-							Op:    constraint.Operator,
-						})
-					}
-				}
-
-			case ConstraintTimeExtraction:
-				// Reconstruct time extraction predicate: [(= ?d 20)]
-				// We need to find the output variable from the time extraction expression
-				// The constraint has TimeField (e.g., "day") and we need the pattern's time variable
-				if dp, ok := pattern.Pattern.(*query.DataPattern); ok && len(dp.Elements) >= 3 {
-					if v, ok := dp.Elements[2].(query.Variable); ok {
-						// v is the time variable from the pattern (e.g., ?t)
-						// Look up the corresponding extraction output variable (e.g., ?d)
-						if fieldMap, found := timeExtractionVars[constraint.TimeField]; found {
-							if outputVar, found := fieldMap[v.Name]; found {
-								// Found it! Create predicate: [(op ?d value)]
-								predicates = append(predicates, &query.Comparison{
-									Left:  query.VariableTerm{Symbol: outputVar},
-									Right: query.ConstantTerm{Value: constraint.Value},
-									Op:    constraint.Operator,
-								})
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return predicates
-}
-
-// realizePhase converts a Phase (with 7 operation types) into a RealizedPhase
-// (with a single Query containing Clause list).
-//
-// The resulting Query is independently executable:
-// - :in clause documents inputs from previous phase's Keep
-// - :find clause outputs this phase's Keep (or final :find for last phase)
-// - :where clause contains all operations in execution order
-//
-// prevKeep is the previous phase's Keep symbols (for :in clause), nil for first phase.
-func realizePhase(phase Phase, isLastPhase bool, prevKeep []query.Symbol) RealizedPhase {
-	var where []query.Clause
-
-	// CRITICAL: Preserve EXACT execution order from current executor!
-	// This ensures identical results for validation.
-	//
-	// Current executor (applyExpressionsAndPredicates) executes in this order:
-	//   1. Patterns (pattern matching) - in executePhaseSequential
-	//   2. OR clauses (data sources, may provide symbols for expressions)
-	//   3. OR-JOIN clauses (data sources)
-	//   4. Expressions (function evaluation, may need symbols from OR clauses)
-	//   5. Predicates (filtering)
-	//   6. Subqueries (nested query execution)
-	//   7. NOT clauses (anti-join filtering)
-	//   8. NOT-JOIN clauses
-
-	// 1. Add patterns (in order)
-	for _, pp := range phase.Patterns {
-		// Pattern is stored as query.Pattern interface, but we need query.Clause
-		// DataPattern implements both Pattern and Clause, so type assert
-		if dp, ok := pp.Pattern.(*query.DataPattern); ok {
-			where = append(where, dp)
-		}
-	}
-
-	// 2. Add OR clauses (data sources that provide symbols)
-	// MUST come before expressions that may depend on their outputs
-	for _, oc := range phase.OrClauses {
-		where = append(where, oc)
-	}
-
-	// 3. Add OR-JOIN clauses (data sources)
-	for _, ojc := range phase.OrJoinClauses {
-		where = append(where, ojc)
-	}
-
-	// 3a. Add OR-DEFAULT clauses (fallback)
-	for _, odc := range phase.OrDefaultClauses {
-		where = append(where, odc)
-	}
-
-	// 3b. Add OR-DEFAULT-JOIN clauses (fallback)
-	for _, odjc := range phase.OrDefaultJoinClauses {
-		where = append(where, odjc)
-	}
-
-	// 4. Add expressions (in order)
-	for _, ep := range phase.Expressions {
-		where = append(where, ep.Expression)
-	}
-
-	// 5. Add predicates (in order)
-	for _, pred := range phase.Predicates {
-		where = append(where, pred.Predicate)
-	}
-
-	// 5a. Reconstruct predicates from storage constraints (for pushed predicates)
-	// These predicates were removed from phase.Predicates after being pushed to storage,
-	// but need to appear in the realized query for semantic completeness.
-	reconstructedPredicates := reconstructPredicatesFromConstraints(phase)
-	where = append(where, reconstructedPredicates...)
-
-	// 6. Add subqueries (in order)
-	// Note: We include all subqueries, even those marked as Decorrelated.
-	// The Metadata will contain decorrelation hints for optimization.
-	for _, sq := range phase.Subqueries {
-		where = append(where, sq.Subquery)
-	}
-
-	// 7. Add NOT clauses (anti-join filtering)
-	for _, nc := range phase.NotClauses {
-		where = append(where, nc)
-	}
-
-	// 8. Add NOT-JOIN clauses
-	for _, njc := range phase.NotJoinClauses {
-		where = append(where, njc)
-	}
-
-	// Build :find clause
-	// - Last phase: Use Phase.Find (preserves aggregates from original query)
-	// - Intermediate phases: Reconstruct from Keep (what actually passes forward)
-	var find []query.FindElement
-	if isLastPhase {
-		// Last phase uses original query's :find (with aggregates)
-		find = phase.Find
-	} else {
-		// Intermediate phase: output only what's in Keep (what passes to next phase)
-		for _, sym := range phase.Keep {
-			find = append(find, query.FindVariable{Symbol: sym})
-		}
-	}
-
-	// Build :in clause from previous phase's Keep (what was actually passed forward)
-	// First phase has no :in, subsequent phases receive previous Keep
-	var in []query.InputSpec
-	if len(prevKeep) > 0 {
-		in = append(in, query.DatabaseInput{Name: datalog.SymDollar})
-		in = append(in, query.RelationInput{Symbols: prevKeep})
-	}
-
-	return RealizedPhase{
-		Query: &query.Query{
-			Find:  find,
-			In:    in,
-			Where: where,
-		},
-		Available: phase.Available,
-		Provides:  phase.Provides,
-		Keep:      phase.Keep,
-		Metadata:  phase.Metadata,
-	}
 }
 
 // String returns a human-readable representation of a RealizedPhase

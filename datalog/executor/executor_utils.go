@@ -5,54 +5,8 @@ import (
 	"sort"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
-
-// injectConditionalAggregates replaces find variables with conditional aggregates
-// from the query rewriter.
-func injectConditionalAggregates(findClause []query.FindElement, condAggs []planner.ConditionalAggregate) []query.FindElement {
-	// Build a map from variable symbols to conditional aggregates
-	varToAgg := make(map[query.Symbol]query.FindAggregate)
-
-	for _, condAgg := range condAggs {
-		// Extract variable(s) from the binding
-		switch b := condAgg.Binding.(type) {
-		case query.TupleBinding:
-			// For tuple bindings, we expect exactly one variable for single aggregates
-			if len(b.Variables) == 1 {
-				varToAgg[b.Variables[0]] = condAgg.Aggregate
-			}
-			// If multiple variables, we'd need to handle differently (not yet implemented)
-		case query.ScalarBinding:
-			// Scalar binding: single value to single variable
-			varToAgg[b.Variable] = condAgg.Aggregate
-		case query.CollectionBinding:
-			varToAgg[b.Variable] = condAgg.Aggregate
-		case query.RelationBinding:
-			// For relation bindings with single variable (rare for aggregates)
-			if len(b.Variables) == 1 {
-				varToAgg[b.Variables[0]] = condAgg.Aggregate
-			}
-		}
-	}
-
-	// Replace find variables with conditional aggregates
-	result := make([]query.FindElement, len(findClause))
-	for i, elem := range findClause {
-		if v, ok := elem.(query.FindVariable); ok {
-			if agg, exists := varToAgg[v.Symbol]; exists {
-				result[i] = agg
-			} else {
-				result[i] = elem
-			}
-		} else {
-			result[i] = elem
-		}
-	}
-
-	return result
-}
 
 // emptyRelationForQuery returns an empty MaterializedRelation with the correct
 // symbols for the given query's :find clause, plus any retained :order-by

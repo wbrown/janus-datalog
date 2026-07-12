@@ -591,9 +591,8 @@ Multi-phase: T(query) = Σ T(phase_i), executed sequentially.
 
 | Mode | Time | When |
 |------|------|------|
-| Sequential | O(\|combos\| x T(sub)) | Default |
-| Batched | O(T(sub)) | `UseComponentizedSubquery=true` |
-| Parallel | O(T(sub) / workers) | `EnableParallelSubqueries=true` |
+| Per-combination | O(\|combos\| x T(sub)) | Nested `(q ...)` clauses |
+| Parallel RelationInput iteration | O(\|inputs\| x T(query) / workers) | `EnableParallelSubqueries=true` |
 
 ### Pull API
 

@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -578,68 +577,6 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 
 	result := NewMaterializedRelationWithOptions(syms, allTuples, opts)
 	result.err = firstErr
-	return result
-}
-
-// convertPlannerConstraints converts planner-level storage constraints to executor-level constraints
-func convertPlannerConstraints(pattern *query.DataPattern, plannerConstraints []planner.StorageConstraint) []StorageConstraint {
-	var result []StorageConstraint
-
-	// Map pattern variables to positions
-	varPositions := make(map[query.Symbol]int)
-	if v, ok := pattern.GetE().(query.Variable); ok {
-		varPositions[v.Name] = 0
-	}
-	if v, ok := pattern.GetA().(query.Variable); ok {
-		varPositions[v.Name] = 1
-	}
-	if v, ok := pattern.GetV().(query.Variable); ok {
-		varPositions[v.Name] = 2
-	}
-	if len(pattern.Elements) > 3 {
-		if v, ok := pattern.GetT().(query.Variable); ok {
-			varPositions[v.Name] = 3
-		}
-	}
-
-	for _, pc := range plannerConstraints {
-		switch pc.Type {
-		case planner.ConstraintEquality:
-			// Position 2 (value) is the common case
-			result = append(result, &equalityConstraint{
-				position: 2,
-				value:    pc.Value,
-			})
-
-		case planner.ConstraintRange:
-			// Build range constraint based on operator
-			rc := &rangeConstraint{position: 2}
-			switch pc.Operator {
-			case query.OpGT:
-				rc.min = pc.Value
-				rc.includeMin = false
-			case query.OpGTE:
-				rc.min = pc.Value
-				rc.includeMin = true
-			case query.OpLT:
-				rc.max = pc.Value
-				rc.includeMax = false
-			case query.OpLTE:
-				rc.max = pc.Value
-				rc.includeMax = true
-			}
-			result = append(result, rc)
-
-		case planner.ConstraintTimeExtraction:
-			// Time extraction with expected value
-			result = append(result, &timeExtractionConstraint{
-				position:  2, // Value position for time
-				extractFn: pc.TimeField,
-				expected:  pc.Value,
-			})
-		}
-	}
-
 	return result
 }
 

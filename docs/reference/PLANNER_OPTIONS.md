@@ -33,8 +33,6 @@ type PlannerOptions struct {
     EnableAlgebraOptimizer    bool // default-active
     EnableScanSharing         bool // opt-in
     EnableEntityPrefetch      bool // opt-in
-    UseStreamingSubqueryUnion bool // opt-in
-    UseComponentizedSubquery  bool // opt-in
 
     EnableIteratorComposition bool // default-active
     EnableTrueStreaming       bool // default-active
@@ -72,9 +70,9 @@ EnableDebugLogging:         false
 IndexNestedLoopThreshold:   0      // always HashJoinScan
 ```
 
-So, off by default (opt-in): `UseStreamingSubqueryUnion`,
-`UseComponentizedSubquery`, `EnableScanSharing`, `EnableEntityPrefetch`,
-`EnableSymmetricHashJoin`, `EnableStreamingJoins`, `EnableStreamingAggregationDebug`.
+So, off by default (opt-in): `EnableScanSharing`, `EnableEntityPrefetch`,
+`EnableSymmetricHashJoin`, `EnableStreamingJoins`, and
+`EnableStreamingAggregationDebug`.
 
 ---
 
@@ -95,14 +93,6 @@ Benchmarked performance-neutral, hence off. Consumed in `executor/executor.go`.
 #### EnableEntityPrefetch — **opt-in** (default false)
 Warms the EA cache after the first data pattern via `PrefetchEntities`.
 Benchmarked performance-neutral, hence off. Consumed in `executor/query_executor.go`.
-
-#### UseStreamingSubqueryUnion — **opt-in** (default false)
-Streams subquery-union results instead of materializing them. Consumed in
-`executor/streaming_union.go` and `executor/subquery.go`.
-
-#### UseComponentizedSubquery — **opt-in** (default false)
-Routes subquery execution through the component-based path (strategy selector,
-batcher, worker pool). Consumed in `executor/query_executor.go`.
 
 ### Streaming
 

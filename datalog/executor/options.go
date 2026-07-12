@@ -18,10 +18,6 @@ type ExecutorOptions struct {
 	EnableParallelSubqueries bool
 	MaxSubqueryWorkers       int
 
-	// Subquery optimization options
-	UseStreamingSubqueryUnion bool // If true, use streaming union for subquery results (default: false; opt-in)
-	UseComponentizedSubquery  bool // If true, use component-based subquery execution (default: false; opt-in)
-
 	// Join options
 	EnableStreamingJoins bool
 	EnableDebugLogging   bool

@@ -24,8 +24,6 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 	// Opt-in: documented as off by default (must be set explicitly).
 	require.False(t, opts.EnableScanSharing, "EnableScanSharing is documented opt-in")
 	require.False(t, opts.EnableEntityPrefetch, "EnableEntityPrefetch is documented opt-in")
-	require.False(t, opts.UseStreamingSubqueryUnion, "UseStreamingSubqueryUnion is documented opt-in")
-	require.False(t, opts.UseComponentizedSubquery, "UseComponentizedSubquery is documented opt-in")
 	require.False(t, opts.EnableSymmetricHashJoin, "EnableSymmetricHashJoin is documented opt-in")
 	require.False(t, opts.EnableStreamingJoins, "EnableStreamingJoins is documented opt-in")
 	require.False(t, opts.EnableStreamingAggregationDebug, "EnableStreamingAggregationDebug is documented opt-in")

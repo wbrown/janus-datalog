@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/parser"
 )
 
@@ -50,9 +51,18 @@ func TestSimpleSubquery(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
+	var executionPath string
+	ctx := NewContext(func(event annotations.Event) {
+		if event.Name == "subquery/executor-path" {
+			executionPath, _ = event.Data["path"].(string)
+		}
+	})
+	result, err := exec.ExecuteWithContext(ctx, q)
 	if err != nil {
 		t.Fatalf("Failed to execute query: %v", err)
+	}
+	if executionPath != "Per-combination QueryExecutor" {
+		t.Fatalf("unexpected subquery execution path annotation: %q", executionPath)
 	}
 
 	// Check results

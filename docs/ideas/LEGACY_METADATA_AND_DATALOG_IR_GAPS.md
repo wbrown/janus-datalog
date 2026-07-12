@@ -1,7 +1,7 @@
 # Legacy Metadata and Datalog IR Gaps
 
 **Reviewed:** 2026-07-11  
-**Status:** Inventory and staged cleanup proposal  
+**Status:** Cleanup in progress; active design decisions deferred
 **Scope:** Planner/executor control flow, not persisted data compatibility
 
 ## Summary
@@ -65,25 +65,13 @@ Preferred cleanup options:
 Option 2 better preserves Datalog as the IR, but it must not duplicate planner
 dependency analysis. This requires an explicit design decision.
 
-#### `conditional_aggregates` — likely dead compatibility read
+#### `conditional_aggregates` — removed
 
-`executor/executor.go` still scans:
-
-```text
-phase.Metadata["conditional_aggregates"]
-```
-
-The current planner has no writer for that key. Conditional aggregate semantics
-are represented in Datalog by `FindAggregate.Predicate`, which
-`QueryExecutor` consumes directly.
-
-This appears to be an observability-only remnant from the removed legacy
-executor. Before removal:
-
-- Add a guard proving conditional-aggregate annotations come from the find
-  clause.
-- Remove the metadata read and dual-representation comments.
-- Run conditional aggregation, decorrelation, and complex-query tests.
+Conditional aggregate semantics and rewrite observability now both derive from
+`FindAggregate.Predicate` in each phase's Datalog find clause. The dead
+`phase.Metadata["conditional_aggregates"]` read and dual-representation comments
+were removed. A structural executor test pins the annotation count to the
+Datalog representation.
 
 ### 2. `Context` metadata map
 
@@ -109,30 +97,15 @@ Suggested sequence:
 
 Do not replace it with another generic context-value mechanism.
 
-### 3. Legacy `QueryPlan` / `Phase` graph
+### 3. Legacy `QueryPlan` / `Phase` graph — removed
 
-The active `ClauseBasedPlanner` constructs `RealizedPlan` directly. The older
-types remain in `planner/types.go`:
+`QueryPlan`, `Phase`, `QueryPlan.Realize`, nested plans, decorrelation plan
+records, constraint-reconstruction metadata, and the executor subsystem that
+kept them reachable have been removed together.
 
-- `QueryPlan`
-- `Phase`
-- `PatternPlan`
-- `SubqueryPlan.NestedPlan`
-- `DecorrelatedSubqueryPlan`
-- `QueryPlan.Realize`
-
-Repository searches find no production construction or assignment of:
-
-- `QueryPlan{...}`
-- `SubqueryPlan.NestedPlan`
-- `Phase.DecorrelatedSubqueries`
-
-`PatternPlan` still has an active explain-analysis use, so the entire type
-family cannot be deleted as one mechanical block.
-
-The old graph is also referenced by the legacy executor-level subquery
-functions in `executor/subquery.go`, creating a mutually supporting dead-code
-cluster. Remove or migrate the cluster together, not piecemeal.
+`PatternPlan`, `PredicatePlan`, `ExpressionPlan`, and `SubqueryPlan` remain only
+as typed explain records on `RealizedPhase`; fields used solely by the old graph
+were removed.
 
 ### 4. Parallel subquery execution implementations
 
@@ -143,55 +116,26 @@ There are two distinct subquery families:
 `query_executor.go` executes nested Datalog recursively and supports:
 
 - Default per-combination execution
-- Opt-in componentized execution
-- Batched, parallel, and sequential strategies
-- Streaming/materialized union selection
+- Default per-combination execution
+- Parallel RelationInput iteration through the executor worker loop
 
-This path is active and must remain until benchmark evidence selects one
-strategy.
+The annotation now reports `"Per-combination QueryExecutor"`.
 
-Its default branch still emits:
+The plan-based executor subsystem and the opt-in componentized subsystem were
+removed. Benchmark execution showed the componentized path could not execute
+representative correlated subqueries: it searched outer relations for the
+nested query's local `:in` names instead of the call-site symbols. Its selector,
+batcher, generic worker pool, streaming-union builder, options, tests, and
+benchmarks therefore did not represent a valid alternative execution path.
+The valid per-combination path completed five two-iteration samples at
+43.1–51.7 ms/op for the 1,000-bar case and 329–372 ms/op for the 5,000-bar case;
+the componentized cases failed before producing timing samples.
 
-```text
-"path": "Legacy QueryExecutor"
-```
+### 5. Planner metadata inside old plan types — removed
 
-That label is stale: `QueryExecutor` is now the active architecture. Rename the
-annotation value independently of any implementation removal.
-
-#### Executor-level `SubqueryPlan` implementation
-
-`executor/subquery.go` contains another sequential/parallel/batched subsystem
-based on `planner.SubqueryPlan` and `QueryPlan.Realize`.
-
-The public executor path does not call `Executor.executeSubquery`; active
-subqueries route through `DefaultQueryExecutor.executeSubquery`.
-
-This is a high-confidence removal candidate, but it has internal benchmarks and
-tests whose intent may still be valuable. Before deletion:
-
-1. Map each test to the active QueryExecutor equivalent.
-2. Move any missing worker-count/error/streaming assertions.
-3. Confirm no exported consumer calls `ExecuteSubquery`.
-4. Delete the old planner graph and executor subsystem together.
-
-### 5. Planner metadata inside old plan types
-
-The older types contain additional opaque maps:
-
-- `QueryPlan.Metadata`
-- `Phase.Metadata`
-- `PatternPlan.Metadata`
-- `PredicatePlan.Metadata`
-- `ExpressionPlan.Metadata`
-
-`PatternPlan.Metadata["storage_constraints"]` participates in the old
-`QueryPlan.Realize` reconstruction path. It should be evaluated as part of the
-old-plan removal, not independently migrated into the active planner.
-
-The active planner's explain fields are typed and observability-only. They are
-not the same problem and should not be removed merely because they are outside
-the Datalog query.
+The metadata maps on `QueryPlan`, `Phase`, `PatternPlan`, `PredicatePlan`, and
+`ExpressionPlan` were removed with the old graph. Active typed explain fields
+remain.
 
 ## Contracts That Are Not Debt
 
@@ -233,7 +177,7 @@ It is categorically different from dead in-process execution code.
 
 ## Staged Cleanup Plan
 
-### Stage 1: Remove the dead conditional-aggregate metadata read
+### Stage 1: Remove the dead conditional-aggregate metadata read — complete
 
 - Pin annotation behavior to `FindAggregate.Predicate`
 - Remove `phase.Metadata["conditional_aggregates"]` reads
@@ -258,7 +202,7 @@ Risk: medium; this affects parameter/environment semantics.
 
 Risk: low internally, compatibility-dependent externally.
 
-### Stage 4: Retire the old plan/subquery cluster
+### Stage 4: Retire the old plan/subquery cluster — complete
 
 - Migrate useful tests to active QueryExecutor paths
 - Remove `QueryPlan`, old `Phase`, nested-plan execution, and their metadata
@@ -266,14 +210,14 @@ Risk: low internally, compatibility-dependent externally.
 
 Risk: high because the cluster is large despite appearing unreachable.
 
-### Stage 5: Remove stale naming and options
+### Stage 5: Remove stale naming and options — complete
 
-- Rename `"Legacy QueryExecutor"` annotation
-- Re-benchmark componentized versus default subquery execution
-- Keep one implementation only if measurements and semantics agree
-- Remove options that no longer select a real production path
+- Renamed `"Legacy QueryExecutor"` annotation
+- Exercised componentized versus default subquery execution
+- Removed the componentized path after it failed correlated-query semantics
+- Removed options that no longer selected a valid production path
 
-Risk: medium.
+Result: one active subquery architecture and no stale strategy options.
 
 ## Verification Gates
 
