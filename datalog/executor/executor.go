@@ -460,7 +460,12 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 				keepErr := collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
-				materialized := NewMaterializedRelationWithOptions(group.Symbols(), tuples, opts)
+				materialized := NewMaterializedRelationWithProperties(
+					group.Symbols(),
+					tuples,
+					opts,
+					group.Properties(),
+				)
 				materialized.err = keepErr
 
 				projected, err := materialized.Project(phase.Keep)
@@ -1159,7 +1164,12 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 				keepErr := collectTuplesInto(&tuples, group)
 
 				opts := group.Options()
-				materialized := NewMaterializedRelationWithOptions(group.Symbols(), tuples, opts)
+				materialized := NewMaterializedRelationWithProperties(
+					group.Symbols(),
+					tuples,
+					opts,
+					group.Properties(),
+				)
 				materialized.err = keepErr
 
 				projected, err := materialized.Project(phase.Keep)

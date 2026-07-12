@@ -1,9 +1,9 @@
 # Janus Datalog Optimization Opportunities
 
 **Reviewed:** 2026-07-11  
-**Status:** Items 1–4 and 7 complete; item 5 core contract checkpointed; item 6
-has 6a and four proven 6b history shapes complete; item 8 ready-predicate
-scheduling complete
+**Status:** Items 1–4 and 7 complete; item 5 includes keyed joins,
+semi/anti joins, and OR/fallback/union propagation; item 6 has 6a and four
+proven 6b history shapes complete; item 8 ready-predicate scheduling complete
 
 Janus Datalog has already harvested most obvious iterator, CRDT, index, and
 hash-join gains. The next meaningful improvements are concentrated in typed
@@ -18,7 +18,7 @@ be omitted.
 | 2 | Use `PutIfAbsent` across deduplication paths | Low-level | Implemented and benchmarked | 7.3% faster geomean | Complete |
 | 3 | Introduce a real Top-N physical operator | Relational algebra | Implemented and benchmarked | 97.1% faster geomean | Complete |
 | 4 | Fuse whole same-entity attribute bundles | Relational algebra | Implemented and benchmarked | 13.5% faster geomean | Complete |
-| 5 | Propagate statically provable relational properties | Relational algebra | Keys consumed inside joins and projections | Up to 32.8% faster focused paths | In progress |
+| 5 | Propagate statically provable relational properties | Relational algebra | Keys consumed inside joins, projections, fallback, and union | Up to 32.8% faster focused paths | In progress |
 | 6 | Push Top-N into proven index order | Relational algebra | 6a + four 6b history shapes implemented | Up to 99.7% faster | In progress |
 | 7 | Compile storage-bound hash matching once | Low-level | Implemented and benchmarked | 32.8% fewer allocations | Complete |
 | 8 | Turn the algebra optimizer into a compositional optimizer | Relational algebra | Ready-predicate scheduling implemented | 62.9% faster focused path | In progress |
@@ -232,8 +232,8 @@ Relevant code and benchmarks:
 ## 5. Propagate Statically Provable Relational Properties
 
 **Status:** Core interface contract, first storage guarantees, key-preserving
-natural joins, and semi/anti filtering rules complete; propagation coverage
-remains in progress.
+natural joins, semi/anti filtering, and OR/fallback/union rules complete;
+propagation coverage remains in progress.
 
 The query syntax, selected index, schema, and `Relation` type already establish
 facts such as candidate keys, uniqueness, ordering, and rewindability, but those
@@ -265,8 +265,13 @@ Implemented propagation:
   a candidate key; non-unique build keys retain fanout slices.
 - Semi-joins and anti-joins preserve all left ordering and candidate keys
   because they only filter left rows.
-- Unions, products, and fallback relations clear properties until a derivation
-  rule proves otherwise.
+- Short-circuit fallback preserves unaffected outer keys when each branch is
+  statically at-most-one row per outer tuple. Multi-row fallback and correlated
+  union derive composite outer-plus-output keys after typed deduplication.
+- Eager and channel-backed set unions establish their full output schema as a
+  candidate key; smaller branch keys are not preserved without a cross-branch
+  disjointness proof.
+- Products still clear properties until a derivation rule proves otherwise.
 - Streaming projection skips deduplication when a candidate key survives.
 
 No persistent cardinality statistics, cost model, heuristic override, or
@@ -388,6 +393,49 @@ The complex checkpoint is again statistically unchanged: 48.22 → 49.17 ms/op
 (`p=0.089`), with 82.80 MiB/op (`p=0.853`) and 1.088M allocations/op
 (`p=0.590`) unchanged.
 
+### OR/fallback and union checkpoint
+
+`or-default` now distinguishes singleton branches from multi-row branches.
+Scalar/tuple subquery bindings, non-expanding expressions, and decorrelated
+aggregate relation bindings whose group keys are outer-bound emit at most one
+row per outer tuple; they preserve unaffected outer keys. Multi-row fallback
+and correlated union perform typed full-tuple deduplication and derive the
+conservative key `outer key + branch output symbols`. Ordinary eager and
+channel-backed unions advertise only the full output key because keys that are
+valid within each branch can still collide across branches.
+
+The production query demonstrates both categories: its first two aggregate
+fallbacks preserve `?scenario`; the argmax fallback is relation-valued after
+decorrelation and therefore carries
+`[?scenario ?lastKey ?lastUpdatedAt]`, not the unsound singleton key
+`[?scenario]`.
+
+A deterministic 500-case randomized differential test mixes singleton ground
+expressions, multi-row data patterns, expanding `enumerate` expressions,
+short-circuit fallback, and correlated union over randomly shaped outer
+relations. It compares the optimized iterator against independent per-outer
+branch evaluation, then validates every advertised candidate key and ordering
+against the produced tuples. The first run exposed a vector-value panic in
+fallback correlation filtering; that path now delegates slice equality to the
+canonical typed `datalog.ValuesEqual` implementation and has a focused
+regression test.
+
+`BenchmarkOrFallbackPropertyPropagation`, keyed vs unproven outer input,
+`benchtime=300ms`, `count=10`, darwin/arm64:
+
+| Rows | Time before | Time after | Time delta | Memory delta | Alloc delta |
+|---:|---:|---:|---:|---:|---:|
+| 10,000 | 8.692 ms | 7.509 ms | **-13.61%** | -9.24% | -3.59% |
+| 100,000 | 84.52 ms | 70.54 ms | **-16.54%** | -8.00% | -3.59% |
+| **Geomean** | **27.10 ms** | **23.01 ms** | **-15.09%** | **-8.62%** | **-3.59%** |
+
+The current complex checkpoint has a 51.98 ms median, 84.05 MiB/op, and 1.043M
+allocations/op (`n=10`). Compared with the preceding documented checkpoint,
+allocations are about 4.2% lower, while wall time and memory do not show a gain
+across separate runs. The post-change allocation profile still attributes
+48.4% cumulative space to overlapping fallback/hash-join stacks; direct leaders
+remain hash-table construction and insertion.
+
 ### Join materialization check
 
 `BenchmarkComplexQueryJoinMaterialization` runs the same production-shaped
@@ -415,8 +463,8 @@ remains the separate index-order Top-N step.
 
 Remaining property work:
 
-- Derive properties through specific OR/fallback shapes only where structural
-  proofs exist.
+- Derive smaller ordinary-union keys only where branch domains are provably
+  disjoint.
 - Propagate join ordering only if an execution strategy establishes it.
 - Establish guarantees for additional storage index and binding strategies.
 - Consume ordering in index-order Top-N.
@@ -668,8 +716,9 @@ Relevant code:
    full scan.
 4. **Completed:** one-pass same-entity attribute bundle fusion.
 5. **Checkpointed:** core relation-property contract, key-aware projection,
-   key-preserving natural joins, and semi/anti joins. OR/fallback, ordering, and
-   broader storage derivations remain.
+   key-preserving natural/semi/anti joins, and OR/fallback/union propagation.
+   Cross-branch disjointness, join ordering, and broader storage derivations
+   remain.
 6. **In progress:** 6a plus history/ATEV, history/TAEV, history/AETV, and
    history/EATV 6b shapes are complete; additional CRDT-safe order-aware index
    selections remain.

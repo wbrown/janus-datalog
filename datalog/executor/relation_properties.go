@@ -82,6 +82,34 @@ func (p RelationProperties) addSymbol(symbol query.Symbol) RelationProperties {
 	return result
 }
 
+func (p RelationProperties) withoutReboundSymbols(symbols []query.Symbol) RelationProperties {
+	rebound := make(map[query.Symbol]bool, len(symbols))
+	for _, symbol := range symbols {
+		rebound[symbol] = true
+	}
+
+	result := RelationProperties{}
+	for _, clause := range p.Ordering {
+		if rebound[clause.Variable] {
+			break
+		}
+		result.Ordering = append(result.Ordering, clause)
+	}
+	for _, key := range p.Keys {
+		valid := true
+		for _, symbol := range key {
+			if rebound[symbol] {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			result.Keys = append(result.Keys, append([]query.Symbol(nil), key...))
+		}
+	}
+	return result
+}
+
 func (p RelationProperties) satisfiesOrdering(required []query.OrderByClause) bool {
 	if len(required) > len(p.Ordering) {
 		return false
@@ -92,6 +120,61 @@ func (p RelationProperties) satisfiesOrdering(required []query.OrderByClause) bo
 		}
 	}
 	return true
+}
+
+func deduplicatedProperties(symbols []query.Symbol) RelationProperties {
+	if len(symbols) == 0 {
+		return RelationProperties{}
+	}
+	return RelationProperties{
+		Keys: [][]query.Symbol{append([]query.Symbol(nil), symbols...)},
+	}
+}
+
+func orProperties(
+	outer RelationProperties,
+	producedSymbols []query.Symbol,
+	overwrittenSymbols []query.Symbol,
+	outputSymbols []query.Symbol,
+	shortCircuit bool,
+	branchesEmitAtMostOne bool,
+) (RelationProperties, bool) {
+	preserved := outer.withoutReboundSymbols(overwrittenSymbols)
+	unaffectedOuterKeys := preserved.Keys
+	preserved.Keys = nil
+
+	result := preserved
+	result.Keys = appendDistinctKeys(result.Keys, deduplicatedProperties(outputSymbols).Keys)
+
+	if shortCircuit && branchesEmitAtMostOne {
+		result.Keys = appendDistinctKeys(result.Keys, unaffectedOuterKeys)
+		return result, len(unaffectedOuterKeys) == 0
+	}
+
+	outputSet := make(map[query.Symbol]bool, len(outputSymbols))
+	for _, symbol := range outputSymbols {
+		outputSet[symbol] = true
+	}
+	for _, outerKey := range unaffectedOuterKeys {
+		composite := append([]query.Symbol(nil), outerKey...)
+		for _, symbol := range producedSymbols {
+			if outputSet[symbol] && !symbolInSlice(composite, symbol) {
+				composite = append(composite, symbol)
+			}
+		}
+		result.Keys = appendDistinctKeys(result.Keys, [][]query.Symbol{composite})
+	}
+
+	return result, true
+}
+
+func symbolInSlice(symbols []query.Symbol, candidate query.Symbol) bool {
+	for _, symbol := range symbols {
+		if symbol == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func joinProperties(

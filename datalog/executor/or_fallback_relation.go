@@ -23,6 +23,8 @@ type OrFallbackRelation struct {
 	outerRel      Relation
 	symbols       []query.Symbol // Determined lazily from first result
 	options       ExecutorOptions
+	properties    RelationProperties
+	deduplicate   bool
 	iteratorCount int            // Track how many iterators have been created (for debugging)
 	joinSyms      []query.Symbol // From or-join: explicit join variables for cache keying
 	prefetched    bool           // True when PrefetchEntities has warmed the EA cache
@@ -59,6 +61,31 @@ func NewOrFallbackRelation(
 			symbols = append(symbols, sym)
 		}
 	}
+	producedSymbols := collectAllBranchOutputSymbols(branches)
+	branchesAtMostOne := orBranchesEmitAtMostOne(branches, outerSyms)
+	properties, deduplicate := orProperties(
+		outerRel.Properties(),
+		producedSymbols,
+		collectAllBranchOverwrittenSymbols(branches, outerSyms),
+		symbols,
+		shortCircuit,
+		branchesAtMostOne,
+	)
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: annotations.OrPropertiesDerived,
+			Data: map[string]interface{}{
+				"short_circuit":           shortCircuit,
+				"branches_at_most_one":    branchesAtMostOne,
+				"deduplicate":             deduplicate,
+				"outer_candidate_keys":    outerRel.Properties().clone().Keys,
+				"result_candidate_keys":   properties.clone().Keys,
+				"result_ordering":         properties.clone().Ordering,
+				"branch_output_symbols":   append([]query.Symbol(nil), producedSymbols...),
+				"relation_output_symbols": append([]query.Symbol(nil), symbols...),
+			},
+		})
+	}
 
 	return &OrFallbackRelation{
 		executor:     executor,
@@ -67,6 +94,8 @@ func NewOrFallbackRelation(
 		outerRel:     outerRel,
 		symbols:      symbols,
 		options:      options,
+		properties:   properties,
+		deduplicate:  deduplicate,
 		shortCircuit: shortCircuit,
 	}
 }
@@ -113,6 +142,184 @@ func computeOrBranchOutputSymbols(branches [][]query.Clause) []query.Symbol {
 		}
 	}
 	return result
+}
+
+func collectAllBranchOutputSymbols(branches [][]query.Clause) []query.Symbol {
+	var result []query.Symbol
+	seen := make(map[query.Symbol]bool)
+	for _, branch := range branches {
+		for _, symbol := range collectBranchOutputSymbols(branch) {
+			if !seen[symbol] {
+				seen[symbol] = true
+				result = append(result, symbol)
+			}
+		}
+	}
+	return result
+}
+
+func collectAllBranchOverwrittenSymbols(
+	branches [][]query.Clause,
+	outerSymbols []query.Symbol,
+) []query.Symbol {
+	var result []query.Symbol
+	seen := make(map[query.Symbol]bool)
+	outerSet := make(map[query.Symbol]bool, len(outerSymbols))
+	for _, symbol := range outerSymbols {
+		outerSet[symbol] = true
+	}
+	add := func(symbol query.Symbol) {
+		if symbol != nil && !seen[symbol] {
+			seen[symbol] = true
+			result = append(result, symbol)
+		}
+	}
+	var collectClause func(query.Clause)
+	collectClause = func(clause query.Clause) {
+		switch typed := clause.(type) {
+		case *query.Expression:
+			switch binding := typed.Binding.(type) {
+			case query.Symbol:
+				add(binding)
+			case query.TupleBinding:
+				for _, symbol := range binding.Variables {
+					add(symbol)
+				}
+			}
+		case *query.SubqueryPattern:
+			switch binding := typed.Binding.(type) {
+			case query.ScalarBinding:
+				add(binding.Variable)
+			case query.TupleBinding:
+				for _, symbol := range binding.Variables {
+					add(symbol)
+				}
+			case query.RelationBinding:
+				for i, symbol := range binding.Variables {
+					if !subqueryFindVariablePassesOuter(typed.Query, i, symbol, outerSet) {
+						add(symbol)
+					}
+				}
+			}
+		case *query.Subquery:
+			switch binding := typed.Binding.(type) {
+			case query.Symbol:
+				add(binding)
+			case query.TupleBinding:
+				for _, symbol := range binding.Variables {
+					add(symbol)
+				}
+			case query.RelationBinding:
+				for i, symbol := range binding.Variables {
+					if !subqueryFindVariablePassesOuter(typed.Query, i, symbol, outerSet) {
+						add(symbol)
+					}
+				}
+			}
+		case *query.OrClause:
+			for _, nested := range typed.Branches {
+				for _, nestedClause := range nested {
+					collectClause(nestedClause)
+				}
+			}
+		case *query.OrDefaultClause:
+			for _, nested := range typed.Branches {
+				for _, nestedClause := range nested {
+					collectClause(nestedClause)
+				}
+			}
+		}
+	}
+	for _, branch := range branches {
+		for _, clause := range branch {
+			collectClause(clause)
+		}
+	}
+	return result
+}
+
+func orBranchesEmitAtMostOne(
+	branches [][]query.Clause,
+	outerSymbols []query.Symbol,
+) bool {
+	if len(branches) == 0 {
+		return false
+	}
+	outerSet := make(map[query.Symbol]bool, len(outerSymbols))
+	for _, symbol := range outerSymbols {
+		outerSet[symbol] = true
+	}
+	for _, branch := range branches {
+		if len(branch) == 0 {
+			return false
+		}
+		for _, clause := range branch {
+			switch typed := clause.(type) {
+			case *query.Expression:
+				if typed.Function == nil || typed.Function.ReturnType() == "tuples" {
+					return false
+				}
+			case *query.SubqueryPattern:
+				switch binding := typed.Binding.(type) {
+				case query.ScalarBinding, query.TupleBinding:
+				case query.RelationBinding:
+					if !relationBindingGroupsAreOuterBound(typed.Query, binding.Variables, outerSet) {
+						return false
+					}
+				default:
+					return false
+				}
+			case *query.Subquery:
+				switch binding := typed.Binding.(type) {
+				case query.Symbol, query.TupleBinding:
+				case query.RelationBinding:
+					if !relationBindingGroupsAreOuterBound(typed.Query, binding.Variables, outerSet) {
+						return false
+					}
+				default:
+					return false
+				}
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func relationBindingGroupsAreOuterBound(
+	subquery *query.Query,
+	bindingVariables []query.Symbol,
+	outerSymbols map[query.Symbol]bool,
+) bool {
+	if subquery == nil || len(subquery.Find) != len(bindingVariables) {
+		return false
+	}
+	for i, element := range subquery.Find {
+		switch element.(type) {
+		case query.FindVariable:
+			if !outerSymbols[bindingVariables[i]] {
+				return false
+			}
+		case query.FindAggregate:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func subqueryFindVariablePassesOuter(
+	subquery *query.Query,
+	findIndex int,
+	bindingVariable query.Symbol,
+	outerSymbols map[query.Symbol]bool,
+) bool {
+	if subquery == nil || findIndex >= len(subquery.Find) || !outerSymbols[bindingVariable] {
+		return false
+	}
+	_, isVariable := subquery.Find[findIndex].(query.FindVariable)
+	return isVariable
 }
 
 // collectBranchOutputSymbols collects symbols that a single branch produces.
@@ -223,6 +430,10 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 	}
 
 	outerIter := outer.Iterator()
+	var seen *TupleKeyMap
+	if r.deduplicate {
+		seen = NewTupleKeyMap()
+	}
 
 	// Emit annotation for iterator creation
 	// Note: Don't call outer.Size() - it may block for streaming relations
@@ -250,6 +461,7 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		options:      r.options,
 		joinSyms:     r.joinSyms,
 		prefetched:   r.prefetched,
+		seen:         seen,
 		err:          setupErr,
 		done:         setupErr != nil,
 	}
@@ -261,7 +473,7 @@ func (r *OrFallbackRelation) Symbols() []query.Symbol {
 }
 
 func (r *OrFallbackRelation) Properties() RelationProperties {
-	return RelationProperties{}
+	return r.properties
 }
 
 func (r *OrFallbackRelation) Size() int {
@@ -310,7 +522,7 @@ func (r *OrFallbackRelation) Materialize() Relation {
 	if syms == nil {
 		syms = r.Symbols()
 	}
-	mat := NewMaterializedRelationWithOptions(syms, tuples, r.options)
+	mat := NewMaterializedRelationWithProperties(syms, tuples, r.options, r.properties)
 	if err != nil {
 		mat.err = err
 	}
@@ -388,6 +600,7 @@ type OrFallbackIterator struct {
 	currentBranchRelation Relation // Track relation for RequiresCopy check
 	currentTuple          Tuple
 	outputSyms            []query.Symbol
+	seen                  *TupleKeyMap
 	done                  bool
 	err                   error
 
@@ -654,17 +867,27 @@ func buildCachedBranch(branchResult Relation, outerSyms []query.Symbol, joinSyms
 }
 
 func (it *OrFallbackIterator) Next() bool {
-	if it.done {
-		return false
-	}
+	for {
+		if it.done {
+			return false
+		}
 
-	// Correlated union mode: yield from buffer if available
-	if !it.shortCircuit {
-		return it.nextCorrelatedUnion()
+		var advanced bool
+		if it.shortCircuit {
+			advanced = it.nextShortCircuit()
+		} else {
+			advanced = it.nextCorrelatedUnion()
+		}
+		if !advanced {
+			return false
+		}
+		if it.seen == nil {
+			return true
+		}
+		if !it.seen.PutIfAbsent(NewTupleKeyFull(it.currentTuple), struct{}{}) {
+			return true
+		}
 	}
-
-	// Short-circuit (fallback/or-default) mode: original behavior
-	return it.nextShortCircuit()
 }
 
 // nextCorrelatedUnion streams through ALL branches per outer tuple.

@@ -7,8 +7,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
+	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -176,6 +178,123 @@ func TestOptimizationMatrix(t *testing.T) {
 		}
 		t.Logf("%-40s %10s %10s", cfg.name, times[0].Round(time.Millisecond), times[1].Round(time.Millisecond))
 	}
+}
+
+func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
+	var propertyEvents []annotations.Event
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:   t.TempDir(),
+		Schema: optimizationMatrixSchema(),
+		AnnotationHandler: func(event annotations.Event) {
+			if event.Name == annotations.OrPropertiesDerived {
+				propertyEvents = append(propertyEvents, event)
+			}
+		},
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	populateOptimizationMatrix(t, db, 3, 2)
+	base, err := db.Query(`[:find ?scenario ?title ?createdAt
+		:where
+		[?scenario :entity/type :entity.type/scenario]
+		[?scenario :scenario/title ?title]
+		[?scenario :scenario/created-at ?createdAt]]`)
+	require.NoError(t, err)
+	scenario := datalog.NewSymbol("?scenario")
+	baseHasScenarioKey := false
+	for _, key := range base.Properties().Keys {
+		if len(key) == 1 && key[0] == scenario {
+			baseHasScenarioKey = true
+			break
+		}
+	}
+	require.True(t, baseHasScenarioKey, "the scenario key must exist before fallback clauses")
+
+	fallbackStages := []struct {
+		name  string
+		query string
+	}{
+		{
+			name: "aggregate tuple fallback",
+			query: `[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration
+				:where
+				[?scenario :entity/type :entity.type/scenario]
+				[?scenario :scenario/title ?title]
+				[?scenario :scenario/created-at ?createdAt]
+				(or-default [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+					:in $ ?s
+					:where [?t :task/root ?s]
+					       [?t :task/status :status/complete]
+					       [(get-else $ ?t :task/token-count 0) ?tok]
+					       [(get-else $ ?t :task/duration 0) ?dur]]
+					$ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
+					[(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])]`,
+		},
+		{
+			name: "scalar fallback and expression",
+			query: `[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration ?complete
+				:where
+				[?scenario :entity/type :entity.type/scenario]
+				[?scenario :scenario/title ?title]
+				[?scenario :scenario/created-at ?createdAt]
+				(or-default [(q [:find (count ?t) (sum ?tok) (sum ?dur)
+					:in $ ?s
+					:where [?t :task/root ?s]
+					       [?t :task/status :status/complete]
+					       [(get-else $ ?t :task/token-count 0) ?tok]
+					       [(get-else $ ?t :task/duration 0) ?dur]]
+					$ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
+					[(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])
+				(or-default [(q [:find (count ?t)
+					:in $ ?s
+					:where [?t :task/root ?s]
+					       [?t :task/key :task/opening]
+					       [?t :task/status :status/complete]]
+					$ ?scenario) [[?openingCount]]]
+					[(ground 0) ?openingCount])
+				[[(> ?openingCount 0)] ?complete]]`,
+		},
+	}
+	for _, stage := range fallbackStages {
+		stageResult, err := db.Query(stage.query)
+		require.NoError(t, err, stage.name)
+		found := false
+		for _, key := range stageResult.Properties().Keys {
+			if len(key) == 1 && key[0] == scenario {
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "%s must preserve the scenario key; keys=%v events=%v",
+			stage.name, stageResult.Properties().Keys, propertyEvents)
+	}
+
+	result, err := db.Query(optimizationMatrixQuery(0))
+	require.NoError(t, err)
+	rows, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+
+	lastKey := datalog.NewSymbol("?lastKey")
+	lastUpdatedAt := datalog.NewSymbol("?lastUpdatedAt")
+	foundComposite := false
+	for _, key := range result.Properties().Keys {
+		if len(key) != 3 {
+			continue
+		}
+		members := map[query.Symbol]bool{}
+		for _, symbol := range key {
+			members[symbol] = true
+		}
+		if members[scenario] && members[lastKey] && members[lastUpdatedAt] {
+			foundComposite = true
+			break
+		}
+	}
+	require.True(t, foundComposite,
+		"the multi-row argmax fallback must retain its proven composite key; keys=%v",
+		result.Properties().Keys)
 }
 
 // BenchmarkComplexQueryCheckpoint measures the default production path through

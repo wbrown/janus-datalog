@@ -575,7 +575,12 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 		iter.Close()
 	}
 
-	result := NewMaterializedRelationWithOptions(syms, allTuples, opts)
+	result := NewMaterializedRelationWithProperties(
+		syms,
+		allTuples,
+		opts,
+		deduplicatedProperties(syms),
+	)
 	result.err = firstErr
 	return result
 }

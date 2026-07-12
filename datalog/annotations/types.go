@@ -55,6 +55,7 @@ const (
 	OrClauseUnion          = "or/union"
 	OrSubqueryInput        = "or/subquery.input"
 	OrSubqueryResult       = "or/subquery.result"
+	OrPropertiesDerived    = "or/properties.derived"
 
 	// Aggregation operations
 	AggregationExecuted     = "aggregation/executed"

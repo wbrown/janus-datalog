@@ -48,7 +48,7 @@ func (ur *UnionRelation) Symbols() []query.Symbol {
 }
 
 func (ur *UnionRelation) Properties() RelationProperties {
-	return RelationProperties{}
+	return deduplicatedProperties(ur.symbols)
 }
 
 // Iterator returns an iterator that consumes from the channel (first call) or cache (subsequent calls)
@@ -144,7 +144,12 @@ func (ur *UnionRelation) Project(symbols []query.Symbol) (Relation, error) {
 func (ur *UnionRelation) Materialize() Relation {
 	var allTuples []Tuple
 	err := collectTuplesInto(&allTuples, ur)
-	mat := NewMaterializedRelation(ur.symbols, allTuples)
+	mat := NewMaterializedRelationWithProperties(
+		ur.symbols,
+		allTuples,
+		ur.opts,
+		ur.Properties(),
+	)
 	mat.err = err
 	return mat
 }
