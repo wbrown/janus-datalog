@@ -100,7 +100,7 @@ func (r *PrependedRelation) Materialize() Relation {
 	}
 	it.Close()
 
-	return NewMaterializedRelationWithProperties(r.symbols, tuples, r.options, r.Properties())
+	return newMaterializedRelationFromSet(r.symbols, tuples, r.options, r.Properties())
 }
 
 func (r *PrependedRelation) Sort(orderBy []query.OrderByClause) Relation {

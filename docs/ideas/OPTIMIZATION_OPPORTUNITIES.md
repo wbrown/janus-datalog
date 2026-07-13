@@ -740,16 +740,26 @@ Candidate investigations:
    consumed outer groups instead of joining back to them. Five redundant joins
    disappear from the complex query, improving 11.3% time, 8.3% memory, and
    10.6% allocations. Keyed branch caches continue to execute each eligible
-   branch once.
+   branch once. A follow-up leaves single outer relations streaming until
+   join-key narrowing requires re-iteration; full-result performance is neutral.
 6. Reuse decorrelated subquery scans/results by correlation key and avoid
    rebuilding equivalent hash tables across fallback branches.
-7. **Partially completed (July 13, 2026):** relation bindings apply positional
+7. **Completed (July 13, 2026):** replayable outer relations now feed a
+   single-use product directly into typed subquery input-combination
+   deduplication. Valid 10K/100K product shapes improve 39.6–44.2% time,
+   37.0–38.7% memory, and 14.3% allocations; the complex checkpoint is neutral.
+8. **Partially completed (July 13, 2026):** relation bindings apply positional
    ρ-renaming to ordering and candidate keys. Before outer replacement, the
    complex query selected two unique hash builds, reducing memory 2.3% and
    allocations 0.9% with no supported latency claim; those joins are now removed
    entirely. Tuple/scalar bindings and multi-result unions remain conservative.
-8. Eliminate phase-boundary materialization where the next operator can consume
+9. Eliminate phase-boundary materialization where the next operator can consume
    the relation once while preserving iterator error and close semantics.
+10. **Completed (July 13, 2026):** enforce the Relation set invariant at
+    construction boundaries and use proven-set construction for set-preserving
+    operators. Exact double-dedup paths were removed from join-key extraction,
+    unions, fallback realization, and aggregation. The complex checkpoint
+    improves 5.1% time, 15.6% memory, and 8.6% allocations.
 
 Correctness gates for every experiment:
 

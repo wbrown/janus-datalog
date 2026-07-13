@@ -577,13 +577,16 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 			}
 		}
 		// Capture a branch's deferred scan error so the union doesn't drop it.
-		if e := iter.Error(); e != nil && firstErr == nil {
-			firstErr = e
+		branchErr := iter.Error()
+		if closeErr := iter.Close(); branchErr == nil {
+			branchErr = closeErr
 		}
-		iter.Close()
+		if branchErr != nil && firstErr == nil {
+			firstErr = branchErr
+		}
 	}
 
-	result := NewMaterializedRelationWithProperties(
+	result := newMaterializedRelationFromSet(
 		syms,
 		allTuples,
 		opts,

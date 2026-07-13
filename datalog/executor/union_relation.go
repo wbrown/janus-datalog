@@ -144,7 +144,7 @@ func (ur *UnionRelation) Project(symbols []query.Symbol) (Relation, error) {
 func (ur *UnionRelation) Materialize() Relation {
 	var allTuples []Tuple
 	err := collectTuplesInto(&allTuples, ur)
-	mat := NewMaterializedRelationWithProperties(
+	mat := newMaterializedRelationFromSet(
 		ur.symbols,
 		allTuples,
 		ur.opts,

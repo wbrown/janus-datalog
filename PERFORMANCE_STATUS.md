@@ -27,9 +27,12 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **ATEV index & attribute high-water mark**: `MaxElementIDForAttribute` and every `Cache.IsAttributeFresh` call become **O(1) (~1 µs)** instead of O(datoms-for-A); **2.2× → 555× faster** at 10–10,000 datoms-per-attribute (verified 2026-05-25). Costs ~14% more write work per commit (1 of 8 indices).
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
-- ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` binding attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
+- ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` binding attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne latest-state queries only; history, as-of, and CardinalityMany stay on the ordinary path. On by default (verified 2026-05-29, M5).
 - ✅ **Same-entity constant constraint fusion**: `[?e :const-attr literal]` on an already-bound entity now uses `LookupAttribute` plus typed equality instead of storage match + hash join. At 1K/10K entities it is **21.9–23.2% faster**, uses **35.3–38.8% less memory**, and performs **42.3–43.4% fewer allocations**. The production-shaped complex checkpoint improves **11.1% time, 21.8% memory, and 23.2% allocations** (n=10; verified 2026-07-13, darwin/arm64).
 - ✅ **Correlated OR outer replacement**: OR/fallback relations already contain their selected outer tuples, so QueryExecutor replaces consumed relation groups instead of appending the result and joining it back to the same outer data. Removing five redundant joins improves the complex checkpoint **11.3% time, 8.3% memory, and 10.6% allocations**. Outer, branch-cache, and close errors now propagate rather than falling through to defaults (n=10; verified 2026-07-13, darwin/arm64).
+- ✅ **Correlated-subquery product streaming**: replayable source relations feed their single-use product directly into typed input-combination deduplication instead of materializing and deduplicating the complete product first. Valid 10K/100K set products improve **39.6–44.2% time**, **37.0–38.7% memory**, and **14.3% allocations**. The complex checkpoint does not exercise this multi-group shape and remains unchanged (n=10; verified 2026-07-13, darwin/arm64).
+- ✅ **Relation set-invariant construction**: operators that already prove duplicate-free output now construct Relations without repeating typed deduplication. Grouped aggregation publishes its group key; union/fallback realization, join-key extraction, selection, deterministic extension, sorting, limits, phase realization, and lazy replay preserve the set proof. The complex checkpoint improves **5.1% time, 15.6% memory, and 8.6% allocations** (n=10; verified 2026-07-13, darwin/arm64).
+- ✅ **Iterator contract hardening**: early-close materialization reports an incomplete-cache error, predicate evaluation failures propagate, streaming transforms use relation-owned iterators, hash joins retain build/probe close errors, unknown-size inputs bind correctly, and `StreamingRelation.Get` performs real random-access realization. Correctness-only; no performance claim.
 - ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
 - ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Bounded Top-N finalization**: ordered limits without non-projected sort keys use an O(N)-memory heap instead of materializing and sorting every row. Across 10K/100K rows and N=1/10/100: **97.1% faster**, **99.96% less memory**, **99.86% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64). The source is still fully scanned; index-order pushdown remains separate.
@@ -992,7 +995,7 @@ times.
 
 - Recognize only contiguous patterns that already satisfy every existing
   fusion gate: default source, no transaction binding, same entity symbol,
-  fresh outputs, CardinalityOne, and latest/as-of mode.
+  fresh outputs, CardinalityOne, and latest-state mode.
 - Traverse the input relation once, perform the same K cache-backed
   `LookupAttribute` calls, and allocate one final-width tuple.
 - Preserve per-attribute `pattern/fused-fetch` events and their sequential
@@ -1108,14 +1111,124 @@ Combined with constant-constraint fusion, the corrected logical-optimizer
 baseline improves from 46.89 ms to 37.96 ms (**−19.0%**), 84.04 MiB to
 58.89 MiB (**−29.9%**), and 1.043M to 709.4K allocations (**−32.0%**).
 
+**Lazy outer-selection follow-up**: selecting a single outer relation no longer
+requests eager materialization. Four of five fallback chains remain streaming;
+one still materializes for join-key narrowing. Full-result measurement is
+performance-neutral: 37.96 → 37.78 ms median, 58.89 → 58.86 MiB, and 709.4K →
+709.2K allocations. This is retained as streaming groundwork, not a performance
+claim.
+
 **Files**:
 
 - `datalog/executor/query_executor.go`
 - `datalog/executor/or_fallback_relation.go`
 - `datalog/executor/or_outer_replacement_test.go`
+- `datalog/executor/or_outer_selection_test.go`
 - `datalog/executor/or_fallback_cache_test.go`
 - `datalog/storage/optimization_matrix_test.go`
 - `datalog/storage/algebra_getelse_product_test.go`
+
+### 21c. Correlated-Subquery Product Streaming (COMPLETE - July 2026)
+**Status**: ✅ Single-use products stream into typed combination extraction
+
+**Audit finding**: correlated subqueries marked source groups cacheable for later
+outer-query reuse, formed a product, materialized/deduplicated that complete
+product, then immediately traversed and deduplicated it again by the requested
+input symbols.
+
+**Change**:
+
+- Keep source relations lazy and replayable through their existing caches.
+- Stream the combined product exactly once into `getUniqueInputCombinations`.
+- Retain typed projected-key deduplication, iterator/close error propagation, and
+  outer relation replay.
+- Emit `subquery/input-combinations` with group count, product shape,
+  realization decision, and distinct combination count.
+
+**Focused measurement** (`BenchmarkSubqueryInputCombinationExtraction`,
+set-valid unique tuples with repeated projected input values,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Product tuples | Time before | Time after | Time delta | Memory delta | Allocation delta |
+|---------------:|------------:|-----------:|-----------:|-------------:|-----------------:|
+| 10,000 | 2.529 ms | 1.412 ms | **−44.2%** | **−37.0%** | **−14.3%** |
+| 100,000 | 24.65 ms | 14.89 ms | **−39.6%** | **−38.7%** | **−14.3%** |
+
+The production-shaped complex checkpoint has no multi-group correlated input
+product and remains unchanged: 37.78 → 37.98 ms median with stable memory and
+allocations.
+
+**Correctness fixes completed during the materialization audit**:
+
+- Incomplete early-close caches fail loudly and replay that failure.
+- Predicate evaluation and hash-join close errors propagate.
+- Streaming transforms consume relation-owned iterators, preserving cache and
+  single-use contracts.
+- Unknown-size scalar, tuple, relation, and collection inputs bind correctly.
+- `StreamingRelation.Get` performs actual realization for random access.
+
+**Files**:
+
+- `datalog/executor/query_executor.go`
+- `datalog/executor/subquery_input_product_test.go`
+- `datalog/executor/subquery_input_product_benchmark_test.go`
+- `datalog/executor/relation.go`
+- `datalog/executor/iterator_composition.go`
+- `datalog/executor/join.go`
+- `datalog/executor/executor_utils.go`
+- `datalog/executor/iterator_contract_hardening_test.go`
+- `datalog/executor/bind_query_inputs_streaming_test.go`
+
+### 21d. Relation Set-Invariant Construction (COMPLETE - July 2026)
+**Status**: ✅ Set-preserving operators do not repeat deduplication
+
+**Relational contract**: every `Relation` is a set. Physical iterators may need
+to establish set semantics before returning a Relation, but a set-preserving
+operator does not need to establish them again.
+
+**Change**:
+
+- Add an internal proven-set materialized constructor that wraps already-valid,
+  duplicate-free tuples without traversing them.
+- Keep value-domain validation at raw/public tuple-entry boundaries; derived
+  operators trust their input Relation.
+- Remove exact second dedup passes from join-key extraction, uncorrelated union,
+  union/fallback realization, and aggregation output.
+- Publish grouped-aggregation keys.
+- Use proven-set construction for selection, deterministic extension, keyed
+  projection, sorting, Top-N, limits, phase realization, lazy replay, and
+  same-entity fusion.
+- Define `Materialize` as ensuring replayability rather than mandatory eager
+  conversion. `LazySeqRelation` is already replayable and returns itself;
+  relational transforms remain lazy over its shared sequence.
+
+**Constructor measurement** (`BenchmarkProvenSetConstruction`,
+`benchtime=300ms`, darwin/arm64):
+
+| Tuples | Deduplicating constructor | Proven-set constructor |
+|-------:|--------------------------:|-----------------------:|
+| 10,000 | 474.4 µs, 1.38 MiB, 10.0K allocs | 16.5 ns, 8 B, 1 alloc |
+| 100,000 | 4.260 ms, 12.45 MiB, 100.3K allocs | 16.8 ns, 8 B, 1 alloc |
+
+**Complex-query checkpoint** (`count=10`, darwin/arm64):
+
+| Metric | Before | After | Delta |
+|--------|-------:|------:|------:|
+| Median time | 37.98 ms | 36.04 ms | **−5.1%** |
+| Memory | 58.85 MiB | 49.65 MiB | **−15.6%** |
+| Allocations | 709.2K | 648.5K | **−8.6%** |
+
+**Files**:
+
+- `datalog/executor/relation.go`
+- `datalog/executor/relation_properties.go`
+- `datalog/executor/aggregation.go`
+- `datalog/executor/or_fallback_relation.go`
+- `datalog/executor/relation_ops.go`
+- `datalog/executor/union_relation.go`
+- `datalog/executor/lazy_seq_relation.go`
+- `datalog/executor/relation_set_construction_benchmark_test.go`
+- set/property/aggregation/LazySeq regression tests
 
 ### 22. Typed Relation Property Propagation (FOUNDATION - July 2026)
 **Status**: ⚠️ Core contract active; derivation and consumption coverage incomplete

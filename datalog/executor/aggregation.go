@@ -256,12 +256,22 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 	// return empty result set instead of a tuple with nil values
 	opts := rel.Options()
 	if !hasAnyValues {
-		empty := NewMaterializedRelationWithOptions(resultSymbols, []Tuple{}, opts)
+		empty := newMaterializedRelationFromSet(
+			resultSymbols,
+			nil,
+			opts,
+			RelationProperties{},
+		)
 		empty.err = aggErr
 		return empty
 	}
 
-	result = NewMaterializedRelationWithOptions(resultSymbols, []Tuple{results}, opts)
+	result = newMaterializedRelationFromSet(
+		resultSymbols,
+		[]Tuple{results},
+		opts,
+		RelationProperties{},
+	)
 	return result
 }
 
@@ -405,7 +415,14 @@ func executeGroupedAggregation(
 	}
 
 	opts := rel.Options()
-	result = NewMaterializedRelationWithOptions(resultSymbols, resultTuples, opts)
+	result = newMaterializedRelationFromSet(
+		resultSymbols,
+		resultTuples,
+		opts,
+		RelationProperties{Keys: [][]query.Symbol{
+			append([]query.Symbol(nil), groupByVars...),
+		}},
+	)
 	// Carry any deferred error from the grouped input scan so a failed scan
 	// isn't laundered into a partial/empty grouped result.
 	aggregateErr = it.Error()
@@ -822,7 +839,12 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 		})
 	}
 	aggregateErr = it.Error()
-	result = NewMaterializedRelationWithOptions(r.Symbols(), resultTuples, r.options)
+	result = newMaterializedRelationFromSet(
+		r.Symbols(),
+		resultTuples,
+		r.options,
+		r.Properties(),
+	)
 	return result
 }
 

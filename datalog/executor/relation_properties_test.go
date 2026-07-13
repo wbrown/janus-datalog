@@ -66,6 +66,23 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 	))
 }
 
+func TestNewMaterializedRelationFromSetPreservesProofs(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	name := datalog.NewSymbol("?name")
+	properties := RelationProperties{Keys: [][]query.Symbol{{entity}}}
+	tuples := []Tuple{{int64(1), "one"}, {int64(2), "two"}}
+
+	relation := newMaterializedRelationFromSet(
+		[]query.Symbol{entity, name},
+		tuples,
+		ExecutorOptions{EnableTrueStreaming: true},
+		properties,
+	)
+	require.Equal(t, tuples, relation.tuples)
+	require.Equal(t, properties, relation.Properties())
+	require.Equal(t, true, relation.Options().EnableTrueStreaming)
+}
+
 func TestRelationPropertyPropagation(t *testing.T) {
 	a := datalog.NewSymbol("?a")
 	b := datalog.NewSymbol("?b")

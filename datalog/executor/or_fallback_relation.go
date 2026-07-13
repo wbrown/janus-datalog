@@ -426,7 +426,23 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		if _, isMat := outer.(*MaterializedRelation); !isMat {
 			var tuples []Tuple
 			setupErr = collectTuplesInto(&tuples, outer)
-			outer = NewMaterializedRelationWithOptions(outer.Symbols(), tuples, r.options)
+			materialized := newMaterializedRelationFromSet(
+				outer.Symbols(),
+				tuples,
+				r.options,
+				outer.Properties(),
+			)
+			materialized.err = setupErr
+			outer = materialized
+			if collector := r.ctx.Collector(); collector != nil {
+				collector.Add(annotations.Event{
+					Name: "or-fallback/outer.materialized",
+					Data: map[string]interface{}{
+						"reason":      "join-key-narrowing",
+						"tuple_count": len(tuples),
+					},
+				})
+			}
 		}
 	}
 
@@ -523,7 +539,7 @@ func (r *OrFallbackRelation) Materialize() Relation {
 	if syms == nil {
 		syms = r.Symbols()
 	}
-	mat := NewMaterializedRelationWithProperties(syms, tuples, r.options, r.properties)
+	mat := newMaterializedRelationFromSet(syms, tuples, r.options, r.properties)
 	if err != nil {
 		mat.err = err
 	}
@@ -1112,7 +1128,12 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 	if len(keys) == 0 {
 		return nil
 	}
-	it.joinKeyRel = NewMaterializedRelationWithOptions(it.joinSyms, keys, it.options)
+	it.joinKeyRel = newMaterializedRelationFromSet(
+		it.joinSyms,
+		keys,
+		it.options,
+		deduplicatedProperties(it.joinSyms),
+	)
 	return it.joinKeyRel
 }
 

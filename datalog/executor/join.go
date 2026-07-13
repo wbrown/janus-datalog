@@ -402,7 +402,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// The build relation may share underlying iterators with the probe relation
 	// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
 	// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
-	buildIt.Close()
+	if closeErr := buildIt.Close(); buildErr == nil {
+		buildErr = closeErr
+	}
 
 	// Emit annotation for copy statistics if collector is available
 	if opts.Collector != nil && (copyCount > 0 || passthruCount > 0) {
@@ -506,7 +508,6 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	}
 
 	probeIt := probeRel.Iterator()
-	defer probeIt.Close()
 
 	probeCount := 0
 	matchCount := 0
@@ -542,6 +543,10 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			}
 		}
 	}
+	probeErr := probeIt.Error()
+	if closeErr := probeIt.Close(); probeErr == nil {
+		probeErr = closeErr
+	}
 	if opts.Collector != nil {
 		opts.Collector.Add(annotations.Event{
 			Name: annotations.JoinProbe,
@@ -561,8 +566,8 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	result.properties = resultProperties.clone()
 	if buildErr != nil {
 		result.err = buildErr
-	} else if pe := probeIt.Error(); pe != nil {
-		result.err = pe
+	} else if probeErr != nil {
+		result.err = probeErr
 	}
 	return result
 }

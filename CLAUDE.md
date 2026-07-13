@@ -442,6 +442,13 @@ Name code for the relational concept it implements:
 - `relation attribute`, not a table field
 - `binding`, when a symbol receives a value
 
+Relational invariants:
+- A `Relation` is always a set; each complete tuple appears at most once.
+- Temporary tuple streams may require deduplication before becoming a Relation.
+- Set-preserving operators must not defensively deduplicate again.
+- `Materialize` guarantees replayability; it does not require eager realization
+  when the Relation is already replayable.
+
 **DO (Go idioms):**
 - Simple functions for stateless operations
 - Methods on types that operate on that type's data

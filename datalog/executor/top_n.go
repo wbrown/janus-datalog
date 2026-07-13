@@ -19,14 +19,14 @@ func TopNRelation(rel Relation, orderBy []query.OrderByClause, limit int) (resul
 	symbols := rel.Symbols()
 	indices, err := orderBySymbolIndices(symbols, orderBy)
 	if err != nil {
-		result := NewMaterializedRelationWithProperties(symbols, nil, rel.Options(), rel.Properties())
+		result := newMaterializedRelationFromSet(symbols, nil, rel.Options(), rel.Properties())
 		result.err = err
 		return result
 	}
 	if limit <= 0 {
 		properties := rel.Properties()
 		properties.Ordering = append([]query.OrderByClause(nil), orderBy...)
-		return NewMaterializedRelationWithProperties(symbols, nil, rel.Options(), properties)
+		return newMaterializedRelationFromSet(symbols, nil, rel.Options(), properties)
 	}
 	if size := rel.Size(); size >= 0 && limit >= size {
 		return rel.Sort(orderBy)
@@ -80,7 +80,7 @@ func TopNRelation(rel Relation, orderBy []query.OrderByClause, limit int) (resul
 
 	properties := rel.Properties()
 	properties.Ordering = append([]query.OrderByClause(nil), orderBy...)
-	result = NewMaterializedRelationWithProperties(symbols, selected.tuples, rel.Options(), properties)
+	result = newMaterializedRelationFromSet(symbols, selected.tuples, rel.Options(), properties)
 	return result
 }
 

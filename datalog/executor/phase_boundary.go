@@ -6,7 +6,7 @@ package executor
 func materializePhaseBoundary(group Relation) Relation {
 	var tuples []Tuple
 	boundaryErr := collectTuplesInto(&tuples, group)
-	materialized := NewMaterializedRelationWithProperties(
+	materialized := newMaterializedRelationFromSet(
 		group.Symbols(),
 		tuples,
 		group.Options(),

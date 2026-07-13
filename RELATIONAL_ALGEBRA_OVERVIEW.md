@@ -69,9 +69,20 @@ type Relation interface {
 
 **Design Principles**:
 - **Immutable**: All operations return NEW relations
-- **Deduplicated**: Tuples are unique within a relation
+- **Set semantics**: Every Relation contains each complete tuple at most once
 - **Streaming-First**: Iterator-based to avoid full materialization
 - **Type-Safe**: Strong typing through Go's type system
+
+Physical tuple streams may contain repeated tuples while an operator is still
+constructing its result. Before that result is exposed as a `Relation`, the
+operator must establish set semantics. Operators that preserve a source set
+(selection, deterministic extension, sorting, limiting, semi/anti join) do not
+deduplicate again. Projection and union restore set semantics unless a retained
+key proves injectivity.
+
+`Materialize()` means ensure replayability, not force eager conversion.
+Materialized relations return themselves; streaming relations enable lazy
+caching; `LazySeqRelation` is already replayable and also returns itself.
 
 ### Two Implementation Strategies
 
@@ -242,6 +253,28 @@ This removes five redundant natural joins from the production-shaped complex
 query, improving 11.3% time, 8.3% memory, and 10.6% allocations. Replacement is
 observable through `or/outer-replaced`; iterator, cache-build, and close errors
 propagate rather than being interpreted as a missing branch.
+
+Outer selection also leaves a single relation streaming until a branch shape
+requires re-iteration for join-key narrowing. This changes when materialization
+occurs but is neutral for full-result performance; it is a streaming contract,
+not an optimization claim. Required materialization is observable through
+`or-fallback/outer.materialized`.
+
+### Replayable Sources, Single-Use Products
+
+Correlated subqueries may need to reuse their source relations after extracting
+input combinations. Those source relations use lazy replay caches. Their
+combined product, however, is consumed exactly once by typed combination
+deduplication and should not itself be materialized.
+
+This distinction avoids a full product tuple slice and an initial full-tuple
+dedup pass immediately before projected-symbol deduplication. On valid 10K/100K
+set products, direct product streaming improves 39.6–44.2% time and 37.0–38.7%
+memory.
+
+Materialization and iterator composition retain strict failure semantics:
+incomplete early-close caches, predicate evaluation failures, iterator errors,
+and close errors propagate rather than producing partial successful relations.
 
 ## Aggregation System
 

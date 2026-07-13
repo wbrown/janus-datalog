@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"crypto/sha1"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,21 @@ func createCacheRemoveTestDB(t *testing.T) (*Database, func()) {
 	db.SetSchema(s)
 
 	return db, func() { db.Close() }
+}
+
+func entityFromIdentity(identity datalog.Identity) Entity {
+	var entity Entity
+	copy(entity[:], identity.Bytes())
+	return entity
+}
+
+func TestEntityFromIdentityIgnoresInternedDisplayString(t *testing.T) {
+	seed := "cache-remove-storage-identity"
+	hash := sha1.Sum([]byte(seed))
+	datalog.NewIdentityFromHash(hash)
+	identity := datalog.NewIdentity(seed)
+
+	require.Equal(t, Entity(hash), entityFromIdentity(identity))
 }
 
 // =============================================================================
@@ -455,7 +471,7 @@ func TestCacheRemove_ResolveLWW_Direct(t *testing.T) {
 	// Verify ResolveLWW returns value
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	eStorage := NewEntity(e.String())
+	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
@@ -501,7 +517,7 @@ func TestCacheRemove_CacheRebuild(t *testing.T) {
 	db.Cache().Clear()
 
 	// Cache rebuild should reflect tombstone
-	eStorage := NewEntity(e.String())
+	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 	key := CacheKey{E: eStorage, A: aStorage}
@@ -660,7 +676,7 @@ func TestCacheRemove_ResolveLWW_SetThenRemove(t *testing.T) {
 	// ResolveLWW → nil
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	eStorage := NewEntity(e.String())
+	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
@@ -768,7 +784,7 @@ func TestCacheRemove_ResolveLWW_ReturnsElementID(t *testing.T) {
 	// ResolveLWW should return nil value but non-zero ElementID
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	eStorage := NewEntity(e.String())
+	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 
@@ -944,7 +960,7 @@ func resolveLWW(t *testing.T, db *Database, e datalog.Identity, a datalog.Keywor
 	t.Helper()
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
-	eStorage := NewEntity(e.String())
+	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 	val, eid, err := matcher.ResolveLWW(eStorage, aStorage)
@@ -1080,7 +1096,7 @@ func TestCacheRemove_ResolveLWW_MultipleEntities(t *testing.T) {
 func cacheRebuildOneValue(t *testing.T, db *Database, e datalog.Identity, a datalog.Keyword) any {
 	t.Helper()
 	db.Cache().Clear()
-	eStorage := NewEntity(e.String())
+	eStorage := entityFromIdentity(e)
 	var aStorage Attribute
 	copy(aStorage[:], a.String())
 	key := CacheKey{E: eStorage, A: aStorage}

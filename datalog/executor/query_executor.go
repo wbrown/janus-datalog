@@ -676,7 +676,7 @@ fetchLoop:
 	for _, fetch := range fetches {
 		properties = properties.addSymbol(fetch.output)
 	}
-	newGroups[entityGroup] = NewMaterializedRelationWithProperties(
+	newGroups[entityGroup] = newMaterializedRelationFromSet(
 		outputSymbols,
 		output,
 		e.options,
@@ -1079,9 +1079,9 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		}
 	}
 
-	// CRITICAL: Materialize groups FIRST to prevent iterator consumption
-	// When we create Product() and materialize it, that will consume the underlying iterators
-	// We need to preserve groups for later use in the outer query
+	// Mark groups cacheable before extracting input combinations so the outer
+	// query can replay them later. Materialize() on StreamingRelation enables
+	// lazy caching; it does not drain the iterator here.
 	materializedGroups := make([]Relation, len(groups))
 	for i, g := range groups {
 		materializedGroups[i] = g.Materialize()
@@ -1130,13 +1130,21 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		combinedRel = Relations(materializedGroups).Product()
 	}
 
-	// Materialize combined relation since getUniqueInputCombinations will consume it
-	combinedRel = combinedRel.Materialize()
-
 	// Get unique combinations of input values
 	inputCombinations, err := getUniqueInputCombinations(combinedRel, inputSymbols)
 	if err != nil {
 		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
+	}
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: "subquery/input-combinations",
+			Data: map[string]interface{}{
+				"relation_groups":    len(materializedGroups),
+				"product":            len(materializedGroups) > 1,
+				"eager_materialized": false,
+				"combination_count":  len(inputCombinations),
+			},
+		})
 	}
 
 	// Execute subquery for each combination
@@ -1494,22 +1502,21 @@ func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, g
 		return NewUnitRelation(e.options), nil
 	}
 
-	var result Relation
 	var consumed []int
 	for i, rel := range groups {
 		if containsAny(rel.Symbols(), neededSymbols) {
-			groups[i] = groups[i].Materialize()
 			consumed = append(consumed, i)
-			if result == nil {
-				result = groups[i]
-			} else {
-				result = result.Join(groups[i])
-			}
 		}
 	}
-
-	if result == nil {
+	if len(consumed) == 0 {
 		return NewUnitRelation(e.options), nil
+	}
+	if len(consumed) == 1 {
+		return groups[consumed[0]], consumed
+	}
+	result := groups[consumed[0]].Materialize()
+	for _, index := range consumed[1:] {
+		result = result.Join(groups[index].Materialize())
 	}
 	return result, consumed
 }
@@ -1517,24 +1524,24 @@ func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, g
 // findOuterRelationBySymbols collects and joins all groups that provide any
 // of the specified symbols into a single outer relation. Returns unit relation if none found.
 func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbol]bool, groups Relations) (Relation, []int) {
-	var result Relation
 	var consumed []int
 	for i, rel := range groups {
 		for _, sym := range rel.Symbols() {
 			if symSet[sym] {
-				groups[i] = groups[i].Materialize()
 				consumed = append(consumed, i)
-				if result == nil {
-					result = groups[i]
-				} else {
-					result = result.Join(groups[i])
-				}
 				break
 			}
 		}
 	}
-	if result == nil {
+	if len(consumed) == 0 {
 		return NewUnitRelation(e.options), nil
+	}
+	if len(consumed) == 1 {
+		return groups[consumed[0]], consumed
+	}
+	result := groups[consumed[0]].Materialize()
+	for _, index := range consumed[1:] {
+		result = result.Join(groups[index].Materialize())
 	}
 	return result, consumed
 }

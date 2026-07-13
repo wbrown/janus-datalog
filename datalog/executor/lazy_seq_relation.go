@@ -48,9 +48,21 @@ func (r *LazySeqRelation) Properties() RelationProperties {
 	return r.properties
 }
 func (r *LazySeqRelation) Size() int                { return -1 } // streaming
-func (r *LazySeqRelation) Get(i int) Tuple          { return nil }
 func (r *LazySeqRelation) RequiresCopy() bool       { return false }
 func (r *LazySeqRelation) Options() ExecutorOptions { return r.options }
+
+func (r *LazySeqRelation) Get(i int) Tuple {
+	if i < 0 {
+		return nil
+	}
+	it := r.Iterator()
+	for position := 0; it.Next(); position++ {
+		if position == i {
+			return it.Tuple()
+		}
+	}
+	return nil
+}
 
 func (r *LazySeqRelation) IsEmpty() bool {
 	return r.seq.Empty()
@@ -63,9 +75,13 @@ func (r *LazySeqRelation) Iterator() Iterator {
 }
 
 func (r *LazySeqRelation) Materialize() Relation {
+	return r
+}
+
+func (r *LazySeqRelation) realizeAll() *MaterializedRelation {
 	var tuples []Tuple
 	err := collectTuplesInto(&tuples, r)
-	result := NewMaterializedRelationWithProperties(r.symbols, tuples, r.options, r.properties)
+	result := newMaterializedRelationFromSet(r.symbols, tuples, r.options, r.properties)
 	result.err = err
 	return result
 }
@@ -78,26 +94,77 @@ func (r *LazySeqRelation) String() string {
 	return fmt.Sprintf("LazySeqRelation([%s])", strings.Join(symStrs, " "))
 }
 
-func (r *LazySeqRelation) Table() string                         { return r.Materialize().Table() }
-func (r *LazySeqRelation) Sorted() ([]Tuple, error)              { return r.Materialize().Sorted() }
-func (r *LazySeqRelation) Sort(o []query.OrderByClause) Relation { return r.Materialize().Sort(o) }
-func (r *LazySeqRelation) Filter(f Filter) Relation              { return FilterRelation(r, f) }
-func (r *LazySeqRelation) Select(pred func(Tuple) bool) Relation { return Select(r, pred) }
+func (r *LazySeqRelation) Table() string                         { return r.realizeAll().Table() }
+func (r *LazySeqRelation) Sorted() ([]Tuple, error)              { return r.realizeAll().Sorted() }
+func (r *LazySeqRelation) Sort(o []query.OrderByClause) Relation { return r.realizeAll().Sort(o) }
+func (r *LazySeqRelation) Filter(f Filter) Relation {
+	return r.fromIterator(
+		NewFilterIterator(r.Iterator(), r.symbols, f),
+		r.symbols,
+		r.properties,
+	)
+}
+
+func (r *LazySeqRelation) Select(pred func(Tuple) bool) Relation {
+	return r.fromIterator(
+		&selectionIterator{source: r.Iterator(), predicate: pred},
+		r.symbols,
+		r.properties,
+	)
+}
 
 func (r *LazySeqRelation) Project(symbols []query.Symbol) (Relation, error) {
-	return r.Materialize().Project(symbols)
+	if len(symbols) == 0 {
+		return nil, fmt.Errorf("cannot project to zero symbols")
+	}
+	for _, symbol := range symbols {
+		if SymbolIndex(r, symbol) < 0 {
+			return nil, fmt.Errorf("cannot project: symbol %s not found in relation (has symbols: %v)", symbol, r.symbols)
+		}
+	}
+	properties := r.properties.project(symbols)
+	var iterator Iterator = NewProjectIterator(r, r.symbols, symbols)
+	if len(properties.Keys) == 0 {
+		iterator = NewDedupIterator(iterator, 0)
+	}
+	return r.fromIterator(iterator, symbols, properties), nil
 }
 
 func (r *LazySeqRelation) ProjectFromPattern(pattern *query.DataPattern) Relation {
-	return r.Materialize().ProjectFromPattern(pattern)
+	return r.realizeAll().ProjectFromPattern(pattern)
 }
 
 func (r *LazySeqRelation) FilterWithPredicate(pred query.Predicate) Relation {
-	return r.Materialize().FilterWithPredicate(pred)
+	return r.fromIterator(
+		NewPredicateFilterIterator(r.Iterator(), r.symbols, pred),
+		r.symbols,
+		r.properties,
+	)
 }
 
 func (r *LazySeqRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
-	return r.Materialize().EvaluateFunction(fn, outputSymbol)
+	symbols := append([]query.Symbol(nil), r.symbols...)
+	if SymbolIndex(r, outputSymbol) < 0 {
+		symbols = append(symbols, outputSymbol)
+	}
+	return r.fromIterator(
+		NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, fn, outputSymbol),
+		symbols,
+		r.properties.addSymbol(outputSymbol),
+	)
+}
+
+func (r *LazySeqRelation) fromIterator(
+	iterator Iterator,
+	symbols []query.Symbol,
+	properties RelationProperties,
+) *LazySeqRelation {
+	return &LazySeqRelation{
+		seq:        NewTupleSeq(iterator, true),
+		symbols:    append([]query.Symbol(nil), symbols...),
+		options:    r.options,
+		properties: properties.clone(),
+	}
 }
 
 func (r *LazySeqRelation) Join(other Relation) Relation {
@@ -179,3 +246,24 @@ func (it *lazySeqIterator) Close() error {
 }
 
 func (it *lazySeqIterator) Error() error { return it.err }
+
+type selectionIterator struct {
+	source    Iterator
+	predicate func(Tuple) bool
+	current   Tuple
+}
+
+func (it *selectionIterator) Next() bool {
+	for it.source.Next() {
+		tuple := it.source.Tuple()
+		if it.predicate(tuple) {
+			it.current = tuple
+			return true
+		}
+	}
+	return false
+}
+
+func (it *selectionIterator) Tuple() Tuple { return it.current }
+func (it *selectionIterator) Close() error { return it.source.Close() }
+func (it *selectionIterator) Error() error { return it.source.Error() }

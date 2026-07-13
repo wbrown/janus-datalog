@@ -312,6 +312,7 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	var fusedConstraints atomic.Int64
 	var uniqueJoinBuilds atomic.Int64
 	var replacedOuterGroups atomic.Int64
+	var narrowedOuterMaterializations atomic.Int64
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:   t.TempDir(),
 		Schema: optimizationMatrixSchema(),
@@ -329,6 +330,8 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 				}
 			case "or/outer-replaced":
 				replacedOuterGroups.Add(1)
+			case "or-fallback/outer.materialized":
+				narrowedOuterMaterializations.Add(1)
 			}
 		},
 	})
@@ -346,6 +349,7 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	require.Equal(t, int64(5), fusedConstraints.Load())
 	require.Zero(t, uniqueJoinBuilds.Load())
 	require.Equal(t, int64(5), replacedOuterGroups.Load())
+	require.Equal(t, int64(1), narrowedOuterMaterializations.Load())
 }
 
 func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
