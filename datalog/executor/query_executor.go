@@ -409,8 +409,10 @@ func (e *DefaultQueryExecutor) executePattern(
 }
 
 type attributeFetchSpec struct {
-	attr   datalog.Keyword
-	output query.Symbol
+	attr         datalog.Keyword
+	output       query.Symbol
+	expected     interface{}
+	isConstraint bool
 }
 
 // tryFuseAttributeFetchBundle recognizes a contiguous run of same-entity
@@ -464,6 +466,7 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	}
 
 	var fetches []attributeFetchSpec
+fetchLoop:
 	for _, clause := range clauses {
 		pattern, ok := clause.(*query.DataPattern)
 		if !ok || len(pattern.Elements) != 3 || pattern.Source != nil || pattern.GetT() != nil {
@@ -481,13 +484,22 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 		if !ok || !fusable.CanFuseAttributeFetch(attr) {
 			break
 		}
-		valueVar, ok := pattern.GetV().(query.Variable)
-		if !ok || boundSymbols[valueVar.Name] {
-			break
+		spec := attributeFetchSpec{attr: attr}
+		switch value := pattern.GetV().(type) {
+		case query.Variable:
+			if boundSymbols[value.Name] {
+				return nil, 0, nil
+			}
+			spec.output = value.Name
+			boundSymbols[value.Name] = true
+		case query.Constant:
+			spec.expected = value.Value
+			spec.isConstraint = true
+		default:
+			break fetchLoop
 		}
 
-		fetches = append(fetches, attributeFetchSpec{attr: attr, output: valueVar.Name})
-		boundSymbols[valueVar.Name] = true
+		fetches = append(fetches, spec)
 	}
 	if len(fetches) == 0 {
 		return nil, 0, nil
@@ -506,7 +518,9 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	outputSymbols := make([]query.Symbol, 0, len(inputSymbols)+len(fetches))
 	outputSymbols = append(outputSymbols, inputSymbols...)
 	for _, fetch := range fetches {
-		outputSymbols = append(outputSymbols, fetch.output)
+		if fetch.output != nil {
+			outputSymbols = append(outputSymbols, fetch.output)
+		}
 	}
 
 	var output []Tuple
@@ -530,8 +544,8 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 			continue
 		}
 
-		expanded := make(Tuple, len(outputSymbols))
-		copy(expanded, tuple)
+		var expanded Tuple
+		outputIndex := len(inputSymbols)
 		complete := true
 		for i, fetch := range fetches {
 			inputCounts[i]++
@@ -545,10 +559,28 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 				complete = false
 				break
 			}
+			if fetch.isConstraint && !datalog.ValuesEqual(value, fetch.expected) {
+				complete = false
+				break
+			}
 			outputCounts[i]++
-			expanded[len(inputSymbols)+i] = value
+			if fetch.output != nil {
+				if expanded == nil {
+					expanded = make(Tuple, len(outputSymbols))
+					copy(expanded, tuple)
+				}
+				expanded[outputIndex] = value
+				outputIndex++
+			}
 		}
 		if complete {
+			if expanded == nil {
+				if input.RequiresCopy() {
+					expanded = copyTuple(tuple)
+				} else {
+					expanded = tuple
+				}
+			}
 			output = append(output, expanded)
 		}
 		if lookupErr != nil {
@@ -571,8 +603,12 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 
 	if collector := ctx.Collector(); collector != nil {
 		for i, fetch := range fetches {
+			eventName := "pattern/fused-fetch"
+			if fetch.isConstraint {
+				eventName = "pattern/fused-constraint"
+			}
 			collector.Add(annotations.Event{
-				Name: "pattern/fused-fetch",
+				Name: eventName,
 				Data: map[string]interface{}{
 					"attr": fetch.attr.String(),
 					"in":   inputCounts[i],

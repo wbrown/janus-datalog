@@ -1,11 +1,11 @@
 # PERFORMANCE_STATUS.md
 
-**Last Updated**: 2026-07-12 (v0.12.0)
+**Last Updated**: 2026-07-13 (v0.14.0)
 **Version**: Clause-based planner, QueryExecutor, ready-predicate scheduling, streaming architecture, Pull API, schema support, key encoder optimization, conditional aggregate rewriting (folded into algebra optimizer), CRDT storage, allocation regression fixes, value elimination, LZ77+FSE compression codec with Tier-3 blob store, ATEV index, iterator-error contract, relation-input parallel iteration refactor (worker pool + workspace reuse), hash-join hot-path inner-loop optimizations including unique-key build specialization, compiled storage hash matching, one-pass same-entity attribute bundles, typed aggregation keys, single-lookup dedup insertion, bounded Top-N finalization, typed Relation property propagation including keyed join dedup elision, natural/semi/anti joins, and OR/fallback/union derivation, existing-order scan termination, ATEV/TAEV/AETV/EATV order-aware history matching, and branch-wide randomized correctness hardening.
 
 ## Executive Summary
 
-The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-12, OR/fallback/union property propagation).
+The Janus Datalog engine delivers production-ready performance through architectural improvements and targeted optimizations. All performance claims in this document are verified by actual benchmarks (most recent entry: 2026-07-13, same-entity constant constraint fusion).
 
 ### Verified Performance Improvements
 - ✅ **New architecture** (clause-based planner + QueryExecutor): **2× faster** on complex OHLC queries (verified)
@@ -28,6 +28,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
 - ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` binding attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
+- ✅ **Same-entity constant constraint fusion**: `[?e :const-attr literal]` on an already-bound entity now uses `LookupAttribute` plus typed equality instead of storage match + hash join. At 1K/10K entities it is **21.9–23.2% faster**, uses **35.3–38.8% less memory**, and performs **42.3–43.4% fewer allocations**. The production-shaped complex checkpoint improves **11.1% time, 21.8% memory, and 23.2% allocations** (n=10; verified 2026-07-13, darwin/arm64).
 - ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
 - ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Bounded Top-N finalization**: ordered limits without non-projected sort keys use an O(N)-memory heap instead of materializing and sorting every row. Across 10K/100K rows and N=1/10/100: **97.1% faster**, **99.96% less memory**, **99.86% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64). The source is still fully scanned; index-order pushdown remains separate.
@@ -1023,6 +1024,53 @@ removing repeated passes rather than changing lookup semantics. The full
 - `datalog/executor/attribute_fetch_bundle_test.go`
 - `datalog/storage/same_entity_fusion_test.go`
 - `datalog/storage/attr_fetch_bench_test.go`
+
+### 21a. Same-Entity Constant Constraint Fusion (COMPLETE - July 2026)
+**Status**: ✅ CardinalityOne literal constraints filter by cache-backed lookup
+
+**Profile evidence** (`BenchmarkComplexQueryCheckpoint`, corrected logical
+optimizer baseline):
+
+- `executeSubquery`: 53.55% cumulative CPU.
+- `HashJoinWithOptions`: 88.62% cumulative allocated space and 92.02% cumulative
+  allocation count.
+- The query executes four subqueries once, builds five fallback caches once, and
+  contains five same-entity constant constraints.
+
+**Change**:
+
+- Extend the existing contiguous same-entity fusion pass from fresh variable
+  bindings to literal value constraints.
+- Resolve each proven CardinalityOne attribute through `LookupAttribute`, compare
+  with `datalog.ValuesEqual`, and discard non-matching tuples in the same
+  traversal.
+- Preserve existing latest-mode/cardinality/source/transaction gates. History,
+  as-of, schema-unknown, CardinalityMany, and CardinalityVector patterns retain
+  normal match semantics.
+- Emit `pattern/fused-constraint` independently from `pattern/fused-fetch`.
+
+**Focused measurement** (`BenchmarkConstantConstraintFusion`,
+`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Entities | Time before | Time after | Time delta | Memory delta | Allocation delta |
+|---------:|------------:|-----------:|-----------:|-------------:|-----------------:|
+| 1,000 | 458.4 µs | 358.1 µs | **−21.9%** | **−35.3%** | **−42.3%** |
+| 10,000 | 4.991 ms | 3.831 ms | **−23.2%** | **−38.8%** | **−43.4%** |
+
+**Complex-query checkpoint** (`count=10`, darwin/arm64):
+
+| Metric | Before | After | Delta |
+|--------|-------:|------:|------:|
+| Median time | 46.89 ms | 41.69 ms | **−11.1%** |
+| Memory | 84.04 MiB | 65.72 MiB | **−21.8%** |
+| Allocations | 1.043M | 800.7K | **−23.2%** |
+
+**Files**:
+
+- `datalog/executor/query_executor.go`
+- `datalog/storage/same_entity_fusion_test.go`
+- `datalog/storage/constant_constraint_fusion_benchmark_test.go`
+- `datalog/storage/optimization_matrix_test.go`
 
 ### 22. Typed Relation Property Propagation (FOUNDATION - July 2026)
 **Status**: ⚠️ Core contract active; derivation and consumption coverage incomplete

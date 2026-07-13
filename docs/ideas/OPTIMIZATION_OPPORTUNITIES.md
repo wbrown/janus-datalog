@@ -707,13 +707,12 @@ Relevant code:
 
 ### Next investigation: complex-query execution structure
 
-The focused optimizations above reduce CPU, memory, and allocations in the
-operators they target, but the production-shaped complex checkpoint remains
-statistically flat in wall time. Its final order key is derived only after
-three fallback/subquery branches, so bounded Top-N cannot avoid the expensive
-upstream work. The logical bridge is now corrected; the remaining investigation
-should focus on the physical execution shape around correlated fallback—not on
-more inner-loop tuning.
+Fresh profiling after restoring the logical bridge showed that fallback branch
+caching already executes four subqueries once and builds five branch caches
+once. The dominant remaining work was hash joining same-entity constant
+constraints inside those subqueries. Extending existing attribute fusion to
+literal constraints reduced the production-shaped complex checkpoint by 11.1%
+time, 21.8% memory, and 23.2% allocations.
 
 Measurement prerequisite: capture steady-state CPU and allocation profiles for
 the warmed complex query without fixture creation or cache warmup in the
@@ -731,16 +730,19 @@ Candidate investigations:
    relation-binding subquery regressed a focused benchmark by 60.4% time, 60.7%
    memory, and 79.8% allocations. Ready `Select` movement through
    joins/subqueries/fallback remains unimplemented.
-3. Batch or decorrelate additional correlated subqueries, especially the
+3. **Completed (July 13, 2026):** fuse proven CardinalityOne literal constraints
+   into cache-backed per-tuple lookup/filter traversal. Focused 1K/10K workloads
+   improve 21.9–23.2% time, 35.3–38.8% memory, and 42.3–43.4% allocations.
+4. Batch or decorrelate additional correlated subqueries, especially the
    tuple-bound argmax branch, while preserving exactly-one binding errors and
    tie semantics.
-4. Represent `or-default` as a keyed outer/default join where possible instead
+5. Represent `or-default` as a keyed outer/default join where possible instead
    of repeated per-outer-tuple branch execution.
-5. Reuse decorrelated subquery scans/results by correlation key and avoid
+6. Reuse decorrelated subquery scans/results by correlation key and avoid
    rebuilding equivalent hash tables across fallback branches.
-6. Carry candidate keys through subquery binding forms so the resulting outer
+7. Carry candidate keys through subquery binding forms so the resulting outer
    joins can use dedup elision and unique-build specialization.
-7. Eliminate phase-boundary materialization where the next operator can consume
+8. Eliminate phase-boundary materialization where the next operator can consume
    the relation once while preserving iterator error and close semantics.
 
 Correctness gates for every experiment:

@@ -100,14 +100,22 @@ present in correct order.
 **Compile:** Not compiled from clauses directly — created by the `:find` clause
 or by optimization passes.
 
-**Decompile:** `Project(symbols)(child)` → `decompile(child)` (pass-through)
+**Decompile:** `Project([?e])(child)` →
 
-Project doesn't produce clauses; it's handled by the executor's `:find` projection.
+```clojure
+[(q [:find ?e
+     :in $
+     :where <decompiled child clauses>]
+    $) [[?e] ...]]
+```
 
-**Round-trip invariant:** Child clauses preserved. Project is transparent to
-decompilation.
+The relation-binding subquery preserves the projection as logical Datalog scope;
+it does not create a physical planner phase.
 
-**Test:** Compile clauses, wrap in Project, decompile, assert child clauses unchanged.
+**Round-trip invariant:** Child semantics and projected symbol order are
+preserved. Symbols outside the projection cannot escape the nested query.
+
+**Test:** `TestDecompileProjectProducesRelationBindingSubquery`.
 
 ### Map
 
@@ -758,11 +766,12 @@ Remaining time dominated by decorrelated subquery full-table scans (8K tasks).
 Enable algebra optimizer by default and fix all regressions.
 
 1. ✅ Flip `EnableAlgebraOptimizer` default to `true`
-2. ✅ **Bypass mechanism**: `optimizeViaAlgebra` errors fall back to
-   original clauses silently (planner doesn't propagate algebra errors)
-3. ✅ **Fix `compileOrFallbackGeneric`**: return error when branch compiles
-   to empty-symbol node (e.g., standalone `missing?` predicate), triggering bypass
-4. ✅ **Fix `GroundFunction.String()`**: handle empty slices without panic
+2. ✅ **Loud failure**: compile, rewrite, validation, and lowering errors
+   propagate through query planning; no silent fallback bypass exists.
+3. ✅ **Schema validation**: every rewrite refreshes and validates exact outputs
+   and free requirements before lowering.
+4. ✅ **Logical boundary**: `optimizeViaAlgebra` accepts Datalog and returns a
+   cloned Datalog query; only `ClauseBasedPlanner` constructs `RealizedPlan`.
 5. ✅ **Fix `extractOrJoinClauseSymbols`**: join vars not produced by all
    branches are `requires` (not `provides`), preserving clause ordering
 6. ✅ **Verify**: `go test ./datalog/...` — all 13 packages pass

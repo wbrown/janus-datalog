@@ -106,8 +106,12 @@ Warms the EA cache after the first data pattern via `PrefetchEntities`.
 Benchmarked performance-neutral, hence off. Consumed in `executor/query_executor.go`.
 
 #### EnableAttributeFetchFusion — **default-active**
-Fuses contiguous cardinality-one fetches sharing an already-bound entity into
-one tuple traversal. Latest mode only; History and AsOf decline the fusion.
+Fuses contiguous CardinalityOne patterns sharing an already-bound entity into
+one tuple traversal. Fresh variables become attached bindings; literal values
+become typed constraints evaluated by cache-backed lookup. Latest mode only;
+History, AsOf, unknown-schema, CardinalityMany, and CardinalityVector patterns
+decline the fusion. Constant constraints improve focused 1K/10K workloads by
+21.9–23.2% time and the production-shaped complex checkpoint by 11.1%.
 Consumed in `executor/query_executor.go`.
 
 ### Streaming

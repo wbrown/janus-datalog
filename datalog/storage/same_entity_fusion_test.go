@@ -226,6 +226,90 @@ func TestFusion_DifferentialLatest(t *testing.T) {
 	})
 }
 
+func TestFusionConstantConstraintDifferential(t *testing.T) {
+	typ := datalog.NewKeyword(":place/type")
+	code := datalog.NewKeyword(":place/code")
+	e1 := datalog.NewIdentity("constraint-e1")
+	e2 := datalog.NewIdentity("constraint-e2")
+	queryText := `[:find ?e
+		:where [?e :place/code "R1"]
+		       [?e :place/type "room"]]`
+
+	t.Run("matching value keeps tuple", func(t *testing.T) {
+		assertFusionEquivalent(t, func(db *Database) {
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e1, code, "R1"))
+			require.NoError(t, tx.Set(e1, typ, "room"))
+			require.NoError(t, tx.Set(e2, code, "H1"))
+			require.NoError(t, tx.Set(e2, typ, "hall"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+		}, queryText)
+	})
+
+	t.Run("missing value drops tuple", func(t *testing.T) {
+		assertFusionEquivalent(t, func(db *Database) {
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e1, code, "R1"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+		}, queryText)
+	})
+
+	t.Run("latest value controls constraint", func(t *testing.T) {
+		assertFusionEquivalent(t, func(db *Database) {
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e1, code, "R1"))
+			require.NoError(t, tx.Set(e1, typ, "hall"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(e1, typ, "room"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+		}, queryText)
+	})
+}
+
+func TestFusionConstantConstraintCoverage(t *testing.T) {
+	typ := datalog.NewKeyword(":place/type")
+	code := datalog.NewKeyword(":place/code")
+	tags := datalog.NewKeyword(":place/tags")
+	e1 := datalog.NewIdentity("constraint-coverage")
+
+	t.Run("cardinality one constraint fires", func(t *testing.T) {
+		cap := &fusionCapture{n: map[string]int{}}
+		db := openFusionDB(t, true, cap.handler())
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(e1, code, "R1"))
+		require.NoError(t, tx.Set(e1, typ, "room"))
+		_, err := tx.Commit()
+		require.NoError(t, err)
+
+		rows := fusionRows(t, db, `[:find ?e
+			:where [?e :place/code "R1"]
+			       [?e :place/type "room"]]`)
+		require.Len(t, rows, 1)
+		require.Equal(t, 1, cap.get("pattern/fused-constraint"))
+	})
+
+	t.Run("cardinality many constraint does not fire", func(t *testing.T) {
+		cap := &fusionCapture{n: map[string]int{}}
+		db := openFusionDB(t, true, cap.handler())
+		tx := db.NewTransaction()
+		require.NoError(t, tx.Set(e1, code, "R1"))
+		require.NoError(t, tx.Add(e1, tags, "selected"))
+		_, err := tx.Commit()
+		require.NoError(t, err)
+
+		rows := fusionRows(t, db, `[:find ?e
+			:where [?e :place/code ?c]
+			       [?e :place/tags "selected"]]`)
+		require.Len(t, rows, 1)
+		require.Zero(t, cap.get("pattern/fused-constraint"))
+	})
+}
+
 type fusionCapture struct {
 	mu sync.Mutex
 	n  map[string]int

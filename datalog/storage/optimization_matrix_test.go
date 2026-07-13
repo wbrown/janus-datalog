@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -303,6 +304,38 @@ func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
 // or-default, expressions, ordering, and bounded Top-N finalization.
 func BenchmarkComplexQueryCheckpoint(b *testing.B) {
 	benchmarkComplexQueryCheckpoint(b, nil)
+}
+
+func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
+	var subqueryExecutions atomic.Int64
+	var fallbackCacheBuilds atomic.Int64
+	var fusedConstraints atomic.Int64
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:   t.TempDir(),
+		Schema: optimizationMatrixSchema(),
+		AnnotationHandler: func(event annotations.Event) {
+			switch event.Name {
+			case "subquery/executor-path":
+				subqueryExecutions.Add(1)
+			case "or-fallback/cache-build":
+				fallbackCacheBuilds.Add(1)
+			case "pattern/fused-constraint":
+				fusedConstraints.Add(1)
+			}
+		},
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	populateOptimizationMatrix(t, db, 10, 20)
+	result, err := db.Query(optimizationMatrixQuery(10))
+	require.NoError(t, err)
+	rows, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 10)
+	require.Equal(t, int64(4), subqueryExecutions.Load())
+	require.Equal(t, int64(5), fallbackCacheBuilds.Load())
+	require.Equal(t, int64(5), fusedConstraints.Load())
 }
 
 func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {

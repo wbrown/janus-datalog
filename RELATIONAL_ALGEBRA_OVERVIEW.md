@@ -8,6 +8,24 @@ Janus Datalog implements a complete relational algebra system as the foundation 
 
 ## Core Architecture
 
+### Logical Optimization, Then Physical Planning
+
+The optimizer contract is pure Datalog:
+
+```
+query.Query → algebra tree → optimized algebra tree → query.Query
+```
+
+Algebra is an internal logical representation. Every optimized operator lowers
+back into Datalog before physical planning; scoped operators use nested queries
+and relation bindings. `Project`, for example, lowers to a subquery with an exact
+`:find`. `ClauseBasedPlanner` alone turns the optimized query into
+`RealizedPlan` phases.
+
+This separation keeps algebraic equivalence independent from execution topology:
+logical rewrites cannot create physical phases, and physical planning cannot
+silently erase logical scope.
+
 ### The Relation Interface
 
 The `Relation` interface (in `datalog/executor/relation.go`) is the fundamental abstraction:
@@ -18,9 +36,9 @@ type Relation interface {
     Project(symbols []Symbol) (Relation, error)      // π (projection)
     Filter(filter Filter) Relation                   // σ (selection)
     Join(other Relation) Relation                    // ⋈ (natural join)
-    HashJoin(other Relation, cols []Symbol) Relation // ⋈ (equi-join)
-    SemiJoin(other Relation, cols []Symbol) Relation // ⋉ (semi-join)
-    AntiJoin(other Relation, cols []Symbol) Relation // ▷ (anti-join)
+    HashJoin(other Relation, joinSymbols []Symbol) Relation // ⋈ (equi-join)
+    SemiJoin(other Relation, joinSymbols []Symbol) Relation // ⋉ (semi-join)
+    AntiJoin(other Relation, joinSymbols []Symbol) Relation // ▷ (anti-join)
     Aggregate(elements []FindElement) Relation       // γ (grouping/aggregation)
     Sort(orderBy []OrderByClause) Relation          // τ (sort)
 
@@ -63,7 +81,7 @@ type Relation interface {
 result := storageRelation.
     Filter(predicate).      // Applied during iteration
     Project(symbols).       // Applied during iteration
-    HashJoin(other, cols)   // Only materializes hash table
+    HashJoin(other, joinSymbols) // Only materializes hash table
 ```
 
 ## Progressive Join Execution
@@ -124,20 +142,20 @@ func (r *MaterializedRelation) Join(other Relation) Relation {
     if len(sharedSymbols) == 0 {
         return crossProduct(r, other) // No shared symbols
     }
-    return r.HashJoin(other, sharedCols)
+    return r.HashJoin(other, sharedSymbols)
 }
 ```
 
 ### 2. Hash Join
 Most common join algorithm (O(n+m) time, O(min(n,m)) space):
 ```go
-func HashJoin(left, right Relation, joinCols []Symbol) Relation {
+func HashJoin(left, right Relation, joinSymbols []Symbol) Relation {
     // Build phase: Hash smaller relation
-    hashTable := buildHashTable(smaller, joinCols)
+    hashTable := buildHashTable(smaller, joinSymbols)
 
     // Probe phase: Stream through larger relation
     for tuple := range larger {
-        key := extractKey(tuple, joinCols)
+        key := extractKey(tuple, joinSymbols)
         if matches := hashTable[key]; matches != nil {
             output combineTuples(tuple, matches)
         }
@@ -153,13 +171,13 @@ func HashJoin(left, right Relation, joinCols []Symbol) Relation {
 ### 3. Semi-Join (Existence Check)
 Returns tuples from left that have matches in right:
 ```go
-func SemiJoin(left, right Relation, joinCols []Symbol) Relation {
+func SemiJoin(left, right Relation, joinSymbols []Symbol) Relation {
     // Build set of keys from right
-    rightKeys := buildKeySet(right, joinCols)
+    rightKeys := buildKeySet(right, joinSymbols)
 
     // Filter left by existence in right
     return left.Filter(func(tuple) bool {
-        key := extractKey(tuple, joinCols)
+        key := extractKey(tuple, joinSymbols)
         return rightKeys.Contains(key)
     })
 }
@@ -168,19 +186,39 @@ func SemiJoin(left, right Relation, joinCols []Symbol) Relation {
 ### 4. Anti-Join (Non-Existence Check)
 Returns tuples from left with NO matches in right:
 ```go
-func AntiJoin(left, right Relation, joinCols []Symbol) Relation {
+func AntiJoin(left, right Relation, joinSymbols []Symbol) Relation {
     // Inverse of semi-join
-    rightKeys := buildKeySet(right, joinCols)
+    rightKeys := buildKeySet(right, joinSymbols)
     return left.Filter(func(tuple) bool {
-        return !rightKeys.Contains(extractKey(tuple, joinCols))
+        return !rightKeys.Contains(extractKey(tuple, joinSymbols))
     })
 }
 ```
 
+### Same-Entity Constraint Fusion
+
+When a relation already binds `?e`, a subsequent proven CardinalityOne pattern
+such as `[?e :task/status :status/complete]` is a selection over that relation.
+The executor implements it directly:
+
+1. Resolve the attribute through the cache-backed entity lookup.
+2. Compare with `datalog.ValuesEqual`.
+3. Retain matching tuples in the same traversal.
+
+This is equivalent to matching a second relation and joining on `?e`, but avoids
+constructing and hashing that relation. The same pass can attach fresh bindings
+from `[?e :attr ?value]`; contiguous fetches and constraints share one traversal.
+History, as-of, unknown-schema, CardinalityMany, and CardinalityVector patterns
+retain ordinary match semantics.
+
+On 1K/10K entities, constant constraint fusion is 21.9–23.2% faster with
+35.3–38.8% less memory and 42.3–43.4% fewer allocations. The production-shaped
+complex checkpoint improves 11.1% time, 21.8% memory, and 23.2% allocations.
+
 ## Aggregation System
 
 ### Grouped Aggregation
-Following SQL semantics with GROUP BY:
+Non-aggregated find symbols define the grouping key:
 
 ```go
 func Aggregate(rel Relation, groupBy []Symbol, aggs []Aggregate) Relation {
