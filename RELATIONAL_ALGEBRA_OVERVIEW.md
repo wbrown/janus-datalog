@@ -26,6 +26,17 @@ This separation keeps algebraic equivalence independent from execution topology:
 logical rewrites cannot create physical phases, and physical planning cannot
 silently erase logical scope.
 
+### ρ-Renaming Through Relation Bindings
+
+A relation-binding subquery positionally maps inner find symbols to outer
+binding symbols. This is the relational rename operator, ρ—not projection.
+
+Execution applies the same positional ρ-renaming to proven ordering and
+candidate keys. For example, an inner grouped aggregate keyed by `?scenario`
+remains keyed after binding that position as `?outer-scenario`. Downstream hash
+joins can then consume the proof for unique-build specialization and
+deduplication elision.
+
 ### The Relation Interface
 
 The `Relation` interface (in `datalog/executor/relation.go`) is the fundamental abstraction:
@@ -214,6 +225,23 @@ retain ordinary match semantics.
 On 1K/10K entities, constant constraint fusion is 21.9–23.2% faster with
 35.3–38.8% less memory and 42.3–43.4% fewer allocations. The production-shaped
 complex checkpoint improves 11.1% time, 21.8% memory, and 23.2% allocations.
+
+### Correlated OR/Fallback Outer Replacement
+
+Correlated OR and fallback execution consumes an outer relation and emits tuples
+containing that outer binding plus branch results. The emitted relation is
+therefore a replacement for the consumed outer relation, not an independent
+relation to join back against it.
+
+`QueryExecutor` records which relation groups formed the OR outer input and
+replaces exactly those groups with the result. Unrelated groups remain and still
+collapse normally. Uncorrelated union continues to append an independent
+relation.
+
+This removes five redundant natural joins from the production-shaped complex
+query, improving 11.3% time, 8.3% memory, and 10.6% allocations. Replacement is
+observable through `or/outer-replaced`; iterator, cache-build, and close errors
+propagate rather than being interpreted as a missing branch.
 
 ## Aggregation System
 

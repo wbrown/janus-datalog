@@ -281,7 +281,13 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 			prefix:  prefix,
 			bodyLen: len(b.Variables),
 		}
-		return NewStreamingRelationWithOptions(outSymbols, wrapped, result.Options()), nil
+		properties := result.Properties().renameSymbols(resultSymbols, b.Variables)
+		return NewStreamingRelationWithProperties(
+			outSymbols,
+			wrapped,
+			result.Options(),
+			properties,
+		), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported binding form: %T", binding)

@@ -177,7 +177,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -189,7 +189,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-join) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -201,7 +201,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-default) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -213,7 +213,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-default-join) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -413,6 +413,58 @@ type attributeFetchSpec struct {
 	output       query.Symbol
 	expected     interface{}
 	isConstraint bool
+}
+
+func replaceConsumedOrGroups(
+	ctx Context,
+	groups Relations,
+	relation Relation,
+) Relations {
+	orRelation, ok := relation.(*OrFallbackRelation)
+	if !ok || len(orRelation.consumedGroups) == 0 {
+		return append(groups, relation)
+	}
+
+	consumed := make(map[int]bool, len(orRelation.consumedGroups))
+	insertAt := len(groups)
+	for _, index := range orRelation.consumedGroups {
+		if index < 0 || index >= len(groups) {
+			continue
+		}
+		consumed[index] = true
+		if index < insertAt {
+			insertAt = index
+		}
+	}
+	if len(consumed) == 0 {
+		return append(groups, relation)
+	}
+
+	result := make(Relations, 0, len(groups)-len(consumed)+1)
+	inserted := false
+	for index, group := range groups {
+		if index == insertAt {
+			result = append(result, relation)
+			inserted = true
+		}
+		if !consumed[index] {
+			result = append(result, group)
+		}
+	}
+	if !inserted {
+		result = append(result, relation)
+	}
+
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: "or/outer-replaced",
+			Data: map[string]interface{}{
+				"consumed_groups":  len(consumed),
+				"remaining_groups": len(result),
+			},
+		})
+	}
+	return result
 }
 
 // tryFuseAttributeFetchBundle recognizes a contiguous run of same-entity
@@ -1348,16 +1400,20 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 // executeOrClauseCorrelatedUnion evaluates all branches per outer tuple and unions results.
 func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branches [][]query.Clause, groups Relations) (Relation, error) {
 	neededSymbols := collectOrBranchRequiredSymbols(branches)
-	outerRel := e.findOuterRelation(neededSymbols, groups)
-	return NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false), nil
+	outerRel, consumed := e.findOuterRelation(neededSymbols, groups)
+	rel := NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false)
+	rel.consumedGroups = consumed
+	return rel, nil
 }
 
 // executeOrDefaultClause implements fallback semantics for or-default clauses:
 // For each input tuple, try branches in order until one returns a result.
 func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx Context, clause *query.OrDefaultClause, groups Relations) (Relation, error) {
 	neededSymbols := collectOrBranchRequiredSymbols(clause.Branches)
-	outerRel := e.findOuterRelation(neededSymbols, groups)
-	return NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true), nil
+	outerRel, consumed := e.findOuterRelation(neededSymbols, groups)
+	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
+	rel.consumedGroups = consumed
+	return rel, nil
 }
 
 // executeOrDefaultJoinClause implements fallback semantics for or-default-join clauses.
@@ -1367,12 +1423,13 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *q
 		joinVarSet[v] = true
 	}
 
-	outerRel := e.findOuterRelationBySymbols(joinVarSet, groups)
+	outerRel, consumed := e.findOuterRelationBySymbols(joinVarSet, groups)
 
 	prefetched := false
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
 	rel.joinSyms = clause.JoinVars
 	rel.prefetched = prefetched
+	rel.consumedGroups = consumed
 	return rel, nil
 }
 
@@ -1432,15 +1489,17 @@ func clausesNeedCorrelation(clauses []query.Clause) bool {
 
 // findOuterRelation collects and joins all groups that provide any of the
 // needed symbols into a single outer relation. Returns unit relation if none found.
-func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) Relation {
+func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) (Relation, []int) {
 	if len(groups) == 0 || len(neededSymbols) == 0 {
-		return NewUnitRelation(e.options)
+		return NewUnitRelation(e.options), nil
 	}
 
 	var result Relation
+	var consumed []int
 	for i, rel := range groups {
 		if containsAny(rel.Symbols(), neededSymbols) {
 			groups[i] = groups[i].Materialize()
+			consumed = append(consumed, i)
 			if result == nil {
 				result = groups[i]
 			} else {
@@ -1450,19 +1509,21 @@ func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, g
 	}
 
 	if result == nil {
-		return NewUnitRelation(e.options)
+		return NewUnitRelation(e.options), nil
 	}
-	return result
+	return result, consumed
 }
 
 // findOuterRelationBySymbols collects and joins all groups that provide any
 // of the specified symbols into a single outer relation. Returns unit relation if none found.
-func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbol]bool, groups Relations) Relation {
+func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbol]bool, groups Relations) (Relation, []int) {
 	var result Relation
+	var consumed []int
 	for i, rel := range groups {
 		for _, sym := range rel.Symbols() {
 			if symSet[sym] {
 				groups[i] = groups[i].Materialize()
+				consumed = append(consumed, i)
 				if result == nil {
 					result = groups[i]
 				} else {
@@ -1473,9 +1534,9 @@ func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbo
 		}
 	}
 	if result == nil {
-		return NewUnitRelation(e.options)
+		return NewUnitRelation(e.options), nil
 	}
-	return result
+	return result, consumed
 }
 
 // findCommonSymbols returns symbols that exist in all relations
@@ -1667,10 +1728,11 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, c
 		joinVarSet[v] = true
 	}
 
-	outerRel := e.findOuterRelationBySymbols(joinVarSet, groups)
+	outerRel, consumed := e.findOuterRelationBySymbols(joinVarSet, groups)
 
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, false)
 	rel.joinSyms = clause.JoinVars
+	rel.consumedGroups = consumed
 	return rel, nil
 }
 
@@ -2051,7 +2113,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
 
@@ -2110,7 +2172,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
 
@@ -2120,7 +2182,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
 
@@ -2130,7 +2192,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
 

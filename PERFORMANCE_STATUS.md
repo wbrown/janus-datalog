@@ -29,6 +29,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
 - ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` binding attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
 - ✅ **Same-entity constant constraint fusion**: `[?e :const-attr literal]` on an already-bound entity now uses `LookupAttribute` plus typed equality instead of storage match + hash join. At 1K/10K entities it is **21.9–23.2% faster**, uses **35.3–38.8% less memory**, and performs **42.3–43.4% fewer allocations**. The production-shaped complex checkpoint improves **11.1% time, 21.8% memory, and 23.2% allocations** (n=10; verified 2026-07-13, darwin/arm64).
+- ✅ **Correlated OR outer replacement**: OR/fallback relations already contain their selected outer tuples, so QueryExecutor replaces consumed relation groups instead of appending the result and joining it back to the same outer data. Removing five redundant joins improves the complex checkpoint **11.3% time, 8.3% memory, and 10.6% allocations**. Outer, branch-cache, and close errors now propagate rather than falling through to defaults (n=10; verified 2026-07-13, darwin/arm64).
 - ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
 - ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Bounded Top-N finalization**: ordered limits without non-projected sort keys use an O(N)-memory heap instead of materializing and sorting every row. Across 10K/100K rows and N=1/10/100: **97.1% faster**, **99.96% less memory**, **99.86% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64). The source is still fully scanned; index-order pushdown remains separate.
@@ -1072,6 +1073,50 @@ optimizer baseline):
 - `datalog/storage/constant_constraint_fusion_benchmark_test.go`
 - `datalog/storage/optimization_matrix_test.go`
 
+### 21b. Correlated OR Outer Replacement (COMPLETE - July 2026)
+**Status**: ✅ OR/fallback results replace the outer groups they already contain
+
+**Profile evidence after constant-constraint fusion**:
+
+- `HashJoinWithOptions`: 62.28% cumulative CPU, 88.21% cumulative allocated
+  space, and 92.25% cumulative allocation count.
+- The stack was rooted under `OrFallbackIterator`: the fallback relation emitted
+  outer symbols plus branch outputs, then QueryExecutor appended it beside the
+  original outer relation and collapsed them through another natural join.
+- The complex query performed this redundant join five times.
+
+**Change**:
+
+- Record exactly which input relation groups are incorporated into each
+  correlated OR/fallback outer relation.
+- Replace those groups with the OR/fallback result before collapsing unrelated
+  groups. Uncorrelated union retains append-and-join behavior.
+- Emit `or/outer-replaced` with consumed and remaining group counts.
+- Propagate outer iterator, branch iterator, cache-build, and close failures;
+  a failed preferred branch cannot be interpreted as no match and fall through
+  to a default.
+
+**Complex-query checkpoint** (`count=10`, darwin/arm64):
+
+| Metric | Before | After | Delta |
+|--------|-------:|------:|------:|
+| Median time | 42.81 ms | 37.96 ms | **−11.3%** |
+| Memory | 64.23 MiB | 58.89 MiB | **−8.3%** |
+| Allocations | 793.1K | 709.4K | **−10.6%** |
+
+Combined with constant-constraint fusion, the corrected logical-optimizer
+baseline improves from 46.89 ms to 37.96 ms (**−19.0%**), 84.04 MiB to
+58.89 MiB (**−29.9%**), and 1.043M to 709.4K allocations (**−32.0%**).
+
+**Files**:
+
+- `datalog/executor/query_executor.go`
+- `datalog/executor/or_fallback_relation.go`
+- `datalog/executor/or_outer_replacement_test.go`
+- `datalog/executor/or_fallback_cache_test.go`
+- `datalog/storage/optimization_matrix_test.go`
+- `datalog/storage/algebra_getelse_product_test.go`
+
 ### 22. Typed Relation Property Propagation (FOUNDATION - July 2026)
 **Status**: ⚠️ Core contract active; derivation and consumption coverage incomplete
 
@@ -1094,6 +1139,8 @@ optimizer baseline):
   preserve properties.
 - Projection retains valid ordering prefixes and fully retained keys.
 - Sort establishes ordering; grouped aggregation establishes its group key.
+- Relation bindings apply positional ρ-renaming to ordering and candidate-key
+  symbols instead of discarding those proofs.
 - Fresh expression outputs preserve guarantees.
 - Joins, unions, products, and fallback relations conservatively clear them.
 - Streaming projection skips deduplication when a candidate key survives.
@@ -1114,6 +1161,20 @@ contract removed that cost while preserving the memory/allocation win.
 Ordering is now consumed when the final relation already satisfies the Datalog
 requirement. Order-aware index selection for additional shapes remains separate.
 
+**Post-fusion relation-binding checkpoint** (`count=10`, darwin/arm64):
+
+| Metric | Before | After | Delta |
+|--------|-------:|------:|------:|
+| Median time | 41.69 ms | 42.81 ms | no supported latency claim |
+| Memory | 65.72 MiB | 64.23 MiB | **−2.3%** |
+| Allocations | 800.7K | 793.1K | **−0.9%** |
+
+At this intermediate checkpoint the complex query selected two unique hash
+builds after grouped-aggregate keys survived `RelationBinding`. The later
+correlated-OR replacement removes those joins entirely; ρ-renaming remains
+available to other downstream consumers. This is proof propagation with a small
+resource reduction, not a wall-time optimization.
+
 **Remaining work**:
 
 - Prove property preservation for specific join and OR/fallback shapes.
@@ -1125,6 +1186,8 @@ requirement. Order-aware index selection for additional shapes remains separate.
 
 - `datalog/executor/relation_properties.go`
 - `datalog/executor/relation_properties_test.go`
+- `datalog/executor/subquery.go`
+- `datalog/executor/subquery_binding_properties_test.go`
 - `datalog/storage/relation_properties.go`
 - `datalog/storage/relation_properties_test.go`
 

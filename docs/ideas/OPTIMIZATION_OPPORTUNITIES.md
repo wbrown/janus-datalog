@@ -736,12 +736,18 @@ Candidate investigations:
 4. Batch or decorrelate additional correlated subqueries, especially the
    tuple-bound argmax branch, while preserving exactly-one binding errors and
    tie semantics.
-5. Represent `or-default` as a keyed outer/default join where possible instead
-   of repeated per-outer-tuple branch execution.
+5. **Completed (July 13, 2026):** correlated OR/fallback output replaces the
+   consumed outer groups instead of joining back to them. Five redundant joins
+   disappear from the complex query, improving 11.3% time, 8.3% memory, and
+   10.6% allocations. Keyed branch caches continue to execute each eligible
+   branch once.
 6. Reuse decorrelated subquery scans/results by correlation key and avoid
    rebuilding equivalent hash tables across fallback branches.
-7. Carry candidate keys through subquery binding forms so the resulting outer
-   joins can use dedup elision and unique-build specialization.
+7. **Partially completed (July 13, 2026):** relation bindings apply positional
+   ρ-renaming to ordering and candidate keys. Before outer replacement, the
+   complex query selected two unique hash builds, reducing memory 2.3% and
+   allocations 0.9% with no supported latency claim; those joins are now removed
+   entirely. Tuple/scalar bindings and multi-result unions remain conservative.
 8. Eliminate phase-boundary materialization where the next operator can consume
    the relation once while preserving iterator error and close semantics.
 

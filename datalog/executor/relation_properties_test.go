@@ -31,6 +31,41 @@ func TestRelationPropertiesAreStableAtInterfaceBoundary(t *testing.T) {
 	require.Equal(t, rel.Properties(), rel.Properties())
 }
 
+func TestRelationPropertiesRenameSymbols(t *testing.T) {
+	innerA := datalog.NewSymbol("?inner-a")
+	innerB := datalog.NewSymbol("?inner-b")
+	outerA := datalog.NewSymbol("?outer-a")
+	outerB := datalog.NewSymbol("?outer-b")
+	properties := RelationProperties{
+		Ordering: []query.OrderByClause{
+			{Variable: innerA, Direction: query.OrderAsc},
+			{Variable: innerB, Direction: query.OrderDesc},
+		},
+		Keys: [][]query.Symbol{{innerA}, {innerA, innerB}},
+	}
+
+	renamed := properties.renameSymbols(
+		[]query.Symbol{innerA, innerB},
+		[]query.Symbol{outerA, outerB},
+	)
+	require.Equal(t,
+		RelationProperties{
+			Ordering: []query.OrderByClause{
+				{Variable: outerA, Direction: query.OrderAsc},
+				{Variable: outerB, Direction: query.OrderDesc},
+			},
+			Keys: [][]query.Symbol{{outerA}, {outerA, outerB}},
+		},
+		renamed,
+	)
+	require.Equal(t, innerA, properties.Ordering[0].Variable,
+		"renaming must not mutate the source properties")
+	require.Empty(t, properties.renameSymbols(
+		[]query.Symbol{innerA},
+		[]query.Symbol{outerA, outerB},
+	))
+}
+
 func TestRelationPropertyPropagation(t *testing.T) {
 	a := datalog.NewSymbol("?a")
 	b := datalog.NewSymbol("?b")

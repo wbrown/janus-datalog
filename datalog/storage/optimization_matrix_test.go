@@ -310,6 +310,8 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	var subqueryExecutions atomic.Int64
 	var fallbackCacheBuilds atomic.Int64
 	var fusedConstraints atomic.Int64
+	var uniqueJoinBuilds atomic.Int64
+	var replacedOuterGroups atomic.Int64
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:   t.TempDir(),
 		Schema: optimizationMatrixSchema(),
@@ -321,6 +323,12 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 				fallbackCacheBuilds.Add(1)
 			case "pattern/fused-constraint":
 				fusedConstraints.Add(1)
+			case annotations.JoinStrategy:
+				if unique, _ := event.Data["build_key_unique"].(bool); unique {
+					uniqueJoinBuilds.Add(1)
+				}
+			case "or/outer-replaced":
+				replacedOuterGroups.Add(1)
 			}
 		},
 	})
@@ -336,6 +344,8 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	require.Equal(t, int64(4), subqueryExecutions.Load())
 	require.Equal(t, int64(5), fallbackCacheBuilds.Load())
 	require.Equal(t, int64(5), fusedConstraints.Load())
+	require.Zero(t, uniqueJoinBuilds.Load())
+	require.Equal(t, int64(5), replacedOuterGroups.Load())
 }
 
 func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
