@@ -123,14 +123,16 @@ results, err := d.Query(query,
 
 The planner is the bridge between a declarative query (an unordered set of clauses) and an executable plan (an ordered sequence of phases). It operates in two stages: **rewrite**, then **phase**.
 
-**Algebra-preserving planning.** Before execution, the planner builds and validates a relational-algebra tree:
+**Algebra-preserving logical optimization.** Before physical planning, the optimizer builds and validates a relational-algebra tree:
 
 - **Algebra IR optimization** (`EnableAlgebraOptimizer`, default-active): clauses are compiled to a relational-algebra tree and passed through transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, scan rewrites for `get-else` with vector defaults). A schema-aware immutable rebuild refreshes derived outputs after every pass.
-- **Direct region emission**: the optimized tree is emitted directly into linear `RealizedPhase` Datalog regions. `Project` remains a materialized boundary, independently structured join children become relation-binding subqueries, and aggregate/OR/NOT/lateral operators retain their algebraic scope. Whole-tree decompilation is not used by production planning.
+- **Nested Datalog lowering**: the optimized tree is lowered back into a cloned `query.Query`. `Project` becomes a relation-binding subquery; aggregate/OR/NOT/lateral scope remains explicit in Datalog. The optimizer contract is therefore `Query → Query`.
 
 - **Constant-bindable scalar detection**: Scalar inputs that only appear in predicates/expressions (not data patterns) are flagged in phase metadata. The executor resolves these as constants rather than creating separate relation groups, avoiding unnecessary joins.
 
-When algebra optimization is disabled, the planner retains the clause-greedy path for differential verification.
+Only after logical lowering does `ClauseBasedPlanner` create physical
+`RealizedPlan` phases. When algebra optimization is disabled, the same planner
+consumes the original Datalog query for differential verification.
 
 **Clause ordering via selectivity scoring.** The planner scores each clause based on how much it will filter data. The key heuristic: constants get 10x the weight of available variables, because a constant like `:person/name` in a pattern actually filters storage, while an available variable like `?e` only enables a join.
 
@@ -484,14 +486,15 @@ Core types in the top-level package:
 
 ### Query Planning (`datalog/planner/`)
 
-Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` into a `RealizedPlan` (ordered phases with physical symbol-flow contracts). The default path compiles and optimizes algebra, validates exact schemas and free requirements, then emits linear Datalog regions directly.
+Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` into a `RealizedPlan` (ordered phases with physical symbol-flow contracts). The default logical path compiles and optimizes algebra, validates exact schemas and free requirements, then lowers back to nested Datalog before the planner constructs phases.
 
-**Algebra emission**: `EnableAlgebraOptimizer` (on by default) runs clauses → algebra IR → transform passes → schema refresh/validation → `RealizedPlan`. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms); real `Project` nodes create materialized phase boundaries. `algebra.Decompile` remains for nested lowering and compatibility tests, not whole-tree production planning.
+**Algebra lowering**: `EnableAlgebraOptimizer` (on by default) runs Query → algebra IR → transform passes → schema refresh/validation → Query. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms); `Project` lowers to a relation-binding subquery. Algebra never constructs `RealizedPlan`.
 
 **Join projection experiment**: `EnableJoinProjectInsertion` (off by default)
-uses backward liveness to insert `Project` on narrowed inner-join children. It
-is correctness-proven for no-input queries, but materialized boundaries regress
-the focused workload; activation waits on streaming boundary execution.
+uses backward liveness to insert `Project` on narrowed inner-join children before
+nested Datalog lowering. It is correctness-proven for no-input queries, but
+relation-subquery execution regresses the focused workload, so it remains an
+inactive logical-rewrite experiment.
 
 **Disabled-optimizer algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
 1. Start with input symbols as available

@@ -681,14 +681,14 @@ All differences are significant (`p=0.000`, `n=10`). The complex checkpoint is
 statistically unchanged: 48.37 → 47.94 ms/op (`p=0.143`), with memory
 (`p=0.912`) and allocations (`p=0.810`) unchanged.
 
-The first compositional algebra step is now complete: production planning emits
-linear Datalog regions directly from the optimized tree, preserves `Project`
-boundaries, nests independently structured children, and validates exact
-schemas/free requirements after every rewrite. Whole-tree
-decompilation/re-phasing is no longer on the default path.
+The first compositional algebra step is now complete with logical/physical
+separation intact: the optimizer validates schemas/free requirements after every
+rewrite and lowers the optimized tree back into nested Datalog. `Project`
+becomes a relation-binding subquery; only `ClauseBasedPlanner` constructs
+`RealizedPlan`.
 
-The July 12 checkpoint measured 52.09 ms/op median (45.24–86.84 ms, too noisy
-for a latency conclusion), 84.05 MiB/op, and 1.043M allocations/op. Relative to
+The July 13 checkpoint measured 46.89 ms/op median (44.26–52.90 ms), 84.04
+MiB/op, and 1.043M allocations/op. Relative to
 the last documented property checkpoint, allocations fell about 4.2% while
 memory rose about 1.5%. This is an architecture/correctness result, not a
 general-query speedup.
@@ -711,9 +711,9 @@ The focused optimizations above reduce CPU, memory, and allocations in the
 operators they target, but the production-shaped complex checkpoint remains
 statistically flat in wall time. Its final order key is derived only after
 three fallback/subquery branches, so bounded Top-N cannot avoid the expensive
-upstream work. The remaining investigation should focus on the algebra-to-plan
-bridge and the physical execution shape around correlated fallback—not on more
-inner-loop tuning.
+upstream work. The logical bridge is now corrected; the remaining investigation
+should focus on the physical execution shape around correlated fallback—not on
+more inner-loop tuning.
 
 Measurement prerequisite: capture steady-state CPU and allocation profiles for
 the warmed complex query without fixture creation or cache warmup in the
@@ -723,15 +723,14 @@ not call any item below a bottleneck until that evidence identifies it.
 
 Candidate investigations:
 
-1. **Completed (July 12, 2026):** emit phased Datalog directly from the algebra
-   tree so rewrites survive planning. Structural operator tests, exact
-   optimized/off tuple differentials, full tests, race tests, and three shuffled
-   repetitions are green.
+1. **Completed (July 13, 2026):** lower optimized algebra into nested Datalog so
+   rewrites survive while the optimizer remains `Query → Query`. Structural
+   operator tests and exact optimized/off tuple differentials are green.
 2. Backward liveness and inner-join `Project` insertion are proven and retained
-   behind default-off `EnableJoinProjectInsertion`. Materializing the boundary
-   regressed a focused benchmark by 7.0% time, 34.6% memory, and 24.9%
-   allocations; revisit activation only with streaming phase boundaries. Ready
-   `Select` movement through joins/subqueries/fallback remains unimplemented.
+   behind default-off `EnableJoinProjectInsertion`. Lowering the projection as a
+   relation-binding subquery regressed a focused benchmark by 60.4% time, 60.7%
+   memory, and 79.8% allocations. Ready `Select` movement through
+   joins/subqueries/fallback remains unimplemented.
 3. Batch or decorrelate additional correlated subqueries, especially the
    tuple-bound argmax branch, while preserving exactly-one binding errors and
    tie semantics.

@@ -44,7 +44,7 @@ func (m *failingScanMatcher) Match(q *query.Query, _ Relations) (Relation, error
 // TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError feeds a hand-built
 // two-phase RealizedPlan to the executor. Phase 0's scan fails (deferred error)
 // and is a non-last phase with Keep symbols, so its result flows through the Keep
-// projection in ExecuteRealized and then across the phase boundary into phase 1.
+// materialization in ExecuteRealized and then across the phase boundary into phase 1.
 // The failure must surface, not be laundered into an empty result.
 //
 // The planner currently never emits multi-phase plans (the greedy phaser
@@ -109,5 +109,5 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 		err = driveErr(result)
 	}
 	require.ErrorIs(t, err, errInjectedIterator,
-		"a failing scan in a non-last phase must surface, not be laundered by the Keep projection or phase boundary")
+		"a failing scan in a non-last phase must surface, not be laundered by boundary materialization")
 }

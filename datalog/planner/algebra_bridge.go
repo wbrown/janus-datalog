@@ -48,3 +48,57 @@ func optimizeAlgebra(clauses []query.Clause, handler annotations.Handler) (*alge
 	})
 	return optimized, nil
 }
+
+// optimizeViaAlgebra preserves the logical optimizer contract: Datalog in,
+// Datalog out. Algebra is an internal representation only; physical phase
+// construction remains the planner's responsibility.
+func optimizeViaAlgebra(
+	q *query.Query,
+	options PlannerOptions,
+	handler annotations.Handler,
+) (*query.Query, error) {
+	if q == nil {
+		return nil, fmt.Errorf("algebra optimize: nil query")
+	}
+	optimized, err := optimizeAlgebra(q.Where, handler)
+	if err != nil {
+		return nil, err
+	}
+	if options.EnableJoinProjectInsertion {
+		hasValueInput := false
+		for _, input := range q.In {
+			if _, isDatabase := input.(query.DatabaseInput); !isDatabase {
+				hasValueInput = true
+				break
+			}
+		}
+		if !hasValueInput {
+			optimized, err = algebra.InsertJoinProjects(optimized, terminalSymbols(q))
+			if err != nil {
+				return nil, fmt.Errorf("algebra project insertion: %w", err)
+			}
+		}
+	}
+	clauses, err := algebra.Decompile(optimized)
+	if err != nil {
+		if handler != nil {
+			handler(annotations.Event{
+				Name: "algebra/decompile-error",
+				Data: map[string]interface{}{"error": err.Error()},
+			})
+		}
+		return nil, fmt.Errorf("algebra decompile: %w", err)
+	}
+	rewritten := *q
+	rewritten.Where = clauses
+	if handler != nil {
+		handler(annotations.Event{
+			Name: "algebra/bridge-complete",
+			Data: map[string]interface{}{
+				"input_clause_count":  len(q.Where),
+				"output_clause_count": len(clauses),
+			},
+		})
+	}
+	return &rewritten, nil
+}

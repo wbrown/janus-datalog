@@ -83,18 +83,18 @@ So, off by default (opt-in): `EnableJoinProjectInsertion`,
 
 #### EnableAlgebraOptimizer — **default-active**
 Relational-algebra IR optimization: the query is compiled to an algebra tree,
-optimized (subquery decorrelation, predicate pushdown), and emitted directly as
-validated Datalog phases. This is where decorrelation and pushdown actually
-happen — there are no separate knobs for them. Consumed in
+optimized (subquery decorrelation, predicate pushdown), and lowered back into a
+validated Datalog query before physical planning. This is where decorrelation
+and pushdown actually happen — there are no separate knobs for them. Consumed in
 `planner/planner_clause_based.go`.
 
 #### EnableJoinProjectInsertion — **experimental, opt-in** (default false)
-Inserts materialized `Project` boundaries on inner-join children when backward
-liveness proves relation attributes dead. It is restricted to queries without input
-bindings because materialized phases do not yet thread the original environment
-relation. A focused 2,000-entity benchmark measured the materialized path as
-7.0% slower with 34.6% more memory and 24.9% more allocations, so this remains
-off until phase boundaries can stream. Consumed in
+Inserts logical `Project` on inner-join children when backward liveness proves
+symbols dead, then lowers it to a relation-binding subquery. It is restricted to
+queries without input bindings until nested lowering explicitly threads those
+bindings. A focused 2,000-entity benchmark measured the nested-Datalog path as
+60.4% slower with 60.7% more memory and 79.8% more allocations, so this remains
+an inactive rewrite experiment. Consumed in
 `planner/planner_clause_based.go`.
 
 #### EnableScanSharing — **opt-in** (default false)

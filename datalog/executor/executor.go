@@ -452,40 +452,18 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 			})
 		}
 
-		// Project each group to Keep symbols (what passes to next phase)
-		// Skip for last phase - QueryExecutor already projected to :find symbols
+		// Non-final Query fragments already emit their exact Keep schema. Make
+		// each result reusable for the next phase without projecting it again.
 		if !isLastPhase && len(phase.Keep) > 0 {
 			for i, group := range groups {
-				// Materialize first to avoid iterator consumption issues
-				// Collect all tuples to create a reusable relation
-				var tuples []Tuple
-				// A non-last phase materializes each group to pass Keep symbols
-				// forward. Carry any deferred scan error onto the materialized
-				// relation so Project propagates it into the next phase instead of
-				// laundering a failed scan into an empty result.
-				keepErr := collectTuplesInto(&tuples, group)
-
-				opts := group.Options()
-				materialized := NewMaterializedRelationWithProperties(
-					group.Symbols(),
-					tuples,
-					opts,
-					group.Properties(),
-				)
-				materialized.err = keepErr
-
-				projected, err := materialized.Project(phase.Keep)
-				if err != nil {
-					return nil, fmt.Errorf("phase %d projection of group %d failed: %w", phaseIndex+1, i, err)
-				}
-				groups[i] = projected
+				groups[i] = materializePhaseBoundary(group)
 			}
 		}
 
-		// DEBUG: Log after projection
+		// DEBUG: Log after boundary materialization
 		if collector := ctx.Collector(); collector != nil && !isLastPhase {
 			collector.Add(annotations.Event{
-				Name: "realized/phase-projected",
+				Name: "realized/phase-materialized",
 				Data: map[string]interface{}{
 					"phase":  phaseIndex + 1,
 					"groups": len(groups),
@@ -1161,31 +1139,11 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 			return nil, err
 		}
 
-		// Project each group to Keep symbols. Skip for the last phase —
-		// QueryExecutor already projected to :find symbols.
+		// Non-final Query fragments already emit their exact Keep schema. Make
+		// each result reusable for the next phase without projecting it again.
 		if !isLastPhase && len(phase.Keep) > 0 {
 			for i, group := range groups {
-				// Materialize first to avoid iterator consumption issues, and
-				// carry any deferred scan error onto the materialized relation
-				// so Project propagates it into the next phase instead of
-				// laundering a failed scan into an empty result.
-				var tuples []Tuple
-				keepErr := collectTuplesInto(&tuples, group)
-
-				opts := group.Options()
-				materialized := NewMaterializedRelationWithProperties(
-					group.Symbols(),
-					tuples,
-					opts,
-					group.Properties(),
-				)
-				materialized.err = keepErr
-
-				projected, err := materialized.Project(phase.Keep)
-				if err != nil {
-					return nil, fmt.Errorf("phase %d projection of group %d failed: %w", phaseIndex+1, i, err)
-				}
-				groups[i] = projected
+				groups[i] = materializePhaseBoundary(group)
 			}
 		}
 

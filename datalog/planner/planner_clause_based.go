@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
-	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -116,47 +115,18 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	// Step 1: Start with the clause list from the query
 	clauses := q.Where
 
-	// Step 2: Optimize and emit directly from the algebra tree. Whole-tree
-	// decompilation would erase Project/Aggregate boundaries before phasing.
+	// Step 2: Optimize Datalog through the algebra IR, then return to Datalog
+	// before physical phase planning.
 	if p.options.EnableAlgebraOptimizer {
-		optimized, err := optimizeAlgebra(clauses, handler)
+		options := p.options
+		if len(initialBindings) > 0 {
+			options.EnableJoinProjectInsertion = false
+		}
+		optimized, err := optimizeViaAlgebra(q, options, handler)
 		if err != nil {
 			return nil, fmt.Errorf("algebra optimization failed: %w", err)
 		}
-		if p.options.EnableJoinProjectInsertion && len(inputSymbols) == 0 {
-			optimized, err = algebra.InsertJoinProjects(optimized, findSymbols)
-			if err != nil {
-				return nil, fmt.Errorf("algebra project insertion failed: %w", err)
-			}
-		}
-		plan, err := emitAlgebraPlan(q, optimized, initialBindings)
-		if err != nil {
-			return nil, fmt.Errorf("algebra emission failed: %w", err)
-		}
-		for i := range plan.Phases {
-			availableSet := make(map[query.Symbol]bool)
-			for symbol := range inputSymbols {
-				availableSet[symbol] = true
-			}
-			for _, symbol := range plan.Phases[i].Available {
-				availableSet[symbol] = true
-			}
-			analyzeClausesForExplain(
-				&plan.Phases[i],
-				plan.Phases[i].Query.Where,
-				availableSet,
-				p.stats,
-			)
-		}
-		if handler != nil {
-			handler(annotations.Event{
-				Name: "algebra/emitted",
-				Data: map[string]interface{}{
-					"phase_count": len(plan.Phases),
-				},
-			})
-		}
-		return plan, nil
+		clauses = optimized.Where
 	}
 
 	// Step 2b: Detect constant-bindable scalar inputs

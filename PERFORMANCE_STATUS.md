@@ -1191,43 +1191,42 @@ This is the checkpoint for the next architecture step: statically provable
 relation properties. Any claimed sort, deduplication, or join elimination must
 improve this benchmark without changing its result.
 
-### Algebra-preserving emission checkpoint (July 12, 2026)
+### Nested Datalog lowering checkpoint (July 13, 2026)
 
-After replacing whole-tree decompilation/re-phasing with direct optimized-tree
-region emission, the same benchmark produced (`benchtime=1s`, `count=10`,
-darwin/arm64):
+After restoring the logical `Query → Query` optimizer contract and lowering
+algebra into nested Datalog before physical planning, the same benchmark produced
+(`benchtime=1s`, `count=10`, darwin/arm64):
 
 | Metric | Result |
 |--------|-------:|
-| Time | **52.09 ms/op median** (45.24–86.84 ms; noisy) |
-| Memory | **84.05 MiB/op** |
+| Time | **46.89 ms/op median** (44.26–52.90 ms) |
+| Memory | **84.04 MiB/op** |
 | Allocations | **1.043M/op** |
 
-The time samples have high variance (56.91 ms mean, 13.86 ms standard
-deviation), so they do not support a latency claim. Against the last documented
-property checkpoint (82.80 MiB, 1.088M allocations), memory is approximately
-1.5% higher while allocations are approximately 4.2% lower. The architectural
-result is therefore correctness and preservation of optimization structure,
-not a demonstrated general-query speedup. It enables future projection/liveness
-work to reduce tuple width without losing `Project` boundaries first.
+Against the last documented property checkpoint (48.90 ms, 82.80 MiB, 1.088M
+allocations), this does not establish a statistically controlled latency change;
+memory is approximately 1.5% higher while allocations are approximately 4.2%
+lower. The architectural result is restored logical/physical separation with no
+evidence of a general-query regression.
 
 ### Materialized join-project experiment (July 12, 2026)
 
-Backward liveness can now insert `Project` above narrowed inner-join children,
-but `EnableJoinProjectInsertion` remains default-off. On a focused 2,000-entity
-scan → selective predicate → project → join query, with algebra optimization
-enabled in both modes (`benchtime=500ms`, `count=10`, darwin/arm64):
+Backward liveness can insert `Project` above narrowed inner-join children and
+lower it as a relation-binding subquery, but `EnableJoinProjectInsertion`
+remains default-off. On a focused 2,000-entity scan → selective predicate →
+project → join query, with algebra optimization enabled in both modes
+(`benchtime=500ms`, `count=10`, darwin/arm64):
 
 | Metric | Flat | Materialized project | Delta |
 |--------|-----:|---------------------:|------:|
-| Median time | 0.975 ms/op | 1.044 ms/op | **+7.0%** |
-| Memory | 1.628 MiB/op | 2.192 MiB/op | **+34.6%** |
-| Allocations | 20.34K/op | 25.40K/op | **+24.9%** |
+| Median time | 0.913 ms/op | 1.464 ms/op | **+60.4%** |
+| Memory | 1.627 MiB/op | 2.614 MiB/op | **+60.7%** |
+| Allocations | 20.38K/op | 36.64K/op | **+79.8%** |
 
-The narrower tuple does not repay the extra phase materialization. The transform
-and benchmark are retained as a correctness/proof checkpoint, but production
-activation should wait until phase boundaries can stream and preserve iterator,
-close-error, tuple-copy, and relation-property contracts.
+The narrower tuple does not repay nested relation-subquery execution. The
+transform and benchmark remain as a correctness/proof checkpoint, but this
+rewrite must stay inactive until the subquery path can consume the logical
+projection without adding this physical cost.
 
 **Files**: `datalog/storage/optimization_matrix_test.go`,
 `datalog/storage/algebra_project_benchmark_test.go`

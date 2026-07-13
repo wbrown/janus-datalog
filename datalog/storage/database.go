@@ -522,7 +522,7 @@ func (d *Database) History() *Database {
 func DefaultPlannerOptions() planner.PlannerOptions {
 	return planner.PlannerOptions{
 		// Planner / algebra optimization
-		EnableAlgebraOptimizer:     true,  // Relational algebra optimization with direct phase emission
+		EnableAlgebraOptimizer:     true,  // Relational algebra optimization with nested Datalog lowering
 		EnableJoinProjectInsertion: false, // Materialized join narrowing regresses focused workloads; retained for experiments
 		EnableScanSharing:          false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
 		EnableEntityPrefetch:       false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)

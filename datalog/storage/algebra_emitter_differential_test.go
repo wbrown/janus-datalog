@@ -9,7 +9,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-func TestAlgebraEmitterOptimizedOffExactTupleDifferential(t *testing.T) {
+func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
 	db, cleanup := setupAlgebraTestDB(t)
 	defer cleanup()
 
