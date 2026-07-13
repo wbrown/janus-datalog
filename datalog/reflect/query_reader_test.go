@@ -73,8 +73,8 @@ type WithAttrTag struct {
 }
 
 func TestNewQueryResultMapper_TaggedFields(t *testing.T) {
-	findColumns := []string{"?name", "?age"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findColumns)
+	findSymbols := []string{"?name", "?age"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,8 +95,8 @@ func TestNewQueryResultMapper_TaggedFields(t *testing.T) {
 }
 
 func TestNewQueryResultMapper_PositionalMapping(t *testing.T) {
-	findColumns := []string{"?name", "?age"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleUntagged{}), findColumns)
+	findSymbols := []string{"?name", "?age"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleUntagged{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,8 +115,8 @@ func TestNewQueryResultMapper_PositionalMapping(t *testing.T) {
 }
 
 func TestNewQueryResultMapper_Aggregates(t *testing.T) {
-	findColumns := []string{"?dept", "(sum ?salary)", "(count ?emp)"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithAggregates{}), findColumns)
+	findSymbols := []string{"?dept", "(sum ?salary)", "(count ?emp)"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithAggregates{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,8 +145,8 @@ func TestNewQueryResultMapper_Aggregates(t *testing.T) {
 }
 
 func TestNewQueryResultMapper_MixedTagsError(t *testing.T) {
-	findColumns := []string{"?name", "?age"}
-	_, err := NewQueryResultMapper(reflect.TypeOf(MixedTags{}), findColumns)
+	findSymbols := []string{"?name", "?age"}
+	_, err := NewQueryResultMapper(reflect.TypeOf(MixedTags{}), findSymbols)
 	if err == nil {
 		t.Fatal("expected error for mixed tags")
 	}
@@ -156,8 +156,8 @@ func TestNewQueryResultMapper_MixedTagsError(t *testing.T) {
 }
 
 func TestNewQueryResultMapper_SymbolNotFound(t *testing.T) {
-	findColumns := []string{"?name"} // Missing ?age
-	_, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findColumns)
+	findSymbols := []string{"?name"} // Missing ?age
+	_, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findSymbols)
 	if err == nil {
 		t.Fatal("expected error for missing symbol")
 	}
@@ -169,8 +169,8 @@ func TestNewQueryResultMapper_SymbolNotFound(t *testing.T) {
 func TestNewQueryResultMapper_MixedMode(t *testing.T) {
 	// WithAttrTag has: ID (skipped with "-,id"), Name (attribute tag), Age (query tag)
 	// This tests mixed mode: query tags in mappings, attribute tags in pullMappings
-	findColumns := []string{"?age"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithAttrTag{}), findColumns)
+	findSymbols := []string{"?age"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithAttrTag{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -199,8 +199,8 @@ func TestNewQueryResultMapper_MixedMode(t *testing.T) {
 }
 
 func TestMapTuple_BasicTypes(t *testing.T) {
-	findColumns := []string{"?name", "?age"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findColumns)
+	findSymbols := []string{"?name", "?age"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -220,8 +220,8 @@ func TestMapTuple_BasicTypes(t *testing.T) {
 }
 
 func TestMapTuple_AllTypes(t *testing.T) {
-	findColumns := []string{"?str", "?int", "?float", "?bool", "?time", "?id", "?kw"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(AllTypes{}), findColumns)
+	findSymbols := []string{"?str", "?int", "?float", "?bool", "?time", "?id", "?kw"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(AllTypes{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,8 +260,8 @@ func TestMapTuple_AllTypes(t *testing.T) {
 }
 
 func TestMapTuple_TypeCoercion(t *testing.T) {
-	findColumns := []string{"?small", "?float"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(TypeCoercion{}), findColumns)
+	findSymbols := []string{"?small", "?float"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(TypeCoercion{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -282,8 +282,8 @@ func TestMapTuple_TypeCoercion(t *testing.T) {
 }
 
 func TestMapTuple_PointerFields(t *testing.T) {
-	findColumns := []string{"?name", "?email"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithPointers{}), findColumns)
+	findSymbols := []string{"?name", "?email"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithPointers{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -319,8 +319,8 @@ func TestMapTuple_PointerFields(t *testing.T) {
 }
 
 func TestMapTuple_Aggregates(t *testing.T) {
-	findColumns := []string{"?dept", "(sum ?salary)", "(count ?emp)"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithAggregates{}), findColumns)
+	findSymbols := []string{"?dept", "(sum ?salary)", "(count ?emp)"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithAggregates{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -343,8 +343,8 @@ func TestMapTuple_Aggregates(t *testing.T) {
 }
 
 func TestMapTuple_ByteSlice(t *testing.T) {
-	findColumns := []string{"?name", "?data"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithBytes{}), findColumns)
+	findSymbols := []string{"?name", "?data"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithBytes{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -370,8 +370,8 @@ func TestMapTuple_ByteSlice(t *testing.T) {
 }
 
 func TestMapTuple_Uint64(t *testing.T) {
-	findColumns := []string{"?name", "?count"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithUint64{}), findColumns)
+	findSymbols := []string{"?name", "?count"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithUint64{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -402,8 +402,8 @@ func TestMapTuple_Uint64(t *testing.T) {
 }
 
 func TestMapTuple_IdentityPointer(t *testing.T) {
-	findColumns := []string{"?name", "?ref"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithIdentityPointer{}), findColumns)
+	findSymbols := []string{"?name", "?ref"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(WithIdentityPointer{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -448,8 +448,8 @@ func TestMapTuple_IdentityPointer(t *testing.T) {
 }
 
 func TestMapAll(t *testing.T) {
-	findColumns := []string{"?name", "?age"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findColumns)
+	findSymbols := []string{"?name", "?age"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -484,8 +484,8 @@ func TestMapAll(t *testing.T) {
 }
 
 func TestMapAll_EmptyResults(t *testing.T) {
-	findColumns := []string{"?name", "?age"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findColumns)
+	findSymbols := []string{"?name", "?age"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -503,8 +503,8 @@ func TestMapAll_EmptyResults(t *testing.T) {
 }
 
 func TestMapTuple_TypeMismatch(t *testing.T) {
-	findColumns := []string{"?name", "?age"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findColumns)
+	findSymbols := []string{"?name", "?age"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(SimpleTagged{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -569,11 +569,11 @@ func TestKeywordPtrTypeMatch(t *testing.T) {
 	tuple := []interface{}{kw}
 	t.Logf("Input kw pointer: %p", kw)
 
-	findColumns := []string{"?kw"}
+	findSymbols := []string{"?kw"}
 	type JustKeyword struct {
 		Keyword datalog.Keyword `datalog:"?kw"`
 	}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(JustKeyword{}), findColumns)
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(JustKeyword{}), findSymbols)
 	if err != nil {
 		t.Fatalf("mapper error: %v", err)
 	}
@@ -616,8 +616,8 @@ type EntityWithSlices struct {
 
 func TestNewQueryResultMapper_PullMapping(t *testing.T) {
 	// When struct has only attribute-style tags, isPullMapping should be true
-	findColumns := []string{"(pull ?e [*])"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)
+	findSymbols := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -638,8 +638,8 @@ func TestNewQueryResultMapper_PullMapping(t *testing.T) {
 }
 
 func TestMapTuple_PullResult(t *testing.T) {
-	findColumns := []string{"(pull ?e [*])"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)
+	findSymbols := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -684,8 +684,8 @@ func TestMapTuple_PullResult(t *testing.T) {
 }
 
 func TestMapTuple_PullResult_WithSlices(t *testing.T) {
-	findColumns := []string{"(pull ?e [*])"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityWithSlices{}), findColumns)
+	findSymbols := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityWithSlices{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -738,8 +738,8 @@ func TestMapTuple_PullResult_WithSlices(t *testing.T) {
 // cardinality-many attribute has only one value - the pull executor returns
 // the value directly instead of as a slice.
 func TestMapTuple_PullResult_SingleValueToSlice(t *testing.T) {
-	findColumns := []string{"(pull ?e [*])"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityWithSlices{}), findColumns)
+	findSymbols := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityWithSlices{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -782,8 +782,8 @@ func TestMapTuple_PullResult_SingleValueToSlice(t *testing.T) {
 }
 
 func TestMapAll_PullResults(t *testing.T) {
-	findColumns := []string{"(pull ?e [*])"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)
+	findSymbols := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -823,8 +823,8 @@ func TestMapAll_PullResults(t *testing.T) {
 
 func TestMapTuple_PullResult_MissingFields(t *testing.T) {
 	// Test that missing fields in pull result are left as zero values
-	findColumns := []string{"(pull ?e [*])"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findColumns)
+	findSymbols := []string{"(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(EntityStruct{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -876,8 +876,8 @@ type MixedModeStruct struct {
 
 func TestMapTuple_MixedMode(t *testing.T) {
 	// Simulates: [:find ?name (pull ?e [:db/id :person/age]) :where [?e :person/name ?name]]
-	findColumns := []string{"?name", "(pull ?e [:db/id :person/age])"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
+	findSymbols := []string{"?name", "(pull ?e [:db/id :person/age])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -922,8 +922,8 @@ func TestMapTuple_MixedMode(t *testing.T) {
 
 func TestMapTuple_MixedMode_NoPullMap(t *testing.T) {
 	// Test that mixed mode gracefully handles tuple without pull map
-	findColumns := []string{"?name"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
+	findSymbols := []string{"?name"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -952,8 +952,8 @@ func TestMapTuple_MixedMode_NoPullMap(t *testing.T) {
 
 func TestMapTuple_MixedMode_PullMapFirst(t *testing.T) {
 	// Test with pull map as first symbol: [:find (pull ?e [*]) ?name ...]
-	findColumns := []string{"(pull ?e [*])", "?name"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
+	findSymbols := []string{"(pull ?e [*])", "?name"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -983,8 +983,8 @@ func TestMapTuple_MixedMode_PullMapFirst(t *testing.T) {
 }
 
 func TestMapAll_MixedMode(t *testing.T) {
-	findColumns := []string{"?name", "(pull ?e [*])"}
-	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findColumns)
+	findSymbols := []string{"?name", "(pull ?e [*])"}
+	mapper, err := NewQueryResultMapper(reflect.TypeOf(MixedModeStruct{}), findSymbols)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

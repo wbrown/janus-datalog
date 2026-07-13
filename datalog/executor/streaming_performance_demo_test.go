@@ -252,7 +252,7 @@ func TestMemoryCharacteristics(t *testing.T) {
 			"Projection Only",
 			5000,
 			5000,
-			"Project 5K tuples from 10 cols to 2 cols",
+			"Project 5K tuples from 10 symbols to 2 symbols",
 		},
 	}
 

@@ -10,6 +10,10 @@ hash-join gains. The next meaningful improvements are concentrated in typed
 grouping, explicit physical properties, and proving when set-semantics work can
 be omitted.
 
+The detailed Relation set/replayability laws, full materialization audit, and
+deduplication decision record live in
+[RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md](RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md).
+
 ## Summary
 
 | Rank | Opportunity | Layer | Evidence | Expected payoff | Effort |
@@ -45,7 +49,7 @@ Relevant code:
 
 ### Measured evidence
 
-`BenchmarkGroupedAggregationKeying`, 10,000 rows and 100 two-column groups,
+`BenchmarkGroupedAggregationKeying`, 10,000 rows and 100 groups keyed by two symbols,
 `benchtime=500ms`, `count=10`:
 
 | Mode | Time before | Time after | Delta | Bytes delta | Allocations delta |
@@ -78,7 +82,7 @@ that a repeated call does not replace the original map value.
 
 ### Measured evidence
 
-`BenchmarkDedupInsertionPaths`, 10,000 two-column Identity/string tuples,
+`BenchmarkDedupInsertionPaths`, 10,000 two-position Identity/string tuples,
 `benchtime=500ms`, `count=10`:
 
 | Workload | Mode | Time before | Time after | Delta |
@@ -681,11 +685,21 @@ All differences are significant (`p=0.000`, `n=10`). The complex checkpoint is
 statistically unchanged: 48.37 → 47.94 ms/op (`p=0.143`), with memory
 (`p=0.912`) and allocations (`p=0.810`) unchanged.
 
-True compositional algebra work remains: emit phased Datalog directly or
-otherwise preserve tree dependencies across the bridge, add dependency-safe
-`Project` pushdown, and run passes to a structural fixpoint with cycle
-protection. Only then consider join associativity or DAG-based
-common-subexpression elimination.
+The first compositional algebra step is now complete with logical/physical
+separation intact: the optimizer validates schemas/free requirements after every
+rewrite and lowers the optimized tree back into nested Datalog. `Project`
+becomes a relation-binding subquery; only `ClauseBasedPlanner` constructs
+`RealizedPlan`.
+
+The July 13 checkpoint measured 46.89 ms/op median (44.26–52.90 ms), 84.04
+MiB/op, and 1.043M allocations/op. Relative to
+the last documented property checkpoint, allocations fell about 4.2% while
+memory rose about 1.5%. This is an architecture/correctness result, not a
+general-query speedup.
+
+Dependency-safe `Project`/`Select` movement and structural fixpoint execution
+remain. Only after those are proven should join associativity or DAG-based
+common-subexpression elimination be considered.
 
 Relevant code:
 
@@ -697,13 +711,12 @@ Relevant code:
 
 ### Next investigation: complex-query execution structure
 
-The focused optimizations above reduce CPU, memory, and allocations in the
-operators they target, but the production-shaped complex checkpoint remains
-statistically flat in wall time. Its final order key is derived only after
-three fallback/subquery branches, so bounded Top-N cannot avoid the expensive
-upstream work. The remaining investigation should focus on the algebra-to-plan
-bridge and the physical execution shape around correlated fallback—not on more
-inner-loop tuning.
+Fresh profiling after restoring the logical bridge showed that fallback branch
+caching already executes four subqueries once and builds five branch caches
+once. The dominant remaining work was hash joining same-entity constant
+constraints inside those subqueries. Extending existing attribute fusion to
+literal constraints reduced the production-shaped complex checkpoint by 11.1%
+time, 21.8% memory, and 23.2% allocations.
 
 Measurement prerequisite: capture steady-state CPU and allocation profiles for
 the warmed complex query without fixture creation or cache warmup in the
@@ -713,22 +726,44 @@ not call any item below a bottleneck until that evidence identifies it.
 
 Candidate investigations:
 
-1. Emit phased Datalog directly from the algebra tree, or otherwise preserve
-   parent/child dependencies through `RealizedPlan`, so rewrites survive greedy
-   clause scheduling.
-2. Push `Project` and ready `Select` operators through joins, subqueries, and
-   fallback branches when symbol and cardinality proofs make the rewrite safe.
-3. Batch or decorrelate additional correlated subqueries, especially the
+1. **Completed (July 13, 2026):** lower optimized algebra into nested Datalog so
+   rewrites survive while the optimizer remains `Query → Query`. Structural
+   operator tests and exact optimized/off tuple differentials are green.
+2. Backward liveness and inner-join `Project` insertion are proven and retained
+   behind default-off `EnableJoinProjectInsertion`. Lowering the projection as a
+   relation-binding subquery regressed a focused benchmark by 60.4% time, 60.7%
+   memory, and 79.8% allocations. Ready `Select` movement through
+   joins/subqueries/fallback remains unimplemented.
+3. **Completed (July 13, 2026):** fuse proven CardinalityOne literal constraints
+   into cache-backed per-tuple lookup/filter traversal. Focused 1K/10K workloads
+   improve 21.9–23.2% time, 35.3–38.8% memory, and 42.3–43.4% allocations.
+4. Batch or decorrelate additional correlated subqueries, especially the
    tuple-bound argmax branch, while preserving exactly-one binding errors and
    tie semantics.
-4. Represent `or-default` as a keyed outer/default join where possible instead
-   of repeated per-outer-tuple branch execution.
-5. Reuse decorrelated subquery scans/results by correlation key and avoid
+5. **Completed (July 13, 2026):** correlated OR/fallback output replaces the
+   consumed outer groups instead of joining back to them. Five redundant joins
+   disappear from the complex query, improving 11.3% time, 8.3% memory, and
+   10.6% allocations. Keyed branch caches continue to execute each eligible
+   branch once. A follow-up leaves single outer relations streaming until
+   join-key narrowing requires re-iteration; full-result performance is neutral.
+6. Reuse decorrelated subquery scans/results by correlation key and avoid
    rebuilding equivalent hash tables across fallback branches.
-6. Carry candidate keys through subquery binding forms so the resulting outer
-   joins can use dedup elision and unique-build specialization.
-7. Eliminate phase-boundary materialization where the next operator can consume
+7. **Completed (July 13, 2026):** replayable outer relations now feed a
+   single-use product directly into typed subquery input-combination
+   deduplication. Valid 10K/100K product shapes improve 39.6–44.2% time,
+   37.0–38.7% memory, and 14.3% allocations; the complex checkpoint is neutral.
+8. **Partially completed (July 13, 2026):** relation bindings apply positional
+   ρ-renaming to ordering and candidate keys. Before outer replacement, the
+   complex query selected two unique hash builds, reducing memory 2.3% and
+   allocations 0.9% with no supported latency claim; those joins are now removed
+   entirely. Tuple/scalar bindings and multi-result unions remain conservative.
+9. Eliminate phase-boundary materialization where the next operator can consume
    the relation once while preserving iterator error and close semantics.
+10. **Completed (July 13, 2026):** enforce the Relation set invariant at
+    construction boundaries and use proven-set construction for set-preserving
+    operators. Exact double-dedup paths were removed from join-key extraction,
+    unions, fallback realization, and aggregation. The complex checkpoint
+    improves 5.1% time, 15.6% memory, and 8.6% allocations.
 
 Correctness gates for every experiment:
 
@@ -783,7 +818,7 @@ The tests exposed and fixed concrete correctness defects:
 8. Closed Badger scans panicked instead of returning `ErrDBClosed`.
 9. Scan sharing conflated physically different query fragments and dropped
    relation properties.
-10. Compiled binding plans treated missing tuple columns as unbound.
+10. Compiled binding plans treated missing tuple positions as unbound.
 
 The same review corrected Janus arithmetic to accept one or more operands:
 unary subtraction/division and variadic `+`, `-`, `*`, `/` use Clojure

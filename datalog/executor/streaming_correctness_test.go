@@ -95,14 +95,14 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 			{2, "bob", 200},
 			{3, "charlie", 300},
 		}
-		leftColumns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
 		rightTuples := []Tuple{
 			{"alice", "NYC"},
 			{"bob", "LA"},
 			{"charlie", "Chicago"},
 		}
-		rightColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
 
 		// Test with materialized
 		matOpts := ExecutorOptions{
@@ -110,8 +110,8 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 			EnableTrueStreaming:       false,
 		}
 
-		matLeft := NewStreamingRelationWithOptions(leftColumns, newMockIterator(leftTuples), matOpts)
-		matRight := NewStreamingRelationWithOptions(rightColumns, newMockIterator(rightTuples), matOpts)
+		matLeft := NewStreamingRelationWithOptions(leftSymbols, newMockIterator(leftTuples), matOpts)
+		matRight := NewStreamingRelationWithOptions(rightSymbols, newMockIterator(rightTuples), matOpts)
 
 		matJoined := HashJoinWithOptions(matLeft, matRight, []query.Symbol{datalog.NewSymbol("?name")}, matOpts)
 		matProjected, err := matJoined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})
@@ -133,8 +133,8 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 			EnableTrueStreaming:       true,
 		}
 
-		streamLeft := NewStreamingRelationWithOptions(leftColumns, newMockIterator(leftTuples), streamOpts)
-		streamRight := NewStreamingRelationWithOptions(rightColumns, newMockIterator(rightTuples), streamOpts)
+		streamLeft := NewStreamingRelationWithOptions(leftSymbols, newMockIterator(leftTuples), streamOpts)
+		streamRight := NewStreamingRelationWithOptions(rightSymbols, newMockIterator(rightTuples), streamOpts)
 
 		streamJoined := HashJoinWithOptions(streamLeft, streamRight, []query.Symbol{datalog.NewSymbol("?name")}, streamOpts)
 		streamProjected, err := streamJoined.Project([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city")})

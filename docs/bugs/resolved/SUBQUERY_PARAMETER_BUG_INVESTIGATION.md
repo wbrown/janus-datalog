@@ -112,7 +112,7 @@ relation[2] = ScalarInput with symbol "?d", value = day number
    - After reordering: `Inputs = [$ ?p ?day]`, but is `?p` or `?day` even in the relation anymore?
 
 2. **Does `getUniqueInputCombinations` fail to find the symbols?**
-   - Line 247: `indices[i] = ColumnIndex(rel, sym)`
+   - Line 247: the relation symbol-position lookup populates `indices[i]`
    - If symbol not found, returns `nil` → empty input combinations
 
 3. **Why would it return 15, 16 instead of the correct values?**

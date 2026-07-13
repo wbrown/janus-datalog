@@ -29,6 +29,48 @@ func (p RelationProperties) clone() RelationProperties {
 	return result
 }
 
+func (p RelationProperties) renameSymbols(from, to []query.Symbol) RelationProperties {
+	if len(from) != len(to) {
+		return RelationProperties{}
+	}
+	rename := func(symbol query.Symbol) (query.Symbol, bool) {
+		for i, candidate := range from {
+			if candidate == symbol {
+				return to[i], true
+			}
+		}
+		return nil, false
+	}
+
+	result := RelationProperties{}
+	for _, clause := range p.Ordering {
+		symbol, ok := rename(clause.Variable)
+		if !ok {
+			break
+		}
+		result.Ordering = append(result.Ordering, query.OrderByClause{
+			Variable:  symbol,
+			Direction: clause.Direction,
+		})
+	}
+	for _, key := range p.Keys {
+		renamed := make([]query.Symbol, len(key))
+		valid := true
+		for i, symbol := range key {
+			replacement, ok := rename(symbol)
+			if !ok {
+				valid = false
+				break
+			}
+			renamed[i] = replacement
+		}
+		if valid {
+			result.Keys = append(result.Keys, renamed)
+		}
+	}
+	return result
+}
+
 func (p RelationProperties) project(symbols []query.Symbol) RelationProperties {
 	retained := make(map[query.Symbol]bool, len(symbols))
 	for _, symbol := range symbols {

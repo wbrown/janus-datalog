@@ -11,7 +11,7 @@ import (
 // emptyRelationForQuery returns an empty MaterializedRelation with the correct
 // symbols for the given query's :find clause, plus any retained :order-by
 // symbols: every path that can reach the finalization sort must produce the
-// same shape, or sorting an empty result would error on a missing sort column.
+// same shape, or sorting an empty result would error on a missing sort symbol.
 // This ensures Query never returns nil — callers always get a valid (possibly
 // empty) Relation.
 func emptyRelationForQuery(q *query.Query) Relation {
@@ -69,7 +69,7 @@ type Result = MaterializedRelation
 // This is a pure function that performs multi-symbol sorting with configurable direction.
 // It materializes the relation if not already materialized.
 //
-// Every sort variable must be a column of the relation; one that is not
+// Every sort variable must be a symbol of the relation; one that is not
 // resolves to a deferred error, never a silent skip — a stated ordering the
 // engine cannot honor must not report success (see
 // docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md). Parsed
@@ -96,13 +96,10 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 		})
 	}
 
-	// Deduplicating construction: inputs are value-domain relations (pull
-	// rendering happens downstream at the result boundary), and the hash
-	// layer rejects non-values loudly.
 	opts := rel.Options()
 	properties := rel.Properties()
 	properties.Ordering = append([]query.OrderByClause(nil), orderBy...)
-	mat := NewMaterializedRelationWithProperties(symbols, tuples, opts, properties)
+	mat := newMaterializedRelationFromSet(symbols, tuples, opts, properties)
 	if err != nil {
 		// Carry a deferred source error so it isn't laundered by materialization.
 		mat.err = err
@@ -121,7 +118,7 @@ func orderBySymbolIndices(symbols []query.Symbol, orderBy []query.OrderByClause)
 			}
 		}
 		if indices[i] < 0 {
-			return indices, fmt.Errorf("order-by variable %s is not a column of the relation (columns: %v)",
+			return indices, fmt.Errorf("order-by variable %s is not a symbol of the relation (symbols: %v)",
 				clause.Variable, symbols)
 		}
 	}
@@ -272,24 +269,29 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 			// Single value input - expect a relation with one symbol and one tuple
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
-				if rel.Size() > 0 {
-					// Create a new relation with the input symbol as symbol name
-					symbols := []query.Symbol{inp.Symbol}
-					tuples := make([]Tuple, 0, rel.Size())
-
-					it := rel.Iterator()
-					for it.Next() {
-						tuple := it.Tuple()
-						if len(tuple) > 0 {
-							// Take first value from each tuple
-							tuples = append(tuples, Tuple{tuple[0]})
-						}
-					}
-					it.Close()
-
-					opts := rel.Options()
-					boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(symbols, tuples, opts))
+				capacity := rel.Size()
+				if capacity < 0 {
+					capacity = 0
 				}
+				tuples := make([]Tuple, 0, capacity)
+				it := rel.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					if len(tuple) > 0 {
+						tuples = append(tuples, Tuple{tuple[0]})
+					}
+				}
+				iterErr := it.Error()
+				if closeErr := it.Close(); iterErr == nil {
+					iterErr = closeErr
+				}
+				bound := NewMaterializedRelationWithOptions(
+					[]query.Symbol{inp.Symbol},
+					tuples,
+					rel.Options(),
+				)
+				bound.err = iterErr
+				boundRelations = append(boundRelations, bound)
 				relationIndex++
 			}
 
@@ -297,9 +299,13 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 			// Multiple tuples input - use the relation directly with renamed symbols
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
-				if rel.Size() > 0 && len(inp.Symbols) == len(rel.Symbols()) {
+				if len(inp.Symbols) == len(rel.Symbols()) {
 					// Create a new relation with the input variables as symbol names
-					tuples := make([]Tuple, 0, rel.Size())
+					capacity := rel.Size()
+					if capacity < 0 {
+						capacity = 0
+					}
+					tuples := make([]Tuple, 0, capacity)
 					err := collectTuplesInto(&tuples, rel)
 
 					opts := rel.Options()
@@ -316,16 +322,16 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 			// Single tuple input - expect a relation with one tuple
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
-				if rel.Size() > 0 && len(inp.Symbols) == len(rel.Symbols()) {
-					// Take the first tuple and bind to variables
-					it := rel.Iterator()
-					if it.Next() {
-						tuple := it.Tuple()
-						opts := rel.Options()
-						boundRelations = append(boundRelations,
-							NewMaterializedRelationWithOptions(inp.Symbols, []Tuple{tuple}, opts))
+				if len(inp.Symbols) == len(rel.Symbols()) {
+					var sourceTuples []Tuple
+					iterErr := collectTuplesInto(&sourceTuples, rel)
+					var tuples []Tuple
+					if len(sourceTuples) > 0 {
+						tuples = []Tuple{sourceTuples[0]}
 					}
-					it.Close()
+					bound := NewMaterializedRelationWithOptions(inp.Symbols, tuples, rel.Options())
+					bound.err = iterErr
+					boundRelations = append(boundRelations, bound)
 				}
 				relationIndex++
 			}
@@ -337,7 +343,11 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 			if relationIndex < len(inputRelations) {
 				rel := inputRelations[relationIndex]
 				symbols := []query.Symbol{inp.Symbol}
-				tuples := make([]Tuple, 0, rel.Size())
+				capacity := rel.Size()
+				if capacity < 0 {
+					capacity = 0
+				}
+				tuples := make([]Tuple, 0, capacity)
 
 				it := rel.Iterator()
 				for it.Next() {
@@ -347,10 +357,15 @@ func BindQueryInputs(q *query.Query, inputRelations []Relation) Relation {
 						tuples = append(tuples, Tuple{tuple[0]})
 					}
 				}
-				it.Close()
+				iterErr := it.Error()
+				if closeErr := it.Close(); iterErr == nil {
+					iterErr = closeErr
+				}
 
 				opts := rel.Options()
-				boundRelations = append(boundRelations, NewMaterializedRelationWithOptions(symbols, tuples, opts))
+				bound := NewMaterializedRelationWithOptions(symbols, tuples, opts)
+				bound.err = iterErr
+				boundRelations = append(boundRelations, bound)
 				relationIndex++
 			}
 		}

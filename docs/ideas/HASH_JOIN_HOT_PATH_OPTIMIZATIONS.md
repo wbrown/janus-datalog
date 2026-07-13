@@ -125,7 +125,7 @@ join. Computing the projection plan per-row is pure overhead.
 **Proposed fix**: Precompute once in `HashJoinWithOptions`:
 
 - `rightNonJoinIndices []int` — positions in the right tuple that aren't
-  join columns.
+  join-symbol positions.
 - `resultWidth int` — `len(leftSyms) + len(rightNonJoinIndices)`.
 
 Store both on the iterator. The combine becomes a pure indexed gather:
@@ -447,7 +447,7 @@ common case (debug off, no collector).
 
 These are lower-impact and can be addressed once the above are measured.
 
-### `NewTupleKey` allocates `[]interface{}` for multi-column join keys
+### `NewTupleKey` allocates `[]interface{}` for multi-symbol join keys
 
 **Location**: `datalog/executor/tuple_key.go:30`
 
@@ -455,8 +455,8 @@ These are lower-impact and can be addressed once the above are measured.
 values := make([]interface{}, len(indices))
 ```
 
-The single-column case (line 22-28) avoids this allocation. For 2-3
-column joins (common), one alloc per probe and build row.
+The single-symbol case (line 22-28) avoids this allocation. For joins on 2-3
+symbols (common), one alloc per probe and build tuple.
 
 **Option A**: Pool the `values` slices and recycle them. Lifecycle:
 slice lives as long as the key is in the map, so pooling requires
@@ -597,7 +597,7 @@ but not the int64 50K profile (cum %):
 for `Identity` values that finding #3 proposes to replace with one
 `binary.BigEndian.Uint64(bytes[:8])` load.
 
-`NewTupleKey` at 6.35% cum is the multi-column `[]interface{}`
+`NewTupleKey` at 6.35% cum is the multi-symbol `[]interface{}`
 allocation called out in Secondary Observations — promoted to a
 visible target now that the benchmark exercises it.
 
@@ -957,8 +957,8 @@ Every Identity sub-benchmark improved (p=0.000, -8.6% to -16.9%):
 Allocations unchanged. The win exceeds the original finding's ~5.7%
 estimate because the old path's per-call cost was a 20-byte array copy
 plus FNV, not FNV alone, and dedup (`NewTupleKeyFull`) hashes every
-output column. The **Keyword** half of the change is not exercised by
-these Identity-keyed benchmarks (their tuples carry no keyword columns
+output tuple position. The **Keyword** half of the change is not exercised by
+these Identity-keyed benchmarks (their tuples carry no keyword values
 through dedup), so its real-world payoff — keywords are in every
 datom's attribute position — is on top of the measured -12.72%.
 
@@ -1096,7 +1096,7 @@ committing.
 
 - Symmetric hash join changes
 - Storage-side hash-join-matcher work
-- Symbol-index optimization (linear search is fine at N ≤ 10 columns)
+- Symbol-index optimization (linear search is fine at N ≤ 10 symbols)
 - Replacement of `TupleKeyMap` with a different data structure
 
 These may become worth doing after the local fixes are in.

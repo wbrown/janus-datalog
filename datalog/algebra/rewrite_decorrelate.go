@@ -146,7 +146,8 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit em
 			Data: &Aggregate{
 				GroupBy:   groupBy,
 				Functions: aggFns,
-				Output:    output,
+				Bindings:  cloneSymbols(output),
+				Output:    cloneSymbols(output),
 			},
 			Children: []*Node{innerNode},
 		}

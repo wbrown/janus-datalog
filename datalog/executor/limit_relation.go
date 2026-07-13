@@ -55,7 +55,7 @@ func (r *LimitRelation) ensure() *MaterializedRelation {
 			}
 		}
 
-		r.mat = NewMaterializedRelationWithProperties(
+		r.mat = newMaterializedRelationFromSet(
 			r.source.Symbols(),
 			tuples,
 			r.source.Options(),

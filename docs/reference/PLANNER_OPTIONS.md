@@ -30,9 +30,10 @@ if a doc says an option is default-active, `DefaultPlannerOptions()` sets it, an
 type PlannerOptions struct {
     Cache *PlanCache // set by the Database
 
-    EnableAlgebraOptimizer    bool // default-active
-    EnableScanSharing         bool // opt-in
-    EnableEntityPrefetch      bool // opt-in
+    EnableAlgebraOptimizer      bool // default-active
+    EnableJoinProjectInsertion bool // experimental, opt-in
+    EnableScanSharing           bool // opt-in
+    EnableEntityPrefetch        bool // opt-in
     EnableAttributeFetchFusion bool // default-active
 
     EnableIteratorComposition bool // default-active
@@ -56,6 +57,7 @@ zero value — i.e. off / nil / 0):
 
 ```go
 EnableAlgebraOptimizer:     true
+EnableJoinProjectInsertion: false
 EnableScanSharing:          false
 EnableEntityPrefetch:       false
 EnableAttributeFetchFusion: true
@@ -69,8 +71,9 @@ EnableStreamingAggregation: true
 IndexNestedLoopThreshold:   0      // always HashJoinScan
 ```
 
-So, off by default (opt-in): `EnableScanSharing`, `EnableEntityPrefetch`,
-`EnableSymmetricHashJoin`, and `EnableStreamingJoins`.
+So, off by default (opt-in): `EnableJoinProjectInsertion`,
+`EnableScanSharing`, `EnableEntityPrefetch`, `EnableSymmetricHashJoin`, and
+`EnableStreamingJoins`.
 
 ---
 
@@ -80,9 +83,19 @@ So, off by default (opt-in): `EnableScanSharing`, `EnableEntityPrefetch`,
 
 #### EnableAlgebraOptimizer — **default-active**
 Relational-algebra IR optimization: the query is compiled to an algebra tree,
-optimized (subquery decorrelation, predicate pushdown), and decompiled back to
-clauses. This is where decorrelation and pushdown actually happen — there are no
-separate knobs for them. Consumed in `planner/planner_clause_based.go`.
+optimized (subquery decorrelation, predicate pushdown), and lowered back into a
+validated Datalog query before physical planning. This is where decorrelation
+and pushdown actually happen — there are no separate knobs for them. Consumed in
+`planner/planner_clause_based.go`.
+
+#### EnableJoinProjectInsertion — **experimental, opt-in** (default false)
+Inserts logical `Project` on inner-join children when backward liveness proves
+symbols dead, then lowers it to a relation-binding subquery. It is restricted to
+queries without input bindings until nested lowering explicitly threads those
+bindings. A focused 2,000-entity benchmark measured the nested-Datalog path as
+60.4% slower with 60.7% more memory and 79.8% more allocations, so this remains
+an inactive rewrite experiment. Consumed in
+`planner/planner_clause_based.go`.
 
 #### EnableScanSharing — **opt-in** (default false)
 Deduplicates identical unbound scans across subqueries via a shared lazy sequence.
@@ -93,8 +106,12 @@ Warms the EA cache after the first data pattern via `PrefetchEntities`.
 Benchmarked performance-neutral, hence off. Consumed in `executor/query_executor.go`.
 
 #### EnableAttributeFetchFusion — **default-active**
-Fuses contiguous cardinality-one fetches sharing an already-bound entity into
-one tuple traversal. Latest mode only; History and AsOf decline the fusion.
+Fuses contiguous CardinalityOne patterns sharing an already-bound entity into
+one tuple traversal. Fresh variables become attached bindings; literal values
+become typed constraints evaluated by cache-backed lookup. Latest mode only;
+History, AsOf, unknown-schema, CardinalityMany, and CardinalityVector patterns
+decline the fusion. Constant constraints improve focused 1K/10K workloads by
+21.9–23.2% time and the production-shaped complex checkpoint by 11.1%.
 Consumed in `executor/query_executor.go`.
 
 ### Streaming

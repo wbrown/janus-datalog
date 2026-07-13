@@ -28,9 +28,9 @@ func TestMaterializedRelation(t *testing.T) {
 	}
 
 	// Test symbols
-	cols := rel.Symbols()
-	if len(cols) != 3 || cols[0] != datalog.NewSymbol("?name") || cols[1] != datalog.NewSymbol("?age") || cols[2] != datalog.NewSymbol("?city") {
-		t.Errorf("unexpected symbols: %v", cols)
+	relationSymbols := rel.Symbols()
+	if len(relationSymbols) != 3 || relationSymbols[0] != datalog.NewSymbol("?name") || relationSymbols[1] != datalog.NewSymbol("?age") || relationSymbols[2] != datalog.NewSymbol("?city") {
+		t.Errorf("unexpected symbols: %v", relationSymbols)
 	}
 
 	// Test iteration
@@ -103,8 +103,8 @@ func TestCommonSymbols(t *testing.T) {
 
 	// Check that ?b and ?c are in common
 	commonSet := make(map[query.Symbol]bool)
-	for _, col := range common {
-		commonSet[col] = true
+	for _, symbol := range common {
+		commonSet[symbol] = true
 	}
 
 	if !commonSet[datalog.NewSymbol("?b")] || !commonSet[datalog.NewSymbol("?c")] {
@@ -128,9 +128,9 @@ func TestProject(t *testing.T) {
 	}
 
 	// Check symbols
-	projCols := projected.Symbols()
-	if len(projCols) != 2 || projCols[0] != datalog.NewSymbol("?name") || projCols[1] != datalog.NewSymbol("?city") {
-		t.Errorf("unexpected projected symbols: %v", projCols)
+	projectedSymbols := projected.Symbols()
+	if len(projectedSymbols) != 2 || projectedSymbols[0] != datalog.NewSymbol("?name") || projectedSymbols[1] != datalog.NewSymbol("?city") {
+		t.Errorf("unexpected projected symbols: %v", projectedSymbols)
 	}
 
 	// Check tuples

@@ -203,12 +203,19 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 	              [(get-else $ ?p :project/opt-b "") ?b]]`
 
 	maxGroups := 0
+	replacements := 0
 	db.SetAnnotationHandler(func(event annotations.Event) {
-		if event.Name == "collapse/success" {
+		switch event.Name {
+		case "collapse/success":
 			if after, ok := event.Data["relations.after"]; ok {
 				if n, ok := after.(int); ok && n > maxGroups {
 					maxGroups = n
 				}
+			}
+		case "or/outer-replaced":
+			replacements++
+			if remaining, ok := event.Data["remaining_groups"].(int); ok && remaining > maxGroups {
+				maxGroups = remaining
 			}
 		}
 	})
@@ -220,6 +227,8 @@ func TestGetElsePipelineInvariant(t *testing.T) {
 	_, err = executor.CollectTuples(rel, nil)
 	require.NoError(t, err)
 
+	require.Equal(t, 3, replacements,
+		"each get-else rewrite must replace its consumed outer relation")
 	assert.Equal(t, 1, maxGroups,
 		"pipeline invariant: should never have more than 1 relation group after collapse; "+
 			"got %d (disjoint groups = Cartesian product risk)", maxGroups)

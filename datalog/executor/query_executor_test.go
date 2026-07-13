@@ -75,12 +75,12 @@ func TestProductRelation(t *testing.T) {
 		}
 
 		// Check symbols
-		cols := product.Symbols()
-		if len(cols) != 2 {
-			t.Errorf("Expected 2 symbols, got %d", len(cols))
+		symbols := product.Symbols()
+		if len(symbols) != 2 {
+			t.Errorf("Expected 2 symbols, got %d", len(symbols))
 		}
-		if cols[0] != datalog.NewSymbol("?x") || cols[1] != datalog.NewSymbol("?y") {
-			t.Errorf("Expected symbols [?x ?y], got %v", cols)
+		if symbols[0] != datalog.NewSymbol("?x") || symbols[1] != datalog.NewSymbol("?y") {
+			t.Errorf("Expected symbols [?x ?y], got %v", symbols)
 		}
 
 		// Verify all combinations exist
@@ -120,9 +120,9 @@ func TestProductRelation(t *testing.T) {
 		}
 
 		// Check symbols
-		cols := product.Symbols()
-		if len(cols) != 3 {
-			t.Errorf("Expected 3 symbols, got %d", len(cols))
+		symbols := product.Symbols()
+		if len(symbols) != 3 {
+			t.Errorf("Expected 3 symbols, got %d", len(symbols))
 		}
 	})
 }
@@ -203,9 +203,9 @@ func TestExecuteExpression(t *testing.T) {
 		}
 
 		// Check symbols
-		cols := result.Symbols()
-		if len(cols) != 2 {
-			t.Errorf("Expected 2 symbols, got %d", len(cols))
+		symbols := result.Symbols()
+		if len(symbols) != 2 {
+			t.Errorf("Expected 2 symbols, got %d", len(symbols))
 		}
 	})
 
@@ -245,9 +245,9 @@ func TestExecuteExpression(t *testing.T) {
 		}
 
 		// Check symbols: should have ?x, ?y, ?z
-		cols := result.Symbols()
-		if len(cols) != 3 {
-			t.Errorf("Expected 3 symbols (?x, ?y, ?z), got %d: %v", len(cols), cols)
+		symbols := result.Symbols()
+		if len(symbols) != 3 {
+			t.Errorf("Expected 3 symbols (?x, ?y, ?z), got %d: %v", len(symbols), symbols)
 		}
 	})
 }
@@ -467,14 +467,14 @@ func TestExecuteTupleGround(t *testing.T) {
 		}
 
 		// Check symbols
-		cols := result.Symbols()
-		if len(cols) != 3 {
-			t.Errorf("Expected 3 symbols, got %d", len(cols))
+		symbols := result.Symbols()
+		if len(symbols) != 3 {
+			t.Errorf("Expected 3 symbols, got %d", len(symbols))
 		}
 		expected := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
 		for i, exp := range expected {
-			if cols[i] != exp {
-				t.Errorf("Symbol %d = %v, want %v", i, cols[i], exp)
+			if symbols[i] != exp {
+				t.Errorf("Symbol %d = %v, want %v", i, symbols[i], exp)
 			}
 		}
 
@@ -527,9 +527,9 @@ func TestExecuteTupleGround(t *testing.T) {
 		}
 
 		// Check symbols: should have ?x, ?a, ?b
-		cols := result.Symbols()
-		if len(cols) != 3 {
-			t.Errorf("Expected 3 symbols, got %d", len(cols))
+		symbols := result.Symbols()
+		if len(symbols) != 3 {
+			t.Errorf("Expected 3 symbols, got %d", len(symbols))
 		}
 	})
 

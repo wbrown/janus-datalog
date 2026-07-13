@@ -244,15 +244,15 @@ After completing the initial three phases, we investigated the remaining "opport
 **Investigation Found**:
 1. **TupleIndexer already has it**: `datalog/query/tuple_indexer.go` contains `ColIndex map[Symbol]int` (line 16)
 2. **Most patterns are different**: Many places build `map[Symbol]interface{}` (bindings), not `map[Symbol]int` (indices)
-3. **Existing helper function**: `ColumnIndex(rel, sym)` in `executor/relation.go:1245` already provides lookup
+3. **Existing symbol-position lookup**: the routine in `executor/relation.go:1245` already provides lookup
 4. **Actual duplicate pattern**: Only 2 occurrences in `ProjectFromPattern` (10-20 lines, not 80-100)
 
-**Conclusion**: Pattern already consolidated. Creating new `ColumnIndexer` would duplicate existing `TupleIndexer.ColIndex`.
+**Conclusion**: Pattern already consolidated. Creating another symbol indexer would duplicate existing `TupleIndexer.ColIndex`.
 
 **Files Checked**:
 - `datalog/query/tuple_indexer.go` - Has ColIndex map
-- `datalog/executor/relation.go` - Has ColumnIndex() helper
-- `datalog/executor/join.go` - Uses ColumnIndex() helper
+- `datalog/executor/relation.go` - Has the symbol-position lookup
+- `datalog/executor/join.go` - Uses that symbol-position lookup
 - `datalog/executor/subquery.go` - Builds bindings maps (different purpose)
 - `datalog/storage/matcher_iterator_*.go` - Uses PatternExtractor (already refactored)
 
@@ -606,7 +606,7 @@ After investigation, only **one item** has actual duplication worth consolidatin
 
 ### Investigated & Found Already Consolidated ✅
 
-- ✅ **Symbol Indexing** - Already exists as `TupleIndexer.ColIndex` and `ColumnIndex()` helper
+- ✅ **Symbol Indexing** - Already exists as `TupleIndexer.ColIndex` and the relation symbol-position lookup
 - ✅ **Value Comparison** - Already consolidated in `datalog/compare.go` (280 lines)
 - ⚠️ **Value Hashing** - Intentionally different operations (hashing vs equality), not duplication
 
@@ -739,7 +739,7 @@ After comprehensive analysis, investigation, and Go idioms review, the janus-dat
   - **Not urgent** - consider only if test maintenance becomes a pain point
 
 **Already Done ✅:**
-- ✅ Symbol Indexing - Use existing `TupleIndexer.ColIndex` and `ColumnIndex()` helper
+- ✅ Symbol Indexing - Use existing `TupleIndexer.ColIndex` and the relation symbol-position lookup
 - ✅ Value Comparison - Use existing `datalog.ValuesEqual()` and `datalog.CompareValues()`
 
 **NOT Recommended:**

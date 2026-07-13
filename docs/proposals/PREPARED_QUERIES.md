@@ -198,7 +198,7 @@ func TryPrepare(queryStr string, opts ...PreparedQueryOption) (*PreparedQuery, e
         queryStr: queryStr,
         query:    q,
         plan:     plan,
-        findCols: extractFindColumnStrings(q.Find),
+        findSymbols: extractFindSymbolStrings(q.Find),
     }, nil
 }
 ```

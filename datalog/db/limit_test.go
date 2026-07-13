@@ -8,8 +8,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/executor"
 )
 
-// collectFirstCol drains a relation and returns the first column of each row.
-func collectFirstCol(t *testing.T, rel executor.Relation) []interface{} {
+// collectFirstValue drains a relation and returns the first value of each tuple.
+func collectFirstValue(t *testing.T, rel executor.Relation) []interface{} {
 	t.Helper()
 	var out []interface{}
 	it := rel.Iterator()
@@ -45,7 +45,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 		                             [?e :event/seq ?seq]
 		                      :limit 2]`)
 		require.NoError(t, err)
-		got := collectFirstCol(t, rel)
+		got := collectFirstValue(t, rel)
 		require.Len(t, got, 2)
 	})
 
@@ -56,7 +56,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 		                      :order-by [[?seq :desc]]
 		                      :limit 1]`)
 		require.NoError(t, err)
-		got := collectFirstCol(t, rel)
+		got := collectFirstValue(t, rel)
 		require.Len(t, got, 1)
 		require.Equal(t, int64(5), got[0])
 	})
@@ -67,7 +67,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 		                             [?e :event/seq ?seq]
 		                      :limit 0]`)
 		require.NoError(t, err)
-		got := collectFirstCol(t, rel)
+		got := collectFirstValue(t, rel)
 		require.Len(t, got, 0)
 	})
 
@@ -77,7 +77,7 @@ func TestQueryLimitThroughStorage(t *testing.T) {
 		                             [?e :event/seq ?seq]
 		                      :limit 100]`)
 		require.NoError(t, err)
-		got := collectFirstCol(t, rel)
+		got := collectFirstValue(t, rel)
 		require.Len(t, got, 5)
 	})
 }
@@ -114,14 +114,14 @@ func TestLimitComposesWithAsOf(t *testing.T) {
 	// Live view: latest snapshot is seq 3.
 	rel, err := d.Query(latestQuery)
 	require.NoError(t, err)
-	live := collectFirstCol(t, rel)
+	live := collectFirstValue(t, rel)
 	require.Len(t, live, 1)
 	require.Equal(t, int64(3), live[0])
 
 	// As-of tx2: snap3 is not yet visible, so the latest is seq 2.
 	rel, err = d.AsOf(tx2ID).Query(latestQuery)
 	require.NoError(t, err)
-	asOf := collectFirstCol(t, rel)
+	asOf := collectFirstValue(t, rel)
 	require.Len(t, asOf, 1)
 	require.Equal(t, int64(2), asOf[0])
 }

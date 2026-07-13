@@ -6,7 +6,39 @@ Janus Datalog implements a complete relational algebra system as the foundation 
 
 **Key Insight**: The relation collapsing algorithm with dynamic join ordering is what separates this from toy implementations - it prevents memory exhaustion on complex queries by intelligently ordering joins based on intermediate result sizes.
 
+For the detailed set/replayability laws and materialization decision record, see
+[Relation Materialization and Set Invariants](docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md).
+
 ## Core Architecture
+
+### Logical Optimization, Then Physical Planning
+
+The optimizer contract is pure Datalog:
+
+```
+query.Query → algebra tree → optimized algebra tree → query.Query
+```
+
+Algebra is an internal logical representation. Every optimized operator lowers
+back into Datalog before physical planning; scoped operators use nested queries
+and relation bindings. `Project`, for example, lowers to a subquery with an exact
+`:find`. `ClauseBasedPlanner` alone turns the optimized query into
+`RealizedPlan` phases.
+
+This separation keeps algebraic equivalence independent from execution topology:
+logical rewrites cannot create physical phases, and physical planning cannot
+silently erase logical scope.
+
+### ρ-Renaming Through Relation Bindings
+
+A relation-binding subquery positionally maps inner find symbols to outer
+binding symbols. This is the relational rename operator, ρ—not projection.
+
+Execution applies the same positional ρ-renaming to proven ordering and
+candidate keys. For example, an inner grouped aggregate keyed by `?scenario`
+remains keyed after binding that position as `?outer-scenario`. Downstream hash
+joins can then consume the proof for unique-build specialization and
+deduplication elision.
 
 ### The Relation Interface
 
@@ -18,9 +50,9 @@ type Relation interface {
     Project(symbols []Symbol) (Relation, error)      // π (projection)
     Filter(filter Filter) Relation                   // σ (selection)
     Join(other Relation) Relation                    // ⋈ (natural join)
-    HashJoin(other Relation, cols []Symbol) Relation // ⋈ (equi-join)
-    SemiJoin(other Relation, cols []Symbol) Relation // ⋉ (semi-join)
-    AntiJoin(other Relation, cols []Symbol) Relation // ▷ (anti-join)
+    HashJoin(other Relation, joinSymbols []Symbol) Relation // ⋈ (equi-join)
+    SemiJoin(other Relation, joinSymbols []Symbol) Relation // ⋉ (semi-join)
+    AntiJoin(other Relation, joinSymbols []Symbol) Relation // ▷ (anti-join)
     Aggregate(elements []FindElement) Relation       // γ (grouping/aggregation)
     Sort(orderBy []OrderByClause) Relation          // τ (sort)
 
@@ -40,9 +72,20 @@ type Relation interface {
 
 **Design Principles**:
 - **Immutable**: All operations return NEW relations
-- **Deduplicated**: Tuples are unique within a relation
+- **Set semantics**: Every Relation contains each complete tuple at most once
 - **Streaming-First**: Iterator-based to avoid full materialization
 - **Type-Safe**: Strong typing through Go's type system
+
+Physical tuple streams may contain repeated tuples while an operator is still
+constructing its result. Before that result is exposed as a `Relation`, the
+operator must establish set semantics. Operators that preserve a source set
+(selection, deterministic extension, sorting, limiting, semi/anti join) do not
+deduplicate again. Projection and union restore set semantics unless a retained
+key proves injectivity.
+
+`Materialize()` means ensure replayability, not force eager conversion.
+Materialized relations return themselves; streaming relations enable lazy
+caching; `LazySeqRelation` is already replayable and also returns itself.
 
 ### Two Implementation Strategies
 
@@ -63,7 +106,7 @@ type Relation interface {
 result := storageRelation.
     Filter(predicate).      // Applied during iteration
     Project(symbols).       // Applied during iteration
-    HashJoin(other, cols)   // Only materializes hash table
+    HashJoin(other, joinSymbols) // Only materializes hash table
 ```
 
 ## Progressive Join Execution
@@ -120,24 +163,24 @@ Result: Single relation with 25 tuples
 Joins on ALL shared symbols:
 ```go
 func (r *MaterializedRelation) Join(other Relation) Relation {
-    sharedCols := findSharedColumns(r, other)
-    if len(sharedCols) == 0 {
+    sharedSymbols := findSharedSymbols(r, other)
+    if len(sharedSymbols) == 0 {
         return crossProduct(r, other) // No shared symbols
     }
-    return r.HashJoin(other, sharedCols)
+    return r.HashJoin(other, sharedSymbols)
 }
 ```
 
 ### 2. Hash Join
 Most common join algorithm (O(n+m) time, O(min(n,m)) space):
 ```go
-func HashJoin(left, right Relation, joinCols []Symbol) Relation {
+func HashJoin(left, right Relation, joinSymbols []Symbol) Relation {
     // Build phase: Hash smaller relation
-    hashTable := buildHashTable(smaller, joinCols)
+    hashTable := buildHashTable(smaller, joinSymbols)
 
     // Probe phase: Stream through larger relation
     for tuple := range larger {
-        key := extractKey(tuple, joinCols)
+        key := extractKey(tuple, joinSymbols)
         if matches := hashTable[key]; matches != nil {
             output combineTuples(tuple, matches)
         }
@@ -153,13 +196,13 @@ func HashJoin(left, right Relation, joinCols []Symbol) Relation {
 ### 3. Semi-Join (Existence Check)
 Returns tuples from left that have matches in right:
 ```go
-func SemiJoin(left, right Relation, joinCols []Symbol) Relation {
+func SemiJoin(left, right Relation, joinSymbols []Symbol) Relation {
     // Build set of keys from right
-    rightKeys := buildKeySet(right, joinCols)
+    rightKeys := buildKeySet(right, joinSymbols)
 
     // Filter left by existence in right
     return left.Filter(func(tuple) bool {
-        key := extractKey(tuple, joinCols)
+        key := extractKey(tuple, joinSymbols)
         return rightKeys.Contains(key)
     })
 }
@@ -168,19 +211,78 @@ func SemiJoin(left, right Relation, joinCols []Symbol) Relation {
 ### 4. Anti-Join (Non-Existence Check)
 Returns tuples from left with NO matches in right:
 ```go
-func AntiJoin(left, right Relation, joinCols []Symbol) Relation {
+func AntiJoin(left, right Relation, joinSymbols []Symbol) Relation {
     // Inverse of semi-join
-    rightKeys := buildKeySet(right, joinCols)
+    rightKeys := buildKeySet(right, joinSymbols)
     return left.Filter(func(tuple) bool {
-        return !rightKeys.Contains(extractKey(tuple, joinCols))
+        return !rightKeys.Contains(extractKey(tuple, joinSymbols))
     })
 }
 ```
 
+### Same-Entity Constraint Fusion
+
+When a relation already binds `?e`, a subsequent proven CardinalityOne pattern
+such as `[?e :task/status :status/complete]` is a selection over that relation.
+The executor implements it directly:
+
+1. Resolve the attribute through the cache-backed entity lookup.
+2. Compare with `datalog.ValuesEqual`.
+3. Retain matching tuples in the same traversal.
+
+This is equivalent to matching a second relation and joining on `?e`, but avoids
+constructing and hashing that relation. The same pass can attach fresh bindings
+from `[?e :attr ?value]`; contiguous fetches and constraints share one traversal.
+History, as-of, unknown-schema, CardinalityMany, and CardinalityVector patterns
+retain ordinary match semantics.
+
+On 1K/10K entities, constant constraint fusion is 21.9–23.2% faster with
+35.3–38.8% less memory and 42.3–43.4% fewer allocations. The production-shaped
+complex checkpoint improves 11.1% time, 21.8% memory, and 23.2% allocations.
+
+### Correlated OR/Fallback Outer Replacement
+
+Correlated OR and fallback execution consumes an outer relation and emits tuples
+containing that outer binding plus branch results. The emitted relation is
+therefore a replacement for the consumed outer relation, not an independent
+relation to join back against it.
+
+`QueryExecutor` records which relation groups formed the OR outer input and
+replaces exactly those groups with the result. Unrelated groups remain and still
+collapse normally. Uncorrelated union continues to append an independent
+relation.
+
+This removes five redundant natural joins from the production-shaped complex
+query, improving 11.3% time, 8.3% memory, and 10.6% allocations. Replacement is
+observable through `or/outer-replaced`; iterator, cache-build, and close errors
+propagate rather than being interpreted as a missing branch.
+
+Outer selection also leaves a single relation streaming until a branch shape
+requires re-iteration for join-key narrowing. This changes when materialization
+occurs but is neutral for full-result performance; it is a streaming contract,
+not an optimization claim. Required materialization is observable through
+`or-fallback/outer.materialized`.
+
+### Replayable Sources, Single-Use Products
+
+Correlated subqueries may need to reuse their source relations after extracting
+input combinations. Those source relations use lazy replay caches. Their
+combined product, however, is consumed exactly once by typed combination
+deduplication and should not itself be materialized.
+
+This distinction avoids a full product tuple slice and an initial full-tuple
+dedup pass immediately before projected-symbol deduplication. On valid 10K/100K
+set products, direct product streaming improves 39.6–44.2% time and 37.0–38.7%
+memory.
+
+Materialization and iterator composition retain strict failure semantics:
+incomplete early-close caches, predicate evaluation failures, iterator errors,
+and close errors propagate rather than producing partial successful relations.
+
 ## Aggregation System
 
 ### Grouped Aggregation
-Following SQL semantics with GROUP BY:
+Non-aggregated find symbols define the grouping key:
 
 ```go
 func Aggregate(rel Relation, groupBy []Symbol, aggs []Aggregate) Relation {

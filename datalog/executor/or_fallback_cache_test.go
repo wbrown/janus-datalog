@@ -91,7 +91,8 @@ func TestBuildCachedBranch(t *testing.T) {
 	outerSyms := []query.Symbol{symE}
 
 	t.Run("build_and_probe", func(t *testing.T) {
-		cb := buildCachedBranch(branchResult, outerSyms, nil)
+		cb, err := buildCachedBranch(branchResult, outerSyms, nil)
+		require.NoError(t, err)
 		require.NotNil(t, cb, "should build cache when shared symbols exist")
 
 		// Probe for entity:1
@@ -117,7 +118,8 @@ func TestBuildCachedBranch(t *testing.T) {
 
 	t.Run("no_shared_symbols", func(t *testing.T) {
 		unrelatedSyms := []query.Symbol{datalog.NewSymbol("?other")}
-		cb := buildCachedBranch(branchResult, unrelatedSyms, nil)
+		cb, err := buildCachedBranch(branchResult, unrelatedSyms, nil)
+		require.NoError(t, err)
 		assert.Nil(t, cb, "no cache when no shared symbols")
 	})
 
@@ -132,7 +134,8 @@ func TestBuildCachedBranch(t *testing.T) {
 			},
 		)
 
-		cb := buildCachedBranch(multiResult, outerSyms, nil)
+		cb, err := buildCachedBranch(multiResult, outerSyms, nil)
+		require.NoError(t, err)
 		require.NotNil(t, cb)
 
 		matches := cb.probe(Tuple{e1})
@@ -147,7 +150,8 @@ func TestBuildCachedBranch(t *testing.T) {
 		// may be different Go objects representing the same entity.
 		// The cache must match on value equality, not pointer equality.
 		e1copy := datalog.NewIdentity("entity:1") // different Go pointer, same hash
-		cb := buildCachedBranch(branchResult, outerSyms, nil)
+		cb, err := buildCachedBranch(branchResult, outerSyms, nil)
+		require.NoError(t, err)
 		require.NotNil(t, cb)
 
 		matches := cb.probe(Tuple{e1copy})
@@ -160,7 +164,8 @@ func TestBuildCachedBranch(t *testing.T) {
 		symName := datalog.NewSymbol("?name")
 		outerWithExtra := []query.Symbol{symE, symName}
 
-		cb := buildCachedBranch(branchResult, outerWithExtra, nil)
+		cb, err := buildCachedBranch(branchResult, outerWithExtra, nil)
+		require.NoError(t, err)
 		require.NotNil(t, cb)
 
 		// Probe with full outer tuple
@@ -173,7 +178,7 @@ func TestBuildCachedBranch(t *testing.T) {
 		// Simulate the exact shape produced by a decorrelated or-join:
 		// The SubqueryPattern binding maps inner ?s → outer ?project and
 		// inner aggregates → outer binding vars.
-		// outerSyms comes from the full outer relation (many columns).
+		// outerSyms comes from the full outer relation (many symbols).
 		symProject := datalog.NewSymbol("?project")
 		symLabel := datalog.NewSymbol("?label")
 		symCreatedAt := datalog.NewSymbol("?createdAt")
@@ -194,7 +199,8 @@ func TestBuildCachedBranch(t *testing.T) {
 		// Outer relation has many symbols, ?project is first
 		outerSyms := []query.Symbol{symProject, symLabel, symCreatedAt}
 
-		cb := buildCachedBranch(decorrelatedResult, outerSyms, nil)
+		cb, err := buildCachedBranch(decorrelatedResult, outerSyms, nil)
+		require.NoError(t, err)
 		require.NotNil(t, cb)
 
 		// Probe with outer tuple for project:1

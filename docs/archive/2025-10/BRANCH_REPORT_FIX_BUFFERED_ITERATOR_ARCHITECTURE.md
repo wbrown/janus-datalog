@@ -61,7 +61,7 @@ The branch transformed the executor from a fragile, materializing-by-default sys
 - Every Relation type has its own .Project() method
 - Removed footgun that would silently materialize
 
-**Commit 6** (`78a2dd7`): Remove ProjectColumns()
+**Commit 6** (`78a2dd7`): Remove the position-list projection function
 - Same footgun as Project()
 - Made Project([]) return error (invalid per Datomic semantics)
 
@@ -265,7 +265,7 @@ The branch transformed the executor from a fragile, materializing-by-default sys
 - Removed and replaced with lazy caching
 
 **8. Global Functions Materializing** (Commits 5-6)
-- Project() and ProjectColumns() always materialized
+- Both projection entry points always materialized
 - Deleted and replaced with Relation methods
 
 **9. Iterator Consumption in Legacy Executor** (Commits 10-12)

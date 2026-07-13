@@ -87,9 +87,9 @@ func BenchmarkHashJoinIteration(b *testing.B) {
 			query.Variable{Name: datalog.NewSymbol("?scenario")},
 		},
 	}
-	inputCols := []query.Symbol{datalog.NewSymbol("?scenario")}
+	inputSymbols := []query.Symbol{datalog.NewSymbol("?scenario")}
 	inputTuples := []executor.Tuple{{scenario1}}
-	inputRel := executor.NewMaterializedRelationWithOptions(inputCols, inputTuples, getDefaultExecutorOptions())
+	inputRel := executor.NewMaterializedRelationWithOptions(inputSymbols, inputTuples, getDefaultExecutorOptions())
 
 	b.ResetTimer()
 	b.ReportAllocs()

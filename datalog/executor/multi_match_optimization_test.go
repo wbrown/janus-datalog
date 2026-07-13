@@ -89,7 +89,7 @@ func (m *MockPatternMatcherWithStats) matchWithoutBindings(pattern *query.DataPa
 }
 
 func (m *MockPatternMatcherWithStats) matchesWithTuple(d datalog.Datom, pattern *query.DataPattern, tuple Tuple, rel Relation) bool {
-	cols := rel.Symbols()
+	symbols := rel.Symbols()
 
 	// Check each pattern element
 	elements := []struct {
@@ -108,8 +108,8 @@ func (m *MockPatternMatcherWithStats) matchesWithTuple(d datalog.Datom, pattern 
 
 		if v, ok := elem.patternElem.(query.Variable); ok {
 			// Find this variable in the relation symbols
-			for i, col := range cols {
-				if col == v.Name && i < len(tuple) {
+			for i, symbol := range symbols {
+				if symbol == v.Name && i < len(tuple) {
 					// Check if the binding matches
 					if !matchValuesEqual(tuple[i], elem.datomValue) {
 						return false

@@ -43,7 +43,7 @@ for iter.Next() {
 }
 
 opts := rel.Options()
-return NewMaterializedRelationWithOptions(newColumns, newTuples, opts)
+return NewMaterializedRelationWithOptions(newSymbols, newTuples, opts)
 ```
 
 `filterWithPredicateAndLookup` and `projectToSymbols` follow the same pattern:

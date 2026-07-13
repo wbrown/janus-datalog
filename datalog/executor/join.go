@@ -244,7 +244,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	}
 
 	// Determine output symbols and the right-side projection plan in a
-	// single pass: positions in right.Symbols() that are not join columns
+	// single pass: positions in right.Symbols() that are not join symbols
 	// both append to outputSyms (the result schema) and to
 	// rightNonJoinIndices (the gather indices used by combineTuplesIndexed
 	// on every matched row). Precomputing these here turns the per-row
@@ -319,7 +319,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Build phase - create hash table using efficient TupleKeyMap.
 	// This is a pure relational join: every build row is preserved. CRDT/temporal
 	// resolution is the storage layer's responsibility (EATV ordering), never
-	// inferred here from a column's name.
+	// inferred here from a symbol's name.
 	// Pre-size based on build relation size to avoid map growth
 	buildSize := buildRel.Size()
 	if buildSize < 0 {
@@ -366,7 +366,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// are preserved; identical output tuples are deduplicated downstream by set
 	// semantics, not here. CRDT/temporal "latest transaction wins" resolution is
 	// handled by the storage layer (EATV index ordering), never inferred from a
-	// column's name.
+	// symbol's name.
 	buildCount := 0
 	for buildIt.Next() {
 		tuple := buildIt.Tuple()
@@ -402,7 +402,9 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// The build relation may share underlying iterators with the probe relation
 	// (e.g., OrFallbackRelation wraps a StreamingRelation that is also the probe).
 	// Close() signals the CachingIterator, unblocking probe's Size()/Iterator().
-	buildIt.Close()
+	if closeErr := buildIt.Close(); buildErr == nil {
+		buildErr = closeErr
+	}
 
 	// Emit annotation for copy statistics if collector is available
 	if opts.Collector != nil && (copyCount > 0 || passthruCount > 0) {
@@ -506,7 +508,6 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	}
 
 	probeIt := probeRel.Iterator()
-	defer probeIt.Close()
 
 	probeCount := 0
 	matchCount := 0
@@ -542,6 +543,10 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 			}
 		}
 	}
+	probeErr := probeIt.Error()
+	if closeErr := probeIt.Close(); probeErr == nil {
+		probeErr = closeErr
+	}
 	if opts.Collector != nil {
 		opts.Collector.Add(annotations.Event{
 			Name: annotations.JoinProbe,
@@ -561,8 +566,8 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	result.properties = resultProperties.clone()
 	if buildErr != nil {
 		result.err = buildErr
-	} else if pe := probeIt.Error(); pe != nil {
-		result.err = pe
+	} else if probeErr != nil {
+		result.err = probeErr
 	}
 	return result
 }

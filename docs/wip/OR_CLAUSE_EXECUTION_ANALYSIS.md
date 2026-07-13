@@ -143,7 +143,7 @@ if bindings == nil || len(bindings) == 0 {
 This scans the database directly:
 - Chooses index based on bound pattern elements (AVET for A+V bound)
 - Returns all matching datoms as a streaming relation
-- Symbols come from `pattern.ExtractColumns()` (only variables)
+- Symbols come from the pattern's variable-extraction routine (only variables)
 
 ### 8. Relation Collapse/Join (`datalog/executor/relations.go`)
 
@@ -155,7 +155,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
     for len(remaining) > 0 {
         currentGroup := remaining[0]
         for i := 0; i < len(remaining); i++ {
-            if hasSharedColumns(currentGroup, remaining[i]) {
+            if hasSharedSymbols(currentGroup, remaining[i]) {
                 currentGroup = ctx.JoinRelations(currentGroup, remaining[i], func() Relation {
                     return currentGroup.Join(remaining[i])
                 })

@@ -128,7 +128,7 @@ The issue is in the binding application logic, which doesn't handle empty aggreg
 func applyBindingForm(result Relation, binding query.TupleBinding, ...) (Relation, error) {
     if result.Size() == 0 {
         // Empty subquery result = no tuple produced
-        return NewMaterializedRelation(outputColumns, []Tuple{}), nil
+        return NewMaterializedRelation(outputSymbols, []Tuple{}), nil
     }
 
     if result.Size() != 1 {

@@ -431,8 +431,8 @@ func (m *instrumentedMatcher) Match(q *query.Query, bindings executor.Relations)
 		for _, elem := range pattern.Elements {
 			if v, ok := elem.(query.Variable); ok {
 				for _, rel := range bindings {
-					for _, col := range rel.Symbols() {
-						if v.Name == col {
+					for _, symbol := range rel.Symbols() {
+						if v.Name == symbol {
 							hasBindingVar = true
 							break
 						}

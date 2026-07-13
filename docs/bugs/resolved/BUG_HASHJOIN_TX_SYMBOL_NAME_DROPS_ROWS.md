@@ -1,8 +1,8 @@
-# Bug: HashJoin Treats Ordinary `?t` Variables as Transaction Columns
+# Bug: HashJoin Treats Ordinary `?t` Variables as Transaction Attributes
 
 ## Summary
 
-`executor.HashJoin` has a name-based special case for transaction columns. If the build-side relation contains a symbol named `?tx`, `?t`, `?txid`, or `?transaction`, and the first tuple at that position is numeric or an `ElementID`, the join enters a "latest transaction wins" dedup path.
+`executor.HashJoin` has a name-based special case for transaction attributes. If the build-side relation contains a symbol named `?tx`, `?t`, `?txid`, or `?transaction`, and the first tuple at that position is numeric or an `ElementID`, the join enters a "latest transaction wins" dedup path.
 
 That is unsafe. `?t` is a normal user variable name, commonly used for "task", "ticker", "time", "type", or arbitrary tuple data. A natural join should preserve all matching rows unless relational set semantics deduplicate identical output tuples. This path can silently collapse distinct build-side rows that share the join key.
 
@@ -10,9 +10,9 @@ That is unsafe. `?t` is a normal user variable name, commonly used for "task", "
 
 Any hash join where:
 
-1. The build-side relation has a column named `?t`, `?tx`, `?txid`, or `?transaction`.
-2. The value in that column is `uint64`, `int64`, `int`, `datalog.ElementID`, or `*datalog.ElementID`.
-3. Multiple build rows share the join key but differ in other columns.
+1. The build-side relation has an attribute named `?t`, `?tx`, `?txid`, or `?transaction`.
+2. The value at that tuple position is `uint64`, `int64`, `int`, `datalog.ElementID`, or `*datalog.ElementID`.
+3. Multiple build tuples share the join key but differ in other attributes.
 
 Example shape:
 
@@ -46,7 +46,7 @@ It then verifies only the Go value type, not the query semantics:
 ```go
 switch firstTuple[txIndex].(type) {
 case uint64, int64, int, datalog.ElementID, *datalog.ElementID:
-	hasTxColumn = true
+	hasTxAttribute = true
 }
 ```
 
@@ -71,7 +71,7 @@ This is not a property of natural joins. It is a storage/temporal resolution rul
 
 ## Expected Behavior
 
-`HashJoin` should perform a pure relational join. It should not infer CRDT or temporal resolution from column names.
+`HashJoin` should perform a pure relational join. It should not infer CRDT or temporal resolution from relation-attribute names.
 
 If transaction deduplication is required anywhere, it should be represented explicitly in the relation metadata, storage matcher output, or a dedicated operator with a clear semantic contract.
 
@@ -81,9 +81,9 @@ Remove the name-based transaction dedup path from generic `HashJoin`.
 
 If a caller truly needs latest-by-transaction behavior:
 
-1. Add explicit metadata to the relation or query plan indicating the transaction column and dedup key.
+1. Add explicit metadata to the relation or query plan indicating the transaction attribute and dedup key.
 2. Apply the dedup as a separate operator before or after the join.
-3. Require the column to be proven to be a transaction position from a four-element data pattern, not guessed from the symbol name.
+3. Require the relation attribute to be proven to occupy a transaction position in a four-element data pattern, not guessed from the symbol name.
 
 ## Tests Needed
 
@@ -106,7 +106,7 @@ relational build loop that preserves every row.
   now-unused `datalog` import.
 - `datalog/executor/join_tx_name_dedup_test.go` —
   `TestHashJoin_TxNameVariablesDoNotDropRows` exercises all four names as
-  ordinary build-side integer columns. It dropped a row before the fix and
+  ordinary build-side integer attributes. It dropped a row before the fix and
   preserves both rows after.
 
 ### Corrections to this report's assumptions
@@ -134,7 +134,7 @@ wrong on three counts:
    relations (ground values, computed `?t`, in-memory sources).
 
 3. **Even a "principled" version of the heuristic is wrong.** Suggested Fix #3
-   (prove the column is a tx position from a four-element pattern, then dedup)
+   (prove the relation attribute is a tx position from a four-element pattern, then dedup)
    still embeds resolution semantics inside a generic relational operator. A
    join must not resolve CRDTs under any circumstances — proven position or not.
    The correct contract is simply: the join preserves rows; storage owns

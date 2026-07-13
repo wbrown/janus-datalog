@@ -177,10 +177,10 @@ func TestDatomToRelationExtraction(t *testing.T) {
 	}
 
 	// Check symbol names
-	expectedCols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?tx")}
-	for i, col := range symbols {
-		if col != expectedCols[i] {
-			t.Errorf("expected symbol %d to be %s, got %s", i, expectedCols[i], col)
+	expectedSymbols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?tx")}
+	for i, symbol := range symbols {
+		if symbol != expectedSymbols[i] {
+			t.Errorf("expected symbol %d to be %s, got %s", i, expectedSymbols[i], symbol)
 		}
 	}
 
@@ -229,12 +229,12 @@ func TestPatternToRelation(t *testing.T) {
 	rel := PatternToRelation(datoms, pattern)
 
 	// Check symbols
-	cols := rel.Symbols()
-	if len(cols) != 2 {
-		t.Errorf("expected 2 symbols, got %d", len(cols))
+	symbols := rel.Symbols()
+	if len(symbols) != 2 {
+		t.Errorf("expected 2 symbols, got %d", len(symbols))
 	}
-	if cols[0] != datalog.NewSymbol("?user") || cols[1] != datalog.NewSymbol("?name") {
-		t.Errorf("unexpected symbols: %v", cols)
+	if symbols[0] != datalog.NewSymbol("?user") || symbols[1] != datalog.NewSymbol("?name") {
+		t.Errorf("unexpected symbols: %v", symbols)
 	}
 
 	// Verify tuples contain correct data

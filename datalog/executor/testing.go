@@ -62,8 +62,8 @@ func CompareRelations(a, b Relation) bool {
 	return true
 }
 
-// CompareRelationsIgnoreColumnOrder compares relations allowing different symbol orders.
-func CompareRelationsIgnoreColumnOrder(a, b Relation) bool {
+// CompareRelationsIgnoreSymbolOrder compares relations allowing different symbol orders.
+func CompareRelationsIgnoreSymbolOrder(a, b Relation) bool {
 	aSyms := a.Symbols()
 	bSyms := b.Symbols()
 

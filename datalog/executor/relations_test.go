@@ -223,8 +223,8 @@ func TestRelationsCollapse(t *testing.T) {
 		assert.Equal(t, 2, result.Size()) // Alice and Bob's full paths
 
 		// Check symbols
-		cols := result.Symbols()
-		assert.Equal(t, 4, len(cols)) // ?person, ?dept, ?building, ?floor
+		symbols := result.Symbols()
+		assert.Equal(t, 4, len(symbols)) // ?person, ?dept, ?building, ?floor
 	})
 
 	t.Run("returns multiple groups for disjoint relations", func(t *testing.T) {
@@ -253,10 +253,10 @@ func TestRelationsCollapse(t *testing.T) {
 		// Check the groups
 		var joinedGroup, disjointGroup Relation
 		for _, g := range groups {
-			cols := g.Symbols()
-			if len(cols) == 3 { // ?x, ?y, ?z
+			symbols := g.Symbols()
+			if len(symbols) == 3 { // ?x, ?y, ?z
 				joinedGroup = g
-			} else if len(cols) == 2 { // ?a, ?b
+			} else if len(symbols) == 2 { // ?a, ?b
 				disjointGroup = g
 			}
 		}

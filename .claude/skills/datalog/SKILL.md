@@ -267,7 +267,7 @@ Each `-in` value is parsed as EDN, so tagged literals work too: `-in '#inst "202
 
 Sort keys may be **any variable bound by `:where`** — they do not need to
 appear in `:find`. The result is sorted before the final projection, then
-stripped back to the `:find` columns:
+stripped back to the `:find` symbols:
 
 ```clojure
 ;; Names ordered by age, without returning the age
@@ -279,7 +279,7 @@ stripped back to the `:find` columns:
 
 Keys that are scalar/tuple `:in` constants are accepted as no-ops (every row
 carries the same value). A key bound nowhere, a relation/collection input
-column not bound in `:where`, or a non-group-key variable in an aggregate
+symbol not bound in `:where`, or a non-group-key variable in an aggregate
 query is a parse error — aggregate queries can only be ordered by their
 group keys.
 

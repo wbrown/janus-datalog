@@ -82,13 +82,13 @@ func TestProjectIterator(t *testing.T) {
 		{2, "bob", 30, "LA"},
 		{3, "charlie", 25, "Chicago"},
 	}
-	sourceColumns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?city")}
-	targetColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")} // Project name and city only
+	sourceSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age"), datalog.NewSymbol("?city")}
+	targetSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")} // Project name and city only
 
 	// Create projection iterator
 	// Wrap tuples in a relation for ProjectIterator
-	sourceRel := NewMaterializedRelation(sourceColumns, tuples)
-	projIter := NewProjectIterator(sourceRel, sourceColumns, targetColumns)
+	sourceRel := NewMaterializedRelation(sourceSymbols, tuples)
+	projIter := NewProjectIterator(sourceRel, sourceSymbols, targetSymbols)
 
 	// Collect projected results
 	var results []Tuple
@@ -222,12 +222,12 @@ func TestComposedIterators(t *testing.T) {
 	filterIter := NewFilterIterator(source, symbols, filter)
 
 	// Step 2: Project name and salary only
-	projectedColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?salary")}
+	projectedSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?salary")}
 	projIndices := []int{1, 3} // Manually specify indices for test
 	projIter := &ProjectIterator{
 		source:     filterIter,
 		indices:    projIndices,
-		newSymbols: projectedColumns,
+		newSymbols: projectedSymbols,
 	}
 
 	// Step 3: Transform to add bonus (10% of salary)
@@ -392,7 +392,7 @@ func TestFunctionEvaluatorIterator(t *testing.T) {
 // TestFunctionEvaluatorIterator_UnifiesExistingSymbol verifies that when the
 // output symbol already exists in the source, the iterator filters (unifies)
 // instead of appending a duplicate. In Datalog, [(+ ?x 0) ?x] means "keep
-// tuples where ?x + 0 == ?x", not "add a second ?x column."
+// tuples where ?x + 0 == ?x", not "add a second ?x binding."
 func TestFunctionEvaluatorIterator_UnifiesExistingSymbol(t *testing.T) {
 	tuples := []Tuple{
 		{int64(10), int64(20)},

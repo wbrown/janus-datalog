@@ -14,22 +14,22 @@ import (
 
 func TestHashJoin(t *testing.T) {
 	// Left relation: people and their departments
-	leftCols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept")}
 	leftTuples := []Tuple{
 		{"Alice", "Engineering"},
 		{"Bob", "Sales"},
 		{"Charlie", "Engineering"},
 	}
-	left := NewMaterializedRelation(leftCols, leftTuples)
+	left := NewMaterializedRelation(leftSymbols, leftTuples)
 
 	// Right relation: departments and their locations
-	rightCols := []query.Symbol{datalog.NewSymbol("?dept"), datalog.NewSymbol("?location")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?dept"), datalog.NewSymbol("?location")}
 	rightTuples := []Tuple{
 		{"Engineering", "Building A"},
 		{"Sales", "Building B"},
 		{"Marketing", "Building C"},
 	}
-	right := NewMaterializedRelation(rightCols, rightTuples)
+	right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 	// Join on ?dept
 	joined := left.HashJoin(right, []query.Symbol{datalog.NewSymbol("?dept")})
@@ -40,9 +40,9 @@ func TestHashJoin(t *testing.T) {
 	}
 
 	// Check symbols
-	expectedCols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept"), datalog.NewSymbol("?location")}
-	if !reflect.DeepEqual(joined.Symbols(), expectedCols) {
-		t.Errorf("expected symbols %v, got %v", expectedCols, joined.Symbols())
+	expectedSymbols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept"), datalog.NewSymbol("?location")}
+	if !reflect.DeepEqual(joined.Symbols(), expectedSymbols) {
+		t.Errorf("expected symbols %v, got %v", expectedSymbols, joined.Symbols())
 	}
 
 	// Collect results
@@ -60,23 +60,23 @@ func TestHashJoin(t *testing.T) {
 	}
 }
 
-func TestJoinMultipleColumns(t *testing.T) {
+func TestJoinMultipleSymbols(t *testing.T) {
 	// Test joining on multiple symbols
-	leftCols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
 	leftTuples := []Tuple{
 		{1, 2, "x"},
 		{1, 3, "y"},
 		{2, 2, "z"},
 	}
-	left := NewMaterializedRelation(leftCols, leftTuples)
+	left := NewMaterializedRelation(leftSymbols, leftTuples)
 
-	rightCols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?d")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?d")}
 	rightTuples := []Tuple{
 		{1, 2, "foo"},
 		{1, 3, "bar"},
 		{2, 3, "baz"},
 	}
-	right := NewMaterializedRelation(rightCols, rightTuples)
+	right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 	// Join on both ?a and ?b
 	joined := left.HashJoin(right, []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b")})
@@ -99,13 +99,13 @@ func TestJoinMultipleColumns(t *testing.T) {
 
 func TestEmptyJoin(t *testing.T) {
 	// Join with no common values
-	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	leftTuples := []Tuple{{1, 2}, {3, 4}}
-	left := NewMaterializedRelation(leftCols, leftTuples)
+	left := NewMaterializedRelation(leftSymbols, leftTuples)
 
-	rightCols := []query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	rightTuples := []Tuple{{5, 6}, {7, 8}}
-	right := NewMaterializedRelation(rightCols, rightTuples)
+	right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 	joined := left.HashJoin(right, []query.Symbol{datalog.NewSymbol("?y")})
 
@@ -116,13 +116,13 @@ func TestEmptyJoin(t *testing.T) {
 
 func TestCrossProduct(t *testing.T) {
 	// Test cross product (no common symbols)
-	leftCols := []query.Symbol{datalog.NewSymbol("?a")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?a")}
 	leftTuples := []Tuple{{"x"}, {"y"}}
-	left := NewMaterializedRelation(leftCols, leftTuples)
+	left := NewMaterializedRelation(leftSymbols, leftTuples)
 
-	rightCols := []query.Symbol{datalog.NewSymbol("?b")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?b")}
 	rightTuples := []Tuple{{1}, {2}}
-	right := NewMaterializedRelation(rightCols, rightTuples)
+	right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 	joined := left.Join(right)
 
@@ -146,22 +146,22 @@ func TestCrossProduct(t *testing.T) {
 
 func TestSemiJoin(t *testing.T) {
 	// Left: all people
-	leftCols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept")}
 	leftTuples := []Tuple{
 		{"Alice", "Engineering"},
 		{"Bob", "Sales"},
 		{"Charlie", "Engineering"},
 		{"David", "HR"},
 	}
-	left := NewMaterializedRelation(leftCols, leftTuples)
+	left := NewMaterializedRelation(leftSymbols, leftTuples)
 
 	// Right: active departments
-	rightCols := []query.Symbol{datalog.NewSymbol("?dept")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?dept")}
 	rightTuples := []Tuple{
 		{"Engineering"},
 		{"Sales"},
 	}
-	right := NewMaterializedRelation(rightCols, rightTuples)
+	right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 	// Semi-join: people in active departments
 	result := left.SemiJoin(right, []query.Symbol{datalog.NewSymbol("?dept")})
@@ -181,21 +181,21 @@ func TestSemiJoin(t *testing.T) {
 
 func TestAntiJoin(t *testing.T) {
 	// Same setup as SemiJoin
-	leftCols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?person"), datalog.NewSymbol("?dept")}
 	leftTuples := []Tuple{
 		{"Alice", "Engineering"},
 		{"Bob", "Sales"},
 		{"Charlie", "Engineering"},
 		{"David", "HR"},
 	}
-	left := NewMaterializedRelation(leftCols, leftTuples)
+	left := NewMaterializedRelation(leftSymbols, leftTuples)
 
-	rightCols := []query.Symbol{datalog.NewSymbol("?dept")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?dept")}
 	rightTuples := []Tuple{
 		{"Engineering"},
 		{"Sales"},
 	}
-	right := NewMaterializedRelation(rightCols, rightTuples)
+	right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 	// Anti-join: people NOT in active departments
 	result := left.AntiJoin(right, []query.Symbol{datalog.NewSymbol("?dept")})
@@ -259,21 +259,21 @@ func TestJoinBuildCopyAnnotation(t *testing.T) {
 	}
 
 	// MaterializedRelation doesn't require copying (RequiresCopy() = false)
-	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	leftTuples := []Tuple{
 		{1, "a"},
 		{2, "b"},
 		{3, "c"},
 	}
-	left := NewMaterializedRelationWithOptions(leftCols, leftTuples, opts)
+	left := NewMaterializedRelationWithOptions(leftSymbols, leftTuples, opts)
 
-	rightCols := []query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	rightTuples := []Tuple{
 		{"a", 100},
 		{"b", 200},
 		{"d", 400},
 	}
-	right := NewMaterializedRelationWithOptions(rightCols, rightTuples, opts)
+	right := NewMaterializedRelationWithOptions(rightSymbols, rightTuples, opts)
 
 	// Perform the join
 	joined := HashJoinWithOptions(left, right, []query.Symbol{datalog.NewSymbol("?y")}, opts)

@@ -236,6 +236,7 @@ type PredicateFilterIterator struct {
 	predicate query.Predicate
 	symbols   []query.Symbol
 	current   Tuple
+	err       error
 }
 
 // NewPredicateFilterIterator creates a new predicate-based filtering iterator
@@ -262,7 +263,11 @@ func (it *PredicateFilterIterator) Next() bool {
 
 		// Evaluate predicate
 		result, err := it.predicate.Eval(bindings)
-		if err == nil && result == true {
+		if err != nil {
+			it.err = err
+			return false
+		}
+		if result {
 			return true
 		}
 	}
@@ -279,7 +284,12 @@ func (it *PredicateFilterIterator) Close() error {
 	return it.source.Close()
 }
 
-func (it *PredicateFilterIterator) Error() error { return it.source.Error() }
+func (it *PredicateFilterIterator) Error() error {
+	if it.err != nil {
+		return it.err
+	}
+	return it.source.Error()
+}
 
 // FunctionEvaluatorIterator adds a new symbol by evaluating a function
 type FunctionEvaluatorIterator struct {

@@ -117,9 +117,10 @@ type PlannerOptions struct {
 
 	// Subquery / algebra optimization
 	EnableAlgebraOptimizer     bool // Enable relational algebra IR optimization (decorrelation, predicate pushdown)
+	EnableJoinProjectInsertion bool // Materialize narrowed inner-join children (experimental, default: false)
 	EnableScanSharing          bool // Share unbound scan results across subqueries via LazySeq (default: false)
 	EnableEntityPrefetch       bool // Warm EA cache after first DataPattern via PrefetchEntities (default: false)
-	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into per-tuple column attach instead of match+join (default: true)
+	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple binding instead of match+join (default: true)
 
 	// Executor streaming options - control memory vs performance tradeoffs
 	EnableIteratorComposition bool // Use composed iterators for lazy evaluation (default: true)

@@ -15,7 +15,7 @@ import (
 // TestComparisonBindingWithOrSubquery_E2E is an end-to-end integration test
 // that reproduces the downstream failure:
 //
-//	column ?complete not found in relation
+//	symbol ?complete not found in relation
 //
 // The pattern is:
 //

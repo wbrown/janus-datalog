@@ -41,7 +41,7 @@ type QueryResultMapper struct {
 }
 
 // NewQueryResultMapper creates a mapper from struct type and :find symbol names.
-// The findColumns should be the string representations of FindElements
+// The findSymbols should be the string representations of FindElements
 // (e.g., "?name", "(sum ?salary)").
 //
 // The mapper supports three modes:
@@ -54,7 +54,7 @@ type QueryResultMapper struct {
 //
 // For mixed mode, use queries like `[:find ?name (pull ?e [:person/age]) :where ...]`
 // where query variables map to their symbols and attribute tags map from the pull result.
-func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryResultMapper, error) {
+func NewQueryResultMapper(elemType reflect.Type, findSymbols []string) (*QueryResultMapper, error) {
 	// Handle pointer to struct
 	if elemType.Kind() == reflect.Ptr {
 		elemType = elemType.Elem()
@@ -65,9 +65,9 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 	}
 
 	// Build symbol index map
-	colIndex := make(map[string]int)
-	for i, col := range findColumns {
-		colIndex[col] = i
+	symbolIndex := make(map[string]int)
+	for i, symbol := range findSymbols {
+		symbolIndex[symbol] = i
 	}
 
 	// Parse struct fields into query mappings and attribute (pull) mappings
@@ -102,10 +102,10 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 			mapping.Tag = tag
 
 			// Look up symbol index
-			idx, found := colIndex[tag]
+			idx, found := symbolIndex[tag]
 			if !found {
 				return nil, fmt.Errorf("%w: field %s tagged with %q not found in query results %v",
-					ErrSymbolNotFound, field.Name, tag, findColumns)
+					ErrSymbolNotFound, field.Name, tag, findSymbols)
 			}
 			mapping.TupleIndex = idx
 			queryMappings = append(queryMappings, mapping)
@@ -170,9 +170,9 @@ func NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryRe
 	// Positional mapping: no tags at all
 	if hasUntagged {
 		for i := range untaggedMappings {
-			if i < len(findColumns) {
+			if i < len(findSymbols) {
 				untaggedMappings[i].TupleIndex = i
-				untaggedMappings[i].Tag = findColumns[i] // For error messages
+				untaggedMappings[i].Tag = findSymbols[i] // For error messages
 			}
 		}
 		return &QueryResultMapper{

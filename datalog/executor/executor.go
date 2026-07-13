@@ -218,6 +218,9 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 // and capping must run over that whole union — not per iteration. Sorting before
 // limiting yields a correct global top-N.
 func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
+	if err := plan.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid realized plan: %w", err)
+	}
 	result, err := e.executeRealizedPlan(ctx, plan, inputRelations)
 	if err != nil {
 		return nil, err
@@ -254,7 +257,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			} else {
 				result = result.Sort(effective)
 			}
-			// The planner retained non-projected sort columns through the
+			// The planner retained non-projected sort symbols through the
 			// final projection so the sort above could resolve them; strip
 			// the result back to the declared :find shape. The projection
 			// deduplicates (set semantics), keeping each duplicate's first
@@ -273,7 +276,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 	// Pull rendering is result presentation, not a relational operation:
 	// pulled maps are not datalog values, so they are produced here, at the
 	// terminal boundary — after sort, strip, and limit — for exactly the
-	// rows the query returns. Entity columns are Identity values through
+	// rows the query returns. Entity bindings are Identity values through
 	// every relational operation above. Aggregate find clauses do not apply
 	// pulls. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
 	if hasPulls(plan.Query.Find) {
@@ -434,6 +437,9 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
 		}
+		if err := validatePhaseOutput(phaseIndex+1, phase, groups); err != nil {
+			return nil, err
+		}
 
 		// DEBUG: Log phase output before projection
 		if collector := ctx.Collector(); collector != nil {
@@ -446,40 +452,18 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 			})
 		}
 
-		// Project each group to Keep symbols (what passes to next phase)
-		// Skip for last phase - QueryExecutor already projected to :find symbols
+		// Non-final Query fragments already emit their exact Keep schema. Make
+		// each result reusable for the next phase without projecting it again.
 		if !isLastPhase && len(phase.Keep) > 0 {
 			for i, group := range groups {
-				// Materialize first to avoid iterator consumption issues
-				// Collect all tuples to create a reusable relation
-				var tuples []Tuple
-				// A non-last phase materializes each group to pass Keep symbols
-				// forward. Carry any deferred scan error onto the materialized
-				// relation so Project propagates it into the next phase instead of
-				// laundering a failed scan into an empty result.
-				keepErr := collectTuplesInto(&tuples, group)
-
-				opts := group.Options()
-				materialized := NewMaterializedRelationWithProperties(
-					group.Symbols(),
-					tuples,
-					opts,
-					group.Properties(),
-				)
-				materialized.err = keepErr
-
-				projected, err := materialized.Project(phase.Keep)
-				if err != nil {
-					return nil, fmt.Errorf("phase %d projection of group %d failed: %w", phaseIndex+1, i, err)
-				}
-				groups[i] = projected
+				groups[i] = materializePhaseBoundary(group)
 			}
 		}
 
-		// DEBUG: Log after projection
+		// DEBUG: Log after boundary materialization
 		if collector := ctx.Collector(); collector != nil && !isLastPhase {
 			collector.Add(annotations.Event{
-				Name: "realized/phase-projected",
+				Name: "realized/phase-materialized",
 				Data: map[string]interface{}{
 					"phase":  phaseIndex + 1,
 					"groups": len(groups),
@@ -908,7 +892,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 //   - modifiedQuery is read-only after construction.
 //   - boundTuple mutation: phase execution reads boundTuple's interface{}
 //     values into freshly-allocated result tuples (joins/projections build
-//     new tuples by combining columns; aggregations build new summary
+//     new tuples by combining bindings; aggregations build new summary
 //     tuples). For primitive values (int64, string, bool, time.Time) the
 //     interface{} carries the value; for pointer types (Identity, Keyword)
 //     it carries the pointer. In both cases, copy-on-store at the consumer
@@ -1151,32 +1135,15 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
 		}
+		if err := validatePhaseOutput(phaseIndex+1, phase, groups); err != nil {
+			return nil, err
+		}
 
-		// Project each group to Keep symbols. Skip for the last phase —
-		// QueryExecutor already projected to :find symbols.
+		// Non-final Query fragments already emit their exact Keep schema. Make
+		// each result reusable for the next phase without projecting it again.
 		if !isLastPhase && len(phase.Keep) > 0 {
 			for i, group := range groups {
-				// Materialize first to avoid iterator consumption issues, and
-				// carry any deferred scan error onto the materialized relation
-				// so Project propagates it into the next phase instead of
-				// laundering a failed scan into an empty result.
-				var tuples []Tuple
-				keepErr := collectTuplesInto(&tuples, group)
-
-				opts := group.Options()
-				materialized := NewMaterializedRelationWithProperties(
-					group.Symbols(),
-					tuples,
-					opts,
-					group.Properties(),
-				)
-				materialized.err = keepErr
-
-				projected, err := materialized.Project(phase.Keep)
-				if err != nil {
-					return nil, fmt.Errorf("phase %d projection of group %d failed: %w", phaseIndex+1, i, err)
-				}
-				groups[i] = projected
+				groups[i] = materializePhaseBoundary(group)
 			}
 		}
 
@@ -1202,6 +1169,23 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 	// ExecuteRealized over that whole union (a per-tuple sort here would be
 	// discarded by the union and would not produce a global ordering).
 	return currentGroups[0], nil
+}
+
+func validatePhaseOutput(phaseNumber int, phase planner.RealizedPhase, groups []Relation) error {
+	for groupIndex, group := range groups {
+		actual := group.Symbols()
+		if len(actual) != len(phase.Provides) {
+			return fmt.Errorf("phase %d group %d physical output schema %v does not match provides schema %v",
+				phaseNumber, groupIndex, actual, phase.Provides)
+		}
+		for i := range actual {
+			if actual[i] != phase.Provides[i] {
+				return fmt.Errorf("phase %d group %d physical output schema %v does not match provides schema %v",
+					phaseNumber, groupIndex, actual, phase.Provides)
+			}
+		}
+	}
+	return nil
 }
 
 // SetPlanCache sets the plan cache for this executor

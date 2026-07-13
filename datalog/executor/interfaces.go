@@ -43,7 +43,7 @@ type EntityLookupMatcher interface {
 }
 
 // AttributeFetchFusable reports whether a same-entity fetch of attr can be
-// fused into a per-tuple LookupAttribute column attach instead of a separate
+// fused into a per-tuple LookupAttribute binding instead of a separate
 // pattern match + hash join. Fusion is valid only when the matcher's
 // LookupAttribute returns the single value a matched pattern would, which
 // requires both:

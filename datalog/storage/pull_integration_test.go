@@ -283,7 +283,7 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 	})
 
 	// Test the same pattern matching but with symbol extraction as pull does
-	t.Run("PatternMatchWithColumnExtraction", func(t *testing.T) {
+	t.Run("PatternMatchWithSymbolExtraction", func(t *testing.T) {
 		matcher := db.Matcher()
 
 		// Create pattern: [alice ?a ?v] - same as what getAllAttributes creates
@@ -304,16 +304,16 @@ func TestPullWildcardPatternMatching(t *testing.T) {
 		}
 
 		// Check symbols
-		cols := rel.Symbols()
-		t.Logf("Symbols: %v", cols)
+		symbols := rel.Symbols()
+		t.Logf("Symbols: %v", symbols)
 
 		// Find symbol indices like pull.go does
 		aIdx := -1
 		vIdx := -1
-		for i, col := range cols {
-			if col == datalog.NewSymbol("?a") {
+		for i, symbol := range symbols {
+			if symbol == datalog.NewSymbol("?a") {
 				aIdx = i
-			} else if col == datalog.NewSymbol("?v") {
+			} else if symbol == datalog.NewSymbol("?v") {
 				vIdx = i
 			}
 		}
@@ -463,7 +463,7 @@ func TestPullIntegration_InQuery(t *testing.T) {
 				continue
 			}
 
-			// First symbol should be the type keyword
+			// First result slot should be the type keyword
 			typeKw, ok := tuple[0].(datalog.Keyword)
 			if !ok {
 				t.Errorf("expected Keyword for type, got %T", tuple[0])

@@ -44,7 +44,7 @@ func (m *failingScanMatcher) Match(q *query.Query, _ Relations) (Relation, error
 // TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError feeds a hand-built
 // two-phase RealizedPlan to the executor. Phase 0's scan fails (deferred error)
 // and is a non-last phase with Keep symbols, so its result flows through the Keep
-// projection in ExecuteRealized and then across the phase boundary into phase 1.
+// materialization in ExecuteRealized and then across the phase boundary into phase 1.
 // The failure must surface, not be laundered into an empty result.
 //
 // The planner currently never emits multi-phase plans (the greedy phaser
@@ -75,13 +75,13 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 		},
 		Phases: []planner.RealizedPhase{
 			{
-				// Non-last phase: provides ?e ?v, keeps ?e for phase 1.
+				// Non-last phase projects its exact ?e boundary for phase 1.
 				Query: &query.Query{
-					Find:  []query.FindElement{query.FindVariable{Symbol: symE}, query.FindVariable{Symbol: symV}},
+					Find:  []query.FindElement{query.FindVariable{Symbol: symE}},
 					In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
 					Where: []query.Clause{p0},
 				},
-				Provides: []query.Symbol{symE, symV},
+				Provides: []query.Symbol{symE},
 				Keep:     []query.Symbol{symE},
 			},
 			{
@@ -92,7 +92,7 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 					Where: []query.Clause{p1},
 				},
 				Available: []query.Symbol{symE},
-				Provides:  []query.Symbol{symE, symW},
+				Provides:  []query.Symbol{symW},
 			},
 		},
 	}
@@ -109,5 +109,5 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 		err = driveErr(result)
 	}
 	require.ErrorIs(t, err, errInjectedIterator,
-		"a failing scan in a non-last phase must surface, not be laundered by the Keep projection or phase boundary")
+		"a failing scan in a non-last phase must surface, not be laundered by boundary materialization")
 }

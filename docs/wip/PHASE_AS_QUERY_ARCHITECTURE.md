@@ -119,7 +119,7 @@ func executePhase(phase *Phase) Relation {
 2. **Phase structure is complex**:
    - 7 operation types (patterns, expressions, predicates, join predicates, subqueries, decorrelated subqueries, projection)
    - Must track Available/Provides/Keep/Find symbols
-   - Metadata for special cases (aggregate_required_columns, conditional_aggregates)
+   - Metadata for special cases (aggregate-required symbols, conditional aggregates)
 
 3. **Edge cases proliferate**:
    - "What if phase has zero patterns?" (just fixed!)

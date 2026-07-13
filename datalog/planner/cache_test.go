@@ -199,6 +199,24 @@ func TestPlanCacheTTL(t *testing.T) {
 	}
 }
 
+func TestPlanCacheSeparatesJoinProjectInsertionOption(t *testing.T) {
+	cache := NewPlanCache(10, 0)
+	q := &query.Query{
+		Find: []query.FindElement{
+			query.FindVariable{Symbol: datalog.NewSymbol("?e")},
+		},
+	}
+	plan := &RealizedPlan{Query: q}
+	disabled := PlannerOptions{EnableAlgebraOptimizer: true}
+	enabled := disabled
+	enabled.EnableJoinProjectInsertion = true
+
+	cache.SetWithOptions(q, plan, disabled)
+	if _, ok := cache.GetWithOptions(q, enabled); ok {
+		t.Fatal("join-project insertion option must produce a distinct plan cache key")
+	}
+}
+
 func TestPlannerWithCache(t *testing.T) {
 	// Create planner with cache using ClauseBasedPlanner
 	cache := NewPlanCache(100, 0)

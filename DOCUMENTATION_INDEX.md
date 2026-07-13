@@ -107,3 +107,6 @@ Each archive directory contains a README explaining its contents.
 ## Future Ideas
 
 See `docs/ideas/` for potential optimizations and features under consideration. The README tracks implementation status.
+
+- **[OPTIMIZATION_OPPORTUNITIES.md](docs/ideas/OPTIMIZATION_OPPORTUNITIES.md)** - Measured optimization roadmap and completed checkpoints
+- **[RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md](docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md)** - Relation set/replayability laws, materialization audit, deduplication rules, and ranked next work

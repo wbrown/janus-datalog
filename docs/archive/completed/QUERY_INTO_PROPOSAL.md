@@ -246,7 +246,7 @@ var (
     ErrMultipleResults = errors.New("query returned multiple results")
     ErrTypeMismatch    = errors.New("cannot convert query result to field type")
     ErrMissingField    = errors.New("required field has no value")
-    ErrUnmappedColumn  = errors.New("query symbol has no matching struct field")
+    ErrUnmappedSymbol  = errors.New("query symbol has no matching struct field")
 )
 ```
 

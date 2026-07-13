@@ -186,6 +186,90 @@ func TestCompileDecompileWithGetElse(t *testing.T) {
 	assert.Equal(t, len(q.Where), len(clauses))
 }
 
+func TestCompileNormalizesUnionOutputsAndOuterJoinKeys(t *testing.T) {
+	parsed, err := parser.ParseQuery(
+		`[:find ?entity ?value
+		  :where [?entity :item/type :item.type/scored]
+		         (or [?entity :item/value ?value]
+		             [(ground 0) ?value])]`,
+	)
+	require.NoError(t, err)
+	root, err := Compile(parsed)
+	require.NoError(t, err)
+
+	unionNode := findAlgebraNode(root, RuleUnion)
+	require.NotNil(t, unionNode)
+	union := unionNode.Data.(*Union)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")},
+		union.JoinVars,
+	)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?entity")},
+		union.Required,
+	)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")},
+		union.Output,
+	)
+}
+
+func TestCompileNormalizesLateralUnionBranchLocalSymbols(t *testing.T) {
+	parsed, err := parser.ParseQuery(
+		`[:find ?entity ?value
+		  :where [?entity :item/type :item.type/scored]
+		         (or-default
+		           (and [?entity :item/child ?child]
+		                [?child :item/value ?value])
+		           [(ground 0) ?value])]`,
+	)
+	require.NoError(t, err)
+	root, err := Compile(parsed)
+	require.NoError(t, err)
+
+	unionNode := findAlgebraNode(root, RuleLateralUnion)
+	require.NotNil(t, unionNode)
+	union := unionNode.Data.(*LateralUnion)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?entity"), datalog.NewSymbol("?value")},
+		union.Output,
+	)
+	require.NotContains(t, union.Output, datalog.NewSymbol("?child"))
+}
+
+func TestNormalizedBranchSymbolsKeepJoinKeysAndCommonPayload(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	value := datalog.NewSymbol("?value")
+	local := datalog.NewSymbol("?local")
+	branches := []*Node{
+		algebraTestScan(entity, value, local),
+		algebraTestScan(value),
+	}
+	require.Equal(t,
+		[]query.Symbol{entity, value},
+		normalizedBranchSymbols(branches, []query.Symbol{entity}),
+	)
+	require.Equal(t,
+		[]query.Symbol{value},
+		normalizedBranchSymbols(branches, nil),
+	)
+}
+
+func findAlgebraNode(node *Node, operator string) *Node {
+	if node == nil {
+		return nil
+	}
+	if node.Op == operator {
+		return node
+	}
+	for _, child := range node.Children {
+		if found := findAlgebraNode(child, operator); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 // === Phase 0: Operator Round-Trip Tests ===
 //
 // Each test verifies: compile(clauses) produces the correct algebra node type,
@@ -398,9 +482,8 @@ func TestRoundTrip_AntiJoinExplicit(t *testing.T) {
 }
 
 func TestRoundTrip_OrUnion(t *testing.T) {
-	// OR with two pattern branches — compiles to Union, decompiles back to OrClause.
-	// Unlike not → not-join, the or → or-join conversion is not applied because
-	// the round-trip doesn't preserve branch semantics for complex union queries.
+	// OR with two pattern branches compiles to Union with the inferred outer key
+	// made explicit, then decompiles to the equivalent OrJoinClause.
 	q, err := parser.ParseQuery(`[:find ?e ?val
 	  :where
 	  [?e :item/type :type/active]
@@ -432,12 +515,16 @@ func TestRoundTrip_OrUnion(t *testing.T) {
 		t.Logf("  [%d] %T: %s", i, c, c.String())
 	}
 
-	// Round-trips to DataPattern + OrClause (union preserved)
+	// Round-trips to DataPattern + OrJoinClause (union and outer key preserved).
 	_, isPattern := clauses[0].(*query.DataPattern)
 	assert.True(t, isPattern, "first clause is DataPattern")
 
-	_, isOr := clauses[1].(*query.OrClause)
-	assert.True(t, isOr, "OR round-trips to OrClause")
+	orJoin, isOrJoin := clauses[1].(*query.OrJoinClause)
+	require.True(t, isOrJoin, "OR round-trips to OrJoinClause")
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?val")},
+		orJoin.JoinVars,
+	)
 }
 
 func TestRoundTrip_LateralJoin(t *testing.T) {

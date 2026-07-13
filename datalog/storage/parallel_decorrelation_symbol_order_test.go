@@ -11,10 +11,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestParallelDecorrelationColumnOrderBadger tests parallel decorrelation symbol ordering with BadgerDB
+// TestParallelDecorrelationSymbolOrderBadger tests parallel decorrelation symbol ordering with BadgerDB
 // This reproduces the gopher-street bug where BadgerMatcher + parallel decorrelation
 // scrambles symbol order due to inconsistent transaction snapshots across goroutines
-func TestParallelDecorrelationColumnOrderBadger(t *testing.T) {
+func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 	// Create temporary BadgerDB
 	tmpDir, err := os.MkdirTemp("", "badger-symbol-order-test-*")
 	if err != nil {
@@ -168,29 +168,29 @@ func TestParallelDecorrelationColumnOrderBadger(t *testing.T) {
 			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
 		}
 
-		// Symbol 1: ?open-price should be 100.00
+		// Result slot 1: ?open-price should be 100.00
 		if val, ok := tuple[1].(float64); !ok || val != 100.0 {
-			t.Errorf("Symbol 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
+			t.Errorf("Result slot 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
 		}
 
-		// Symbol 2: ?daily-high should be 103.00
+		// Result slot 2: ?daily-high should be 103.00
 		if val, ok := tuple[2].(float64); !ok || val != 103.0 {
-			t.Errorf("Symbol 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
+			t.Errorf("Result slot 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
 		}
 
-		// Symbol 3: ?daily-low should be 99.50
+		// Result slot 3: ?daily-low should be 99.50
 		if val, ok := tuple[3].(float64); !ok || val != 99.5 {
-			t.Errorf("Symbol 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
+			t.Errorf("Result slot 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
 		}
 
-		// Symbol 4: ?close-price should be 102.50
+		// Result slot 4: ?close-price should be 102.50
 		if val, ok := tuple[4].(float64); !ok || val != 102.5 {
-			t.Errorf("Symbol 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
+			t.Errorf("Result slot 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
 		}
 
-		// Symbol 5: ?total-volume should be 3050000
+		// Result slot 5: ?total-volume should be 3050000
 		if val, ok := tuple[5].(float64); !ok || val != 3050000 {
-			t.Errorf("Symbol 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
+			t.Errorf("Result slot 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
 		}
 	})
 
@@ -225,19 +225,19 @@ func TestParallelDecorrelationColumnOrderBadger(t *testing.T) {
 		}
 
 		if val, ok := tuple[1].(float64); !ok || val != 100.0 {
-			t.Errorf("Symbol 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
+			t.Errorf("Result slot 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
 		}
 		if val, ok := tuple[2].(float64); !ok || val != 103.0 {
-			t.Errorf("Symbol 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
+			t.Errorf("Result slot 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
 		}
 		if val, ok := tuple[3].(float64); !ok || val != 99.5 {
-			t.Errorf("Symbol 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
+			t.Errorf("Result slot 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
 		}
 		if val, ok := tuple[4].(float64); !ok || val != 102.5 {
-			t.Errorf("Symbol 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
+			t.Errorf("Result slot 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
 		}
 		if val, ok := tuple[5].(float64); !ok || val != 3050000 {
-			t.Errorf("Symbol 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
+			t.Errorf("Result slot 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
 		}
 	})
 }

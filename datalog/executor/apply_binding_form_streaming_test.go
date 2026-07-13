@@ -43,7 +43,7 @@ func sym(s string) query.Symbol { return datalog.NewSymbol(s) }
 // --- TupleBinding ---
 
 // Empty streaming result → empty relation (datalog pattern-fails-to-match),
-// not an error. Input-value columns carried through with no rows.
+// not an error. Input-value bindings carried through with no rows.
 func TestApplyBindingForm_TupleBinding_StreamingEmpty(t *testing.T) {
 	inputSyms := []query.Symbol{sym("?e")}
 	inputValues := map[query.Symbol]interface{}{sym("?e"): "e1"}

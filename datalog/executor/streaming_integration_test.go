@@ -26,7 +26,7 @@ func TestStreamingIntegration(t *testing.T) {
 			{4, "diana", 400},
 			{5, "eve", 500},
 		}
-		leftColumns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
 		// Create test data for right relation
 		rightTuples := []Tuple{
@@ -35,14 +35,14 @@ func TestStreamingIntegration(t *testing.T) {
 			{"charlie", "Chicago", 35},
 			{"diana", "Boston", 40},
 		}
-		rightColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
 
 		// Create streaming relations with options
 		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelationWithOptions(leftColumns, leftIter, opts)
+		leftRel := NewStreamingRelationWithOptions(leftSymbols, leftIter, opts)
 
 		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelationWithOptions(rightColumns, rightIter, opts)
+		rightRel := NewStreamingRelationWithOptions(rightSymbols, rightIter, opts)
 
 		// Verify relations report as streaming
 		assert.Equal(t, -1, leftRel.Size())
@@ -69,8 +69,8 @@ func TestStreamingIntegration(t *testing.T) {
 		assert.True(t, isStreaming, "Filter should return StreamingRelation")
 
 		// Perform join on ?name
-		joinCols := []query.Symbol{datalog.NewSymbol("?name")}
-		joined := SymmetricHashJoin(filteredLeft, filteredRight, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
+		joined := SymmetricHashJoin(filteredLeft, filteredRight, joinSymbols)
 
 		// Verify join returns streaming relation
 		_, isStreaming = joined.(*StreamingRelation)
@@ -139,8 +139,8 @@ func TestStreamingIntegration(t *testing.T) {
 		matRel := NewMaterializedRelationWithOptions([]query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?value")}, matTuples, opts)
 
 		// Join streaming with materialized
-		joinCols := []query.Symbol{datalog.NewSymbol("?name")}
-		joined := HashJoin(streamRel, matRel, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
+		joined := HashJoin(streamRel, matRel, joinSymbols)
 
 		// Iterate results
 		it := joined.Iterator()

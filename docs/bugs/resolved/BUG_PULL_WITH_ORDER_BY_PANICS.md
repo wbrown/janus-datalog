@@ -3,11 +3,11 @@
 **Status**: FIXED (2026-07-04) via the
 **pull relocation**: pull rendering moved from the QueryExecutor's last
 phase to the result boundary in `ExecuteRealized`, after sort → strip →
-limit. Entity columns stay `Identity` — a first-class, natively hashable
+limit. Entity bindings stay `Identity` — a first-class, natively hashable
 value — through every relational operation, so no crash site needed any
 change to its deduplication. Companion changes landed with it: `(pull ...)`
 is rejected at parse time inside subquery finds (subquery results feed
-outer relational flow); the retained-sort-column strip simplified to a
+outer relational flow); stripping retained sort attributes simplified to a
 plain deduplicating projection (its pull exemption became dead code); and
 the value domain is now **loudly enforced** — `hashValue`'s default and
 `ValuesEqual`'s fallback panic naming any non-value type instead of
@@ -61,8 +61,8 @@ downstream. Site-by-site status, confirmed by reproduction tests:
 
 | Site | Query shape | Status |
 |------|------------|--------|
-| `SortRelation` (`executor_utils.go`) | pull + `:order-by` (tied sort keys, or pull-columns-only relations) | **FIXED by relocation** — maps never reach the sort. `TestOrderByPullWithTiedSortKeys` green; `TestSortRelationRejectsNonValueTuples` pins that a hand-built map-bearing relation now fails loudly as a value-domain violation |
-| Post-sort strip (`executor.go`) | pull + non-projected `:order-by` | **FIXED by relocation** — the strip is a plain deduplicating projection over value columns (`TestOrderByNonProjectedWithPull` green); the former pull-exempt branch was deleted as dead code |
+| `SortRelation` (`executor_utils.go`) | pull + `:order-by` (tied sort keys, or relations containing only pull results) | **FIXED by relocation** — maps never reach the sort. `TestOrderByPullWithTiedSortKeys` green; `TestSortRelationRejectsNonValueTuples` pins that a hand-built map-bearing relation now fails loudly as a value-domain violation |
+| Post-sort strip (`executor.go`) | pull + non-projected `:order-by` | **FIXED by relocation** — the strip is a plain deduplicating projection over value attributes (`TestOrderByNonProjectedWithPull` green); the former pull-exempt branch was deleted as dead code |
 | `LimitRelation.ensure` (`limit_relation.go:58`) | pull + `:limit ≥2` | **FIXED by relocation** — the capped result deduplicates `Identity` rows, then the boundary pulls only the surviving N (`TestPullWithLimitTwoRows` green) |
 | Relation-input iteration combine (`executor.go`) | pull + `:in $ [[?x] ...]` | **FIXED by relocation** — the union deduplicates `Identity` rows (correct by-entity set semantics), then the boundary pulls each surviving row (`TestPullWithRelationInputUnion` green) |
 | Multi-group product path (`query_executor.go`) | pull + disjoint find groups | never crashed, previously uncovered — `TestPullWithDisjointFindGroups` pins pull rendering through it end-to-end |
@@ -86,7 +86,7 @@ presentation, not a relational operator** — `map[string]interface{}` is
 not a janus value type, and its presence in relation tuples is the
 violation. Relocate `executePulls` from the QueryExecutor's last phase to
 the result boundary in `ExecuteRealized`, after sort → strip → limit:
-entity columns stay `Identity` through all relational operations, every
+entity bindings stay `Identity` through all relational operations, every
 crash site heals untouched, deduplication gains correct by-entity set
 semantics, and pull + `:limit N` pulls only N entities. Companion
 enforcement: `hashValue`/`ValuesEqual` defaults become loud failures
@@ -172,7 +172,7 @@ creation); re-deduplication is redundant for comparable tuples and fatal
 for pulled ones.
 
 The companion strip step being added by the order-by fix (project retained
-sort columns away after sorting) must likewise skip deduplication when the
+sort attributes away after sorting) must likewise skip deduplication when the
 find spec contains pulls, mirroring `executePulls`' own exemption.
 
 See the Design Decision section of

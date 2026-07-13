@@ -206,79 +206,79 @@ func TestSetSemantics_Projection(t *testing.T) {
 func TestSetSemantics_Joins(t *testing.T) {
 	t.Run("HashJoin produces no duplicates", func(t *testing.T) {
 		// Create relations where join could produce duplicates
-		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 		leftTuples := []Tuple{
 			{1, "a"},
 			{1, "b"}, // Same ?x, different ?y
 			{2, "c"},
 		}
-		left := NewMaterializedRelation(leftCols, leftTuples)
+		left := NewMaterializedRelation(leftSymbols, leftTuples)
 
-		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")}
 		rightTuples := []Tuple{
 			{1, 100},
 			{1, 100}, // Duplicate in input (should be deduped by constructor)
 			{2, 200},
 		}
-		right := NewMaterializedRelation(rightCols, rightTuples)
+		right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 		joined := HashJoin(left, right, []query.Symbol{datalog.NewSymbol("?x")})
 		assertNoDuplicates(t, "HashJoin", joined)
 	})
 
 	t.Run("SemiJoin produces no duplicates", func(t *testing.T) {
-		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 		leftTuples := []Tuple{
 			{1, "a"},
 			{1, "b"},
 			{2, "c"},
 		}
-		left := NewMaterializedRelation(leftCols, leftTuples)
+		left := NewMaterializedRelation(leftSymbols, leftTuples)
 
-		rightCols := []query.Symbol{datalog.NewSymbol("?x")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?x")}
 		rightTuples := []Tuple{
 			{1},
 			{1}, // Duplicate key
 		}
-		right := NewMaterializedRelation(rightCols, rightTuples)
+		right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 		joined := SemiJoin(left, right, []query.Symbol{datalog.NewSymbol("?x")})
 		assertNoDuplicates(t, "SemiJoin", joined)
 	})
 
 	t.Run("AntiJoin produces no duplicates", func(t *testing.T) {
-		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 		leftTuples := []Tuple{
 			{1, "a"},
 			{2, "b"},
 			{3, "c"},
 		}
-		left := NewMaterializedRelation(leftCols, leftTuples)
+		left := NewMaterializedRelation(leftSymbols, leftTuples)
 
-		rightCols := []query.Symbol{datalog.NewSymbol("?x")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?x")}
 		rightTuples := []Tuple{
 			{1},
 		}
-		right := NewMaterializedRelation(rightCols, rightTuples)
+		right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 		joined := AntiJoin(left, right, []query.Symbol{datalog.NewSymbol("?x")})
 		assertNoDuplicates(t, "AntiJoin", joined)
 	})
 
 	t.Run("Natural Join (via Join method) produces no duplicates", func(t *testing.T) {
-		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 		leftTuples := []Tuple{
 			{1, "a"},
 			{2, "b"},
 		}
-		left := NewMaterializedRelation(leftCols, leftTuples)
+		left := NewMaterializedRelation(leftSymbols, leftTuples)
 
-		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")}
 		rightTuples := []Tuple{
 			{1, 100},
 			{2, 200},
 		}
-		right := NewMaterializedRelation(rightCols, rightTuples)
+		right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 		joined := left.Join(right)
 		assertNoDuplicates(t, "Natural Join", joined)
@@ -291,20 +291,20 @@ func TestSetSemantics_Joins(t *testing.T) {
 
 func TestSetSemantics_Union(t *testing.T) {
 	t.Run("UnionRelation deduplicates across relations", func(t *testing.T) {
-		cols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 		// Create channel with relations that have overlapping tuples
 		ch := make(chan relationItem, 3)
 
-		rel1 := NewMaterializedRelation(cols, []Tuple{
+		rel1 := NewMaterializedRelation(symbols, []Tuple{
 			{1, "a"},
 			{2, "b"},
 		})
-		rel2 := NewMaterializedRelation(cols, []Tuple{
+		rel2 := NewMaterializedRelation(symbols, []Tuple{
 			{2, "b"}, // Duplicate from rel1
 			{3, "c"},
 		})
-		rel3 := NewMaterializedRelation(cols, []Tuple{
+		rel3 := NewMaterializedRelation(symbols, []Tuple{
 			{1, "a"}, // Duplicate from rel1
 			{3, "c"}, // Duplicate from rel2
 			{4, "d"},
@@ -315,7 +315,7 @@ func TestSetSemantics_Union(t *testing.T) {
 		ch <- relationItem{relation: rel3}
 		close(ch)
 
-		union := NewUnionRelation(ch, cols, ExecutorOptions{})
+		union := NewUnionRelation(ch, symbols, ExecutorOptions{})
 		materialized := union.Materialize()
 
 		// Should have 4 unique tuples

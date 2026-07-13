@@ -176,12 +176,12 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		}
 	}
 
-	newColumns := symbols
+	newSymbols := symbols
 	if !hasAllBindings && len(bindingSymbols) > 0 {
-		newColumns = append([]query.Symbol{}, symbols...)
+		newSymbols = append([]query.Symbol{}, symbols...)
 		for _, bindSym := range bindingSymbols {
 			if _, exists := existingBindingIndices[bindSym]; !exists {
-				newColumns = append(newColumns, bindSym)
+				newSymbols = append(newSymbols, bindSym)
 			}
 		}
 	}
@@ -276,11 +276,11 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 						}
 						newTuples = append(newTuples, newTuple)
 					} else {
-						newTuple := make(Tuple, len(newColumns))
+						newTuple := make(Tuple, len(newSymbols))
 						copy(newTuple, tuple)
 						for i, bindSym := range tb.Variables {
-							for j := len(symbols); j < len(newColumns); j++ {
-								if newColumns[j] == bindSym {
+							for j := len(symbols); j < len(newSymbols); j++ {
+								if newSymbols[j] == bindSym {
 									newTuple[j] = subTuple[i]
 									break
 								}
@@ -323,16 +323,16 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			newTuples = append(newTuples, newTuple)
 		} else {
 			// Add new symbols
-			newTuple := make(Tuple, len(newColumns))
+			newTuple := make(Tuple, len(newSymbols))
 			copy(newTuple, tuple)
 			// Handle tuple binding - evalResult should be []interface{}
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {
 				values, ok := evalResult.([]interface{})
 				if ok && len(values) == len(tb.Variables) {
 					for i, bindSym := range tb.Variables {
-						// Find position of this symbol in newColumns
-						for j := len(symbols); j < len(newColumns); j++ {
-							if newColumns[j] == bindSym {
+						// Find the position of this symbol in newSymbols.
+						for j := len(symbols); j < len(newSymbols); j++ {
+							if newSymbols[j] == bindSym {
 								newTuple[j] = values[i]
 								break
 							}
@@ -354,13 +354,13 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	opts := rel.Options()
 	properties := rel.Properties()
 	if expanded {
-		properties = expansionProperties(properties, bindingSymbols, newColumns)
+		properties = expansionProperties(properties, bindingSymbols, newSymbols)
 	} else {
 		for _, symbol := range bindingSymbols {
 			properties = properties.addSymbol(symbol)
 		}
 	}
-	result = NewMaterializedRelationWithProperties(newColumns, newTuples, opts, properties)
+	result = NewMaterializedRelationWithProperties(newSymbols, newTuples, opts, properties)
 	return
 }
 
@@ -577,13 +577,16 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 			}
 		}
 		// Capture a branch's deferred scan error so the union doesn't drop it.
-		if e := iter.Error(); e != nil && firstErr == nil {
-			firstErr = e
+		branchErr := iter.Error()
+		if closeErr := iter.Close(); branchErr == nil {
+			branchErr = closeErr
 		}
-		iter.Close()
+		if branchErr != nil && firstErr == nil {
+			firstErr = branchErr
+		}
 	}
 
-	result := NewMaterializedRelationWithProperties(
+	result := newMaterializedRelationFromSet(
 		syms,
 		allTuples,
 		opts,

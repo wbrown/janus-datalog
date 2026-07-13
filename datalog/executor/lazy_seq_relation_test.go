@@ -104,12 +104,17 @@ func TestLazySeqRelation_SymbolRemapping(t *testing.T) {
 // TestLazySeqRelation_Materialize verifies that Materialize() realizes
 // the entire seq and returns a relation that can be iterated.
 func TestLazySeqRelation_Materialize(t *testing.T) {
+	nextCalls := 0
 	tuples := []Tuple{{10}, {20}, {30}}
-	seq := makeTupleSeq(tuples)
+	seq := NewTupleSeq(
+		&countingSliceIterator{tuples: tuples, nextCalls: &nextCalls},
+		false,
+	)
 	rel := NewLazySeqRelation(seq, []query.Symbol{datalog.NewSymbol("?x")})
 
 	mat := rel.Materialize()
-	require.NotNil(t, mat)
+	require.Same(t, rel, mat)
+	require.Zero(t, nextCalls, "Materialize must not force a LazySeq")
 
 	var collected []Tuple
 	it := mat.Iterator()
@@ -121,9 +126,111 @@ func TestLazySeqRelation_Materialize(t *testing.T) {
 	it.Close()
 
 	require.Len(t, collected, 3)
+	require.Equal(t, 3, nextCalls)
 	assert.Equal(t, 10, collected[0][0])
 	assert.Equal(t, 20, collected[1][0])
 	assert.Equal(t, 30, collected[2][0])
+}
+
+func TestLazySeqRelationTransformsRemainLazy(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	y := datalog.NewSymbol("?y")
+
+	t.Run("project", func(t *testing.T) {
+		nextCalls := 0
+		relation := NewLazySeqRelation(
+			NewTupleSeq(
+				&countingSliceIterator{
+					tuples:    []Tuple{{int64(1), "a"}, {int64(2), "b"}},
+					nextCalls: &nextCalls,
+				},
+				false,
+			),
+			[]query.Symbol{x, y},
+		)
+		projected, err := relation.Project([]query.Symbol{x})
+		require.NoError(t, err)
+		require.Zero(t, nextCalls)
+		it := projected.Iterator()
+		require.True(t, it.Next())
+		require.Equal(t, Tuple{int64(1)}, it.Tuple())
+		require.Equal(t, 1, nextCalls)
+		require.NoError(t, it.Close())
+	})
+
+	t.Run("predicate", func(t *testing.T) {
+		nextCalls := 0
+		relation := NewLazySeqRelation(
+			NewTupleSeq(
+				&countingSliceIterator{
+					tuples:    []Tuple{{int64(1)}, {int64(2)}, {int64(3)}},
+					nextCalls: &nextCalls,
+				},
+				false,
+			),
+			[]query.Symbol{x},
+		)
+		filtered := relation.FilterWithPredicate(&query.Comparison{
+			Op:    query.OpGT,
+			Left:  query.VariableTerm{Symbol: x},
+			Right: query.ConstantTerm{Value: int64(1)},
+		})
+		require.Zero(t, nextCalls)
+		it := filtered.Iterator()
+		require.True(t, it.Next())
+		require.Equal(t, Tuple{int64(2)}, it.Tuple())
+		require.Equal(t, 2, nextCalls)
+		require.NoError(t, it.Close())
+	})
+
+	t.Run("extension", func(t *testing.T) {
+		nextCalls := 0
+		relation := NewLazySeqRelation(
+			NewTupleSeq(
+				&countingSliceIterator{
+					tuples:    []Tuple{{int64(1)}, {int64(2)}},
+					nextCalls: &nextCalls,
+				},
+				false,
+			),
+			[]query.Symbol{x},
+		)
+		extended := relation.EvaluateFunction(
+			query.ArithmeticFunction{
+				Op: query.OpAdd,
+				Args: []query.Term{
+					query.VariableTerm{Symbol: x},
+					query.ConstantTerm{Value: int64(10)},
+				},
+			},
+			y,
+		)
+		require.Zero(t, nextCalls)
+		it := extended.Iterator()
+		require.True(t, it.Next())
+		require.Equal(t, Tuple{int64(1), int64(11)}, it.Tuple())
+		require.Equal(t, 1, nextCalls)
+		require.NoError(t, it.Close())
+	})
+}
+
+func TestLazySeqRelationGetRealizesOnlyRequiredPrefix(t *testing.T) {
+	nextCalls := 0
+	relation := NewLazySeqRelation(
+		NewTupleSeq(
+			&countingSliceIterator{
+				tuples:    []Tuple{{int64(1)}, {int64(2)}, {int64(3)}},
+				nextCalls: &nextCalls,
+			},
+			false,
+		),
+		testSymbols(),
+	)
+
+	require.Equal(t, Tuple{int64(2)}, relation.Get(1))
+	require.Equal(t, 2, nextCalls)
+	require.Equal(t, Tuple{int64(1)}, relation.Get(0))
+	require.Equal(t, 2, nextCalls, "cached prefix must satisfy earlier random access")
 }
 
 // makeTupleSeq creates a LazySeq from a slice of tuples for testing.

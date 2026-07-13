@@ -40,14 +40,39 @@ func decompileNode(n *Node) ([]query.Clause, error) {
 	case RuleConstant:
 		return decompileConstant(n)
 	case RuleProject:
-		// Project doesn't produce clauses — pass through child
-		if len(n.Children) > 0 {
-			return decompileNode(n.Children[0])
-		}
-		return nil, nil
+		return decompileProject(n)
 	default:
 		return nil, fmt.Errorf("unknown algebra node: %s", n.Op)
 	}
+}
+
+func decompileProject(n *Node) ([]query.Clause, error) {
+	project := n.Data.(*Project)
+	if len(n.Children) == 0 {
+		return nil, nil
+	}
+	if len(n.Children) != 1 {
+		return nil, fmt.Errorf("Project requires 1 child")
+	}
+	where, err := decompileNode(n.Children[0])
+	if err != nil {
+		return nil, err
+	}
+	find := make([]query.FindElement, len(project.Symbols))
+	for i, symbol := range project.Symbols {
+		find[i] = query.FindVariable{Symbol: symbol}
+	}
+	return []query.Clause{&query.SubqueryPattern{
+		Query: &query.Query{
+			Find:  find,
+			In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
+			Where: where,
+		},
+		Inputs: []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
+		Binding: query.RelationBinding{
+			Variables: append([]query.Symbol(nil), project.Symbols...),
+		},
+	}}, nil
 }
 
 // decompileScan emits the original DataPattern.
@@ -435,14 +460,15 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 		Where: innerClauses,
 	}
 
-	// Build binding: RelationBinding with outer names (agg.Output).
+	// Build binding with the outer names corresponding positionally to the
+	// grouped keys and aggregate results.
 	// Uses Constant($) for the database source marker (not Variable).
 	// RelationBinding (not TupleBinding) because the decorrelated query
 	// returns multiple rows (one per GROUP BY value).
 	sp := &query.SubqueryPattern{
 		Query:   innerQuery,
 		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
-		Binding: query.RelationBinding{Variables: agg.Output},
+		Binding: query.RelationBinding{Variables: agg.Bindings},
 	}
 
 	return []query.Clause{sp}, nil

@@ -241,7 +241,7 @@ func TestCompareValues(t *testing.T) {
 		{"float to int", 10.5, int(10), 1},
 
 		// Mixed types order by type rank (numeric=1 < bool=2 < string=4).
-		{"string vs int", "test", 123, 1},  // string rank > numeric rank
+		{"string vs int", "test", 123, 1},    // string rank > numeric rank
 		{"bool vs string", true, "test", -1}, // bool rank < string rank
 	}
 

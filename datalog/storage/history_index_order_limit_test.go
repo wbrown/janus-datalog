@@ -617,12 +617,12 @@ func requireHistoryRowsEqual(
 	require.Len(t, actual, len(expected), "%s limit %d", shape, limit)
 	for rowIndex := range expected {
 		require.Len(t, actual[rowIndex], len(expected[rowIndex]), "%s limit %d row %d", shape, limit, rowIndex)
-		for columnIndex := range expected[rowIndex] {
+		for tuplePosition := range expected[rowIndex] {
 			require.True(t,
-				datalog.ValuesEqual(expected[rowIndex][columnIndex], actual[rowIndex][columnIndex]),
-				"%s limit %d row %d column %d: expected %v, got %v",
-				shape, limit, rowIndex, columnIndex,
-				expected[rowIndex][columnIndex], actual[rowIndex][columnIndex],
+				datalog.ValuesEqual(expected[rowIndex][tuplePosition], actual[rowIndex][tuplePosition]),
+				"%s limit %d row %d tuple position %d: expected %v, got %v",
+				shape, limit, rowIndex, tuplePosition,
+				expected[rowIndex][tuplePosition], actual[rowIndex][tuplePosition],
 			)
 		}
 	}

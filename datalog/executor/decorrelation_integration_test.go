@@ -215,7 +215,7 @@ func TestHourlyOHLCDecorrelation(t *testing.T) {
 
 		for j := range rowDecor {
 			if rowDecor[j] != rowNoDecor[j] {
-				t.Errorf("Tuple %d, col %d mismatch: decorrelated=%v, sequential=%v",
+				t.Errorf("Tuple %d, position %d mismatch: decorrelated=%v, sequential=%v",
 					i, j, rowDecor[j], rowNoDecor[j])
 			}
 		}

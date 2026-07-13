@@ -8,10 +8,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// optimizeViaAlgebra compiles clauses to a relational algebra IR, applies
-// algebraic equivalence rules, then decompiles back to clauses.
-// This is a pure clause transformation: []Clause → []Clause.
-func optimizeViaAlgebra(clauses []query.Clause, handler annotations.Handler) ([]query.Clause, error) {
+// optimizeAlgebra compiles clauses to relational algebra and applies the
+// configured equivalence passes without flattening the optimized tree.
+func optimizeAlgebra(clauses []query.Clause, handler annotations.Handler) (*algebra.Node, error) {
 	emit := func(name string, data map[string]interface{}) {
 		if handler != nil {
 			handler(annotations.Event{Name: name, Data: data})
@@ -47,55 +46,59 @@ func optimizeViaAlgebra(clauses []query.Clause, handler annotations.Handler) ([]
 	emit("algebra/optimized", map[string]interface{}{
 		"tree": optimized.String(),
 	})
+	return optimized, nil
+}
 
-	result, err := algebra.Decompile(optimized)
-	if err != nil {
-		emit("algebra/decompile-error", map[string]interface{}{
-			"error": err.Error(),
-		})
-		return nil, fmt.Errorf("algebra decompile: %w", err)
+// optimizeViaAlgebra preserves the logical optimizer contract: Datalog in,
+// Datalog out. Algebra is an internal representation only; physical phase
+// construction remains the planner's responsibility.
+func optimizeViaAlgebra(
+	q *query.Query,
+	options PlannerOptions,
+	handler annotations.Handler,
+) (*query.Query, error) {
+	if q == nil {
+		return nil, fmt.Errorf("algebra optimize: nil query")
 	}
-
-	// Report what changed
-	changed := len(result) != len(clauses)
-	if !changed {
-		for i := range result {
-			if fmt.Sprintf("%T", result[i]) != fmt.Sprintf("%T", clauses[i]) {
-				changed = true
+	optimized, err := optimizeAlgebra(q.Where, handler)
+	if err != nil {
+		return nil, err
+	}
+	if options.EnableJoinProjectInsertion {
+		hasValueInput := false
+		for _, input := range q.In {
+			if _, isDatabase := input.(query.DatabaseInput); !isDatabase {
+				hasValueInput = true
 				break
 			}
 		}
-	}
-
-	var resultTypes []string
-	var resultDetails []string
-	for _, c := range result {
-		resultTypes = append(resultTypes, fmt.Sprintf("%T", c))
-		detail := fmt.Sprintf("%T", c)
-		switch cl := c.(type) {
-		case *query.OrClause:
-			detail += fmt.Sprintf(" branches=%d", len(cl.Branches))
-		case *query.OrJoinClause:
-			detail += fmt.Sprintf(" joinVars=%v branches=%d", cl.JoinVars, len(cl.Branches))
-		case *query.OrDefaultClause:
-			detail += fmt.Sprintf(" branches=%d", len(cl.Branches))
-		case *query.OrDefaultJoinClause:
-			detail += fmt.Sprintf(" joinVars=%v branches=%d", cl.JoinVars, len(cl.Branches))
-		case *query.NotClause:
-			detail += fmt.Sprintf(" innerClauses=%d", len(cl.Clauses))
-		case *query.NotJoinClause:
-			detail += fmt.Sprintf(" joinVars=%v innerClauses=%d", cl.JoinVars, len(cl.Clauses))
+		if !hasValueInput {
+			optimized, err = algebra.InsertJoinProjects(optimized, terminalSymbols(q))
+			if err != nil {
+				return nil, fmt.Errorf("algebra project insertion: %w", err)
+			}
 		}
-		resultDetails = append(resultDetails, detail)
 	}
-
-	emit("algebra/bridge-complete", map[string]interface{}{
-		"input_clauses":  len(clauses),
-		"output_clauses": len(result),
-		"changed":        changed,
-		"output_types":   resultTypes,
-		"output_details": resultDetails,
-	})
-
-	return result, nil
+	clauses, err := algebra.Decompile(optimized)
+	if err != nil {
+		if handler != nil {
+			handler(annotations.Event{
+				Name: "algebra/decompile-error",
+				Data: map[string]interface{}{"error": err.Error()},
+			})
+		}
+		return nil, fmt.Errorf("algebra decompile: %w", err)
+	}
+	rewritten := *q
+	rewritten.Where = clauses
+	if handler != nil {
+		handler(annotations.Event{
+			Name: "algebra/bridge-complete",
+			Data: map[string]interface{}{
+				"input_clause_count":  len(q.Where),
+				"output_clause_count": len(clauses),
+			},
+		})
+	}
+	return &rewritten, nil
 }

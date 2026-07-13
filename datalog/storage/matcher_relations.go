@@ -44,7 +44,7 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		return nil, err
 	}
 	// Determine pattern symbols
-	symbols := pattern.ExtractColumns()
+	symbols := pattern.Symbols()
 
 	if bindings == nil || len(bindings) == 0 {
 		// Simple case - no bindings

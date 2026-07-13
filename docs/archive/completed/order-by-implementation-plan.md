@@ -123,7 +123,7 @@ func sortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
     // Get symbol indices for sort variables
     sortIndices := make([]int, len(orderBy))
     for i, clause := range orderBy {
-        idx := mat.ColumnIndex(clause.Variable)
+        idx := mat.SymbolIndex(clause.Variable)
         if idx < 0 {
             // Variable not in results, skip sorting by it
             continue

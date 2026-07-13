@@ -151,7 +151,7 @@ func TestConditionalAggregateRewriteAnnotationUsesDatalogFindClause(t *testing.T
 		Query: phaseQuery,
 		Phases: []planner.RealizedPhase{{
 			Query:    phaseQuery,
-			Provides: []query.Symbol{symE, symValue, symFilter},
+			Provides: []query.Symbol{datalog.NewSymbol(find[0].String())},
 		}},
 	}
 

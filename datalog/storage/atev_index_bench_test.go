@@ -68,8 +68,8 @@ func populateAttribute(b *testing.B, store *BadgerStore, a datalog.Keyword, coun
 }
 
 // BenchmarkMaxElementIDForAttribute_ATEVSeek_vs_AEVTScan measures the
-// freshness-path win at several attribute cardinalities. The ATEV column is
-// the production path (single forward seek); the AEVT column is the
+// freshness-path win at several attribute cardinalities. The ATEV index path is
+// the production path (single forward seek); the AEVT index path is the
 // pre-existing forward scan.
 //
 // Expectation: ATEV is roughly constant-time; AEVT scales linearly with the

@@ -150,7 +150,7 @@ do not appear in the int64 50K profile:
 
 `hashValue` 5.72% is the FNV-1a loop over the 20-byte SHA1 hash for
 `datalog.Identity` values. `NewTupleKey` 6.35% is the
-`make([]interface{}, len(indices))` for the multi-column key path.
+`make([]interface{}, len(indices))` for the multi-symbol key path.
 `combineTuples` is type-agnostic and tracks the int64 case closely.
 
 `ValuesEqual`/`reflect.ValueOf` (finding #2) does not surface in
@@ -357,7 +357,7 @@ the achievable result may land somewhat either side of it).
 After-state for same-entity attribute fusion (`EnableAttributeFetchFusion`,
 default on). Adds a `patterns-fused` arm to `BenchmarkAttrFetch`: the same
 `patterns` query run with fusion enabled, which turns each same-entity
-`[?e :const-attr ?fresh]` pattern into a per-tuple `LookupAttribute` column
+`[?e :const-attr ?fresh]` pattern into a per-tuple `LookupAttribute` binding
 attach instead of a match + hash join. n=10, Apple M5 darwin/arm64.
 
 | N | K | patterns | fused | pull | fused vs patterns | patterns allocs | fused allocs |

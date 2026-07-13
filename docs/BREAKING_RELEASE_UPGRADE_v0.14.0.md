@@ -59,6 +59,11 @@ The query builder functions `qb.Add`, `Sub`, `Mul`, and `Div` take a required
 first operand followed by variadic operands. Existing two-operand calls remain
 valid.
 
+### Data patterns
+
+The deprecated `query.DataPattern.ExtractColumns` method was removed. Use
+`DataPattern.Symbols` to obtain the relation symbols bound by a pattern.
+
 ### Planner and executor cleanup
 
 The supported planner interchange is `planner.RealizedPlan` /
@@ -87,7 +92,7 @@ observe additional result groups.
 Grouped aggregate queries whose grouping variables are absent from the source
 relation are now rejected during execution. This includes queries such as
 `[:find ?missing (count ?e) ...]`; they no longer reach aggregation with an
-undefined grouping column.
+undefined grouping symbol.
 
 ## Legacy L85 physical databases
 

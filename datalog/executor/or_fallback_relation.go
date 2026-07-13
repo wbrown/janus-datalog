@@ -17,18 +17,19 @@ import (
 // branches in order until one produces results. When shortCircuit=false
 // (correlated union), it evaluates ALL branches and unions the results.
 type OrFallbackRelation struct {
-	executor      *DefaultQueryExecutor
-	ctx           Context
-	branches      [][]query.Clause
-	outerRel      Relation
-	symbols       []query.Symbol // Determined lazily from first result
-	options       ExecutorOptions
-	properties    RelationProperties
-	deduplicate   bool
-	iteratorCount int            // Track how many iterators have been created (for debugging)
-	joinSyms      []query.Symbol // From or-join: explicit join variables for cache keying
-	prefetched    bool           // True when PrefetchEntities has warmed the EA cache
-	shortCircuit  bool           // true = fallback (first match wins), false = correlated union (all branches)
+	executor       *DefaultQueryExecutor
+	ctx            Context
+	branches       [][]query.Clause
+	outerRel       Relation
+	symbols        []query.Symbol // Determined lazily from first result
+	options        ExecutorOptions
+	properties     RelationProperties
+	deduplicate    bool
+	iteratorCount  int            // Track how many iterators have been created (for debugging)
+	joinSyms       []query.Symbol // From or-join: explicit join variables for cache keying
+	prefetched     bool           // True when PrefetchEntities has warmed the EA cache
+	shortCircuit   bool           // true = fallback (first match wins), false = correlated union (all branches)
+	consumedGroups []int          // Input relation groups already incorporated into outerRel
 }
 
 // NewOrFallbackRelation creates a streaming OR relation.
@@ -425,7 +426,23 @@ func (r *OrFallbackRelation) Iterator() Iterator {
 		if _, isMat := outer.(*MaterializedRelation); !isMat {
 			var tuples []Tuple
 			setupErr = collectTuplesInto(&tuples, outer)
-			outer = NewMaterializedRelationWithOptions(outer.Symbols(), tuples, r.options)
+			materialized := newMaterializedRelationFromSet(
+				outer.Symbols(),
+				tuples,
+				r.options,
+				outer.Properties(),
+			)
+			materialized.err = setupErr
+			outer = materialized
+			if collector := r.ctx.Collector(); collector != nil {
+				collector.Add(annotations.Event{
+					Name: "or-fallback/outer.materialized",
+					Data: map[string]interface{}{
+						"reason":      "join-key-narrowing",
+						"tuple_count": len(tuples),
+					},
+				})
+			}
 		}
 	}
 
@@ -522,7 +539,7 @@ func (r *OrFallbackRelation) Materialize() Relation {
 	if syms == nil {
 		syms = r.Symbols()
 	}
-	mat := NewMaterializedRelationWithProperties(syms, tuples, r.options, r.properties)
+	mat := newMaterializedRelationFromSet(syms, tuples, r.options, r.properties)
 	if err != nil {
 		mat.err = err
 	}
@@ -722,7 +739,16 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 			idx.Put(key, []Tuple{tuple})
 		}
 	}
-	outerIt.Close()
+	outerErr := outerIt.Error()
+	closeErr := outerIt.Close()
+	if outerErr != nil {
+		it.err = outerErr
+		return nil
+	}
+	if closeErr != nil {
+		it.err = closeErr
+		return nil
+	}
 
 	return &cachedBranch{
 		index:      idx,
@@ -817,7 +843,11 @@ func hasNarrowableBranch(branches [][]query.Clause) bool {
 // the specified join symbols. Only join variables are used as keys —
 // not all shared symbols — because branch results may contain symbols
 // with the same name but different values than the outer relation.
-func buildCachedBranch(branchResult Relation, outerSyms []query.Symbol, joinSyms []query.Symbol) *cachedBranch {
+func buildCachedBranch(
+	branchResult Relation,
+	outerSyms []query.Symbol,
+	joinSyms []query.Symbol,
+) (*cachedBranch, error) {
 	branchSyms := branchResult.Symbols()
 
 	// Use only join symbols as cache keys
@@ -850,7 +880,7 @@ func buildCachedBranch(branchResult Relation, outerSyms []query.Symbol, joinSyms
 		}
 	}
 	if len(bIdx) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	idx := NewTupleKeyMap()
@@ -866,9 +896,20 @@ func buildCachedBranch(branchResult Relation, outerSyms []query.Symbol, joinSyms
 			idx.Put(key, []Tuple{cp})
 		}
 	}
-	iter.Close()
+	iterErr := iter.Error()
+	if closeErr := iter.Close(); iterErr == nil {
+		iterErr = closeErr
+	}
+	if iterErr != nil {
+		return nil, iterErr
+	}
 
-	return &cachedBranch{index: idx, branchSyms: branchSyms, outerIdx: oIdx, branchIdx: bIdx}
+	return &cachedBranch{
+		index:      idx,
+		branchSyms: branchSyms,
+		outerIdx:   oIdx,
+		branchIdx:  bIdx,
+	}, nil
 }
 
 func (it *OrFallbackIterator) Next() bool {
@@ -903,6 +944,7 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 	// Initialize: advance to first outer tuple before trying any branches
 	if it.unionInputRel == nil && it.unionBranchIdx == 0 {
 		if !it.outerIter.Next() {
+			it.err = it.outerIter.Error()
 			it.done = true
 			return false
 		}
@@ -923,10 +965,20 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 				it.currentTuple = it.currentBranchIter.Tuple()
 				return true
 			}
-			// Branch exhausted, close it
-			it.currentBranchIter.Close()
+			branchErr := it.currentBranchIter.Error()
+			closeErr := it.currentBranchIter.Close()
 			it.currentBranchIter = nil
 			it.currentBranchRelation = nil
+			if branchErr != nil {
+				it.err = branchErr
+				it.done = true
+				return false
+			}
+			if closeErr != nil {
+				it.err = closeErr
+				it.done = true
+				return false
+			}
 		}
 
 		// Try remaining branches for the current outer tuple
@@ -967,11 +1019,23 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 				}
 				return true
 			}
-			branchIter.Close()
+			branchErr := branchIter.Error()
+			closeErr := branchIter.Close()
+			if branchErr != nil {
+				it.err = branchErr
+				it.done = true
+				return false
+			}
+			if closeErr != nil {
+				it.err = closeErr
+				it.done = true
+				return false
+			}
 		}
 
 		// All branches exhausted for current outer tuple — advance to next
 		if !it.outerIter.Next() {
+			it.err = it.outerIter.Error()
 			it.done = true
 			return false
 		}
@@ -1024,7 +1088,7 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 		return nil
 	}
 
-	// Map each join symbol to its column in the outer relation.
+	// Map each join symbol to its tuple position in the outer relation.
 	pos := make([]int, len(it.joinSyms))
 	for i, js := range it.joinSyms {
 		pos[i] = -1
@@ -1068,12 +1132,26 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 		seen.Put(tk, true)
 		keys = append(keys, key)
 	}
-	oit.Close()
+	outerErr := oit.Error()
+	closeErr := oit.Close()
+	if outerErr != nil {
+		it.err = outerErr
+		return nil
+	}
+	if closeErr != nil {
+		it.err = closeErr
+		return nil
+	}
 
 	if len(keys) == 0 {
 		return nil
 	}
-	it.joinKeyRel = NewMaterializedRelationWithOptions(it.joinSyms, keys, it.options)
+	it.joinKeyRel = newMaterializedRelationFromSet(
+		it.joinSyms,
+		keys,
+		it.options,
+		deduplicatedProperties(it.joinSyms),
+	)
 	return it.joinKeyRel
 }
 
@@ -1087,14 +1165,25 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				it.currentTuple = it.currentBranchIter.Tuple()
 				return true
 			}
-			// Branch exhausted, close it
-			it.currentBranchIter.Close()
+			branchErr := it.currentBranchIter.Error()
+			closeErr := it.currentBranchIter.Close()
 			it.currentBranchIter = nil
 			it.currentBranchRelation = nil
+			if branchErr != nil {
+				it.err = branchErr
+				it.done = true
+				return false
+			}
+			if closeErr != nil {
+				it.err = closeErr
+				it.done = true
+				return false
+			}
 		}
 
 		// Need to advance to next outer tuple
 		if !it.outerIter.Next() {
+			it.err = it.outerIter.Error()
 			// Emit annotation when outer iterator exhausted
 			if collector := it.ctx.Collector(); collector != nil {
 				collector.Add(annotations.Event{
@@ -1249,7 +1338,12 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 									},
 								})
 							}
-							cb := buildCachedBranch(branchResult, it.outerSyms, it.joinSyms)
+							cb, err := buildCachedBranch(branchResult, it.outerSyms, it.joinSyms)
+							if err != nil {
+								it.err = err
+								it.done = true
+								return false
+							}
 							if cb != nil {
 								if it.branchCache == nil {
 									it.branchCache = make(map[int]*cachedBranch)
@@ -1305,7 +1399,18 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 					}
 					return true
 				}
-				branchIter.Close()
+				branchErr := branchIter.Error()
+				closeErr := branchIter.Close()
+				if branchErr != nil {
+					it.err = branchErr
+					it.done = true
+					return false
+				}
+				if closeErr != nil {
+					it.err = closeErr
+					it.done = true
+					return false
+				}
 			}
 		}
 		// No branch matched for this outer tuple - continue to next outer tuple
@@ -1317,15 +1422,18 @@ func (it *OrFallbackIterator) Tuple() Tuple {
 }
 
 func (it *OrFallbackIterator) Close() error {
+	var closeErr error
 	if it.currentBranchIter != nil {
-		it.currentBranchIter.Close()
+		closeErr = it.currentBranchIter.Close()
 		it.currentBranchIter = nil
 	}
 	if it.outerIter != nil {
-		it.outerIter.Close()
+		if err := it.outerIter.Close(); closeErr == nil {
+			closeErr = err
+		}
 	}
 	it.done = true
-	return nil
+	return closeErr
 }
 
 // Error returns any error encountered during iteration
@@ -1447,9 +1555,15 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 			tuples = append(tuples, cp)
 		}
 	}
-	iter.Close()
-
-	return NewMaterializedRelation(branchSyms, tuples)
+	iterErr := iter.Error()
+	closeErr := iter.Close()
+	result := NewMaterializedRelation(branchSyms, tuples)
+	if iterErr != nil {
+		result.err = iterErr
+	} else if closeErr != nil {
+		result.err = closeErr
+	}
+	return result
 }
 
 func (it *projectedIterator) Close() error {

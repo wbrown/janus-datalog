@@ -30,7 +30,7 @@ Two consequences, one live and one latent:
    values degrades to a linear equality scan: all entries collide, and
    every lookup walks the collision chain calling `datalog.ValuesEqual`
    (recursive slice comparison) per entry. Hash joins and deduplication
-   over vector-valued columns are effectively O(n²).
+   over vector-valued relation attributes are effectively O(n²).
 2. **OBSERVED — silent wrong results under stack movement.** Correctness
    survives *only* while equal-and-unequal values alike share the constant
    and the equality fallback resolves them. But the "constant" is the

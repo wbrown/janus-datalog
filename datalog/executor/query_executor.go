@@ -69,7 +69,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		switch c := clause.(type) {
 		case *query.DataPattern:
 			// Same-entity attribute fetches on an already-bound ?e are
-			// per-tuple column attaches, not new relations to hash-join.
+			// per-tuple attribute attaches, not new relations to hash-join.
 			// Consume a contiguous run in one traversal when every pattern
 			// satisfies the existing cardinality and temporal gates.
 			fusedCount := 0
@@ -177,7 +177,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -189,7 +189,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-join) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -201,7 +201,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-default) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -213,7 +213,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				return nil, fmt.Errorf("clause %d (or-default-join) failed: %w", i, err)
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = Relations(ctx.CollapseRelations([]Relation(groups), func() []Relation {
 				return []Relation(groups.Collapse(ctx))
@@ -276,7 +276,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 
 	} else {
 		// Simple projection to :find symbols. Pull find elements project
-		// their entity variable like any other column (Identity values):
+		// their entity variable like any other symbol (Identity values):
 		// pull rendering is result presentation and happens at the result
 		// boundary in ExecuteRealized, after sort/strip/limit — never
 		// inside relational flow. See
@@ -372,7 +372,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 
 		// Single group or each group projects independently. Pull rendering
 		// happens at the result boundary (ExecuteRealized, after
-		// sort/strip/limit), not here: entity columns stay Identity through
+		// sort/strip/limit), not here: entity bindings stay Identity through
 		// the relational pipeline.
 		for i, group := range groups {
 			projected, err := group.Project(findSymbols)
@@ -409,12 +409,66 @@ func (e *DefaultQueryExecutor) executePattern(
 }
 
 type attributeFetchSpec struct {
-	attr   datalog.Keyword
-	output query.Symbol
+	attr         datalog.Keyword
+	output       query.Symbol
+	expected     interface{}
+	isConstraint bool
+}
+
+func replaceConsumedOrGroups(
+	ctx Context,
+	groups Relations,
+	relation Relation,
+) Relations {
+	orRelation, ok := relation.(*OrFallbackRelation)
+	if !ok || len(orRelation.consumedGroups) == 0 {
+		return append(groups, relation)
+	}
+
+	consumed := make(map[int]bool, len(orRelation.consumedGroups))
+	insertAt := len(groups)
+	for _, index := range orRelation.consumedGroups {
+		if index < 0 || index >= len(groups) {
+			continue
+		}
+		consumed[index] = true
+		if index < insertAt {
+			insertAt = index
+		}
+	}
+	if len(consumed) == 0 {
+		return append(groups, relation)
+	}
+
+	result := make(Relations, 0, len(groups)-len(consumed)+1)
+	inserted := false
+	for index, group := range groups {
+		if index == insertAt {
+			result = append(result, relation)
+			inserted = true
+		}
+		if !consumed[index] {
+			result = append(result, group)
+		}
+	}
+	if !inserted {
+		result = append(result, relation)
+	}
+
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: "or/outer-replaced",
+			Data: map[string]interface{}{
+				"consumed_groups":  len(consumed),
+				"remaining_groups": len(result),
+			},
+		})
+	}
+	return result
 }
 
 // tryFuseAttributeFetchBundle recognizes a contiguous run of same-entity
-// cardinality-one patterns and executes all of them as one per-tuple column
+// cardinality-one patterns and executes all of them as one per-tuple attribute
 // attach. It preserves the existing single-pattern gates and event stream while
 // avoiding one relation traversal and materialization per additional attribute.
 //
@@ -429,7 +483,7 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 		return nil, 0, nil
 	}
 	first, ok := clauses[0].(*query.DataPattern)
-	if !ok || len(first.Elements) != 3 || first.Source != nil || first.GetT() != nil {
+	if !ok || len(first.Elements) != 3 || first.Source != nil {
 		return nil, 0, nil
 	}
 	entityVar, ok := first.GetE().(query.Variable)
@@ -464,9 +518,10 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	}
 
 	var fetches []attributeFetchSpec
+fetchLoop:
 	for _, clause := range clauses {
 		pattern, ok := clause.(*query.DataPattern)
-		if !ok || len(pattern.Elements) != 3 || pattern.Source != nil || pattern.GetT() != nil {
+		if !ok || len(pattern.Elements) != 3 || pattern.Source != nil {
 			break
 		}
 		candidateEntity, ok := pattern.GetE().(query.Variable)
@@ -481,13 +536,22 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 		if !ok || !fusable.CanFuseAttributeFetch(attr) {
 			break
 		}
-		valueVar, ok := pattern.GetV().(query.Variable)
-		if !ok || boundSymbols[valueVar.Name] {
-			break
+		spec := attributeFetchSpec{attr: attr}
+		switch value := pattern.GetV().(type) {
+		case query.Variable:
+			if boundSymbols[value.Name] {
+				return nil, 0, nil
+			}
+			spec.output = value.Name
+			boundSymbols[value.Name] = true
+		case query.Constant:
+			spec.expected = value.Value
+			spec.isConstraint = true
+		default:
+			break fetchLoop
 		}
 
-		fetches = append(fetches, attributeFetchSpec{attr: attr, output: valueVar.Name})
-		boundSymbols[valueVar.Name] = true
+		fetches = append(fetches, spec)
 	}
 	if len(fetches) == 0 {
 		return nil, 0, nil
@@ -506,7 +570,9 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	outputSymbols := make([]query.Symbol, 0, len(inputSymbols)+len(fetches))
 	outputSymbols = append(outputSymbols, inputSymbols...)
 	for _, fetch := range fetches {
-		outputSymbols = append(outputSymbols, fetch.output)
+		if fetch.output != nil {
+			outputSymbols = append(outputSymbols, fetch.output)
+		}
 	}
 
 	var output []Tuple
@@ -530,8 +596,8 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 			continue
 		}
 
-		expanded := make(Tuple, len(outputSymbols))
-		copy(expanded, tuple)
+		var expanded Tuple
+		outputIndex := len(inputSymbols)
 		complete := true
 		for i, fetch := range fetches {
 			inputCounts[i]++
@@ -545,10 +611,28 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 				complete = false
 				break
 			}
+			if fetch.isConstraint && !datalog.ValuesEqual(value, fetch.expected) {
+				complete = false
+				break
+			}
 			outputCounts[i]++
-			expanded[len(inputSymbols)+i] = value
+			if fetch.output != nil {
+				if expanded == nil {
+					expanded = make(Tuple, len(outputSymbols))
+					copy(expanded, tuple)
+				}
+				expanded[outputIndex] = value
+				outputIndex++
+			}
 		}
 		if complete {
+			if expanded == nil {
+				if input.RequiresCopy() {
+					expanded = copyTuple(tuple)
+				} else {
+					expanded = tuple
+				}
+			}
 			output = append(output, expanded)
 		}
 		if lookupErr != nil {
@@ -565,14 +649,15 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	if iterErr != nil {
 		return nil, 0, iterErr
 	}
-	if iterErr != nil {
-		return nil, 0, iterErr
-	}
 
 	if collector := ctx.Collector(); collector != nil {
 		for i, fetch := range fetches {
+			eventName := "pattern/fused-fetch"
+			if fetch.isConstraint {
+				eventName = "pattern/fused-constraint"
+			}
 			collector.Add(annotations.Event{
-				Name: "pattern/fused-fetch",
+				Name: eventName,
 				Data: map[string]interface{}{
 					"attr": fetch.attr.String(),
 					"in":   inputCounts[i],
@@ -588,7 +673,7 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 	for _, fetch := range fetches {
 		properties = properties.addSymbol(fetch.output)
 	}
-	newGroups[entityGroup] = NewMaterializedRelationWithProperties(
+	newGroups[entityGroup] = newMaterializedRelationFromSet(
 		outputSymbols,
 		output,
 		e.options,
@@ -991,9 +1076,9 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		}
 	}
 
-	// CRITICAL: Materialize groups FIRST to prevent iterator consumption
-	// When we create Product() and materialize it, that will consume the underlying iterators
-	// We need to preserve groups for later use in the outer query
+	// Mark groups cacheable before extracting input combinations so the outer
+	// query can replay them later. Materialize() on StreamingRelation enables
+	// lazy caching; it does not drain the iterator here.
 	materializedGroups := make([]Relation, len(groups))
 	for i, g := range groups {
 		materializedGroups[i] = g.Materialize()
@@ -1042,13 +1127,21 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		combinedRel = Relations(materializedGroups).Product()
 	}
 
-	// Materialize combined relation since getUniqueInputCombinations will consume it
-	combinedRel = combinedRel.Materialize()
-
 	// Get unique combinations of input values
 	inputCombinations, err := getUniqueInputCombinations(combinedRel, inputSymbols)
 	if err != nil {
 		return nil, fmt.Errorf("subquery input extraction failed: %w", err)
+	}
+	if collector := ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name: "subquery/input-combinations",
+			Data: map[string]interface{}{
+				"relation_groups":    len(materializedGroups),
+				"product":            len(materializedGroups) > 1,
+				"eager_materialized": false,
+				"combination_count":  len(inputCombinations),
+			},
+		})
 	}
 
 	// Execute subquery for each combination
@@ -1312,16 +1405,20 @@ func (e *DefaultQueryExecutor) executeOrClause(ctx Context, clause *query.OrClau
 // executeOrClauseCorrelatedUnion evaluates all branches per outer tuple and unions results.
 func (e *DefaultQueryExecutor) executeOrClauseCorrelatedUnion(ctx Context, branches [][]query.Clause, groups Relations) (Relation, error) {
 	neededSymbols := collectOrBranchRequiredSymbols(branches)
-	outerRel := e.findOuterRelation(neededSymbols, groups)
-	return NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false), nil
+	outerRel, consumed := e.findOuterRelation(neededSymbols, groups)
+	rel := NewOrFallbackRelation(e, ctx, branches, outerRel, e.options, false)
+	rel.consumedGroups = consumed
+	return rel, nil
 }
 
 // executeOrDefaultClause implements fallback semantics for or-default clauses:
 // For each input tuple, try branches in order until one returns a result.
 func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx Context, clause *query.OrDefaultClause, groups Relations) (Relation, error) {
 	neededSymbols := collectOrBranchRequiredSymbols(clause.Branches)
-	outerRel := e.findOuterRelation(neededSymbols, groups)
-	return NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true), nil
+	outerRel, consumed := e.findOuterRelation(neededSymbols, groups)
+	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
+	rel.consumedGroups = consumed
+	return rel, nil
 }
 
 // executeOrDefaultJoinClause implements fallback semantics for or-default-join clauses.
@@ -1331,12 +1428,13 @@ func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *q
 		joinVarSet[v] = true
 	}
 
-	outerRel := e.findOuterRelationBySymbols(joinVarSet, groups)
+	outerRel, consumed := e.findOuterRelationBySymbols(joinVarSet, groups)
 
 	prefetched := false
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
 	rel.joinSyms = clause.JoinVars
 	rel.prefetched = prefetched
+	rel.consumedGroups = consumed
 	return rel, nil
 }
 
@@ -1396,53 +1494,56 @@ func clausesNeedCorrelation(clauses []query.Clause) bool {
 
 // findOuterRelation collects and joins all groups that provide any of the
 // needed symbols into a single outer relation. Returns unit relation if none found.
-func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) Relation {
+func (e *DefaultQueryExecutor) findOuterRelation(neededSymbols []query.Symbol, groups Relations) (Relation, []int) {
 	if len(groups) == 0 || len(neededSymbols) == 0 {
-		return NewUnitRelation(e.options)
+		return NewUnitRelation(e.options), nil
 	}
 
-	var result Relation
+	var consumed []int
 	for i, rel := range groups {
 		if containsAny(rel.Symbols(), neededSymbols) {
-			groups[i] = groups[i].Materialize()
-			if result == nil {
-				result = groups[i]
-			} else {
-				result = result.Join(groups[i])
-			}
+			consumed = append(consumed, i)
 		}
 	}
-
-	if result == nil {
-		return NewUnitRelation(e.options)
+	if len(consumed) == 0 {
+		return NewUnitRelation(e.options), nil
 	}
-	return result
+	if len(consumed) == 1 {
+		return groups[consumed[0]], consumed
+	}
+	result := groups[consumed[0]].Materialize()
+	for _, index := range consumed[1:] {
+		result = result.Join(groups[index].Materialize())
+	}
+	return result, consumed
 }
 
 // findOuterRelationBySymbols collects and joins all groups that provide any
 // of the specified symbols into a single outer relation. Returns unit relation if none found.
-func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbol]bool, groups Relations) Relation {
-	var result Relation
+func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbol]bool, groups Relations) (Relation, []int) {
+	var consumed []int
 	for i, rel := range groups {
 		for _, sym := range rel.Symbols() {
 			if symSet[sym] {
-				groups[i] = groups[i].Materialize()
-				if result == nil {
-					result = groups[i]
-				} else {
-					result = result.Join(groups[i])
-				}
+				consumed = append(consumed, i)
 				break
 			}
 		}
 	}
-	if result == nil {
-		return NewUnitRelation(e.options)
+	if len(consumed) == 0 {
+		return NewUnitRelation(e.options), nil
 	}
-	return result
+	if len(consumed) == 1 {
+		return groups[consumed[0]], consumed
+	}
+	result := groups[consumed[0]].Materialize()
+	for _, index := range consumed[1:] {
+		result = result.Join(groups[index].Materialize())
+	}
+	return result, consumed
 }
 
-// findCommonColumns returns symbols that exist in all relations
+// findCommonSymbols returns symbols that exist in all relations
 func findCommonSymbols(relations []Relation) []query.Symbol {
 	if len(relations) == 0 {
 		return nil
@@ -1631,15 +1732,16 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, c
 		joinVarSet[v] = true
 	}
 
-	outerRel := e.findOuterRelationBySymbols(joinVarSet, groups)
+	outerRel, consumed := e.findOuterRelationBySymbols(joinVarSet, groups)
 
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, false)
 	rel.joinSyms = clause.JoinVars
+	rel.consumedGroups = consumed
 	return rel, nil
 }
 
 // extractEntityIDs extracts datalog.Identity values from the specified symbol
-// columns of a materialized relation. Used to collect entity IDs for prefetch.
+// bindings of a materialized relation. Used to collect entity IDs for prefetch.
 func extractEntityIDs(rel Relation, syms []query.Symbol) []datalog.Identity {
 	symIdx := make(map[query.Symbol]int)
 	for i, s := range rel.Symbols() {
@@ -2015,7 +2117,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
 
@@ -2074,7 +2176,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
 
@@ -2084,7 +2186,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
 
@@ -2094,7 +2196,7 @@ func (e *DefaultQueryExecutor) executeInnerClauses(ctx Context, clauses []query.
 				return nil, err
 			}
 			if newRel != nil {
-				groups = append(groups, newRel)
+				groups = replaceConsumedOrGroups(ctx, groups, newRel)
 			}
 			groups = groups.Collapse(ctx)
 

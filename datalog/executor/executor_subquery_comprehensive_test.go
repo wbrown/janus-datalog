@@ -436,7 +436,7 @@ func TestSubqueryErrorHandling(t *testing.T) {
 			wantErr: "tuple binding expects exactly 1 result",
 		},
 		{
-			name: "RelationBindingColumnMismatch",
+			name: "RelationBindingSymbolMismatch",
 			queryStr: `[:find ?name ?a ?b ?c
 			           :where 
 			           [?e :employee/name ?name]
