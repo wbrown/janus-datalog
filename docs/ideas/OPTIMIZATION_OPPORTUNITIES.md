@@ -10,6 +10,10 @@ hash-join gains. The next meaningful improvements are concentrated in typed
 grouping, explicit physical properties, and proving when set-semantics work can
 be omitted.
 
+The detailed Relation set/replayability laws, full materialization audit, and
+deduplication decision record live in
+[RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md](RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md).
+
 ## Summary
 
 | Rank | Opportunity | Layer | Evidence | Expected payoff | Effort |

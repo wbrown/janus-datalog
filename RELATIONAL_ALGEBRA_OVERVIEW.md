@@ -6,6 +6,9 @@ Janus Datalog implements a complete relational algebra system as the foundation 
 
 **Key Insight**: The relation collapsing algorithm with dynamic join ordering is what separates this from toy implementations - it prevents memory exhaustion on complex queries by intelligently ordering joins based on intermediate result sizes.
 
+For the detailed set/replayability laws and materialization decision record, see
+[Relation Materialization and Set Invariants](docs/ideas/RELATION_MATERIALIZATION_AND_SET_INVARIANTS.md).
+
 ## Core Architecture
 
 ### Logical Optimization, Then Physical Planning
