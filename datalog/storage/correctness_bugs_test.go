@@ -226,7 +226,7 @@ func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
 	var aBytes Attribute
 	copy(aBytes[:], name.String())
 
-	// Batch scanning's Position field names the binding column
+	// Batch scanning's Position field names the binding component
 	// (0=E, 1=A, 2=V). buildKey must handle every (index, position)
 	// combination its signature admits — silent nil returns cause
 	// silent zero-result scans, the exact failure mode the external

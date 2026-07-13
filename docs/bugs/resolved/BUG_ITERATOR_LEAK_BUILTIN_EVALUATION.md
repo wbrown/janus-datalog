@@ -45,7 +45,7 @@ Five functions in `helpers.go` call `rel.Iterator()`. Three of them call `iter.C
 |------|----------|-----------------|---------|
 | 80 | `filterWithPredicateAndLookup` | **NO** | `missing?` |
 | 178 | `evaluateExpressionWithLookup` | **NO** | `get-some`, `get-else` |
-| 329 | `projectToColumns` | YES (line 338) | standard queries |
+| 329 | final symbol projection routine | YES (line 338) | standard queries |
 | 404 | `getUniqueCombinations` | YES (line 417) | NOT/OR |
 | 482 | `unionRelations` | YES (line 495) | OR branches |
 
@@ -78,7 +78,7 @@ Go's GC collects the unreachable iterator chain but does NOT call `skiplist.Decr
 
 ### Why standard queries don't leak
 
-Standard pattern queries go through the join path (`HashJoinWithOptions`), which uses `defer buildIt.Close()` and `defer probeIt.Close()`. The final result extraction uses `projectToColumns`, which calls `iter.Close()` at line 338. Every iterator in the standard path is properly closed.
+Standard pattern queries go through the join path (`HashJoinWithOptions`), which uses `defer buildIt.Close()` and `defer probeIt.Close()`. The final result extraction uses the symbol-projection routine, which calls `iter.Close()` at line 338. Every iterator in the standard path is properly closed.
 
 ### Why `:in $` bound entities don't leak
 
@@ -103,7 +103,7 @@ for iter.Next() {
 }
 // iter.Close() is never called
 
-// helpers.go — projectToColumns (standard path, correct)
+// Standard final symbol projection path (correct)
 // Line 329: iterator opened, closed at line 338
 iter := rel.Iterator()
 for iter.Next() {
@@ -121,7 +121,7 @@ iter.Close()  // ← correctly closed
 | `get-else` (pattern-discovered entity) | **YES** | Entity from `[?e :attr _]` |
 | `missing?` (pattern-discovered entity) | **YES** | Entity from `[?e :attr _]` |
 | Standard `[?e :attr ?val]` | NO | Join path closes iterators |
-| `(pull ?e [...])` | NO | `projectToColumns` closes iterators |
+| `(pull ?e [...])` | NO | the final symbol projection closes iterators |
 
 ## Impact
 
@@ -152,7 +152,7 @@ iter := rel.Iterator()
 defer iter.Close()  // ADD THIS
 ```
 
-This matches the pattern already used by `projectToColumns` (line 338), `getUniqueCombinations` (line 417), and `unionRelations` (line 495) in the same file.
+This matches the pattern already used by the final symbol projection (line 338), `getUniqueCombinations` (line 417), and `unionRelations` (line 495) in the same file.
 
 ## Files Involved
 

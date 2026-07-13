@@ -222,7 +222,7 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 
 			for j := range rowSeq {
 				if rowSeq[j] != rowPar[j] {
-					t.Errorf("Tuple %d, col %d mismatch: sequential=%v, parallel=%v",
+					t.Errorf("Tuple %d, position %d mismatch: sequential=%v, parallel=%v",
 						i, j, rowSeq[j], rowPar[j])
 				}
 			}

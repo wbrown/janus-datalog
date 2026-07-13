@@ -12,7 +12,7 @@ beneath where the stack trace pointed — by interrogation, not by debugging
 
 The starting defect was well-behaved, as defects go. `SortRelation`
 resolved each `:order-by` variable against the relation's projected
-columns; a variable that wasn't among them resolved to `-1` and the
+attributes; a variable that wasn't among them resolved to `-1` and the
 comparator silently skipped it:
 
 ```go
@@ -22,7 +22,7 @@ if sortIndices[k] < 0 {
 }
 ```
 
-Since the executor projects the result down to the `:find` columns before
+Since the executor projects the result down to the `:find` symbols before
 the sort runs, any sort key bound only in `:where` was structurally gone by
 sort time. With a single order-by clause, every comparison fell through:
 the query stated an ordering, the engine returned arbitrary order, and
@@ -44,7 +44,7 @@ proved too strict. Inputs model as EDB relations, so scalar `:in`
 parameters are singleton attributes (sorting by one is a well-defined
 identity, not an error), and a variable bound nowhere fails the safety
 condition (the one theory-mandated rejection). Implementation: parser
-validation, planner retention of sort columns through phasing, executor
+validation, planner retention of sort attributes through phasing, executor
 sort-then-strip at the finalization boundary.
 
 So far, so good. The process was working. Then the coverage audit ran.
@@ -169,12 +169,12 @@ default:
 
 Maps hash to the address of `hashValue`'s own local variable — effectively
 a constant per call site. So all-map tuples always collide, forcing the
-panicking comparison. But a tuple that *also* carries a comparable column
-(the sort key) gets that column mixed into its hash — and with distinct
+panicking comparison. But a tuple that *also* carries a comparable component
+(the sort key) gets that component mixed into its hash — and with distinct
 sort-key values, the hashes differ, no collision occurs, and the maps are
 never compared. The tests passed **by data luck**. The true crash
 condition at the sort site: pull + order-by where any two rows *tie on
-every comparable column*, or a relation whose columns are all pulls. New
+every comparable tuple position*, or a relation whose attributes are all pulls. New
 reproductions were written with tied keys; they panic deterministically.
 
 ---
@@ -289,7 +289,7 @@ Each stratum of the genealogy generates its own piece of the real fix
 
 - **Relocation (from stratum 2):** pull is result *presentation*, so it
   is applied at the result boundary — after sort, strip, and limit —
-  never inside the relational pipeline. Entity columns stay `Identity`
+  never inside the relational pipeline. Entity bindings stay `Identity`
   (first-class, pointer-interned, natively hashable) through every
   relational operation, and maps exist only in the terminal, user-facing
   result. All four crash sites heal with **zero changes to any of them**,
@@ -428,8 +428,8 @@ invariant safe requires whole-codebase rigor, and that burden is itself a
 cost that vetoes convenient fixes to shared primitives.
 
 **The Principle**: Crash > wrong answer, always, in a correctness-focused
-system. Any change that moves a failure from the loud column to the
-silent column needs the strongest justification in the codebase, not the
+system. Any change that moves a failure from the loud path to the
+silent path needs the strongest justification in the codebase, not the
 weakest.
 
 **How to apply**: Before weakening any check, dedup, validation, or

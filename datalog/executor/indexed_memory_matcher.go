@@ -176,7 +176,7 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	// Build indices on first use (lazy initialization)
 	m.buildIndices()
 
-	symbols := pattern.ExtractColumns()
+	symbols := pattern.Symbols()
 
 	// Extract options: prefer bindings, fall back to matcher's options
 	m.optionsMutex.RLock()

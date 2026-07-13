@@ -27,8 +27,8 @@ func BenchmarkHashJoinBuildSize(b *testing.B) {
 	for _, buildSize := range buildSizes {
 		for _, dataSize := range dataSizes {
 			b.Run(fmt.Sprintf("build_%d/data_%d", buildSize, dataSize), func(b *testing.B) {
-				leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-				rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+				leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+				rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 				leftTuples := make([]Tuple, dataSize)
 				rightTuples := make([]Tuple, dataSize)
@@ -45,7 +45,7 @@ func BenchmarkHashJoinBuildSize(b *testing.B) {
 					// BOTH relations must be streaming to trigger DefaultHashTableSize
 					// If one is materialized, it will be chosen as build (known size)
 					left := &StreamingRelation{
-						symbols:  leftCols,
+						symbols:  leftSymbols,
 						iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
@@ -55,7 +55,7 @@ func BenchmarkHashJoinBuildSize(b *testing.B) {
 					}
 
 					right := &StreamingRelation{
-						symbols:  rightCols,
+						symbols:  rightSymbols,
 						iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
@@ -88,8 +88,8 @@ func BenchmarkHashJoinBuildSizeOptimal(b *testing.B) {
 	for _, buildSize := range buildSizes {
 		for _, dataSize := range dataSizes {
 			b.Run(fmt.Sprintf("build_%d/data_%d", buildSize, dataSize), func(b *testing.B) {
-				leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-				rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+				leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+				rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 				leftTuples := make([]Tuple, dataSize)
 				rightTuples := make([]Tuple, dataSize)
@@ -105,7 +105,7 @@ func BenchmarkHashJoinBuildSizeOptimal(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					// BOTH streaming to trigger DefaultHashTableSize
 					left := &StreamingRelation{
-						symbols:  leftCols,
+						symbols:  leftSymbols,
 						iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
@@ -115,7 +115,7 @@ func BenchmarkHashJoinBuildSizeOptimal(b *testing.B) {
 					}
 
 					right := &StreamingRelation{
-						symbols:  rightCols,
+						symbols:  rightSymbols,
 						iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 						size:     -1,
 						options: ExecutorOptions{
@@ -149,8 +149,8 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 	sizes := []int{100, 1000, 5000}
 
 	for _, size := range sizes {
-		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -162,8 +162,8 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 
 		// Case 1: Both Materialized (baseline - optimal)
 		b.Run(fmt.Sprintf("mat_x_mat/size_%d", size), func(b *testing.B) {
-			left := NewMaterializedRelation(leftCols, leftTuples)
-			right := NewMaterializedRelation(rightCols, rightTuples)
+			left := NewMaterializedRelation(leftSymbols, leftTuples)
+			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 			b.ResetTimer()
 			b.ReportAllocs()
@@ -186,12 +186,12 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options:  ExecutorOptions{EnableStreamingJoins: true},
 				}
-				right := NewMaterializedRelation(rightCols, rightTuples)
+				right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 				result := left.Join(right)
 				it := result.Iterator()
@@ -209,9 +209,9 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				left := NewMaterializedRelation(leftCols, leftTuples)
+				left := NewMaterializedRelation(leftSymbols, leftTuples)
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options:  ExecutorOptions{EnableStreamingJoins: true},
@@ -234,7 +234,7 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -243,7 +243,7 @@ func BenchmarkHashJoinInputTypes(b *testing.B) {
 					},
 				}
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -268,8 +268,8 @@ func BenchmarkHashJoinMaterializedVsStreaming(b *testing.B) {
 	size := 1000
 
 	b.Run("materialized", func(b *testing.B) {
-		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -279,8 +279,8 @@ func BenchmarkHashJoinMaterializedVsStreaming(b *testing.B) {
 			rightTuples[i] = Tuple{int64(i), fmt.Sprintf("value%d", i)}
 		}
 
-		left := NewMaterializedRelation(leftCols, leftTuples)
-		right := NewMaterializedRelation(rightCols, rightTuples)
+		left := NewMaterializedRelation(leftSymbols, leftTuples)
+		right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 		b.ResetTimer()
 		b.ReportAllocs()
@@ -296,8 +296,8 @@ func BenchmarkHashJoinMaterializedVsStreaming(b *testing.B) {
 	})
 
 	b.Run("streaming", func(b *testing.B) {
-		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -312,12 +312,12 @@ func BenchmarkHashJoinMaterializedVsStreaming(b *testing.B) {
 
 		for i := 0; i < b.N; i++ {
 			left := &StreamingRelation{
-				symbols:  leftCols,
+				symbols:  leftSymbols,
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
 				options:  ExecutorOptions{EnableStreamingJoins: true},
 			}
-			right := NewMaterializedRelation(rightCols, rightTuples)
+			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 			result := left.Join(right)
 			it := result.Iterator()
@@ -343,8 +343,8 @@ func BenchmarkHashJoinStreaming(b *testing.B) {
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
 			// Create two relations with common symbol
-			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -354,8 +354,8 @@ func BenchmarkHashJoinStreaming(b *testing.B) {
 				rightTuples[i] = Tuple{int64(i), fmt.Sprintf("value%d", i)}
 			}
 
-			left := NewMaterializedRelation(leftCols, leftTuples)
-			right := NewMaterializedRelation(rightCols, rightTuples)
+			left := NewMaterializedRelation(leftSymbols, leftTuples)
+			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 			b.ResetTimer()
 			b.ReportAllocs()
@@ -384,8 +384,8 @@ func BenchmarkHashJoinStreaming(b *testing.B) {
 // This is the common case - result is consumed once
 func BenchmarkHashJoinSingleIteration(b *testing.B) {
 	size := 1000
-	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, size)
 	rightTuples := make([]Tuple, size)
@@ -395,8 +395,8 @@ func BenchmarkHashJoinSingleIteration(b *testing.B) {
 		rightTuples[i] = Tuple{int64(i), fmt.Sprintf("value%d", i)}
 	}
 
-	left := NewMaterializedRelation(leftCols, leftTuples)
-	right := NewMaterializedRelation(rightCols, rightTuples)
+	left := NewMaterializedRelation(leftSymbols, leftTuples)
+	right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -420,8 +420,8 @@ func BenchmarkHashJoinStreamingInput(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
-			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -438,14 +438,14 @@ func BenchmarkHashJoinStreamingInput(b *testing.B) {
 				// Create streaming left relation (Size() = -1)
 				// This triggers DefaultHashTableSize
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options:  ExecutorOptions{EnableStreamingJoins: true},
 				}
 
 				// Right side materialized (has known size)
-				right := NewMaterializedRelation(rightCols, rightTuples)
+				right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 				result := left.Join(right)
 
@@ -477,8 +477,8 @@ func BenchmarkHashJoinLargeResult(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("size_%d", size), func(b *testing.B) {
-			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?data")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?data")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -488,8 +488,8 @@ func BenchmarkHashJoinLargeResult(b *testing.B) {
 				rightTuples[i] = Tuple{int64(i), int64(i * 100)}
 			}
 
-			left := NewMaterializedRelation(leftCols, leftTuples)
-			right := NewMaterializedRelation(rightCols, rightTuples)
+			left := NewMaterializedRelation(leftSymbols, leftTuples)
+			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 			b.ResetTimer()
 			b.ReportAllocs()

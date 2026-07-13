@@ -427,7 +427,7 @@ func (it *FilterIterator) Tuple() Tuple {
 type ProjectIterator struct {
     source     Iterator
     indices    []int  // Symbol indices to keep
-    newColumns []Symbol
+    newSymbols []Symbol
     current    Tuple
 }
 
@@ -856,7 +856,7 @@ Functional programming principles—immutability, lazy evaluation, and compositi
 - Vectorized execution with immutability
 - Distributed query execution with functional composition
 - Automatic optimization via rewrites
-- Integration with columnar storage
+- Integration with vertically partitioned storage
 
 ---
 

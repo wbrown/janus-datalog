@@ -327,7 +327,7 @@ func TestPatternExtractor_EmptyPattern(t *testing.T) {
 	}
 }
 
-func TestPatternExtractor_ColumnsInDifferentOrder(t *testing.T) {
+func TestPatternExtractor_SymbolsInDifferentOrder(t *testing.T) {
 	// Test that symbol ordering doesn't matter - it's the symbol name that counts
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")

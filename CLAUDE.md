@@ -431,6 +431,17 @@ Naming something precisely forces you to think about what it does and where it b
 - Name the function for what it does (`getUniqueCombinations`, not `helperGetCombos`)
 - If you can't name it, you don't understand it well enough to write it
 
+### CRITICAL: Use Pure Relational-Algebra Vocabulary
+Describe relation structure with **symbols**, **tuple positions**, **relation
+attributes**, and **bindings**. Do not import SQL table-field terminology into
+identifiers, comments, errors, tests, documentation, or design discussion.
+
+Name code for the relational concept it implements:
+- `symbols`, not table-oriented field lists
+- `symbolIndex` or `tuplePosition`, not SQL-oriented positional names
+- `relation attribute`, not a table field
+- `binding`, when a symbol receives a value
+
 **DO (Go idioms):**
 - Simple functions for stateless operations
 - Methods on types that operate on that type's data

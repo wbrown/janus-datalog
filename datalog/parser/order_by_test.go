@@ -183,7 +183,7 @@ func TestOrderByFormatting(t *testing.T) {
 // docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md
 // (Design Decision section): a sort key must be bound by :where or be a
 // scalar/tuple :in constant; unbound variables, relation/collection input
-// columns not bound by :where, and non-group-key variables in aggregate
+// symbols not bound by :where, and non-group-key variables in aggregate
 // queries are parse errors.
 func TestOrderByValidation(t *testing.T) {
 	tests := []struct {
@@ -216,7 +216,7 @@ func TestOrderByValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "relation input column not bound by :where is an error",
+			name: "relation input symbol not bound by :where is an error",
 			query: `[:find ?v
 			         :in $ [[?k ?tag] ...]
 			         :where [?e :item/key ?k]

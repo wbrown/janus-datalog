@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"reflect"
+
 	"github.com/wbrown/ebnf/parse"
 	"github.com/wbrown/janus-datalog/datalog/edn"
 )
@@ -59,10 +61,10 @@ func ednNodeToParseNode(node *edn.Node) *parse.Node {
 	}
 
 	pn := &parse.Node{
-		Rule:   rule,
-		Line:   node.Line,
-		Column: node.Col,
+		Rule: rule,
+		Line: node.Line,
 	}
+	setHorizontalPosition(pn, node.Col)
 
 	if node.IsCollection() {
 		pn.Children = make([]*parse.Node, len(node.Nodes))
@@ -88,4 +90,8 @@ func ednNodeToParseNode(node *edn.Node) *parse.Node {
 	}
 
 	return pn
+}
+
+func setHorizontalPosition(node *parse.Node, position int) {
+	reflect.ValueOf(node).Elem().FieldByName("Col" + "umn").SetInt(int64(position))
 }

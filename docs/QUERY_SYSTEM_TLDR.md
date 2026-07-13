@@ -156,7 +156,7 @@ func Collapse(relations []Relation) []Relation {
     for _, rel := range relations {
         merged := false
         for i, group := range groups {
-            if shareColumns(rel, group) {
+            if shareSymbols(rel, group) {
                 groups[i] = hashJoin(group, rel)  // Join on shared symbols
                 merged = true
                 break

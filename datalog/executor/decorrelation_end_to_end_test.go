@@ -84,10 +84,10 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 	}
 
 	// Check symbols
-	expectedCols := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?high"), datalog.NewSymbol("?low")}
-	if !columnsEqualTest(result.Symbols(), expectedCols) {
+	expectedSymbols := []query.Symbol{datalog.NewSymbol("?hour"), datalog.NewSymbol("?high"), datalog.NewSymbol("?low")}
+	if !symbolsEqualTest(result.Symbols(), expectedSymbols) {
 		t.Errorf("symbol mismatch:\n  got=%v\n  want=%v",
-			result.Symbols(), expectedCols)
+			result.Symbols(), expectedSymbols)
 	}
 
 	// Check results
@@ -165,7 +165,7 @@ func TestDecorrelationEndToEnd(t *testing.T) {
 
 // Test utilities
 
-func columnsEqualTest(a, b []query.Symbol) bool {
+func symbolsEqualTest(a, b []query.Symbol) bool {
 	if len(a) != len(b) {
 		return false
 	}

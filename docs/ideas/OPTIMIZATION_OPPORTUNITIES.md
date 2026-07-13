@@ -45,7 +45,7 @@ Relevant code:
 
 ### Measured evidence
 
-`BenchmarkGroupedAggregationKeying`, 10,000 rows and 100 two-column groups,
+`BenchmarkGroupedAggregationKeying`, 10,000 rows and 100 groups keyed by two symbols,
 `benchtime=500ms`, `count=10`:
 
 | Mode | Time before | Time after | Delta | Bytes delta | Allocations delta |
@@ -78,7 +78,7 @@ that a repeated call does not replace the original map value.
 
 ### Measured evidence
 
-`BenchmarkDedupInsertionPaths`, 10,000 two-column Identity/string tuples,
+`BenchmarkDedupInsertionPaths`, 10,000 two-position Identity/string tuples,
 `benchtime=500ms`, `count=10`:
 
 | Workload | Mode | Time before | Time after | Delta |
@@ -727,8 +727,11 @@ Candidate investigations:
    tree so rewrites survive planning. Structural operator tests, exact
    optimized/off tuple differentials, full tests, race tests, and three shuffled
    repetitions are green.
-2. Push `Project` and ready `Select` operators through joins, subqueries, and
-   fallback branches when symbol and cardinality proofs make the rewrite safe.
+2. Backward liveness and inner-join `Project` insertion are proven and retained
+   behind default-off `EnableJoinProjectInsertion`. Materializing the boundary
+   regressed a focused benchmark by 7.0% time, 34.6% memory, and 24.9%
+   allocations; revisit activation only with streaming phase boundaries. Ready
+   `Select` movement through joins/subqueries/fallback remains unimplemented.
 3. Batch or decorrelate additional correlated subqueries, especially the
    tuple-bound argmax branch, while preserving exactly-one binding errors and
    tie semantics.
@@ -794,7 +797,7 @@ The tests exposed and fixed concrete correctness defects:
 8. Closed Badger scans panicked instead of returning `ErrDBClosed`.
 9. Scan sharing conflated physically different query fragments and dropped
    relation properties.
-10. Compiled binding plans treated missing tuple columns as unbound.
+10. Compiled binding plans treated missing tuple positions as unbound.
 
 The same review corrected Janus arithmetic to accept one or more operands:
 unary subtraction/division and variadic `+`, `-`, `*`, `/` use Clojure

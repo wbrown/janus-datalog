@@ -18,7 +18,7 @@ func TestSymmetricHashJoin(t *testing.T) {
 		{3, "charlie", 300},
 		{4, "diana", 400},
 	}
-	leftColumns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
 
 	// Test data for right relation
 	rightTuples := []Tuple{
@@ -27,19 +27,19 @@ func TestSymmetricHashJoin(t *testing.T) {
 		{"charlie", "Chicago", 35},
 		{"eve", "Miami", 28},
 	}
-	rightColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
 
 	t.Run("BasicJoin", func(t *testing.T) {
 		// Create streaming relations
 		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelation(leftColumns, leftIter)
+		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
 		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelation(rightColumns, rightIter)
+		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		// Perform symmetric hash join on ?name
-		joinCols := []query.Symbol{datalog.NewSymbol("?name")}
-		result := SymmetricHashJoin(leftRel, rightRel, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
+		result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
 
 		// Collect results
 		var results []Tuple
@@ -56,8 +56,8 @@ func TestSymmetricHashJoin(t *testing.T) {
 		assert.Len(t, results, 3) // alice, bob, charlie match
 
 		// Check output symbols
-		expectedCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
-		assert.Equal(t, expectedCols, result.Symbols())
+		expectedSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score"), datalog.NewSymbol("?city"), datalog.NewSymbol("?age")}
+		assert.Equal(t, expectedSymbols, result.Symbols())
 
 		// Verify specific results (order may vary due to hash tables)
 		foundAlice, foundBob, foundCharlie := false, false, false
@@ -89,7 +89,7 @@ func TestSymmetricHashJoin(t *testing.T) {
 		assert.True(t, foundCharlie, "charlie join result not found")
 	})
 
-	t.Run("MultiColumnJoin", func(t *testing.T) {
+	t.Run("MultiSymbolJoin", func(t *testing.T) {
 		// Test data with multiple join symbols
 		leftTuples := []Tuple{
 			{1, "alice", 100},
@@ -103,18 +103,18 @@ func TestSymmetricHashJoin(t *testing.T) {
 			{3, "charlie", "Chicago"}, // Different id, won't match
 		}
 
-		leftCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
-		rightCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
 
 		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelation(leftCols, leftIter)
+		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
 		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelation(rightCols, rightIter)
+		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		// Join on both ?id and ?name
-		joinCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
-		result := SymmetricHashJoin(leftRel, rightRel, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
+		result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
 
 		// Collect results
 		var results []Tuple
@@ -142,13 +142,13 @@ func TestSymmetricHashJoin(t *testing.T) {
 	t.Run("EmptyRelations", func(t *testing.T) {
 		// Test with empty left relation
 		emptyIter := newMockIterator([]Tuple{})
-		emptyRel := NewStreamingRelation(leftColumns, emptyIter)
+		emptyRel := NewStreamingRelation(leftSymbols, emptyIter)
 
 		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelation(rightColumns, rightIter)
+		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
-		joinCols := []query.Symbol{datalog.NewSymbol("?name")}
-		result := SymmetricHashJoin(emptyRel, rightRel, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
+		result := SymmetricHashJoin(emptyRel, rightRel, joinSymbols)
 
 		it := result.Iterator()
 		assert.False(t, it.Next(), "Should have no results with empty left")
@@ -156,12 +156,12 @@ func TestSymmetricHashJoin(t *testing.T) {
 
 		// Test with empty right relation
 		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelation(leftColumns, leftIter)
+		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
 		emptyIter2 := newMockIterator([]Tuple{})
-		emptyRel2 := NewStreamingRelation(rightColumns, emptyIter2)
+		emptyRel2 := NewStreamingRelation(rightSymbols, emptyIter2)
 
-		result = SymmetricHashJoin(leftRel, emptyRel2, joinCols)
+		result = SymmetricHashJoin(leftRel, emptyRel2, joinSymbols)
 
 		it = result.Iterator()
 		assert.False(t, it.Next(), "Should have no results with empty right")
@@ -179,18 +179,18 @@ func TestSymmetricHashJoin(t *testing.T) {
 			{4, "diana"},
 		}
 
-		leftCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
-		rightCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name2")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name2")}
 
 		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelation(leftCols, leftIter)
+		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
 		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelation(rightCols, rightIter)
+		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		// Join on ?id which has no matches
-		joinCols := []query.Symbol{datalog.NewSymbol("?id")}
-		result := SymmetricHashJoin(leftRel, rightRel, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?id")}
+		result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
 
 		it := result.Iterator()
 		assert.False(t, it.Next(), "Should have no results when keys don't match")
@@ -209,17 +209,17 @@ func TestSymmetricHashJoin(t *testing.T) {
 			{1, "Boston"}, // Same key, different value
 		}
 
-		leftCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
-		rightCols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?city")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?city")}
 
 		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelation(leftCols, leftIter)
+		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
 		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelation(rightCols, rightIter)
+		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
-		joinCols := []query.Symbol{datalog.NewSymbol("?id")}
-		result := SymmetricHashJoin(leftRel, rightRel, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?id")}
+		result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
 
 		var results []Tuple
 		it := result.Iterator()
@@ -253,13 +253,13 @@ func TestSymmetricHashJoin(t *testing.T) {
 		opts := ExecutorOptions{EnableTrueStreaming: true}
 
 		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelationWithOptions(leftColumns, leftIter, opts)
+		leftRel := NewStreamingRelationWithOptions(leftSymbols, leftIter, opts)
 
 		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelationWithOptions(rightColumns, rightIter, opts)
+		rightRel := NewStreamingRelationWithOptions(rightSymbols, rightIter, opts)
 
-		joinCols := []query.Symbol{datalog.NewSymbol("?name")}
-		result := SymmetricHashJoin(leftRel, rightRel, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
+		result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
 
 		// Verify result is a StreamingRelation
 		_, ok := result.(*StreamingRelation)
@@ -269,16 +269,16 @@ func TestSymmetricHashJoin(t *testing.T) {
 		assert.Equal(t, -1, result.Size())
 	})
 
-	t.Run("InvalidJoinColumn", func(t *testing.T) {
+	t.Run("InvalidJoinSymbol", func(t *testing.T) {
 		leftIter := newMockIterator(leftTuples)
-		leftRel := NewStreamingRelation(leftColumns, leftIter)
+		leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
 		rightIter := newMockIterator(rightTuples)
-		rightRel := NewStreamingRelation(rightColumns, rightIter)
+		rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
 		// Try to join on non-existent symbol
-		joinCols := []query.Symbol{datalog.NewSymbol("?nonexistent")}
-		result := SymmetricHashJoin(leftRel, rightRel, joinCols)
+		joinSymbols := []query.Symbol{datalog.NewSymbol("?nonexistent")}
+		result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
 
 		// Should return empty relation
 		it := result.Iterator()
@@ -290,38 +290,38 @@ func TestSymmetricHashJoin(t *testing.T) {
 func TestChooseJoinStrategy(t *testing.T) {
 	// Create test relations
 	matTuples := []Tuple{{1, "a"}, {2, "b"}}
-	matColumns := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-	matRel := NewMaterializedRelation(matColumns, matTuples)
+	matSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	matRel := NewMaterializedRelation(matSymbols, matTuples)
 
 	streamIter := newMockIterator(matTuples)
-	streamRel := NewStreamingRelation(matColumns, streamIter)
+	streamRel := NewStreamingRelation(matSymbols, streamIter)
 
-	joinCols := []query.Symbol{datalog.NewSymbol("?x")}
+	joinSymbols := []query.Symbol{datalog.NewSymbol("?x")}
 
 	t.Run("BothMaterialized", func(t *testing.T) {
 		opts := ExecutorOptions{}
-		strategy := ChooseJoinStrategy(matRel, matRel, joinCols, opts)
+		strategy := ChooseJoinStrategy(matRel, matRel, joinSymbols, opts)
 		assert.Equal(t, "standard", strategy)
 	})
 
 	t.Run("BothStreamingWithFeatureEnabled", func(t *testing.T) {
 		opts := ExecutorOptions{EnableSymmetricHashJoin: true}
-		strategy := ChooseJoinStrategy(streamRel, streamRel, joinCols, opts)
+		strategy := ChooseJoinStrategy(streamRel, streamRel, joinSymbols, opts)
 		assert.Equal(t, "symmetric", strategy)
 	})
 
 	t.Run("BothStreamingWithFeatureDisabled", func(t *testing.T) {
 		opts := ExecutorOptions{EnableSymmetricHashJoin: false}
-		strategy := ChooseJoinStrategy(streamRel, streamRel, joinCols, opts)
+		strategy := ChooseJoinStrategy(streamRel, streamRel, joinSymbols, opts)
 		assert.Equal(t, "standard", strategy)
 	})
 
 	t.Run("MixedTypes", func(t *testing.T) {
 		opts := ExecutorOptions{}
-		strategy := ChooseJoinStrategy(matRel, streamRel, joinCols, opts)
+		strategy := ChooseJoinStrategy(matRel, streamRel, joinSymbols, opts)
 		assert.Equal(t, "asymmetric", strategy)
 
-		strategy = ChooseJoinStrategy(streamRel, matRel, joinCols, opts)
+		strategy = ChooseJoinStrategy(streamRel, matRel, joinSymbols, opts)
 		assert.Equal(t, "asymmetric", strategy)
 	})
 }
@@ -339,19 +339,19 @@ func BenchmarkSymmetricHashJoin(b *testing.B) {
 		}
 	}
 
-	leftColumns := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
-	rightColumns := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
-	joinCols := []query.Symbol{datalog.NewSymbol("?name")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?id"), datalog.NewSymbol("?name"), datalog.NewSymbol("?score")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
+	joinSymbols := []query.Symbol{datalog.NewSymbol("?name")}
 
 	b.Run("SymmetricHashJoin", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			leftIter := newMockIterator(leftTuples)
-			leftRel := NewStreamingRelation(leftColumns, leftIter)
+			leftRel := NewStreamingRelation(leftSymbols, leftIter)
 
 			rightIter := newMockIterator(rightTuples)
-			rightRel := NewStreamingRelation(rightColumns, rightIter)
+			rightRel := NewStreamingRelation(rightSymbols, rightIter)
 
-			result := SymmetricHashJoin(leftRel, rightRel, joinCols)
+			result := SymmetricHashJoin(leftRel, rightRel, joinSymbols)
 
 			// Consume results
 			it := result.Iterator()
@@ -365,10 +365,10 @@ func BenchmarkSymmetricHashJoin(b *testing.B) {
 
 	b.Run("StandardHashJoin", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			leftRel := NewMaterializedRelation(leftColumns, leftTuples)
-			rightRel := NewMaterializedRelation(rightColumns, rightTuples)
+			leftRel := NewMaterializedRelation(leftSymbols, leftTuples)
+			rightRel := NewMaterializedRelation(rightSymbols, rightTuples)
 
-			result := HashJoin(leftRel, rightRel, joinCols)
+			result := HashJoin(leftRel, rightRel, joinSymbols)
 
 			// Consume results
 			it := result.Iterator()

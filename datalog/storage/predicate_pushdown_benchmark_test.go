@@ -106,8 +106,8 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 			for it.Next() {
 				tuple := it.Tuple()
 				// Find the time value
-				for i, col := range timeRel.Symbols() {
-					if col == datalog.NewSymbol("?t") {
+				for i, symbol := range timeRel.Symbols() {
+					if symbol == datalog.NewSymbol("?t") {
 						if t, ok := tuple[i].(time.Time); ok {
 							if t.Day() == 5 {
 								count++
@@ -189,8 +189,8 @@ func BenchmarkPredicatePushdown(b *testing.B) {
 				it := timeRel.Iterator()
 				for it.Next() {
 					tuple := it.Tuple()
-					for i, col := range timeRel.Symbols() {
-						if col == datalog.NewSymbol("?t") {
+					for i, symbol := range timeRel.Symbols() {
+						if symbol == datalog.NewSymbol("?t") {
 							if t, ok := tuple[i].(time.Time); ok {
 								if t.Day() == 5 {
 									count++
@@ -300,8 +300,8 @@ func BenchmarkPredicatePushdownAllocs(b *testing.B) {
 			it := timeRel.Iterator()
 			for it.Next() {
 				tuple := it.Tuple()
-				for i, col := range timeRel.Symbols() {
-					if col == datalog.NewSymbol("?t") {
+				for i, symbol := range timeRel.Symbols() {
+					if symbol == datalog.NewSymbol("?t") {
 						if t, ok := tuple[i].(time.Time); ok {
 							_ = t.Day() == 5
 						}

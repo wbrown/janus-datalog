@@ -27,11 +27,11 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **ATEV index & attribute high-water mark**: `MaxElementIDForAttribute` and every `Cache.IsAttributeFresh` call become **O(1) (~1 µs)** instead of O(datoms-for-A); **2.2× → 555× faster** at 10–10,000 datoms-per-attribute (verified 2026-05-25). Costs ~14% more write work per commit (1 of 8 indices).
 - ✅ **Relation-input parallel iteration**: worker pool + workspace reuse for `:in $ [[?x ?y] ...]`-shape queries. **10–25% wall-time improvement** uniformly across worker counts that fit in P-cores; **1.4% fewer allocations** per query. Eliminates per-tuple goroutine spawn (`len(tuples)` goroutines → `numWorkers`), per-call `QueryExecutor`/`modifiedQuery` rebuild, and per-call `BindQueryInputs` machinery. Fixes an iterator-workspace-reuse race on streaming inputs (verified 2026-05-26).
 - ✅ **Hash-join hot-path optimizations**: **~25% faster Identity-keyed joins** (entity references — the dominant real-world shape), **~14% faster int64-keyed**, **~4.4% fewer allocations** (n=10 geomean) from six targeted inner-loop findings. Biggest wins: pointer-hashing interned Identity/Keyword instead of their SHA1 content (−12.7% Identity) and hoisting the `combineTuples` projection plan out of the inner loop (−8.8%) (verified 2026-05-29, M3 Ultra).
-- ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` column attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
+- ✅ **Same-entity attribute-fetch fusion**: a `[?e :const-attr ?fresh]` fetch on an already-bound `?e` executes as a per-tuple `LookupAttribute` binding attach instead of a separate match + hash join. **1.40–1.94× faster** (scaling with attributes-per-entity), **~2.6–3× fewer allocations**; reaches and at K≤3 beats the no-join Pull floor (flat tuples vs Pull's nested maps). Both paths use the EA cache for the per-`(E,A)` lookup — fusion removes the join around it. CardinalityOne and latest/as-of only (history and CardinalityMany stay on the join path); on by default (verified 2026-05-29, M5).
 - ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
 - ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Bounded Top-N finalization**: ordered limits without non-projected sort keys use an O(N)-memory heap instead of materializing and sorting every row. Across 10K/100K rows and N=1/10/100: **97.1% faster**, **99.96% less memory**, **99.86% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64). The source is still fully scanned; index-order pushdown remains separate.
-- ✅ **One-pass same-entity attribute bundles**: contiguous cardinality-one fetches sharing a bound entity now attach all output columns in one traversal and one materialization. **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 at 1,000 entities is **24.8% faster, 56.5% less memory, 36.5% fewer allocations** (n=10; verified 2026-07-11, darwin/arm64).
+- ✅ **One-pass same-entity attribute bundles**: contiguous cardinality-one fetches sharing a bound entity now attach all output bindings in one traversal and one materialization. **13.5% faster, 32.9% less memory, 19.5% fewer allocations** geomean; K=6 at 1,000 entities is **24.8% faster, 56.5% less memory, 36.5% fewer allocations** (n=10; verified 2026-07-11, darwin/arm64).
 - ⚠️ **Typed Relation properties (foundation)**: `Relation.Properties()` carries ordering and candidate-key guarantees using Datalog symbols. Initial conservative propagation plus key-aware streaming projection reduces the complex-query checkpoint by **5.45% memory** and **2.71% allocations** with statistically unchanged time. Join/OR derivations and broader storage coverage remain (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **Existing-order scan termination (6a)**: when a relation already satisfies Datalog `:order-by`, ordered limits stream directly through `LimitRelation`. On 10K AETV-ordered entities, N=1/10/100 scans exactly N rows and is **98.1–99.7% faster**, with **97.0–99.4% less memory** and **98.0–99.6% fewer allocations**. Order-aware index selection (6b) remains separate (n=10; verified 2026-07-11, darwin/arm64).
 - ✅ **History ATEV order-aware matching (6b first shape)**: `PatternMatcher.Match` now receives a one-pattern Datalog query fragment. Safe history queries with constant A and `Tx desc, E asc` select ATEV and scan exactly N raw datoms: **99.15% faster, 99.07% less memory, 98.89% fewer allocations** geomean. Latest/as-of explicitly decline Tx-primary ATEV (n=10; verified 2026-07-11, darwin/arm64).
@@ -863,7 +863,7 @@ not injective:
   values paired with their string renderings in both aggregation modes.
 
 **Measurement** (`BenchmarkGroupedAggregationKeying`, 10,000 rows, 100
-two-column groups, `benchtime=500ms`, `count=10`, darwin/arm64):
+groups keyed by two symbols, `benchtime=500ms`, `count=10`, darwin/arm64):
 
 | Mode | Time before | Time after | Delta | Bytes delta | Allocs delta |
 |------|------------:|-----------:|------:|------------:|-------------:|
@@ -899,7 +899,7 @@ already provides a single-walk `PutIfAbsent` operation.
 - Set semantics are unchanged; this does not skip deduplication or introduce
   relational property propagation.
 
-**Measurement** (`BenchmarkDedupInsertionPaths`, 10,000 two-column
+**Measurement** (`BenchmarkDedupInsertionPaths`, 10,000 two-position
 Identity/string tuples, `benchtime=500ms`, `count=10`, darwin/arm64):
 
 | Workload | Mode | Time before | Time after | Delta |
@@ -1211,7 +1211,26 @@ result is therefore correctness and preservation of optimization structure,
 not a demonstrated general-query speedup. It enables future projection/liveness
 work to reduce tuple width without losing `Project` boundaries first.
 
-**File**: `datalog/storage/optimization_matrix_test.go`
+### Materialized join-project experiment (July 12, 2026)
+
+Backward liveness can now insert `Project` above narrowed inner-join children,
+but `EnableJoinProjectInsertion` remains default-off. On a focused 2,000-entity
+scan → selective predicate → project → join query, with algebra optimization
+enabled in both modes (`benchtime=500ms`, `count=10`, darwin/arm64):
+
+| Metric | Flat | Materialized project | Delta |
+|--------|-----:|---------------------:|------:|
+| Median time | 0.975 ms/op | 1.044 ms/op | **+7.0%** |
+| Memory | 1.628 MiB/op | 2.192 MiB/op | **+34.6%** |
+| Allocations | 20.34K/op | 25.40K/op | **+24.9%** |
+
+The narrower tuple does not repay the extra phase materialization. The transform
+and benchmark are retained as a correctness/proof checkpoint, but production
+activation should wait until phase boundaries can stream and preserve iterator,
+close-error, tuple-copy, and relation-property contracts.
+
+**Files**: `datalog/storage/optimization_matrix_test.go`,
+`datalog/storage/algebra_project_benchmark_test.go`
 
 ---
 
@@ -2194,7 +2213,7 @@ benchmark artifacts under `docs/perf/` (`*_m3ultra_*.txt`).
   same-content/different-pointer), so the pointer address is already a unique,
   stable key — hashing the 20-byte SHA1 content was redundant. One load replaces
   a 20-byte array copy plus an FNV loop on every key build, on every
-  probe/build/dedup column.
+  probe/build/dedup tuple position.
 - **#1** removed a per-result-row `map[query.Symbol]bool` allocation plus a double
   symbol scan by precomputing the right-side projection plan once per join.
 - **#4** is the only finding that reduced allocations: dropping a doubly-redundant

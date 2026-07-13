@@ -309,13 +309,13 @@ This is the strongest example of "operate on compressed data" in the literature.
 
 #### FSST: Fast Static Symbol Table (Boncz et al., VLDB 2020)
 
-**FSST** from CWI Amsterdam is a lightweight string compression scheme used in column stores. Its key property: **equality comparisons can be performed directly on compressed values** as long as both operands are compressed with the same symbol table. This means queries with equality-selection predicates work on compressed strings without decompression.
+**FSST** from CWI Amsterdam is a lightweight string compression scheme used in vertically partitioned analytical stores. Its key property: **equality comparisons can be performed directly on compressed values** as long as both operands are compressed with the same symbol table. This means queries with equality-selection predicates work on compressed strings without decompression.
 
 Properties:
 - Maps 1-8 byte "symbols" to single-byte "codes"
 - Random access to individual compressed strings (not block-based)
 - Decompression speed comparable to or better than LZ4, with significantly better compression
-- Implemented in DuckDB and other column stores
+- Implemented in DuckDB and other vertically partitioned analytical stores
 
 FSST supports equality but NOT order comparison on compressed form — the compression does not preserve sort order.
 
@@ -369,7 +369,7 @@ This is architecturally very similar to what L85 does for janus-datalog, but mor
 
 #### CockroachDB Key Encoding
 
-CockroachDB encodes SQL primary keys into KV keys such that `enc(x) <= enc(y) iff x <= y` for ascending columns (reversed for descending). Uses a prefix-free encoding where the first byte indicates field type. STRING and BYTES share an encoding. Collated strings appear twice: once as sort key, once as actual value.
+CockroachDB encodes SQL primary keys into KV keys such that `enc(x) <= enc(y) iff x <= y` for ascending key fields (reversed for descending). It uses a prefix-free encoding where the first byte indicates field type. STRING and BYTES share an encoding. Collated strings appear twice: once as sort key, once as actual value.
 
 - Tech notes: [encoding.md](https://github.com/cockroachdb/cockroach/blob/master/docs/tech-notes/encoding.md)
 - Encoding code: [encoding.go](https://github.com/cockroachdb/cockroach/blob/master/pkg/util/encoding/encoding.go)
@@ -419,17 +419,17 @@ Pebble (CockroachDB's Go storage engine) uses the same block format. There is an
 - Uncompressed "modification log" within compressed pages avoids recompression on small updates
 - Key prefix compression within pages
 
-#### ClickHouse: Column-level specialized encodings
+#### ClickHouse: Per-field specialized encodings
 
 ClickHouse uses a two-layer approach:
 1. **Encodings** (Delta, DoubleDelta, Gorilla, T64) transform data by type to reduce entropy
 2. **Compression** (LZ4, ZSTD) compresses the encoded output
 
-These encodings do NOT preserve sort order — they're designed for columnar analytics where you decompress before comparing. Sort order is maintained by the MergeTree's primary key ordering, not by compression.
+These encodings do NOT preserve sort order — they're designed for vertically partitioned analytics where values are decompressed before comparison. Sort order is maintained by the MergeTree's primary key ordering, not by compression.
 
 #### DuckDB: Lightweight compression
 
-Seven algorithms (Constant, RLE, BitPacking, FOR, Dictionary, FSST, Chimp/Patas), selected per-column-segment. Dramatic compression ratios (e.g., 1.73GB to 0.21GB for On Time dataset). Operates in conjunction with late materialization and vectorized execution.
+Seven algorithms (Constant, RLE, BitPacking, FOR, Dictionary, FSST, Chimp/Patas), selected per homogeneous field segment. Dramatic compression ratios (e.g., 1.73GB to 0.21GB for On Time dataset). Operates in conjunction with late materialization and vectorized execution.
 
 #### Datomic: Fressian + zip
 
@@ -437,7 +437,7 @@ Datomic segments (arrays of ~1000-20000 datoms) are serialized with **Fressian**
 
 #### Apache Parquet: Dictionary encoding + min/max statistics
 
-Parquet uses dictionary encoding and RLE within column chunks. Range scans work through **predicate pushdown** using per-chunk min/max statistics — the query engine skips chunks whose range doesn't overlap the predicate. Dictionary-level predicate evaluation can provide up to 8x speedup.
+Parquet uses dictionary encoding and RLE within chunks that each hold one schema field's values. Range scans work through **predicate pushdown** using per-chunk min/max statistics — the query engine skips chunks whose range doesn't overlap the predicate. Dictionary-level predicate evaluation can provide up to 8x speedup.
 
 ### 5. B-Tree Compression Survey (SIGMOD 2024)
 
@@ -454,7 +454,7 @@ Key finding: **Head+Tail Compression** achieves faster performance than uncompre
 
 ### 6. Dictionary-Based Order-Preserving String Compression (Binnig et al., SIGMOD 2009)
 
-Designed for SAP HANA-style column stores: replaces variable-length strings with fixed-length integer codes from an order-preserving dictionary. The dictionary maps string values to integer codes such that the code ordering matches the string ordering. Enables range queries on codes without decompression. Uses front coding internally (lexicographic ordering + prefix deduplication).
+Designed for SAP HANA-style vertically partitioned stores: replaces variable-length strings with fixed-length integer codes from an order-preserving dictionary. The dictionary maps string values to integer codes such that the code ordering matches the string ordering. Enables range queries on codes without decompression. Uses front coding internally (lexicographic ordering + prefix deduplication).
 
 - Paper: [CMU Course PDF](https://15721.courses.cs.cmu.edu/spring2016/papers/p283-binnig.pdf)
 

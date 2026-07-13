@@ -383,7 +383,7 @@ func TestResultMethods(t *testing.T) {
 		t.Error("expected nil for out of bounds index")
 	}
 
-	// Test ColumnIndex
+	// Test SymbolIndex
 	if idx := result.SymbolIndex(datalog.NewSymbol("?name")); idx != 0 {
 		t.Errorf("expected index 0 for ?name, got %d", idx)
 	}

@@ -1024,7 +1024,7 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 		return nil
 	}
 
-	// Map each join symbol to its column in the outer relation.
+	// Map each join symbol to its tuple position in the outer relation.
 	pos := make([]int, len(it.joinSyms))
 	for i, js := range it.joinSyms {
 		pos[i] = -1

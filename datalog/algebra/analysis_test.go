@@ -331,7 +331,7 @@ func TestRefreshSchemasRepairsDerivedOutputsWithoutMutatingInput(t *testing.T) {
 	payload := datalog.NewSymbol("?payload")
 
 	left := &Node{
-		Op: RuleMap,
+		Op:       RuleMap,
 		Children: []*Node{algebraTestScan(entity, title, count)},
 		Data: &Map{
 			Expression: &query.Expression{

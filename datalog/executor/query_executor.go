@@ -69,7 +69,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		switch c := clause.(type) {
 		case *query.DataPattern:
 			// Same-entity attribute fetches on an already-bound ?e are
-			// per-tuple column attaches, not new relations to hash-join.
+			// per-tuple attribute attaches, not new relations to hash-join.
 			// Consume a contiguous run in one traversal when every pattern
 			// satisfies the existing cardinality and temporal gates.
 			fusedCount := 0
@@ -276,7 +276,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 
 	} else {
 		// Simple projection to :find symbols. Pull find elements project
-		// their entity variable like any other column (Identity values):
+		// their entity variable like any other symbol (Identity values):
 		// pull rendering is result presentation and happens at the result
 		// boundary in ExecuteRealized, after sort/strip/limit — never
 		// inside relational flow. See
@@ -372,7 +372,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 
 		// Single group or each group projects independently. Pull rendering
 		// happens at the result boundary (ExecuteRealized, after
-		// sort/strip/limit), not here: entity columns stay Identity through
+		// sort/strip/limit), not here: entity bindings stay Identity through
 		// the relational pipeline.
 		for i, group := range groups {
 			projected, err := group.Project(findSymbols)
@@ -414,7 +414,7 @@ type attributeFetchSpec struct {
 }
 
 // tryFuseAttributeFetchBundle recognizes a contiguous run of same-entity
-// cardinality-one patterns and executes all of them as one per-tuple column
+// cardinality-one patterns and executes all of them as one per-tuple attribute
 // attach. It preserves the existing single-pattern gates and event stream while
 // avoiding one relation traversal and materialization per additional attribute.
 //
@@ -1442,7 +1442,7 @@ func (e *DefaultQueryExecutor) findOuterRelationBySymbols(symSet map[query.Symbo
 	return result
 }
 
-// findCommonColumns returns symbols that exist in all relations
+// findCommonSymbols returns symbols that exist in all relations
 func findCommonSymbols(relations []Relation) []query.Symbol {
 	if len(relations) == 0 {
 		return nil
@@ -1639,7 +1639,7 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, c
 }
 
 // extractEntityIDs extracts datalog.Identity values from the specified symbol
-// columns of a materialized relation. Used to collect entity IDs for prefetch.
+// bindings of a materialized relation. Used to collect entity IDs for prefetch.
 func extractEntityIDs(rel Relation, syms []query.Symbol) []datalog.Identity {
 	symIdx := make(map[query.Symbol]int)
 	for i, s := range rel.Symbols() {

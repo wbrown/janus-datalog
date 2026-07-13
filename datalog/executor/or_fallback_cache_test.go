@@ -173,7 +173,7 @@ func TestBuildCachedBranch(t *testing.T) {
 		// Simulate the exact shape produced by a decorrelated or-join:
 		// The SubqueryPattern binding maps inner ?s → outer ?project and
 		// inner aggregates → outer binding vars.
-		// outerSyms comes from the full outer relation (many columns).
+		// outerSyms comes from the full outer relation (many symbols).
 		symProject := datalog.NewSymbol("?project")
 		symLabel := datalog.NewSymbol("?label")
 		symCreatedAt := datalog.NewSymbol("?createdAt")

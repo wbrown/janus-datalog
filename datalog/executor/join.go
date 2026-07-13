@@ -244,7 +244,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	}
 
 	// Determine output symbols and the right-side projection plan in a
-	// single pass: positions in right.Symbols() that are not join columns
+	// single pass: positions in right.Symbols() that are not join symbols
 	// both append to outputSyms (the result schema) and to
 	// rightNonJoinIndices (the gather indices used by combineTuplesIndexed
 	// on every matched row). Precomputing these here turns the per-row
@@ -319,7 +319,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// Build phase - create hash table using efficient TupleKeyMap.
 	// This is a pure relational join: every build row is preserved. CRDT/temporal
 	// resolution is the storage layer's responsibility (EATV ordering), never
-	// inferred here from a column's name.
+	// inferred here from a symbol's name.
 	// Pre-size based on build relation size to avoid map growth
 	buildSize := buildRel.Size()
 	if buildSize < 0 {
@@ -366,7 +366,7 @@ func HashJoinWithOptions(left, right Relation, joinSyms []query.Symbol, opts Exe
 	// are preserved; identical output tuples are deduplicated downstream by set
 	// semantics, not here. CRDT/temporal "latest transaction wins" resolution is
 	// handled by the storage layer (EATV index ordering), never inferred from a
-	// column's name.
+	// symbol's name.
 	buildCount := 0
 	for buildIt.Next() {
 		tuple := buildIt.Tuple()

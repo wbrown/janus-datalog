@@ -227,6 +227,6 @@ func datomsToRelationWithOptions(datoms []datalog.Datom, pattern *query.DataPatt
 
 // PatternToRelation converts pattern match results to a relation
 func PatternToRelation(datoms []datalog.Datom, pattern *query.DataPattern) Relation {
-	symbols := pattern.ExtractColumns()
+	symbols := pattern.Symbols()
 	return datomsToRelation(datoms, pattern, symbols)
 }

@@ -72,7 +72,7 @@ func (e *Executor) executeSubqueryWithHashTable(
     inputRel Relation,
 ) (*SubqueryResult, error) {
     // Single pass over inputRel
-    inputIndices := findInputColumns(inputRel, subqPlan.InputVariables)
+    inputIndices := findInputSymbolPositions(inputRel, subqPlan.InputVariables)
     hashTable := NewTupleKeyMap()
     inputCombinations := NewTupleKeyMap()
 

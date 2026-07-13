@@ -107,17 +107,17 @@ func TestJoinCopyAnnotationMaterialized(t *testing.T) {
 	}
 
 	// Create two materialized relations (RequiresCopy = false)
-	leftCols := []datalog.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	leftSymbols := []datalog.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	leftTuples := []executor.Tuple{
 		{1, "a"}, {2, "b"}, {3, "c"},
 	}
-	left := executor.NewMaterializedRelationWithOptions(leftCols, leftTuples, opts)
+	left := executor.NewMaterializedRelationWithOptions(leftSymbols, leftTuples, opts)
 
-	rightCols := []datalog.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
+	rightSymbols := []datalog.Symbol{datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 	rightTuples := []executor.Tuple{
 		{"a", 100}, {"b", 200},
 	}
-	right := executor.NewMaterializedRelationWithOptions(rightCols, rightTuples, opts)
+	right := executor.NewMaterializedRelationWithOptions(rightSymbols, rightTuples, opts)
 
 	// Join
 	joined := executor.HashJoinWithOptions(left, right, []datalog.Symbol{datalog.NewSymbol("?y")}, opts)

@@ -120,8 +120,8 @@ Result: Single relation with 25 tuples
 Joins on ALL shared symbols:
 ```go
 func (r *MaterializedRelation) Join(other Relation) Relation {
-    sharedCols := findSharedColumns(r, other)
-    if len(sharedCols) == 0 {
+    sharedSymbols := findSharedSymbols(r, other)
+    if len(sharedSymbols) == 0 {
         return crossProduct(r, other) // No shared symbols
     }
     return r.HashJoin(other, sharedCols)

@@ -598,6 +598,54 @@ func TestClauseBasedPlannerEmitsDirectlyFromOptimizedAlgebra(t *testing.T) {
 	require.NotContains(t, names, "algebra/bridge-complete")
 }
 
+func TestClauseBasedPlannerInsertsJoinProjectBoundary(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	payload := datalog.NewSymbol("?payload")
+	parsed, err := parser.ParseQuery(
+		`[:find ?entity ?payload
+		  :where [?entity :item/score ?score]
+		         [(> ?score 90)]
+		         [?entity :item/payload ?payload]]`,
+	)
+	require.NoError(t, err)
+
+	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{
+		EnableAlgebraOptimizer:     true,
+		EnableJoinProjectInsertion: true,
+	}).
+		Plan(parsed, nil)
+	require.NoError(t, err)
+	require.NoError(t, plan.Validate())
+	require.Len(t, plan.Phases, 2)
+	require.Equal(t, []query.Symbol{entity}, plan.Phases[0].Provides)
+	require.Equal(t, []query.Symbol{entity}, plan.Phases[0].Keep)
+	require.Equal(t, []query.Symbol{entity}, plan.Phases[1].Available)
+	require.Equal(t, []query.Symbol{entity, payload}, plan.Phases[1].Provides)
+}
+
+func TestClauseBasedPlannerKeepsInputSymbolsLiveAcrossJoinPlanning(t *testing.T) {
+	targetTeam := datalog.NewSymbol("?target-team")
+	parsed, err := parser.ParseQuery(
+		`[:find ?name
+		  :in $ ?target-team
+		  :where [?entity :person/name ?name]
+		         [?entity :person/team ?target-team]]`,
+	)
+	require.NoError(t, err)
+
+	plan, err := NewClauseBasedPlanner(nil, PlannerOptions{EnableAlgebraOptimizer: true}).
+		Plan(parsed, nil)
+	require.NoError(t, err)
+	require.NoError(t, plan.Validate())
+	require.Len(t, plan.Phases, 1,
+		"input-bound pattern variables must not be projected into an uncorrelated subquery")
+	require.Contains(t, plan.Phases[0].Available, targetTeam)
+	require.Len(t, plan.Phases[0].Query.Where, 2)
+	_, isPattern := plan.Phases[0].Query.Where[1].(*query.DataPattern)
+	require.True(t, isPattern,
+		"input-bound pattern must remain in the phase that receives its binding")
+}
+
 func algebraTreeContains(node *algebra.Node, operator string) bool {
 	if node.Op == operator {
 		return true

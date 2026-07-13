@@ -12,14 +12,14 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// TestHashJoinColumnIndexBug tests the bug where HashJoinScan confused
+// TestHashJoinSymbolIndexBug tests the bug where HashJoinScan confused
 // datom position with symbol index in the binding relation.
 //
 // Bug scenario:
 // - Pattern: [?e :attr ?ref] where ?ref comes from a binding relation
 // - ?ref is at datom position 2 (V position)
 // - But ?ref is at symbol index 0 in the binding relation (first/only symbol)
-// - buildHashSet was using position=2 instead of columnIndex=0
+// - buildHashSet was using position=2 instead of symbolIndex=0
 // - Tried to access tuple[2] when tuple only had length 1
 // - Result: Empty hash set → no matches
 //
@@ -27,7 +27,7 @@ import (
 // - With threshold ≤2, IndexNestedLoop was used for small binding sets
 // - Only appeared when we changed threshold to 0, making HashJoinScan the default
 // - Most benchmarks had patterns where datom position == symbol index
-func TestHashJoinColumnIndexBug(t *testing.T) {
+func TestHashJoinSymbolIndexBug(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
 	assert.NoError(t, err)
@@ -96,7 +96,7 @@ func TestHashJoinColumnIndexBug(t *testing.T) {
 		case datalog.Identity:
 			// Valid Identity type
 		default:
-			t.Errorf("First symbol should be Identity, got %T: %v", v, v)
+			t.Errorf("First tuple position should be Identity, got %T: %v", v, v)
 		}
 		// Verify value is a float64
 		value, ok := tuple[1].(float64)
@@ -108,9 +108,9 @@ func TestHashJoinColumnIndexBug(t *testing.T) {
 	assert.Equal(t, 5, count, "Iterator should return 5 tuples")
 }
 
-// TestHashJoinColumnIndexMultiColumn tests the fix works with multiple symbols
+// TestHashJoinSymbolIndexMultiSymbol tests the fix works with multiple symbols
 // where the join variable is not the first symbol.
-func TestHashJoinColumnIndexMultiColumn(t *testing.T) {
+func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := NewDatabase(tempDir)
 	assert.NoError(t, err)
@@ -169,7 +169,7 @@ func TestHashJoinColumnIndexMultiColumn(t *testing.T) {
 	case datalog.Identity:
 		// Valid Identity type
 	default:
-		t.Fatalf("Expected Identity for first symbol, got %T", v)
+		t.Fatalf("Expected Identity in first tuple position, got %T", v)
 	}
 	switch v := tuple[1].(type) {
 	case datalog.Identity:

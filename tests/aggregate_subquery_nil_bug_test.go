@@ -302,7 +302,7 @@ func TestMultipleAggregateSubqueriesNilBug(t *testing.T) {
 
 	// Check that all aggregate values are non-nil
 	if len(tuple) != 5 {
-		t.Fatalf("Expected 5 columns in result, got %d", len(tuple))
+		t.Fatalf("Expected 5 symbols in result, got %d", len(tuple))
 	}
 
 	openPrice := tuple[2]

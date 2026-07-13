@@ -97,8 +97,8 @@ func (it *mockUnsafeIterator) Error() error { return it.err }
 
 func TestUnionIteratorCopiesFromUnsafeSource(t *testing.T) {
 	// Create an unsafe relation that reuses workspace
-	cols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
-	unsafeRel := newMockUnsafeRelation(cols, [][]interface{}{
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	unsafeRel := newMockUnsafeRelation(symbols, [][]interface{}{
 		{1, "a"},
 		{2, "b"},
 		{3, "c"},
@@ -110,7 +110,7 @@ func TestUnionIteratorCopiesFromUnsafeSource(t *testing.T) {
 	close(ch)
 
 	// Create UnionRelation
-	union := NewUnionRelation(ch, cols, ExecutorOptions{})
+	union := NewUnionRelation(ch, symbols, ExecutorOptions{})
 
 	// Iterate and store tuple references
 	var storedTuples []Tuple
@@ -158,12 +158,12 @@ func TestUnionIteratorCopiesFromUnsafeSource(t *testing.T) {
 
 func TestUnionIteratorPassthroughFromSafeSource(t *testing.T) {
 	// Create a safe MaterializedRelation (RequiresCopy() = false)
-	cols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	tuples := []Tuple{
 		{1, "a"},
 		{2, "b"},
 	}
-	safeRel := NewMaterializedRelation(cols, tuples)
+	safeRel := NewMaterializedRelation(symbols, tuples)
 
 	// Create channel and send the relation
 	ch := make(chan relationItem, 1)
@@ -171,7 +171,7 @@ func TestUnionIteratorPassthroughFromSafeSource(t *testing.T) {
 	close(ch)
 
 	// Create UnionRelation
-	union := NewUnionRelation(ch, cols, ExecutorOptions{})
+	union := NewUnionRelation(ch, symbols, ExecutorOptions{})
 
 	// Iterate and check that tuples pass through correctly
 	var results []Tuple
@@ -202,16 +202,16 @@ func TestUnionIteratorPassthroughFromSafeSource(t *testing.T) {
 // =============================================================================
 
 func TestUnionIteratorMixedSources(t *testing.T) {
-	cols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 	// Safe source
-	safeRel := NewMaterializedRelation(cols, []Tuple{
+	safeRel := NewMaterializedRelation(symbols, []Tuple{
 		{1, "safe1"},
 		{2, "safe2"},
 	})
 
 	// Unsafe source
-	unsafeRel := newMockUnsafeRelation(cols, [][]interface{}{
+	unsafeRel := newMockUnsafeRelation(symbols, [][]interface{}{
 		{3, "unsafe1"},
 		{4, "unsafe2"},
 	})
@@ -223,7 +223,7 @@ func TestUnionIteratorMixedSources(t *testing.T) {
 	close(ch)
 
 	// Create UnionRelation
-	union := NewUnionRelation(ch, cols, ExecutorOptions{})
+	union := NewUnionRelation(ch, symbols, ExecutorOptions{})
 
 	// Iterate and store all tuples
 	var storedTuples []Tuple
@@ -263,10 +263,10 @@ func TestUnionIteratorMixedSources(t *testing.T) {
 // =============================================================================
 
 func TestPrependedIteratorCopiesFromUnsafeRest(t *testing.T) {
-	cols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 	// Create unsafe relation for the "rest"
-	unsafeRel := newMockUnsafeRelation(cols, [][]interface{}{
+	unsafeRel := newMockUnsafeRelation(symbols, [][]interface{}{
 		{2, "rest1"},
 		{3, "rest2"},
 		{4, "rest3"},
@@ -274,7 +274,7 @@ func TestPrependedIteratorCopiesFromUnsafeRest(t *testing.T) {
 
 	// Create PrependedRelation with a safe first tuple and unsafe rest
 	firstTuple := Tuple{1, "first"}
-	prepended := NewPrependedRelation(cols, firstTuple, unsafeRel, ExecutorOptions{})
+	prepended := NewPrependedRelation(symbols, firstTuple, unsafeRel, ExecutorOptions{})
 
 	// Iterate and store all tuples
 	var storedTuples []Tuple
@@ -314,17 +314,17 @@ func TestPrependedIteratorCopiesFromUnsafeRest(t *testing.T) {
 // =============================================================================
 
 func TestPrependedIteratorPassthroughFromSafeRest(t *testing.T) {
-	cols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 
 	// Create safe relation for the "rest"
-	safeRel := NewMaterializedRelation(cols, []Tuple{
+	safeRel := NewMaterializedRelation(symbols, []Tuple{
 		{2, "rest1"},
 		{3, "rest2"},
 	})
 
 	// Create PrependedRelation
 	firstTuple := Tuple{1, "first"}
-	prepended := NewPrependedRelation(cols, firstTuple, safeRel, ExecutorOptions{})
+	prepended := NewPrependedRelation(symbols, firstTuple, safeRel, ExecutorOptions{})
 
 	// Iterate and store all tuples
 	var storedTuples []Tuple
@@ -358,8 +358,8 @@ func TestPrependedIteratorPassthroughFromSafeRest(t *testing.T) {
 // =============================================================================
 
 func TestMockUnsafeRelationActuallyCorrupts(t *testing.T) {
-	cols := []query.Symbol{datalog.NewSymbol("?x")}
-	unsafe := newMockUnsafeRelation(cols, [][]interface{}{
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
+	unsafe := newMockUnsafeRelation(symbols, [][]interface{}{
 		{1},
 		{2},
 		{3},
@@ -392,8 +392,8 @@ func TestMockUnsafeRelationActuallyCorrupts(t *testing.T) {
 // =============================================================================
 
 func TestMaterializedRelationDoesNotCorrupt(t *testing.T) {
-	cols := []query.Symbol{datalog.NewSymbol("?x")}
-	safe := NewMaterializedRelation(cols, []Tuple{
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
+	safe := NewMaterializedRelation(symbols, []Tuple{
 		{1},
 		{2},
 		{3},
@@ -434,13 +434,13 @@ func TestOrFallbackIteratorCopiesFromUnsafeOuter(t *testing.T) {
 
 	// Create an unsafe outer relation with [?e, ?name]
 	// This simulates what BadgerDB returns - workspace reuse
-	outerCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
+	outerSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1"), "item1"},
 		{datalog.NewIdentity("e2"), "item2"},
 		{datalog.NewIdentity("e3"), "item3"},
 	}
-	outerRel := newMockUnsafeRelation(outerCols, outerData)
+	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
 
 	// Create OR clause: [?e :item/priority ?p]
 	// This branch will match entities with priority
@@ -526,7 +526,7 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 	// Create an unsafe relation that will be returned by the "branch"
 	// This simulates what would happen if a branch returned a StreamingRelation
 	// with workspace reuse
-	branchCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
+	branchSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")}
 	unsafeBranchData := [][]interface{}{
 		{1, "a"},
 		{1, "b"},
@@ -534,7 +534,7 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 		{2, "d"},
 		{2, "e"},
 	}
-	unsafeBranch := newMockUnsafeRelation(branchCols, unsafeBranchData)
+	unsafeBranch := newMockUnsafeRelation(branchSymbols, unsafeBranchData)
 
 	// Test projectedIterator - this is what OrFallbackIterator wraps the branch with
 	// The fix is in projectedIterator.Tuple() which should copy when source.RequiresCopy() = true
@@ -542,8 +542,8 @@ func TestOrFallbackIteratorWithUnsafeBranchResult(t *testing.T) {
 	projIt := &projectedIterator{
 		inner:          branchIt,
 		branchRelation: unsafeBranch, // This has RequiresCopy() = true
-		branchSyms:     branchCols,
-		outputSyms:     branchCols, // Same symbols, no projection needed
+		branchSyms:     branchSymbols,
+		outputSyms:     branchSymbols, // Same symbols, no projection needed
 	}
 
 	var storedTuples []Tuple
@@ -604,12 +604,12 @@ func TestOrFallbackIteratorMultipleBranchResultsIntegration(t *testing.T) {
 	})
 
 	// Create an outer relation with 2 entities
-	outerCols := []query.Symbol{datalog.NewSymbol("?e")}
+	outerSymbols := []query.Symbol{datalog.NewSymbol("?e")}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1")},
 		{datalog.NewIdentity("e2")},
 	}
-	outerRel := newMockUnsafeRelation(outerCols, outerData)
+	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
 
 	// Create OR clause: [?e :item/tag ?tag]
 	// This will return MULTIPLE tuples per outer tuple
@@ -694,13 +694,13 @@ func TestOrFallbackIteratorWithFallbackBranch(t *testing.T) {
 	ctx := NewContext(nil)
 
 	// Create an unsafe outer relation with 3 items
-	outerCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
+	outerSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
 	outerData := [][]interface{}{
 		{datalog.NewIdentity("e1"), "item1"},
 		{datalog.NewIdentity("e2"), "item2"},
 		{datalog.NewIdentity("e3"), "item3"}, // No priority - will use fallback
 	}
-	outerRel := newMockUnsafeRelation(outerCols, outerData)
+	outerRel := newMockUnsafeRelation(outerSymbols, outerData)
 
 	// Create OR clause with fallback: [?e :item/priority ?p] or [(ground 0) ?p]
 	orClause := &query.OrClause{

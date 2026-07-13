@@ -39,7 +39,7 @@ type ExecutorOptions struct {
 	EnableEntityPrefetch bool
 
 	// Attribute-fetch fusion: execute a same-entity [?e :const-attr ?fresh]
-	// pattern as a per-tuple LookupAttribute column attach instead of a
+	// pattern as a per-tuple LookupAttribute binding instead of a
 	// separate relation match + hash join. CardinalityOne, latest/as-of only.
 	EnableAttributeFetchFusion bool
 }

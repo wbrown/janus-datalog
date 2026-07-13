@@ -171,7 +171,7 @@ func CollapseRelations(relations []Relation) []Relation {
         for changed {
             changed = false
             for i := 0; i < len(remaining); i++ {
-                if SharesColumns(currentGroup, remaining[i]) {
+                if SharesSymbols(currentGroup, remaining[i]) {
                     // Join them
                     currentGroup = Join(currentGroup, remaining[i])
 

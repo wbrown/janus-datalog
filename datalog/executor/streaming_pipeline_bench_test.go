@@ -17,8 +17,8 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 	sizes := []int{1000, 10000}
 
 	for _, size := range sizes {
-		leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-		rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -35,7 +35,7 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 			var totalTime time.Duration
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -45,7 +45,7 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 					},
 				}
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -72,7 +72,7 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 			var totalTime time.Duration
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -82,7 +82,7 @@ func BenchmarkTimeToFirstResult(b *testing.B) {
 					},
 				}
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -110,8 +110,8 @@ func BenchmarkLimitQueries(b *testing.B) {
 	dataSize := 10000
 	limits := []int{10, 100, 1000}
 
-	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, dataSize)
 	rightTuples := make([]Tuple, dataSize)
@@ -128,7 +128,7 @@ func BenchmarkLimitQueries(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -138,7 +138,7 @@ func BenchmarkLimitQueries(b *testing.B) {
 					},
 				}
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -165,7 +165,7 @@ func BenchmarkLimitQueries(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -175,7 +175,7 @@ func BenchmarkLimitQueries(b *testing.B) {
 					},
 				}
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -203,8 +203,8 @@ func BenchmarkLimitQueries(b *testing.B) {
 func BenchmarkPeakMemory(b *testing.B) {
 	size := 50000 // Large dataset to see memory difference
 
-	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, size)
 	rightTuples := make([]Tuple, size)
@@ -223,7 +223,7 @@ func BenchmarkPeakMemory(b *testing.B) {
 			runtime.ReadMemStats(&memBefore)
 
 			left := &StreamingRelation{
-				symbols:  leftCols,
+				symbols:  leftSymbols,
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
@@ -233,7 +233,7 @@ func BenchmarkPeakMemory(b *testing.B) {
 				},
 			}
 			right := &StreamingRelation{
-				symbols:  rightCols,
+				symbols:  rightSymbols,
 				iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
@@ -279,7 +279,7 @@ func BenchmarkPeakMemory(b *testing.B) {
 			runtime.ReadMemStats(&memBefore)
 
 			left := &StreamingRelation{
-				symbols:  leftCols,
+				symbols:  leftSymbols,
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
@@ -289,7 +289,7 @@ func BenchmarkPeakMemory(b *testing.B) {
 				},
 			}
 			right := &StreamingRelation{
-				symbols:  rightCols,
+				symbols:  rightSymbols,
 				iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
@@ -332,8 +332,8 @@ func BenchmarkPeakMemory(b *testing.B) {
 func BenchmarkMultiStagePipeline(b *testing.B) {
 	size := 10000
 
-	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, size)
 	rightTuples := make([]Tuple, size)
@@ -349,7 +349,7 @@ func BenchmarkMultiStagePipeline(b *testing.B) {
 
 		for i := 0; i < b.N; i++ {
 			left := &StreamingRelation{
-				symbols:  leftCols,
+				symbols:  leftSymbols,
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
@@ -359,7 +359,7 @@ func BenchmarkMultiStagePipeline(b *testing.B) {
 				},
 			}
 			right := &StreamingRelation{
-				symbols:  rightCols,
+				symbols:  rightSymbols,
 				iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
@@ -401,7 +401,7 @@ func BenchmarkMultiStagePipeline(b *testing.B) {
 
 		for i := 0; i < b.N; i++ {
 			left := &StreamingRelation{
-				symbols:  leftCols,
+				symbols:  leftSymbols,
 				iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{
@@ -411,7 +411,7 @@ func BenchmarkMultiStagePipeline(b *testing.B) {
 				},
 			}
 			right := &StreamingRelation{
-				symbols:  rightCols,
+				symbols:  rightSymbols,
 				iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 				size:     -1,
 				options: ExecutorOptions{

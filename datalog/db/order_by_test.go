@@ -44,9 +44,9 @@ func TestOrderByNonProjectedThroughStorage(t *testing.T) {
 		                             [?t :task/priority ?p]
 		                      :order-by [[?p :desc]]]`)
 		require.NoError(t, err)
-		got := collectFirstCol(t, rel)
+		got := collectFirstValue(t, rel)
 		require.Equal(t, []interface{}{"gamma", "alpha", "delta", "beta"}, got)
-		// The retained sort column is stripped from the result shape.
+		// The retained sort symbol is stripped from the result shape.
 		require.Len(t, rel.Symbols(), 1)
 	})
 
@@ -57,7 +57,7 @@ func TestOrderByNonProjectedThroughStorage(t *testing.T) {
 		                      :order-by [[?p :desc]]
 		                      :limit 1]`)
 		require.NoError(t, err)
-		got := collectFirstCol(t, rel)
+		got := collectFirstValue(t, rel)
 		require.Equal(t, []interface{}{"gamma"}, got)
 	})
 }

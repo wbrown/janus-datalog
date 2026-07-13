@@ -705,7 +705,7 @@ func indexName(idx IndexType) string {
 // For cardinality-one, returns the current value (highest Tx via LWW).
 // For cardinality-many, returns one of the current set members.
 // CanFuseAttributeFetch reports whether a same-entity fetch of attr can be
-// fused into a per-tuple LookupAttribute column attach. True only when the
+// fused into a per-tuple LookupAttribute binding. True only when the
 // attribute is declared CardinalityOne in the schema AND the matcher is not in
 // history mode — the two conditions under which LookupAttribute returns the
 // single value a matched pattern would. Returns false for schemaless,

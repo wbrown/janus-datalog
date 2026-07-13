@@ -16,8 +16,8 @@ func TestJoinCorrectness(t *testing.T) {
 
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
-			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -29,10 +29,10 @@ func TestJoinCorrectness(t *testing.T) {
 			}
 
 			// Get results from asymmetric
-			asymmetricResults := getJoinResults(t, leftTuples, rightTuples, leftCols, rightCols, false)
+			asymmetricResults := getJoinResults(t, leftTuples, rightTuples, leftSymbols, rightSymbols, false)
 
 			// Get results from symmetric
-			symmetricResults := getJoinResults(t, leftTuples, rightTuples, leftCols, rightCols, true)
+			symmetricResults := getJoinResults(t, leftTuples, rightTuples, leftSymbols, rightSymbols, true)
 
 			// 1. Check count matches
 			if len(asymmetricResults) != size {
@@ -58,8 +58,8 @@ func TestJoinCorrectness(t *testing.T) {
 
 // TestJoinCorrectnessWithMismatches tests partial joins where not all tuples match
 func TestJoinCorrectnessWithMismatches(t *testing.T) {
-	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	// Left has IDs 0-99, Right has IDs 50-149
 	// Expected matches: 50-99 (50 results)
@@ -71,8 +71,8 @@ func TestJoinCorrectnessWithMismatches(t *testing.T) {
 		rightTuples[i] = Tuple{int64(i + 50), fmt.Sprintf("value%d", i+50)}
 	}
 
-	asymmetricResults := getJoinResults(t, leftTuples, rightTuples, leftCols, rightCols, false)
-	symmetricResults := getJoinResults(t, leftTuples, rightTuples, leftCols, rightCols, true)
+	asymmetricResults := getJoinResults(t, leftTuples, rightTuples, leftSymbols, rightSymbols, false)
+	symmetricResults := getJoinResults(t, leftTuples, rightTuples, leftSymbols, rightSymbols, true)
 
 	expectedCount := 50
 	if len(asymmetricResults) != expectedCount {
@@ -105,8 +105,8 @@ func TestJoinCorrectnessEarlyTermination(t *testing.T) {
 	size := 10000
 	limit := 100
 
-	leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-	rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+	leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+	rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 	leftTuples := make([]Tuple, size)
 	rightTuples := make([]Tuple, size)
@@ -117,8 +117,8 @@ func TestJoinCorrectnessEarlyTermination(t *testing.T) {
 	}
 
 	// Get limited results
-	asymmetricResults := getJoinResultsWithLimit(t, leftTuples, rightTuples, leftCols, rightCols, false, limit)
-	symmetricResults := getJoinResultsWithLimit(t, leftTuples, rightTuples, leftCols, rightCols, true, limit)
+	asymmetricResults := getJoinResultsWithLimit(t, leftTuples, rightTuples, leftSymbols, rightSymbols, false, limit)
+	symmetricResults := getJoinResultsWithLimit(t, leftTuples, rightTuples, leftSymbols, rightSymbols, true, limit)
 
 	// Both should return exactly 'limit' results
 	if len(asymmetricResults) != limit {
@@ -138,9 +138,9 @@ func TestJoinCorrectnessEarlyTermination(t *testing.T) {
 }
 
 // getAllJoinResults gets all join results
-func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rightCols []query.Symbol, symmetric bool) []Tuple {
+func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftSymbols, rightSymbols []query.Symbol, symmetric bool) []Tuple {
 	left := &StreamingRelation{
-		symbols:  leftCols,
+		symbols:  leftSymbols,
 		iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
@@ -150,7 +150,7 @@ func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rig
 		},
 	}
 	right := &StreamingRelation{
-		symbols:  rightCols,
+		symbols:  rightSymbols,
 		iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
@@ -177,9 +177,9 @@ func getJoinResults(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rig
 }
 
 // getLimitedJoinResults gets limited join results
-func getJoinResultsWithLimit(t *testing.T, leftTuples, rightTuples []Tuple, leftCols, rightCols []query.Symbol, symmetric bool, limit int) []Tuple {
+func getJoinResultsWithLimit(t *testing.T, leftTuples, rightTuples []Tuple, leftSymbols, rightSymbols []query.Symbol, symmetric bool, limit int) []Tuple {
 	left := &StreamingRelation{
-		symbols:  leftCols,
+		symbols:  leftSymbols,
 		iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{
@@ -189,7 +189,7 @@ func getJoinResultsWithLimit(t *testing.T, leftTuples, rightTuples []Tuple, left
 		},
 	}
 	right := &StreamingRelation{
-		symbols:  rightCols,
+		symbols:  rightSymbols,
 		iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 		size:     -1,
 		options: ExecutorOptions{

@@ -26,14 +26,14 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 	for _, size := range sizes {
 		// Build the Identity values once outside the b.N loop. Interning means
 		// the same string returns the same pointer; both relations share the
-		// same Identity instances on the join column.
+		// same Identity instances on the join symbol.
 		ids := make([]datalog.Identity, size)
 		for i := 0; i < size; i++ {
 			ids[i] = datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
 		}
 
-		leftCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
-		rightCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?value")}
+		leftSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?name")}
+		rightSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?value")}
 
 		leftTuples := make([]Tuple, size)
 		rightTuples := make([]Tuple, size)
@@ -44,8 +44,8 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 
 		// Case 1: Both Materialized
 		b.Run(fmt.Sprintf("mat_x_mat/size_%d", size), func(b *testing.B) {
-			left := NewMaterializedRelation(leftCols, leftTuples)
-			right := NewMaterializedRelation(rightCols, rightTuples)
+			left := NewMaterializedRelation(leftSymbols, leftTuples)
+			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 			b.ResetTimer()
 			b.ReportAllocs()
@@ -67,12 +67,12 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options:  ExecutorOptions{EnableStreamingJoins: true},
 				}
-				right := NewMaterializedRelation(rightCols, rightTuples)
+				right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 				result := left.Join(right)
 				it := result.Iterator()
@@ -89,9 +89,9 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				left := NewMaterializedRelation(leftCols, leftTuples)
+				left := NewMaterializedRelation(leftSymbols, leftTuples)
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options:  ExecutorOptions{EnableStreamingJoins: true},
@@ -113,7 +113,7 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -122,7 +122,7 @@ func BenchmarkHashJoinIdentityKeys(b *testing.B) {
 					},
 				}
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -174,8 +174,8 @@ func BenchmarkHashJoinIdentityHighFanout(b *testing.B) {
 				ids[i] = datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
 			}
 
-			leftCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_l")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_r")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_l")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_r")}
 
 			leftTuples := make([]Tuple, 0, sh.keys*sh.m)
 			rightTuples := make([]Tuple, 0, sh.keys*sh.m)
@@ -186,8 +186,8 @@ func BenchmarkHashJoinIdentityHighFanout(b *testing.B) {
 				}
 			}
 
-			left := NewMaterializedRelation(leftCols, leftTuples)
-			right := NewMaterializedRelation(rightCols, rightTuples)
+			left := NewMaterializedRelation(leftSymbols, leftTuples)
+			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 			b.ResetTimer()
 			b.ReportAllocs()
@@ -233,8 +233,8 @@ func BenchmarkHashJoinIdentityDuplicates(b *testing.B) {
 				ids[i] = datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
 			}
 
-			leftCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_l")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_r")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_l")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?attr_r")}
 
 			// SHARED payload per key — every repetition of a given key
 			// carries the same value, so result rows collapse to K unique
@@ -251,8 +251,8 @@ func BenchmarkHashJoinIdentityDuplicates(b *testing.B) {
 				}
 			}
 
-			left := NewMaterializedRelationNoDedupeWithOptions(leftCols, leftTuples, ExecutorOptions{})
-			right := NewMaterializedRelationNoDedupeWithOptions(rightCols, rightTuples, ExecutorOptions{})
+			left := NewMaterializedRelationNoDedupeWithOptions(leftSymbols, leftTuples, ExecutorOptions{})
+			right := NewMaterializedRelationNoDedupeWithOptions(rightSymbols, rightTuples, ExecutorOptions{})
 
 			b.ResetTimer()
 			b.ReportAllocs()
@@ -282,8 +282,8 @@ func BenchmarkHashJoinIdentityLargeResult(b *testing.B) {
 				ids[i] = datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
 			}
 
-			leftCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?data")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?value")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?data")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -292,8 +292,8 @@ func BenchmarkHashJoinIdentityLargeResult(b *testing.B) {
 				rightTuples[i] = Tuple{ids[i], int64(i * 100)}
 			}
 
-			left := NewMaterializedRelation(leftCols, leftTuples)
-			right := NewMaterializedRelation(rightCols, rightTuples)
+			left := NewMaterializedRelation(leftSymbols, leftTuples)
+			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 			b.ResetTimer()
 			b.ReportAllocs()

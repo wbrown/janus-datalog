@@ -369,7 +369,7 @@ func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symb
 	}
 
 	union := &Node{
-		Op:       RuleUnion,
+		Op: RuleUnion,
 		Data: &Union{
 			Output:   output,
 			JoinVars: effectiveJoinVars,
@@ -508,7 +508,7 @@ func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symb
 	output := normalizedBranchSymbols(compiled, current.Symbols())
 
 	lateralUnion := &Node{
-		Op:       RuleLateralUnion,
+		Op: RuleLateralUnion,
 		Data: &LateralUnion{
 			Output:   output,
 			JoinVars: joinVars,

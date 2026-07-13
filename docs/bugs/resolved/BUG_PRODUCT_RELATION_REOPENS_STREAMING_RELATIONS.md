@@ -212,7 +212,7 @@ for i := 1; i < len(relations); i++ {
   accumulation order (`query_executor.go`), with no size awareness; and product
   operands are typically `StreamingRelation`s with `Size() == -1`, so a
   "stream-the-largest" reorder isn't reliably available. Reordering is
-  content-safe (Project normalizes columns) but unmeasurable here, so it's left as
+  content-safe (Project normalizes relation attributes) but unmeasurable here, so it's left as
   a possible future planner-level optimization for the case where group sizes are
   known.
 

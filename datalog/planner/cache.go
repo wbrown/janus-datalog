@@ -181,6 +181,7 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 	// Hash planner options that affect the plan
 	fmt.Fprintf(h, "OPTIONS:")
 	fmt.Fprintf(h, "AlgebraOptimizer:%v;", opts.EnableAlgebraOptimizer)
+	fmt.Fprintf(h, "JoinProjectInsertion:%v;", opts.EnableJoinProjectInsertion)
 
 	return hex.EncodeToString(h.Sum(nil))
 }

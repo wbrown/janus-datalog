@@ -10,7 +10,7 @@ import (
 )
 
 // BenchmarkSortRelation measures the standalone sort cost on a materialized
-// relation (10k rows, two columns, sort key in the relation), including the
+// relation (10k rows, two symbols, sort key in the relation), including the
 // deduplicating result materialization.
 func BenchmarkSortRelation(b *testing.B) {
 	const n = 10000
@@ -70,7 +70,7 @@ func benchmarkOrderByQuery(b *testing.B, queryStr string) {
 	}
 }
 
-// Projected sort key: sort key is a :find column.
+// Projected sort key: sort key is a :find symbol.
 func BenchmarkOrderByProjectedKey(b *testing.B) {
 	benchmarkOrderByQuery(b, `[:find ?name ?age
 	                           :where [?e :user/name ?name]
@@ -78,7 +78,7 @@ func BenchmarkOrderByProjectedKey(b *testing.B) {
 	                           :order-by [[?age :asc]]]`)
 }
 
-// Non-projected sort key: pays column retention through the final phase
+// Non-projected sort key: pays symbol retention through the final phase
 // plus the post-sort strip projection.
 func BenchmarkOrderByNonProjectedKey(b *testing.B) {
 	benchmarkOrderByQuery(b, `[:find ?name

@@ -42,11 +42,11 @@ func (it *deferredErrorScan) Next() bool {
 	}
 	return false
 }
-func (it *deferredErrorScan) Datom() (*datalog.Datom, error)  { return &datalog.Datom{}, nil }
-func (it *deferredErrorScan) Close() error                    { it.closed = true; return nil }
-func (it *deferredErrorScan) Seek(key []byte)                 {}
-func (it *deferredErrorScan) ElementID() datalog.ElementID    { return datalog.ElementID{} }
-func (it *deferredErrorScan) Error() error                    { return it.err }
+func (it *deferredErrorScan) Datom() (*datalog.Datom, error) { return &datalog.Datom{}, nil }
+func (it *deferredErrorScan) Close() error                   { it.closed = true; return nil }
+func (it *deferredErrorScan) Seek(key []byte)                {}
+func (it *deferredErrorScan) ElementID() datalog.ElementID   { return datalog.ElementID{} }
+func (it *deferredErrorScan) Error() error                   { return it.err }
 
 var _ Iterator = (*deferredErrorScan)(nil)
 
@@ -136,7 +136,7 @@ func TestMatchWithoutIteratorReuse_SurfacesDeferredBindingError(t *testing.T) {
 			query.Variable{Name: vSym},
 		},
 	}
-	symbols := pattern.ExtractColumns()
+	symbols := pattern.Symbols()
 
 	// Binding relation yields one tuple, then defers the error.
 	base := executor.NewMaterializedRelation(

@@ -11,7 +11,7 @@ import (
 // Pull + deduplication composition (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md).
 // Pulled values are result presentation, not datalog values: pulls render at
 // the result boundary after sort/strip/limit, so relational operations
-// (dedup, union, limit) only ever see Identity in the entity column.
+// (dedup, union, limit) only ever see Identity in the entity binding.
 
 // Pull + :limit N≥2: LimitRelation.ensure deduplicates Identity rows, then
 // the boundary pull renders only the N surviving rows.

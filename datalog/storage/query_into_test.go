@@ -601,7 +601,7 @@ func TestQueryInto_KeywordField(t *testing.T) {
 	}
 }
 
-func TestQueryInto_ScalarMultiColumnError(t *testing.T) {
+func TestQueryInto_ScalarMultiSymbolError(t *testing.T) {
 	db, cleanup := createTestDatabaseWithPeople(t)
 	defer cleanup()
 
@@ -677,7 +677,7 @@ func TestQueryOneInto_ScalarNotFound(t *testing.T) {
 	}
 }
 
-func TestQueryOneInto_ScalarMultiColumnError(t *testing.T) {
+func TestQueryOneInto_ScalarMultiSymbolError(t *testing.T) {
 	db, cleanup := createTestDatabaseWithPeople(t)
 	defer cleanup()
 
@@ -727,7 +727,7 @@ type PullResult struct {
 
 // MixedModeResult combines query variables with pull attributes
 type MixedModeResult struct {
-	// Query variable - comes from tuple symbol
+	// Query variable - comes from a tuple position
 	PersonName string `datalog:"?name"`
 	// Attribute tags - come from pull result map in tuple
 	ID  datalog.Identity `datalog:"db/id"`

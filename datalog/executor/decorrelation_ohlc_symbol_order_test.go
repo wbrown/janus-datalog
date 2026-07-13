@@ -9,9 +9,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestOHLCColumnOrderBug reproduces the gopher-street symbol ordering bug
+// TestOHLCSymbolOrderBug reproduces the gopher-street symbol ordering bug
 // with a realistic OHLC query pattern
-func TestOHLCColumnOrderBug(t *testing.T) {
+func TestOHLCSymbolOrderBug(t *testing.T) {
 	// Create realistic OHLC data: 3 bars for one day
 	sym1 := datalog.NewIdentity("sym1")
 	bar1 := datalog.NewIdentity("bar1")

@@ -99,7 +99,7 @@ func TestProjectToSymbols_PropagatesAfterPartialResults(t *testing.T) {
 // loop, surviving tuples are not reported as a clean filtered result.
 func TestFilterWithPredicateAndLookup_PropagatesEvalError(t *testing.T) {
 	src := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}})
-	// ?missing isn't a column in `src`, so every tuple's bindings lack it
+	// ?missing isn't a symbol in `src`, so every tuple's bindings lack it
 	// and Comparison.Eval returns ("cannot resolve left term ?missing").
 	pred := &query.Comparison{
 		Op:    query.OpEQ,

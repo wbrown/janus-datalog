@@ -433,11 +433,11 @@ Not from encoding format.
 | System | Primary CRDT Mechanism | Ordering Primitive | Storage Model |
 |--------|----------------------|-------------------|---------------|
 | **Janus** | Key structure + indices | ElementID (Lamport + ReplicaID) | LSM-tree with 8 indices |
-| **Automerge** | Operation log + columnar encoding | OpID (Actor + Counter) | Compressed chunks |
+| **Automerge** | Operation log + per-field encoding | OpID (Actor + Counter) | Compressed chunks |
 | **Yjs** | YATA algorithm | Vector clocks per document | Binary deltas |
 | **Riak** | Dotted Version Vectors | DVV (dot + vector clock) | Bitcask/LevelDB per vnode |
 
-### Automerge: Operation-Centric Columnar Encoding
+### Automerge: Operation-Centric Per-Field Encoding
 
 [Automerge](https://automerge.org/automerge-binary-format-spec/) treats documents as operation logs with heavy compression:
 
@@ -447,7 +447,7 @@ OpID = (ActorID, Counter)
 ```
 
 **Storage approach:**
-- Operations stored as columnar tables (like Parquet)
+- Operations partitioned into homogeneous field streams (similar to Parquet's per-field chunks)
 - Run-length + delta encoding: `[1,2,3,5,7]` → `[(3,+1),(2,+2)]`
 - Chunks identified by `[docID, chunk-type, chunk-hash]`
 - DEFLATE compression on top
@@ -529,7 +529,7 @@ Tx = (Lamport:8, ReplicaID:8) with bitwise NOT
 | **Current value lookup** | O(n) reconstruct | O(n) traverse | O(1) but separate type | O(1) first entry |
 | **History query** | Full doc load | Not designed for | Limited | Native index scan |
 | **Ordering size** | O(replicas) | O(replicas) | O(replicas) | O(1) fixed 16 bytes |
-| **Compression** | Heavy (columnar+DEFLATE) | Binary deltas | None | LSM compaction |
+| **Compression** | Heavy (per-field streams + DEFLATE) | Binary deltas | None | LSM compaction |
 | **Query model** | JSON paths | Text positions | Key-value | Datalog |
 | **CRDT types** | JSON structure | Text/Array focused | Explicit (counter/set/map) | Schema-driven (one/many/vector) |
 

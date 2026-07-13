@@ -67,13 +67,13 @@ func TestExecuteQuery(t *testing.T) {
 	}
 }
 
-// TestRelationInput_RefAndKeywordColumns isolates whether a relation-input join
-// [[?a ?b] ...] matches when a join column is an entity REF (datalog.Identity value) or a
-// KEYWORD value — vs the canonical string/int64 columns. A scalar binding of the same
+// TestRelationInput_RefAndKeywordSymbols isolates whether a relation-input join
+// [[?a ?b] ...] matches when a join symbol is an entity REF (datalog.Identity value) or a
+// KEYWORD value — vs the canonical string/int64 symbols. A scalar binding of the same
 // values matches (control), so a relation miss here pins exactly which value type the
-// multi-column relation join fails to compare. Repro for a narrative-generators batch
+// multi-symbol relation join fails to compare. Repro for a narrative-generators batch
 // content query returning 0 rows on [[?key ?subject] ...].
-func TestRelationInput_RefAndKeywordColumns(t *testing.T) {
+func TestRelationInput_RefAndKeywordSymbols(t *testing.T) {
 	dir, err := os.MkdirTemp("", "query-relinput-ref-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestRelationInput_RefAndKeywordColumns(t *testing.T) {
 		t.Errorf("scalar identity input: expected 1, got %d", len(scalarRef))
 	}
 
-	// Relation with a string + IDENTITY column.
+	// Relation with a string + IDENTITY binding.
 	relRef, err := executor.CollectTuples(db.Query(
 		`[:find ?e :in $ [[?name ?owner] ...] :where [?e :t/name ?name] [?e :t/owner ?owner]]`,
 		[][]any{{"A", ownerX}}))
@@ -120,10 +120,10 @@ func TestRelationInput_RefAndKeywordColumns(t *testing.T) {
 		t.Fatalf("relation ref query: %v", err)
 	}
 	if len(relRef) != 1 {
-		t.Errorf("relation with identity column: expected 1, got %d", len(relRef))
+		t.Errorf("relation with identity binding: expected 1, got %d", len(relRef))
 	}
 
-	// Relation with a string + KEYWORD column.
+	// Relation with a string + KEYWORD binding.
 	relKw, err := executor.CollectTuples(db.Query(
 		`[:find ?e :in $ [[?name ?tag] ...] :where [?e :t/name ?name] [?e :t/tag ?tag]]`,
 		[][]any{{"A", datalog.NewKeyword(":tag/red")}}))
@@ -131,7 +131,7 @@ func TestRelationInput_RefAndKeywordColumns(t *testing.T) {
 		t.Fatalf("relation kw query: %v", err)
 	}
 	if len(relKw) != 1 {
-		t.Errorf("relation with keyword column: expected 1, got %d", len(relKw))
+		t.Errorf("relation with keyword binding: expected 1, got %d", len(relKw))
 	}
 
 	// Bisect toward the failing narrative-generators query shape: a SCALAR input before

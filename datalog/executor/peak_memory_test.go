@@ -17,8 +17,8 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
-			leftCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?name")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?value")}
 
 			leftTuples := make([]Tuple, size)
 			rightTuples := make([]Tuple, size)
@@ -36,7 +36,7 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 				runtime.ReadMemStats(&memBefore)
 
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -46,7 +46,7 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 					},
 				}
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -97,7 +97,7 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 				runtime.ReadMemStats(&memBefore)
 
 				left := &StreamingRelation{
-					symbols:  leftCols,
+					symbols:  leftSymbols,
 					iterator: &sliceIterator{tuples: leftTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{
@@ -107,7 +107,7 @@ func TestPeakMemoryFullConsumption(t *testing.T) {
 					},
 				}
 				right := &StreamingRelation{
-					symbols:  rightCols,
+					symbols:  rightSymbols,
 					iterator: &sliceIterator{tuples: rightTuples, pos: -1},
 					size:     -1,
 					options: ExecutorOptions{

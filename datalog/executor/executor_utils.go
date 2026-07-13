@@ -11,7 +11,7 @@ import (
 // emptyRelationForQuery returns an empty MaterializedRelation with the correct
 // symbols for the given query's :find clause, plus any retained :order-by
 // symbols: every path that can reach the finalization sort must produce the
-// same shape, or sorting an empty result would error on a missing sort column.
+// same shape, or sorting an empty result would error on a missing sort symbol.
 // This ensures Query never returns nil — callers always get a valid (possibly
 // empty) Relation.
 func emptyRelationForQuery(q *query.Query) Relation {
@@ -69,7 +69,7 @@ type Result = MaterializedRelation
 // This is a pure function that performs multi-symbol sorting with configurable direction.
 // It materializes the relation if not already materialized.
 //
-// Every sort variable must be a column of the relation; one that is not
+// Every sort variable must be a symbol of the relation; one that is not
 // resolves to a deferred error, never a silent skip — a stated ordering the
 // engine cannot honor must not report success (see
 // docs/bugs/resolved/BUG_ORDER_BY_NON_PROJECTED_VARIABLE_SILENTLY_IGNORED.md). Parsed
@@ -121,7 +121,7 @@ func orderBySymbolIndices(symbols []query.Symbol, orderBy []query.OrderByClause)
 			}
 		}
 		if indices[i] < 0 {
-			return indices, fmt.Errorf("order-by variable %s is not a column of the relation (columns: %v)",
+			return indices, fmt.Errorf("order-by variable %s is not a symbol of the relation (symbols: %v)",
 				clause.Variable, symbols)
 		}
 	}

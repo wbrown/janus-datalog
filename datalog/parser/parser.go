@@ -173,8 +173,8 @@ func parseQueryVector(node *edn.Node) (*query.Query, error) {
 // a sort key must be bound by :where (the result is sorted before the final
 // projection, so it need not be projected) or be a scalar/tuple :in constant
 // (a well-defined identity sort, dropped at execution). Variables bound
-// nowhere violate the safety condition; relation/collection input columns
-// not bound by :where are not columns of any relation the sort could see;
+// nowhere violate the safety condition; relation/collection input symbols
+// not bound by :where are not attributes of any relation the sort could see;
 // and aggregate queries collapse rows, so only their group keys can order
 // them.
 func validateOrderByClauses(q *query.Query) error {
@@ -215,14 +215,14 @@ func validateOrderByClauses(q *query.Query) error {
 			continue
 		}
 		if findVars[v] {
-			// A projected column is always resolvable at sort time.
+			// A projected symbol is always resolvable at sort time.
 			continue
 		}
 		if whereVars[v] {
 			continue
 		}
 		if iterated[v] {
-			return fmt.Errorf("order-by variable %s is an input column not bound in :where: bind it in a :where clause or add it to :find to sort by it", v)
+			return fmt.Errorf("order-by variable %s is an input symbol not bound in :where: bind it in a :where clause or add it to :find to sort by it", v)
 		}
 		return fmt.Errorf("order-by variable %s is not bound in the query", v)
 	}

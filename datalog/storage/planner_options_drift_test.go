@@ -27,6 +27,7 @@ func TestDefaultPlannerOptions_MatchesDocumentedDefaults(t *testing.T) {
 	require.False(t, opts.EnableEntityPrefetch, "EnableEntityPrefetch is documented opt-in")
 	require.False(t, opts.EnableSymmetricHashJoin, "EnableSymmetricHashJoin is documented opt-in")
 	require.False(t, opts.EnableStreamingJoins, "EnableStreamingJoins is documented opt-in")
+	require.False(t, opts.EnableJoinProjectInsertion, "EnableJoinProjectInsertion is an inactive materialization experiment")
 	optionsType := reflect.TypeOf(opts)
 	_, hasJoinDebugFlag := optionsType.FieldByName("EnableDebugLogging")
 	require.False(t, hasJoinDebugFlag, "join diagnostics must use annotations, not a debug flag")

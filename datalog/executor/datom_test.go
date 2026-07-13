@@ -98,9 +98,9 @@ func TestDatomRelation(t *testing.T) {
 	rel := NewDatomRelation(datoms, binding)
 
 	// Check symbols
-	cols := rel.Symbols()
-	if len(cols) != 4 {
-		t.Errorf("expected 4 symbols, got %d", len(cols))
+	symbols := rel.Symbols()
+	if len(symbols) != 4 {
+		t.Errorf("expected 4 symbols, got %d", len(symbols))
 	}
 
 	// Check data
@@ -186,10 +186,10 @@ func TestDatomJoinScenario(t *testing.T) {
 	}
 
 	// Verify symbols
-	cols := joined.Symbols()
-	expectedCols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
-	if len(cols) != len(expectedCols) {
-		t.Errorf("expected %d symbols, got %d", len(expectedCols), len(cols))
+	symbols := joined.Symbols()
+	expectedSymbols := []query.Symbol{datalog.NewSymbol("?user"), datalog.NewSymbol("?name"), datalog.NewSymbol("?age")}
+	if len(symbols) != len(expectedSymbols) {
+		t.Errorf("expected %d symbols, got %d", len(expectedSymbols), len(symbols))
 	}
 
 	// Check actual data

@@ -197,7 +197,7 @@ Composite join:
 
 This is already close to Janus's internal execution model:
 
-- `TupleKeyMap` hashes selected relation columns.
+- `TupleKeyMap` hashes selected relation attributes.
 - Hash joins accept multiple join symbols.
 - Candidate keys are `[][]query.Symbol`.
 - Tuple/relation input bindings carry multiple symbols.

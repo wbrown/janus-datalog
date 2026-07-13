@@ -522,9 +522,10 @@ func (d *Database) History() *Database {
 func DefaultPlannerOptions() planner.PlannerOptions {
 	return planner.PlannerOptions{
 		// Planner / algebra optimization
-		EnableAlgebraOptimizer: true,  // Relational algebra IR clause rewriting (decorrelation via compile → optimize → decompile)
-		EnableScanSharing:      false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
-		EnableEntityPrefetch:   false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
+		EnableAlgebraOptimizer:     true,  // Relational algebra optimization with direct phase emission
+		EnableJoinProjectInsertion: false, // Materialized join narrowing regresses focused workloads; retained for experiments
+		EnableScanSharing:          false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
+		EnableEntityPrefetch:       false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
 
 		// Executor streaming options (NEW: enabled by default for performance)
 		EnableIteratorComposition: true,  // Lazy evaluation throughout pipeline
@@ -540,7 +541,7 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableStreamingAggregation: true,  // Streaming aggregation
 
 		// Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple
-		// LookupAttribute column attach instead of match + hash join.
+		// LookupAttribute binding instead of match + hash join.
 		EnableAttributeFetchFusion: true,
 
 		// Storage join strategy

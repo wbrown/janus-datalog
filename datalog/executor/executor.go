@@ -257,7 +257,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 			} else {
 				result = result.Sort(effective)
 			}
-			// The planner retained non-projected sort columns through the
+			// The planner retained non-projected sort symbols through the
 			// final projection so the sort above could resolve them; strip
 			// the result back to the declared :find shape. The projection
 			// deduplicates (set semantics), keeping each duplicate's first
@@ -276,7 +276,7 @@ func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inpu
 	// Pull rendering is result presentation, not a relational operation:
 	// pulled maps are not datalog values, so they are produced here, at the
 	// terminal boundary — after sort, strip, and limit — for exactly the
-	// rows the query returns. Entity columns are Identity values through
+	// rows the query returns. Entity bindings are Identity values through
 	// every relational operation above. Aggregate find clauses do not apply
 	// pulls. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
 	if hasPulls(plan.Query.Find) {
@@ -914,7 +914,7 @@ func (e *Executor) executeRealizedWithRelationInputIterationParallel(
 //   - modifiedQuery is read-only after construction.
 //   - boundTuple mutation: phase execution reads boundTuple's interface{}
 //     values into freshly-allocated result tuples (joins/projections build
-//     new tuples by combining columns; aggregations build new summary
+//     new tuples by combining bindings; aggregations build new summary
 //     tuples). For primitive values (int64, string, bool, time.Time) the
 //     interface{} carries the value; for pointer types (Identity, Keyword)
 //     it carries the pointer. In both cases, copy-on-store at the consumer

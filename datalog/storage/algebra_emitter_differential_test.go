@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
@@ -102,6 +103,48 @@ func TestAlgebraEmitterOptimizedOffExactTupleDifferential(t *testing.T) {
 	}
 }
 
+func TestJoinProjectInsertionExactTupleDifferential(t *testing.T) {
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
+	require.NoError(t, err)
+	defer db.Close()
+
+	score := datalog.NewKeyword(":item/score")
+	payload := datalog.NewKeyword(":item/payload")
+	tx := db.NewTransaction()
+	for _, item := range []struct {
+		id      string
+		score   int64
+		payload string
+	}{
+		{id: "item-a", score: 95, payload: "alpha"},
+		{id: "item-b", score: 80, payload: "beta"},
+		{id: "item-c", score: 100, payload: "gamma"},
+	} {
+		entity := datalog.NewIdentity(item.id)
+		tx.Add(entity, score, item.score)
+		tx.Add(entity, payload, item.payload)
+	}
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	source := `[:find ?entity ?payload
+		:where [?entity :item/score ?score]
+		       [(> ?score 90)]
+		       [?entity :item/payload ?payload]]`
+	baselineOptions := DefaultPlannerOptions()
+	baselineOptions.EnableJoinProjectInsertion = false
+	projectOptions := baselineOptions
+	projectOptions.EnableJoinProjectInsertion = true
+	baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
+	optimized := executePlannerOptions(t, db, source, nil, projectOptions)
+	require.ElementsMatch(t, baseline, optimized)
+	require.Len(t, optimized, 2)
+	require.ElementsMatch(t, []interface{}{"alpha", "gamma"}, []interface{}{
+		optimized[0][1],
+		optimized[1][1],
+	})
+}
+
 func executeAlgebraMode(
 	t *testing.T,
 	db *Database,
@@ -110,13 +153,24 @@ func executeAlgebraMode(
 	enabled bool,
 ) [][]interface{} {
 	t.Helper()
+	options := DefaultPlannerOptions()
+	options.EnableAlgebraOptimizer = enabled
+	return executePlannerOptions(t, db, source, inputs, options)
+}
+
+func executePlannerOptions(
+	t testing.TB,
+	db *Database,
+	source string,
+	inputs []interface{},
+	options planner.PlannerOptions,
+) [][]interface{} {
+	t.Helper()
 	q, err := db.resolveQuery(source)
 	require.NoError(t, err)
 	relations, err := db.convertInputsToRelations(q, inputs)
 	require.NoError(t, err)
 
-	options := DefaultPlannerOptions()
-	options.EnableAlgebraOptimizer = enabled
 	options.Cache = nil
 	router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
 	exec := executor.NewExecutorWithOptions(router, db, planner.PlannerOptions(options))

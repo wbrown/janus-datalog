@@ -107,7 +107,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
         for changed {
             changed = false
             for i := 0; i < len(remaining); i++ {
-                if hasSharedColumns(currentGroup, remaining[i]) {
+                if hasSharedSymbols(currentGroup, remaining[i]) {
                     currentGroup = currentGroup.Join(remaining[i])
                     remaining = append(remaining[:i], remaining[i+1:]...)
                     changed = true
@@ -145,11 +145,11 @@ func (rs Relations) Collapse(ctx Context) Relations {
 ### Cost Analysis
 
 **Best case (incremental joins):**
-- 10 `hasSharedColumns` checks
+- 10 shared-symbol checks
 - ~40 symbol comparisons × 5ns = **0.2µs**
 
 **Worst case (disjoint groups):**
-- 100+ `hasSharedColumns` checks
+- 100+ shared-symbol checks
 - ~400 comparisons × 5ns = **2µs**
 
 **Context:**
@@ -166,7 +166,7 @@ func (rs Relations) Collapse(ctx Context) Relations {
 
 ### Apparent Inefficiencies
 
-**1. hasSharedColumns is O(cols1 × cols2)**
+**1. Shared-symbol detection is O(symbols1 × symbols2)**
 
 Could use a map for O(cols1 + cols2), but:
 - Typical symbol count: 2-5
@@ -250,7 +250,7 @@ type Phase struct {
 type JoinTreeNode struct {
     Left        *JoinTreeNode
     Right       *JoinTreeNode
-    JoinColumns []Symbol
+    JoinSymbols []Symbol
     Strategy    JoinType  // Hash, Nested, Merge
 }
 ```
@@ -263,7 +263,7 @@ func executeJoinTree(node *JoinTreeNode) Relation {
     }
     left := executeJoinTree(node.Left)
     right := executeJoinTree(node.Right)
-    return join(left, right, node.JoinColumns, node.Strategy)
+    return join(left, right, node.JoinSymbols, node.Strategy)
 }
 ```
 
@@ -449,7 +449,7 @@ The buffer reuse and performance optimization are **implementation details** sup
 
 ### Low Priority (Nice to Have)
 
-6. **hasSharedColumns optimization** - Use map if symbol count typically >10 (need data)
+6. **Shared-symbol detection optimization** - Use map if symbol count typically >10 (need data)
 7. **Adaptive collapse** - Track if repeated disjoint checks are actually happening
 8. **Benchmark collapse overhead** - Measure actual impact on real queries
 

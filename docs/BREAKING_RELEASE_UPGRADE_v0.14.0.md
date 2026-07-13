@@ -87,7 +87,7 @@ observe additional result groups.
 Grouped aggregate queries whose grouping variables are absent from the source
 relation are now rejected during execution. This includes queries such as
 `[:find ?missing (count ?e) ...]`; they no longer reach aggregation with an
-undefined grouping column.
+undefined grouping symbol.
 
 ## Legacy L85 physical databases
 

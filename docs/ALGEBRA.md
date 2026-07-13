@@ -146,7 +146,7 @@ The Aggregate becomes an uncorrelated SubqueryPattern:
 
 **Round-trip invariant:** GROUP BY symbols, aggregate functions, and inner WHERE
 clauses are all preserved. The SubqueryPattern's RelationBinding maps the `:find`
-columns to output symbols positionally.
+elements to output symbols positionally.
 
 **Test:** Build an Aggregate node over compiled inner clauses, decompile, verify
 the SubqueryPattern has correct `:find`, `:in`, `:where`, and binding.
@@ -446,7 +446,7 @@ value, producing results filtered to that x value.
 The right side executes S once for ALL values of x. Since x was a parameter that
 filtered the WHERE clauses (e.g., `[?t :task/root ?s]` with ?s bound), removing
 it from `:in` makes ?s a free variable. The WHERE clauses still reference ?s, so
-the results include ALL ?s values. Adding ?s to `:find` makes it an output column.
+the results include ALL ?s values. Adding ?s to `:find` makes it an output relation attribute.
 The LeftOuterJoin matches each R tuple to its S' rows by x. Non-matching R tuples
 get defaults.
 

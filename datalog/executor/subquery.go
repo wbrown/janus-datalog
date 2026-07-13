@@ -242,13 +242,13 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 	switch b := binding.(type) {
 	case query.TupleBinding:
 		// TupleBinding [[?a ?b]]: subquery must return exactly one
-		// tuple; its N columns bind to the N variables. Arity of the
+		// tuple; its N positions bind to the N variables. Arity of the
 		// subquery's schema must match len(Variables).
 		return applyExactlyOneBinding(result, inputValues, inputSymbols, b.Variables, "tuple", len(b.Variables))
 
 	case query.ScalarBinding:
 		// ScalarBinding ?x: subquery must return exactly one tuple
-		// with exactly one column; ScalarBinding is the arity-1 case
+		// with exactly one component; ScalarBinding is the arity-1 case
 		// of TupleBinding.
 		return applyExactlyOneBinding(result, inputValues, inputSymbols, []query.Symbol{b.Variable}, "scalar", 1)
 
@@ -257,9 +257,9 @@ func applyBindingForm(result Relation, binding query.BindingForm, inputValues ma
 		return nil, fmt.Errorf("collection binding not yet implemented")
 
 	case query.RelationBinding:
-		resultCols := result.Symbols()
-		if len(b.Variables) != len(resultCols) {
-			return nil, fmt.Errorf("relation binding expects %d symbols, got %d", len(b.Variables), len(resultCols))
+		resultSymbols := result.Symbols()
+		if len(b.Variables) != len(resultSymbols) {
+			return nil, fmt.Errorf("relation binding expects %d symbols, got %d", len(b.Variables), len(resultSymbols))
 		}
 
 		realInputSymbols := filterSourceSymbols(inputSymbols)

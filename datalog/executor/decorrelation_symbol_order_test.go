@@ -9,9 +9,9 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestParallelDecorrelationColumnOrder tests that :find clause order is preserved
+// TestParallelDecorrelationSymbolOrder tests that :find clause order is preserved
 // with parallel decorrelation enabled
-func TestParallelDecorrelationColumnOrder(t *testing.T) {
+func TestParallelDecorrelationSymbolOrder(t *testing.T) {
 	// Create test data
 	datoms := []datalog.Datom{
 		{

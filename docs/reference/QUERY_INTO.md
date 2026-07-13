@@ -410,7 +410,7 @@ dlreflect.ErrSymbolNotFound
 dlreflect.ErrMixedTags
 
 // Low-level API (for advanced use)
-dlreflect.NewQueryResultMapper(elemType reflect.Type, findColumns []string) (*QueryResultMapper, error)
+dlreflect.NewQueryResultMapper(elemType reflect.Type, findSymbols []string) (*QueryResultMapper, error)
 mapper.MapTuple(tuple []interface{}, dest reflect.Value) error
 mapper.MapAll(tuples [][]interface{}, destSlice reflect.Value) error
 ```

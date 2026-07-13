@@ -322,9 +322,9 @@ The `updatePhaseSymbols` function recalculates `Keep` symbols after phase reorde
 // BEFORE (BROKEN):
 // 2b. Keep symbols needed for conditional aggregates in THIS phase
 if phases[i].Metadata != nil {
-    if aggCols, ok := phases[i].Metadata["aggregate_required_columns"]; ok {
-        if cols, ok := aggCols.([]query.Symbol); ok {
-            for _, sym := range cols {
+    if aggSymbols, ok := phases[i].Metadata["aggregate_required_symbols"]; ok {
+        if symbols, ok := aggSymbols.([]query.Symbol); ok {
+            for _, sym := range symbols {
                 if available[sym] {
                     keep[sym] = true
                 }
@@ -346,9 +346,9 @@ This failed because only Phase 0 had the metadata. Phase 1+ would drop the aggre
 // not just the phase that has the metadata!
 for j := 0; j <= i; j++ {
     if phases[j].Metadata != nil {
-        if aggCols, ok := phases[j].Metadata["aggregate_required_columns"]; ok {
-            if cols, ok := aggCols.([]query.Symbol); ok {
-                for _, sym := range cols {
+        if aggSymbols, ok := phases[j].Metadata["aggregate_required_symbols"]; ok {
+            if symbols, ok := aggSymbols.([]query.Symbol); ok {
+                for _, sym := range symbols {
                     if available[sym] {
                         keep[sym] = true
                     }

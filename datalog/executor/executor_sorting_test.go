@@ -290,7 +290,7 @@ func TestOrderByNonProjectedVariable(t *testing.T) {
 			}
 
 			// The sort variable must not leak into the result shape: the
-			// relation contains exactly the :find columns.
+			// relation contains exactly the :find symbols.
 			symbols := result.Symbols()
 			if len(symbols) != 1 || symbols[0].String() != "?name" {
 				t.Fatalf("expected result symbols [?name], got %v", symbols)
@@ -533,7 +533,7 @@ func TestOrderByScalarConstantKeyThenRealKey(t *testing.T) {
 }
 
 // Case H: a collection-input variable bound per-row by a :where pattern is a
-// genuine relation column and sorts normally, projected or not. Names are
+// genuine relation symbol and sorts normally, projected or not. Names are
 // chosen so global name order differs from dept-blocked name order.
 func TestOrderByCollectionInputBoundVariable(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
@@ -593,11 +593,11 @@ func TestOrderByCollectionInputBoundVariable(t *testing.T) {
 	}
 }
 
-// Case I: a relation-input column bound per-row by a :where pattern sorts the
+// Case I: a relation-input symbol bound per-row by a :where pattern sorts the
 // combined output across all input tuples (the union), not per iteration.
 // Inputs are given in reverse key order so iteration order can't pass by
 // accident.
-func TestOrderByRelationInputColumnAcrossUnion(t *testing.T) {
+func TestOrderByRelationInputSymbolAcrossUnion(t *testing.T) {
 	keyAttr := datalog.NewKeyword(":item/key")
 	valAttr := datalog.NewKeyword(":item/val")
 	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
@@ -651,7 +651,7 @@ func TestOrderByRelationInputColumnAcrossUnion(t *testing.T) {
 }
 
 // Case K: ordering an aggregate query by a group key. The group key is a
-// column of the post-aggregation relation, so this must sort.
+// symbol of the post-aggregation relation, so this must sort.
 func TestOrderByAggregateGroupKey(t *testing.T) {
 	cityAttr := datalog.NewKeyword(":person/city")
 	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
@@ -717,7 +717,7 @@ func TestOrderByAggregateNonFindVariableIsError(t *testing.T) {
 }
 
 // Case M: janus find results are set semantics (materialization
-// deduplicates), so stripping the sort column after sorting collapses
+// deduplicates), so stripping the sort symbol after sorting collapses
 // duplicate find values — and the survivor's position is its first
 // occurrence in sorted order. Ages 10 (Alice), 20 (Bob), 30 (Alice) sort to
 // Alice, Bob, Alice; dedup keeps [Alice, Bob].
@@ -765,7 +765,7 @@ func TestOrderByNonProjectedPreservesDuplicates(t *testing.T) {
 
 // Case P: a (pull ...) find spec combined with a fully *projected* sort
 // key. Pulls render at the result boundary after sort/strip/limit, so the
-// sort only ever sees Identity in the entity column; the tied-key variant
+// sort only ever sees Identity in the entity binding; the tied-key variant
 // is TestOrderByPullWithTiedSortKeys below.
 func TestOrderByProjectedKeyWithPull(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
@@ -795,8 +795,8 @@ func TestOrderByProjectedKeyWithPull(t *testing.T) {
 }
 
 // Case N: a (pull ...) find spec combined with a non-projected sort key.
-// The retained sort column orders the result, the strip projects back to
-// the find shape (all value columns — plain deduplicating projection), and
+// The retained sort symbol orders the result, the strip projects back to
+// the find shape (all value bindings — plain deduplicating projection), and
 // the boundary pull renders the surviving rows.
 func TestOrderByNonProjectedWithPull(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
@@ -914,15 +914,15 @@ func TestSortRelationUnresolvableKeyIsDeferredError(t *testing.T) {
 }
 
 // Pull + order-by with TIED sort keys: rows that tie on every comparable
-// column must sort and render correctly. Pulls run at the result boundary
+// symbol must sort and render correctly. Pulls run at the result boundary
 // after sort/strip/limit, so relational operations only ever see Identity
-// in the entity column. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
+// in the entity binding. See docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md.
 func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 	nameAttr := datalog.NewKeyword(":user/name")
 	ageAttr := datalog.NewKeyword(":user/age")
 	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
 
-	// Two users share age 30: their tuples tie on every comparable column.
+	// Two users share age 30: their tuples tie on every comparable result slot.
 	datoms := []datalog.Datom{
 		{E: datalog.NewIdentity("user:alice"), A: nameAttr, V: "Alice", Tx: tx},
 		{E: datalog.NewIdentity("user:alice"), A: ageAttr, V: int64(30), Tx: tx},

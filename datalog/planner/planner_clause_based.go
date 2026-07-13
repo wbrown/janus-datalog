@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/algebra"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
@@ -121,6 +122,12 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 		optimized, err := optimizeAlgebra(clauses, handler)
 		if err != nil {
 			return nil, fmt.Errorf("algebra optimization failed: %w", err)
+		}
+		if p.options.EnableJoinProjectInsertion && len(inputSymbols) == 0 {
+			optimized, err = algebra.InsertJoinProjects(optimized, findSymbols)
+			if err != nil {
+				return nil, fmt.Errorf("algebra project insertion failed: %w", err)
+			}
 		}
 		plan, err := emitAlgebraPlan(q, optimized, initialBindings)
 		if err != nil {

@@ -88,11 +88,11 @@ func (s *TupleSet) Contains(tuple Tuple) bool {
 For single-symbol projections on interned types (`*Identity`, `*Keyword`), use pointer comparison:
 
 ```go
-type SingleColumnSet struct {
+type SingleValueSet struct {
     m map[interface{}]struct{}
 }
 
-func (s *SingleColumnSet) Add(val interface{}) bool {
+func (s *SingleValueSet) Add(val interface{}) bool {
     if _, exists := s.m[val]; exists {
         return false
     }
@@ -111,7 +111,7 @@ Choose strategy based on projection characteristics:
 ```go
 func NewDedupIterator(source Iterator, symbols []Symbol) Iterator {
     if len(symbols) == 1 && isInternedType(symbols[0]) {
-        return &SingleColumnDedupIterator{...}
+        return &SingleSymbolDedupIterator{...}
     }
     if expectedCardinality < 100 {
         return &LinearScanDedupIterator{...}  // O(n²) but cache-friendly

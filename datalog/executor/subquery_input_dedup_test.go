@@ -60,7 +60,7 @@ func TestGetUniqueInputCombinations_SourceMarkerDoesNotCollide(t *testing.T) {
 	}
 	inputSymbols := []query.Symbol{source, datalog.NewSymbol("?a")}
 
-	// Outer relation contains only the data symbol ?a; the source is not a column.
+	// Outer relation contains only the data symbol ?a; the source is not a symbol.
 	rel := NewMaterializedRelation(
 		[]query.Symbol{datalog.NewSymbol("?a")},
 		[]Tuple{{int64(5)}, {"5"}, {int64(5)}}, // int64(5) and "5" are distinct; the second int64(5) is a real duplicate

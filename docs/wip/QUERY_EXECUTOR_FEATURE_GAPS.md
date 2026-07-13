@@ -151,7 +151,7 @@ The QueryExecutor (clause-based execution) now has feature parity for all critic
 
 ### Aggregate Required Symbols Tracking
 
-**Legacy**: Reads `"aggregate_required_columns"` from metadata to prevent dropping symbols needed for aggregation.
+**Legacy**: Reads aggregate-required-symbol metadata to prevent dropping symbols needed for aggregation.
 
 **QueryExecutor**: May eliminate symbols prematurely. Lower risk since aggregation tests pass.
 

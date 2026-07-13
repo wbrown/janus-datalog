@@ -488,6 +488,11 @@ Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` into
 
 **Algebra emission**: `EnableAlgebraOptimizer` (on by default) runs clauses → algebra IR → transform passes → schema refresh/validation → `RealizedPlan`. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms); real `Project` nodes create materialized phase boundaries. `algebra.Decompile` remains for nested lowering and compatibility tests, not whole-tree production planning.
 
+**Join projection experiment**: `EnableJoinProjectInsertion` (off by default)
+uses backward liveness to insert `Project` on narrowed inner-join children. It
+is correctness-proven for no-input queries, but materialized boundaries regress
+the focused workload; activation waits on streaming boundary execution.
+
 **Disabled-optimizer algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
 1. Start with input symbols as available
 2. Score all executable clauses (all required symbols are available)

@@ -245,10 +245,10 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 	}
 
 	// Build result symbols (aggregate functions as symbol names)
-	resultColumns := make([]query.Symbol, len(aggregates))
+	resultSymbols := make([]query.Symbol, len(aggregates))
 	for i, agg := range aggregates {
 		// Use String() method which handles conditional vs unconditional formatting
-		resultColumns[i] = datalog.NewSymbol(agg.String())
+		resultSymbols[i] = datalog.NewSymbol(agg.String())
 	}
 
 	// Relational theory: empty input → empty output
@@ -256,12 +256,12 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 	// return empty result set instead of a tuple with nil values
 	opts := rel.Options()
 	if !hasAnyValues {
-		empty := NewMaterializedRelationWithOptions(resultColumns, []Tuple{}, opts)
+		empty := NewMaterializedRelationWithOptions(resultSymbols, []Tuple{}, opts)
 		empty.err = aggErr
 		return empty
 	}
 
-	result = NewMaterializedRelationWithOptions(resultColumns, []Tuple{results}, opts)
+	result = NewMaterializedRelationWithOptions(resultSymbols, []Tuple{results}, opts)
 	return result
 }
 
@@ -397,15 +397,15 @@ func executeGroupedAggregation(
 	}
 
 	// Build result symbols
-	resultColumns := make([]query.Symbol, len(groupByVars)+len(aggregates))
-	copy(resultColumns, groupByVars)
+	resultSymbols := make([]query.Symbol, len(groupByVars)+len(aggregates))
+	copy(resultSymbols, groupByVars)
 	for i, agg := range aggregates {
 		// Use String() method which handles conditional vs unconditional formatting
-		resultColumns[len(groupByVars)+i] = datalog.NewSymbol(agg.String())
+		resultSymbols[len(groupByVars)+i] = datalog.NewSymbol(agg.String())
 	}
 
 	opts := rel.Options()
-	result = NewMaterializedRelationWithOptions(resultColumns, resultTuples, opts)
+	result = NewMaterializedRelationWithOptions(resultSymbols, resultTuples, opts)
 	// Carry any deferred error from the grouped input scan so a failed scan
 	// isn't laundered into a partial/empty grouped result.
 	aggregateErr = it.Error()

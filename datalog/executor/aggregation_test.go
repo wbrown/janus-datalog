@@ -22,11 +22,11 @@ func TestExecuteAggregations(t *testing.T) {
 	rel := NewMaterializedRelation(symbols, tuples)
 
 	tests := []struct {
-		name         string
-		findElements []query.FindElement
-		expectedCols []query.Symbol
-		expectedRows int
-		validate     func(*testing.T, Relation)
+		name            string
+		findElements    []query.FindElement
+		expectedSymbols []query.Symbol
+		expectedRows    int
+		validate        func(*testing.T, Relation)
 	}{
 		{
 			name: "no aggregates - just projection",
@@ -34,8 +34,8 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 				query.FindVariable{Symbol: datalog.NewSymbol("?age")},
 			},
-			expectedCols: []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age")},
-			expectedRows: 4,
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?age")},
+			expectedRows:    4,
 			validate: func(t *testing.T, result Relation) {
 				// Should have all 4 tuples with just name and age
 				if result.Size() != 4 {
@@ -48,8 +48,8 @@ func TestExecuteAggregations(t *testing.T) {
 			findElements: []query.FindElement{
 				query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?name")},
 			},
-			expectedCols: []query.Symbol{datalog.NewSymbol("(count ?name)")},
-			expectedRows: 1,
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("(count ?name)")},
+			expectedRows:    1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
 				defer it.Close()
@@ -66,8 +66,8 @@ func TestExecuteAggregations(t *testing.T) {
 			findElements: []query.FindElement{
 				query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?age")},
 			},
-			expectedCols: []query.Symbol{datalog.NewSymbol("(avg ?age)")},
-			expectedRows: 1,
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("(avg ?age)")},
+			expectedRows:    1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
 				defer it.Close()
@@ -84,8 +84,8 @@ func TestExecuteAggregations(t *testing.T) {
 			findElements: []query.FindElement{
 				query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?score")},
 			},
-			expectedCols: []query.Symbol{datalog.NewSymbol("(max ?score)")},
-			expectedRows: 1,
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("(max ?score)")},
+			expectedRows:    1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
 				defer it.Close()
@@ -104,8 +104,8 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?name")},
 				query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?score")},
 			},
-			expectedCols: []query.Symbol{datalog.NewSymbol("?age"), datalog.NewSymbol("(count ?name)"), datalog.NewSymbol("(avg ?score)")},
-			expectedRows: 3, // 3 unique ages: 25, 30, 35
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("?age"), datalog.NewSymbol("(count ?name)"), datalog.NewSymbol("(avg ?score)")},
+			expectedRows:    3, // 3 unique ages: 25, 30, 35
 			validate: func(t *testing.T, result Relation) {
 				// Find the tuple for age 25 (should have count=2, avg=90)
 				it := result.Iterator()
@@ -135,8 +135,8 @@ func TestExecuteAggregations(t *testing.T) {
 				query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?age")},
 				query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?score")},
 			},
-			expectedCols: []query.Symbol{datalog.NewSymbol("(min ?age)"), datalog.NewSymbol("(max ?age)"), datalog.NewSymbol("(sum ?score)")},
-			expectedRows: 1,
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("(min ?age)"), datalog.NewSymbol("(max ?age)"), datalog.NewSymbol("(sum ?score)")},
+			expectedRows:    1,
 			validate: func(t *testing.T, result Relation) {
 				it := result.Iterator()
 				defer it.Close()
@@ -161,8 +161,8 @@ func TestExecuteAggregations(t *testing.T) {
 			result := ExecuteAggregations(rel, tt.findElements)
 
 			// Check symbol count
-			if len(result.Symbols()) != len(tt.expectedCols) {
-				t.Errorf("expected %d symbols, got %d", len(tt.expectedCols), len(result.Symbols()))
+			if len(result.Symbols()) != len(tt.expectedSymbols) {
+				t.Errorf("expected %d symbols, got %d", len(tt.expectedSymbols), len(result.Symbols()))
 			}
 
 			// Check tuple count
@@ -301,7 +301,7 @@ func TestAggregationRejectsMissingGroupSymbolWithoutPanic(t *testing.T) {
 	require.Contains(t, driveErr(result).Error(), "group-by symbol ?missing")
 }
 
-func TestProjectColumns(t *testing.T) {
+func TestProjectSymbols(t *testing.T) {
 	symbols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")}
 	tuples := []Tuple{
 		{1, 2, 3, 4},
@@ -311,15 +311,15 @@ func TestProjectColumns(t *testing.T) {
 	rel := NewMaterializedRelation(symbols, tuples)
 
 	tests := []struct {
-		name         string
-		projectCols  []query.Symbol
-		expectedCols []query.Symbol
-		expectedVals [][]interface{}
+		name            string
+		projectSymbols  []query.Symbol
+		expectedSymbols []query.Symbol
+		expectedVals    [][]interface{}
 	}{
 		{
-			name:         "project subset",
-			projectCols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?c")},
-			expectedCols: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?c")},
+			name:            "project subset",
+			projectSymbols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?c")},
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?c")},
 			expectedVals: [][]interface{}{
 				{1, 3},
 				{5, 7},
@@ -327,9 +327,9 @@ func TestProjectColumns(t *testing.T) {
 			},
 		},
 		{
-			name:         "project reordered",
-			projectCols:  []query.Symbol{datalog.NewSymbol("?d"), datalog.NewSymbol("?b")},
-			expectedCols: []query.Symbol{datalog.NewSymbol("?d"), datalog.NewSymbol("?b")},
+			name:            "project reordered",
+			projectSymbols:  []query.Symbol{datalog.NewSymbol("?d"), datalog.NewSymbol("?b")},
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("?d"), datalog.NewSymbol("?b")},
 			expectedVals: [][]interface{}{
 				{4, 2},
 				{8, 6},
@@ -337,9 +337,9 @@ func TestProjectColumns(t *testing.T) {
 			},
 		},
 		{
-			name:         "project all",
-			projectCols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")},
-			expectedCols: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")},
+			name:            "project all",
+			projectSymbols:  []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")},
+			expectedSymbols: []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c"), datalog.NewSymbol("?d")},
 			expectedVals: [][]interface{}{
 				{1, 2, 3, 4},
 				{5, 6, 7, 8},
@@ -350,19 +350,19 @@ func TestProjectColumns(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := rel.Project(tt.projectCols)
+			result, err := rel.Project(tt.projectSymbols)
 			if err != nil {
 				t.Fatalf("Project failed: %v", err)
 			}
 
 			// Check symbols
-			resultCols := result.Symbols()
-			if len(resultCols) != len(tt.expectedCols) {
-				t.Fatalf("expected %d symbols, got %d", len(tt.expectedCols), len(resultCols))
+			resultSymbols := result.Symbols()
+			if len(resultSymbols) != len(tt.expectedSymbols) {
+				t.Fatalf("expected %d symbols, got %d", len(tt.expectedSymbols), len(resultSymbols))
 			}
-			for i, col := range resultCols {
-				if col != tt.expectedCols[i] {
-					t.Errorf("symbol %d: expected %s, got %s", i, tt.expectedCols[i], col)
+			for i, symbol := range resultSymbols {
+				if symbol != tt.expectedSymbols[i] {
+					t.Errorf("symbol %d: expected %s, got %s", i, tt.expectedSymbols[i], symbol)
 				}
 			}
 
@@ -382,7 +382,7 @@ func TestProjectColumns(t *testing.T) {
 				}
 				for i, val := range tuple {
 					if val != expected[i] {
-						t.Errorf("tuple %d col %d: expected %v, got %v", idx, i, expected[i], val)
+						t.Errorf("tuple %d position %d: expected %v, got %v", idx, i, expected[i], val)
 					}
 				}
 				idx++

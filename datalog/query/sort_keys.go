@@ -29,7 +29,7 @@ func ConstantInputSymbols(specs []InputSpec) map[Symbol]bool {
 }
 
 // IteratedInputSymbols returns the :in symbols whose values vary across the
-// result: collection inputs and relation-input columns.
+// result: collection inputs and relation-input symbols.
 func IteratedInputSymbols(specs []InputSpec) map[Symbol]bool {
 	iterated := make(map[Symbol]bool)
 	for _, spec := range specs {
@@ -67,7 +67,7 @@ func EffectiveOrderBy(q *Query) []OrderByClause {
 // RetainedSortSymbols returns the :order-by variables that must survive the
 // final projection so the executor can sort the assembled result before
 // stripping it back to the declared :find shape: every effective sort key
-// that is not already a :find column. Aggregate queries retain nothing —
+// that is not already a :find symbol. Aggregate queries retain nothing —
 // their valid sort keys are group keys, which are :find variables by
 // definition, and appending variables to an aggregate find clause would
 // change its grouping.

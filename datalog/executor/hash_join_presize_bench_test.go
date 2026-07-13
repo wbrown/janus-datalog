@@ -17,9 +17,9 @@ func BenchmarkHashJoinPreSizing(b *testing.B) {
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Size_%d", size), func(b *testing.B) {
 			// Create two relations to join
-			leftCols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
-			rightCols := []query.Symbol{datalog.NewSymbol("?b"), datalog.NewSymbol("?d")}
-			joinCols := []query.Symbol{datalog.NewSymbol("?b")}
+			leftSymbols := []query.Symbol{datalog.NewSymbol("?a"), datalog.NewSymbol("?b"), datalog.NewSymbol("?c")}
+			rightSymbols := []query.Symbol{datalog.NewSymbol("?b"), datalog.NewSymbol("?d")}
+			joinSymbols := []query.Symbol{datalog.NewSymbol("?b")}
 
 			// Generate test data
 			leftTuples := make([]Tuple, size)
@@ -32,14 +32,14 @@ func BenchmarkHashJoinPreSizing(b *testing.B) {
 				rightTuples[i] = Tuple{i % 100, i * 3} // ?b, ?d
 			}
 
-			left := NewMaterializedRelation(leftCols, leftTuples)
-			right := NewMaterializedRelation(rightCols, rightTuples)
+			left := NewMaterializedRelation(leftSymbols, leftTuples)
+			right := NewMaterializedRelation(rightSymbols, rightTuples)
 
 			b.ResetTimer()
 			b.ReportAllocs()
 
 			for i := 0; i < b.N; i++ {
-				result := HashJoin(left, right, joinCols)
+				result := HashJoin(left, right, joinSymbols)
 				if result.Size() == 0 {
 					b.Fatal("Empty result")
 				}

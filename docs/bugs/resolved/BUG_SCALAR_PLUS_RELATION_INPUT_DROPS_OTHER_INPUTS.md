@@ -31,9 +31,9 @@ It is not specific to value type: the dropped scalar can be a string, int,
 scalar-then-relation — that fails, regardless of clause shape (`(not …)`,
 wildcard `_`, finding the input vars, etc. all reproduce).
 
-Reproduced by `TestRelationInput_RefAndKeywordColumns` in
+Reproduced by the relation-input reference-and-keyword test in
 `datalog/storage/query_inputs_test.go` (the "scalar+relation" sub-checks).
-`TestJoin_NoSharedColumns_CrossProduct` (`datalog/executor`) confirms the cross
+The no-shared-symbol cross-product test (`datalog/executor`) confirms the cross
 product itself is correct — the bug is upstream in input binding, not the join.
 
 ## Root Cause
@@ -61,7 +61,7 @@ for it.Next() {
 
     // Create scalar input relations for this tuple
     var tupleInputRelations []Relation
-    for i, sym := range relationInput.Symbols {   // <-- ONLY the relation's columns
+    for i, sym := range relationInput.Symbols {   // <-- ONLY the relation's attributes
         if i < len(tuple) {
             tupleInputRelations = append(tupleInputRelations,
                 NewMaterializedRelation([]query.Symbol{sym}, []Tuple{{tuple[i]}}))
@@ -127,8 +127,8 @@ which returned 0 rows for exactly this query shape.
 
 ## Test Coverage (to add with the fix)
 
-- `datalog/storage/query_inputs_test.go` — `TestRelationInput_RefAndKeywordColumns`
-  (scalar+relation, identity and keyword columns; already present, currently red).
+- `datalog/storage/query_inputs_test.go` — relation-input reference-and-keyword test
+  (scalar+relation, identity and keyword tuple positions; already present, currently red).
 - Library-level cases for `scalar + relation`, `collection + relation`,
   `tuple + relation`, and relation followed by scalar — each must bind both.
 - `datalog/executor` — direct coverage that the iteration path forwards
@@ -157,16 +157,16 @@ rewrite.
   relation is forwarded in its original slot, and only the iteration relation's
   slot is replaced by one single-value relation per `RelationInput` symbol drawn
   from the tuple. Both paths call it instead of building inputs from the relation's
-  columns alone.
+  attributes alone.
 
 ### Tests
 
-- `datalog/storage/query_inputs_test.go` — `TestRelationInput_RefAndKeywordColumns`:
+- `datalog/storage/query_inputs_test.go` — relation-input reference-and-keyword test:
   scalar+relation (find `?e`, find input vars, wildcard `_`, `(not …)`),
   relation+scalar (order independence), collection+relation, and ref/keyword
-  column types. Red before the fix, green after.
+  value types. Red before the fix, green after.
 - `datalog/executor/multi_tuple_binding_test.go` —
-  `TestJoin_NoSharedColumns_CrossProduct`: confirms the no-shared-column cross
+  no-shared-symbol cross-product test: confirms the no-shared-symbol cross
   product is correct, isolating the bug to input binding rather than the join.
 
 ### Provenance

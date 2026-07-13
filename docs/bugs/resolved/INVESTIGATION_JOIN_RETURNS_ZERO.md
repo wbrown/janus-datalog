@@ -151,7 +151,7 @@ Many other tests are also failing, likely due to the same root cause:
 - `TestBatchScanTrace`
 - `TestDatabasePlanCache`
 - `TestDebugBasicQuery` ← This one
-- `TestParallelDecorrelationColumnOrderBadger`
+- parallel decorrelation symbol-order test with Badger
 - `TestPredicatePushdownIntegration`
 - `TestEarlyPredicateFiltering`
 - `TestPredicatePushdownCorrectness`

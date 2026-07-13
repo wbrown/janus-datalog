@@ -18,7 +18,7 @@ import (
 // =============================================================================
 //
 // Fusion executes a same-entity [?e :const-attr ?fresh] pattern as a per-tuple
-// LookupAttribute column attach instead of a separate match + hash join. These
+// LookupAttribute symbol attach instead of a separate match + hash join. These
 // tests prove it preserves query semantics.
 //
 // Pillar 1 — DIFFERENTIAL: every scenario runs the identical query against a

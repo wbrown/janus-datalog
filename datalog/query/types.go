@@ -342,12 +342,6 @@ func (p *DataPattern) Symbols() []Symbol {
 	return symbols
 }
 
-// ExtractColumns is deprecated, use Symbols() instead
-// Kept for backward compatibility
-func (p *DataPattern) ExtractColumns() []Symbol {
-	return p.Symbols()
-}
-
 // Query represents a Datalog query
 type Query struct {
 	Find         []FindElement   // Elements to return (variables or aggregates)

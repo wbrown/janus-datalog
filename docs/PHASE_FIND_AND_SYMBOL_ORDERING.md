@@ -57,7 +57,7 @@ type MaterializedRelation struct {
 
 This means:
 - Looking up a symbol by name finds its **index position**
-- Accessing values requires `tuple[columnIndex]`
+- Accessing values requires `tuple[symbolIndex]`
 - **Reordering symbols means creating new tuple arrays** with values copied to new positions
 
 ## Performance Implications

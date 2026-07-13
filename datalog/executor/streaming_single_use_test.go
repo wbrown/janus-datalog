@@ -11,7 +11,7 @@ import (
 // TestStreamingRelationSingleUse verifies that StreamingRelation with EnableTrueStreaming
 // panics on second Iterator() call as expected
 func TestStreamingRelationSingleUse(t *testing.T) {
-	cols := []query.Symbol{datalog.NewSymbol("?x")}
+	symbols := []query.Symbol{datalog.NewSymbol("?x")}
 	tuples := []Tuple{
 		Tuple{1},
 		Tuple{2},
@@ -19,10 +19,10 @@ func TestStreamingRelationSingleUse(t *testing.T) {
 	}
 
 	// Create a materialized relation then convert to streaming
-	matRel := NewMaterializedRelation(cols, tuples)
+	matRel := NewMaterializedRelation(symbols, tuples)
 	iter := matRel.Iterator()
 	opts := ExecutorOptions{EnableTrueStreaming: true}
-	rel := NewStreamingRelationWithOptions(cols, iter, opts)
+	rel := NewStreamingRelationWithOptions(symbols, iter, opts)
 
 	// First iteration should work
 	it1 := rel.Iterator()
@@ -69,8 +69,8 @@ func TestStreamingRelationSingleUseInJoin(t *testing.T) {
 	rel2 := NewStreamingRelationWithOptions(cols2, iter2, opts)
 
 	// Join should work without panicking (single Iterator() call per relation)
-	joinCols := []query.Symbol{datalog.NewSymbol("?y")}
-	result := HashJoin(rel1, rel2, joinCols)
+	joinSymbols := []query.Symbol{datalog.NewSymbol("?y")}
+	result := HashJoin(rel1, rel2, joinSymbols)
 
 	// Verify result
 	if result.Size() != 2 {

@@ -104,9 +104,9 @@ From `phase_reordering.go:342-358`, the fix for the original conditional aggrega
 // 2b. Keep symbols needed for conditional aggregates in ANY phase
 for j := 0; j <= i; j++ {
     if phases[j].Metadata != nil {
-        if aggCols, ok := phases[j].Metadata["aggregate_required_columns"]; ok {
-            if cols, ok := aggCols.([]query.Symbol); ok {
-                for _, sym := range cols {
+        if aggSymbols, ok := phases[j].Metadata["aggregate_required_symbols"]; ok {
+            if syms, ok := aggSymbols.([]query.Symbol); ok {
+                for _, sym := range syms {
                     if available[sym] {  // ← BUG: Checks original name
                         keep[sym] = true  // ← BUG: Keeps original name
                     }
@@ -125,7 +125,7 @@ for j := 0; j <= i; j++ {
 ```
 Phase 0:
   Patterns: [?ev :event/person ?person], [?ev :event/time ?t], ...
-  Metadata["aggregate_required_columns"] = [?v, ?__cond_?pd]
+  Metadata["aggregate_required_symbols"] = [?v, ?__cond_?pd]
 ```
 
 **Step 2**: Phase reordering analyzes variable conflicts
@@ -138,7 +138,7 @@ Need to rename: ?person → ?p
 ```
 Phase 0 (after renaming):
   Patterns: [?ev :event/person ?p], [?ev :event/time ?t], ...
-  Metadata["aggregate_required_columns"] = [?v, ?__cond_?pd]  ← NOT UPDATED!
+  Metadata["aggregate_required_symbols"] = [?v, ?__cond_?pd]  ← NOT UPDATED!
 ```
 
 **Step 4**: updatePhaseSymbols tries to keep metadata symbols
@@ -215,9 +215,9 @@ func TestMetadataInvariantAfterReordering(t *testing.T) {
     // Check all phases
     for i, phase := range plan.Phases {
         if phase.Metadata != nil {
-            // Check aggregate_required_columns
-            if cols, ok := phase.Metadata["aggregate_required_columns"]; ok {
-                for _, sym := range cols.([]query.Symbol) {
+            // Check aggregate-required symbols
+            if value, ok := phase.Metadata["aggregate_required_symbols"]; ok {
+                for _, sym := range value.([]query.Symbol) {
                     // Every symbol in metadata must be in Available or Provides
                     assert.True(t, phase.Available[sym] || contains(phase.Provides, sym),
                         "Phase %d metadata references undefined symbol %v", i, sym)
@@ -263,9 +263,9 @@ func reorderPlanByRelations(phases []Phase) []Phase {
 }
 
 func updateMetadataSymbols(metadata map[string]interface{}, renameMap map[query.Symbol]query.Symbol) {
-    // Update aggregate_required_columns
-    if cols, ok := metadata["aggregate_required_columns"]; ok {
-        if syms, ok := cols.([]query.Symbol); ok {
+    // Update aggregate-required symbols
+    if value, ok := metadata["aggregate_required_symbols"]; ok {
+        if syms, ok := value.([]query.Symbol); ok {
             for j, sym := range syms {
                 if newSym, renamed := renameMap[sym]; renamed {
                     syms[j] = newSym
@@ -287,7 +287,7 @@ Instead of storing symbol names in metadata, store stable IDs:
 type VariableID int
 
 // Metadata stores IDs instead of names
-metadata["aggregate_required_columns"] = []VariableID{v1, v2, v3}
+metadata["aggregate_required_symbols"] = []VariableID{v1, v2, v3}
 
 // Separate mapping from IDs to current names
 phase.SymbolTable[v1] = query.Symbol("?v")
@@ -609,7 +609,7 @@ The confusion likely came from:
 1. **Optimization Composability**: Optimizations MUST be independently testable and composable. We now test all 4 combinations (none, A only, B only, both).
 
 2. **Complete Variable Renaming**: When phase reordering renames variables, ALL references must be updated, not just patterns. This includes:
-   - Phase metadata (aggregate_required_columns)
+   - Phase metadata (aggregate-required symbols)
    - Expression outputs
    - Predicate references
    - Any other symbol references
