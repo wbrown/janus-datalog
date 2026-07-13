@@ -1207,8 +1207,13 @@ operator does not need to establish them again.
 
 | Tuples | Deduplicating constructor | Proven-set constructor |
 |-------:|--------------------------:|-----------------------:|
-| 10,000 | 474.4 µs, 1.38 MiB, 10.0K allocs | 16.5 ns, 8 B, 1 alloc |
-| 100,000 | 4.260 ms, 12.45 MiB, 100.3K allocs | 16.8 ns, 8 B, 1 alloc |
+| 10,000 | 462.2 µs, 1.38 MiB, 10.0K allocs | 56.7 ns, 208 B, 3 allocs |
+| 100,000 | 4.525 ms, 12.45 MiB, 100.3K allocs | 56.6 ns, 208 B, 3 allocs |
+
+The benchmark stores constructed Relations in a package-level sink so escape
+analysis cannot remove the immutable property clone. Proven-set construction
+remains O(1); the fixed allocations copy relation and candidate-key property
+slices.
 
 **Complex-query checkpoint** (`count=10`, darwin/arm64):
 

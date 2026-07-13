@@ -242,8 +242,13 @@ Focused constructor measurement:
 
 | Tuples | Deduplicating constructor | Proven-set constructor |
 |---:|---:|---:|
-| 10,000 | 474.4 µs, 1.38 MiB, 10.0K allocations | 16.5 ns, 8 B, 1 allocation |
-| 100,000 | 4.260 ms, 12.45 MiB, 100.3K allocations | 16.8 ns, 8 B, 1 allocation |
+| 10,000 | 462.2 µs, 1.38 MiB, 10.0K allocations | 56.7 ns, 208 B, 3 allocations |
+| 100,000 | 4.525 ms, 12.45 MiB, 100.3K allocations | 56.6 ns, 208 B, 3 allocations |
+
+The benchmark retains each result through a package-level sink so compiler
+escape analysis cannot erase the immutable property clone. The constructor is
+still O(1); its fixed three allocations copy the relation and candidate-key
+property slices.
 
 Complex checkpoint:
 

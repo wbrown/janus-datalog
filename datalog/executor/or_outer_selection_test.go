@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -169,4 +170,128 @@ func TestOuterJoinKeysProducesSetWithJoinKey(t *testing.T) {
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 		keys.Properties(),
 	)
+}
+
+func TestFilterBranchToOuterTuplePreservesIteratorAndCloseErrors(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	value := datalog.NewSymbol("?value")
+	branch := NewMaterializedRelation(
+		[]query.Symbol{entity, value},
+		[]Tuple{{int64(1), "one"}, {int64(2), "two"}},
+	)
+
+	iterationFailure := filterBranchToOuterTuple(
+		failingRelation{Relation: branch, failAfter: 1},
+		Tuple{int64(1)},
+		[]query.Symbol{entity},
+	)
+	require.ErrorIs(t, driveErr(iterationFailure), errInjectedIterator)
+
+	closeFailure := errors.New("filter branch close failure")
+	closeResult := filterBranchToOuterTuple(
+		failingRelation{Relation: branch, failAfter: 100, closeErr: closeFailure},
+		Tuple{int64(1)},
+		[]query.Symbol{entity},
+	)
+	require.ErrorIs(t, driveErr(closeResult), closeFailure)
+}
+
+func TestOuterJoinKeysPreservesOuterIteratorAndCloseErrors(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	value := datalog.NewSymbol("?value")
+	base := NewMaterializedRelation(
+		[]query.Symbol{entity},
+		[]Tuple{{int64(1)}, {int64(2)}},
+	)
+
+	testCases := []struct {
+		name     string
+		outer    Relation
+		expected error
+	}{
+		{
+			name:     "iteration",
+			outer:    failingRelation{Relation: base, failAfter: 1},
+			expected: errInjectedIterator,
+		},
+		{
+			name:     "close",
+			outer:    failingRelation{Relation: base, failAfter: 100, closeErr: errors.New("outer join keys close failure")},
+			expected: errors.New("outer join keys close failure"),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			relation := NewOrFallbackRelation(
+				newQueryExecutor(NewMemoryPatternMatcher(nil), nil, ExecutorOptions{}),
+				NewContext(nil),
+				[][]query.Clause{{&query.Expression{
+					Function: &query.GroundFunction{Value: "fallback"},
+					Binding:  value,
+				}}},
+				testCase.outer,
+				ExecutorOptions{},
+				true,
+			)
+			relation.joinSyms = []query.Symbol{entity}
+			iterator := relation.Iterator().(*OrFallbackIterator)
+
+			require.Nil(t, iterator.outerJoinKeys())
+			require.EqualError(t, iterator.err, testCase.expected.Error())
+		})
+	}
+}
+
+func TestBuildBranchFromEACachePreservesOuterIteratorAndCloseErrors(t *testing.T) {
+	entitySymbol := datalog.NewSymbol("?entity")
+	valueSymbol := datalog.NewSymbol("?value")
+	entity := datalog.NewIdentity("ea-cache-outer-error")
+	attr := datalog.NewKeyword(":item/value")
+	base := NewMaterializedRelation(
+		[]query.Symbol{entitySymbol},
+		[]Tuple{{entity}},
+	)
+	branch := []query.Clause{&query.DataPattern{Elements: []query.PatternElement{
+		query.Variable{Name: entitySymbol},
+		query.Constant{Value: attr},
+		query.Variable{Name: valueSymbol},
+	}}}
+	matcher := &bundleLookupMatcher{values: map[bundleLookupKey]interface{}{
+		{entity: entity, attr: attr}: "present",
+	}}
+
+	testCases := []struct {
+		name     string
+		outer    Relation
+		expected error
+	}{
+		{
+			name:     "iteration",
+			outer:    failingRelation{Relation: base, failAfter: 0},
+			expected: errInjectedIterator,
+		},
+		{
+			name:     "close",
+			outer:    failingRelation{Relation: base, failAfter: 100, closeErr: errors.New("EA cache outer close failure")},
+			expected: errors.New("EA cache outer close failure"),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			relation := NewOrFallbackRelation(
+				newQueryExecutor(matcher, nil, ExecutorOptions{}),
+				NewContext(nil),
+				[][]query.Clause{branch},
+				testCase.outer,
+				ExecutorOptions{},
+				true,
+			)
+			iterator := relation.Iterator().(*OrFallbackIterator)
+
+			require.Nil(t, iterator.buildBranchFromEACache(branch))
+			require.EqualError(t, iterator.err, testCase.expected.Error())
+		})
+	}
 }

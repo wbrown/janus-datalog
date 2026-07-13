@@ -739,7 +739,16 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 			idx.Put(key, []Tuple{tuple})
 		}
 	}
-	outerIt.Close()
+	outerErr := outerIt.Error()
+	closeErr := outerIt.Close()
+	if outerErr != nil {
+		it.err = outerErr
+		return nil
+	}
+	if closeErr != nil {
+		it.err = closeErr
+		return nil
+	}
 
 	return &cachedBranch{
 		index:      idx,
@@ -1123,7 +1132,16 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 		seen.Put(tk, true)
 		keys = append(keys, key)
 	}
-	oit.Close()
+	outerErr := oit.Error()
+	closeErr := oit.Close()
+	if outerErr != nil {
+		it.err = outerErr
+		return nil
+	}
+	if closeErr != nil {
+		it.err = closeErr
+		return nil
+	}
 
 	if len(keys) == 0 {
 		return nil
@@ -1537,9 +1555,15 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 			tuples = append(tuples, cp)
 		}
 	}
-	iter.Close()
-
-	return NewMaterializedRelation(branchSyms, tuples)
+	iterErr := iter.Error()
+	closeErr := iter.Close()
+	result := NewMaterializedRelation(branchSyms, tuples)
+	if iterErr != nil {
+		result.err = iterErr
+	} else if closeErr != nil {
+		result.err = closeErr
+	}
+	return result
 }
 
 func (it *projectedIterator) Close() error {

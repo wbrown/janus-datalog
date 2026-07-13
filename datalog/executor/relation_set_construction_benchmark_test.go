@@ -8,6 +8,8 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
+var provenSetConstructionResult Relation
+
 func BenchmarkProvenSetConstruction(b *testing.B) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")
@@ -30,6 +32,7 @@ func BenchmarkProvenSetConstruction(b *testing.B) {
 				if relation.Size() != count {
 					b.Fatalf("got %d tuples, want %d", relation.Size(), count)
 				}
+				provenSetConstructionResult = relation
 			}
 		})
 		b.Run(fmt.Sprintf("tuples=%d/proven-set", count), func(b *testing.B) {
@@ -44,6 +47,7 @@ func BenchmarkProvenSetConstruction(b *testing.B) {
 				if relation.Size() != count {
 					b.Fatalf("got %d tuples, want %d", relation.Size(), count)
 				}
+				provenSetConstructionResult = relation
 			}
 		})
 	}

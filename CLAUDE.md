@@ -442,6 +442,11 @@ Name code for the relational concept it implements:
 - `relation attribute`, not a table field
 - `binding`, when a symbol receives a value
 
+Exact external API names that describe source locations are exempt. For example,
+`parse.Node.Column` is a horizontal source position, not relation structure; use
+that field directly and preserve compile-time checking rather than hiding its
+name through reflection or string construction.
+
 Relational invariants:
 - A `Relation` is always a set; each complete tuple appears at most once.
 - Temporary tuple streams may require deduplication before becoming a Relation.

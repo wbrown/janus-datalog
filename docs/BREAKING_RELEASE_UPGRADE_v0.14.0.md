@@ -59,6 +59,11 @@ The query builder functions `qb.Add`, `Sub`, `Mul`, and `Div` take a required
 first operand followed by variadic operands. Existing two-operand calls remain
 valid.
 
+### Data patterns
+
+The deprecated `query.DataPattern.ExtractColumns` method was removed. Use
+`DataPattern.Symbols` to obtain the relation symbols bound by a pattern.
+
 ### Planner and executor cleanup
 
 The supported planner interchange is `planner.RealizedPlan` /

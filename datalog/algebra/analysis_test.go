@@ -70,6 +70,7 @@ func TestAnalyzeValidatesEveryOperatorContract(t *testing.T) {
 			Data: &Aggregate{
 				GroupBy:   []query.Symbol{score},
 				Functions: []query.FindAggregate{{Function: "count", Arg: entity}},
+				Bindings:  []query.Symbol{score, count},
 				Output:    []query.Symbol{score, count},
 			},
 		},
@@ -257,12 +258,79 @@ func TestAnalyzeTracksFreeRequirementsFromEnvironment(t *testing.T) {
 		Data: &Aggregate{
 			GroupBy:   []query.Symbol{input},
 			Functions: []query.FindAggregate{{Function: "count", Arg: result}},
+			Bindings:  []query.Symbol{input, datalog.NewSymbol("(count ?result)")},
 			Output:    []query.Symbol{input, datalog.NewSymbol("(count ?result)")},
 		},
 	}
 	aggregateAnalysis, err := Analyze(aggregated)
 	require.NoError(t, err)
 	require.Equal(t, []query.Symbol{input}, aggregateAnalysis[aggregated].Required)
+}
+
+func TestAnalyzeAntiJoinDoesNotTreatRightOutputAsLeftEnvironment(t *testing.T) {
+	correlation := datalog.NewSymbol("?correlation")
+	left := &Node{
+		Op:   RuleProject,
+		Data: &Project{Symbols: []query.Symbol{correlation}},
+	}
+	right := algebraTestScan(correlation)
+	anti := &Node{
+		Op:       RuleAntiJoin,
+		Children: []*Node{left, right},
+		Data: &AntiJoin{
+			JoinSymbols: []query.Symbol{correlation},
+			Output:      []query.Symbol{correlation},
+		},
+	}
+
+	analysis, err := Analyze(anti)
+	require.NoError(t, err)
+	require.Equal(t, []query.Symbol{correlation}, analysis[anti].Required,
+		"the right side of an anti-join filters left tuples but cannot satisfy the left environment")
+}
+
+func TestAnalyzeRejectsAggregateOutputWithWrongGroupPrefix(t *testing.T) {
+	group := datalog.NewSymbol("?group")
+	value := datalog.NewSymbol("?value")
+	wrong := datalog.NewSymbol("?wrong")
+	result := datalog.NewSymbol("?total")
+	aggregate := &Node{
+		Op:       RuleAggregate,
+		Children: []*Node{algebraTestScan(group, value)},
+		Data: &Aggregate{
+			GroupBy:   []query.Symbol{group},
+			Functions: []query.FindAggregate{{Function: "sum", Arg: value}},
+			Bindings:  []query.Symbol{group, result},
+			Output:    []query.Symbol{wrong, result},
+		},
+	}
+
+	_, err := Analyze(aggregate)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "aggregate output")
+}
+
+func TestRefreshSchemasRepairsAggregateGroupPrefix(t *testing.T) {
+	group := datalog.NewSymbol("?group")
+	value := datalog.NewSymbol("?value")
+	wrong := datalog.NewSymbol("?wrong")
+	result := datalog.NewSymbol("?total")
+	aggregate := &Node{
+		Op:       RuleAggregate,
+		Children: []*Node{algebraTestScan(group, value)},
+		Data: &Aggregate{
+			GroupBy:   []query.Symbol{group},
+			Functions: []query.FindAggregate{{Function: "sum", Arg: value}},
+			Bindings:  []query.Symbol{group, result},
+			Output:    []query.Symbol{wrong, result},
+		},
+	}
+
+	refreshed, err := RefreshSchemas(aggregate)
+	require.NoError(t, err)
+	require.Equal(t, []query.Symbol{group, result}, refreshed.Symbols())
+	require.Equal(t, []query.Symbol{wrong, result}, aggregate.Symbols(),
+		"schema refresh must not mutate the input aggregate")
 }
 
 func TestAnalyzeUnionNormalizesOuterKeysAndBranchLocalSymbols(t *testing.T) {

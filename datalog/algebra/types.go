@@ -250,7 +250,8 @@ func (l *LateralJoin) String() string {
 type Aggregate struct {
 	GroupBy   []query.Symbol        // Grouping variables
 	Functions []query.FindAggregate // Aggregate functions (count, sum, etc.)
-	Output    []query.Symbol        // GroupBy keys + aggregate result symbols
+	Bindings  []query.Symbol        // Positional output bindings for group keys + aggregate results
+	Output    []query.Symbol        // Derived schema; must equal Bindings
 }
 
 func (a *Aggregate) OutputSymbols() []query.Symbol { return a.Output }

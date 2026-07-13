@@ -35,6 +35,9 @@ func (plan *RealizedPlan) Validate() error {
 			return fmt.Errorf("phase %d provides schema %v does not match query output schema %v",
 				phaseNumber, phase.Provides, output)
 		}
+		if err := validatePhaseLiveness(phaseNumber, phase.Query); err != nil {
+			return err
+		}
 
 		isLast := i == len(plan.Phases)-1
 		if isLast {
@@ -52,6 +55,83 @@ func (plan *RealizedPlan) Validate() error {
 		if !samePhysicalSchema(phase.Keep, nextRelationInput) {
 			return fmt.Errorf("phase %d boundary schema %v does not match previous boundary input of phase %d: %v",
 				phaseNumber, phase.Keep, phaseNumber+1, nextRelationInput)
+		}
+	}
+	return nil
+}
+
+func validatePhaseLiveness(phaseNumber int, phaseQuery *query.Query) error {
+	available := make(map[query.Symbol]bool)
+	for _, symbol := range physicalInputSymbols(phaseQuery.In) {
+		available[symbol] = true
+	}
+	for _, clause := range phaseQuery.Where {
+		symbols := extractClauseSymbols(clause)
+		for _, symbol := range symbols.Provides {
+			available[symbol] = true
+		}
+	}
+	for _, clause := range phaseQuery.Where {
+		symbols := extractClauseSymbols(clause)
+		for _, symbol := range symbols.Requires {
+			if symbol.IsSource() {
+				continue
+			}
+			if !available[symbol] {
+				return fmt.Errorf("phase %d clause %T requires unavailable symbol %s",
+					phaseNumber, clause, symbol)
+			}
+		}
+	}
+	if err := validateFinalizationLiveness(phaseNumber, phaseQuery, available); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateFinalizationLiveness(
+	phaseNumber int,
+	phaseQuery *query.Query,
+	available map[query.Symbol]bool,
+) error {
+	hasAggregate := false
+	for _, element := range phaseQuery.Find {
+		if element.IsAggregate() {
+			hasAggregate = true
+			break
+		}
+	}
+	for _, element := range phaseQuery.Find {
+		switch find := element.(type) {
+		case query.FindVariable:
+			if !available[find.Symbol] {
+				if hasAggregate {
+					return fmt.Errorf("phase %d group-by symbol %s is unavailable",
+						phaseNumber, find.Symbol)
+				}
+				return fmt.Errorf("phase %d find symbol %s is unavailable",
+					phaseNumber, find.Symbol)
+			}
+		case query.FindAggregate:
+			if !available[find.Arg] {
+				return fmt.Errorf("phase %d aggregate input symbol %s is unavailable",
+					phaseNumber, find.Arg)
+			}
+			if find.Predicate != nil && !available[find.Predicate] {
+				return fmt.Errorf("phase %d aggregate predicate symbol %s is unavailable",
+					phaseNumber, find.Predicate)
+			}
+		case query.FindPull:
+			if !available[find.Variable] {
+				return fmt.Errorf("phase %d pull symbol %s is unavailable",
+					phaseNumber, find.Variable)
+			}
+		}
+	}
+	for _, symbol := range query.RetainedSortSymbols(phaseQuery) {
+		if !available[symbol] {
+			return fmt.Errorf("phase %d order-by symbol %s is unavailable",
+				phaseNumber, symbol)
 		}
 	}
 	return nil

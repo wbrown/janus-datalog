@@ -460,14 +460,15 @@ func decompileAggregate(n *Node) ([]query.Clause, error) {
 		Where: innerClauses,
 	}
 
-	// Build binding: RelationBinding with outer names (agg.Output).
+	// Build binding with the outer names corresponding positionally to the
+	// grouped keys and aggregate results.
 	// Uses Constant($) for the database source marker (not Variable).
 	// RelationBinding (not TupleBinding) because the decorrelated query
 	// returns multiple rows (one per GROUP BY value).
 	sp := &query.SubqueryPattern{
 		Query:   innerQuery,
 		Inputs:  []query.PatternElement{query.Constant{Value: datalog.SymDollar}},
-		Binding: query.RelationBinding{Variables: agg.Output},
+		Binding: query.RelationBinding{Variables: agg.Bindings},
 	}
 
 	return []query.Clause{sp}, nil

@@ -68,6 +68,11 @@ func TestRealizedPlanPhysicalContracts(t *testing.T) {
 					Find: []query.FindElement{
 						query.FindAggregate{Function: "max", Arg: payload},
 					},
+					Where: []query.Clause{&query.DataPattern{Elements: []query.PatternElement{
+						query.Variable{Name: entity},
+						query.Constant{Value: datalog.NewKeyword(":item/payload")},
+						query.Variable{Name: payload},
+					}}},
 				},
 				Available: []query.Symbol{entity},
 				Provides:  []query.Symbol{aggregateResult},
@@ -133,6 +138,66 @@ func TestRealizedPlanPhysicalContracts(t *testing.T) {
 	}
 }
 
+func TestRealizedPlanRejectsSymbolDroppedBeforeNonAdjacentUse(t *testing.T) {
+	entity := datalog.NewSymbol("?entity")
+	derived := datalog.NewSymbol("?derived")
+	plan := &RealizedPlan{
+		Query: &query.Query{},
+		Phases: []RealizedPhase{
+			{
+				Query: &query.Query{
+					Find: []query.FindElement{query.FindVariable{Symbol: entity}},
+					Where: []query.Clause{&query.DataPattern{Elements: []query.PatternElement{
+						query.Variable{Name: entity},
+						query.Constant{Value: datalog.NewKeyword(":item/id")},
+						query.Constant{Value: "present"},
+					}}},
+				},
+				Provides: []query.Symbol{entity},
+				Keep:     []query.Symbol{entity},
+			},
+			{
+				Query: &query.Query{
+					In: []query.InputSpec{
+						query.DatabaseInput{Name: datalog.SymDollar},
+						query.RelationInput{Symbols: []query.Symbol{entity}},
+					},
+					Find: []query.FindElement{query.FindVariable{Symbol: derived}},
+					Where: []query.Clause{&query.Expression{
+						Function: query.IdentityFunction{
+							Arg: query.VariableTerm{Symbol: entity},
+						},
+						Binding: derived,
+					}},
+				},
+				Available: []query.Symbol{entity},
+				Provides:  []query.Symbol{derived},
+				Keep:      []query.Symbol{derived},
+			},
+			{
+				Query: &query.Query{
+					In: []query.InputSpec{
+						query.DatabaseInput{Name: datalog.SymDollar},
+						query.RelationInput{Symbols: []query.Symbol{derived}},
+					},
+					Find: []query.FindElement{query.FindVariable{Symbol: derived}},
+					Where: []query.Clause{&query.Comparison{
+						Op:    query.OpEQ,
+						Left:  query.VariableTerm{Symbol: entity},
+						Right: query.ConstantTerm{Value: int64(1)},
+					}},
+				},
+				Available: []query.Symbol{derived},
+				Provides:  []query.Symbol{derived},
+			},
+		},
+	}
+
+	err := plan.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires unavailable symbol ?entity")
+}
+
 func TestPhysicalFindSymbolsPreserveTypedOutputOrder(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")
@@ -194,8 +259,9 @@ func cloneRealizedPlanForContractTest(plan *RealizedPlan) *RealizedPlan {
 		cloned.Phases[i].Provides = append([]query.Symbol(nil), phase.Provides...)
 		cloned.Phases[i].Keep = append([]query.Symbol(nil), phase.Keep...)
 		cloned.Phases[i].Query = &query.Query{
-			Find: append([]query.FindElement(nil), phase.Query.Find...),
-			In:   append([]query.InputSpec(nil), phase.Query.In...),
+			Find:  append([]query.FindElement(nil), phase.Query.Find...),
+			In:    append([]query.InputSpec(nil), phase.Query.In...),
+			Where: append([]query.Clause(nil), phase.Query.Where...),
 		}
 	}
 	return cloned

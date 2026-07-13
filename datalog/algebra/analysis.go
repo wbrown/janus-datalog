@@ -125,7 +125,12 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy := *data
 			copy.GroupBy = cloneSymbols(data.GroupBy)
 			copy.Functions = append([]query.FindAggregate(nil), data.Functions...)
-			copy.Output = cloneSymbols(data.Output)
+			copy.Bindings = cloneSymbols(data.Bindings)
+			output, err := aggregateOutputSchema(data)
+			if err != nil {
+				return nil, fmt.Errorf("refresh Aggregate: %w", err)
+			}
+			copy.Output = output
 			refreshed.Data = &copy
 		case *Constant:
 			copy := *data
@@ -347,7 +352,7 @@ func analyzeAntiJoin(node *Node, children []Analysis) (Analysis, error) {
 	}
 	return Analysis{
 		Output:   data.Output,
-		Required: combineFreeRequirements(children[0], children[1]),
+		Required: antiJoinFreeRequirements(children[0], children[1]),
 	}, nil
 }
 
@@ -455,9 +460,13 @@ func analyzeAggregate(node *Node, children []Analysis) (Analysis, error) {
 			required = append(required, function.Predicate)
 		}
 	}
-	if len(data.Output) != len(data.GroupBy)+len(data.Functions) {
-		return Analysis{}, fmt.Errorf("aggregate output arity %d does not match %d group keys and %d functions",
-			len(data.Output), len(data.GroupBy), len(data.Functions))
+	expected, err := aggregateOutputSchema(data)
+	if err != nil {
+		return Analysis{}, err
+	}
+	if !sameSymbolsInOrder(data.Output, expected) {
+		return Analysis{}, fmt.Errorf("aggregate output %v does not match group keys and result bindings %v",
+			data.Output, expected)
 	}
 	return Analysis{Output: data.Output, Required: required}, nil
 }
@@ -502,6 +511,29 @@ func combineFreeRequirements(left, right Analysis) []query.Symbol {
 	return uniqueSymbols(required)
 }
 
+func antiJoinFreeRequirements(left, right Analysis) []query.Symbol {
+	required := cloneSymbols(left.Required)
+	for _, symbol := range right.Required {
+		if !containsSymbol(left.Output, symbol) {
+			required = append(required, symbol)
+		}
+	}
+	return uniqueSymbols(required)
+}
+
+func aggregateOutputSchema(data *Aggregate) ([]query.Symbol, error) {
+	if len(data.Bindings) != len(data.GroupBy)+len(data.Functions) {
+		return nil, fmt.Errorf("aggregate binding arity %d does not match %d group keys and %d functions",
+			len(data.Bindings), len(data.GroupBy), len(data.Functions))
+	}
+	for i, binding := range data.Bindings {
+		if binding == nil {
+			return nil, fmt.Errorf("aggregate output binding %d is nil", i)
+		}
+	}
+	return cloneSymbols(data.Bindings), nil
+}
+
 func validateUniqueSymbols(name string, symbols []query.Symbol) error {
 	seen := make(map[query.Symbol]struct{}, len(symbols))
 	for _, symbol := range symbols {
@@ -523,10 +555,6 @@ func sameSymbolsInOrder(left, right []query.Symbol) bool {
 		}
 	}
 	return true
-}
-
-func sameSymbolSet(left, right []query.Symbol) bool {
-	return len(left) == len(right) && containsAllSymbols(left, right)
 }
 
 func containsAllSymbols(have, required []query.Symbol) bool {

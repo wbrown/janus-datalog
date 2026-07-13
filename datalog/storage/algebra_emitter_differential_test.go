@@ -7,6 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/planner"
+	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
 func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
@@ -143,6 +144,47 @@ func TestJoinProjectInsertionExactTupleDifferential(t *testing.T) {
 		optimized[0][1],
 		optimized[1][1],
 	})
+}
+
+func TestJoinProjectInsertionDeduplicatesProjectedFanout(t *testing.T) {
+	tag := datalog.NewKeyword(":item/tag")
+	payload := datalog.NewKeyword(":item/payload")
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       tag,
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityMany,
+	})
+	s.Add(&schema.AttributeDefinition{
+		Ident:       payload,
+		ValueType:   schema.TypeString,
+		Cardinality: schema.CardinalityOne,
+	})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), Schema: s})
+	require.NoError(t, err)
+	defer db.Close()
+
+	entity := datalog.NewIdentity("fanout-item")
+	tx := db.NewTransaction()
+	tx.Add(entity, tag, "alpha")
+	tx.Add(entity, tag, "beta")
+	tx.Add(entity, payload, "shared")
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	source := `[:find ?entity ?payload
+		:where [?entity :item/tag ?tag]
+		       [?entity :item/payload ?payload]]`
+	baselineOptions := DefaultPlannerOptions()
+	baselineOptions.EnableJoinProjectInsertion = false
+	projectOptions := baselineOptions
+	projectOptions.EnableJoinProjectInsertion = true
+
+	baseline := executePlannerOptions(t, db, source, nil, baselineOptions)
+	projected := executePlannerOptions(t, db, source, nil, projectOptions)
+	require.Equal(t, [][]interface{}{{entity, "shared"}}, baseline)
+	require.Equal(t, baseline, projected,
+		"projecting the fanout symbol must retain Relation set semantics")
 }
 
 func executeAlgebraMode(

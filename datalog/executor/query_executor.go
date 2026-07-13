@@ -483,7 +483,7 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 		return nil, 0, nil
 	}
 	first, ok := clauses[0].(*query.DataPattern)
-	if !ok || len(first.Elements) != 3 || first.Source != nil || first.GetT() != nil {
+	if !ok || len(first.Elements) != 3 || first.Source != nil {
 		return nil, 0, nil
 	}
 	entityVar, ok := first.GetE().(query.Variable)
@@ -521,7 +521,7 @@ func (e *DefaultQueryExecutor) tryFuseAttributeFetchBundle(
 fetchLoop:
 	for _, clause := range clauses {
 		pattern, ok := clause.(*query.DataPattern)
-		if !ok || len(pattern.Elements) != 3 || pattern.Source != nil || pattern.GetT() != nil {
+		if !ok || len(pattern.Elements) != 3 || pattern.Source != nil {
 			break
 		}
 		candidateEntity, ok := pattern.GetE().(query.Variable)
@@ -645,9 +645,6 @@ fetchLoop:
 	}
 	if closeErr := it.Close(); iterErr == nil {
 		iterErr = closeErr
-	}
-	if iterErr != nil {
-		return nil, 0, iterErr
 	}
 	if iterErr != nil {
 		return nil, 0, iterErr
