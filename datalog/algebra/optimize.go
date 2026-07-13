@@ -71,6 +71,11 @@ func (o *Optimizer) Optimize(root *Node) (*Node, error) {
 				return root, nil
 			}
 		}
+		refreshed, err := RefreshSchemas(FromParseTree(tree))
+		if err != nil {
+			return nil, err
+		}
+		tree = ToParseTree(refreshed)
 	}
 
 	return FromParseTree(tree), nil

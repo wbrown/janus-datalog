@@ -1191,6 +1191,26 @@ This is the checkpoint for the next architecture step: statically provable
 relation properties. Any claimed sort, deduplication, or join elimination must
 improve this benchmark without changing its result.
 
+### Algebra-preserving emission checkpoint (July 12, 2026)
+
+After replacing whole-tree decompilation/re-phasing with direct optimized-tree
+region emission, the same benchmark produced (`benchtime=1s`, `count=10`,
+darwin/arm64):
+
+| Metric | Result |
+|--------|-------:|
+| Time | **52.09 ms/op median** (45.24–86.84 ms; noisy) |
+| Memory | **84.05 MiB/op** |
+| Allocations | **1.043M/op** |
+
+The time samples have high variance (56.91 ms mean, 13.86 ms standard
+deviation), so they do not support a latency claim. Against the last documented
+property checkpoint (82.80 MiB, 1.088M allocations), memory is approximately
+1.5% higher while allocations are approximately 4.2% lower. The architectural
+result is therefore correctness and preservation of optimization structure,
+not a demonstrated general-query speedup. It enables future projection/liveness
+work to reduce tuple width without losing `Project` boundaries first.
+
 **File**: `datalog/storage/optimization_matrix_test.go`
 
 ---

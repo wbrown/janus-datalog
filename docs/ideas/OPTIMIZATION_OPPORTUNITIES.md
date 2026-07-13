@@ -681,11 +681,21 @@ All differences are significant (`p=0.000`, `n=10`). The complex checkpoint is
 statistically unchanged: 48.37 → 47.94 ms/op (`p=0.143`), with memory
 (`p=0.912`) and allocations (`p=0.810`) unchanged.
 
-True compositional algebra work remains: emit phased Datalog directly or
-otherwise preserve tree dependencies across the bridge, add dependency-safe
-`Project` pushdown, and run passes to a structural fixpoint with cycle
-protection. Only then consider join associativity or DAG-based
-common-subexpression elimination.
+The first compositional algebra step is now complete: production planning emits
+linear Datalog regions directly from the optimized tree, preserves `Project`
+boundaries, nests independently structured children, and validates exact
+schemas/free requirements after every rewrite. Whole-tree
+decompilation/re-phasing is no longer on the default path.
+
+The July 12 checkpoint measured 52.09 ms/op median (45.24–86.84 ms, too noisy
+for a latency conclusion), 84.05 MiB/op, and 1.043M allocations/op. Relative to
+the last documented property checkpoint, allocations fell about 4.2% while
+memory rose about 1.5%. This is an architecture/correctness result, not a
+general-query speedup.
+
+Dependency-safe `Project`/`Select` movement and structural fixpoint execution
+remain. Only after those are proven should join associativity or DAG-based
+common-subexpression elimination be considered.
 
 Relevant code:
 
@@ -713,9 +723,10 @@ not call any item below a bottleneck until that evidence identifies it.
 
 Candidate investigations:
 
-1. Emit phased Datalog directly from the algebra tree, or otherwise preserve
-   parent/child dependencies through `RealizedPlan`, so rewrites survive greedy
-   clause scheduling.
+1. **Completed (July 12, 2026):** emit phased Datalog directly from the algebra
+   tree so rewrites survive planning. Structural operator tests, exact
+   optimized/off tuple differentials, full tests, race tests, and three shuffled
+   repetitions are green.
 2. Push `Project` and ready `Select` operators through joins, subqueries, and
    fallback branches when symbol and cardinality proofs make the rewrite safe.
 3. Batch or decorrelate additional correlated subqueries, especially the

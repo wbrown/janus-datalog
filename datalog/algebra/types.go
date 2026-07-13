@@ -184,6 +184,7 @@ func (a *AntiJoin) String() string {
 type Union struct {
 	Output   []query.Symbol // Shared output symbols across branches
 	JoinVars []query.Symbol // Explicit join variables from or-join (nil for plain or)
+	Required []query.Symbol // Correlation keys supplied by the outer relation
 }
 
 // LateralUnion combines branches with per-tuple evaluation against the outer relation.
@@ -194,6 +195,7 @@ type Union struct {
 type LateralUnion struct {
 	Output   []query.Symbol // Output symbols across branches
 	JoinVars []query.Symbol // Explicit join variables (nil for plain or-default)
+	Required []query.Symbol // Correlation keys supplied by the outer relation
 }
 
 func (u *Union) OutputSymbols() []query.Symbol { return u.Output }

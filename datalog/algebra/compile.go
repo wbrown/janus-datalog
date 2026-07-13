@@ -345,15 +345,36 @@ func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symb
 		children = append(children, compiled)
 	}
 
-	// Output symbols = union of all branch symbols
+	explicitJoin := len(joinVars) > 0
+	required := make([]query.Symbol, 0)
+	if current != nil {
+		for _, child := range children {
+			for _, symbol := range sharedSymbols(current.Symbols(), child.Symbols()) {
+				if (!explicitJoin || containsSymbol(joinVars, symbol)) &&
+					!containsSymbol(required, symbol) {
+					required = append(required, symbol)
+				}
+			}
+		}
+	}
 	var output []query.Symbol
-	if len(children) > 0 {
-		output = children[0].Symbols()
+	effectiveJoinVars := append([]query.Symbol(nil), joinVars...)
+	if explicitJoin {
+		output = append([]query.Symbol(nil), joinVars...)
+	} else {
+		output = normalizedBranchSymbols(children, required)
+		if len(required) > 0 {
+			effectiveJoinVars = append([]query.Symbol(nil), output...)
+		}
 	}
 
 	union := &Node{
 		Op:       RuleUnion,
-		Data:     &Union{Output: output, JoinVars: joinVars},
+		Data: &Union{
+			Output:   output,
+			JoinVars: effectiveJoinVars,
+			Required: required,
+		},
 		Children: children,
 	}
 	return joinWith(current, union), nil
@@ -484,14 +505,41 @@ func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symb
 		compiled[i] = node
 	}
 
-	output := mergeSymbols(compiled[0].Symbols(), compiled[1].Symbols())
+	output := normalizedBranchSymbols(compiled, current.Symbols())
 
 	lateralUnion := &Node{
 		Op:       RuleLateralUnion,
-		Data:     &LateralUnion{Output: output, JoinVars: joinVars},
+		Data: &LateralUnion{
+			Output:   output,
+			JoinVars: joinVars,
+			Required: append([]query.Symbol(nil), current.Symbols()...),
+		},
 		Children: compiled,
 	}
 	return lateralUnion, nil
+}
+
+func normalizedBranchSymbols(branches []*Node, joinVars []query.Symbol) []query.Symbol {
+	output := append([]query.Symbol(nil), joinVars...)
+	if len(branches) == 0 {
+		return output
+	}
+	for _, symbol := range branches[0].Symbols() {
+		if containsSymbol(joinVars, symbol) {
+			continue
+		}
+		common := true
+		for _, branch := range branches[1:] {
+			if !containsSymbol(branch.Symbols(), symbol) {
+				common = false
+				break
+			}
+		}
+		if common && !containsSymbol(output, symbol) {
+			output = append(output, symbol)
+		}
+	}
+	return output
 }
 
 // compilePredicate produces a Select node for any predicate type.

@@ -123,13 +123,14 @@ results, err := d.Query(query,
 
 The planner is the bridge between a declarative query (an unordered set of clauses) and an executable plan (an ordered sequence of phases). It operates in two stages: **rewrite**, then **phase**.
 
-**Clause rewriting (optimize first).** Before any ordering happens, the planner rewrites clauses to enable more efficient execution:
+**Algebra-preserving planning.** Before execution, the planner builds and validates a relational-algebra tree:
 
-- **Algebra IR optimization** (`EnableAlgebraOptimizer`, default-active): clauses are compiled to a relational-algebra tree, passed through transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, scan rewrites for `get-else` with vector defaults), and decompiled back to clauses. This is where the real optimization happens.
+- **Algebra IR optimization** (`EnableAlgebraOptimizer`, default-active): clauses are compiled to a relational-algebra tree and passed through transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, scan rewrites for `get-else` with vector defaults). A schema-aware immutable rebuild refreshes derived outputs after every pass.
+- **Direct region emission**: the optimized tree is emitted directly into linear `RealizedPhase` Datalog regions. `Project` remains a materialized boundary, independently structured join children become relation-binding subqueries, and aggregate/OR/NOT/lateral operators retain their algebraic scope. Whole-tree decompilation is not used by production planning.
 
 - **Constant-bindable scalar detection**: Scalar inputs that only appear in predicates/expressions (not data patterns) are flagged in phase metadata. The executor resolves these as constants rather than creating separate relation groups, avoiding unnecessary joins.
 
-After rewriting, the planner phases the transformed clause list **once** — the "optimize first, phase once" architecture.
+When algebra optimization is disabled, the planner retains the clause-greedy path for differential verification.
 
 **Clause ordering via selectivity scoring.** The planner scores each clause based on how much it will filter data. The key heuristic: constants get 10x the weight of available variables, because a constant like `:person/name` in a pattern actually filters storage, while an available variable like `?e` only enables a join.
 
@@ -483,11 +484,11 @@ Core types in the top-level package:
 
 ### Query Planning (`datalog/planner/`)
 
-Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` (unordered clauses) into a `RealizedPlan` (ordered phases with symbol flow contracts). Architecture: **optimize first, phase once** — clause rewrites happen before phasing, so the greedy algorithm works on an already-optimized clause list.
+Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` into a `RealizedPlan` (ordered phases with physical symbol-flow contracts). The default path compiles and optimizes algebra, validates exact schemas and free requirements, then emits linear Datalog regions directly.
 
-**Clause rewriting**: The default optimizer is the algebra bridge (`EnableAlgebraOptimizer`, on by default): clauses → algebra IR → transform passes (subquery decorrelation, predicate pushdown, conditional aggregate rewriting, `get-else` scan rewrites with vector defaults) → clauses. Constant-bindable scalar inputs are detected and flagged in a separate pass.
+**Algebra emission**: `EnableAlgebraOptimizer` (on by default) runs clauses → algebra IR → transform passes → schema refresh/validation → `RealizedPlan`. Non-linear children remain nested Datalog (`q`, OR/fallback, and NOT forms); real `Project` nodes create materialized phase boundaries. `algebra.Decompile` remains for nested lowering and compatibility tests, not whole-tree production planning.
 
-**Core algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
+**Disabled-optimizer algorithm** (`clause_phasing.go`): Greedy clause selection within phases:
 1. Start with input symbols as available
 2. Score all executable clauses (all required symbols are available)
 3. Select highest-scoring clause, add to current phase, mark its output symbols as available
@@ -500,11 +501,11 @@ Single planner: `ClauseBasedPlanner`. Converts a declarative `*query.Query` (uno
 
 **Output**: `RealizedPlan` — sequence of `RealizedPhase`, each containing:
 - `Query`: Self-contained `*query.Query` fragment (`:find`, `:in`, `:where` clauses in execution order)
-- `Available`: Symbols bound when this phase starts
-- `Provides`: Symbols this phase's clauses produce
-- `Keep`: Symbols to pass to next phase (projected away otherwise)
+- `Available`: Exact phase input schema/environment
+- `Provides`: Exact physical output schema of `Query`
+- `Keep`: Exact materialized boundary schema; equal to `Provides` for non-final phases and empty for the final phase
 
-**Key invariant**: `Keep ⊆ Provides` — can only carry forward symbols that exist in the relation.
+**Key invariants**: phase metadata must match Datalog input/output schemas exactly; adjacent `Keep`/relation-input schemas must agree; runtime relations are checked against `Provides`.
 
 **Plan caching** (`cache.go`): SHA256 of query structure → cached `RealizedPlan`. LRU eviction at 1000 plans, 5-minute TTL. 3x speedup on repeated queries. Hit/miss counters for monitoring.
 

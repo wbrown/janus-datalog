@@ -89,22 +89,11 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 		}
 	}
 
-	// Extract find symbols
-	var findSymbols []query.Symbol
-	findSymbolSet := make(map[query.Symbol]bool)
-	for _, elem := range q.Find {
-		switch e := elem.(type) {
-		case query.FindVariable:
-			if !findSymbolSet[e.Symbol] {
-				findSymbols = append(findSymbols, e.Symbol)
-				findSymbolSet[e.Symbol] = true
-			}
-		case query.FindAggregate:
-			if !findSymbolSet[e.Arg] {
-				findSymbols = append(findSymbols, e.Arg)
-				findSymbolSet[e.Arg] = true
-			}
-		}
+	// Collect every symbol required by final projection and finalization.
+	findSymbols := terminalSymbols(q)
+	findSymbolSet := make(map[query.Symbol]bool, len(findSymbols))
+	for _, symbol := range findSymbols {
+		findSymbolSet[symbol] = true
 	}
 
 	// Retain effective :order-by symbols through phasing so the last phase's
@@ -126,14 +115,41 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 	// Step 1: Start with the clause list from the query
 	clauses := q.Where
 
-	// Step 2: Apply optimizations as pure clause transformations
-	// Algebraic optimization: clauses → algebra IR → transform passes → clauses
+	// Step 2: Optimize and emit directly from the algebra tree. Whole-tree
+	// decompilation would erase Project/Aggregate boundaries before phasing.
 	if p.options.EnableAlgebraOptimizer {
-		optimized, err := optimizeViaAlgebra(clauses, handler)
+		optimized, err := optimizeAlgebra(clauses, handler)
 		if err != nil {
 			return nil, fmt.Errorf("algebra optimization failed: %w", err)
 		}
-		clauses = optimized
+		plan, err := emitAlgebraPlan(q, optimized, initialBindings)
+		if err != nil {
+			return nil, fmt.Errorf("algebra emission failed: %w", err)
+		}
+		for i := range plan.Phases {
+			availableSet := make(map[query.Symbol]bool)
+			for symbol := range inputSymbols {
+				availableSet[symbol] = true
+			}
+			for _, symbol := range plan.Phases[i].Available {
+				availableSet[symbol] = true
+			}
+			analyzeClausesForExplain(
+				&plan.Phases[i],
+				plan.Phases[i].Query.Where,
+				availableSet,
+				p.stats,
+			)
+		}
+		if handler != nil {
+			handler(annotations.Event{
+				Name: "algebra/emitted",
+				Data: map[string]interface{}{
+					"phase_count": len(plan.Phases),
+				},
+			})
+		}
+		return plan, nil
 	}
 
 	// Step 2b: Detect constant-bindable scalar inputs
@@ -182,15 +198,28 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 			}
 		}
 
-		// Build the query fragment for this phase
+		phaseAvailable := cp.Available
+		if i > 0 {
+			phaseAvailable = append([]query.Symbol(nil), realizedPhases[i-1].Keep...)
+			for _, symbol := range phaseConstBindable {
+				if !containsSymbol(phaseAvailable, symbol) {
+					phaseAvailable = append(phaseAvailable, symbol)
+				}
+			}
+		}
+
+		phaseFind := buildFindClause(keep, q.Find, isLastPhase, retainedSort)
+
+		// Build the query fragment for this phase.
 		phaseQuery := &query.Query{
-			Find:  buildFindClause(cp.Provides, q.Find, isLastPhase, retainedSort),
-			In:    buildInClause(cp.Available, phaseConstBindable),
+			Find:  phaseFind,
+			In:    buildInClause(phaseAvailable, phaseConstBindable),
 			Where: cp.Clauses,
 		}
+		phaseAvailable = physicalInputSymbols(phaseQuery.In)
 		if len(clausePhases) == 1 &&
 			len(cp.Clauses) == 1 &&
-			len(cp.Available) == 0 &&
+			len(phaseAvailable) == 0 &&
 			len(q.OrderBy) > 0 &&
 			q.Limit != nil {
 			_, isPattern := cp.Clauses[0].(*query.DataPattern)
@@ -208,11 +237,17 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 			}
 		}
 
+		phaseProvides := physicalFindSymbols(phaseFind)
+		var phaseKeep []query.Symbol
+		if !isLastPhase {
+			phaseKeep = append([]query.Symbol(nil), phaseProvides...)
+		}
+
 		realizedPhases[i] = RealizedPhase{
 			Query:     phaseQuery,
-			Available: cp.Available,
-			Provides:  cp.Provides,
-			Keep:      keep,
+			Available: phaseAvailable,
+			Provides:  phaseProvides,
+			Keep:      phaseKeep,
 		}
 
 		// Populate explain fields for detailed plan output
@@ -221,7 +256,7 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 		for sym := range inputSymbols {
 			availableSet[sym] = true
 		}
-		for _, sym := range cp.Available {
+		for _, sym := range phaseAvailable {
 			availableSet[sym] = true
 		}
 		analyzeClausesForExplain(&realizedPhases[i], cp.Clauses, availableSet, p.stats)

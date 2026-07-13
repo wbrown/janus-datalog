@@ -75,13 +75,13 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 		},
 		Phases: []planner.RealizedPhase{
 			{
-				// Non-last phase: provides ?e ?v, keeps ?e for phase 1.
+				// Non-last phase projects its exact ?e boundary for phase 1.
 				Query: &query.Query{
-					Find:  []query.FindElement{query.FindVariable{Symbol: symE}, query.FindVariable{Symbol: symV}},
+					Find:  []query.FindElement{query.FindVariable{Symbol: symE}},
 					In:    []query.InputSpec{query.DatabaseInput{Name: datalog.SymDollar}},
 					Where: []query.Clause{p0},
 				},
-				Provides: []query.Symbol{symE, symV},
+				Provides: []query.Symbol{symE},
 				Keep:     []query.Symbol{symE},
 			},
 			{
@@ -92,7 +92,7 @@ func TestExecuteRealized_NonLastPhaseKeep_SurfacesScanError(t *testing.T) {
 					Where: []query.Clause{p1},
 				},
 				Available: []query.Symbol{symE},
-				Provides:  []query.Symbol{symE, symW},
+				Provides:  []query.Symbol{symW},
 			},
 		},
 	}

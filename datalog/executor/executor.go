@@ -218,6 +218,9 @@ func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelati
 // and capping must run over that whole union — not per iteration. Sorting before
 // limiting yields a correct global top-N.
 func (e *Executor) ExecuteRealized(ctx Context, plan *planner.RealizedPlan, inputRelations []Relation) (Relation, error) {
+	if err := plan.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid realized plan: %w", err)
+	}
 	result, err := e.executeRealizedPlan(ctx, plan, inputRelations)
 	if err != nil {
 		return nil, err
@@ -433,6 +436,9 @@ func (e *Executor) executeRealizedPlan(ctx Context, plan *planner.RealizedPlan, 
 		groups, err := queryExecutor.Execute(ctx, phase.Query, currentGroups)
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
+		}
+		if err := validatePhaseOutput(phaseIndex+1, phase, groups); err != nil {
+			return nil, err
 		}
 
 		// DEBUG: Log phase output before projection
@@ -1151,6 +1157,9 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 		if err != nil {
 			return nil, fmt.Errorf("phase %d failed: %w", phaseIndex+1, err)
 		}
+		if err := validatePhaseOutput(phaseIndex+1, phase, groups); err != nil {
+			return nil, err
+		}
 
 		// Project each group to Keep symbols. Skip for the last phase —
 		// QueryExecutor already projected to :find symbols.
@@ -1202,6 +1211,23 @@ func (p *preparedIteration) Run(ctx Context, iterationTuple Tuple) (Relation, er
 	// ExecuteRealized over that whole union (a per-tuple sort here would be
 	// discarded by the union and would not produce a global ordering).
 	return currentGroups[0], nil
+}
+
+func validatePhaseOutput(phaseNumber int, phase planner.RealizedPhase, groups []Relation) error {
+	for groupIndex, group := range groups {
+		actual := group.Symbols()
+		if len(actual) != len(phase.Provides) {
+			return fmt.Errorf("phase %d group %d physical output schema %v does not match provides schema %v",
+				phaseNumber, groupIndex, actual, phase.Provides)
+		}
+		for i := range actual {
+			if actual[i] != phase.Provides[i] {
+				return fmt.Errorf("phase %d group %d physical output schema %v does not match provides schema %v",
+					phaseNumber, groupIndex, actual, phase.Provides)
+			}
+		}
+	}
+	return nil
 }
 
 // SetPlanCache sets the plan cache for this executor
