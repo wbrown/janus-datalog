@@ -82,6 +82,7 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			}
 			copy := *data
 			copy.JoinSymbols = cloneSymbols(data.JoinSymbols)
+			copy.Required = cloneSymbols(data.Required)
 			copy.Output = cloneSymbols(children[0].Symbols())
 			refreshed.Data = &copy
 		case *Union:
@@ -342,9 +343,40 @@ func analyzeAntiJoin(node *Node, children []Analysis) (Analysis, error) {
 	if !ok {
 		return Analysis{}, dataTypeError(node, "*algebra.AntiJoin")
 	}
+	for _, symbol := range data.Required {
+		if !containsSymbol(data.JoinSymbols, symbol) {
+			return Analysis{}, fmt.Errorf("correlation requirement %s is not declared as an anti-join symbol", symbol)
+		}
+		if !containsSymbol(children[0].Output, symbol) {
+			return Analysis{}, fmt.Errorf("correlation requirement %s is not produced by the left child", symbol)
+		}
+		if containsSymbol(children[1].Output, symbol) {
+			return Analysis{}, fmt.Errorf("correlation requirement %s is already produced by the right child", symbol)
+		}
+		if !containsSymbol(children[1].Required, symbol) {
+			return Analysis{}, fmt.Errorf("correlation requirement %s is not a free requirement of the right child", symbol)
+		}
+	}
 	for _, symbol := range data.JoinSymbols {
-		if !containsSymbol(children[0].Output, symbol) || !containsSymbol(children[1].Output, symbol) {
-			return Analysis{}, fmt.Errorf("anti-join symbol %s must be produced by both children", symbol)
+		if !containsSymbol(children[0].Output, symbol) {
+			return Analysis{}, fmt.Errorf("anti-join symbol %s must be produced by the left child", symbol)
+		}
+		if !containsSymbol(children[1].Output, symbol) && !containsSymbol(data.Required, symbol) {
+			return Analysis{}, fmt.Errorf(
+				"anti-join symbol %s must be produced by the right child or declared as a correlation requirement",
+				symbol,
+			)
+		}
+	}
+	for _, symbol := range children[1].Required {
+		if symbol.IsSource() || containsSymbol(children[1].Output, symbol) {
+			continue
+		}
+		if containsSymbol(children[0].Output, symbol) && !containsSymbol(data.Required, symbol) {
+			return Analysis{}, fmt.Errorf(
+				"right child requires outer symbol %s but the anti-join does not declare it as a correlation requirement",
+				symbol,
+			)
 		}
 	}
 	if !sameSymbolsInOrder(data.Output, children[0].Output) {
@@ -383,6 +415,15 @@ func analyzeUnionBranches(output, joinVars, outerRequired []query.Symbol, childr
 				continue
 			}
 			if !containsSymbol(child.Output, symbol) {
+				if len(joinVars) > 0 && containsSymbol(joinVars, symbol) {
+					return Analysis{}, fmt.Errorf(
+						"or-join header declares %s, but branch %d schema %v does not bind it; every branch must bind every header variable; if %s is an input filter rather than an output, remove it from the header",
+						symbol,
+						i,
+						child.Output,
+						symbol,
+					)
+				}
 				return Analysis{}, fmt.Errorf("union branch %d schema %v does not provide output symbol %s", i, child.Output, symbol)
 			}
 		}

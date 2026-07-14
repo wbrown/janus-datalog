@@ -289,6 +289,49 @@ func TestAnalyzeAntiJoinDoesNotTreatRightOutputAsLeftEnvironment(t *testing.T) {
 		"the right side of an anti-join filters left tuples but cannot satisfy the left environment")
 }
 
+func TestAnalyzeCorrelatedAntiJoinRequirements(t *testing.T) {
+	goal := datalog.NewSymbol("?goal")
+	goalSet := datalog.NewSymbol("?goalSet")
+	termType := datalog.NewSymbol("?termType")
+	left := algebraTestScan(goal, goalSet)
+	rightScan := algebraTestScan(goal, termType)
+	right := &Node{
+		Op:       RuleSelect,
+		Children: []*Node{rightScan},
+		Data: &Select{
+			Required: []query.Symbol{termType, goalSet},
+			Output:   []query.Symbol{goal, termType},
+		},
+	}
+	anti := &Node{
+		Op:       RuleAntiJoin,
+		Children: []*Node{left, right},
+		Data: &AntiJoin{
+			JoinSymbols:  []query.Symbol{goal, goalSet},
+			Required:     []query.Symbol{goalSet},
+			Output:       []query.Symbol{goal, goalSet},
+			ExplicitJoin: true,
+		},
+	}
+
+	analysis, err := Analyze(anti)
+	require.NoError(t, err)
+	require.Empty(t, analysis[anti].Required)
+
+	unused := datalog.NewSymbol("?unused")
+	invalid := *anti
+	invalid.Children = []*Node{algebraTestScan(goal, goalSet, unused), right}
+	invalidData := *anti.Data.(*AntiJoin)
+	invalidData.JoinSymbols = append(cloneSymbols(invalidData.JoinSymbols), unused)
+	invalidData.Required = []query.Symbol{unused}
+	invalidData.Output = []query.Symbol{goal, goalSet, unused}
+	invalid.Data = &invalidData
+	_, err = Analyze(&invalid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "correlation requirement ?unused")
+	require.Contains(t, err.Error(), "not a free requirement of the right child")
+}
+
 func TestAnalyzeRejectsAggregateOutputWithWrongGroupPrefix(t *testing.T) {
 	group := datalog.NewSymbol("?group")
 	value := datalog.NewSymbol("?value")

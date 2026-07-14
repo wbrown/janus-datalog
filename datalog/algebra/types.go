@@ -165,6 +165,7 @@ func (j *Join) String() string {
 // Compiled from query.NotClause / query.NotJoinClause.
 type AntiJoin struct {
 	JoinSymbols  []query.Symbol // Variables to anti-join on
+	Required     []query.Symbol // Correlation inputs supplied by the left relation
 	Output       []query.Symbol // Same as left child's output
 	ExplicitJoin bool           // True if compiled from NotJoinClause (user specified join vars)
 }

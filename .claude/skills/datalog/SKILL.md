@@ -149,6 +149,18 @@ Queries are EDN vectors. The basic form:
   [?p :person/status "inactive"])
 ```
 
+`not-join` headers must include every outer variable consumed by the body,
+including predicate/expression-only inputs:
+```clojure
+[?goal :goal/set-type ?goalSet]
+(not-join [?goal ?goalSet]
+  [?event :event/goal ?goal]
+  [?event :event/type ?eventType]
+  [(!= ?eventType ?goalSet)])
+```
+Variables produced by both sides are equality keys; outer variables consumed
+only by body predicates are correlation inputs. Plain `not` infers both.
+
 **OR clauses** — alternative patterns:
 ```clojure
 (or [?p :person/city "New York"]
@@ -156,6 +168,14 @@ Queries are EDN vectors. The basic form:
 (or-join [?p]
   [?p :role/admin true]
   [?p :role/superuser true])
+```
+
+Every `or-join` branch must bind every header variable. Keep branch-specific
+filter inputs out of the header:
+```clojure
+(or-join [?e]
+  [?e :entity/crawl ?crawl]
+  [?e :entity/world ?world])
 ```
 
 **Vector functions** — operate on cardinality-vector attributes:
