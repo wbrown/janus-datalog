@@ -235,6 +235,21 @@ func TestCompileRejectsInvalidNotJoinHeaders(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsPlainNotWithUnboundOuterRequirement(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?goal
+		:where
+		[?goal :entity/type :type/goal]
+		(not
+			[?event :event/goal ?goal]
+			[?event :event/type ?termType]
+			[(!= ?termType ?missing)])]`)
+	require.NoError(t, err)
+
+	_, err = Compile(q)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "NOT body requires unbound outer symbol ?missing")
+}
+
 func TestOrJoinSchemaDiagnosticExplainsHeaderContract(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?entity
 		:in $ ?room ?crawl ?world

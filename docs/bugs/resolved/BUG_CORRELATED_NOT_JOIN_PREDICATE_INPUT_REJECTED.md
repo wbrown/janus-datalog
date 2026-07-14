@@ -157,12 +157,28 @@ document the v0.13-to-v0.14 migration.
 - Exact downstream `not-join` reproduction with a predicate-only outer input.
 - Optimized/off semantic differential with one excluded and one retained goal.
 - Plain `not` inference of a predicate-only outer input.
+- Plain `not` rejects a right requirement unavailable from the outer relation.
 - Structural assertion for equality keys versus correlation requirements.
 - Missing explicit-header correlation input rejected during planning.
 - Header variable neither produced nor required by the body rejected.
 - Compile/optimize/decompile round trip preserves the complete header.
 - `or-join` branch-schema validation remains strict and emits an actionable
   diagnostic.
+
+## Verification Performed
+
+The following gates were run against the completed fix on 2026-07-14:
+
+```bash
+go test -count=1 ./...
+go vet ./...
+go test -race -count=1 ./datalog/algebra ./datalog/storage
+go test -count=1 -shuffle=on ./datalog/algebra ./datalog/storage
+```
+
+All completed successfully. The optimized/off execution differential is
+`TestCorrelatedNotJoinPredicateInputMatchesUnoptimizedExecution`; structural and
+diagnostic coverage lives in the algebra package tests listed above.
 
 ## Resolution Criteria
 
@@ -171,5 +187,6 @@ document the v0.13-to-v0.14 migration.
 - [x] Invalid or omitted header bindings fail before execution.
 - [x] Pure anti-join schema checks remain unchanged.
 - [x] `or-join` branch equality is not weakened.
-- [x] Upgrade documentation explains the `or-join` header tightening.
-- [x] Full, race, shuffled, and optimized/off differential gates pass.
+- [x] Upgrade documentation explains `not-join` correlation requirements and the
+  `or-join` header tightening.
+- [x] Semantic, structural, invalid-header, and diagnostic regressions pass.

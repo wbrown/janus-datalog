@@ -94,6 +94,32 @@ relation are now rejected during execution. This includes queries such as
 `[:find ?missing (count ?e) ...]`; they no longer reach aggregation with an
 undefined grouping symbol.
 
+### `not-join` outer requirements
+
+Every outer variable consumed inside an explicit `not-join` body must appear in
+the header, including variables used only by predicates or expressions:
+
+```clojure
+(not-join [?goal ?goalSet]
+  [?event :event/goal ?goal]
+  [?event :event/type ?eventType]
+  [(!= ?eventType ?goalSet)])
+```
+
+Omitting `?goalSet` is invalid because the body cannot resolve it from local
+patterns:
+
+```clojure
+(not-join [?goal]
+  ...
+  [(!= ?eventType ?goalSet)])
+```
+
+Earlier v0.14 releases rejected this shape later during execution with an
+unresolved-term error. The planner now reports the missing header requirement
+before constructing the anti-join. This changes diagnostic timing and clarity,
+not the accepted query set.
+
 ### `or-join` header validation
 
 v0.14 validates that every `or-join` branch binds every variable declared in the
