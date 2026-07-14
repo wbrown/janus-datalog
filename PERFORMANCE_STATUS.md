@@ -32,6 +32,7 @@ The Janus Datalog engine delivers production-ready performance through architect
 - ✅ **Correlated OR outer replacement**: OR/fallback relations already contain their selected outer tuples, so QueryExecutor replaces consumed relation groups instead of appending the result and joining it back to the same outer data. Removing five redundant joins improves the complex checkpoint **11.3% time, 8.3% memory, and 10.6% allocations**. Outer, branch-cache, and close errors now propagate rather than falling through to defaults (n=10; verified 2026-07-13, darwin/arm64).
 - ✅ **Correlated-subquery product streaming**: replayable source relations feed their single-use product directly into typed input-combination deduplication instead of materializing and deduplicating the complete product first. Valid 10K/100K set products improve **39.6–44.2% time**, **37.0–38.7% memory**, and **14.3% allocations**. The complex checkpoint does not exercise this multi-group shape and remains unchanged (n=10; verified 2026-07-13, darwin/arm64).
 - ✅ **Relation set-invariant construction**: operators that already prove duplicate-free output now construct Relations without repeating typed deduplication. Grouped aggregation publishes its group key; union/fallback realization, join-key extraction, selection, deterministic extension, sorting, limits, phase realization, and lazy replay preserve the set proof. The complex checkpoint improves **5.1% time, 15.6% memory, and 8.6% allocations** (n=10; verified 2026-07-13, darwin/arm64).
+- ✅ **Batch wildcard Pull resolution**: `(pull ?e [*])` finalization collects matched entities and resolves their non-unique EATV ranges through one Badger read transaction and iterator instead of opening/discarding one transaction per entity. Focused 230/3,899-entity runs are **14.4×/10.8× faster**, use **90.9% less memory**, and perform **89.7% fewer allocations**. Latest and AsOf preserve CRDT semantics; unique-ownership walks and Tier-3 blob dereferences may open additional reads, and History retains its raw-mode path (10 iterations; verified 2026-07-13, darwin/arm64).
 - ✅ **Iterator contract hardening**: early-close materialization reports an incomplete-cache error, predicate evaluation failures propagate, streaming transforms use relation-owned iterators, hash joins retain build/probe close errors, unknown-size inputs bind correctly, and `StreamingRelation.Get` performs real random-access realization. Correctness-only; no performance claim.
 - ✅ **Typed aggregation keys**: batch and streaming grouped aggregation now key groups with `TupleKeyMap` instead of delimiter-joined formatted strings. This fixes silent collisions between distinct values and makes grouped aggregation **47.5% faster**, with **25.8% less memory** and **71.3% fewer allocations** (n=10 geomean; verified 2026-07-11, darwin/arm64).
 - ✅ **Single-lookup dedup insertion**: eight set-insertion paths now use `TupleKeyMap.PutIfAbsent` instead of `Exists` followed by `Put`. Materialized and streaming deduplication improve **5.4–9.0%** (**7.3% geomean**) with unchanged memory and allocations (n=10; verified 2026-07-11, darwin/arm64).
@@ -316,6 +317,22 @@ See `docs/archive/2025-10/CSE_FINDINGS.md` for historical analysis.
 |--------|------|---------|
 | Pull | 3.5µs | **9.2×** |
 | Query | 32.7µs | baseline |
+
+**Wildcard find-pull batching** (5 attributes/entity, cache disabled):
+
+| Entities | Per-entity transactions | Batched EATV scan | Time | Memory | Allocations |
+|---------:|------------------------:|----------------------:|-----:|-------:|------------:|
+| 230 | 4.829 ms | 335.4 µs | **14.4× faster** | **90.9% less** | **89.7% fewer** |
+| 3,899 | 64.19 ms | 5.917 ms | **10.8× faster** | **90.9% less** | **89.7% fewer** |
+
+`applyFindPulls` now collects the result entities and calls `PullMany` once per
+pull expression. Exact wildcard patterns use `BatchEntityResolver`;
+`Database.ResolveAllAttributesMany` deduplicates and sorts entities by EATV
+order, then seeks every non-unique entity range through one Badger transaction
+and iterator. Unique-attribute ownership walks and Tier-3 blob dereferences retain
+their specialized reads. `pull/batch.begin` and `pull/batch.complete` annotations
+make the result-boundary work visible. Explicit-attribute and nested pull patterns
+retain their existing per-entity execution.
 
 **Scaling Characteristics**:
 - **Per-attribute cost**: ~1.2µs (BadgerDB), ~470ns (in-memory)

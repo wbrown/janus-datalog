@@ -68,6 +68,8 @@ const (
 	// Pull API operations
 	PullBegin           = "pull/begin"
 	PullComplete        = "pull/complete"
+	PullBatchBegin      = "pull/batch.begin"
+	PullBatchComplete   = "pull/batch.complete"
 	PullEntityBegin     = "pull/entity.begin"
 	PullEntityComplete  = "pull/entity.complete"
 	PullAttributeLookup = "pull/attr.lookup"

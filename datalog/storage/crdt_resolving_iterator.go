@@ -419,8 +419,16 @@ func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 	// DFS from HEAD, collect values into a single resolved list.
 	// Recursion depth ≈ vector length for sequentially-appended vectors; see
 	// the stack-depth note in storage/rga_reconstruct.go (ReconstructRGA).
-	var values []any
+	values := make([]any, 0)
 	var maxTx datalog.ElementID
+	for _, element := range elemByID {
+		if maxTx.Less(element.id) {
+			maxTx = element.id
+		}
+		if element.tombstoneID != nil && maxTx.Less(*element.tombstoneID) {
+			maxTx = *element.tombstoneID
+		}
+	}
 	visited := make(map[datalog.ElementID]bool)
 	var walk func(id datalog.ElementID)
 	walk = func(id datalog.ElementID) {
@@ -432,18 +440,11 @@ func (it *CRDTResolvingIterator) resolveRGAGroup() []*datalog.Datom {
 		for _, child := range children[id] {
 			if child.tombstoneID == nil && child.value != nil {
 				values = append(values, child.value)
-				if maxTx.Less(child.id) {
-					maxTx = child.id
-				}
 			}
 			walk(child.id)
 		}
 	}
 	walk(HEAD)
-
-	if len(values) == 0 {
-		return nil
-	}
 
 	return []*datalog.Datom{{
 		E:  it.currentE,

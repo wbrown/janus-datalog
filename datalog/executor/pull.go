@@ -15,6 +15,11 @@ type PullExecutor struct {
 	entityResolver EntityResolver
 }
 
+type pullBatchContext interface {
+	PullBatchBegin(entityCount, specCount int, resolved bool)
+	PullBatchComplete(entityCount, attrCount int, resolved bool, err error)
+}
+
 // NewPullExecutor creates a new pull executor
 func NewPullExecutor(matcher PatternMatcher, resolver EntityResolver) *PullExecutor {
 	return &PullExecutor{
@@ -345,6 +350,20 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 
 // PullMany executes a pull pattern for multiple entities
 func (pe *PullExecutor) PullMany(entities []datalog.Identity, pattern *query.PullPattern) ([]map[string]interface{}, error) {
+	if resolver, ok := pe.entityResolver.(BatchEntityResolver); ok &&
+		isWildcardPullPattern(pattern) &&
+		len(entities) > 0 {
+		pe.pullBatchBegin(len(entities), len(pattern.Specs), false)
+		resolved, err := resolver.ResolveAllAttributesMany(entities)
+		if err != nil {
+			pe.pullBatchComplete(len(entities), 0, false, err)
+			return nil, fmt.Errorf("batch wildcard pull failed: %w", err)
+		}
+		results, attrCount, err := renderBatchWildcardResults(resolved, len(entities))
+		pe.pullBatchComplete(len(entities), attrCount, false, err)
+		return results, err
+	}
+
 	results := make([]map[string]interface{}, len(entities))
 	for i, entity := range entities {
 		result, err := pe.Pull(entity, pattern)
@@ -354,6 +373,41 @@ func (pe *PullExecutor) PullMany(entities []datalog.Identity, pattern *query.Pul
 		results[i] = result
 	}
 	return results, nil
+}
+
+func isWildcardPullPattern(pattern *query.PullPattern) bool {
+	if pattern == nil || len(pattern.Specs) != 1 {
+		return false
+	}
+	_, ok := pattern.Specs[0].(*query.PullWildcard)
+	return ok
+}
+
+func renderBatchWildcardResults(
+	resolved []map[datalog.Keyword]interface{},
+	entityCount int,
+) ([]map[string]interface{}, int, error) {
+	if len(resolved) != entityCount {
+		return nil, 0, fmt.Errorf(
+			"batch wildcard resolver returned %d results for %d entities",
+			len(resolved),
+			entityCount,
+		)
+	}
+	results := make([]map[string]interface{}, len(resolved))
+	attrCount := 0
+	for i, attrs := range resolved {
+		if len(attrs) == 0 {
+			continue
+		}
+		result := make(map[string]interface{}, len(attrs))
+		for attr, value := range attrs {
+			result[query.KeyName(attr)] = value
+		}
+		results[i] = result
+		attrCount += len(result)
+	}
+	return results, attrCount, nil
 }
 
 // ============================================================================
@@ -611,6 +665,20 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 
 // PullResolvedMany executes a resolved pull pattern for multiple entities
 func (pe *PullExecutor) PullResolvedMany(entities []datalog.Identity, pattern *query.ResolvedPullPattern) ([]map[string]interface{}, error) {
+	if resolver, ok := pe.entityResolver.(BatchEntityResolver); ok &&
+		isResolvedWildcardPullPattern(pattern) &&
+		len(entities) > 0 {
+		pe.pullBatchBegin(len(entities), len(pattern.Specs), true)
+		resolved, err := resolver.ResolveAllAttributesMany(entities)
+		if err != nil {
+			pe.pullBatchComplete(len(entities), 0, true, err)
+			return nil, fmt.Errorf("batch resolved wildcard pull failed: %w", err)
+		}
+		results, attrCount, err := renderBatchWildcardResults(resolved, len(entities))
+		pe.pullBatchComplete(len(entities), attrCount, true, err)
+		return results, err
+	}
+
 	results := make([]map[string]interface{}, len(entities))
 	for i, entity := range entities {
 		result, err := pe.PullResolved(entity, pattern)
@@ -620,6 +688,30 @@ func (pe *PullExecutor) PullResolvedMany(entities []datalog.Identity, pattern *q
 		results[i] = result
 	}
 	return results, nil
+}
+
+func isResolvedWildcardPullPattern(pattern *query.ResolvedPullPattern) bool {
+	if pattern == nil || len(pattern.Specs) != 1 {
+		return false
+	}
+	_, ok := pattern.Specs[0].(*query.ResolvedPullWildcard)
+	return ok
+}
+
+func (pe *PullExecutor) pullBatchBegin(entityCount, specCount int, resolved bool) {
+	if ctx, ok := pe.ctx.(pullBatchContext); ok {
+		ctx.PullBatchBegin(entityCount, specCount, resolved)
+	}
+}
+
+func (pe *PullExecutor) pullBatchComplete(
+	entityCount, attrCount int,
+	resolved bool,
+	err error,
+) {
+	if ctx, ok := pe.ctx.(pullBatchContext); ok {
+		ctx.PullBatchComplete(entityCount, attrCount, resolved, err)
+	}
 }
 
 // getIdentity extracts an Identity from a value

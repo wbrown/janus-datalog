@@ -2643,6 +2643,14 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 // vector) via CRDTResolvingIterator. Returns nil if the entity has no
 // current value for the attribute.
 func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *BadgerMatcher, card schema.Cardinality, valueType schema.ValueType) (interface{}, error) {
+	if card == schema.CardinalityVector && d.cache == nil {
+		value, found, err := matcher.LookupAttribute(entity, attr)
+		if err != nil || !found {
+			return nil, err
+		}
+		return value, nil
+	}
+
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
@@ -2680,9 +2688,6 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 			tuple := iter.Tuple()
 			if len(tuple) > 0 && tuple[0] != nil {
 				if vec, ok := tuple[0].([]interface{}); ok {
-					if len(vec) == 0 {
-						return nil, nil
-					}
 					if valueType != "" {
 						return typedVector(vec, valueType), nil
 					}
@@ -2725,7 +2730,11 @@ func entryToValue(entry *CacheEntry, valueType schema.ValueType) interface{} {
 		}
 		return values
 	case schema.CardinalityVector:
-		return typedVector(entry.VectorList(), valueType)
+		values := entry.VectorList()
+		if values == nil {
+			return nil
+		}
+		return typedVector(values, valueType)
 	default:
 		return entry.OneValue()
 	}
