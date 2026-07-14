@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"math/rand"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -135,6 +137,180 @@ func TestResolveAllAttributesManyPreservesUniqueFallback(t *testing.T) {
 	require.Equal(t, "shared@example.com", results[1][email])
 }
 
+func TestResolveAllAttributesManyMatchesDeclaredSchema(t *testing.T) {
+	s, err := schema.NewBuilder().
+		Attribute(":person/name").Type(schema.TypeString).One().Add().
+		Build()
+	require.NoError(t, err)
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), Schema: s})
+	require.NoError(t, err)
+	defer db.Close()
+
+	entity := datalog.NewIdentity("batch-declared-schema")
+	name := datalog.NewKeyword(":person/name")
+	nickname := datalog.NewKeyword(":person/nickname")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(entity, name, "Declared"))
+	require.NoError(t, tx.Set(entity, nickname, "Stored but undeclared"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	perEntity, err := db.ResolveAllAttributes(entity)
+	require.NoError(t, err)
+	batch, err := db.ResolveAllAttributesMany([]datalog.Identity{entity})
+	require.NoError(t, err)
+	require.Equal(t, perEntity, batch[0])
+	require.NotContains(t, batch[0], nickname)
+}
+
+func TestResolveAllAttributesManyKeepsExplicitlyClearedVector(t *testing.T) {
+	for _, disableCache := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disable_cache=%t", disableCache), func(t *testing.T) {
+			s, err := schema.NewBuilder().
+				Attribute(":person/skills").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:         t.TempDir(),
+				Schema:       s,
+				DisableCache: disableCache,
+			})
+			require.NoError(t, err)
+			defer db.Close()
+
+			entity := datalog.NewIdentity("batch-cleared-vector")
+			neverSet := datalog.NewIdentity("batch-never-set-vector")
+			skills := datalog.NewKeyword(":person/skills")
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(entity, skills, "Go"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Remove(entity, skills, "Go"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			perEntity, err := db.ResolveAllAttributes(entity)
+			require.NoError(t, err)
+			batch, err := db.ResolveAllAttributesMany([]datalog.Identity{entity})
+			require.NoError(t, err)
+			require.Equal(t, perEntity, batch[0])
+			require.Equal(t, []string{}, batch[0][skills])
+
+			neverSetPerEntity, err := db.ResolveAllAttributes(neverSet)
+			require.NoError(t, err)
+			neverSetBatch, err := db.ResolveAllAttributesMany([]datalog.Identity{neverSet})
+			require.NoError(t, err)
+			require.NotContains(t, neverSetPerEntity, skills)
+			require.Equal(t, neverSetPerEntity, neverSetBatch[0])
+		})
+	}
+}
+
+func TestResolveAllAttributesManyDifferential(t *testing.T) {
+	for _, disableCache := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disable_cache=%t", disableCache), func(t *testing.T) {
+			random := rand.New(rand.NewSource(0x381))
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+				Attribute(":person/steps").Type(schema.TypeString).Vector().Add().
+				Attribute(":person/missing").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:         t.TempDir(),
+				Schema:       s,
+				DisableCache: disableCache,
+			})
+			require.NoError(t, err)
+			defer db.Close()
+
+			name := datalog.NewKeyword(":person/name")
+			tags := datalog.NewKeyword(":person/tags")
+			steps := datalog.NewKeyword(":person/steps")
+			undeclared := datalog.NewKeyword(":person/nickname")
+			entities := make([]datalog.Identity, 64)
+			addedSteps := make(map[[20]byte][]string)
+			tx := db.NewTransaction()
+			for i := range entities {
+				entity := datalog.NewIdentity(fmt.Sprintf("batch-differential-%d", i))
+				entities[i] = entity
+				if random.Intn(4) != 0 {
+					require.NoError(t, tx.Set(entity, name, fmt.Sprintf("Name %d", i)))
+				}
+				if random.Intn(3) == 0 {
+					require.NoError(t, tx.Set(entity, undeclared, fmt.Sprintf("Nick %d", i)))
+				}
+				for tag := 0; tag < random.Intn(4); tag++ {
+					require.NoError(t, tx.Add(entity, tags, fmt.Sprintf("tag-%d", tag)))
+				}
+				for step := 0; step < random.Intn(4); step++ {
+					value := fmt.Sprintf("step-%d", step)
+					require.NoError(t, tx.Add(entity, steps, value))
+					addedSteps[entity.Hash()] = append(addedSteps[entity.Hash()], value)
+				}
+			}
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			tx = db.NewTransaction()
+			for i, entity := range entities {
+				if i%5 == 0 {
+					for _, value := range addedSteps[entity.Hash()] {
+						require.NoError(t, tx.Remove(entity, steps, value))
+					}
+				}
+				if i%7 == 0 {
+					require.NoError(t, tx.Remove(entity, name, fmt.Sprintf("Name %d", i)))
+				}
+			}
+			_, err = tx.Commit()
+			require.NoError(t, err)
+
+			expected := make([]map[datalog.Keyword]interface{}, len(entities))
+			for i, entity := range entities {
+				expected[i], err = db.ResolveAllAttributes(entity)
+				require.NoError(t, err)
+			}
+			actual, err := db.ResolveAllAttributesMany(entities)
+			require.NoError(t, err)
+			require.Len(t, actual, len(expected))
+			for i := range expected {
+				require.Equal(t,
+					normalizeWildcardAttributes(expected[i]),
+					normalizeWildcardAttributes(actual[i]),
+					"entity %d", i,
+				)
+			}
+		})
+	}
+}
+
+func TestResolveAllAttributesManyHistoryMatchesPerEntity(t *testing.T) {
+	db, err := NewDatabase(t.TempDir())
+	require.NoError(t, err)
+	defer db.Close()
+
+	entity := datalog.NewIdentity("batch-history")
+	name := datalog.NewKeyword(":person/name")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Set(entity, name, "First"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+	tx = db.NewTransaction()
+	require.NoError(t, tx.Set(entity, name, "Second"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	history := db.History()
+	perEntity, err := history.ResolveAllAttributes(entity)
+	require.NoError(t, err)
+	batch, err := history.ResolveAllAttributesMany([]datalog.Identity{entity})
+	require.NoError(t, err)
+	require.Equal(t, perEntity, batch[0])
+}
+
 func TestWildcardPullQueryUsesOneBatch(t *testing.T) {
 	var batchBegins, batchCompletes int
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
@@ -177,6 +353,63 @@ func TestWildcardPullQueryUsesOneBatch(t *testing.T) {
 		require.Equal(t, "scenario", pulled["entity/type"])
 		require.NotNil(t, pulled[query.DBIDKey])
 	}
+}
+
+func TestWildcardPullQueryRendersMultiValuedAttributes(t *testing.T) {
+	s, err := schema.NewBuilder().
+		Attribute(":entity/type").Type(schema.TypeString).One().Add().
+		Attribute(":entity/tags").Type(schema.TypeString).Many().Add().
+		Attribute(":entity/steps").Type(schema.TypeString).Vector().Add().
+		Build()
+	require.NoError(t, err)
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir(), Schema: s})
+	require.NoError(t, err)
+	defer db.Close()
+
+	entityType := datalog.NewKeyword(":entity/type")
+	tags := datalog.NewKeyword(":entity/tags")
+	steps := datalog.NewKeyword(":entity/steps")
+	tx := db.NewTransaction()
+	for i := 0; i < 3; i++ {
+		entity := datalog.NewIdentity(fmt.Sprintf("multi:%d", i))
+		require.NoError(t, tx.Set(entity, entityType, "multi"))
+		require.NoError(t, tx.Add(entity, tags, "one"))
+		require.NoError(t, tx.Add(entity, tags, "two"))
+		require.NoError(t, tx.Add(entity, steps, "first"))
+		require.NoError(t, tx.Add(entity, steps, "second"))
+	}
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	result, queryErr := db.Query(`[:find (pull ?entity [*])
+		:where [?entity :entity/type "multi"]]`)
+	rows, err := executor.CollectTuples(result, queryErr)
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+	for _, row := range rows {
+		pulled := row[0].(map[string]interface{})
+		require.ElementsMatch(t, []interface{}{"one", "two"}, pulled["entity/tags"])
+		require.Equal(t, []string{"first", "second"}, pulled["entity/steps"])
+	}
+}
+
+func normalizeWildcardAttributes(
+	attrs map[datalog.Keyword]interface{},
+) map[datalog.Keyword]interface{} {
+	normalized := make(map[datalog.Keyword]interface{}, len(attrs))
+	for attr, value := range attrs {
+		if values, ok := value.([]interface{}); ok {
+			items := make([]string, len(values))
+			for i, item := range values {
+				items[i] = fmt.Sprintf("%T:%v", item, item)
+			}
+			sort.Strings(items)
+			normalized[attr] = items
+		} else {
+			normalized[attr] = value
+		}
+	}
+	return normalized
 }
 
 func BenchmarkResolveAllAttributesMany(b *testing.B) {

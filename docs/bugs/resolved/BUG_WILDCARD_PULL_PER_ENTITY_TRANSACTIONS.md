@@ -54,7 +54,8 @@ defaulted, limited, and nested patterns retain their existing behavior.
 `Database.ResolveAllAttributesMany`:
 
 1. Deduplicates entities and sorts them by identity bytes, matching EATV order.
-2. Opens one Badger read transaction and one iterator.
+2. Opens one Badger read transaction and one iterator for the non-unique EATV
+   ranges that dominate wildcard resolution.
 3. Seeks each entity's EATV range through that iterator.
 4. Groups datoms by attribute and applies the canonical LWW, add-wins, or RGA
    resolution functions.
@@ -65,6 +66,16 @@ Latest and AsOf modes filter transactions exactly as their matcher does.
 Unique attributes retain walk-based ownership/fallback resolution. History mode
 retains its prior raw-mode path. Duplicate input entities are scanned once but
 receive independent result maps.
+
+When a schema is present, the batch path applies the same declared-attribute set
+as single-entity `ResolveAllAttributes`; stored undeclared attributes remain
+excluded from wildcard results. Fully tombstoned CardinalityVector attributes
+are present as typed empty vectors, while never-set vectors remain absent. The
+cache-enabled and cache-disabled single-entity paths now share that distinction.
+
+Unique-attribute ownership walks and Tier-3 blob dereferences may open additional
+specialized reads; the single transaction claim applies to the dominant batched
+EATV traversal, not every possible storage access.
 
 `pull/batch.begin` and `pull/batch.complete` annotations expose entity count,
 attribute count, latency, mode, and success at the result boundary.
@@ -80,6 +91,11 @@ Tests cover:
   missing entities/attributes, duplicate entities, and input-order preservation.
 - AsOf visibility.
 - Unique-attribute ownership fallback.
+- Declared-schema filtering of stored undeclared attributes.
+- Differential batch-versus-single resolution over randomized schema-backed data.
+- Fully tombstoned versus never-set vector semantics in both cache modes.
+- History-mode fallback and exact-wildcard gate decline for mixed patterns.
+- Multi-valued attributes through the end-to-end rendered Pull boundary.
 - Batch resolver and input iterator/close error propagation.
 
 Focused storage benchmark, five attributes per entity with cache disabled:

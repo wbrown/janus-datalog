@@ -15,9 +15,10 @@ type wildcardUniqueLookup struct {
 	attr   datalog.Keyword
 }
 
-// ResolveAllAttributesMany resolves wildcard pulls for a complete entity set
-// through one Badger read transaction and one iterator. Results preserve input
-// order. Duplicate entities are scanned once.
+// ResolveAllAttributesMany resolves wildcard pulls for a complete entity set.
+// The dominant non-unique EATV traversal shares one Badger read transaction and
+// iterator; unique-ownership walks and blob dereferences retain their specialized
+// reads. Results preserve input order. Duplicate entities are scanned once.
 func (d *Database) ResolveAllAttributesMany(
 	entities []datalog.Identity,
 ) ([]map[datalog.Keyword]interface{}, error) {
@@ -53,6 +54,7 @@ func (d *Database) ResolveAllAttributesMany(
 	})
 
 	resolved := make(map[[20]byte]map[datalog.Keyword]interface{}, len(sortedEntities))
+	declaredAttrs := d.declaredWildcardAttributes()
 	var uniqueLookups []wildcardUniqueLookup
 	err := d.store.db.View(func(txn *badger.Txn) error {
 		options := badger.DefaultIteratorOptions
@@ -65,6 +67,7 @@ func (d *Database) ResolveAllAttributesMany(
 				matcher,
 				iterator,
 				entity,
+				declaredAttrs,
 			)
 			if err != nil {
 				return err
@@ -104,6 +107,7 @@ func (d *Database) resolveWildcardEntity(
 	matcher *BadgerMatcher,
 	iterator *badger.Iterator,
 	entity datalog.Identity,
+	declaredAttrs map[datalog.Keyword]struct{},
 ) (map[datalog.Keyword]interface{}, []wildcardUniqueLookup, error) {
 	entityBytes := entity.Bytes()
 	start, end := d.store.encoder.EncodePrefixRange(EATV, entityBytes[:])
@@ -115,6 +119,12 @@ func (d *Database) resolveWildcardEntity(
 	flush := func() {
 		if currentAttr == nil || len(currentDatoms) == 0 {
 			return
+		}
+		if declaredAttrs != nil {
+			if _, declared := declaredAttrs[currentAttr]; !declared {
+				currentDatoms = currentDatoms[:0]
+				return
+			}
 		}
 		if d.isUniqueAttribute(currentAttr) {
 			pending = append(pending, wildcardUniqueLookup{
@@ -153,6 +163,19 @@ func (d *Database) resolveWildcardEntity(
 	}
 	flush()
 	return result, pending, nil
+}
+
+func (d *Database) declaredWildcardAttributes() map[datalog.Keyword]struct{} {
+	s, ok := d.schema.(*schema.Schema)
+	if !ok || !s.HasSchema() {
+		return nil
+	}
+	attrs := s.Attributes()
+	declared := make(map[datalog.Keyword]struct{}, len(attrs))
+	for _, definition := range attrs {
+		declared[definition.Ident] = struct{}{}
+	}
+	return declared
 }
 
 func (d *Database) resolveWildcardDatoms(
@@ -218,7 +241,7 @@ func cloneResolvedAttributes(
 	attrs map[datalog.Keyword]interface{},
 ) map[datalog.Keyword]interface{} {
 	if len(attrs) == 0 {
-		return nil
+		return make(map[datalog.Keyword]interface{})
 	}
 	cloned := make(map[datalog.Keyword]interface{}, len(attrs))
 	for attr, value := range attrs {
@@ -230,7 +253,9 @@ func cloneResolvedAttributes(
 func cloneResolvedAttributeValue(value interface{}) interface{} {
 	switch typed := value.(type) {
 	case []byte:
-		return append([]byte(nil), typed...)
+		cloned := make([]byte, len(typed))
+		copy(cloned, typed)
+		return cloned
 	case []interface{}:
 		cloned := make([]interface{}, len(typed))
 		for i, element := range typed {
@@ -238,13 +263,21 @@ func cloneResolvedAttributeValue(value interface{}) interface{} {
 		}
 		return cloned
 	case []string:
-		return append([]string(nil), typed...)
+		cloned := make([]string, len(typed))
+		copy(cloned, typed)
+		return cloned
 	case []int64:
-		return append([]int64(nil), typed...)
+		cloned := make([]int64, len(typed))
+		copy(cloned, typed)
+		return cloned
 	case []float64:
-		return append([]float64(nil), typed...)
+		cloned := make([]float64, len(typed))
+		copy(cloned, typed)
+		return cloned
 	case []bool:
-		return append([]bool(nil), typed...)
+		cloned := make([]bool, len(typed))
+		copy(cloned, typed)
+		return cloned
 	default:
 		return value
 	}

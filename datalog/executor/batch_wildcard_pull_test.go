@@ -107,6 +107,34 @@ func TestApplyFindPullsPropagatesBatchWildcardError(t *testing.T) {
 	require.ErrorIs(t, err, batchErr)
 }
 
+func TestPullManyDoesNotBatchMixedWildcardPattern(t *testing.T) {
+	name := datalog.NewKeyword(":entity/name")
+	first := datalog.NewIdentity("mixed-pull-first")
+	second := datalog.NewIdentity("mixed-pull-second")
+	resolver := &recordingBatchEntityResolver{
+		values: map[[20]byte]map[datalog.Keyword]interface{}{
+			first.Hash():  {name: "First"},
+			second.Hash(): {name: "Second"},
+		},
+	}
+	matcher := NewIndexedMemoryMatcher([]datalog.Datom{
+		{E: first, A: name, V: "First"},
+		{E: second, A: name, V: "Second"},
+	})
+	puller := NewPullExecutor(matcher, resolver)
+	pattern := &query.PullPattern{Specs: []query.PullAttrSpec{
+		&query.PullWildcard{},
+		&query.PullAttribute{Attr: name},
+	}}
+
+	results, err := puller.PullMany([]datalog.Identity{first, second}, pattern)
+	require.NoError(t, err)
+	require.Zero(t, resolver.batchCalls)
+	require.Equal(t, 2, resolver.singleCalls)
+	require.Equal(t, "First", results[0]["entity/name"])
+	require.Equal(t, "Second", results[1]["entity/name"])
+}
+
 func TestApplyFindPullsPropagatesInputIteratorAndCloseErrors(t *testing.T) {
 	entitySymbol := datalog.NewSymbol("?entity")
 	entity := datalog.NewIdentity("batch-pull-input-error")
