@@ -161,6 +161,100 @@ func TestCompileDecompileWithNot(t *testing.T) {
 	assert.Equal(t, len(q.Where), len(clauses))
 }
 
+func TestCompileCorrelatedNotJoinSeparatesKeysAndRequirements(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?goal
+		:where
+		[?goal :entity/type :type/goal]
+		[?setEvent :event/goal ?goal]
+		[?setEvent :event/type ?goalSet]
+		(not-join [?goal ?goalSet]
+			[?termEvent :event/goal ?goal]
+			[?termEvent :event/type ?termType]
+			[(!= ?termType ?goalSet)])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	antiNode := findAlgebraNode(root, RuleAntiJoin)
+	require.NotNil(t, antiNode)
+	anti := antiNode.Data.(*AntiJoin)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?goal"), datalog.NewSymbol("?goalSet")},
+		anti.JoinSymbols,
+	)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?goalSet")},
+		anti.Required,
+	)
+
+	optimizer := NewOptimizer(DefaultPasses()...)
+	optimized, err := optimizer.Optimize(root)
+	require.NoError(t, err)
+	clauses, err := Decompile(optimized)
+	require.NoError(t, err)
+	notJoin, ok := clauses[len(clauses)-1].(*query.NotJoinClause)
+	require.True(t, ok)
+	require.Equal(t, anti.JoinSymbols, notJoin.JoinVars)
+}
+
+func TestCompileRejectsInvalidNotJoinHeaders(t *testing.T) {
+	testCases := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{
+			name: "header symbol not bound outside",
+			query: `[:find ?goal
+				:where
+				[?goal :entity/type :type/goal]
+				(not-join [?goal ?missing]
+					[?event :event/goal ?goal])]`,
+			want: "header symbol ?missing is not bound by the outer relation",
+		},
+		{
+			name: "header symbol unused by body",
+			query: `[:find ?goal
+				:where
+				[?goal :entity/type :type/goal]
+				[?goal :entity/name ?name]
+				(not-join [?goal ?name]
+					[?event :event/goal ?goal])]`,
+			want: "header symbol ?name is neither produced nor consumed by the body",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(testCase.query)
+			require.NoError(t, err)
+			_, err = Compile(q)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), testCase.want)
+		})
+	}
+}
+
+func TestOrJoinSchemaDiagnosticExplainsHeaderContract(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?entity
+		:in $ ?room ?crawl ?world
+		:where
+		[?entity :entity/location ?room]
+		(or-join [?entity ?crawl ?world]
+			[?entity :entity/crawl ?crawl]
+			[?entity :entity/world ?world])]`)
+	require.NoError(t, err)
+	root, err := Compile(q)
+	require.NoError(t, err)
+
+	optimizer := NewOptimizer(DefaultPasses()...)
+	_, err = optimizer.Optimize(root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "or-join header declares ?world")
+	require.Contains(t, err.Error(), "every branch must bind every header variable")
+	require.Contains(t, err.Error(), "remove it from the header")
+}
+
 // TestCompileDecompileWithGetElse verifies get-else survives the pipeline.
 func TestCompileDecompileWithGetElse(t *testing.T) {
 	q, err := parser.ParseQuery(`[:find ?e ?title

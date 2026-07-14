@@ -216,16 +216,36 @@ func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
 		return nil, fmt.Errorf("NOT inner clauses: %w", err)
 	}
 
-	// Join symbols = variables shared between current and inner.
-	// The algebra bridge resolves NOT's context-dependent join variables
-	// statically and emits NotJoinClause so the executor needs no runtime
-	// inference. This is the not → not-join conversion.
+	// Join symbols include right-produced equality keys and predicate-only
+	// requirements supplied by the outer relation. The algebra bridge resolves
+	// NOT's context-dependent join variables statically and emits NotJoinClause
+	// so the executor needs no runtime inference.
 	joinSyms := sharedSymbols(current.Symbols(), inner.Symbols())
+	analysis, err := Analyze(inner)
+	if err != nil {
+		return nil, fmt.Errorf("NOT inner analysis: %w", err)
+	}
+	var required []query.Symbol
+	for _, symbol := range analysis[inner].Required {
+		if symbol.IsSource() {
+			continue
+		}
+		if !containsSymbol(current.Symbols(), symbol) {
+			return nil, fmt.Errorf("NOT body requires unbound outer symbol %s", symbol)
+		}
+		if !containsSymbol(joinSyms, symbol) {
+			joinSyms = append(joinSyms, symbol)
+		}
+		if !containsSymbol(inner.Symbols(), symbol) {
+			required = append(required, symbol)
+		}
+	}
 
 	return &Node{
 		Op: RuleAntiJoin,
 		Data: &AntiJoin{
 			JoinSymbols:  joinSyms,
+			Required:     required,
 			Output:       current.Symbols(),
 			ExplicitJoin: true,
 		},
@@ -243,11 +263,49 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("NOT-JOIN inner clauses: %w", err)
 	}
+	analysis, err := Analyze(inner)
+	if err != nil {
+		return nil, fmt.Errorf("NOT-JOIN inner analysis: %w", err)
+	}
+	right := analysis[inner]
+	for _, symbol := range nj.JoinVars {
+		if !containsSymbol(current.Symbols(), symbol) {
+			return nil, fmt.Errorf("not-join header symbol %s is not bound by the outer relation", symbol)
+		}
+	}
+	for _, symbol := range right.Required {
+		if symbol.IsSource() {
+			continue
+		}
+		if !containsSymbol(current.Symbols(), symbol) {
+			return nil, fmt.Errorf("NOT-JOIN body requires unbound outer symbol %s", symbol)
+		}
+		if !containsSymbol(nj.JoinVars, symbol) {
+			return nil, fmt.Errorf(
+				"not-join header must declare outer requirement %s used by the body",
+				symbol,
+			)
+		}
+	}
+	var required []query.Symbol
+	for _, symbol := range nj.JoinVars {
+		if containsSymbol(inner.Symbols(), symbol) {
+			continue
+		}
+		if !containsSymbol(right.Required, symbol) {
+			return nil, fmt.Errorf(
+				"not-join header symbol %s is neither produced nor consumed by the body",
+				symbol,
+			)
+		}
+		required = append(required, symbol)
+	}
 
 	return &Node{
 		Op: RuleAntiJoin,
 		Data: &AntiJoin{
 			JoinSymbols:  nj.JoinVars,
+			Required:     required,
 			Output:       current.Symbols(),
 			ExplicitJoin: true, // NotJoinClause — user specified join vars
 		},

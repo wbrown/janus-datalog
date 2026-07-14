@@ -94,6 +94,32 @@ relation are now rejected during execution. This includes queries such as
 `[:find ?missing (count ?e) ...]`; they no longer reach aggregation with an
 undefined grouping symbol.
 
+### `or-join` header validation
+
+v0.14 validates that every `or-join` branch binds every variable declared in the
+header. v0.13 accepted over-declared headers and could silently derive the union
+schema from one branch.
+
+This query is invalid because neither branch binds the other branch's value:
+
+```clojure
+(or-join [?entity ?crawl ?world]
+  [?entity :entity/crawl ?crawl]
+  [?entity :entity/world ?world])
+```
+
+If `?crawl` and `?world` are branch-specific input filters rather than union
+outputs, reduce the header to the variables every branch binds:
+
+```clojure
+(or-join [?entity]
+  [?entity :entity/crawl ?crawl]
+  [?entity :entity/world ?world])
+```
+
+The stricter rule is Datomic-compatible and prevents branch-local values from
+being represented as shared union attributes.
+
 ## Legacy L85 physical databases
 
 Normal databases created through `db.Open` or `storage.NewDatabase` already use

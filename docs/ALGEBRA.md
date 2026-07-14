@@ -215,12 +215,22 @@ SubqueryPattern branch and default branch.
 
 For `not-join`: `(not-join [?e] [...])` → `AntiJoin(joinSymbols=[?e], explicitJoin=true)`
 
+Header variables produced by both sides are equality keys. Header variables
+consumed only as right-child predicate/expression inputs are recorded in
+`AntiJoin.Required` and supplied by the left relation. The compiler validates
+that every explicit header variable is left-bound and either right-produced or a
+real right free requirement; right outer requirements omitted from the header
+are rejected.
+
+Plain `not` infers both categories before lowering to explicit `not-join`.
+
 **Decompile:**
 - `AntiJoin(explicitJoin=false)` → `decompile(left) ++ (not <decompile(right)>)`
 - `AntiJoin(explicitJoin=true)` → `decompile(left) ++ (not-join [vars] <decompile(right)>)`
 
-**Round-trip invariant:** Join symbols preserved. Inner clauses wrapped in
-NotClause or NotJoinClause. Left clauses come first.
+**Round-trip invariant:** Join symbols and correlation requirements are
+preserved. Inner clauses are wrapped in NotClause or NotJoinClause. Left clauses
+come first.
 
 **Test:** Compile `[?e :type :foo] (not [?e :deleted true])`, decompile, assert
 DataPattern + NotClause.
