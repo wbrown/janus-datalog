@@ -235,6 +235,24 @@ Logical negation and disjunction for complex query patterns:
                   [?e :deleted true])]
 ```
 
+The header must include every outer variable consumed by the body, including
+variables used only by predicates or expressions:
+
+```clojure
+[:find ?goal
+ :where
+ [?goal :goal/set-type ?goalSet]
+ (not-join [?goal ?goalSet]
+   [?event :event/goal ?goal]
+   [?event :event/type ?eventType]
+   [(!= ?eventType ?goalSet)])]
+```
+
+Here `?goal` is produced by both sides and acts as an equality key.
+`?goalSet` is supplied by the outer tuple and consumed only by the body
+predicate. Omitting it from the header is invalid. Plain `not` infers both
+right-produced equality keys and predicate/expression correlation inputs.
+
 **OR - Union of branches:**
 ```clojure
 [:find ?name
@@ -250,6 +268,16 @@ Logical negation and disjunction for complex query patterns:
         (or-join [?e]
                  [?e :user/status "active"]
                  [?e :admin/status "enabled"])]
+```
+
+Every `or-join` branch must bind every header variable. The header is the shared
+branch output interface, not a list of branch-specific filter inputs:
+
+```clojure
+;; Valid: both branches bind ?e.
+(or-join [?e]
+  [?e :entity/crawl ?crawl]
+  [?e :entity/world ?world])
 ```
 
 **OR semantics (Datomic-compatible):**
