@@ -77,3 +77,13 @@ type EntityResolver interface {
 	// - CardinalityVector: []interface{} (RGA ordered list)
 	ResolveAllAttributes(entity datalog.Identity) (map[datalog.Keyword]interface{}, error)
 }
+
+// BatchEntityResolver extends EntityResolver with wildcard resolution for a
+// complete entity set. Implementations may share storage traversal state across
+// entities while preserving input order in the returned slice.
+type BatchEntityResolver interface {
+	EntityResolver
+	ResolveAllAttributesMany(
+		entities []datalog.Identity,
+	) ([]map[datalog.Keyword]interface{}, error)
+}

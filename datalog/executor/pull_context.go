@@ -60,8 +60,9 @@ func (c *BasePullContext) NestedComplete(parentEntity datalog.Identity, attr dat
 
 // AnnotatedPullContext wraps operations with timing and event emission.
 type AnnotatedPullContext struct {
-	handler   annotations.Handler
-	pullStart time.Time
+	handler    annotations.Handler
+	pullStart  time.Time
+	batchStart time.Time
 }
 
 // NewPullContext creates an appropriate context based on whether annotations are needed.
@@ -97,6 +98,35 @@ func (c *AnnotatedPullContext) PullComplete(entity datalog.Identity, attrCount i
 			"attr_count": attrCount,
 			"resolved":   resolved,
 			"success":    err == nil,
+		},
+	})
+}
+
+func (c *AnnotatedPullContext) PullBatchBegin(entityCount, specCount int, resolved bool) {
+	c.batchStart = time.Now()
+	c.handler(annotations.Event{
+		Name:  annotations.PullBatchBegin,
+		Start: c.batchStart,
+		Data: map[string]interface{}{
+			"entity_count": entityCount,
+			"spec_count":   specCount,
+			"resolved":     resolved,
+		},
+	})
+}
+
+func (c *AnnotatedPullContext) PullBatchComplete(entityCount, attrCount int, resolved bool, err error) {
+	end := time.Now()
+	c.handler(annotations.Event{
+		Name:    annotations.PullBatchComplete,
+		Start:   c.batchStart,
+		End:     end,
+		Latency: end.Sub(c.batchStart),
+		Data: map[string]interface{}{
+			"entity_count": entityCount,
+			"attr_count":   attrCount,
+			"resolved":     resolved,
+			"success":      err == nil,
 		},
 	})
 }

@@ -1266,70 +1266,76 @@ func hasPulls(find []query.FindElement) bool {
 // design (docs/bugs/resolved/BUG_PULL_WITH_ORDER_BY_PANICS.md) runs this only at the
 // result boundary, after sort/strip/limit.
 func applyFindPulls(matcher PatternMatcher, entityResolver EntityResolver, rel Relation, find []query.FindElement) (Relation, error) {
-	// Build mapping: symbol index -> pull pattern
 	symbols := rel.Symbols()
-	pullSpecs := make(map[int]query.FindPull)
-
+	type pullRequest struct {
+		symbolIndex int
+		pull        query.FindPull
+	}
+	var requests []pullRequest
 	for _, elem := range find {
 		if pull, ok := elem.(query.FindPull); ok {
-			// Find the symbol index for this pull variable
 			for i, sym := range symbols {
 				if sym == pull.Variable {
-					pullSpecs[i] = pull
+					requests = append(requests, pullRequest{
+						symbolIndex: i,
+						pull:        pull,
+					})
 					break
 				}
 			}
 		}
 	}
-
-	if len(pullSpecs) == 0 {
-		return rel, nil // No pulls to execute
+	if len(requests) == 0 {
+		return rel, nil
 	}
 
-	// Create pull executor
 	puller := NewPullExecutor(matcher, entityResolver)
+	if collector := rel.Options().Collector; collector != nil {
+		puller = NewPullExecutorWithHandler(matcher, entityResolver, collector.Handler())
+	}
 
-	// Process tuples and execute pulls
 	var resultTuples []Tuple
 	it := rel.Iterator()
-	defer it.Close()
-
 	for it.Next() {
 		tuple := it.Tuple()
-		// Make a copy to modify
 		newTuple := make(Tuple, len(tuple))
 		copy(newTuple, tuple)
+		resultTuples = append(resultTuples, newTuple)
+	}
+	iterErr := it.Error()
+	closeErr := it.Close()
+	if iterErr != nil {
+		return nil, iterErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
 
-		// Execute pulls for each pull symbol
-		for symIdx, pull := range pullSpecs {
-			if symIdx >= len(tuple) {
+	for _, request := range requests {
+		var entities []datalog.Identity
+		var tupleIndexes []int
+		for tupleIndex, tuple := range resultTuples {
+			if request.symbolIndex >= len(tuple) {
 				continue
 			}
-
-			// Get the entity value
-			entity, ok := tuple[symIdx].(datalog.Identity)
+			entity, ok := tuple[request.symbolIndex].(datalog.Identity)
 			if !ok || entity == nil {
-				// Value is not an entity - keep it as is
 				continue
 			}
-
-			// Execute pull
-			pulled, err := puller.Pull(entity, pull.Pattern)
-			if err != nil {
-				return nil, fmt.Errorf("pull failed for %s: %w", pull.Variable, err)
-			}
-
-			// Add the entity ID to the pull result so it can be mapped to struct fields
-			// tagged with datalog:"db/id" or datalog:":db/id"
+			entities = append(entities, entity)
+			tupleIndexes = append(tupleIndexes, tupleIndex)
+		}
+		pulledResults, err := puller.PullMany(entities, request.pull.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("pull failed for %s: %w", request.pull.Variable, err)
+		}
+		for i, pulled := range pulledResults {
+			entity := entities[i]
 			if pulled != nil {
 				pulled[query.DBIDKey] = entity
 			}
-
-			// Replace entity with pulled map (nil if entity not found)
-			newTuple[symIdx] = pulled
+			resultTuples[tupleIndexes[i]][request.symbolIndex] = pulled
 		}
-
-		resultTuples = append(resultTuples, newTuple)
 	}
 
 	// Return relation without deduplication - pulled maps (map[string]interface{})
