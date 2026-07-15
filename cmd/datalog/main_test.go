@@ -303,9 +303,8 @@ func TestCLI_BothFlagsError(t *testing.T) {
 		t.Error("Expected error when both flags specified")
 	}
 
-	// Should mention cannot use both
-	if !strings.Contains(string(out), "Cannot specify both") {
-		t.Errorf("Expected 'Cannot specify both' error, got: %s", out)
+	if !strings.Contains(string(out), "Specify only one of -export, -import, -export-bin, -import-bin") {
+		t.Errorf("Expected mutually-exclusive transfer-mode error, got: %s", out)
 	}
 }
 
