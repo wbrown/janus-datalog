@@ -3,6 +3,13 @@
 Durable benchmark and profile artifacts captured pre-refactor, kept so
 "before/after" comparisons survive working-tree changes.
 
+## Analyses
+
+- [Complex Query Computational Complexity](COMPLEX_QUERY_COMPLEXITY.md) —
+  operation-by-operation time and space bounds for
+  `BenchmarkComplexQueryCheckpoint`, including decorrelation and worst-case
+  qualifications.
+
 ## How to read this directory
 
 Each baseline has a `<benchmark>_baseline_<date>` stem with these
