@@ -67,7 +67,7 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			continue
+			return nil, err
 		}
 		if m.shouldFilterTx(datom.Tx) {
 			continue
@@ -104,6 +104,9 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 				state.hasRemove = true
 			}
 		}
+	}
+	if err := iter.Error(); err != nil {
+		return nil, err
 	}
 
 	// Resolve each value's membership using add-wins semantics
@@ -192,7 +195,7 @@ func (m *BadgerMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{})
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			continue
+			return false, err
 		}
 
 		elemID := datom.Tx
@@ -210,6 +213,9 @@ func (m *BadgerMatcher) checkSetMembership(eBytes, aBytes []byte, v interface{})
 				hasRemove = true
 			}
 		}
+	}
+	if err := iter.Error(); err != nil {
+		return false, err
 	}
 
 	// Determine membership using add-wins semantics

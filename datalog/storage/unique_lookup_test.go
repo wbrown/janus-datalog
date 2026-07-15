@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 // Tests for (A, V)-LWW resolution of unique attributes:
 //   - Database.LookupByUnique public API
 //   - V-view query behavior when multiple entities claim the same unique value

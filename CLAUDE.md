@@ -4,9 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Test Commands
 
+**The standard gate is `make test`.** It runs the native suite (`go test -count=1 ./...`) and the js/wasm contracts (`make test-wasm`). Do not treat bare `go test ./...` as a full green — that skips wasm.
+
 ```bash
-go test -count=1 ./...          # Full suite
-go test -v ./package -run Test  # Single test
+make test                        # Full gate: native + wasm (required)
+make test-wasm                   # js/wasm contracts only (needs node)
+go test -v ./package -run Test   # Focused native iteration only
 ```
 
 **Do NOT add `-timeout` to `go test` commands, or use `-timeout 0`.** Use the default timeout. No exceptions.
@@ -68,13 +71,13 @@ All of these are decisions for the user, not you.
 
 ## The Baseline Is Green — Never Blame Pre-Existing Conditions
 
-**Every test passes before any work session starts. This is an invariant, not something to verify.** The repository is always green at the start of your work (`go test -count=1 ./...` passes; the pre-push hook enforces it). Internalize this and reason from it.
+**Every test passes before any work session starts. This is an invariant, not something to verify.** The repository is always green at the start of your work (`make test` passes; the pre-push hook enforces it). Internalize this and reason from it.
 
 It has one unavoidable consequence: **any test that fails during or after your work was caused by your work** — either by a change you made, or by a stricter gate you chose to run (e.g. `-race`) that the standard suite does not. There is no third possibility. Therefore:
 
 - **NEVER attribute a test failure to "pre-existing conditions."** Not in your reasoning, not in your reporting. The phrasing "this is pre-existing / not my change / not part of this work / I didn't touch that code" is **forbidden** — it is blame-deflection (CYA), and against a green baseline it is also false by construction. Catch yourself before you emit it.
 - **NEVER run experiments to "prove" a failure is pre-existing.** No `git stash`, no `git checkout -- <file>`, no revert-and-rerun to A/B the baseline. You already know the baseline was green and you already have your own diff; causation is determined by **reading the diff and the failure**, never by mutating the working tree. (`git stash` is banned outright — it has silently buried uncommitted work in this repo. Never run it for any reason.)
-- **Do NOT invent gates the project does not use** (e.g. `-race`, extra linters) and then go chasing what they surface as if it were someone else's problem. The standard gate is `go test -count=1 ./...`. If you choose to run a stricter check, anything it finds is yours to fully resolve or you should not have run it.
+- **Do NOT invent gates the project does not use** (e.g. `-race`, extra linters) and then go chasing what they surface as if it were someone else's problem. The standard gate is `make test`. If you choose to run a stricter check, anything it finds is yours to fully resolve or you should not have run it.
 
 When a test is red there is exactly one fork: **fix it, or report it and ask** (per "When Tests Fail" above). There is no "investigate whose fault it is" step. Ownership is the default; the baseline guarantees it.
 
@@ -120,7 +123,7 @@ action, stop: you have already lost it. These are the recurring instances:
 
 - **Green gates commit-prep.** `git add`, moving a bug doc to `resolved/`, marking
   something RESOLVED — these are commit-prep, and they come *after* a green
-  `go test -count=1 ./...`, never in the same breath as the run that would tell you
+  `make test`, never in the same breath as the run that would tell you
   whether the work is even correct. A red pre-existing test is the loudest signal
   the approach is wrong; you must not be anywhere near `git add` when you haven't
   earned green.
@@ -320,7 +323,7 @@ The storage layer connects the query engine to BadgerDB:
 5. **Conditional Aggregate Rewriting** - 7.7× faster correlated aggregates
 6. **AETV Index + Value Elimination** - Proper A-primary CRDT resolution; ~50% storage reduction (keys-only)
 7. **Temporal API Cleanup** - Removed `[(history)]`/`[(as-of)]` query predicates; use `d.History()`/`d.AsOf()` instead
-8. **Pre-push Hook + CI** - `go test ./...` runs on every push
+8. **Pre-push Hook + CI** - `make test` (native + wasm) runs on every push
 
 ### ✅ October 2025 Updates
 1. **QueryExecutor & RealizedPlan Architecture (Stage B)** - Major architectural improvement
@@ -397,7 +400,7 @@ See `TODO.md` and `PERFORMANCE_STATUS.md` for detailed roadmap.
 **Long Term**:
 1. **Statistics-based optimization** - Query planning with cardinality estimates
 2. **Parallel pattern execution** - For independent patterns (requires dependency analysis)
-3. **WASM build** - Browser deployment support
+3. **WASM persistence adapters** - OPFS / host IndexedDB on top of `OpenMemory` + Export/Import
 
 ## Go Implementation Guidelines
 
@@ -722,7 +725,8 @@ The implementation is NOT complete until tests pass. This is non-negotiable beca
 
 #### 3. Run the tests
 ```bash
-go test -v ./package -run TestName
+go test -v ./package -run TestName   # focused iteration
+make test                            # full gate before declaring done
 ```
 
 **If tests timeout**:
@@ -750,7 +754,7 @@ go test -v ./package -run TestName
 - ❌ Skip verification because of timeouts
 - ❌ Assume a fix works based on theory alone
 - ❌ Use `t.Skip` to hide known bugs or unimplemented features. If a test exists, it documents expected behavior. If it fails, that's a bug to track — not a skip to add. Skips are a one-way ratchet: easy to add, never removed, and they silently degrade coverage when the underlying bug gets fixed by other work.
-- ❌ Scope test runs to `./datalog/...` — always use `./...` to include integration tests in `tests/`
+- ❌ Scope the full gate to bare `go test ./...` or `./datalog/...` — use `make test` (native `./...` plus wasm); focused `go test` is for iteration only
 
 ---
 

@@ -7,6 +7,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/schema"
+	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 type config struct {
@@ -16,6 +17,7 @@ type config struct {
 	disableCache         bool
 	plannerOptions       *planner.PlannerOptions
 	compressionThreshold int
+	store                storage.Store
 }
 
 // Option configures a database opened with Open.
@@ -52,6 +54,11 @@ func WithPlannerOptions(opts planner.PlannerOptions) Option {
 // Default (when unset / 0) is 512. Use -1 to disable compression.
 func WithCompressionThreshold(bytes int) Option {
 	return func(c *config) { c.compressionThreshold = bytes }
+}
+
+// WithStore injects the ordered storage backend used by the database.
+func WithStore(store storage.Store) Option {
+	return func(c *config) { c.store = store }
 }
 
 // WithoutCompression disables transparent value compression.

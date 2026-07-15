@@ -74,6 +74,9 @@ func (d *Database) export(w io.Writer, formatDatom func(*datalog.Datom) string, 
 			return fmt.Errorf("failed to write newline: %w", err)
 		}
 	}
+	if err := iter.Error(); err != nil {
+		return fmt.Errorf("failed to read datom: %w", err)
+	}
 
 	if err := bw.Flush(); err != nil {
 		return fmt.Errorf("failed to flush writer: %w", err)

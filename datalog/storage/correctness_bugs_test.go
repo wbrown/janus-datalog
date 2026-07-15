@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 // Regression tests for five correctness bugs flagged in
 // docs/bugs/EXTERNAL_REVIEW_2026_04.md items 1-5.
 //
@@ -204,7 +206,7 @@ func TestSimpleBatchScanner_BuildKey_AETV(t *testing.T) {
 	require.NotNil(t, got, "buildKey must not return nil for AETV with E-bound + A-constant")
 
 	// The expected prefix for AETV with E+A bound is [prefix][A][E].
-	encoder := matcher.store.encoder
+	encoder := matcher.store.Encoder()
 	expected := encoder.EncodePrefix(AETV, aBytes[:], alice.Bytes())
 	assert.True(t, bytes.Equal(got, expected),
 		"buildKey on AETV must produce [prefix][A][E]; got %x, expected %x", got, expected)
@@ -233,7 +235,7 @@ func TestSimpleBatchScanner_BuildKey_AllIndices(t *testing.T) {
 	// review flagged for this function.
 	// Tx constant used by the ATEV case below; the value chosen doesn't
 	// matter so long as it encodes to a non-empty constT.
-	constTBytes := matcher.store.encoder.EncodeTxForPrefix(
+	constTBytes := matcher.store.Encoder().EncodeTxForPrefix(
 		NewTxFromElementID(datalog.ElementID{Lamport: 1, ReplicaID: 1}),
 	)
 	for _, tc := range []struct {
@@ -291,7 +293,7 @@ func TestSimpleBatchScanner_BuildKey_AVET_PositionSemantics(t *testing.T) {
 	scanner := &simpleBatchScanner{matcher: matcher, index: AVET, position: 1}
 	got := scanner.buildKey(emailKw, nil, nil)
 
-	expected := matcher.store.encoder.EncodePrefix(AVET, aBytes[:])
+	expected := matcher.store.Encoder().EncodePrefix(AVET, aBytes[:])
 	require.NotNil(t, got,
 		"AVET position=1 with Keyword value: buildKey returned nil. "+
 			"Type of value in test: %T", emailKw)

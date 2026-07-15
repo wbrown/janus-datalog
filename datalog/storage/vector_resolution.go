@@ -139,6 +139,9 @@ func (m *BadgerMatcher) loadRGAElements(eBytes, aBytes []byte) ([]RGAElement, er
 			}
 		}
 	}
+	if err := iter.Error(); err != nil {
+		return nil, fmt.Errorf("decode RGA element: %w", err)
+	}
 
 	// Convert map to slice
 	elements := make([]RGAElement, 0, len(elemByID))

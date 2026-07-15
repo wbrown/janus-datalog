@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 // Tests for the AfterRef heuristic decode bug (BUG_SHARED_DB_DATOM_LOSS).
@@ -187,7 +189,7 @@ func TestAfterRefHeuristicBug_Integration(t *testing.T) {
 
 	// Read back via EATV scan (used by LookupAttribute / ResolveLWW)
 	store := db.Store()
-	encoder := store.encoder
+	encoder := store.Encoder()
 
 	// Build EATV prefix for entity + refAttr
 	eBytes := entity.Hash()

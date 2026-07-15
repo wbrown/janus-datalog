@@ -40,6 +40,19 @@ go tool pprof -top -cum -nodecount=40 /tmp/exec.test <prof>.prof
 
 ## Current baselines
 
+### `wasm_memory_backend_2026-07-15/`
+
+Post-Store-injection / Scan-workspace-unification checkpoint for the WASM
+memory-backend work. Captures:
+
+- `BenchmarkKeyOnlyScanning` (1K/10K)
+- `BenchmarkDatomFromKeyDirect` / `BenchmarkDatomFromKeyToTuple`
+- `BenchmarkStorageHashJoinCompiledMatching`
+- `BenchmarkResolveAllAttributesMany` (230 / 3,899 entities)
+- OHLC + `BenchmarkComplexQueryCheckpoint` (companion file when present)
+
+Machine: Apple M5, go1.26.3 darwin/arm64. Count=5.
+
 ### `relation_input_parallel_baseline_2026-05-26.txt`
 
 `BenchmarkRelationInputParallel` on the relation-input parallel

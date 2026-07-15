@@ -73,9 +73,9 @@ func valueTypeFromValue(v interface{}) schema.ValueType {
 // OpCRDTRemove entries are skipped because they are ambiguous, and an attribute
 // whose entries are ALL removes resolves empty under either cardinality, so it
 // defaults to one. Returns a non-nil (possibly empty) schema.
-func inferSchemaFromStore(store *BadgerStore) (*schema.Schema, error) {
+func inferSchemaFromStore(store Store) (*schema.Schema, error) {
 	s := schema.NewSchema()
-	start, end := store.encoder.EncodePrefixRange(ATEV)
+	start, end := store.Encoder().EncodePrefixRange(ATEV)
 	iter, err := store.ScanKeysOnly(ATEV, start, end)
 	if err != nil {
 		return nil, err

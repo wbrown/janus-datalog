@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -237,14 +239,18 @@ func OpenTestDatabase(path string) (*Database, error) {
 
 // TestDatabaseStats prints statistics about the test database
 func TestDatabaseStats(db *Database) error {
+	store, ok := db.store.(*BadgerStore)
+	if !ok {
+		return fmt.Errorf("database statistics require a Badger store")
+	}
 	// Get database path and file size
-	info, err := os.Stat(db.store.db.Opts().Dir)
+	info, err := os.Stat(store.db.Opts().Dir)
 	if err != nil {
 		return fmt.Errorf("failed to stat database: %w", err)
 	}
 
 	fmt.Printf("Database Statistics:\n")
-	fmt.Printf("  Path: %s\n", db.store.db.Opts().Dir)
+	fmt.Printf("  Path: %s\n", store.db.Opts().Dir)
 	fmt.Printf("  Size on disk: %.2f MB\n", float64(info.Size())/1024/1024)
 
 	return nil

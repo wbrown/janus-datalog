@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -16,9 +15,9 @@ type wildcardUniqueLookup struct {
 }
 
 // ResolveAllAttributesMany resolves wildcard pulls for a complete entity set.
-// The dominant non-unique EATV traversal shares one Badger read transaction and
-// iterator; unique-ownership walks and blob dereferences retain their specialized
-// reads. Results preserve input order. Duplicate entities are scanned once.
+// The dominant non-unique EATV traversal shares one decoded store scan session;
+// unique-ownership walks and blob dereferences retain their specialized reads.
+// Results preserve input order. Duplicate entities are scanned once.
 func (d *Database) ResolveAllAttributesMany(
 	entities []datalog.Identity,
 ) ([]map[datalog.Keyword]interface{}, error) {
@@ -56,29 +55,32 @@ func (d *Database) ResolveAllAttributesMany(
 	resolved := make(map[[20]byte]map[datalog.Keyword]interface{}, len(sortedEntities))
 	declaredAttrs := d.declaredWildcardAttributes()
 	var uniqueLookups []wildcardUniqueLookup
-	err := d.store.db.View(func(txn *badger.Txn) error {
-		options := badger.DefaultIteratorOptions
-		options.PrefetchValues = false
-		iterator := txn.NewIterator(options)
-		defer iterator.Close()
-
-		for _, entity := range sortedEntities {
-			entityResult, pending, err := d.resolveWildcardEntity(
-				matcher,
-				iterator,
-				entity,
-				declaredAttrs,
-			)
-			if err != nil {
-				return err
-			}
-			resolved[entity.Hash()] = entityResult
-			uniqueLookups = append(uniqueLookups, pending...)
-		}
-		return nil
-	})
+	scanStart, scanEnd := d.encoder.EncodePrefixRange(EATV)
+	iterator, err := d.store.ScanKeysOnly(EATV, scanStart, scanEnd)
 	if err != nil {
 		return nil, fmt.Errorf("batch wildcard scan failed: %w", err)
+	}
+	for _, entity := range sortedEntities {
+		entityResult, pending, err := d.resolveWildcardEntity(
+			matcher,
+			iterator,
+			entity,
+			declaredAttrs,
+		)
+		if err != nil {
+			_ = iterator.Close()
+			return nil, err
+		}
+		resolved[entity.Hash()] = entityResult
+		uniqueLookups = append(uniqueLookups, pending...)
+	}
+	iterErr := iterator.Error()
+	closeErr := iterator.Close()
+	if iterErr != nil {
+		return nil, fmt.Errorf("batch wildcard scan failed: %w", iterErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("batch wildcard scan close failed: %w", closeErr)
 	}
 
 	for _, lookup := range uniqueLookups {
@@ -105,12 +107,12 @@ func (d *Database) ResolveAllAttributesMany(
 
 func (d *Database) resolveWildcardEntity(
 	matcher *BadgerMatcher,
-	iterator *badger.Iterator,
+	iterator Iterator,
 	entity datalog.Identity,
 	declaredAttrs map[datalog.Keyword]struct{},
 ) (map[datalog.Keyword]interface{}, []wildcardUniqueLookup, error) {
 	entityBytes := entity.Bytes()
-	start, end := d.store.encoder.EncodePrefixRange(EATV, entityBytes[:])
+	start, _ := d.encoder.EncodePrefixRange(EATV, entityBytes[:])
 	result := make(map[datalog.Keyword]interface{})
 	var pending []wildcardUniqueLookup
 	var currentAttr datalog.Keyword
@@ -142,15 +144,14 @@ func (d *Database) resolveWildcardEntity(
 		currentDatoms = currentDatoms[:0]
 	}
 
-	for iterator.Seek(start); iterator.Valid(); iterator.Next() {
-		key := iterator.Item().Key()
-		if bytes.Compare(key, end) >= 0 {
-			break
-		}
-		keyCopy := iterator.Item().KeyCopy(nil)
-		datom, err := DatomFromKey(EATV, keyCopy, d.store.encoder, d.store.db)
+	iterator.Seek(start)
+	for iterator.Next() {
+		datom, err := iterator.Datom()
 		if err != nil {
 			return nil, nil, err
+		}
+		if !bytes.Equal(datom.E.Bytes(), entityBytes[:]) {
+			break
 		}
 		if matcher.shouldFilterTx(datom.Tx) {
 			continue
@@ -159,7 +160,7 @@ func (d *Database) resolveWildcardEntity(
 			flush()
 		}
 		currentAttr = datom.A
-		currentDatoms = append(currentDatoms, datom)
+		currentDatoms = append(currentDatoms, *datom)
 	}
 	flush()
 	return result, pending, nil

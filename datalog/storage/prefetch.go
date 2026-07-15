@@ -39,7 +39,7 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 		prev = e
 	}
 
-	encoder := m.store.encoder
+	encoder := m.encoder
 
 	for _, e := range deduped {
 		// Build prefix range for this entity on EATV: prefix(1) + E(20)
@@ -59,7 +59,8 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 		for iter.Next() {
 			d, err := iter.Datom()
 			if err != nil {
-				break
+				_ = iter.Close()
+				return
 			}
 			if m.shouldFilterTx(d.Tx) {
 				continue
@@ -80,6 +81,10 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 			currentAttr = aBytes
 			currentDatoms = append(currentDatoms, *d)
 			hasGroup = true
+		}
+		if err := iter.Error(); err != nil {
+			_ = iter.Close()
+			return
 		}
 		// Flush last group
 		if hasGroup && len(currentDatoms) > 0 {

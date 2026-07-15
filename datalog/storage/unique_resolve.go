@@ -53,7 +53,7 @@ func newUniqueWalkState() *uniqueWalkState {
 // is applied at the caller's iteration level (not here), because the
 // streaming path already filters at its source.
 func (m *BadgerMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Datom, eBytes Entity, aBytes Attribute) (walkEntryDecision, error) {
-	vKey := string(encodeValueForSearch(datom.V, m.store.encoder))
+	vKey := string(encodeValueForSearch(datom.V, m.encoder))
 
 	if datom.Op == datalog.OpCRDTRemove {
 		if existing, ok := state.retracted[vKey]; !ok || existing.Less(datom.Tx) {
@@ -95,7 +95,7 @@ func (m *BadgerMatcher) walkApplyEntry(state *uniqueWalkState, datom *datalog.Da
 // mode are skipped. The supersession check against other entities is
 // likewise restricted via m.shouldFilterTx in resolveMaxOtherTxForValue.
 func (m *BadgerMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (any, datalog.ElementID, bool, error) {
-	start, end := m.store.encoder.EncodePrefixRange(EATV, eBytes[:], aBytes[:])
+	start, end := m.encoder.EncodePrefixRange(EATV, eBytes[:], aBytes[:])
 	iter, err := m.store.ScanKeysOnly(EATV, start, end)
 	if err != nil {
 		return nil, datalog.ElementID{}, false, err
@@ -134,8 +134,8 @@ func (m *BadgerMatcher) walkUniqueEntityValue(eBytes Entity, aBytes Attribute) (
 // Honors the matcher's temporal mode — entries with Tx > m.txID in as-of
 // mode are excluded.
 func (m *BadgerMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, exceptE Entity) (datalog.ElementID, error) {
-	vBytes := encodeValueForSearch(v, m.store.encoder)
-	start, end := m.store.encoder.EncodePrefixRange(AVET, aBytes[:], vBytes)
+	vBytes := encodeValueForSearch(v, m.encoder)
+	start, end := m.encoder.EncodePrefixRange(AVET, aBytes[:], vBytes)
 	iter, err := m.store.ScanKeysOnly(AVET, start, end)
 	if err != nil {
 		return datalog.ElementID{}, err
@@ -196,7 +196,7 @@ func (m *BadgerMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, excep
 // "V is owned by E" via resolveAVLWW always agree.
 func (m *BadgerMatcher) resolveAVLWW(a Attribute, vBytes []byte, v any) (datalog.Identity, datalog.ElementID, error) {
 	// Step 1: find the max-Tx entry for (a, v) across all entities.
-	start, end := m.store.encoder.EncodePrefixRange(AVET, a[:], vBytes)
+	start, end := m.encoder.EncodePrefixRange(AVET, a[:], vBytes)
 	iter, err := m.store.ScanKeysOnly(AVET, start, end)
 	if err != nil {
 		return nil, datalog.ElementID{}, err

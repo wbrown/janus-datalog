@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -212,7 +214,7 @@ func TestTier3_ContentDedup(t *testing.T) {
 
 	// Count blobs — should be exactly 1 (content-addressed dedup)
 	count := 0
-	err = db.Store().db.View(func(txn *badger.Txn) error {
+	err = requireBadgerStore(t, db).db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.Prefix = []byte{blobKeyPrefix}
 		it := txn.NewIterator(opts)

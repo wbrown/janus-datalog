@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 // Reproduction for docs/bugs/BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
 //
 // Database.Query builds the executor from the database's effective

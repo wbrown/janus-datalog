@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -35,7 +37,7 @@ func BenchmarkDatomDecoding(b *testing.B) {
 	defer store.Close()
 
 	// Create a sample key
-	encoder := store.encoder
+	encoder := store.Encoder()
 	entity := datalog.NewIdentity("test-entity-1")
 	attr := datalog.NewKeyword(":task/scenario")
 	val := datalog.NewIdentity("scenario-1")
@@ -169,7 +171,7 @@ func BenchmarkDatomFromKeyToTuple(b *testing.B) {
 	defer store.Close()
 
 	// Create a sample key
-	encoder := store.encoder
+	encoder := store.Encoder()
 	entity := datalog.NewIdentity("test-entity-1")
 	attr := datalog.NewKeyword(":test/attribute")
 	datom := &datalog.Datom{

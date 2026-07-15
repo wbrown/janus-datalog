@@ -287,7 +287,11 @@ func (c *Cache) InvalidateAttribute(a Attribute) {
 //
 // For attributes with millions of entities, this first query after restart
 // may be slow. Subsequent queries use the cached attrVersions and are O(1).
-func (c *Cache) IsAttributeFresh(a Attribute, store Store) bool {
+type attributeVersionStore interface {
+	MaxElementIDForAttribute(a []byte) (datalog.ElementID, error)
+}
+
+func (c *Cache) IsAttributeFresh(a Attribute, store attributeVersionStore) bool {
 	val, ok := c.attrVersions.Load(a)
 	if !ok {
 		return false // No cached version - first query after restart will be slow

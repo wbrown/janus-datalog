@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -13,7 +15,6 @@ import (
 
 // metadataPrefix is used to store database metadata (e.g., ReplicaID)
 // separate from datom indices
-const metadataPrefix = "_meta:"
 
 // BadgerStore implements Store using BadgerDB
 type BadgerStore struct {
@@ -21,6 +22,12 @@ type BadgerStore struct {
 	encoder   *BinaryKeyEncoder
 	closeOnce sync.Once
 	closeErr  error
+}
+
+var _ Store = (*BadgerStore)(nil)
+
+func (s *BadgerStore) Encoder() *BinaryKeyEncoder {
+	return s.encoder
 }
 
 // NewBadgerStore creates a new BadgerDB-backed store.
@@ -137,7 +144,7 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 	for _, eavtKey := range keysToDelete {
 		// Decode the EAVT key to get the full datom including Tx
 		// DatomFromKey handles all the complexity of decoding components
-		storedDatom, err := DatomFromKey(EAVT, eavtKey, s.encoder, s.db)
+		storedDatom, err := DatomFromKey(EAVT, eavtKey, s.encoder, badgerTxnBlobReader{txn: txn})
 		if err != nil {
 			return fmt.Errorf("failed to decode key for retraction: %w", err)
 		}
@@ -167,7 +174,7 @@ func (s *BadgerStore) MaxTxForEntity(e datalog.Identity) (datalog.ElementID, boo
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			datom, err := DatomFromKey(EAVT, it.Item().KeyCopy(nil), s.encoder, s.db)
+			datom, err := DatomFromKey(EAVT, it.Item().KeyCopy(nil), s.encoder, badgerTxnBlobReader{txn: txn})
 			if err != nil {
 				return fmt.Errorf("decode EAVT key: %w", err)
 			}
@@ -197,7 +204,7 @@ func (s *BadgerStore) DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Seek(taevPrefix); it.ValidForPrefix(taevPrefix); it.Next() {
-			datom, err := DatomFromKey(TAEV, it.Item().KeyCopy(nil), s.encoder, s.db)
+			datom, err := DatomFromKey(TAEV, it.Item().KeyCopy(nil), s.encoder, badgerTxnBlobReader{txn: txn})
 			if err != nil {
 				return fmt.Errorf("decode TAEV key: %w", err)
 			}
@@ -239,34 +246,11 @@ func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	return deleted, nil
 }
 
-// Scan returns an iterator for a range of keys
+// Scan returns a workspace-decoded iterator for a range of keys.
+// Scan and ScanKeysOnly share the same KeyOnlyIterator contract: Datom()
+// returns the iterator's current workspace until Next, Seek, or Close.
 func (s *BadgerStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
-	if s.db.IsClosed() {
-		return nil, badger.ErrDBClosed
-	}
-	txn := s.db.NewTransaction(false)
-
-	opts := badger.DefaultIteratorOptions
-	// All datom data is encoded in keys — values are not stored.
-	// PrefetchValues must be false to avoid spawning prefetch goroutines
-	// per iterator, which causes scheduler thrashing with thousands of
-	// short-lived iterators (e.g., per-(E,A) cache resolution).
-	// PrefetchSize is ignored when PrefetchValues is false.
-	opts.PrefetchValues = false
-
-	it := txn.NewIterator(opts)
-
-	iter := &BadgerIterator{
-		txn:     txn,
-		it:      it,
-		start:   start,
-		end:     end,
-		index:   index,
-		encoder: s.encoder,
-		db:      s.db,
-	}
-	runtime.SetFinalizer(iter, (*BadgerIterator).Close)
-	return iter, nil
+	return NewKeyOnlyIterator(s, index, start, end)
 }
 
 // Get retrieves a single datom by key
@@ -281,7 +265,7 @@ func (s *BadgerStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
 		}
 
 		// Decode datom from key - values are not stored
-		datom, err := DatomFromKey(index, key, s.encoder, s.db)
+		datom, err := DatomFromKey(index, key, s.encoder, badgerTxnBlobReader{txn: txn})
 		if err != nil {
 			return err
 		}
@@ -499,7 +483,7 @@ type BadgerIterator struct {
 	index   IndexType
 	valid   bool
 	encoder *BinaryKeyEncoder // For decoding Op from key
-	db      *badger.DB        // For Tier 3 blob lookups in Datom()
+	blobs   BlobReader        // Uses the scan transaction for Tier 3 blobs
 }
 
 // Next advances the iterator
@@ -533,14 +517,12 @@ func (i *BadgerIterator) Next() bool {
 func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
 	item := i.it.Item()
 
-	// Must copy key since BadgerDB reuses the buffer.
-	// Note: We cannot reuse a key buffer here because DecodeKey returns a slice
-	// into the key bytes for the value component. Reusing the buffer would cause
-	// the value slice to be overwritten on subsequent calls.
-	key := item.KeyCopy(nil)
-
-	// Decode datom from key - all information is in the key
-	datom, err := DatomFromKey(i.index, key, i.encoder, i.db)
+	datom, err := decodeDatomFromKey(
+		i.index,
+		item.Key(),
+		i.encoder,
+		i.blobs,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -585,85 +567,6 @@ func (i *BadgerIterator) ElementID() datalog.ElementID {
 // the current item. Returning nil satisfies the Iterator interface
 // and tells wrapping iterators there is no deferred error to collect.
 func (i *BadgerIterator) Error() error { return nil }
-
-// extractElementIDFromKey extracts the ElementID from a key based on index type.
-// The Tx is encoded with bitwise NOT, so we reverse it here.
-func extractElementIDFromKey(index IndexType, key []byte) datalog.ElementID {
-	const (
-		prefixSize = 1
-		entitySize = 20
-		attrSize   = 32
-		txSize     = 16
-	)
-
-	if len(key) < prefixSize+txSize {
-		return datalog.ElementID{}
-	}
-
-	var txBytes []byte
-
-	switch index {
-	case TAEV:
-		// TAEV: [prefix:1][Tx:16][A:32][E:20][V:var]
-		// Tx is right after prefix
-		txBytes = key[prefixSize : prefixSize+txSize]
-
-	case EATV:
-		// EATV: [prefix:1][E:20][A:32][Tx:16][V:var][Op:1]
-		// Tx is after E+A
-		offset := prefixSize + entitySize + attrSize
-		if len(key) < offset+txSize {
-			return datalog.ElementID{}
-		}
-		txBytes = key[offset : offset+txSize]
-
-	case AETV:
-		// AETV: [prefix:1][A:32][E:20][Tx:16][V:var][Op:1]
-		// Tx is after A+E
-		offset := prefixSize + attrSize + entitySize
-		if len(key) < offset+txSize {
-			return datalog.ElementID{}
-		}
-		txBytes = key[offset : offset+txSize]
-
-	case ATEV:
-		// ATEV: [prefix:1][A:32][Tx:16][E:20][V:var][AfterRef?:16][Op:1]
-		// Tx is immediately after A
-		txBytes = key[prefixSize+attrSize : prefixSize+attrSize+txSize]
-
-	case EAVT, AEVT, AVET, VAET:
-		// These indices have Tx near the tail, but the tail also
-		// carries Op (1 byte, always last) and optionally AfterRef
-		// (16 bytes, immediately before Op when Op.HasAfterRef()).
-		// Layout: [...][Tx:16][AfterRef:16?][Op:1]
-		//
-		// Previous implementation read key[len-16:], which returned
-		// the Op byte + last 15 bytes of Tx (no AfterRef), or all 16
-		// bytes of AfterRef (with AfterRef) — both wrong.
-		if len(key) < 1 {
-			return datalog.ElementID{}
-		}
-		opByte := key[len(key)-1]
-		tailAfterTx := 1 // Op byte
-		if datalog.CRDTOp(opByte).HasAfterRef() {
-			tailAfterTx += 16 // AfterRef block
-		}
-		if len(key) < tailAfterTx+txSize {
-			return datalog.ElementID{}
-		}
-		txBytes = key[len(key)-tailAfterTx-txSize : len(key)-tailAfterTx]
-
-	default:
-		// Programmer error: a new IndexType was added without teaching this
-		// switch where Tx lives in its layout. Silent zero return here once
-		// hid a missing ATEV case — surface it loudly instead. Matches the
-		// encoder switch in key_encoder_binary.go.
-		panic(fmt.Sprintf("extractElementIDFromKey: unknown index type %v", index))
-	}
-
-	// Reverse bitwise NOT to get original ElementID
-	return DecodeElementID(txBytes)
-}
 
 // BadgerTx implements Tx for BadgerDB
 type BadgerTx struct {

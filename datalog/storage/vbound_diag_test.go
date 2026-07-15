@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -144,7 +146,7 @@ func TestDiag_VBound_VIsIrrelevant(t *testing.T) {
 	matcher := NewBadgerMatcher(db.Store())
 	matcher.SetSchema(db.Schema())
 	sd := ToStorageDatom(datalog.Datom{E: e, A: a})
-	encoder := db.Store().encoder
+	encoder := db.Store().Encoder()
 	start, end := encoder.EncodePrefixRange(EATV, sd.E[:], sd.A[:])
 	iter, err := db.Store().Scan(EATV, start, end)
 	require.NoError(t, err)

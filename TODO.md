@@ -109,7 +109,7 @@ These items have been completed and are preserved for historical context:
 3. **Transaction Functions**: Custom transaction logic
 
 ### Infrastructure
-1. **WASM Build**: Browser deployment
+1. **WASM persistence adapters**: OPFS / host IndexedDB backends on top of `OpenMemory` + Export/Import
 2. **Distributed Execution**: Multi-node queries
 3. **Incremental View Maintenance**: Real-time aggregations
 4. **Query Timeout/Cancellation**: Resource limits

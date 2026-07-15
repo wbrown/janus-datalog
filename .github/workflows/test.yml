@@ -24,3 +24,25 @@ jobs:
         run: >-
           go test -race -count=1 ./datalog/storage
           -run '^(TestTupleBuilderCacheConcurrency|TestIteratorWorkspaceConcurrency|TestCacheConcurrency|TestCommit_ConcurrentReadersSeeCommittedValue|TestTruncateToConcurrentWritersNoCollision)$'
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build datalog for js/wasm
+        run: GOOS=js GOARCH=wasm go build ./datalog/...
+      - name: Build db package for js/wasm
+        run: GOOS=js GOARCH=wasm go build ./datalog/db
+      - name: Run portable storage contracts under wasm
+        run: |
+          PATH="$(go env GOROOT)/lib/wasm:$PATH"
+          GOOS=js GOARCH=wasm go test -count=1 ./datalog/storage -run 'TestStore|TestScanAndScan|TestDatabaseBackends|TestMemory'
+      - name: Run memory backend under wasm
+        run: |
+          PATH="$(go env GOROOT)/lib/wasm:$PATH"
+          GOOS=js GOARCH=wasm go test -count=1 ./datalog/wasmtest

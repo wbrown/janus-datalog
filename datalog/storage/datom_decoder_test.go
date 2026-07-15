@@ -1,6 +1,9 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -55,6 +58,30 @@ func TestDatomFromKeyValueSemantics(t *testing.T) {
 
 	// Note: After Phase 4, d1 and d2 will be value types, not pointers.
 	// The test verifies correctness regardless of the return type.
+}
+
+func TestDatomFromBorrowedKeyClonesByteValue(t *testing.T) {
+	encoder := &BinaryKeyEncoder{}
+	datom := &datalog.Datom{
+		E:  datalog.NewIdentity("borrowed-key-bytes"),
+		A:  datalog.NewKeyword(":test/bytes"),
+		V:  []byte("borrowed-value"),
+		Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1},
+	}
+	key := encoder.EncodeKey(EAVT, datom)
+	decoded, err := DatomFromKey(EAVT, key, encoder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := decoded.V.([]byte)
+	offset := bytes.Index(key, []byte("borrowed-value"))
+	if offset < 0 {
+		t.Fatal("encoded byte value not found in key")
+	}
+	key[offset] = 'X'
+	if string(value) != "borrowed-value" {
+		t.Fatalf("decoded byte value aliases borrowed key: %q", value)
+	}
 }
 
 // TestDatomFromKeyAllIndexTypes verifies DatomFromKey works correctly
@@ -318,4 +345,67 @@ func TestBadgerIteratorKeyBufferReuse(t *testing.T) {
 			t.Errorf("Value differs across Datom() calls: %v, %v, %v", d1.V, d2.V, d3.V)
 		}
 	})
+}
+
+func TestKeyOnlyIteratorRetainedByteValuesOutliveBorrowedKeys(t *testing.T) {
+	db, err := NewDatabase(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	attr := datalog.NewKeyword(":test/bytes")
+	first := datalog.NewIdentity("bytes:first")
+	second := datalog.NewIdentity("bytes:second")
+	tx := db.NewTransaction()
+	if err := tx.Set(first, attr, []byte("first-value")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Set(second, attr, []byte("second-value")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	iter, err := db.Store().ScanKeysOnly(
+		EAVT,
+		[]byte{byte(EAVT)},
+		[]byte{byte(EAVT) + 1},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained [][]byte
+	for iter.Next() {
+		datom, err := iter.Datom()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if datom.A == attr {
+			retained = append(retained, datom.V.([]byte))
+		}
+	}
+	if err := iter.Error(); err != nil {
+		t.Fatal(err)
+	}
+	if err := iter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(retained) != 2 {
+		t.Fatalf("got %d byte values, want 2", len(retained))
+	}
+
+	values := map[string]bool{
+		string(retained[0]): true,
+		string(retained[1]): true,
+	}
+	if !values["first-value"] || !values["second-value"] {
+		t.Fatalf("retained byte values were corrupted after iteration: %q", retained)
+	}
+	secondBefore := string(retained[1])
+	retained[0][0] ^= 0x20
+	if string(retained[1]) != secondBefore {
+		t.Fatal("retained byte values share backing storage")
+	}
 }

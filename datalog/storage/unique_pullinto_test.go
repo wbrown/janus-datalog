@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 // Test that PullInto honors the walk-based (A, V)-LWW entity-view
 // fallback for unique attributes.
 //

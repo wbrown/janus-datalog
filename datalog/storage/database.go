@@ -42,7 +42,8 @@ func (d *Database) resolveQuery(q interface{}) (*query.Query, error) {
 
 // Database provides the main API for reading and writing datoms
 type Database struct {
-	store             *BadgerStore
+	store             Store
+	encoder           *BinaryKeyEncoder
 	txCounter         atomic.Uint64
 	mu                sync.RWMutex
 	activeTx          map[*Transaction]bool
@@ -88,6 +89,7 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
 	Path                 string                  // Path to the database directory
+	Store                Store                   // Optional injected storage backend; Path is ignored when set
 	Schema               schema.SchemaProvider   // Optional schema for validation
 	AnnotationHandler    annotations.Handler     // Optional handler for query tracing
 	ReplicaID            uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
@@ -100,7 +102,8 @@ type DatabaseOptions struct {
 // This is the most flexible constructor, supporting all configuration options.
 //
 // Options:
-//   - Path: Required. Directory for BadgerDB storage.
+//   - Path: Required for the native default Badger backend when Store is nil.
+//   - Store: Optional injected ordered backend; when set, Path is ignored.
 //   - Schema: Optional schema for validation.
 //   - ReplicaID: For CRDT mode. 0 = auto-generate random; non-zero = use specified.
 //   - DisableCache: Disable EA cache; queries resolve directly from storage.
@@ -111,7 +114,7 @@ type DatabaseOptions struct {
 //	    Path: "/path/to/db",
 //	})
 func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
-	if opts.Path == "" {
+	if opts.Store == nil && opts.Path == "" {
 		return nil, fmt.Errorf("database path is required")
 	}
 
@@ -126,9 +129,22 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	if threshold > 0 {
 		encoder.CompressionThreshold = threshold
 	}
-	store, err := NewBadgerStore(opts.Path, encoder)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create store: %w", err)
+	var store Store
+	var err error
+	if opts.Store != nil {
+		store = opts.Store
+		encoder = store.Encoder()
+		if encoder == nil {
+			return nil, fmt.Errorf("injected store returned nil encoder")
+		}
+		if threshold > 0 {
+			encoder.CompressionThreshold = threshold
+		}
+	} else {
+		store, err = openDefaultStore(opts.Path, encoder)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create store: %w", err)
+		}
 	}
 
 	// Determine ReplicaID: check metadata first (existing DB), then opts, then generate
@@ -195,6 +211,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 
 	d := &Database{
 		store:             store,
+		encoder:           encoder,
 		activeTx:          make(map[*Transaction]bool),
 		planCache:         planner.NewPlanCache(1000, 0),
 		parseCache:        NewParseCache(1000),
@@ -296,6 +313,10 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 				key := CacheKey{E: eBytes, A: aBytes}
 				d.cache.GetOrResolve(key, matcher)
 			}
+		}
+		if err := iter.Error(); err != nil {
+			iter.Close()
+			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
 		iter.Close()
 
@@ -487,6 +508,7 @@ var _ executor.PatternMatcher = (*Database)(nil)
 func (d *Database) AsOf(txID datalog.ElementID) *Database {
 	return &Database{
 		store:             d.store,
+		encoder:           d.encoder,
 		schema:            d.schema,
 		annotationHandler: d.annotationHandler,
 		planCache:         d.planCache,
@@ -508,6 +530,7 @@ func (d *Database) History() *Database {
 	empty := datalog.ElementID{}
 	return &Database{
 		store:             d.store,
+		encoder:           d.encoder,
 		schema:            d.schema,
 		annotationHandler: d.annotationHandler,
 		planCache:         d.planCache,
@@ -591,7 +614,7 @@ func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.
 }
 
 // Store returns the underlying store for direct access (debugging/testing)
-func (d *Database) Store() *BadgerStore {
+func (d *Database) Store() Store {
 	return d.store
 }
 
@@ -1589,7 +1612,7 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 		for iter.Next() {
 			datom, err := iter.Datom()
 			if err != nil {
-				continue
+				return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
 			}
 
 			if datom.Op == datalog.OpRGATombstone {
@@ -1604,6 +1627,9 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 					break // Early termination - no need to scan further
 				}
 			}
+		}
+		if err := iter.Error(); err != nil {
+			return fmt.Errorf("EAVT scan for vector Remove failed: %w", err)
 		}
 
 		// If no matching element found, Remove is a no-op (not an error)
@@ -2478,7 +2504,7 @@ func (d *Database) LookupByUnique(attr datalog.Keyword, value interface{}) (data
 
 	var aBytes Attribute
 	copy(aBytes[:], attr.String())
-	vBytes := encodeValueForSearch(value, d.store.encoder)
+	vBytes := encodeValueForSearch(value, d.encoder)
 
 	owner, _, err := matcher.resolveAVLWW(aBytes, vBytes, value)
 	if err != nil {
@@ -2774,7 +2800,7 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	// No schema: scan EAVT to discover all attributes for this entity, then
 	// delegate per-attribute resolution to ResolveEntityAttributes.
 	eBytes := entity.Bytes()
-	encoder := d.store.encoder
+	encoder := d.encoder
 	start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
 
 	iter, err := d.store.Scan(EAVT, start, end)
@@ -2787,12 +2813,15 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("EAVT scan failed: %w", err)
 		}
 		sd := ToStorageDatom(*datom)
 		if _, seen := seenAttrs[sd.A]; !seen {
 			seenAttrs[sd.A] = datom.A
 		}
+	}
+	if err := iter.Error(); err != nil {
+		return nil, fmt.Errorf("EAVT scan failed: %w", err)
 	}
 
 	keywords := make([]datalog.Keyword, 0, len(seenAttrs))

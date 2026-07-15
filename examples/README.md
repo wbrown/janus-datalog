@@ -1,6 +1,6 @@
 # Janus-Datalog Examples
 
-14 runnable examples covering the full API. All use the public `db` package.
+15 runnable examples covering the full API. All use the public `db` package.
 
 ## Quick Start
 
@@ -28,6 +28,7 @@ Run from the **repository root**. Examples that load shared data (`examples/data
 | 12 | `annotations.go` | WithVerbose, custom annotation handler, event tracing | 1 |
 | 13 | `storage_internals.go` | Explain, Analyze, plan cache, direct store access | 4 |
 | 14 | `export_import.go` | Export/Import EDN, compressed export, round-trip | 1 |
+| 15 | `wasm_memory.go` | `OpenMemory`, host-managed Export/Import persistence | 14 |
 
 ## Shared Datasets
 
@@ -49,3 +50,4 @@ To regenerate: `go run examples/generate_data.go`
 **Observability**: `annotations.go`
 **Advanced/Internals**: `storage_internals.go`
 **Backup/Restore**: `export_import.go`
+**WASM / memory backend**: `wasm_memory.go`

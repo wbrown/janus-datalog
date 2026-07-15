@@ -94,6 +94,9 @@ func (m *BadgerMatcher) ResolveLWW(e Entity, a Attribute) (any, datalog.ElementI
 		}
 		return datom.V, datom.Tx, nil
 	}
+	if err := iter.Error(); err != nil {
+		return nil, datalog.ElementID{}, err
+	}
 
 	// No value found
 	return nil, datalog.ElementID{}, nil

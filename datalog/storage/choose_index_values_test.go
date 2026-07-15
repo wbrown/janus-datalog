@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -95,8 +97,8 @@ func TestChooseIndexForValuesAVET(t *testing.T) {
 		copy(attrBytes[:], attr.String())
 
 		// Full attribute scan (no value filter)
-		start := matcher.store.encoder.EncodePrefix(AVET, attrBytes[:])
-		end := append(matcher.store.encoder.EncodePrefix(AVET, attrBytes[:]), 0xFF, 0xFF, 0xFF, 0xFF)
+		start := matcher.store.Encoder().EncodePrefix(AVET, attrBytes[:])
+		end := append(matcher.store.Encoder().EncodePrefix(AVET, attrBytes[:]), 0xFF, 0xFF, 0xFF, 0xFF)
 
 		iter, err := matcher.store.ScanKeysOnly(AVET, start, end)
 		if err != nil {

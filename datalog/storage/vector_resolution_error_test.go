@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -24,7 +26,7 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 	}
 	require.NoError(t, store.Assert([]datalog.Datom{datom}))
 
-	validKey := store.encoder.EncodeKey(EATV, &datom)
+	validKey := store.Encoder().EncodeKey(EATV, &datom)
 	malformed := append([]byte(nil), validKey[:54]...)
 	rawTx := store.db.NewTransaction(true)
 	require.NoError(t, rawTx.Delete(validKey))
@@ -37,9 +39,8 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 	prefix = append(prefix, attributeBytes[:]...)
 	iter, err := store.Scan(EATV, prefix, prefixEnd(prefix))
 	require.NoError(t, err)
-	require.True(t, iter.Next())
-	_, decodeErr := iter.Datom()
-	require.Error(t, decodeErr)
+	require.False(t, iter.Next(), "malformed key must stop the workspace scan")
+	require.Error(t, iter.Error())
 	require.NoError(t, iter.Close())
 
 	matcher := NewBadgerMatcher(store)

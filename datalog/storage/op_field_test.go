@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 // op_field_test.go - Tests for Op field implementation

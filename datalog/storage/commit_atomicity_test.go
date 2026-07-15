@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 // Tests for commit atomicity guarantees.
 //
 // Transaction.Commit wraps the entire logical commit (retracts, asserts,

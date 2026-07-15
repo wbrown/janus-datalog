@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -58,7 +60,7 @@ func writeTier3ValueThenCorruptBlob(t *testing.T) (*Database, datalog.Identity, 
 
 	// Delete all blob keys (prefix 0xFF) so the value cannot be decoded.
 	deleted := 0
-	err = db.store.db.Update(func(txn *badger.Txn) error {
+	err = requireBadgerStore(t, db).db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		prefix := []byte{0xFF}
@@ -86,6 +88,24 @@ func TestCollectTuples_SurfacesBlobDecodeError(t *testing.T) {
 
 	_, err := executor.CollectTuples(db.Query(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e))
 	require.ErrorContains(t, err, "blob", "a missing blob must not be reported as an empty result")
+}
+
+func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
+	db, entity, attr := writeTier3ValueThenCorruptBlob(t)
+	defer db.Close()
+
+	entityBytes := entity.Bytes()
+	attrBytes := ToStorageDatom(datalog.Datom{A: attr}).A
+	start, end := db.store.Encoder().EncodePrefixRange(EATV, entityBytes[:], attrBytes[:])
+	iter, err := db.store.ScanKeysOnly(EATV, start, end)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	require.False(t, iter.Next())
+	firstErr := iter.Error()
+	require.ErrorContains(t, firstErr, "blob")
+	require.False(t, iter.Next())
+	require.ErrorIs(t, iter.Error(), firstErr)
 }
 
 // Analyze fully executes the query (EXPLAIN ANALYZE-style), so a deferred
@@ -284,7 +304,7 @@ func writeValidThenCorruptBlob(t *testing.T) *Database {
 	// Delete all blob keys (prefix 0xFF). Only `high` is Tier-3, so only its value
 	// becomes undecodable; `low` is inline and still resolves.
 	deleted := 0
-	err = db.store.db.Update(func(txn *badger.Txn) error {
+	err = requireBadgerStore(t, db).db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		prefix := []byte{0xFF}
