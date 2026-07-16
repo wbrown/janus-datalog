@@ -39,6 +39,8 @@ type Store interface {
 	Scan(index IndexType, start, end []byte) (Iterator, error)
 	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
 	// Get retrieves a single datom by full index key. Missing keys return (nil, nil).
+	// CountKeys is not on Store — it remains *BadgerStore-only (debug/test);
+	// see docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md.
 	Get(index IndexType, key []byte) (*datalog.Datom, error)
 	DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
 	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)

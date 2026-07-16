@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"bytes"
 	"fmt"
 	"runtime"
 
@@ -53,6 +54,9 @@ func (i *KeyOnlyIterator) Next() bool {
 }
 
 func (i *KeyOnlyIterator) Key() []byte {
+	if !i.positionedInRange() {
+		return nil
+	}
 	return i.BadgerIterator.Key()
 }
 
@@ -60,7 +64,10 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 	if i.currentError != nil {
 		return nil, i.currentError
 	}
-	if !i.BadgerIterator.valid || i.it == nil || !i.it.Valid() {
+	// Next() returns false at the exclusive end bound while the underlying
+	// Badger iterator can still be Valid() on the successor key. Refuse that
+	// out-of-range position so Datom() matches the ScanKeysOnly contract.
+	if !i.positionedInRange() {
 		return nil, fmt.Errorf("no current datom")
 	}
 	if !i.hasDatom {
@@ -78,6 +85,16 @@ func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 		i.hasDatom = true
 	}
 	return &i.currentDatom, nil
+}
+
+func (i *KeyOnlyIterator) positionedInRange() bool {
+	if !i.BadgerIterator.valid || i.it == nil || !i.it.Valid() {
+		return false
+	}
+	if i.end == nil {
+		return true
+	}
+	return bytes.Compare(i.it.Item().Key(), i.end) < 0
 }
 
 func (i *KeyOnlyIterator) Seek(key []byte) {

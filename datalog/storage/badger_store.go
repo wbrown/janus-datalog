@@ -505,6 +505,8 @@ func (i *BadgerIterator) Next() bool {
 	if i.end != nil {
 		key := i.it.Item().Key()
 		if bytes.Compare(key, i.end) >= 0 {
+			// Leave the Badger cursor on the successor key (Valid() may still
+			// be true) but report not-current: Key()/Datom() must not expose it.
 			return false
 		}
 	}
@@ -518,17 +520,27 @@ func (i *BadgerIterator) Key() []byte {
 	if i.it == nil || !i.it.Valid() {
 		return nil
 	}
-	return i.it.Item().Key()
+	key := i.it.Item().Key()
+	if i.end != nil && bytes.Compare(key, i.end) >= 0 {
+		return nil
+	}
+	return key
 }
 
 // Datom returns the current datom decoded from the key
 // Values are not stored - all datom information is in the key
 func (i *BadgerIterator) Datom() (*datalog.Datom, error) {
-	item := i.it.Item()
+	if i.it == nil || !i.it.Valid() {
+		return nil, fmt.Errorf("no current datom")
+	}
+	key := i.it.Item().Key()
+	if i.end != nil && bytes.Compare(key, i.end) >= 0 {
+		return nil, fmt.Errorf("no current datom")
+	}
 
 	datom, err := decodeDatomFromKey(
 		i.index,
-		item.Key(),
+		key,
 		i.encoder,
 		i.blobs,
 	)

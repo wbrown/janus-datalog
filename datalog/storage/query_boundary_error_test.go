@@ -110,6 +110,42 @@ func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
 	require.ErrorIs(t, iter.Error(), firstErr)
 }
 
+// After Next() returns false at an exclusive end bound, Badger may still sit
+// on the successor key. Datom()/Key() must report no current position — not
+// decode the out-of-range neighbor.
+func TestKeyOnlyIterator_DatomRejectsEndBoundSuccessor(t *testing.T) {
+	db, err := NewDatabase(t.TempDir())
+	require.NoError(t, err)
+	defer db.Close()
+
+	first := datalog.NewIdentity("bound-a")
+	second := datalog.NewIdentity("bound-b")
+	if bytes.Compare(first.Bytes(), second.Bytes()) > 0 {
+		first, second = second, first
+	}
+	attr := datalog.NewKeyword(":bound/v")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(first, attr, "one"))
+	require.NoError(t, tx.Add(second, attr, "two"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	firstBytes := first.Bytes()
+	start, end := db.store.Encoder().EncodePrefixRange(EAVT, firstBytes[:])
+	iter, err := db.store.ScanKeysOnly(EAVT, start, end)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	require.True(t, iter.Next())
+	d, err := iter.Datom()
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(d.E.Bytes(), firstBytes[:]))
+
+	require.False(t, iter.Next(), "scan of first entity must stop before successor")
+	_, err = iter.Datom()
+	require.ErrorContains(t, err, "no current datom")
+}
+
 // Analyze fully executes the query (EXPLAIN ANALYZE-style), so a deferred
 // blob-decode failure must surface as an error from Analyze itself — not be
 // deferred past the API boundary into a lazy result the caller iterates later.
