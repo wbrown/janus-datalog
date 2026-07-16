@@ -29,6 +29,8 @@ func main() {
 	var enableDecorrelation bool
 	var exportPath string
 	var importPath string
+	var exportBinPath string
+	var importBinPath string
 	var compressedExport bool
 	var showStats bool
 
@@ -43,6 +45,8 @@ func main() {
 	flag.StringVar(&exportPath, "export", "", "export database to EDN file")
 	flag.BoolVar(&compressedExport, "compressed", false, "use #lzj compressed tagged literals in export")
 	flag.StringVar(&importPath, "import", "", "import database from EDN file")
+	flag.StringVar(&exportBinPath, "export-bin", "", "export database to compressed binary JDZL file")
+	flag.StringVar(&importBinPath, "import-bin", "", "import database from compressed binary JDZL file")
 	flag.BoolVar(&showStats, "stats", false, "print per-attribute cardinality, value size, and duplication statistics")
 	flag.Var(&inputValues, "in", "input parameter as EDN value (repeatable, one per :in binding)")
 	flag.Usage = func() {
@@ -52,14 +56,16 @@ func main() {
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  %s -i                 # Interactive mode with default database\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -i mydata.db      # Interactive mode with specific database\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -db /path/to/db   # Using -db flag\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -i mydata.db       # Interactive mode with specific database\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -db /path/to/db    # Using -db flag\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -verbose           # Verbose mode with query annotations\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -verbose -i        # Interactive mode with annotations\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -query '[:find ?x :where [?x :person/name _]]'  # Run single query\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -query '[:find ?n :in $ ?age :where [?p :person/age ?age] [?p :person/name ?n]]' -in 30  # With input binding\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -export data.edn  # Export database to EDN file\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db newdata.db -import data.edn # Import EDN file into database\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -export-bin data.jdzl  # Compressed binary export\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -db newdata.db -import-bin data.jdzl # Binary import\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -stats            # Print cardinality and value statistics\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db dump.edn -query '...'       # Query an EDN dump directly (temporary database)\n", os.Args[0])
 	}
@@ -75,12 +81,24 @@ func main() {
 		dbPath = flag.Arg(0)
 	}
 
-	// Check for conflicting flags
-	if exportPath != "" && importPath != "" {
-		log.Fatalf("Cannot specify both -export and -import")
+	transferModes := 0
+	if exportPath != "" {
+		transferModes++
 	}
-	if showStats && (exportPath != "" || importPath != "") {
-		log.Fatalf("Cannot combine -stats with -export or -import")
+	if importPath != "" {
+		transferModes++
+	}
+	if exportBinPath != "" {
+		transferModes++
+	}
+	if importBinPath != "" {
+		transferModes++
+	}
+	if transferModes > 1 {
+		log.Fatalf("Specify only one of -export, -import, -export-bin, -import-bin")
+	}
+	if showStats && transferModes > 0 {
+		log.Fatalf("Cannot combine -stats with export/import flags")
 	}
 
 	// Default to datalog.db if no path specified
@@ -103,6 +121,16 @@ func main() {
 	// Handle import mode
 	if importPath != "" {
 		runImport(dbPath, importPath)
+		return
+	}
+
+	if exportBinPath != "" {
+		runExportBin(dbPath, exportBinPath)
+		return
+	}
+
+	if importBinPath != "" {
+		runImportBin(dbPath, importBinPath)
 		return
 	}
 
@@ -378,6 +406,60 @@ func runImport(dbPath, importPath string) {
 		log.Fatalf("Failed to import: %v", err)
 	}
 
+	fmt.Printf("Imported %s into database %s\n", importPath, dbPath)
+}
+
+func runExportBin(dbPath, exportPath string) {
+	// Keep Fatalf outside the cleanup scope so deferred temp-dir removal runs
+	// on export failure (os.Exit from log.Fatalf skips defers).
+	if err := exportBinaryDatabase(dbPath, exportPath); err != nil {
+		log.Fatalf("%v", err)
+	}
+	fmt.Printf("Exported database to %s\n", exportPath)
+}
+
+func exportBinaryDatabase(dbPath, exportPath string) error {
+	db, cleanup, err := openDatabaseOrEDN(dbPath)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	f, err := os.Create(exportPath)
+	if err != nil {
+		return fmt.Errorf("Failed to create binary export file: %v", err)
+	}
+	defer f.Close()
+
+	if err := db.ExportBinary(f); err != nil {
+		return fmt.Errorf("Failed to export binary database: %v", err)
+	}
+	return nil
+}
+
+func runImportBin(dbPath, importPath string) {
+	if strings.HasSuffix(dbPath, ".edn") || strings.HasSuffix(dbPath, ".jdzl") {
+		log.Fatalf("Cannot import into %s: -db must be a database directory", dbPath)
+	}
+	if _, err := os.Stat(importPath); os.IsNotExist(err) {
+		log.Fatalf("Import file does not exist: %s", importPath)
+	}
+
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		log.Fatalf("Failed to open/create database: %v", err)
+	}
+	defer db.Close()
+
+	f, err := os.Open(importPath)
+	if err != nil {
+		log.Fatalf("Failed to open binary import file: %v", err)
+	}
+	defer f.Close()
+
+	if err := db.ImportBinary(f); err != nil {
+		log.Fatalf("Failed to import binary dump: %v", err)
+	}
 	fmt.Printf("Imported %s into database %s\n", importPath, dbPath)
 }
 

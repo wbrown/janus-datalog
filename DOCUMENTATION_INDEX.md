@@ -29,6 +29,7 @@ Configuration, semantics, and proofs in `docs/reference/`:
 - **[OP_POSITION_PROOF.md](docs/reference/OP_POSITION_PROOF.md)** - Why the Op byte goes last (key-decoding correctness)
 - **[SCHEMA.md](docs/reference/SCHEMA.md)** - Schema support: types, cardinality, uniqueness, Pull API integration
 - **[EXPORT_IMPORT.md](docs/reference/EXPORT_IMPORT.md)** - Database export/import to EDN format for backup and migration
+- **[BINARY_EXPORT.md](docs/reference/BINARY_EXPORT.md)** - Compressed seekable JDZL binary dump (`-export-bin` / `-import-bin`)
 
 **Query system:**
 - **[PLANNER_OPTIONS.md](docs/reference/PLANNER_OPTIONS.md)** - Complete planner options reference with performance guidance
