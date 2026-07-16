@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
 	github.com/fatih/color v1.18.0
+	github.com/google/btree v1.1.3
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/olekukonko/tablewriter v1.0.7

@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"go/build/constraint"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,14 +21,14 @@ func main() {
 
 	dir := "datalog/storage"
 	portable := map[string]bool{
-		"backend_cases_test.go":       true,
-		"backend_cases_wasm_test.go":  true,
-		"backend_contract_test.go":    true,
-		"backend_blob_memory_test.go": true,
-		"memory_store_test.go":        true,
+		"backend_cases_test.go":        true,
+		"backend_cases_wasm_test.go":   true,
+		"backend_contract_test.go":     true,
+		"backend_blob_memory_test.go":  true,
+		"memory_store_test.go":         true,
 		"memory_backend_bench_test.go": true,
-		"public_contract_test.go":     true,
-		"tag_nonportable_tests.go":    true,
+		"public_contract_test.go":      true,
+		"tag_nonportable_tests.go":     true,
 	}
 	tag := []byte("//go:build !(js && wasm)\n\n")
 	entries, err := os.ReadDir(dir)
@@ -51,13 +52,9 @@ func main() {
 			continue
 		}
 		if bytes.HasPrefix(data, []byte("//go:build")) || bytes.HasPrefix(data, []byte("// +build")) {
-			head := data
-			if len(head) > 512 {
-				head = head[:512]
-			}
 			// Already constrained files must exclude js/wasm explicitly. Leaving
 			// e.g. //go:build !race untagged pulls Badger-only tests into wasm.
-			if !bytes.Contains(head, []byte("js && wasm")) {
+			if !buildConstraintExcludesJSWASM(data) {
 				fmt.Fprintf(os.Stderr, "error: %s has a build constraint without js/wasm exclusion; add !(js && wasm) or list the file in the portable allowlist\n", path)
 				uncoveredConstraint++
 			}
@@ -84,4 +81,61 @@ func main() {
 	if uncoveredConstraint > 0 || missingConstraint > 0 {
 		os.Exit(1)
 	}
+}
+
+// buildConstraintExcludesJSWASM reports whether the file's leading build
+// constraint lines evaluate to false under the js+wasm tag pair (i.e. the
+// tests are excluded from that build). Parses the constraint expression; does
+// not substring-match comment text.
+func buildConstraintExcludesJSWASM(src []byte) bool {
+	expr, ok := parseLeadingBuildConstraint(src)
+	if !ok || expr == nil {
+		return false
+	}
+	return !expr.Eval(func(tag string) bool {
+		switch tag {
+		case "js", "wasm":
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+func parseLeadingBuildConstraint(src []byte) (constraint.Expr, bool) {
+	var expr constraint.Expr
+	rest := src
+	for len(rest) > 0 {
+		var line []byte
+		if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+			line = rest[:i]
+			rest = rest[i+1:]
+		} else {
+			line = rest
+			rest = nil
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			if expr != nil {
+				break
+			}
+			continue
+		}
+		if !bytes.HasPrefix(line, []byte("//go:build")) && !bytes.HasPrefix(line, []byte("// +build")) {
+			break
+		}
+		next, err := constraint.Parse(string(line))
+		if err != nil {
+			return nil, false
+		}
+		if expr == nil {
+			expr = next
+			continue
+		}
+		expr = &constraint.AndExpr{X: expr, Y: next}
+	}
+	if expr == nil {
+		return nil, false
+	}
+	return expr, true
 }

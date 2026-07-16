@@ -576,10 +576,13 @@ func (i *BadgerIterator) Seek(key []byte) {
 // ElementID extracts the transaction ElementID from the current key.
 // This is more efficient than Datom() when only the ElementID is needed.
 func (i *BadgerIterator) ElementID() datalog.ElementID {
-	if !i.it.Valid() {
+	if i.it == nil || !i.it.Valid() {
 		return datalog.ElementID{}
 	}
 	key := i.it.Item().Key()
+	if i.end != nil && bytes.Compare(key, i.end) >= 0 {
+		return datalog.ElementID{}
+	}
 	return extractElementIDFromKey(i.index, key)
 }
 

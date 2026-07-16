@@ -261,3 +261,32 @@ func BenchmarkMemoryRetract(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkMemoryAssertBulk tracks Import-shaped growth: N×4 datoms must not
+// produce ~N² wall time (the old sorted-[]string insert pathology).
+func BenchmarkMemoryAssertBulk(b *testing.B) {
+	for _, size := range []int{1000, 4000} {
+		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
+			attr := datalog.NewKeyword(":bench/assert-bulk")
+			datoms := make([]datalog.Datom, size)
+			for i := 0; i < size; i++ {
+				datoms[i] = datalog.Datom{
+					E:  datalog.NewIdentity(fmt.Sprintf("assert-entity-%d", i)),
+					A:  attr,
+					V:  int64(i),
+					Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
+				}
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				store := NewMemoryStore(&BinaryKeyEncoder{})
+				if err := store.Assert(datoms); err != nil {
+					b.Fatal(err)
+				}
+				_ = store.Close()
+			}
+		})
+	}
+}

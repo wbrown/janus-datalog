@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -87,14 +88,19 @@ func TestMemoryStoreMaintainsSortedKeys(t *testing.T) {
 
 	store.mu.RLock()
 	defer store.mu.RUnlock()
-	require.Equal(t, len(store.entries), len(store.keys))
-	for i := 1; i < len(store.keys); i++ {
-		require.Less(t, store.keys[i-1], store.keys[i], "keys must stay sorted")
-	}
-	for _, key := range store.keys {
+	require.Equal(t, len(store.entries), store.keys.Len())
+	var prev string
+	seen := false
+	store.keys.Ascend(func(key string) bool {
 		_, ok := store.entries[key]
-		require.True(t, ok, "sorted key missing from entries: %q", key)
-	}
+		require.True(t, ok, "ordered key missing from entries: %q", key)
+		if seen {
+			require.Less(t, prev, key, "keys must stay sorted")
+		}
+		prev = key
+		seen = true
+		return true
+	})
 }
 
 func TestMemoryStoreMaxElementIDForAttribute(t *testing.T) {
@@ -253,9 +259,26 @@ func corruptEntityEATVKeys(t *testing.T, store *MemoryStore, entity datalog.Iden
 	for _, encoded := range keys {
 		value := store.entries[encoded]
 		delete(store.entries, encoded)
+		store.keys.Delete(encoded)
 		// Keep the entity prefix so the shared scan still observes this successor
 		// key, but truncate so Datom() decode fails if the boundary check is skipped.
 		truncated := append([]byte(nil), []byte(encoded)[:22]...)
-		store.entries[string(truncated)] = value
+		truncatedKey := string(truncated)
+		store.entries[truncatedKey] = value
+		store.keys.ReplaceOrInsert(truncatedKey)
 	}
+	// Prove the ordered index still surfaces a truncated EATV key for this entity
+	// (otherwise ResolveAllAttributesMany would never hit the decode-skip path).
+	sawTruncated := false
+	prefix := string(append([]byte{byte(EATV)}, entityBytes[:]...))
+	store.keys.AscendGreaterOrEqual(prefix, func(encoded string) bool {
+		if !strings.HasPrefix(encoded, prefix) {
+			return false
+		}
+		if len(encoded) == 22 {
+			sawTruncated = true
+		}
+		return true
+	})
+	require.True(t, sawTruncated, "corruptEntityEATVKeys must leave a truncated key in the ordered index")
 }

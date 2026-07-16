@@ -9,10 +9,15 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/btree"
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
 var errMemoryStoreClosed = errors.New("memory store closed")
+
+// memoryKeyTreeDegree is the B-tree branching factor for the key index.
+// Degree 32 is a common in-memory default (nodes hold up to 63 items).
+const memoryKeyTreeDegree = 32
 
 // MemoryStore is an ordered, transactional, in-memory implementation of Store.
 // It persists the same binary keys as BadgerStore, including all eight indices,
@@ -23,18 +28,24 @@ var errMemoryStoreClosed = errors.New("memory store closed")
 // This matches BadgerTx immediacy for interleaving and avoids cloning the
 // whole store on every commit (required for Import and other batched writes).
 //
-// keys is the sorted set of entries map keys, kept in lockstep with puts and
-// deletes so retract and scan can binary-search prefixes instead of scanning
-// the whole map (Badger's Seek/ValidForPrefix analogue).
+// keys is a B-tree of entries map keys, kept in lockstep with puts and deletes
+// so retract and scan can Seek/prefix-iterate in O(log N + range) instead of
+// scanning the whole map (Badger's Seek/ValidForPrefix analogue). Insert and
+// delete are O(log N) per key, so Import/batched Assert stay O(M log N) in the
+// key index (not O(M²) from mid-slice shifts on a sorted []string).
 type MemoryStore struct {
 	mu      sync.RWMutex
 	encoder *BinaryKeyEncoder
 	entries map[string][]byte
-	keys    []string
+	keys    *btree.BTreeG[string]
 	closed  bool
 }
 
 var _ Store = (*MemoryStore)(nil)
+
+func newMemoryKeyTree() *btree.BTreeG[string] {
+	return btree.NewOrderedG[string](memoryKeyTreeDegree)
+}
 
 func NewMemoryStore(encoder *BinaryKeyEncoder) *MemoryStore {
 	if encoder == nil {
@@ -43,6 +54,7 @@ func NewMemoryStore(encoder *BinaryKeyEncoder) *MemoryStore {
 	return &MemoryStore{
 		encoder: encoder,
 		entries: make(map[string][]byte),
+		keys:    newMemoryKeyTree(),
 	}
 }
 
@@ -87,7 +99,7 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 				continue
 			}
 			delete(s.entries, key)
-			removeSortedMemoryKey(&s.keys, key)
+			s.keys.Delete(key)
 		}
 	}
 	return len(datoms), nil
@@ -132,21 +144,15 @@ func (s *MemoryStore) scan(index IndexType, start, end []byte) (Iterator, error)
 	}
 	startKey := string(start)
 	endKey := string(end)
-	i := sort.Search(len(s.keys), func(i int) bool {
-		return s.keys[i] >= startKey
-	})
 	keys := make([][]byte, 0)
-	for ; i < len(s.keys); i++ {
-		encoded := s.keys[i]
-		if encoded >= endKey {
-			break
-		}
+	s.keys.AscendRange(startKey, endKey, func(encoded string) bool {
 		key := []byte(encoded)
 		if len(key) == 21 && key[0] == blobKeyPrefix {
-			continue
+			return true
 		}
 		keys = append(keys, append([]byte(nil), key...))
-	}
+		return true
+	})
 	return &memoryIterator{
 		index:    index,
 		keys:     keys,
@@ -252,7 +258,7 @@ func (s *MemoryStore) SetMetadataUint64(key string, value uint64) error {
 	binary.BigEndian.PutUint64(encoded, value)
 	metaKey := metadataPrefix + key
 	if _, had := s.entries[metaKey]; !had {
-		insertSortedMemoryKey(&s.keys, metaKey)
+		s.keys.ReplaceOrInsert(metaKey)
 	}
 	s.entries[metaKey] = encoded
 	return nil
@@ -374,7 +380,7 @@ func putMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string, val
 		val: append([]byte(nil), old...),
 	})
 	if !had {
-		insertSortedMemoryKey(&store.keys, key)
+		store.keys.ReplaceOrInsert(key)
 	}
 	if value == nil {
 		store.entries[key] = nil
@@ -394,7 +400,7 @@ func deleteMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string) 
 		val: append([]byte(nil), old...),
 	})
 	delete(store.entries, key)
-	removeSortedMemoryKey(&store.keys, key)
+	store.keys.Delete(key)
 }
 
 func restoreMemoryEntries(store *MemoryStore, undo []memoryEntryUndo) {
@@ -404,45 +410,25 @@ func restoreMemoryEntries(store *MemoryStore, undo []memoryEntryUndo) {
 			_, exists := store.entries[entry.key]
 			store.entries[entry.key] = entry.val
 			if !exists {
-				insertSortedMemoryKey(&store.keys, entry.key)
+				store.keys.ReplaceOrInsert(entry.key)
 			}
 			continue
 		}
 		delete(store.entries, entry.key)
-		removeSortedMemoryKey(&store.keys, entry.key)
+		store.keys.Delete(entry.key)
 	}
 }
 
-func insertSortedMemoryKey(keys *[]string, key string) {
-	i := sort.SearchStrings(*keys, key)
-	if i < len(*keys) && (*keys)[i] == key {
-		return
-	}
-	*keys = append(*keys, "")
-	copy((*keys)[i+1:], (*keys)[i:])
-	(*keys)[i] = key
-}
-
-func removeSortedMemoryKey(keys *[]string, key string) {
-	i := sort.SearchStrings(*keys, key)
-	if i == len(*keys) || (*keys)[i] != key {
-		return
-	}
-	*keys = append((*keys)[:i], (*keys)[i+1:]...)
-}
-
-func memoryKeysWithPrefix(keys []string, prefix []byte) []string {
+func memoryKeysWithPrefix(keys *btree.BTreeG[string], prefix []byte) []string {
 	p := string(prefix)
-	i := sort.Search(len(keys), func(i int) bool {
-		return keys[i] >= p
-	})
 	var matches []string
-	for ; i < len(keys); i++ {
-		if !strings.HasPrefix(keys[i], p) {
-			break
+	keys.AscendGreaterOrEqual(p, func(encoded string) bool {
+		if !strings.HasPrefix(encoded, p) {
+			return false
 		}
-		matches = append(matches, keys[i])
-	}
+		matches = append(matches, encoded)
+		return true
+	})
 	return matches
 }
 
