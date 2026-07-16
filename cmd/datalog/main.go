@@ -36,7 +36,7 @@ func main() {
 
 	var inputValues ednSliceFlag
 
-	flag.StringVar(&dbPath, "db", "", "database or EDN dump path (.edn dumps load into a temporary database)")
+	flag.StringVar(&dbPath, "db", "", "database directory, or .edn/.jdzl dump (dumps load into a temporary database)")
 	flag.BoolVar(&interactive, "i", false, "interactive mode")
 	flag.BoolVar(&help, "h", false, "show help")
 	flag.BoolVar(&verbose, "verbose", false, "verbose mode (show query annotations)")
@@ -50,7 +50,7 @@ func main() {
 	flag.BoolVar(&showStats, "stats", false, "print per-attribute cardinality, value size, and duplication statistics")
 	flag.Var(&inputValues, "in", "input parameter as EDN value (repeatable, one per :in binding)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] [database_or_edn_dump_path]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] [database_or_dump_path]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "A Datalog query engine with persistent storage.\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
@@ -68,6 +68,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -db newdata.db -import-bin data.jdzl # Binary import\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -stats            # Print cardinality and value statistics\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db dump.edn -query '...'       # Query an EDN dump directly (temporary database)\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -db dump.jdzl -query '...'      # Query a JDZL dump directly (temporary database)\n", os.Args[0])
 	}
 	flag.Parse()
 
@@ -134,7 +135,7 @@ func main() {
 		return
 	}
 
-	// Open database (BadgerDB directory or .edn dump)
+	// Open database (BadgerDB directory, or .edn/.jdzl dump)
 	db, cleanup, err := openDatabaseOrEDN(dbPath)
 	if err != nil {
 		log.Fatalf("%v", err)
@@ -302,17 +303,24 @@ func parseValue(s string) interface{} {
 	return s
 }
 
+// isDumpFilePath reports whether path is an EDN or JDZL dump file (not a
+// BadgerDB directory). Both formats load into a disposable temp database via
+// openDatabaseOrEDN.
+func isDumpFilePath(path string) bool {
+	return strings.HasSuffix(path, ".edn") || strings.HasSuffix(path, ".jdzl")
+}
+
 // openDatabaseOrEDN opens dbPath as a BadgerDB database, or — when the path
-// ends in .edn — imports the EDN dump into a database in a temporary
+// ends in .edn or .jdzl — imports that dump into a database in a temporary
 // directory. The returned cleanup function closes the database and removes
-// the temporary directory; callers must invoke it. Writes to an EDN-backed
+// the temporary directory; callers must invoke it. Writes to a dump-backed
 // database are discarded when the process exits.
 func openDatabaseOrEDN(dbPath string) (*storage.Database, func(), error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, nil, fmt.Errorf("database does not exist: %s", dbPath)
 	}
 
-	if !strings.HasSuffix(dbPath, ".edn") {
+	if !isDumpFilePath(dbPath) {
 		db, err := storage.NewDatabase(dbPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to open database: %w", err)
@@ -337,21 +345,30 @@ func openDatabaseOrEDN(dbPath string) (*storage.Database, func(), error) {
 	f, err := os.Open(dbPath)
 	if err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("failed to open EDN file: %w", err)
+		return nil, nil, fmt.Errorf("failed to open dump file: %w", err)
 	}
 	defer f.Close()
 
-	if err := db.Import(f); err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("failed to import EDN dump: %w", err)
+	switch {
+	case strings.HasSuffix(dbPath, ".edn"):
+		if err := db.Import(f); err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("failed to import EDN dump: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Loaded EDN dump %s into a temporary database (changes will be discarded)\n", dbPath)
+	case strings.HasSuffix(dbPath, ".jdzl"):
+		if err := db.ImportBinary(f); err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("failed to import JDZL dump: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Loaded JDZL dump %s into a temporary database (changes will be discarded)\n", dbPath)
 	}
 
-	fmt.Fprintf(os.Stderr, "Loaded EDN dump %s into a temporary database (changes will be discarded)\n", dbPath)
 	return db, cleanup, nil
 }
 
 // runExport exports the database to an EDN file. The source may itself be an
-// EDN dump, which supports re-encoding (e.g. plain dump -> -compressed dump).
+// .edn or .jdzl dump (re-encode / convert via a temporary database).
 func runExport(dbPath, exportPath string, compressed bool) {
 	db, cleanup, err := openDatabaseOrEDN(dbPath)
 	if err != nil {
@@ -376,10 +393,10 @@ func runExport(dbPath, exportPath string, compressed bool) {
 
 // runImport imports an EDN file into the database
 func runImport(dbPath, importPath string) {
-	// Importing into an .edn path would load into a discarded temp database;
-	// the target must be a real database directory.
-	if strings.HasSuffix(dbPath, ".edn") {
-		log.Fatalf("Cannot import into %s: -db must be a database directory, not an EDN dump", dbPath)
+	// Importing into a dump path would open/create a Badger directory named
+	// after the dump file; the target must be a real database directory.
+	if isDumpFilePath(dbPath) {
+		log.Fatalf("Cannot import into %s: -db must be a database directory", dbPath)
 	}
 
 	// Check if import file exists
@@ -438,7 +455,7 @@ func exportBinaryDatabase(dbPath, exportPath string) error {
 }
 
 func runImportBin(dbPath, importPath string) {
-	if strings.HasSuffix(dbPath, ".edn") || strings.HasSuffix(dbPath, ".jdzl") {
+	if isDumpFilePath(dbPath) {
 		log.Fatalf("Cannot import into %s: -db must be a database directory", dbPath)
 	}
 	if _, err := os.Stat(importPath); os.IsNotExist(err) {
