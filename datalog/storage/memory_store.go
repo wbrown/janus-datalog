@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -21,10 +22,15 @@ var errMemoryStoreClosed = errors.New("memory store closed")
 // write lock, journaling prior values so a failed apply can restore them.
 // This matches BadgerTx immediacy for interleaving and avoids cloning the
 // whole store on every commit (required for Import and other batched writes).
+//
+// keys is the sorted set of entries map keys, kept in lockstep with puts and
+// deletes so retract and scan can binary-search prefixes instead of scanning
+// the whole map (Badger's Seek/ValidForPrefix analogue).
 type MemoryStore struct {
 	mu      sync.RWMutex
 	encoder *BinaryKeyEncoder
 	entries map[string][]byte
+	keys    []string
 	closed  bool
 }
 
@@ -76,7 +82,12 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	}
 	for i := range datoms {
 		for _, index := range Indices {
-			delete(s.entries, string(s.encoder.EncodeKey(index, &datoms[i])))
+			key := string(s.encoder.EncodeKey(index, &datoms[i]))
+			if _, ok := s.entries[key]; !ok {
+				continue
+			}
+			delete(s.entries, key)
+			removeSortedMemoryKey(&s.keys, key)
 		}
 	}
 	return len(datoms), nil
@@ -119,20 +130,23 @@ func (s *MemoryStore) scan(index IndexType, start, end []byte) (Iterator, error)
 	if end == nil {
 		end = []byte{byte(index) + 1}
 	}
+	startKey := string(start)
+	endKey := string(end)
+	i := sort.Search(len(s.keys), func(i int) bool {
+		return s.keys[i] >= startKey
+	})
 	keys := make([][]byte, 0)
-	for encoded := range s.entries {
+	for ; i < len(s.keys); i++ {
+		encoded := s.keys[i]
+		if encoded >= endKey {
+			break
+		}
 		key := []byte(encoded)
 		if len(key) == 21 && key[0] == blobKeyPrefix {
 			continue
 		}
-		if bytes.Compare(key, start) < 0 || bytes.Compare(key, end) >= 0 {
-			continue
-		}
 		keys = append(keys, append([]byte(nil), key...))
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return bytes.Compare(keys[i], keys[j]) < 0
-	})
 	return &memoryIterator{
 		index:    index,
 		keys:     keys,
@@ -236,7 +250,11 @@ func (s *MemoryStore) SetMetadataUint64(key string, value uint64) error {
 	}
 	encoded := make([]byte, 8)
 	binary.BigEndian.PutUint64(encoded, value)
-	s.entries[metadataPrefix+key] = encoded
+	metaKey := metadataPrefix + key
+	if _, had := s.entries[metaKey]; !had {
+		insertSortedMemoryKey(&s.keys, metaKey)
+	}
+	s.entries[metaKey] = encoded
 	return nil
 }
 
@@ -326,12 +344,12 @@ func (tx *memoryStoreTx) Commit() error {
 		switch op.kind {
 		case memoryTxAssert:
 			for j := range op.datoms {
-				assertMemoryDatom(tx.store.entries, tx.store.encoder, &op.datoms[j], &undo)
+				assertMemoryDatom(tx.store, &op.datoms[j], &undo)
 			}
 		case memoryTxRetract:
 			for j := range op.datoms {
-				if err := retractMemoryDatom(tx.store.entries, tx.store.encoder, reader, &op.datoms[j], &undo); err != nil {
-					restoreMemoryEntries(tx.store.entries, undo)
+				if err := retractMemoryDatom(tx.store, reader, &op.datoms[j], &undo); err != nil {
+					restoreMemoryEntries(tx.store, undo)
 					return err
 				}
 			}
@@ -348,22 +366,25 @@ func (tx *memoryStoreTx) Rollback() error {
 	return nil
 }
 
-func putMemoryEntry(entries map[string][]byte, undo *[]memoryEntryUndo, key string, value []byte) {
-	old, had := entries[key]
+func putMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string, value []byte) {
+	old, had := store.entries[key]
 	*undo = append(*undo, memoryEntryUndo{
 		key: key,
 		had: had,
 		val: append([]byte(nil), old...),
 	})
+	if !had {
+		insertSortedMemoryKey(&store.keys, key)
+	}
 	if value == nil {
-		entries[key] = nil
+		store.entries[key] = nil
 		return
 	}
-	entries[key] = append([]byte(nil), value...)
+	store.entries[key] = append([]byte(nil), value...)
 }
 
-func deleteMemoryEntry(entries map[string][]byte, undo *[]memoryEntryUndo, key string) {
-	old, had := entries[key]
+func deleteMemoryEntry(store *MemoryStore, undo *[]memoryEntryUndo, key string) {
+	old, had := store.entries[key]
 	if !had {
 		return
 	}
@@ -372,63 +393,95 @@ func deleteMemoryEntry(entries map[string][]byte, undo *[]memoryEntryUndo, key s
 		had: true,
 		val: append([]byte(nil), old...),
 	})
-	delete(entries, key)
+	delete(store.entries, key)
+	removeSortedMemoryKey(&store.keys, key)
 }
 
-func restoreMemoryEntries(entries map[string][]byte, undo []memoryEntryUndo) {
+func restoreMemoryEntries(store *MemoryStore, undo []memoryEntryUndo) {
 	for i := len(undo) - 1; i >= 0; i-- {
 		entry := undo[i]
 		if entry.had {
-			entries[entry.key] = entry.val
+			_, exists := store.entries[entry.key]
+			store.entries[entry.key] = entry.val
+			if !exists {
+				insertSortedMemoryKey(&store.keys, entry.key)
+			}
 			continue
 		}
-		delete(entries, entry.key)
+		delete(store.entries, entry.key)
+		removeSortedMemoryKey(&store.keys, entry.key)
 	}
 }
 
-func assertMemoryDatom(entries map[string][]byte, encoder *BinaryKeyEncoder, datom *datalog.Datom, undo *[]memoryEntryUndo) {
-	valueBytes, blob := encoder.EncodeValueBytes(datom.V)
+func insertSortedMemoryKey(keys *[]string, key string) {
+	i := sort.SearchStrings(*keys, key)
+	if i < len(*keys) && (*keys)[i] == key {
+		return
+	}
+	*keys = append(*keys, "")
+	copy((*keys)[i+1:], (*keys)[i:])
+	(*keys)[i] = key
+}
+
+func removeSortedMemoryKey(keys *[]string, key string) {
+	i := sort.SearchStrings(*keys, key)
+	if i == len(*keys) || (*keys)[i] != key {
+		return
+	}
+	*keys = append((*keys)[:i], (*keys)[i+1:]...)
+}
+
+func memoryKeysWithPrefix(keys []string, prefix []byte) []string {
+	p := string(prefix)
+	i := sort.Search(len(keys), func(i int) bool {
+		return keys[i] >= p
+	})
+	var matches []string
+	for ; i < len(keys); i++ {
+		if !strings.HasPrefix(keys[i], p) {
+			break
+		}
+		matches = append(matches, keys[i])
+	}
+	return matches
+}
+
+func assertMemoryDatom(store *MemoryStore, datom *datalog.Datom, undo *[]memoryEntryUndo) {
+	valueBytes, blob := store.encoder.EncodeValueBytes(datom.V)
 	if blob != nil {
 		var key [21]byte
 		key[0] = blobKeyPrefix
 		copy(key[1:], blob.Hash[:])
-		putMemoryEntry(entries, undo, string(key[:]), blob.CompressedBytes)
+		putMemoryEntry(store, undo, string(key[:]), blob.CompressedBytes)
 	}
 	for _, index := range Indices {
-		key := encoder.EncodeKeyWithValueBytes(index, datom, valueBytes)
-		putMemoryEntry(entries, undo, string(key), nil)
+		key := store.encoder.EncodeKeyWithValueBytes(index, datom, valueBytes)
+		putMemoryEntry(store, undo, string(key), nil)
 	}
 }
 
 func retractMemoryDatom(
-	entries map[string][]byte,
-	encoder *BinaryKeyEncoder,
+	store *MemoryStore,
 	blobs BlobReader,
 	datom *datalog.Datom,
 	undo *[]memoryEntryUndo,
 ) error {
 	storageDatom := ToStorageDatom(*datom)
-	valueBytes := encodeValueForSearch(storageDatom.V, encoder)
+	valueBytes := encodeValueForSearch(storageDatom.V, store.encoder)
 	searchPrefix := concatBytes(
 		[]byte{byte(EAVT)},
 		storageDatom.E[:],
 		storageDatom.A[:],
 		valueBytes,
 	)
-	var matches [][]byte
-	for encoded := range entries {
-		key := []byte(encoded)
-		if bytes.HasPrefix(key, searchPrefix) {
-			matches = append(matches, append([]byte(nil), key...))
-		}
-	}
-	for _, key := range matches {
-		stored, err := decodeDatomFromKey(EAVT, key, encoder, blobs)
+	matches := memoryKeysWithPrefix(store.keys, searchPrefix)
+	for _, encoded := range matches {
+		stored, err := decodeDatomFromKey(EAVT, []byte(encoded), store.encoder, blobs)
 		if err != nil {
 			return err
 		}
 		for _, index := range Indices {
-			deleteMemoryEntry(entries, undo, string(encoder.EncodeKey(index, &stored)))
+			deleteMemoryEntry(store, undo, string(store.encoder.EncodeKey(index, &stored)))
 		}
 	}
 	return nil

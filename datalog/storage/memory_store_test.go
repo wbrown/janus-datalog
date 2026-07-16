@@ -65,6 +65,38 @@ func TestMemoryStoreRetractRemovesMatchingDatom(t *testing.T) {
 	require.Equal(t, 1, countStoreIndex(t, store, EAVT))
 }
 
+func TestMemoryStoreMaintainsSortedKeys(t *testing.T) {
+	store := NewMemoryStore(&BinaryKeyEncoder{})
+	t.Cleanup(func() { _ = store.Close() })
+
+	attr := datalog.NewKeyword(":memory/keys")
+	for i := 0; i < 20; i++ {
+		require.NoError(t, store.Assert([]datalog.Datom{{
+			E:  datalog.NewIdentity(fmt.Sprintf("memory:keys:%02d", i)),
+			A:  attr,
+			V:  int64(i),
+			Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
+		}}))
+	}
+	require.NoError(t, store.Retract([]datalog.Datom{{
+		E:  datalog.NewIdentity("memory:keys:05"),
+		A:  attr,
+		V:  int64(5),
+		Tx: datalog.ElementID{Lamport: 6, ReplicaID: 1},
+	}}))
+
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	require.Equal(t, len(store.entries), len(store.keys))
+	for i := 1; i < len(store.keys); i++ {
+		require.Less(t, store.keys[i-1], store.keys[i], "keys must stay sorted")
+	}
+	for _, key := range store.keys {
+		_, ok := store.entries[key]
+		require.True(t, ok, "sorted key missing from entries: %q", key)
+	}
+}
+
 func TestMemoryStoreMaxElementIDForAttribute(t *testing.T) {
 	store := NewMemoryStore(&BinaryKeyEncoder{})
 	t.Cleanup(func() { _ = store.Close() })

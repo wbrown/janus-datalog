@@ -226,3 +226,38 @@ func BenchmarkMemorySimpleQuery(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkMemoryRetract(b *testing.B) {
+	for _, size := range []int{1000, 10000} {
+		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
+			store := NewMemoryStore(&BinaryKeyEncoder{})
+			b.Cleanup(func() { _ = store.Close() })
+
+			attr := datalog.NewKeyword(":bench/retract")
+			datoms := make([]datalog.Datom, size)
+			for i := 0; i < size; i++ {
+				datoms[i] = datalog.Datom{
+					E:  datalog.NewIdentity(fmt.Sprintf("retract-entity-%d", i)),
+					A:  attr,
+					V:  int64(i),
+					Tx: datalog.ElementID{Lamport: uint64(i + 1), ReplicaID: 1},
+				}
+			}
+			if err := store.Assert(datoms); err != nil {
+				b.Fatal(err)
+			}
+			target := datoms[size/2]
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if err := store.Assert([]datalog.Datom{target}); err != nil {
+					b.Fatal(err)
+				}
+				if err := store.Retract([]datalog.Datom{target}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

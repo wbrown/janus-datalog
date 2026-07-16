@@ -5,7 +5,7 @@
 WASM_PATH := $(shell go env GOROOT)/lib/wasm
 # Portable contract matrix + MemoryStore regressions. Keep the pattern tight:
 # a broad TestMemory match pulls large stress cases into the node wasm runner.
-WASM_CONTRACT_RUN := TestStoreBackend|TestScanAndScanKeysOnly|TestDatabaseBackends|TestMemoryStoreConstructs|TestMemoryStoreTx|TestMemoryStoreRetract|TestMemoryStoreMax|TestMemoryStoreScan|TestInjectedStore|TestResolveAllAttributesManySkips
+WASM_CONTRACT_RUN := TestStoreBackend|TestScanAndScanKeysOnly|TestDatabaseBackends|TestMemoryStore|TestInjectedStore|TestResolveAllAttributesManySkips
 
 # Default target
 help:
@@ -35,8 +35,11 @@ test-storage: build-testdb
 	go test ./datalog/storage/...
 
 # js/wasm via Go's Node runner (GOROOT/lib/wasm/go_js_wasm_exec). Requires node on PATH.
+# tag_nonportable_tests.go verifies every storage *_test.go is either on the
+# portable allowlist or has a js/wasm exclusion (fail-closed; use --apply to tag).
 test-wasm:
 	@command -v node >/dev/null 2>&1 || { echo "node is required for wasm tests (go_js_wasm_exec)"; exit 1; }
+	go run datalog/storage/tag_nonportable_tests.go
 	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go build ./datalog/...
 	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go build ./datalog/db
 	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 ./datalog/storage -run '$(WASM_CONTRACT_RUN)'
