@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -58,7 +60,7 @@ func writeTier3ValueThenCorruptBlob(t *testing.T) (*Database, datalog.Identity, 
 
 	// Delete all blob keys (prefix 0xFF) so the value cannot be decoded.
 	deleted := 0
-	err = db.store.db.Update(func(txn *badger.Txn) error {
+	err = requireBadgerStore(t, db).db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		prefix := []byte{0xFF}
@@ -86,6 +88,62 @@ func TestCollectTuples_SurfacesBlobDecodeError(t *testing.T) {
 
 	_, err := executor.CollectTuples(db.Query(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e))
 	require.ErrorContains(t, err, "blob", "a missing blob must not be reported as an empty result")
+}
+
+func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
+	db, entity, attr := writeTier3ValueThenCorruptBlob(t)
+	defer db.Close()
+
+	entityBytes := entity.Bytes()
+	attrBytes := ToStorageDatom(datalog.Datom{A: attr}).A
+	start, end := db.store.Encoder().EncodePrefixRange(EATV, entityBytes[:], attrBytes[:])
+	iter, err := db.store.ScanKeysOnly(EATV, start, end)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	require.True(t, iter.Next())
+	_, err = iter.Datom()
+	require.ErrorContains(t, err, "blob")
+	firstErr := iter.Error()
+	require.ErrorIs(t, firstErr, err)
+	require.False(t, iter.Next())
+	require.ErrorIs(t, iter.Error(), firstErr)
+}
+
+// After Next() returns false at an exclusive end bound, Badger may still sit
+// on the successor key. Datom()/Key() must report no current position — not
+// decode the out-of-range neighbor.
+func TestKeyOnlyIterator_DatomRejectsEndBoundSuccessor(t *testing.T) {
+	db, err := NewDatabase(t.TempDir())
+	require.NoError(t, err)
+	defer db.Close()
+
+	first := datalog.NewIdentity("bound-a")
+	second := datalog.NewIdentity("bound-b")
+	if bytes.Compare(first.Bytes(), second.Bytes()) > 0 {
+		first, second = second, first
+	}
+	attr := datalog.NewKeyword(":bound/v")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(first, attr, "one"))
+	require.NoError(t, tx.Add(second, attr, "two"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	firstBytes := first.Bytes()
+	start, end := db.store.Encoder().EncodePrefixRange(EAVT, firstBytes[:])
+	iter, err := db.store.ScanKeysOnly(EAVT, start, end)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	require.True(t, iter.Next())
+	d, err := iter.Datom()
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(d.E.Bytes(), firstBytes[:]))
+
+	require.False(t, iter.Next(), "scan of first entity must stop before successor")
+	_, err = iter.Datom()
+	require.ErrorContains(t, err, "no current datom")
 }
 
 // Analyze fully executes the query (EXPLAIN ANALYZE-style), so a deferred
@@ -284,7 +342,7 @@ func writeValidThenCorruptBlob(t *testing.T) *Database {
 	// Delete all blob keys (prefix 0xFF). Only `high` is Tier-3, so only its value
 	// becomes undecodable; `low` is inline and still resolves.
 	deleted := 0
-	err = db.store.db.Update(func(txn *badger.Txn) error {
+	err = requireBadgerStore(t, db).db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		prefix := []byte{0xFF}

@@ -401,27 +401,27 @@ func (m *BadgerMatcher) matchUnboundAsRelation(
 	properties := unboundScanProperties(pattern, index, card, m.isHistoryMode())
 	if orderedProperties, ok := historyTAEVProperties(q, pattern, m.isHistoryMode()); ok {
 		index = TAEV
-		start, end = m.store.encoder.EncodePrefixRange(TAEV)
+		start, end = m.encoder.EncodePrefixRange(TAEV)
 		properties = orderedProperties
 	} else if orderedProperties, ok := historyAETVProperties(q, pattern, m.isHistoryMode()); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			attr := ToStorageDatom(datalog.Datom{A: keyword}).A
 			index = AETV
-			start, end = m.store.encoder.EncodePrefixRange(AETV, attr[:])
+			start, end = m.encoder.EncodePrefixRange(AETV, attr[:])
 			properties = orderedProperties
 		}
 	} else if orderedProperties, ok := historyEATVProperties(q, pattern, m.isHistoryMode()); ok {
 		if identity, identityOK := e.(datalog.Identity); identityOK {
 			entity := ToStorageDatom(datalog.Datom{E: identity}).E
 			index = EATV
-			start, end = m.store.encoder.EncodePrefixRange(EATV, entity[:])
+			start, end = m.encoder.EncodePrefixRange(EATV, entity[:])
 			properties = orderedProperties
 		}
 	} else if orderedProperties, ok := historyATEVProperties(q, pattern, m.isHistoryMode()); ok {
 		if keyword, keywordOK := a.(datalog.Keyword); keywordOK {
 			attr := ToStorageDatom(datalog.Datom{A: keyword}).A
 			index = ATEV
-			start, end = m.store.encoder.EncodePrefixRange(ATEV, attr[:])
+			start, end = m.encoder.EncodePrefixRange(ATEV, attr[:])
 			properties = orderedProperties
 		}
 	}
@@ -800,7 +800,7 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	aKw := it.boundA.(datalog.Keyword)
 	var aStorage Attribute
 	copy(aStorage[:], aKw.String())
-	vBytes := encodeValueForSearch(it.currentBoundV, it.matcher.store.encoder)
+	vBytes := encodeValueForSearch(it.currentBoundV, it.matcher.encoder)
 
 	owner, ownerTx, err := it.matcher.resolveAVLWW(aStorage, vBytes, it.currentBoundV)
 	if err != nil {
@@ -823,7 +823,7 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 
 // validateCandidate checks if the current value of (E, A) matches boundV
 func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) bool {
-	encoder := it.matcher.store.encoder
+	encoder := it.matcher.encoder
 
 	// Convert E to storage bytes
 	eBytes := ToStorageDatom(datalog.Datom{E: e}).E
@@ -998,7 +998,7 @@ func (it *validatingVBoundIterator) getCardinalityEnum(a datalog.Keyword) schema
 // openCRDTScan opens a CRDT-resolving scan on the V-primary index for current bound V.
 // Returns both the CRDTResolvingIterator wrapper and the raw iterator (for proper Close).
 func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iterator, error) {
-	encoder := it.matcher.store.encoder
+	encoder := it.matcher.encoder
 	var start, end []byte
 
 	if it.matcher.handler != nil {
@@ -1083,7 +1083,7 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 
 // encodeValue converts a value to bytes for index prefix
 func (it *validatingVBoundIterator) encodeValue(v any) []byte {
-	return encodeValueForSearch(v, it.matcher.store.encoder)
+	return encodeValueForSearch(v, it.matcher.encoder)
 }
 
 // buildTuple creates a result tuple from a validated datom

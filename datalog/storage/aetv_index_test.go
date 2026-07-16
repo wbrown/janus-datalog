@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 // AETV Index Tests
@@ -330,7 +332,7 @@ func TestAETVStorageScan(t *testing.T) {
 	var attrBytes Attribute
 	copy(attrBytes[:], attr.String())
 
-	start, end := db.Store().encoder.EncodePrefixRange(AETV, attrBytes[:])
+	start, end := db.Store().Encoder().EncodePrefixRange(AETV, attrBytes[:])
 	iter, err := db.Store().ScanKeysOnly(AETV, start, end)
 	require.NoError(t, err)
 	defer iter.Close()
@@ -372,7 +374,7 @@ func TestAETVStorageScanTxDescendingOrder(t *testing.T) {
 	copy(attrBytes[:], attr.String())
 	eBytes := entity.Hash()
 
-	start, end := db.Store().encoder.EncodePrefixRange(AETV, attrBytes[:], eBytes[:])
+	start, end := db.Store().Encoder().EncodePrefixRange(AETV, attrBytes[:], eBytes[:])
 	iter, err := db.Store().ScanKeysOnly(AETV, start, end)
 	require.NoError(t, err)
 	defer iter.Close()

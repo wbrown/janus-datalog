@@ -1,4 +1,4 @@
 #!/bin/sh
-echo "Running go test ./..."
-go test -count=1 ./...
+echo "Running make test (native + wasm)..."
+make test
 exit $?

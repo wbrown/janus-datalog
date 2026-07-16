@@ -4,6 +4,11 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 )
 
+const (
+	metadataPrefix = "_meta:"
+	blobKeyPrefix  = byte(0xFF)
+)
+
 // IndexType represents different index orderings
 type IndexType uint8
 
@@ -23,13 +28,24 @@ var Indices = []IndexType{EAVT, EATV, AEVT, AETV, ATEV, AVET, VAET, TAEV}
 
 // Store is the interface for datom storage
 type Store interface {
+	Encoder() *BinaryKeyEncoder
+
 	// Write operations
 	Assert(datoms []datalog.Datom) error
 	Retract(datoms []datalog.Datom) error
+	DeleteDatoms(datoms []datalog.Datom) (int, error)
 
 	// Read operations
 	Scan(index IndexType, start, end []byte) (Iterator, error)
+	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
+	// Get retrieves a single datom by full index key. Missing keys return (nil, nil).
+	// CountKeys is not on Store — it remains *BadgerStore-only (debug/test);
+	// see docs/BREAKING_RELEASE_UPGRADE_v0.15.0.md.
 	Get(index IndexType, key []byte) (*datalog.Datom, error)
+	DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
+	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
+	GetMetadataUint64(key string) (uint64, bool, error)
+	SetMetadataUint64(key string, value uint64) error
 
 	// MaxElementID returns the highest ElementID in the store.
 	// Used to restore the Lamport clock on database open.
@@ -66,9 +82,12 @@ type Store interface {
 // Error() must be checked after Next() returns false. A nil result
 // indicates normal exhaustion; non-nil indicates that iteration
 // aborted partway through (storage scan failure, sub-scan failure
-// inside a wrapping iterator, or a Datom() decode error that
-// couldn't be returned to the caller because Next() had already
-// indicated "no next item").
+// inside a wrapping iterator, or a decode failure retained as a sticky
+// Error after Next() returned false).
+//
+// Workspace contract: Datom() returns the iterator's current datom
+// workspace until Next, Seek, or Close. Callers that retain values past
+// those calls must copy. Scan and ScanKeysOnly share this contract.
 type Iterator interface {
 	Next() bool
 	Datom() (*datalog.Datom, error)

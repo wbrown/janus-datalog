@@ -1058,7 +1058,7 @@ We welcome contributions! Here's how to get started:
 **Areas where we'd love help:**
 
 - Additional aggregation functions (e.g., distinct, median)
-- WASM build support
+- WASM / in-memory backend (`db.OpenMemory`, host-managed Export/Import persistence)
 - Query optimization with statistics (for SQL-style workloads)
 - Documentation improvements
 

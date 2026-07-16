@@ -10,6 +10,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/db"
 	"github.com/wbrown/janus-datalog/datalog/schema"
+	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
 func tempDB(t *testing.T, opts ...db.Option) *db.DB {
@@ -35,6 +36,36 @@ func TestOpenClose(t *testing.T) {
 
 	err = d.Close()
 	require.NoError(t, err)
+}
+
+func TestOpenMemory(t *testing.T) {
+	d, err := db.OpenMemory(db.WithReplicaID(42))
+	require.NoError(t, err)
+	defer d.Close()
+	_, ok := d.Store().(*storage.MemoryStore)
+	require.True(t, ok)
+
+	entity := datalog.NewIdentity("memory-public")
+	attr := datalog.NewKeyword(":memory/name")
+	tx := d.NewTransaction()
+	require.NoError(t, tx.Set(entity, attr, "portable"))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	var names []string
+	require.NoError(t, d.QueryInto(
+		&names,
+		`[:find ?name :where [?entity :memory/name ?name]]`,
+	))
+	require.Equal(t, []string{"portable"}, names)
+}
+
+func TestOpenWithInjectedStoreDoesNotRequirePath(t *testing.T) {
+	store := storage.NewMemoryStore(&storage.BinaryKeyEncoder{})
+	database, err := db.Open("", db.WithStore(store), db.WithReplicaID(43))
+	require.NoError(t, err)
+	defer database.Close()
+	require.Same(t, store, database.Store())
 }
 
 func TestQueryRoundTrip(t *testing.T) {

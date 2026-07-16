@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkOHLCQuery/WithoutPushdown-10 	      46	  26952273 ns/op	24685516 B/op	  398134 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10 	      45	  24976319 ns/op	24675418 B/op	  398087 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10 	      45	  24960637 ns/op	24671676 B/op	  398087 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10 	      44	  24913608 ns/op	24675198 B/op	  398087 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10 	      45	  24787621 ns/op	24673133 B/op	  398085 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10    	      46	  24874353 ns/op	24677285 B/op	  398087 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10    	      44	  24911934 ns/op	24676819 B/op	  398086 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10    	      44	  24912776 ns/op	24677021 B/op	  398087 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10    	      46	  25034024 ns/op	24672652 B/op	  398090 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10    	      45	  24894766 ns/op	24673275 B/op	  398086 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       1	1303498791 ns/op	2390800720 B/op	 8250507 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       2	 559068042 ns/op	214343744 B/op	 3930911 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       2	 550391020 ns/op	214291828 B/op	 3930659 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       2	 551157938 ns/op	214302860 B/op	 3930702 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       2	 549644666 ns/op	214289624 B/op	 3930652 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       2	 591860688 ns/op	214534384 B/op	 3931613 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       2	 549408354 ns/op	214286328 B/op	 3930639 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       2	 577644458 ns/op	214459780 B/op	 3931317 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       2	 705442208 ns/op	215210184 B/op	 3934311 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       2	 553181812 ns/op	214306324 B/op	 3930716 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	4035228292 ns/op	5135590360 B/op	71780195 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	4511405875 ns/op	5138139896 B/op	71790253 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	5027447500 ns/op	5141384408 B/op	71802927 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	4530442708 ns/op	5138473896 B/op	71791515 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	4471020542 ns/op	5138109240 B/op	71790078 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      18	  72207361 ns/op	49685452 B/op	  620128 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      26	  44592787 ns/op	49418045 B/op	  619489 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      24	  63114356 ns/op	49565560 B/op	  619918 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      26	  40444872 ns/op	49425236 B/op	  619395 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      30	  40878006 ns/op	49427221 B/op	  619405 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	320.762s

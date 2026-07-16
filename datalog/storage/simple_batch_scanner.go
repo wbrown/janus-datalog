@@ -165,7 +165,7 @@ func (s *simpleBatchScanner) calculateScanRange(bindingSet map[string]executor.T
 		if !ok {
 			panic(fmt.Sprintf("Tx constant must be ElementID, got %T", c.Value))
 		}
-		constT = s.matcher.store.encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
+		constT = s.matcher.encoder.EncodeTxForPrefix(NewTxFromElementID(eid))
 	}
 
 	// Find min and max keys from binding values
@@ -214,7 +214,7 @@ func (s *simpleBatchScanner) buildKey(value interface{}, constA, constT []byte) 
 	}
 
 	// Use the store's encoder to build proper keys
-	encoder := s.matcher.store.encoder
+	encoder := s.matcher.encoder
 
 	// Use named IndexType constants. The earlier implementation switched
 	// on integer literals (0=EAVT, 1=AEVT, 3=VAET, 4=TAEV), which was

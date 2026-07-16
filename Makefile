@@ -1,14 +1,20 @@
 # Janus Datalog - Makefile
 
-.PHONY: test test-fast test-storage bench bench-prebuilt profile clean-testdb build-testdb help
+.PHONY: test test-fast test-storage test-wasm bench bench-prebuilt profile clean-testdb build-testdb help
+
+WASM_PATH := $(shell go env GOROOT)/lib/wasm
+# Portable contract matrix + MemoryStore regressions. Keep the pattern tight:
+# a broad TestMemory match pulls large stress cases into the node wasm runner.
+WASM_CONTRACT_RUN := TestStoreBackend|TestScanAndScanKeysOnly|TestDatabaseBackends|TestMemoryStore|TestInjectedStore|TestResolveAllAttributesManySkips
 
 # Default target
 help:
 	@echo "Janus Datalog - Available targets:"
 	@echo ""
-	@echo "  make test           - Run all tests (auto-builds test DB if needed)"
+	@echo "  make test           - Native suite + wasm contracts (standard gate)"
 	@echo "  make test-fast      - Run tests with short flag (skips slow tests)"
-	@echo "  make test-storage   - Run storage tests only"
+	@echo "  make test-storage   - Run storage tests only (native)"
+	@echo "  make test-wasm      - Portable storage contracts + wasmtest under js/wasm"
 	@echo "  make bench          - Run all benchmarks"
 	@echo "  make bench-prebuilt - Run pre-built database benchmarks"
 	@echo "  make profile        - Profile pattern matching with pre-built DB"
@@ -19,13 +25,25 @@ help:
 
 # Test targets
 test: build-testdb
-	go test ./...
+	go test -count=1 ./...
+	$(MAKE) test-wasm
 
 test-fast:
 	go test -short ./...
 
 test-storage: build-testdb
 	go test ./datalog/storage/...
+
+# js/wasm via Go's Node runner (GOROOT/lib/wasm/go_js_wasm_exec). Requires node on PATH.
+# tag_nonportable_tests.go verifies every storage *_test.go is either on the
+# portable allowlist or has a js/wasm exclusion (fail-closed; use --apply to tag).
+test-wasm:
+	@command -v node >/dev/null 2>&1 || { echo "node is required for wasm tests (go_js_wasm_exec)"; exit 1; }
+	go run datalog/storage/tag_nonportable_tests.go
+	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go build ./datalog/...
+	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go build ./datalog/db
+	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 ./datalog/storage -run '$(WASM_CONTRACT_RUN)'
+	PATH="$(WASM_PATH):$$PATH" GOOS=js GOARCH=wasm go test -count=1 ./datalog/wasmtest
 
 # Benchmark targets
 bench: build-testdb

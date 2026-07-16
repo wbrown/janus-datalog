@@ -1,3 +1,5 @@
+//go:build !(js && wasm)
+
 package storage
 
 import (
@@ -545,8 +547,8 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 
 	t.Run("A+Tx_only", func(t *testing.T) {
 		_, start, end := matcher.chooseIndexForValues(ATEV, nil, a, nil, tx)
-		expected := matcher.store.encoder.EncodePrefix(ATEV, aStorage[:],
-			matcher.store.encoder.EncodeTxForPrefix(NewTxFromElementID(tx)))
+		expected := matcher.store.Encoder().EncodePrefix(ATEV, aStorage[:],
+			matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx)))
 		if !bytes.HasPrefix(start, expected) {
 			t.Errorf("ATEV [A][Tx] prefix: start = %x, expected prefix %x", start, expected)
 		}
@@ -557,8 +559,8 @@ func TestChooseIndexForValues_ATEV(t *testing.T) {
 
 	t.Run("A+Tx+E", func(t *testing.T) {
 		_, start, end := matcher.chooseIndexForValues(ATEV, e, a, nil, tx)
-		expected := matcher.store.encoder.EncodePrefix(ATEV, aStorage[:],
-			matcher.store.encoder.EncodeTxForPrefix(NewTxFromElementID(tx)),
+		expected := matcher.store.Encoder().EncodePrefix(ATEV, aStorage[:],
+			matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx)),
 			eHash[:])
 		if !bytes.HasPrefix(start, expected) {
 			t.Errorf("ATEV [A][Tx][E] prefix: start = %x, expected prefix %x", start, expected)
@@ -591,7 +593,7 @@ func TestSimpleBatchScanner_BuildKey_ATEV_VVaries(t *testing.T) {
 	var aBytes Attribute
 	copy(aBytes[:], a.String())
 	tx := datalog.ElementID{Lamport: 11, ReplicaID: 1}
-	constT := matcher.store.encoder.EncodeTxForPrefix(NewTxFromElementID(tx))
+	constT := matcher.store.Encoder().EncodeTxForPrefix(NewTxFromElementID(tx))
 
 	scanner := &simpleBatchScanner{
 		matcher:  matcher,
@@ -606,7 +608,7 @@ func TestSimpleBatchScanner_BuildKey_ATEV_VVaries(t *testing.T) {
 	if got == nil {
 		t.Fatal("buildKey(ATEV, position=2) returned nil")
 	}
-	expected := matcher.store.encoder.EncodePrefix(ATEV, aBytes[:], constT)
+	expected := matcher.store.Encoder().EncodePrefix(ATEV, aBytes[:], constT)
 	if !bytes.Equal(got, expected) {
 		t.Errorf("ATEV position=2 key mismatch: got %x, want %x", got, expected)
 	}

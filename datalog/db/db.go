@@ -42,6 +42,7 @@ func Open(path string, opts ...Option) (*DB, error) {
 	}
 	d, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
 		Path:                 path,
+		Store:                cfg.store,
 		Schema:               cfg.schema,
 		ReplicaID:            cfg.replicaID,
 		AnnotationHandler:    cfg.annotationHandler,
@@ -51,6 +52,31 @@ func Open(path string, opts ...Option) (*DB, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)
+	}
+	return d, nil
+}
+
+// OpenMemory creates a database backed by the pure-Go ordered memory store.
+func OpenMemory(opts ...Option) (*DB, error) {
+	var cfg config
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	store := cfg.store
+	if store == nil {
+		store = storage.NewMemoryStore(nil)
+	}
+	d, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+		Store:                store,
+		Schema:               cfg.schema,
+		ReplicaID:            cfg.replicaID,
+		AnnotationHandler:    cfg.annotationHandler,
+		DisableCache:         cfg.disableCache,
+		PlannerOptions:       cfg.plannerOptions,
+		CompressionThreshold: cfg.compressionThreshold,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("db.OpenMemory: %w", err)
 	}
 	return d, nil
 }

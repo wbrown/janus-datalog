@@ -1,0 +1,17 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+BenchmarkMemoryRetract/Size1000-10         	  283616	      3834 ns/op	    7637 B/op	     100 allocs/op
+BenchmarkMemoryRetract/Size1000-10         	  331600	      3430 ns/op	    7635 B/op	     100 allocs/op
+BenchmarkMemoryRetract/Size1000-10         	  336114	      3453 ns/op	    7635 B/op	     100 allocs/op
+BenchmarkMemoryRetract/Size10000-10        	  321421	      3647 ns/op	    7636 B/op	     100 allocs/op
+BenchmarkMemoryRetract/Size10000-10        	  337203	      3499 ns/op	    7635 B/op	     100 allocs/op
+BenchmarkMemoryRetract/Size10000-10        	  325268	      3673 ns/op	    7636 B/op	     100 allocs/op
+BenchmarkMemoryAssertBulk/Size1000-10      	     621	   2078393 ns/op	 6300143 B/op	   27753 allocs/op
+BenchmarkMemoryAssertBulk/Size1000-10      	     610	   1918264 ns/op	 6299933 B/op	   27751 allocs/op
+BenchmarkMemoryAssertBulk/Size1000-10      	     634	   1859866 ns/op	 6299545 B/op	   27750 allocs/op
+BenchmarkMemoryAssertBulk/Size4000-10      	     140	   8636779 ns/op	26681476 B/op	  110837 allocs/op
+BenchmarkMemoryAssertBulk/Size4000-10      	     141	   8412842 ns/op	26679197 B/op	  110833 allocs/op
+BenchmarkMemoryAssertBulk/Size4000-10      	     142	   8355008 ns/op	26680462 B/op	  110833 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	144.518s

@@ -286,7 +286,7 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 	// Use the provided index and compute range based on bound values
 	var startParts, endParts [][]byte
 
-	encoder := m.store.encoder
+	encoder := m.encoder
 
 	switch index {
 	case EAVT, EATV: // E-primary indices: E first, then A

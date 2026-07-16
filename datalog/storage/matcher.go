@@ -11,9 +11,10 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// BadgerMatcher implements the executor.PatternMatcher interface using BadgerStore
+// BadgerMatcher implements executor.PatternMatcher over a storage Store.
 type BadgerMatcher struct {
-	store             *BadgerStore
+	store             Store
+	encoder           *BinaryKeyEncoder
 	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
 	builderCache      *sync.Map                // map[string]*query.InternedTupleBuilder - Thread-safe cache for tuple builders
 	builderCacheOnce  sync.Once                // Ensures builderCache is initialized exactly once
@@ -72,19 +73,21 @@ func (m *BadgerMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
 	return CacheKey{E: e, A: a}, true
 }
 
-// NewBadgerMatcher creates a new pattern matcher for the BadgerStore
-func NewBadgerMatcher(store *BadgerStore) *BadgerMatcher {
+// NewBadgerMatcher creates a new pattern matcher for a storage backend.
+func NewBadgerMatcher(store Store) *BadgerMatcher {
 	return &BadgerMatcher{
 		store:        store,
+		encoder:      store.Encoder(),
 		builderCache: &sync.Map{},
 		options:      executor.ExecutorOptions{}, // Default options
 	}
 }
 
 // NewBadgerMatcherWithOptions creates a new pattern matcher with specific options
-func NewBadgerMatcherWithOptions(store *BadgerStore, opts executor.ExecutorOptions) *BadgerMatcher {
+func NewBadgerMatcherWithOptions(store Store, opts executor.ExecutorOptions) *BadgerMatcher {
 	return &BadgerMatcher{
 		store:        store,
+		encoder:      store.Encoder(),
 		builderCache: &sync.Map{},
 		options:      opts,
 	}
@@ -102,6 +105,7 @@ func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 
 	return &BadgerMatcher{
 		store:        m.store,
+		encoder:      m.encoder,
 		txID:         &txID,
 		builderCache: m.builderCache,
 		handler:      m.handler,
@@ -460,7 +464,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	// 5. TAEV - if only Tx is bound
 	// 6. EAVT - full scan if nothing is bound
 
-	encoder := m.store.encoder
+	encoder := m.encoder
 
 	if e != nil {
 		// E is bound
@@ -730,7 +734,7 @@ func (m *BadgerMatcher) LookupAttribute(
 	eBytes := entity.Bytes()
 	aStorage := ToStorageDatom(datalog.Datom{A: attr}).A
 
-	encoder := m.store.encoder
+	encoder := m.encoder
 
 	// Determine cardinality and value type for correct resolution
 	card := schema.CardinalityOne // default
@@ -1023,7 +1027,7 @@ func (m *BadgerMatcher) LookupAllAttributes(entity datalog.Identity, attr datalo
 //   - OpCRDTAdd/OpCRDTRemove → add-wins set (cardinality-many): resolve membership
 //   - OpRGAInsert/OpRGATombstone → RGA vector (cardinality-vector): reconstruct ordered list
 func (m *BadgerMatcher) lookupAllAttributesFallback(eBytes, aBytes []byte) ([]interface{}, error) {
-	encoder := m.store.encoder
+	encoder := m.encoder
 
 	// Peek at first datom to determine op type
 	start, end := encoder.EncodePrefixRange(AEVT, aBytes, eBytes)
