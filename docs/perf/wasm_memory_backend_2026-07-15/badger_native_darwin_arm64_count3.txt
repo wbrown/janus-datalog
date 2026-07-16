@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkKeyOnlyScanning/Size1000/Binary-10    	    9026	    127626 ns/op	   40543 B/op	    1763 allocs/op
+BenchmarkKeyOnlyScanning/Size1000/Binary-10    	    9454	    125967 ns/op	   40493 B/op	    1763 allocs/op
+BenchmarkKeyOnlyScanning/Size1000/Binary-10    	    9175	    129523 ns/op	   40529 B/op	    1763 allocs/op
+BenchmarkKeyOnlyScanning/Size10000/Binary-10   	     823	   1446917 ns/op	  447469 B/op	   19802 allocs/op
+BenchmarkKeyOnlyScanning/Size10000/Binary-10   	     824	   1442571 ns/op	  447333 B/op	   19801 allocs/op
+BenchmarkKeyOnlyScanning/Size10000/Binary-10   	     778	   1461346 ns/op	  449961 B/op	   19803 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10   	    3064	    404997 ns/op	  436300 B/op	    8097 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10   	    3073	    387804 ns/op	  436241 B/op	    8097 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10   	    3068	    385114 ns/op	  436235 B/op	    8097 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10  	     162	   7494290 ns/op	 7364628 B/op	  136640 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10  	     158	   7529637 ns/op	 7365199 B/op	  136642 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10  	     163	   7327657 ns/op	 7364512 B/op	  136640 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10               	     636	   1869697 ns/op	  337391 B/op	   10274 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10               	     632	   2069010 ns/op	  338113 B/op	   10277 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10               	     638	   2015714 ns/op	  337921 B/op	   10276 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	155.915s

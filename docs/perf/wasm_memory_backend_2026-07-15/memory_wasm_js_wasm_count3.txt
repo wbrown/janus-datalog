@@ -1,0 +1,23 @@
+goos: js
+goarch: wasm
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+BenchmarkMemoryKeyOnlyScanning/Size1000        	     584	   2208878 ns/op	  817608 B/op	   10760 allocs/op
+BenchmarkMemoryKeyOnlyScanning/Size1000        	     558	   2110184 ns/op	  817608 B/op	   10760 allocs/op
+BenchmarkMemoryKeyOnlyScanning/Size1000        	     637	   1897552 ns/op	  817608 B/op	   10760 allocs/op
+BenchmarkMemoryKeyOnlyScanning/Size10000       	      62	  33148271 ns/op	 8575112 B/op	  109767 allocs/op
+BenchmarkMemoryKeyOnlyScanning/Size10000       	      45	  24433271 ns/op	 8575112 B/op	  109767 allocs/op
+BenchmarkMemoryKeyOnlyScanning/Size10000       	      46	  24156071 ns/op	 8575112 B/op	  109767 allocs/op
+BenchmarkMemoryResolveAllAttributesMany/entities=230/batch         	     354	   3287797 ns/op	 1375528 B/op	   16597 allocs/op
+BenchmarkMemoryResolveAllAttributesMany/entities=230/batch         	     331	   3511334 ns/op	 1375528 B/op	   16597 allocs/op
+BenchmarkMemoryResolveAllAttributesMany/entities=230/batch         	     375	   3185723 ns/op	 1375528 B/op	   16597 allocs/op
+BenchmarkMemoryResolveAllAttributesMany/entities=3899/batch        	      13	  83922294 ns/op	24018344 B/op	  280802 allocs/op
+BenchmarkMemoryResolveAllAttributesMany/entities=3899/batch        	      22	  67285993 ns/op	24018344 B/op	  280802 allocs/op
+BenchmarkMemoryResolveAllAttributesMany/entities=3899/batch        	      21	  65781431 ns/op	24018344 B/op	  280802 allocs/op
+BenchmarkMemoryStorageHashJoinCompiledMatching                     	      43	  29027393 ns/op	 9947287 B/op	  100263 allocs/op
+BenchmarkMemoryStorageHashJoinCompiledMatching                     	      38	  29932632 ns/op	 9947289 B/op	  100263 allocs/op
+BenchmarkMemoryStorageHashJoinCompiledMatching                     	      38	  29956359 ns/op	 9947289 B/op	  100263 allocs/op
+BenchmarkMemorySimpleQuery                                         	       6	 187655296 ns/op	108079333 B/op	 1354023 allocs/op
+BenchmarkMemorySimpleQuery                                         	       6	 176414805 ns/op	108079190 B/op	 1354021 allocs/op
+BenchmarkMemorySimpleQuery                                         	       6	 176408107 ns/op	108079190 B/op	 1354021 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	23.758s

@@ -43,15 +43,19 @@ go tool pprof -top -cum -nodecount=40 /tmp/exec.test <prof>.prof
 ### `wasm_memory_backend_2026-07-15/`
 
 Post-Store-injection / Scan-workspace-unification checkpoint for the WASM
-memory-backend work. Captures:
+memory-backend work.
 
-- `BenchmarkKeyOnlyScanning` (1K/10K)
-- `BenchmarkDatomFromKeyDirect` / `BenchmarkDatomFromKeyToTuple`
-- `BenchmarkStorageHashJoinCompiledMatching`
-- `BenchmarkResolveAllAttributesMany` (230 / 3,899 entities)
-- OHLC + `BenchmarkComplexQueryCheckpoint` (companion file when present)
+**Native vs js/wasm (MemoryStore, apples-to-apples):** see
+[`MEMORY_NATIVE_VS_WASM.md`](wasm_memory_backend_2026-07-15/MEMORY_NATIVE_VS_WASM.md).
+Portable `BenchmarkMemory*` suite; WASM via Node is **~5.2×** slower geomean
+than native darwin/arm64 (allocs unchanged). Count=3.
 
-Machine: Apple M5, go1.26.3 darwin/arm64. Count=5.
+Also retains earlier Badger-native checkpoint files (not wasm-runnable):
+
+- `scan_decode_hashjoin_pull_baseline_count5.txt`
+- `ohlc_complex_baseline_count5.txt`
+
+Machine: Apple M5, go1.26.3.
 
 ### `relation_input_parallel_baseline_2026-05-26.txt`
 
