@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -236,49 +235,83 @@ func TestResolveAllAttributesManySkipsSuccessorDecodeErrors(t *testing.T) {
 	require.NoError(t, tx.Add(second, attr, "successor"))
 	_, err = tx.Commit()
 	require.NoError(t, err)
-	corruptEntityEATVKeys(t, store, second)
+
+	// Commit also writes :db/txInstant. In EATV order that tx-metadata entity
+	// often sits between the two user entities, so corrupting `second` never
+	// reaches the shared scan for `first`. Corrupt the true immediate EATV
+	// successor of `first` instead — that is the key the pre-decode bound skips.
+	successorKey := immediateEATVSuccessorKey(t, store, first)
+	corruptEATVKey(t, store, successorKey)
+	requireImmediateEATVSuccessorTruncated(t, store, first)
 
 	results, err := db.ResolveAllAttributesMany([]datalog.Identity{first})
 	require.NoError(t, err)
 	require.Equal(t, "ok", results[0][attr])
 }
 
-func corruptEntityEATVKeys(t *testing.T, store *MemoryStore, entity datalog.Identity) {
+// immediateEATVSuccessorKey returns the first EATV key after entity's range.
+func immediateEATVSuccessorKey(t *testing.T, store *MemoryStore, entity datalog.Identity) string {
+	t.Helper()
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	entityBytes := entity.Bytes()
+	prefix := string(append([]byte{byte(EATV)}, entityBytes[:]...))
+	var sawOwn bool
+	var successor string
+	store.keys.AscendGreaterOrEqual(prefix, func(encoded string) bool {
+		key := []byte(encoded)
+		if len(key) < 21 || key[0] != byte(EATV) {
+			return false
+		}
+		if bytes.Equal(key[1:21], entityBytes[:]) {
+			sawOwn = true
+			return true
+		}
+		successor = encoded
+		return false
+	})
+	require.True(t, sawOwn, "entity must have at least one EATV key")
+	require.NotEmpty(t, successor, "expected an EATV key after entity (tx metadata or next user)")
+	return successor
+}
+
+// corruptEATVKey truncates one EATV key in lockstep with the ordered index so
+// Datom() decode fails if the pull_batch pre-decode entity bound is skipped.
+func corruptEATVKey(t *testing.T, store *MemoryStore, encoded string) {
 	t.Helper()
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	value, ok := store.entries[encoded]
+	require.True(t, ok, "successor key missing from entries")
+	require.Greater(t, len(encoded), 22, "successor key must be long enough to truncate")
+	delete(store.entries, encoded)
+	store.keys.Delete(encoded)
+	truncatedKey := string(append([]byte(nil), []byte(encoded)[:22]...))
+	store.entries[truncatedKey] = value
+	store.keys.ReplaceOrInsert(truncatedKey)
+}
+
+// requireImmediateEATVSuccessorTruncated proves the next EATV key after entity
+// is the truncated successor — otherwise ResolveAllAttributesMany never hits it.
+func requireImmediateEATVSuccessorTruncated(t *testing.T, store *MemoryStore, entity datalog.Identity) {
+	t.Helper()
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 	entityBytes := entity.Bytes()
-	var keys []string
-	for encoded := range store.entries {
-		key := []byte(encoded)
-		if len(key) > 21 && key[0] == byte(EATV) && bytes.Equal(key[1:21], entityBytes[:]) {
-			keys = append(keys, encoded)
-		}
-	}
-	require.NotEmpty(t, keys)
-	for _, encoded := range keys {
-		value := store.entries[encoded]
-		delete(store.entries, encoded)
-		store.keys.Delete(encoded)
-		// Keep the entity prefix so the shared scan still observes this successor
-		// key, but truncate so Datom() decode fails if the boundary check is skipped.
-		truncated := append([]byte(nil), []byte(encoded)[:22]...)
-		truncatedKey := string(truncated)
-		store.entries[truncatedKey] = value
-		store.keys.ReplaceOrInsert(truncatedKey)
-	}
-	// Prove the ordered index still surfaces a truncated EATV key for this entity
-	// (otherwise ResolveAllAttributesMany would never hit the decode-skip path).
-	sawTruncated := false
 	prefix := string(append([]byte{byte(EATV)}, entityBytes[:]...))
+	var next string
 	store.keys.AscendGreaterOrEqual(prefix, func(encoded string) bool {
-		if !strings.HasPrefix(encoded, prefix) {
+		key := []byte(encoded)
+		if len(key) < 21 || key[0] != byte(EATV) {
 			return false
 		}
-		if len(encoded) == 22 {
-			sawTruncated = true
+		if bytes.Equal(key[1:21], entityBytes[:]) {
+			return true
 		}
-		return true
+		next = encoded
+		return false
 	})
-	require.True(t, sawTruncated, "corruptEntityEATVKeys must leave a truncated key in the ordered index")
+	require.NotEmpty(t, next, "missing EATV successor after entity")
+	require.Equal(t, 22, len(next), "immediate EATV successor must be the truncated key")
+	require.False(t, bytes.Equal([]byte(next)[1:21], entityBytes[:]), "successor must be a different entity")
 }

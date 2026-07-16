@@ -21,6 +21,35 @@ is closer (~1.4–1.9× time, ~2–3× bytes).
 
 MemoryStore is the wasm/portability backend, not a Badger performance peer yet.
 
+### Assert / Retract (Store path, post B-tree)
+
+Same host/date as above; count=3. Artifacts:
+`memory_assert_retract_native_darwin_arm64_count3.txt` vs
+`badger_assert_retract_native_darwin_arm64_count3.txt`. Badger mirrors live in
+`datalog/storage/badger_assert_retract_bench_test.go`.
+
+| Benchmark | Badger | Memory | Badger / Memory |
+|-----------|-------:|-------:|----------------:|
+| AssertBulk/1000 | 5.87 ms | 1.92 ms | **3.1×** |
+| AssertBulk/4000 | 22.8 ms | 8.41 ms | **2.7×** |
+| Retract/1000 | 139 µs | 3.45 µs | **40×** |
+| Retract/10000 | 141 µs | 3.65 µs | **39×** |
+
+Bulk Assert is Memory-faster on the Store path (in-process B-tree vs Badger open
++ LSM write). Retract is essentially flat in N for both; Memory stays ~40×
+cheaper (point delete in the B-tree vs Badger seek/delete). Scan/join above is
+still Badger-faster — different hot path.
+
+Re-run:
+
+```bash
+go test -count=3 -bench='BenchmarkMemoryAssertBulk|BenchmarkMemoryRetract' -benchmem ./datalog/storage \
+  > docs/perf/wasm_memory_backend_2026-07-15/memory_assert_retract_native_darwin_arm64_count3.txt
+
+go test -count=3 -bench='BenchmarkBadgerAssertBulk|BenchmarkBadgerRetract' -benchmem ./datalog/storage \
+  > docs/perf/wasm_memory_backend_2026-07-15/badger_assert_retract_native_darwin_arm64_count3.txt
+```
+
 ---
 
 ## Native MemoryStore vs js/wasm
