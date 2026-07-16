@@ -23,9 +23,16 @@ I/O is framed chunks, not a byte-stream codec.
 ```bash
 datalog -db mydata.db -export-bin backup.jdzl
 datalog -db newdata.db -import-bin backup.jdzl
+
+# .jdzl is a peer dump source to .edn: query / stats / re-export via a temp DB
+datalog -db backup.jdzl -query '[:find ?e :where [?e :person/name _]]'
+datalog -db backup.jdzl -export backup.edn
+datalog -db backup.jdzl -export-bin recompressed.jdzl
 ```
 
-EDN `-export` / `-import` are unchanged.
+`-db` dump paths (`.edn` or `.jdzl`) load into a disposable temporary database.
+`-import` / `-import-bin` still require `-db` to be a real Badger directory —
+not a dump file.
 
 ## File layout
 

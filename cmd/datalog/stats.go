@@ -17,7 +17,7 @@ import (
 
 // runStats scans the full database (EAVT index, all history) and reports
 // per-attribute cardinality, value size distribution, and value duplication.
-// The source may be a BadgerDB directory or an .edn dump.
+// The source may be a BadgerDB directory or an .edn/.jdzl dump.
 func runStats(dbPath string) {
 	db, cleanup, err := openDatabaseOrEDN(dbPath)
 	if err != nil {

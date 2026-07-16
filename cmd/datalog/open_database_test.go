@@ -35,6 +35,30 @@ func createTestEDNDump(t *testing.T) string {
 	return ednPath
 }
 
+// createTestJDZLDump exports the standard two-person test database to a JDZL file.
+func createTestJDZLDump(t *testing.T) string {
+	t.Helper()
+	dbPath := createTestDatabase(t)
+
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	jdzlPath := filepath.Join(t.TempDir(), "dump.jdzl")
+	f, err := os.Create(jdzlPath)
+	if err != nil {
+		t.Fatalf("Failed to create JDZL file: %v", err)
+	}
+	defer f.Close()
+
+	if err := db.ExportBinary(f); err != nil {
+		t.Fatalf("Failed to export binary: %v", err)
+	}
+	return jdzlPath
+}
+
 func TestOpenDatabaseOrEDN_BadgerPath(t *testing.T) {
 	dbPath := createTestDatabase(t)
 
@@ -71,10 +95,29 @@ func TestOpenDatabaseOrEDN_EDNDump(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseOrEDN_JDZLDump(t *testing.T) {
+	jdzlPath := createTestJDZLDump(t)
+
+	db, cleanup, err := openDatabaseOrEDN(jdzlPath)
+	if err != nil {
+		t.Fatalf("openDatabaseOrEDN(jdzl dump) failed: %v", err)
+	}
+	defer cleanup()
+
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [_ :person/name ?name]]`))
+	if err != nil {
+		t.Fatalf("Query against JDZL-backed database failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 names from JDZL dump, got %d", len(results))
+	}
+}
+
 func TestOpenDatabaseOrEDN_MissingPath(t *testing.T) {
 	for _, path := range []string{
 		"/nonexistent/path/db",
 		"/nonexistent/path/dump.edn",
+		"/nonexistent/path/dump.jdzl",
 	} {
 		_, _, err := openDatabaseOrEDN(path)
 		if err == nil {
@@ -143,6 +186,69 @@ func TestCLI_ExportFromEDNDump(t *testing.T) {
 	}
 }
 
+func TestCLI_QueryFromJDZLDump(t *testing.T) {
+	binPath := buildCLI(t)
+	jdzlPath := createTestJDZLDump(t)
+
+	cmd := exec.Command(binPath, "-db", jdzlPath,
+		"-query", `[:find ?name :where [_ :person/name ?name]]`)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Query against JDZL dump failed: %v\n%s", err, out)
+	}
+
+	output := string(out)
+	if !strings.Contains(output, "Alice") || !strings.Contains(output, "Bob") {
+		t.Errorf("Expected Alice and Bob in output:\n%s", output)
+	}
+}
+
+func TestCLI_ExportEDNFromJDZLDump(t *testing.T) {
+	binPath := buildCLI(t)
+	jdzlPath := createTestJDZLDump(t)
+	exportPath := filepath.Join(t.TempDir(), "from-jdzl.edn")
+
+	cmd := exec.Command(binPath, "-db", jdzlPath, "-export", exportPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Export EDN from JDZL dump failed: %v\n%s", err, out)
+	}
+
+	reexported, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatalf("Failed to read re-exported file: %v", err)
+	}
+	if !strings.Contains(string(reexported), ":person/name") {
+		t.Errorf("EDN from JDZL missing expected datoms:\n%s", reexported)
+	}
+}
+
+func TestCLI_ExportBinFromJDZLDump(t *testing.T) {
+	binPath := buildCLI(t)
+	jdzlPath := createTestJDZLDump(t)
+	exportPath := filepath.Join(t.TempDir(), "recompressed.jdzl")
+
+	cmd := exec.Command(binPath, "-db", jdzlPath, "-export-bin", exportPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Export-bin from JDZL dump failed: %v\n%s", err, out)
+	}
+
+	db, cleanup, err := openDatabaseOrEDN(exportPath)
+	if err != nil {
+		t.Fatalf("open recompressed JDZL failed: %v", err)
+	}
+	defer cleanup()
+
+	results, err := executor.CollectTuples(db.Query(`[:find ?name :where [_ :person/name ?name]]`))
+	if err != nil {
+		t.Fatalf("Query recompressed JDZL failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 names from recompressed JDZL, got %d", len(results))
+	}
+}
+
 func TestCLI_ImportIntoEDNPathRejected(t *testing.T) {
 	binPath := buildCLI(t)
 	ednPath := createTestEDNDump(t)
@@ -156,5 +262,26 @@ func TestCLI_ImportIntoEDNPathRejected(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "database directory") {
 		t.Errorf("Expected error to explain -db must be a database directory, got: %s", out)
+	}
+}
+
+func TestCLI_ImportIntoJDZLPathRejected(t *testing.T) {
+	binPath := buildCLI(t)
+	ednPath := createTestEDNDump(t)
+	jdzlPath := createTestJDZLDump(t)
+	target := filepath.Join(t.TempDir(), "target.jdzl")
+
+	for _, args := range [][]string{
+		{"-db", target, "-import", ednPath},
+		{"-db", target, "-import-bin", jdzlPath},
+	} {
+		cmd := exec.Command(binPath, args...)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("Expected error for %v", args)
+		}
+		if !strings.Contains(string(out), "database directory") {
+			t.Errorf("Expected database-directory rejection for %v, got: %s", args, out)
+		}
 	}
 }
