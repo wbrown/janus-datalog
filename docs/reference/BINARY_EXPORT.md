@@ -128,18 +128,25 @@ The soft budget does **not** terminate a chunk mid-entity.
 
 A single entity larger than the soft budget produces one oversized chunk. Do
 not split mid-entity: keeping an entity’s datoms in one LZJ window maximizes
-compression of the repeated `E` field (and adjacent `A` runs).
+compression of the repeated `E` field (and adjacent `A` runs). Chunk and value
+lengths are `uint32` on the wire; export fails if an uncompressed chunk,
+compressed payload, or value exceeds 4 GiB — it does not truncate.
 
 ## Parallel import
 
 1. Read header; seek to `index_offset`; parse index.
 2. Fan out over index entries (worker limit configurable).
 3. Each worker: seek → read frame → decompress → decode records → `store.Assert`.
-4. After all workers succeed, `clock.Restore` using the trailer max ElementID
+4. The first worker error cancels further launches and asks in-flight workers
+   to stop between steps; `ImportBinary` then returns that error. The store may
+   already contain a partial import (import is not transactional across chunks).
+5. After all workers succeed, `clock.Restore` using the trailer max ElementID
    (or `store.MaxElementID()` as a cross-check).
 
-Chunks never split an entity, so workers do not coordinate on entity identity.
-`Assert` rebuilds all eight indices and blobs for each batch.
+Index entry counts and chunk payload lengths are bounded against remaining file
+size before allocation. Chunks never split an entity, so workers do not
+coordinate on entity identity. `Assert` rebuilds all eight indices and blobs
+for each batch.
 
 ## Semantics preserved (same as EDN dump)
 

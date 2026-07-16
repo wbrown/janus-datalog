@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -305,6 +306,162 @@ func TestCLI_BothFlagsError(t *testing.T) {
 
 	if !strings.Contains(string(out), "Specify only one of -export, -import, -export-bin, -import-bin") {
 		t.Errorf("Expected mutually-exclusive transfer-mode error, got: %s", out)
+	}
+}
+
+func TestCLI_BinaryFlagsMutualExclusion(t *testing.T) {
+	binPath := buildCLI(t)
+	cases := [][]string{
+		{"-export-bin", "out.jdzl", "-import-bin", "in.jdzl"},
+		{"-export", "out.edn", "-export-bin", "out.jdzl"},
+		{"-import", "in.edn", "-import-bin", "in.jdzl"},
+	}
+	for _, args := range cases {
+		cmdArgs := append([]string{"-db", "test.db"}, args...)
+		cmd := exec.Command(binPath, cmdArgs...)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("expected mutual-exclusion error for %v", args)
+		}
+		if !strings.Contains(string(out), "Specify only one of -export, -import, -export-bin, -import-bin") {
+			t.Errorf("expected transfer-mode error for %v, got: %s", args, out)
+		}
+	}
+}
+
+func TestCLI_StatsWithBinaryFlagError(t *testing.T) {
+	binPath := buildCLI(t)
+	cmd := exec.Command(binPath, "-db", "test.db", "-stats", "-export-bin", "out.jdzl")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Error("expected error combining -stats with -export-bin")
+	}
+	if !strings.Contains(string(out), "Cannot combine -stats with export/import flags") {
+		t.Errorf("expected -stats guard error, got: %s", out)
+	}
+}
+
+func TestCLI_ExportBinFlag(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := createTestDatabase(t)
+	exportPath := filepath.Join(t.TempDir(), "export.jdzl")
+
+	cmd := exec.Command(binPath, "-db", dbPath, "-export-bin", exportPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Export-bin failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Exported database to") {
+		t.Errorf("Expected export success message, got: %s", out)
+	}
+	content, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatalf("Failed to read binary export: %v", err)
+	}
+	if len(content) < 4 || string(content[0:4]) != "JDZL" {
+		t.Errorf("Expected JDZL magic, got prefix %q (len=%d)", content, len(content))
+	}
+}
+
+func TestCLI_ImportBinFlag(t *testing.T) {
+	binPath := buildCLI(t)
+
+	sourceDir := t.TempDir()
+	sourceDBPath := filepath.Join(sourceDir, "source.db")
+	sourceDB, err := storage.NewDatabase(sourceDBPath)
+	if err != nil {
+		t.Fatalf("Failed to create source database: %v", err)
+	}
+	tx := sourceDB.NewTransaction()
+	entity := datalog.NewIdentity("test-entity")
+	tx.Add(entity, datalog.NewKeyword(":test/value"), "hello")
+	tx.Add(entity, datalog.NewKeyword(":test/count"), int64(42))
+	if _, err := tx.Commit(); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+	jdzlPath := filepath.Join(t.TempDir(), "import.jdzl")
+	jdzlFile, err := os.Create(jdzlPath)
+	if err != nil {
+		t.Fatalf("Failed to create jdzl file: %v", err)
+	}
+	if err := sourceDB.ExportBinary(jdzlFile); err != nil {
+		t.Fatalf("Failed to export source database: %v", err)
+	}
+	jdzlFile.Close()
+	sourceDB.Close()
+
+	dbPath := filepath.Join(t.TempDir(), "imported.db")
+	cmd := exec.Command(binPath, "-db", dbPath, "-import-bin", jdzlPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Import-bin failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Imported") {
+		t.Errorf("Expected import success message, got: %s", out)
+	}
+
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open imported database: %v", err)
+	}
+	defer db.Close()
+	result, err := executor.CollectTuples(db.Query(`[:find ?v :where [_ :test/value ?v]]`))
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("Expected 1 result, got %d", len(result))
+	}
+}
+
+func TestCLI_ExportImportBinRoundTrip(t *testing.T) {
+	binPath := buildCLI(t)
+	db1Path := createTestDatabase(t)
+	exportPath := filepath.Join(t.TempDir(), "roundtrip.jdzl")
+	db2Path := filepath.Join(t.TempDir(), "roundtrip.db")
+
+	cmd := exec.Command(binPath, "-db", db1Path, "-export-bin", exportPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Export-bin failed: %v\n%s", err, out)
+	}
+	cmd = exec.Command(binPath, "-db", db2Path, "-import-bin", exportPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Import-bin failed: %v\n%s", err, out)
+	}
+
+	db1, err := storage.NewDatabase(db1Path)
+	if err != nil {
+		t.Fatalf("open db1: %v", err)
+	}
+	defer db1.Close()
+	db2, err := storage.NewDatabase(db2Path)
+	if err != nil {
+		t.Fatalf("open db2: %v", err)
+	}
+	defer db2.Close()
+
+	var edn1, edn2 bytes.Buffer
+	if err := db1.Export(&edn1); err != nil {
+		t.Fatalf("export db1 edn: %v", err)
+	}
+	if err := db2.Export(&edn2); err != nil {
+		t.Fatalf("export db2 edn: %v", err)
+	}
+	if edn1.String() != edn2.String() {
+		t.Error("binary CLI round-trip produced different EDN dumps")
+	}
+}
+
+func TestCLI_ImportBinNonexistentFile(t *testing.T) {
+	binPath := buildCLI(t)
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	cmd := exec.Command(binPath, "-db", dbPath, "-import-bin", "/nonexistent/file.jdzl")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Error("Expected error for nonexistent import-bin file")
+	}
+	if !strings.Contains(string(out), "does not exist") {
+		t.Errorf("Expected 'does not exist' error, got: %s", out)
 	}
 }
 

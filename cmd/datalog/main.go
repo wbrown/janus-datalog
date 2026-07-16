@@ -410,22 +410,31 @@ func runImport(dbPath, importPath string) {
 }
 
 func runExportBin(dbPath, exportPath string) {
+	// Keep Fatalf outside the cleanup scope so deferred temp-dir removal runs
+	// on export failure (os.Exit from log.Fatalf skips defers).
+	if err := exportBinaryDatabase(dbPath, exportPath); err != nil {
+		log.Fatalf("%v", err)
+	}
+	fmt.Printf("Exported database to %s\n", exportPath)
+}
+
+func exportBinaryDatabase(dbPath, exportPath string) error {
 	db, cleanup, err := openDatabaseOrEDN(dbPath)
 	if err != nil {
-		log.Fatalf("%v", err)
+		return err
 	}
 	defer cleanup()
 
 	f, err := os.Create(exportPath)
 	if err != nil {
-		log.Fatalf("Failed to create binary export file: %v", err)
+		return fmt.Errorf("Failed to create binary export file: %v", err)
 	}
 	defer f.Close()
 
 	if err := db.ExportBinary(f); err != nil {
-		log.Fatalf("Failed to export binary database: %v", err)
+		return fmt.Errorf("Failed to export binary database: %v", err)
 	}
-	fmt.Printf("Exported database to %s\n", exportPath)
+	return nil
 }
 
 func runImportBin(dbPath, importPath string) {

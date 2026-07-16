@@ -1,12 +1,15 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/codec"
@@ -175,6 +178,8 @@ func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) e
 
 // ImportBinary reads a JDZL file and asserts its datoms. r must be an
 // io.ReadSeeker. Chunks are decoded and asserted in parallel up to Workers.
+// The first worker error cancels remaining launches and in-flight work; the
+// store may still contain a partial import when an error is returned.
 func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) error {
 	workers := runtime.GOMAXPROCS(0)
 	if len(opts) > 0 && opts[0].Workers > 0 {
@@ -190,41 +195,63 @@ func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) er
 		return err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var seekMu sync.Mutex
 	sem := make(chan struct{}, workers)
-	errCh := make(chan error, len(trailer.entries))
+	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
+	var reported atomic.Bool
+	reportErr := func(err error) {
+		if err == nil || !reported.CompareAndSwap(false, true) {
+			return
+		}
+		cancel()
+		errCh <- err
+	}
+
 	for i := range trailer.entries {
 		entry := trailer.entries[i]
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(entry binaryIndexEntry) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			unc, err := readBinaryChunkPayload(r, entry, &seekMu)
-			if err != nil {
-				errCh <- err
-				return
-			}
-			datoms, err := decodeBinaryChunk(unc)
-			if err != nil {
-				errCh <- err
-				return
-			}
-			if len(datoms) == 0 {
-				return
-			}
-			if err := d.store.Assert(datoms); err != nil {
-				errCh <- fmt.Errorf("binary import assert chunk at %d: %w", entry.offset, err)
-			}
-		}(entry)
+		select {
+		case <-ctx.Done():
+			// Stop launching; in-flight workers still finish or exit on ctx checks.
+		case sem <- struct{}{}:
+			wg.Add(1)
+			go func(entry binaryIndexEntry) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				if ctx.Err() != nil {
+					return
+				}
+				unc, err := readBinaryChunkPayload(r, entry, &seekMu)
+				if err != nil {
+					reportErr(err)
+					return
+				}
+				if ctx.Err() != nil {
+					return
+				}
+				datoms, err := decodeBinaryChunk(unc)
+				if err != nil {
+					reportErr(err)
+					return
+				}
+				if len(datoms) == 0 || ctx.Err() != nil {
+					return
+				}
+				if err := d.store.Assert(datoms); err != nil {
+					reportErr(fmt.Errorf("binary import assert chunk at %d: %w", entry.offset, err))
+				}
+			}(entry)
+			continue
+		}
+		break
 	}
 	wg.Wait()
 	close(errCh)
-	for err := range errCh {
-		if err != nil {
-			return err
-		}
+	if err := <-errCh; err != nil {
+		return err
 	}
 
 	maxElementID := trailer.maxTx
@@ -282,11 +309,19 @@ func writeBinaryChunk(w io.Writer, offset uint64, unc []byte, firstE, lastE [20]
 		flags = binaryChunkFlagRaw
 		payload = unc
 	}
+	uncLen, err := binaryUint32Len(len(unc), "uncompressed chunk")
+	if err != nil {
+		return binaryIndexEntry{}, 0, err
+	}
+	cmpLen, err := binaryUint32Len(len(payload), "compressed chunk")
+	if err != nil {
+		return binaryIndexEntry{}, 0, err
+	}
 	var hdr [binaryChunkHeaderSize]byte
 	hdr[0] = binaryChunkTypeData
 	hdr[1] = flags
-	binary.BigEndian.PutUint32(hdr[2:6], uint32(len(unc)))
-	binary.BigEndian.PutUint32(hdr[6:10], uint32(len(payload)))
+	binary.BigEndian.PutUint32(hdr[2:6], uncLen)
+	binary.BigEndian.PutUint32(hdr[6:10], cmpLen)
 	n, err := w.Write(hdr[:])
 	if err != nil {
 		return binaryIndexEntry{}, 0, err
@@ -297,17 +332,21 @@ func writeBinaryChunk(w io.Writer, offset uint64, unc []byte, firstE, lastE [20]
 	}
 	return binaryIndexEntry{
 		offset: offset,
-		cmpLen: uint32(len(payload)),
-		uncLen: uint32(len(unc)),
+		cmpLen: cmpLen,
+		uncLen: uncLen,
 		firstE: firstE,
 		lastE:  lastE,
 	}, int64(n + m), nil
 }
 
 func writeBinaryIndex(w io.Writer, trailer binaryTrailer) error {
+	count, err := binaryUint32Len(len(trailer.entries), "index entry count")
+	if err != nil {
+		return err
+	}
 	var hdr [24]byte
 	copy(hdr[0:4], binaryIndexMagic)
-	binary.BigEndian.PutUint32(hdr[4:8], uint32(len(trailer.entries)))
+	binary.BigEndian.PutUint32(hdr[4:8], count)
 	binary.BigEndian.PutUint64(hdr[8:16], trailer.maxTx.Lamport)
 	binary.BigEndian.PutUint64(hdr[16:24], trailer.maxTx.ReplicaID)
 	if _, err := w.Write(hdr[:]); err != nil {
@@ -331,6 +370,13 @@ func readBinaryIndex(r io.ReadSeeker, indexOffset uint64) (binaryTrailer, error)
 	if indexOffset < binaryHeaderSize {
 		return binaryTrailer{}, errors.New("binary import: invalid index offset")
 	}
+	fileSize, err := seekerSize(r)
+	if err != nil {
+		return binaryTrailer{}, err
+	}
+	if indexOffset > uint64(fileSize) {
+		return binaryTrailer{}, errors.New("binary import: index offset past end of file")
+	}
 	if _, err := r.Seek(int64(indexOffset), io.SeekStart); err != nil {
 		return binaryTrailer{}, fmt.Errorf("binary import seek index: %w", err)
 	}
@@ -342,6 +388,11 @@ func readBinaryIndex(r io.ReadSeeker, indexOffset uint64) (binaryTrailer, error)
 		return binaryTrailer{}, fmt.Errorf("binary import: bad index magic %q", hdr[0:4])
 	}
 	count := binary.BigEndian.Uint32(hdr[4:8])
+	remaining := uint64(fileSize) - indexOffset - uint64(len(hdr))
+	maxEntries := remaining / binaryIndexEntrySize
+	if uint64(count) > maxEntries {
+		return binaryTrailer{}, fmt.Errorf("binary import: index count %d exceeds remaining file capacity %d", count, maxEntries)
+	}
 	trailer := binaryTrailer{
 		entries: make([]binaryIndexEntry, 0, count),
 		maxTx: datalog.ElementID{
@@ -368,6 +419,13 @@ func readBinaryIndex(r io.ReadSeeker, indexOffset uint64) (binaryTrailer, error)
 func readBinaryChunkPayload(r io.ReadSeeker, entry binaryIndexEntry, seekMu *sync.Mutex) ([]byte, error) {
 	seekMu.Lock()
 	defer seekMu.Unlock()
+	fileSize, err := seekerSize(r)
+	if err != nil {
+		return nil, err
+	}
+	if entry.offset > uint64(fileSize) {
+		return nil, fmt.Errorf("binary import: chunk offset %d past end of file", entry.offset)
+	}
 	if _, err := r.Seek(int64(entry.offset), io.SeekStart); err != nil {
 		return nil, fmt.Errorf("binary import seek chunk: %w", err)
 	}
@@ -383,6 +441,10 @@ func readBinaryChunkPayload(r io.ReadSeeker, entry binaryIndexEntry, seekMu *syn
 	cmpLen := binary.BigEndian.Uint32(hdr[6:10])
 	if uncLen != entry.uncLen || cmpLen != entry.cmpLen {
 		return nil, fmt.Errorf("binary import: chunk length mismatch at %d", entry.offset)
+	}
+	payloadEnd := entry.offset + uint64(binaryChunkHeaderSize) + uint64(cmpLen)
+	if payloadEnd > uint64(fileSize) {
+		return nil, fmt.Errorf("binary import: chunk payload at %d exceeds file size", entry.offset)
 	}
 	payload := make([]byte, cmpLen)
 	if _, err := io.ReadFull(r, payload); err != nil {
@@ -416,6 +478,10 @@ func encodeBinaryDatom(d *datalog.Datom) ([]byte, error) {
 	}
 
 	vBytes := datalog.ValueBytes(d.V)
+	vLen, err := binaryUint32Len(len(vBytes), "value")
+	if err != nil {
+		return nil, err
+	}
 	recLen := 20 + 32 + 16 + 1 + 1 + 1 + 4 + len(vBytes)
 	if d.Op.HasAfterRef() {
 		recLen += 16
@@ -442,7 +508,7 @@ func encodeBinaryDatom(d *datalog.Datom) ([]byte, error) {
 	}
 	buf[off] = byte(datalog.Type(d.V))
 	off++
-	binary.BigEndian.PutUint32(buf[off:off+4], uint32(len(vBytes)))
+	binary.BigEndian.PutUint32(buf[off:off+4], vLen)
 	off += 4
 	copy(buf[off:], vBytes)
 	return buf, nil
@@ -452,8 +518,9 @@ func decodeBinaryChunk(unc []byte) ([]datalog.Datom, error) {
 	var datoms []datalog.Datom
 	off := 0
 	for off < len(unc) {
-		need := 20 + 32 + 16 + 1 + 1 + 1 + 4
-		if off+need > len(unc) {
+		// Fixed prefix through flags; AfterRef and value header checked after.
+		const prefixLen = 20 + 32 + 16 + 1 + 1
+		if off+prefixLen > len(unc) {
 			return nil, fmt.Errorf("binary import: truncated record at %d", off)
 		}
 		var eHash [20]byte
@@ -476,11 +543,14 @@ func decodeBinaryChunk(unc []byte) ([]datalog.Datom, error) {
 			afterRef = datalog.ElementIDFromBytes(unc[off : off+16])
 			off += 16
 		}
+		if off+5 > len(unc) {
+			return nil, fmt.Errorf("binary import: truncated value header at %d", off)
+		}
 		vType := datalog.ValueType(unc[off])
 		off++
 		vLen := binary.BigEndian.Uint32(unc[off : off+4])
 		off += 4
-		if off+int(vLen) > len(unc) {
+		if uint64(off)+uint64(vLen) > uint64(len(unc)) {
 			return nil, fmt.Errorf("binary import: truncated value at %d", off)
 		}
 		v, err := datalog.ValueFromBytes(vType, unc[off:off+int(vLen)])
@@ -499,4 +569,26 @@ func decodeBinaryChunk(unc []byte) ([]datalog.Datom, error) {
 		})
 	}
 	return datoms, nil
+}
+
+func binaryUint32Len(n int, what string) (uint32, error) {
+	if n < 0 || n > math.MaxUint32 {
+		return 0, fmt.Errorf("binary export: %s length %d exceeds uint32", what, n)
+	}
+	return uint32(n), nil
+}
+
+func seekerSize(r io.ReadSeeker) (int64, error) {
+	cur, err := r.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, fmt.Errorf("binary import tell: %w", err)
+	}
+	end, err := r.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, fmt.Errorf("binary import size: %w", err)
+	}
+	if _, err := r.Seek(cur, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("binary import restore: %w", err)
+	}
+	return end, nil
 }
