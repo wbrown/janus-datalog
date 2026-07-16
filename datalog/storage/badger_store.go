@@ -512,6 +512,15 @@ func (i *BadgerIterator) Next() bool {
 	return true
 }
 
+// Key returns the current index key without decoding the datom or resolving blobs.
+// Valid after Next returns true until the next Next, Seek, or Close.
+func (i *BadgerIterator) Key() []byte {
+	if i.it == nil || !i.it.Valid() {
+		return nil
+	}
+	return i.it.Item().Key()
+}
+
 // Datom returns the current datom decoded from the key
 // Values are not stored - all datom information is in the key
 func (i *BadgerIterator) Datom() (*datalog.Datom, error) {

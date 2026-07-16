@@ -38,6 +38,8 @@ type Store interface {
 	// Read operations
 	Scan(index IndexType, start, end []byte) (Iterator, error)
 	ScanKeysOnly(index IndexType, start, end []byte) (Iterator, error)
+	// Get retrieves a single datom by full index key. Missing keys return (nil, nil).
+	Get(index IndexType, key []byte) (*datalog.Datom, error)
 	DatomsAfter(eid datalog.ElementID) ([]datalog.Datom, error)
 	MaxTxForEntity(e datalog.Identity) (datalog.ElementID, bool, error)
 	GetMetadataUint64(key string) (uint64, bool, error)

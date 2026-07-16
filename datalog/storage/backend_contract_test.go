@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,12 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
+
+var exportInstantPattern = regexp.MustCompile(`#inst "[^"]+"`)
+
+func stabilizeExport(dump string) string {
+	return exportInstantPattern.ReplaceAllString(dump, `#inst "stable"`)
+}
 
 func TestStoreBackendContract(t *testing.T) {
 	for _, testCase := range storeContractCases() {
@@ -199,15 +206,21 @@ func TestStoreBackendsRetainByteValuesAndStickyBlobErrors(t *testing.T) {
 			require.NoError(t, err)
 			defer iter.Close()
 			seenInline := 0
+			var firstErr error
 			for iter.Next() {
 				datom, err := iter.Datom()
-				require.NoError(t, err)
+				if err != nil {
+					firstErr = err
+					break
+				}
 				if datom.A == inlineAttr {
 					seenInline++
 				}
 			}
 			require.Equal(t, 2, seenInline, "valid rows before a corrupt blob must remain visible")
-			firstErr := iter.Error()
+			if firstErr == nil {
+				firstErr = iter.Error()
+			}
 			require.ErrorContains(t, firstErr, "blob")
 			require.False(t, iter.Next())
 			require.ErrorIs(t, iter.Error(), firstErr)
@@ -241,6 +254,7 @@ func TestDatabaseBackendsPublicSemantics(t *testing.T) {
 			database := openContractDatabase(t, testCase, DatabaseOptions{
 				Schema:       s,
 				DisableCache: true,
+				ReplicaID:    42,
 			})
 			entity := datalog.NewIdentity("backend:item")
 			name := datalog.NewKeyword(":item/name")
@@ -346,6 +360,10 @@ func TestDatabaseBackendsPublicSemantics(t *testing.T) {
 			results["memory"].pulled[datalog.NewKeyword(":item/steps")],
 		)
 		require.Equal(t, results["badger"].afterTruncate, results["memory"].afterTruncate)
+		require.Equal(t,
+			stabilizeExport(results["badger"].exported),
+			stabilizeExport(results["memory"].exported),
+		)
 	}
 }
 
@@ -387,6 +405,35 @@ func TestStoreBackendTransactionOrderedScan(t *testing.T) {
 			require.NoError(t, iter.Close())
 			require.Len(t, got, 2)
 			require.LessOrEqual(t, bytes.Compare(got[0].E.Bytes(), got[1].E.Bytes()), 0)
+
+			// Multi-key ordering must be deterministic and strictly sorted by
+			// encoded EAVT key — not a two-element flake check.
+			extra := make([]datalog.Datom, 0, 5)
+			for i := 0; i < 5; i++ {
+				extra = append(extra, datalog.Datom{
+					E:  datalog.NewIdentity(fmt.Sprintf("memory:order:%d", i)),
+					A:  attr,
+					V:  fmt.Sprintf("v%d", i),
+					Tx: datalog.ElementID{Lamport: uint64(10 + i), ReplicaID: 1},
+				})
+			}
+			require.NoError(t, store.Assert(extra))
+			iter, err = store.ScanKeysOnly(EAVT, []byte{byte(EAVT)}, []byte{byte(EAVT) + 1})
+			require.NoError(t, err)
+			var keys [][]byte
+			for iter.Next() {
+				keyed, ok := iter.(interface{ Key() []byte })
+				require.True(t, ok, "store iterators must expose Key() for order checks")
+				key := keyed.Key()
+				require.NotNil(t, key)
+				keys = append(keys, append([]byte(nil), key...))
+			}
+			require.NoError(t, iter.Error())
+			require.NoError(t, iter.Close())
+			require.GreaterOrEqual(t, len(keys), 7)
+			for i := 1; i < len(keys); i++ {
+				require.Equal(t, -1, bytes.Compare(keys[i-1], keys[i]))
+			}
 		})
 	}
 }

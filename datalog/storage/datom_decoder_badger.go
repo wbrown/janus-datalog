@@ -49,28 +49,33 @@ func (i *KeyOnlyIterator) Next() bool {
 		return false
 	}
 	i.hasDatom = false
-	if !i.BadgerIterator.Next() {
-		return false
-	}
-	i.currentDatom, i.currentError = decodeDatomFromKey(
-		i.index,
-		i.it.Item().Key(),
-		i.encoder,
-		i.blobs,
-	)
-	if i.currentError != nil {
-		return false
-	}
-	i.hasDatom = true
-	return true
+	return i.BadgerIterator.Next()
+}
+
+func (i *KeyOnlyIterator) Key() []byte {
+	return i.BadgerIterator.Key()
 }
 
 func (i *KeyOnlyIterator) Datom() (*datalog.Datom, error) {
 	if i.currentError != nil {
 		return nil, i.currentError
 	}
-	if !i.hasDatom {
+	if !i.BadgerIterator.valid || i.it == nil || !i.it.Valid() {
 		return nil, fmt.Errorf("no current datom")
+	}
+	if !i.hasDatom {
+		datom, err := decodeDatomFromKey(
+			i.index,
+			i.it.Item().Key(),
+			i.encoder,
+			i.blobs,
+		)
+		if err != nil {
+			i.currentError = err
+			return nil, err
+		}
+		i.currentDatom = datom
+		i.hasDatom = true
 	}
 	return &i.currentDatom, nil
 }

@@ -16,10 +16,28 @@ It now returns the `storage.Store` interface.
 store := database.Store() // storage.Store
 ```
 
+`Store.Get(index, key)` remains on the interface (point lookup by full index
+key; missing keys return `(nil, nil)`). `(*BadgerStore).CountKeys` was never on
+`Store` and is no longer reachable through `db.Store()` — keep a concrete
+`*BadgerStore` handle if you need Badger-only key counting.
+
 Call sites that type-asserted to `*storage.BadgerStore` must either:
 
 1. Depend only on `storage.Store` methods, or
 2. Keep a concrete handle obtained from `storage.NewBadgerStore` before injection.
+
+### `DatomFromKey` takes `BlobReader`
+
+The exported `DatomFromKey` final parameter is now `storage.BlobReader` instead
+of `*badger.DB`. Pass `nil` when Tier-3 values are not expected. There is no
+exported `*badger.DB` adapter; in-tree callers use the scan-session blob reader.
+
+### Injected store ownership
+
+`DatabaseOptions.Store` / `db.WithStore` leave ownership with the caller on
+constructor failure (the store is not `Close`d). On success, `Database.Close`
+closes the injected store. Compression threshold options apply only when the
+constructor creates the store — configure an injected encoder before injection.
 
 ### Injected backends
 

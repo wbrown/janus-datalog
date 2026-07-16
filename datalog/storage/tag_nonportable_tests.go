@@ -27,6 +27,7 @@ func main() {
 		panic(err)
 	}
 	tagged := 0
+	uncoveredConstraint := 0
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, "_test.go") || portable[name] {
@@ -38,6 +39,16 @@ func main() {
 			panic(err)
 		}
 		if bytes.HasPrefix(data, []byte("//go:build")) || bytes.HasPrefix(data, []byte("// +build")) {
+			head := data
+			if len(head) > 512 {
+				head = head[:512]
+			}
+			// Already constrained files must exclude js/wasm explicitly. Leaving
+			// e.g. //go:build !race untagged pulls Badger-only tests into wasm.
+			if !bytes.Contains(head, []byte("js && wasm")) {
+				fmt.Fprintf(os.Stderr, "error: %s has a build constraint without js/wasm exclusion; add !(js && wasm) or list the file in the portable allowlist\n", path)
+				uncoveredConstraint++
+			}
 			continue
 		}
 		if err := os.WriteFile(path, append(tag, data...), 0o644); err != nil {
@@ -47,4 +58,7 @@ func main() {
 		fmt.Println(path)
 	}
 	fmt.Printf("tagged %d files\n", tagged)
+	if uncoveredConstraint > 0 {
+		os.Exit(1)
+	}
 }

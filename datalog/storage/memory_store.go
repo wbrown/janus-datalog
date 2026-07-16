@@ -16,6 +16,11 @@ var errMemoryStoreClosed = errors.New("memory store closed")
 // MemoryStore is an ordered, transactional, in-memory implementation of Store.
 // It persists the same binary keys as BadgerStore, including all eight indices,
 // metadata, and content-addressed blobs.
+//
+// Commits apply Assert/Retract in call order against the live map under the
+// write lock, journaling prior values so a failed apply can restore them.
+// This matches BadgerTx immediacy for interleaving and avoids cloning the
+// whole store on every commit (required for Import and other batched writes).
 type MemoryStore struct {
 	mu      sync.RWMutex
 	encoder *BinaryKeyEncoder
@@ -75,6 +80,23 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 		}
 	}
 	return len(datoms), nil
+}
+
+func (s *MemoryStore) Get(index IndexType, key []byte) (*datalog.Datom, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, errMemoryStoreClosed
+	}
+	if _, ok := s.entries[string(key)]; !ok {
+		return nil, nil
+	}
+	// Already under RLock; blob reads must not re-enter the mutex.
+	datom, err := decodeDatomFromKey(index, key, s.encoder, memoryEntriesBlobReader{entries: s.entries})
+	if err != nil {
+		return nil, err
+	}
+	return &datom, nil
 }
 
 func (s *MemoryStore) Scan(index IndexType, start, end []byte) (Iterator, error) {
@@ -234,18 +256,41 @@ func (s *MemoryStore) Close() error {
 	return nil
 }
 
+type memoryTxOpKind uint8
+
+const (
+	memoryTxAssert memoryTxOpKind = iota
+	memoryTxRetract
+)
+
+type memoryTxOp struct {
+	kind   memoryTxOpKind
+	datoms []datalog.Datom
+}
+
+type memoryEntryUndo struct {
+	key string
+	had bool
+	val []byte
+}
+
 type memoryStoreTx struct {
-	store     *MemoryStore
-	asserted  []datalog.Datom
-	retracted []datalog.Datom
-	done      bool
+	store *MemoryStore
+	ops   []memoryTxOp
+	done  bool
 }
 
 func (tx *memoryStoreTx) Assert(datoms []datalog.Datom) error {
 	if tx.done {
 		return errors.New("memory transaction closed")
 	}
-	tx.asserted = append(tx.asserted, datoms...)
+	if len(datoms) == 0 {
+		return nil
+	}
+	tx.ops = append(tx.ops, memoryTxOp{
+		kind:   memoryTxAssert,
+		datoms: append([]datalog.Datom(nil), datoms...),
+	})
 	return nil
 }
 
@@ -253,7 +298,13 @@ func (tx *memoryStoreTx) Retract(datoms []datalog.Datom) error {
 	if tx.done {
 		return errors.New("memory transaction closed")
 	}
-	tx.retracted = append(tx.retracted, datoms...)
+	if len(datoms) == 0 {
+		return nil
+	}
+	tx.ops = append(tx.ops, memoryTxOp{
+		kind:   memoryTxRetract,
+		datoms: append([]datalog.Datom(nil), datoms...),
+	})
 	return nil
 }
 
@@ -267,17 +318,25 @@ func (tx *memoryStoreTx) Commit() error {
 	if tx.store.closed {
 		return errMemoryStoreClosed
 	}
-	next := cloneMemoryEntries(tx.store.entries)
-	for i := range tx.asserted {
-		assertMemoryDatom(next, tx.store.encoder, &tx.asserted[i])
-	}
-	reader := memoryBlobReaderFromEntries(next)
-	for i := range tx.retracted {
-		if err := retractMemoryDatom(next, tx.store.encoder, reader, &tx.retracted[i]); err != nil {
-			return err
+	var undo []memoryEntryUndo
+	// Commit already holds the write lock; blob reads must not re-enter the mutex.
+	reader := memoryEntriesBlobReader{entries: tx.store.entries}
+	for i := range tx.ops {
+		op := &tx.ops[i]
+		switch op.kind {
+		case memoryTxAssert:
+			for j := range op.datoms {
+				assertMemoryDatom(tx.store.entries, tx.store.encoder, &op.datoms[j], &undo)
+			}
+		case memoryTxRetract:
+			for j := range op.datoms {
+				if err := retractMemoryDatom(tx.store.entries, tx.store.encoder, reader, &op.datoms[j], &undo); err != nil {
+					restoreMemoryEntries(tx.store.entries, undo)
+					return err
+				}
+			}
 		}
 	}
-	tx.store.entries = next
 	return nil
 }
 
@@ -289,25 +348,55 @@ func (tx *memoryStoreTx) Rollback() error {
 	return nil
 }
 
-func cloneMemoryEntries(entries map[string][]byte) map[string][]byte {
-	cloned := make(map[string][]byte, len(entries))
-	for key, value := range entries {
-		cloned[key] = append([]byte(nil), value...)
+func putMemoryEntry(entries map[string][]byte, undo *[]memoryEntryUndo, key string, value []byte) {
+	old, had := entries[key]
+	*undo = append(*undo, memoryEntryUndo{
+		key: key,
+		had: had,
+		val: append([]byte(nil), old...),
+	})
+	if value == nil {
+		entries[key] = nil
+		return
 	}
-	return cloned
+	entries[key] = append([]byte(nil), value...)
 }
 
-func assertMemoryDatom(entries map[string][]byte, encoder *BinaryKeyEncoder, datom *datalog.Datom) {
+func deleteMemoryEntry(entries map[string][]byte, undo *[]memoryEntryUndo, key string) {
+	old, had := entries[key]
+	if !had {
+		return
+	}
+	*undo = append(*undo, memoryEntryUndo{
+		key: key,
+		had: true,
+		val: append([]byte(nil), old...),
+	})
+	delete(entries, key)
+}
+
+func restoreMemoryEntries(entries map[string][]byte, undo []memoryEntryUndo) {
+	for i := len(undo) - 1; i >= 0; i-- {
+		entry := undo[i]
+		if entry.had {
+			entries[entry.key] = entry.val
+			continue
+		}
+		delete(entries, entry.key)
+	}
+}
+
+func assertMemoryDatom(entries map[string][]byte, encoder *BinaryKeyEncoder, datom *datalog.Datom, undo *[]memoryEntryUndo) {
 	valueBytes, blob := encoder.EncodeValueBytes(datom.V)
 	if blob != nil {
 		var key [21]byte
 		key[0] = blobKeyPrefix
 		copy(key[1:], blob.Hash[:])
-		entries[string(key[:])] = append([]byte(nil), blob.CompressedBytes...)
+		putMemoryEntry(entries, undo, string(key[:]), blob.CompressedBytes)
 	}
 	for _, index := range Indices {
 		key := encoder.EncodeKeyWithValueBytes(index, datom, valueBytes)
-		entries[string(key)] = nil
+		putMemoryEntry(entries, undo, string(key), nil)
 	}
 }
 
@@ -316,6 +405,7 @@ func retractMemoryDatom(
 	encoder *BinaryKeyEncoder,
 	blobs BlobReader,
 	datom *datalog.Datom,
+	undo *[]memoryEntryUndo,
 ) error {
 	storageDatom := ToStorageDatom(*datom)
 	valueBytes := encodeValueForSearch(storageDatom.V, encoder)
@@ -338,7 +428,7 @@ func retractMemoryDatom(
 			return err
 		}
 		for _, index := range Indices {
-			delete(entries, string(encoder.EncodeKey(index, &stored)))
+			deleteMemoryEntry(entries, undo, string(encoder.EncodeKey(index, &stored)))
 		}
 	}
 	return nil
@@ -346,40 +436,30 @@ func retractMemoryDatom(
 
 type memoryBlobReader struct {
 	store *MemoryStore
-	blobs map[[20]byte][]byte
 }
 
-func memoryBlobReaderFromEntries(entries map[string][]byte) memoryBlobReader {
-	blobs := make(map[[20]byte][]byte)
-	for encoded, value := range entries {
-		key := []byte(encoded)
-		if len(key) != 21 || key[0] != blobKeyPrefix {
-			continue
-		}
-		var hash [20]byte
-		copy(hash[:], key[1:])
-		blobs[hash] = value
-	}
-	return memoryBlobReader{blobs: blobs}
+type memoryEntriesBlobReader struct {
+	entries map[string][]byte
 }
 
 func (r memoryBlobReader) ReadBlob(hash [20]byte, read func([]byte) error) error {
-	if r.store != nil {
-		r.store.mu.RLock()
-		defer r.store.mu.RUnlock()
-		if r.store.closed {
-			return errMemoryStoreClosed
-		}
-		var key [21]byte
-		key[0] = blobKeyPrefix
-		copy(key[1:], hash[:])
-		value, ok := r.store.entries[string(key[:])]
-		if !ok {
-			return fmt.Errorf("blob not found for hash %x", hash)
-		}
-		return read(value)
+	r.store.mu.RLock()
+	defer r.store.mu.RUnlock()
+	if r.store.closed {
+		return errMemoryStoreClosed
 	}
-	value, ok := r.blobs[hash]
+	return readMemoryBlob(r.store.entries, hash, read)
+}
+
+func (r memoryEntriesBlobReader) ReadBlob(hash [20]byte, read func([]byte) error) error {
+	return readMemoryBlob(r.entries, hash, read)
+}
+
+func readMemoryBlob(entries map[string][]byte, hash [20]byte, read func([]byte) error) error {
+	var key [21]byte
+	key[0] = blobKeyPrefix
+	copy(key[1:], hash[:])
+	value, ok := entries[string(key[:])]
 	if !ok {
 		return fmt.Errorf("blob not found for hash %x", hash)
 	}
@@ -404,28 +484,36 @@ func (i *memoryIterator) Next() bool {
 	}
 	i.hasDatom = false
 	i.position++
-	if i.position >= len(i.keys) {
-		return false
+	return i.position < len(i.keys)
+}
+
+func (i *memoryIterator) Key() []byte {
+	if i.closed || i.position < 0 || i.position >= len(i.keys) {
+		return nil
 	}
-	i.currentDatom, i.err = decodeDatomFromKey(
-		i.index,
-		i.keys[i.position],
-		i.encoder,
-		i.blobs,
-	)
-	if i.err != nil {
-		return false
-	}
-	i.hasDatom = true
-	return true
+	return i.keys[i.position]
 }
 
 func (i *memoryIterator) Datom() (*datalog.Datom, error) {
 	if i.err != nil {
 		return nil, i.err
 	}
-	if !i.hasDatom {
+	if i.closed || i.position < 0 || i.position >= len(i.keys) {
 		return nil, errors.New("no current datom")
+	}
+	if !i.hasDatom {
+		datom, err := decodeDatomFromKey(
+			i.index,
+			i.keys[i.position],
+			i.encoder,
+			i.blobs,
+		)
+		if err != nil {
+			i.err = err
+			return nil, err
+		}
+		i.currentDatom = datom
+		i.hasDatom = true
 	}
 	return &i.currentDatom, nil
 }
@@ -447,7 +535,7 @@ func (i *memoryIterator) Seek(key []byte) {
 }
 
 func (i *memoryIterator) ElementID() datalog.ElementID {
-	if !i.hasDatom || i.position < 0 || i.position >= len(i.keys) {
+	if i.closed || i.position < 0 || i.position >= len(i.keys) {
 		return datalog.ElementID{}
 	}
 	return extractElementIDFromKey(i.index, i.keys[i.position])

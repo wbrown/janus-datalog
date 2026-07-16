@@ -14,10 +14,29 @@ type wildcardUniqueLookup struct {
 	attr   datalog.Keyword
 }
 
+// indexKeyIterator is implemented by store iterators that can expose the current
+// raw index key without decoding values or resolving blobs.
+type indexKeyIterator interface {
+	Key() []byte
+}
+
+func iteratorCurrentKey(iterator Iterator) ([]byte, bool) {
+	keyed, ok := iterator.(indexKeyIterator)
+	if !ok {
+		return nil, false
+	}
+	key := keyed.Key()
+	if key == nil {
+		return nil, false
+	}
+	return key, true
+}
+
 // ResolveAllAttributesMany resolves wildcard pulls for a complete entity set.
-// The dominant non-unique EATV traversal shares one decoded store scan session;
-// unique-ownership walks and blob dereferences retain their specialized reads.
-// Results preserve input order. Duplicate entities are scanned once.
+// The dominant non-unique EATV traversal shares one store scan session and seeks
+// forward per entity; unique-ownership walks and blob dereferences retain their
+// specialized reads. Results preserve input order. Duplicate entities are scanned
+// once.
 func (d *Database) ResolveAllAttributesMany(
 	entities []datalog.Identity,
 ) ([]map[datalog.Keyword]interface{}, error) {
@@ -146,6 +165,14 @@ func (d *Database) resolveWildcardEntity(
 
 	iterator.Seek(start)
 	for iterator.Next() {
+		// Bound the entity before decoding. The shared EATV scan advances one
+		// key into the successor entity; decoding that key would surface
+		// unrequested blob/decode errors and pay an extra Tier-3 read.
+		if key, ok := iteratorCurrentKey(iterator); ok {
+			if len(key) < 21 || !bytes.Equal(key[1:21], entityBytes[:]) {
+				break
+			}
+		}
 		datom, err := iterator.Datom()
 		if err != nil {
 			return nil, nil, err

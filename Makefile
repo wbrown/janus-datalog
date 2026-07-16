@@ -3,7 +3,9 @@
 .PHONY: test test-fast test-storage test-wasm bench bench-prebuilt profile clean-testdb build-testdb help
 
 WASM_PATH := $(shell go env GOROOT)/lib/wasm
-WASM_CONTRACT_RUN := TestStore|TestScanAndScan|TestDatabaseBackends|TestMemory
+# Portable contract matrix + MemoryStore regressions. Keep the pattern tight:
+# a broad TestMemory match pulls large stress cases into the node wasm runner.
+WASM_CONTRACT_RUN := TestStoreBackend|TestScanAndScanKeysOnly|TestDatabaseBackends|TestMemoryStoreConstructs|TestMemoryStoreTx|TestMemoryStoreRetract|TestMemoryStoreMax|TestMemoryStoreScan|TestInjectedStore|TestResolveAllAttributesManySkips
 
 # Default target
 help:

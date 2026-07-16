@@ -39,7 +39,10 @@ func TestLoadRGAElementsPropagatesDatomDecodeError(t *testing.T) {
 	prefix = append(prefix, attributeBytes[:]...)
 	iter, err := store.Scan(EATV, prefix, prefixEnd(prefix))
 	require.NoError(t, err)
-	require.False(t, iter.Next(), "malformed key must stop the workspace scan")
+	require.True(t, iter.Next(), "malformed key is still a positioned scan entry")
+	_, err = iter.Datom()
+	require.Error(t, err, "malformed key must fail decode")
+	require.False(t, iter.Next())
 	require.Error(t, iter.Error())
 	require.NoError(t, iter.Close())
 

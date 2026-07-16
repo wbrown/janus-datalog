@@ -57,6 +57,9 @@ func WithCompressionThreshold(bytes int) Option {
 }
 
 // WithStore injects the ordered storage backend used by the database.
+// The caller retains ownership of the store: Open/OpenMemory error paths do not
+// Close it. Compression options do not mutate the injected store's encoder —
+// configure the encoder before injection.
 func WithStore(store storage.Store) Option {
 	return func(c *config) { c.store = store }
 }

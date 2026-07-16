@@ -101,9 +101,11 @@ func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
 	require.NoError(t, err)
 	defer iter.Close()
 
-	require.False(t, iter.Next())
+	require.True(t, iter.Next())
+	_, err = iter.Datom()
+	require.ErrorContains(t, err, "blob")
 	firstErr := iter.Error()
-	require.ErrorContains(t, firstErr, "blob")
+	require.ErrorIs(t, firstErr, err)
 	require.False(t, iter.Next())
 	require.ErrorIs(t, iter.Error(), firstErr)
 }

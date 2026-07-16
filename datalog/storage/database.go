@@ -88,14 +88,17 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
-	Path                 string                  // Path to the database directory
-	Store                Store                   // Optional injected storage backend; Path is ignored when set
+	Path  string // Path to the database directory
+	// Store injects an ordered backend. The caller retains ownership: construction
+	// error paths do not Close it, and CompressionThreshold options do not mutate
+	// the injected store's encoder (configure the encoder before injection).
+	Store                Store
 	Schema               schema.SchemaProvider   // Optional schema for validation
 	AnnotationHandler    annotations.Handler     // Optional handler for query tracing
 	ReplicaID            uint64                  // For CRDT mode: 0 = auto-generate random; non-zero = use specified. Ignored for existing DBs.
 	DisableCache         bool                    // Disable EA cache; queries resolve directly from storage
 	PlannerOptions       *planner.PlannerOptions // Optional override for default planner options
-	CompressionThreshold int                     // Compress string/[]byte values >= this size (0 = default 512; -1 to disable)
+	CompressionThreshold int                     // Compress string/[]byte values >= this size (0 = default 512; -1 to disable). Applies only when Store is nil.
 }
 
 // NewDatabaseWithOptions creates a database with the specified options.
@@ -103,7 +106,10 @@ type DatabaseOptions struct {
 //
 // Options:
 //   - Path: Required for the native default Badger backend when Store is nil.
-//   - Store: Optional injected ordered backend; when set, Path is ignored.
+//   - Store: Optional injected ordered backend; when set, Path is ignored. The
+//     caller retains ownership on constructor failure (not Closed). On success,
+//     Database.Close closes it. CompressionThreshold does not mutate an injected
+//     encoder — configure the encoder before injection.
 //   - Schema: Optional schema for validation.
 //   - ReplicaID: For CRDT mode. 0 = auto-generate random; non-zero = use specified.
 //   - DisableCache: Disable EA cache; queries resolve directly from storage.
@@ -131,19 +137,27 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	}
 	var store Store
 	var err error
+	// ownsStore is true only when this constructor opened the backend. Injected
+	// stores remain owned by the caller; error paths must not Close them.
+	ownsStore := false
 	if opts.Store != nil {
 		store = opts.Store
 		encoder = store.Encoder()
 		if encoder == nil {
 			return nil, fmt.Errorf("injected store returned nil encoder")
 		}
-		if threshold > 0 {
-			encoder.CompressionThreshold = threshold
-		}
+		// Injected stores own their encoder configuration. CompressionThreshold
+		// options apply only when this constructor creates the store.
 	} else {
 		store, err = openDefaultStore(opts.Path, encoder)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create store: %w", err)
+		}
+		ownsStore = true
+	}
+	closeOwnedStore := func() {
+		if ownsStore {
+			_ = store.Close()
 		}
 	}
 
@@ -151,7 +165,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	var replicaID uint64
 	storedReplicaID, found, err := store.GetMetadataUint64("replica_id")
 	if err != nil {
-		store.Close()
+		closeOwnedStore()
 		return nil, fmt.Errorf("failed to read replica_id metadata: %w", err)
 	}
 
@@ -167,7 +181,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		}
 		// Persist the ReplicaID for future opens
 		if err := store.SetMetadataUint64("replica_id", replicaID); err != nil {
-			store.Close()
+			closeOwnedStore()
 			return nil, fmt.Errorf("failed to persist replica_id metadata: %w", err)
 		}
 	}
@@ -179,7 +193,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	// This ensures new writes have higher Lamport values than existing data
 	maxElementID, err := store.MaxElementID()
 	if err != nil {
-		store.Close()
+		closeOwnedStore()
 		return nil, fmt.Errorf("failed to get max ElementID: %w", err)
 	}
 	if !maxElementID.IsZero() {
@@ -201,7 +215,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 	if effectiveSchema == nil {
 		inferred, ierr := inferSchemaFromStore(store)
 		if ierr != nil {
-			store.Close()
+			closeOwnedStore()
 			return nil, fmt.Errorf("inferring schema from store: %w", ierr)
 		}
 		if inferred.HasSchema() {
