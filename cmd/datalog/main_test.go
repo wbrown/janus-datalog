@@ -331,13 +331,22 @@ func TestCLI_BinaryFlagsMutualExclusion(t *testing.T) {
 
 func TestCLI_StatsWithBinaryFlagError(t *testing.T) {
 	binPath := buildCLI(t)
-	cmd := exec.Command(binPath, "-db", "test.db", "-stats", "-export-bin", "out.jdzl")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Error("expected error combining -stats with -export-bin")
+	cases := [][]string{
+		{"-stats", "-export-bin", "out.jdzl"},
+		{"-stats", "-import-bin", "in.jdzl"},
+		{"-stats", "-export", "out.edn"},
+		{"-stats", "-import", "in.edn"},
 	}
-	if !strings.Contains(string(out), "Cannot combine -stats with export/import flags") {
-		t.Errorf("expected -stats guard error, got: %s", out)
+	for _, args := range cases {
+		cmdArgs := append([]string{"-db", "test.db"}, args...)
+		cmd := exec.Command(binPath, cmdArgs...)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("expected error combining -stats with %v", args)
+		}
+		if !strings.Contains(string(out), "Cannot combine -stats with export/import flags") {
+			t.Errorf("expected -stats guard error for %v, got: %s", args, out)
+		}
 	}
 }
 

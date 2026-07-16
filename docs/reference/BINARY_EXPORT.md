@@ -138,10 +138,17 @@ compressed payload, or value exceeds 4 GiB — it does not truncate.
 2. Fan out over index entries (worker limit configurable).
 3. Each worker: seek → read frame → decompress → decode records → `store.Assert`.
 4. The first worker error cancels further launches and asks in-flight workers
-   to stop between steps; `ImportBinary` then returns that error. The store may
-   already contain a partial import (import is not transactional across chunks).
+   to stop between steps; `ImportBinary` then returns that error.
 5. After all workers succeed, `clock.Restore` using the trailer max ElementID
    (or `store.MaxElementID()` as a cross-check).
+
+**Error semantics (non-transactional):** import is not all-or-nothing across
+chunks. Workers that already completed `Assert` before cancellation leave their
+datoms in the store. Which subset committed is scheduling-dependent
+(nondeterministic). A failed `ImportBinary` is therefore **not** a clean
+rollback, and retrying the same import into the same database is **not** a
+safe recovery path. After an error, import into a **fresh** database directory
+(or discard the partially mutated target) and run again.
 
 Index entry counts and chunk payload lengths are bounded against remaining file
 size before allocation. Chunks never split an entity, so workers do not

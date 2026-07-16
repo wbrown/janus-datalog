@@ -178,8 +178,12 @@ func (d *Database) ExportBinary(w io.WriteSeeker, opts ...BinaryExportOptions) e
 
 // ImportBinary reads a JDZL file and asserts its datoms. r must be an
 // io.ReadSeeker. Chunks are decoded and asserted in parallel up to Workers.
-// The first worker error cancels remaining launches and in-flight work; the
-// store may still contain a partial import when an error is returned.
+//
+// The first worker error cancels remaining launches and in-flight work between
+// steps, then that error is returned. Import is not transactional across
+// chunks: workers that already Asserted leave a nondeterministic partial
+// subset of the file in the store. Retrying into the same database is not a
+// safe recovery; use a fresh database (or discard the target) after failure.
 func (d *Database) ImportBinary(r io.ReadSeeker, opts ...BinaryImportOptions) error {
 	workers := runtime.GOMAXPROCS(0)
 	if len(opts) > 0 && opts[0].Workers > 0 {
@@ -572,7 +576,9 @@ func decodeBinaryChunk(unc []byte) ([]datalog.Datom, error) {
 }
 
 func binaryUint32Len(n int, what string) (uint32, error) {
-	if n < 0 || n > math.MaxUint32 {
+	// Compare in uint64 space so this compiles when int is 32-bit
+	// (n > math.MaxUint32 is not a valid int comparison on 32-bit).
+	if n < 0 || uint64(n) > math.MaxUint32 {
 		return 0, fmt.Errorf("binary export: %s length %d exceeds uint32", what, n)
 	}
 	return uint32(n), nil

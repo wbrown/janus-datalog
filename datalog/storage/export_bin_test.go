@@ -252,25 +252,39 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 	var out seekBuffer
 	require.NoError(t, db1.ExportBinary(&out))
 
-	// At least one exported record must carry the AfterRef flag (RGA ops).
+	// Decode every RGA record and require a real AfterRef chain: first insert
+	// after HEAD (zero ElementID), later inserts after a prior insert's Tx.
+	// Byte-identity alone would miss an encode that truncates AfterRef.
 	hdr, err := readBinaryHeader(&out)
 	require.NoError(t, err)
 	trailer, err := readBinaryIndex(&out, hdr.indexOffset)
 	require.NoError(t, err)
 	var seekMu sync.Mutex
-	foundAfterRef := false
+	type rgaRec struct {
+		v        string
+		tx       datalog.ElementID
+		afterRef datalog.ElementID
+	}
+	var rga []rgaRec
 	for _, entry := range trailer.entries {
 		unc, err := readBinaryChunkPayload(&out, entry, &seekMu)
 		require.NoError(t, err)
 		datoms, err := decodeBinaryChunk(unc)
 		require.NoError(t, err)
 		for _, d := range datoms {
-			if d.Op.HasAfterRef() {
-				foundAfterRef = true
+			if !d.Op.HasAfterRef() {
+				continue
 			}
+			v, ok := d.V.(string)
+			require.True(t, ok, "RGA value should be string, got %T", d.V)
+			rga = append(rga, rgaRec{v: v, tx: d.Tx, afterRef: d.AfterRef})
 		}
 	}
-	require.True(t, foundAfterRef, "expected RGA AfterRef records in binary export")
+	require.Len(t, rga, 3, "expected three RGA insert records")
+	require.True(t, rga[0].afterRef.IsZero(), "first insert AfterRef should be HEAD (zero)")
+	require.Equal(t, rga[0].tx, rga[1].afterRef, "second insert AfterRef must equal first Tx")
+	require.Equal(t, rga[1].tx, rga[2].afterRef, "third insert AfterRef must equal second Tx")
+	require.Equal(t, []string{"first", "second", "third"}, []string{rga[0].v, rga[1].v, rga[2].v})
 
 	db2, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:   t.TempDir(),
@@ -279,6 +293,13 @@ func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { db2.Close() })
 	require.NoError(t, db2.ImportBinary(&out))
+
+	type docItems struct {
+		Items []string `datalog:"doc/items"`
+	}
+	var got docItems
+	require.NoError(t, db2.PullInto(id, &got))
+	require.Equal(t, []string{"first", "second", "third"}, got.Items)
 
 	var again seekBuffer
 	require.NoError(t, db2.ExportBinary(&again))
@@ -389,7 +410,16 @@ func TestBinaryImport_RejectsOversizedIndexCount(t *testing.T) {
 }
 
 func TestBinaryUint32Len_RejectsOverflow(t *testing.T) {
-	_, err := binaryUint32Len(int(math.MaxUint32)+1, "value")
+	_, err := binaryUint32Len(-1, "value")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds uint32")
+
+	// MaxUint32+1 is not representable as int on 32-bit hosts.
+	if ^uint(0)>>32 == 0 {
+		t.Skip("int cannot exceed MaxUint32 on this architecture")
+	}
+	n := int(uint64(math.MaxUint32) + 1)
+	_, err = binaryUint32Len(n, "value")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds uint32")
 }
