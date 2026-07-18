@@ -231,10 +231,13 @@ The subquery `(q [...] $ ?var1 ?var2)` takes a full query, then lists the inputs
 
 **Tagged literals** — use typed constants directly in patterns and predicates:
 ```clojure
-[#identity "L85hash..." :person/name ?name]   ;; match specific entity
+[#identity "L85hash..." :person/name ?name]   ;; match specific entity by hash
+[#id "user:alice" :person/name ?name]         ;; match specific entity by seed string
 [?e :event/date #inst "2024-06-15T10:30:00Z"] ;; match timestamp
 [(> ?d #inst "2024-01-01T00:00:00Z")]          ;; compare against timestamp
 ```
+
+`#id "seed"` hashes the seed at parse time — it is `NewIdentity` in literal form, for when you know the seed string an entity was created under. A bare string never matches an entity: in the entity position it is an error, in the value position it is an ordinary typed non-match.
 
 ### Input Parameters
 
@@ -506,7 +509,7 @@ Entities are identified by an **Identity** — a SHA1 hash of a seed string, dis
 
 When you query for an entity variable like `?e`, the result symbol shows the L85 hash. You don't normally need to use these directly — join through known attribute values instead (see debugging patterns above).
 
-The `#identity "L85hash"` tagged literal exists for cases where you have a hash from logs or export output and need to look it up directly. This is the exception, not the normal workflow.
+The `#identity "L85hash"` tagged literal exists for cases where you have a hash from logs or export output and need to look it up directly. The `#id "seed"` literal covers the complementary case: constructing the identity from the seed string it was created under. Both are the exception, not the normal workflow — join through attribute values instead.
 
 ## Notes
 
@@ -515,4 +518,4 @@ The `#identity "L85hash"` tagged literal exists for cases where you have a hash 
 - String literals use double quotes: `"value"`
 - The `_` wildcard matches any value without binding
 - Empty results return a table with headers but no tuples
-- Tagged literals: `#identity "L85..."`, `#inst "RFC3339..."`, `#bytes "L85..."`
+- Tagged literals: `#identity "L85..."`, `#id "seed"`, `#inst "RFC3339..."`, `#bytes "L85..."`

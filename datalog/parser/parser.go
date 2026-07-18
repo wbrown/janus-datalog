@@ -901,6 +901,15 @@ func parseTaggedLiteral(node *edn.Node) (query.PatternElement, error) {
 		}
 		return query.Constant{Value: datalog.NewIdentityFromHash(hash)}, nil
 
+	case "id":
+		// #id "seed" constructs the identity by hashing the seed — NewIdentity
+		// in literal form. Input-only sugar: the formatter always emits the
+		// canonical #identity "L85" (seed→hash is one-way).
+		if val.Type != edn.NodeString {
+			return nil, fmt.Errorf("#id requires string value")
+		}
+		return query.Constant{Value: datalog.NewIdentity(val.Value)}, nil
+
 	case "inst":
 		if val.Type != edn.NodeString {
 			return nil, fmt.Errorf("#inst requires string value")
