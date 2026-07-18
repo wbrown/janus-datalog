@@ -2348,10 +2348,23 @@ func (d *Database) Stats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
+// validateEntityPositionInput rejects a non-Identity user input bound to a
+// symbol that occupies the entity position of a data pattern. This is the
+// input half of the entity-position boundary — the other half is query-text
+// constants, validated at match entry. Interior data flow is never validated:
+// there a non-Identity is the equality join's ordinary typed non-match.
+func validateEntityPositionInput(sym query.Symbol, value interface{}) error {
+	if _, ok := value.(datalog.Identity); !ok {
+		return fmt.Errorf("input %s binds the entity position of a data pattern and requires an identity, got %T (construct one with NewIdentity or an #identity literal)", sym, value)
+	}
+	return nil
+}
+
 // convertInputsToRelations converts Go values to executor.Relation based on the :in clause
 func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}) ([]executor.Relation, error) {
 	inputRelations := make([]executor.Relation, 0, len(inputs))
 	inputIdx := 0
+	entityBound := query.EntityPositionSymbols(q)
 
 	for _, inputSpec := range q.In {
 		switch spec := inputSpec.(type) {
@@ -2362,6 +2375,11 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 		case query.ScalarInput:
 			if inputIdx >= len(inputs) {
 				return nil, fmt.Errorf("not enough inputs: expected input for %s (have %d inputs, need %d)", spec.Symbol, len(inputs), inputIdx+1)
+			}
+			if entityBound[spec.Symbol] {
+				if err := validateEntityPositionInput(spec.Symbol, inputs[inputIdx]); err != nil {
+					return nil, err
+				}
 			}
 
 			// Create single-value relation (normalize integer width to int64 so
@@ -2386,6 +2404,11 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 
 			tuples := make([]executor.Tuple, slice.Len())
 			for i := 0; i < slice.Len(); i++ {
+				if entityBound[spec.Symbol] {
+					if err := validateEntityPositionInput(spec.Symbol, slice.Index(i).Interface()); err != nil {
+						return nil, err
+					}
+				}
 				tuples[i] = executor.Tuple{datalog.NormalizeValue(slice.Index(i).Interface())}
 			}
 
@@ -2414,6 +2437,11 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 			// Create single tuple
 			tuple := make(executor.Tuple, slice.Len())
 			for i := 0; i < slice.Len(); i++ {
+				if entityBound[spec.Symbols[i]] {
+					if err := validateEntityPositionInput(spec.Symbols[i], slice.Index(i).Interface()); err != nil {
+						return nil, err
+					}
+				}
 				tuple[i] = datalog.NormalizeValue(slice.Index(i).Interface())
 			}
 
@@ -2445,6 +2473,11 @@ func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}
 
 				tuple := make(executor.Tuple, innerSlice.Len())
 				for j := 0; j < innerSlice.Len(); j++ {
+					if entityBound[spec.Symbols[j]] {
+						if err := validateEntityPositionInput(spec.Symbols[j], innerSlice.Index(j).Interface()); err != nil {
+							return nil, err
+						}
+					}
 					tuple[j] = datalog.NormalizeValue(innerSlice.Index(j).Interface())
 				}
 				tuples[i] = tuple

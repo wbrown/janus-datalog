@@ -617,6 +617,53 @@ func validateEntityBinding(e interface{}) error {
 	return nil
 }
 
+// filterEntityBindableTuples drops binding tuples whose value for the
+// pattern's entity-position variable is not an Identity. Such a value names no
+// entity — the typed non-match of the equality join — so it contributes zero
+// rows and no seek is constructed for it. The hash and merge joins reach the
+// same result through their typed keys and the canonical comparator; the
+// seek-based strategies drop these bindings here, at construction, so
+// matchesDatom only ever sees Identity entity bindings. Tuples are returned
+// unchanged (and unallocated) when the pattern's entity position is not bound
+// by these symbols or every binding is already an Identity.
+func filterEntityBindableTuples(pattern *query.DataPattern, symbols []query.Symbol, tuples []executor.Tuple) []executor.Tuple {
+	eVar, ok := pattern.GetE().(query.Variable)
+	if !ok {
+		return tuples
+	}
+	idx := -1
+	for i, sym := range symbols {
+		if sym == eVar.Name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return tuples
+	}
+	for i, tuple := range tuples {
+		if idx >= len(tuple) {
+			continue
+		}
+		if _, ok := tuple[idx].(datalog.Identity); ok {
+			continue
+		}
+		// First non-Identity binding found: copy-filter the remainder.
+		filtered := make([]executor.Tuple, 0, len(tuples)-1)
+		filtered = append(filtered, tuples[:i]...)
+		for _, rest := range tuples[i+1:] {
+			if idx < len(rest) {
+				if _, ok := rest[idx].(datalog.Identity); !ok {
+					continue
+				}
+			}
+			filtered = append(filtered, rest)
+		}
+		return filtered
+	}
+	return tuples
+}
+
 // matchesDatom checks if a datom matches the pattern constraints
 func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
 	// Note: Identity is always a pointer type now, no dereferencing needed
