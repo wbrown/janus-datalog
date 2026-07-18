@@ -25,6 +25,7 @@ func main() {
 		"backend_cases_wasm_test.go":   true,
 		"backend_contract_test.go":     true,
 		"backend_blob_memory_test.go":  true,
+		"export_bin_test.go":           true,
 		"memory_store_test.go":         true,
 		"memory_backend_bench_test.go": true,
 		"public_contract_test.go":      true,
