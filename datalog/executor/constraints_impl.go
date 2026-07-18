@@ -1,9 +1,7 @@
 package executor
 
 import (
-	"bytes"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -86,7 +84,7 @@ func (c *rangeConstraint) Evaluate(datom *datalog.Datom) bool {
 	}
 
 	if c.min != nil {
-		cmp := compareValuesForConstraints(value, c.min)
+		cmp := datalog.CompareValues(value, c.min)
 		if c.includeMin && cmp < 0 {
 			return false
 		}
@@ -96,7 +94,7 @@ func (c *rangeConstraint) Evaluate(datom *datalog.Datom) bool {
 	}
 
 	if c.max != nil {
-		cmp := compareValuesForConstraints(value, c.max)
+		cmp := datalog.CompareValues(value, c.max)
 		if c.includeMax && cmp > 0 {
 			return false
 		}
@@ -168,140 +166,24 @@ func (c *timeExtractionConstraint) String() string {
 	return fmt.Sprintf("%s(V) = %v", c.extractFn, c.expected)
 }
 
-// Value comparison functions
-
-func compareValuesForConstraints(a, b interface{}) int {
-	// Handle time.Time specially
-	if t1, ok := a.(time.Time); ok {
-		if t2, ok := b.(time.Time); ok {
-			if t1.Before(t2) {
-				return -1
-			} else if t1.After(t2) {
-				return 1
-			}
-			return 0
-		}
-	}
-
-	// Handle numeric types
-	var v1, v2 float64
-	var v1Ok, v2Ok bool
-
-	switch x := a.(type) {
-	case int:
-		v1, v1Ok = float64(x), true
-	case int64:
-		v1, v1Ok = float64(x), true
-	case float64:
-		v1, v1Ok = x, true
-	}
-
-	switch x := b.(type) {
-	case int:
-		v2, v2Ok = float64(x), true
-	case int64:
-		v2, v2Ok = float64(x), true
-	case float64:
-		v2, v2Ok = x, true
-	}
-
-	if v1Ok && v2Ok {
-		if v1 < v2 {
-			return -1
-		} else if v1 > v2 {
-			return 1
-		}
-		return 0
-	}
-
-	// Fall back to string comparison
-	return bytes.Compare([]byte(fmt.Sprintf("%v", a)), []byte(fmt.Sprintf("%v", b)))
-}
-
+// valuesEqual reports equality for join and filter checks. It delegates to
+// datalog.ValuesEqual — the value domain's canonical equality — with one
+// deliberately retained extension, pending its own decision: a Keyword or
+// Symbol on the left additionally matches its string text. Identity has no
+// such coercion; strings become entities only by boundary construction
+// (NewIdentity, #identity literals).
 func valuesEqual(a, b interface{}) bool {
-	aValue := reflect.ValueOf(a)
-	bValue := reflect.ValueOf(b)
-	if (aValue.IsValid() && aValue.Kind() == reflect.Slice) ||
-		(bValue.IsValid() && bValue.Kind() == reflect.Slice) {
-		return datalog.ValuesEqual(a, b)
-	}
-
-	// Handle Identity comparison. Identities equal only identities: strings
-	// become entities by boundary construction (NewIdentity, #identity
-	// literals), never by comparison-time coercion, so a string here is an
-	// ordinary typed non-match.
-	if id1, ok := a.(datalog.Identity); ok {
-		if id2, ok := b.(datalog.Identity); ok {
-			return id1.Equal(id2)
-		}
-		return false
-	}
-
-	// Handle Keyword comparison
-	if kw1, ok := a.(datalog.Keyword); ok {
-		if kw2, ok := b.(datalog.Keyword); ok {
-			return kw1.String() == kw2.String()
-		}
+	if kw, ok := a.(datalog.Keyword); ok {
 		if s, ok := b.(string); ok {
-			return kw1.String() == s
+			return kw.String() == s
 		}
 	}
-
-	// Handle Symbol comparison
-	if sym1, ok := a.(datalog.Symbol); ok {
-		if sym2, ok := b.(datalog.Symbol); ok {
-			return sym1.Equal(sym2)
-		}
+	if sym, ok := a.(datalog.Symbol); ok {
 		if s, ok := b.(string); ok {
-			return sym1.String() == s
+			return sym.String() == s
 		}
 	}
-
-	// Handle numeric comparisons with type flexibility
-	switch n1 := a.(type) {
-	case int64:
-		switch n2 := b.(type) {
-		case int64:
-			return n1 == n2
-		case int:
-			return n1 == int64(n2)
-		case float64:
-			return float64(n1) == n2
-		}
-	case int:
-		switch n2 := b.(type) {
-		case int:
-			return n1 == n2
-		case int64:
-			return int64(n1) == n2
-		case float64:
-			return float64(n1) == n2
-		}
-	case float64:
-		switch n2 := b.(type) {
-		case float64:
-			return n1 == n2
-		case int64:
-			return n1 == float64(n2)
-		case int:
-			return n1 == float64(n2)
-		}
-	case bool:
-		if b2, ok := b.(bool); ok {
-			return n1 == b2
-		}
-	case string:
-		if s2, ok := b.(string); ok {
-			return n1 == s2
-		}
-	case time.Time:
-		if t2, ok := b.(time.Time); ok {
-			return n1.Equal(t2)
-		}
-	}
-
-	// Default equality
-	return a == b
+	return datalog.ValuesEqual(a, b)
 }
 
 func ifThen(cond bool, ifTrue, ifFalse string) string {

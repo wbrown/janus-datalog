@@ -2,8 +2,8 @@ package datalog
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"time"
@@ -185,7 +185,7 @@ func compareNumeric(left int64, right interface{}) int {
 		return compareInt64s(left, ri)
 	}
 	if r, ok := right.(float64); ok {
-		return compareFloats(float64(left), r)
+		return compareInt64Float64(left, r)
 	}
 	// Numeric (rank 1) vs non-numeric (higher rank): numeric sorts first. The
 	// reverse direction (non-numeric left vs numeric right) reaches
@@ -196,7 +196,7 @@ func compareNumeric(left int64, right interface{}) int {
 // compareFloat compares a float64 with another numeric value
 func compareFloat(left float64, right interface{}) int {
 	if ri, ok := asInt64(right); ok {
-		return compareFloats(left, float64(ri))
+		return -compareInt64Float64(ri, left)
 	}
 	if r, ok := right.(float64); ok {
 		return compareFloats(left, r)
@@ -205,39 +205,52 @@ func compareFloat(left float64, right interface{}) int {
 	return -1
 }
 
-// compareBytes compares two byte slices as numeric values
-// For 20-byte hashes, we compare as 2 uint64s + 1 uint32
-func compareBytes(a, b []byte) int {
-	// Compare first 8 bytes as uint64
-	a1 := binary.BigEndian.Uint64(a[0:8])
-	b1 := binary.BigEndian.Uint64(b[0:8])
-	if a1 < b1 {
+// compareInt64Float64 compares an int64 with a float64 exactly. Routing the
+// integer through float64 collapses adjacent values above 2^53; instead the
+// float's integer part is compared as int64, with any fractional part
+// breaking the tie.
+func compareInt64Float64(i int64, f float64) int {
+	if math.IsNaN(f) {
+		// Preserves compareFloats' existing NaN behavior (incomparable → 0).
+		return 0
+	}
+	if f >= 9223372036854775808.0 { // 2^63: above every int64
 		return -1
 	}
-	if a1 > b1 {
+	if f < -9223372036854775808.0 { // below every int64
 		return 1
 	}
+	floor := math.Floor(f)
+	fi := int64(floor)
+	if i != fi {
+		return compareInt64s(i, fi)
+	}
+	if f > floor {
+		return -1 // i == floor(f) < f
+	}
+	return 0
+}
 
-	// Compare second 8 bytes as uint64
-	a2 := binary.BigEndian.Uint64(a[8:16])
-	b2 := binary.BigEndian.Uint64(b[8:16])
-	if a2 < b2 {
+// compareUint64Float64 compares a uint64 with a float64 exactly, mirroring
+// compareInt64Float64 for the unsigned range.
+func compareUint64Float64(u uint64, f float64) int {
+	if math.IsNaN(f) {
+		return 0
+	}
+	if f >= 18446744073709551616.0 { // 2^64: above every uint64
 		return -1
 	}
-	if a2 > b2 {
+	if f < 0 {
 		return 1
 	}
-
-	// Compare last 4 bytes as uint32
-	a3 := binary.BigEndian.Uint32(a[16:20])
-	b3 := binary.BigEndian.Uint32(b[16:20])
-	if a3 < b3 {
+	floor := math.Floor(f)
+	fu := uint64(floor)
+	if u != fu {
+		return compareUint64s(u, fu)
+	}
+	if f > floor {
 		return -1
 	}
-	if a3 > b3 {
-		return 1
-	}
-
 	return 0
 }
 
@@ -273,7 +286,7 @@ func compareUint64(left uint64, right interface{}) int {
 	case uint64:
 		return compareUint64s(left, r)
 	case float64:
-		return compareFloats(float64(left), r)
+		return compareUint64Float64(left, r)
 	}
 	// Numeric (rank 1) vs non-numeric: numeric sorts first (see compareNumeric).
 	return -1

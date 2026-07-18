@@ -494,8 +494,11 @@ func TestMergeJoinPerformance(t *testing.T) {
 	}
 }
 
-// TestCompareJoinKeys verifies the key comparison function
-func TestCompareJoinKeys(t *testing.T) {
+// TestMergeJoinKeyComparison pins the merge join's advance comparator, which
+// is the canonical datalog.CompareValues — the same total order that sorts
+// the binding relation, so the advance logic and the binding sort agree by
+// construction.
+func TestMergeJoinKeyComparison(t *testing.T) {
 	tests := []struct {
 		name     string
 		a        interface{}
@@ -564,9 +567,9 @@ func TestCompareJoinKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := compareJoinKeys(tt.a, tt.b)
+			result := datalog.CompareValues(tt.a, tt.b)
 			if result != tt.expected {
-				t.Errorf("compareJoinKeys(%v, %v) = %d, expected %d",
+				t.Errorf("CompareValues(%v, %v) = %d, expected %d",
 					tt.a, tt.b, result, tt.expected)
 			}
 		})

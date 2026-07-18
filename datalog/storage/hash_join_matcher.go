@@ -92,9 +92,20 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 		return HashJoinScan
 	}
 
-	// High selectivity (>50%): merge join is optimal
-	// Both binding relation and pattern scan are sorted, so we can merge them
-	return MergeJoin
+	// High selectivity (>50%): merge join, but only for entity-position keys.
+	// The merge advance is correct only when three orders agree: the binding
+	// sort (CompareValues via Sorted()), the advance comparator (CompareValues),
+	// and the storage scan order of the probe stream. That agreement is provable
+	// for E-position keys — probe datoms arrive in hash-byte order, which is
+	// exactly Identity's CompareValues order, and the projected single-column
+	// binding set makes cmp==0 coincide with ValuesEqual (interned pointer
+	// equality). Value-position scan order is the on-disk type-tag order, which
+	// deliberately differs from CompareValues' rank order (see datalog/compare.go),
+	// so those joins use the order-free hash join instead.
+	if position == 0 {
+		return MergeJoin
+	}
+	return HashJoinScan
 }
 
 // estimatePatternCardinality estimates total datoms matching pattern's constant parts
@@ -683,121 +694,6 @@ func extractBindingKey(tuple executor.Tuple, position int) interface{} {
 	return tuple[position]
 }
 
-// compareJoinKeys compares two join keys for ordering in merge join
-// Returns: -1 if a < b, 0 if a == b, 1 if a > b
-func compareJoinKeys(a, b interface{}) int {
-	// Handle nil cases
-	if a == nil && b == nil {
-		return 0
-	}
-	if a == nil {
-		return -1
-	}
-	if b == nil {
-		return 1
-	}
-
-	// Note: Identity is always a pointer type now, no dereferencing needed
-
-	// Type-specific comparisons using sort order
-	switch aVal := a.(type) {
-	case datalog.Identity:
-		if bVal, ok := b.(datalog.Identity); ok {
-			// Handle nil cases
-			if aVal == nil && bVal == nil {
-				return 0
-			}
-			if aVal == nil {
-				return -1
-			}
-			if bVal == nil {
-				return 1
-			}
-			// Compare by hash (lexicographic order)
-			aHash := aVal.Hash()
-			bHash := bVal.Hash()
-			for i := 0; i < len(aHash) && i < len(bHash); i++ {
-				if aHash[i] < bHash[i] {
-					return -1
-				}
-				if aHash[i] > bHash[i] {
-					return 1
-				}
-			}
-			return 0
-		}
-	case datalog.Keyword:
-		if bVal, ok := b.(datalog.Keyword); ok {
-			// For interned keywords, pointer equality means value equality
-			if aVal == bVal {
-				return 0
-			}
-			// Different pointers should mean different keywords
-			// If strings are equal but pointers differ, interning is broken
-			aStr := aVal.String()
-			bStr := bVal.String()
-			if aStr == bStr {
-				panic(fmt.Sprintf("BUG: interning broken - same keyword %q has different pointers", aStr))
-			}
-			if aStr < bStr {
-				return -1
-			}
-			return 1
-		}
-	case string:
-		if bVal, ok := b.(string); ok {
-			if aVal < bVal {
-				return -1
-			}
-			if aVal > bVal {
-				return 1
-			}
-			return 0
-		}
-	case uint64:
-		if bVal, ok := b.(uint64); ok {
-			if aVal < bVal {
-				return -1
-			}
-			if aVal > bVal {
-				return 1
-			}
-			return 0
-		}
-	case int64:
-		if bVal, ok := b.(int64); ok {
-			if aVal < bVal {
-				return -1
-			}
-			if aVal > bVal {
-				return 1
-			}
-			return 0
-		}
-	case datalog.ElementID:
-		if bEid, ok := datalog.DerefElementID(b); ok {
-			return aVal.Compare(bEid)
-		}
-	case *datalog.ElementID:
-		if aVal != nil {
-			if bEid, ok := datalog.DerefElementID(b); ok {
-				return aVal.Compare(bEid)
-			}
-		}
-	}
-
-	// Fall back to string comparison for unknown types
-	aStr := fmt.Sprintf("%v", a)
-	bStr := fmt.Sprintf("%v", b)
-	if aStr < bStr {
-		return -1
-	}
-	if aStr > bStr {
-		return 1
-	}
-	return 0
-}
-
 // hashJoinIterator performs lazy hash join iteration
 type hashJoinIterator struct {
 	matcher         *BadgerMatcher
@@ -938,7 +834,7 @@ func (it *mergeJoinIterator) Next() bool {
 		// Advance binding index while binding < datom
 		for it.bindingIdx < len(it.sortedTuples) {
 			bindingKey := extractBindingKey(it.sortedTuples[it.bindingIdx], it.position)
-			cmp := compareJoinKeys(bindingKey, probeKey)
+			cmp := datalog.CompareValues(bindingKey, probeKey)
 
 			if cmp < 0 {
 				// Binding < datom: advance binding
@@ -956,7 +852,7 @@ func (it *mergeJoinIterator) Next() bool {
 
 		// Check if binding == datom
 		bindingKey := extractBindingKey(it.sortedTuples[it.bindingIdx], it.position)
-		cmp := compareJoinKeys(bindingKey, probeKey)
+		cmp := datalog.CompareValues(bindingKey, probeKey)
 
 		if cmp == 0 {
 			// Keys match! Check full pattern match
