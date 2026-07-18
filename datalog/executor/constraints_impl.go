@@ -226,14 +226,15 @@ func valuesEqual(a, b interface{}) bool {
 		return datalog.ValuesEqual(a, b)
 	}
 
-	// Handle Identity comparison
+	// Handle Identity comparison. Identities equal only identities: strings
+	// become entities by boundary construction (NewIdentity, #identity
+	// literals), never by comparison-time coercion, so a string here is an
+	// ordinary typed non-match.
 	if id1, ok := a.(datalog.Identity); ok {
 		if id2, ok := b.(datalog.Identity); ok {
 			return id1.Equal(id2)
 		}
-		if s, ok := b.(string); ok {
-			return id1.String() == s
-		}
+		return false
 	}
 
 	// Handle Keyword comparison

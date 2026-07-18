@@ -107,13 +107,8 @@ func InternIdentityFromHash(hash [20]byte) Identity {
 		return val.(Identity)
 	}
 
-	// Slow path: create and store. Identities from storage have an empty str
-	// field, so String() falls back to L85() (a pure function of the hash,
-	// computed on demand).
-	id := &identity{
-		value: hash,
-		str:   "", // Unknown - String() uses L85() (computed on demand)
-	}
+	// Slow path: create and store.
+	id := &identity{value: hash}
 	actual, _ := identityIntern.cache.LoadOrStore(hash, id)
 	return actual.(Identity)
 }

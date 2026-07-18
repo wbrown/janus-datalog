@@ -120,12 +120,11 @@ func matchesConstant(value, constant interface{}) bool {
 	// Handle different type combinations
 	switch v := value.(type) {
 	case datalog.Identity:
-		switch c := constant.(type) {
-		case datalog.Identity:
+		// Identities match only identities. Strings become entities by boundary
+		// construction (NewIdentity, #identity literals), never by
+		// comparison-time coercion; a string constant here is a typed non-match.
+		if c, ok := constant.(datalog.Identity); ok {
 			return v.Equal(c)
-		case string:
-			// Allow matching by string for convenience
-			return v.String() == c
 		}
 
 	case datalog.Keyword:

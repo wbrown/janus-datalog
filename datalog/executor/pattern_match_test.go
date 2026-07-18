@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -267,7 +268,9 @@ func TestPatternToRelation(t *testing.T) {
 }
 
 func TestMatchWithStringConstants(t *testing.T) {
-	// Test that we can use string constants for matching keywords and identities
+	// String constants match keywords (the attribute convenience is retained),
+	// but never identities: the entity position requires an Identity and a
+	// string there is a loud query defect, not a convenience.
 	alice := datalog.NewIdentity("user:alice")
 	nameAttr := datalog.NewKeyword(":user/name")
 
@@ -277,10 +280,10 @@ func TestMatchWithStringConstants(t *testing.T) {
 
 	matcher := NewMemoryPatternMatcher(datoms)
 
-	// Match using string constants (convenience feature)
+	// Identity in entity position, string for the attribute keyword
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
-			query.Constant{Value: "user:alice"}, // String instead of Identity
+			query.Constant{Value: alice},
 			query.Constant{Value: ":user/name"}, // String instead of Keyword
 			query.Variable{Name: datalog.NewSymbol("?name")},
 		},
@@ -299,6 +302,21 @@ func TestMatchWithStringConstants(t *testing.T) {
 	it.Close()
 
 	if count != 1 {
-		t.Errorf("expected 1 match using string constants, got %d", count)
+		t.Errorf("expected 1 match using string attribute constant, got %d", count)
+	}
+
+	// A string constant in the entity position is a validation error
+	stringEPattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Constant{Value: "user:alice"},
+			query.Constant{Value: ":user/name"},
+			query.Variable{Name: datalog.NewSymbol("?name")},
+		},
+	}
+
+	if _, err := matcher.Match(query.PatternQuery(stringEPattern), nil); err == nil {
+		t.Fatal("expected an error for a string constant in entity position, got none")
+	} else if !strings.Contains(err.Error(), "entity position") {
+		t.Errorf("error should name the entity position; got: %v", err)
 	}
 }

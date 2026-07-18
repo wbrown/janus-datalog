@@ -1580,10 +1580,10 @@ func formatValue(sb *strings.Builder, v interface{}) {
 		sb.WriteString(val.String())
 
 	case datalog.Identity:
-		// For entity references in queries, use the original string representation
-		// wrapped in a custom reader tag for clarity
-		sb.WriteString("#db/id \"")
-		sb.WriteString(val.String())
+		// Entity references render as the canonical #identity literal, which
+		// the parser reads back to the same hash.
+		sb.WriteString("#identity \"")
+		sb.WriteString(val.L85())
 		sb.WriteString("\"")
 
 	case string:

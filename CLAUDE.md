@@ -263,7 +263,7 @@ The codebase maintains a clean separation between user-facing types and storage 
   - `Tx: ElementID` - 16-byte transaction ID (Lamport + ReplicaID) for CRDT causal ordering
   - `Op: CRDTOp` - CRDT operation (none/add/remove/rga-insert/rga-tombstone)
   - `AfterRef: ElementID` - RGA position reference (only used when `Op.HasAfterRef()` is true)
-- **Identity**: Like C++ Reference and Clojure Identity - contains hash, L85, and original string
+- **Identity**: Like C++ Reference and Clojure Identity - the SHA1 content-address hash, rendered as L85; the seed string is hashed and discarded
 - **Value**: Just `interface{}` - no wrapper types, direct Go types:
   - Scalars: `string`, `int64`, `float64`, `bool`, `time.Time`, `[]byte`
   - References: `Identity` (aliased as `Reference` when used as a value)

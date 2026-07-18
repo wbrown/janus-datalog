@@ -43,6 +43,9 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	if err != nil {
 		return nil, err
 	}
+	if err := validateEntityBinding(m.extractValue(pattern.GetE())); err != nil {
+		return nil, err
+	}
 	// Determine pattern symbols
 	symbols := pattern.Symbols()
 

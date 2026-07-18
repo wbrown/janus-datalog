@@ -250,6 +250,9 @@ func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog
 	if elem := pattern.GetT(); elem != nil {
 		tx = m.extractValue(elem)
 	}
+	if err := validateEntityBinding(e); err != nil {
+		return nil, err
+	}
 
 	// Determine cardinality for CRDT resolution
 	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
@@ -334,6 +337,9 @@ func (m *BadgerMatcher) MatchWithHistory(pattern *query.DataPattern) ([]datalog.
 	if elem := pattern.GetT(); elem != nil {
 		tx = m.extractValue(elem)
 	}
+	if err := validateEntityBinding(e); err != nil {
+		return nil, err
+	}
 
 	// Choose index and create scan range
 	index, start, end := m.chooseIndex(e, a, v, tx)
@@ -386,6 +392,9 @@ func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetTx datalog.E
 	}
 	if elem := pattern.GetT(); elem != nil {
 		tx = m.extractValue(elem)
+	}
+	if err := validateEntityBinding(e); err != nil {
+		return nil, err
 	}
 
 	// Choose index and create scan range
@@ -593,6 +602,21 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	return EATV, start, end
 }
 
+// validateEntityBinding rejects non-Identity values bound to a data pattern's
+// entity position. The entity position is inhabited only by Identity; a string
+// or other value there is a query defect that must fail loudly rather than
+// silently matching nothing. Strings become entities by boundary construction
+// (NewIdentity, #identity literals), never by comparison-time coercion.
+func validateEntityBinding(e interface{}) error {
+	if e == nil {
+		return nil
+	}
+	if _, ok := e.(datalog.Identity); !ok {
+		return fmt.Errorf("data pattern entity position requires an identity, got %T (construct one with NewIdentity or an #identity literal)", e)
+	}
+	return nil
+}
+
 // matchesDatom checks if a datom matches the pattern constraints
 func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface{}) bool {
 	// Note: Identity is always a pointer type now, no dereferencing needed
@@ -612,10 +636,10 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 				return false
 			}
 		default:
-			// For other types, try equality
-			if datom.E.String() != fmt.Sprintf("%v", e) {
-				return false
-			}
+			// Unreachable when entity bindings are validated at extraction
+			// (validateEntityBinding). Fail loudly rather than fuzzy-match: the
+			// entity position is inhabited only by Identity.
+			panic(fmt.Sprintf("BUG: non-Identity entity binding reached matchesDatom: %T", e))
 		}
 	}
 

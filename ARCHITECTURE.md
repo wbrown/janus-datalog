@@ -478,7 +478,7 @@ preserves compressed form through export / import.
 
 Core types in the top-level package:
 - **Datom**: `{E: Identity, A: Keyword, V: Value, Tx: ElementID, Op: CRDTOp, AfterRef: ElementID}`
-- **Identity**: Entity identifier — SHA1 hash + L85 cache + original string
+- **Identity**: Entity identifier — the SHA1 content-address hash; renders as L85. The seed string is consumed by `NewIdentity` and discarded
 - **Keyword**: Interned pointer type (`*keyword`); pointer equality = value equality, O(1) comparison
 - **Symbol**: Interned pointer type (`*symbol`); query variables only, not stored
 - **ElementID**: `{Lamport: uint64, ReplicaID: uint64}` — CRDT causality

@@ -467,13 +467,12 @@ entityID := "user-123"
 entityHash := sha1(entityID)
 entityDisplay := base64(entityHash)
 
-// Janus: one type, three faces
+// Janus: one type, one canonical form
 type Identity struct {
-    original string  // "user-123"
-    hash     [20]byte // SHA1
-    l85      string   // display
+    hash [20]byte // SHA1 of the seed string — the content address IS the identity
 }
-// Ask for what you need: id.String(), id.Bytes(), id.L85()
+// The seed is hashed and discarded; String() and L85() both render the hash.
+// A human-readable name is application data: store it as an attribute.
 ```
 
 **Schema:**

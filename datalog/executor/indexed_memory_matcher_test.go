@@ -370,7 +370,7 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 			t.Fatal("Expected non-nil tuple")
 		}
 		entity := tuple[0].(datalog.Identity)
-		if entity.String() != "e1" {
+		if !entity.Equal(datalog.NewIdentity("e1")) {
 			t.Errorf("Expected entity e1, got %s", entity.String())
 		}
 	})

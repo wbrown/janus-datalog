@@ -80,10 +80,11 @@ func TestOrClauseWithCorrelatedSubquery_E2E(t *testing.T) {
 
 	t.Logf("Results map: %v", results)
 
-	// Verify results
+	// Verify results; identities render as L85, so key lookups go through the
+	// same identities the fixture created
 	assert.Len(t, results, 2, "Should have 2 scenarios")
-	assert.Equal(t, int64(2), results["scenario:1"], "Scenario 1 should have 2 completed tasks")
-	assert.Equal(t, int64(0), results["scenario:2"], "Scenario 2 should fall back to 0")
+	assert.Equal(t, int64(2), results[scenario1.String()], "Scenario 1 should have 2 completed tasks")
+	assert.Equal(t, int64(0), results[scenario2.String()], "Scenario 2 should fall back to 0")
 }
 
 // TestScenarioSummaryQuery_E2E tests the exact query from the user's production code.

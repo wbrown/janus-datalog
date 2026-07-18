@@ -218,8 +218,10 @@ func TestCacheMatrix_EConstantAUnbound(t *testing.T) {
 			// This goes through matchUnboundAsRelation → chooseIndex with e != nil
 			// The bug was: chooseIndex used EAVT (V-before-Tx) for E-only case
 			// Fixed: now uses EATV (Tx-first) for proper CRDT resolution
+			// The entity constant is an #identity literal: entity position
+			// requires an Identity, never a seed string.
 			results, err := executor.CollectTuples(db.Query(
-				`[:find ?a ?v :where ["person-1" ?a ?v]]`))
+				`[:find ?a ?v :where [#identity "` + personID.L85() + `" ?a ?v]]`))
 			require.NoError(t, err)
 
 			// Should return 2 results: one for name (Charlie), one for age (30)
@@ -1488,12 +1490,13 @@ func TestCacheMatrix_AllUnbound(t *testing.T) {
 			results, err := executor.CollectTuples(db.Query(`[:find ?e ?a ?v :where [?e ?a ?v]]`))
 			require.NoError(t, err)
 
-			// Count only person entities (filter out tx:* system entities)
-			// System entities like tx:* have :db/txInstant without schema, so return all values
+			// Count only the two person entities (the scan also returns tx:*
+			// system entities' :db/txInstant datoms). Identities render as L85
+			// hashes, so filter by identity equality, not by seed-string prefix.
 			personResults := 0
 			for _, r := range results {
 				if e, ok := r[0].(datalog.Identity); ok {
-					if len(e.String()) > 0 && e.String()[0] != 't' { // not tx:*
+					if e.Equal(person1) || e.Equal(person2) {
 						personResults++
 					}
 				}
