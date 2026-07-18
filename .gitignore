@@ -70,3 +70,6 @@ test_*.txt
 
 # Claude Code hook runtime state (per-turn tool-call gate lock markers)
 .claude/.gate-locks/
+
+# personal envrc
+.envrc
