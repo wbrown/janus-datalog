@@ -1,6 +1,6 @@
 # BUG: NOT bodies with scoped or existential variables cannot plan (non-bridge path)
 
-**Status**: Open (2026-07-19). Reproducer `TestNotClauseWithOrJoinBody` in `datalog/executor/not_or_test.go` is committed **red** by owner ruling: a known bug's reproducer belongs in the suite, documenting the defect loudly, not quarantined to keep the gate green. The gate is red until this is fixed; that is the honest state.
+**Status**: Resolved (2026-07-19; step A `d235b76`, step B `1b4348c`, step C lands with this doc move). All three defects fixed; `TestNotClauseWithOrJoinBody` (committed red by owner ruling until this step) and `TestNotClauseWithExistentialBodyVariable` are green; full gate (native + wasm) green.
 
 ## Symptom
 
@@ -80,3 +80,9 @@ Test-first per step: unit tests pinning `FreeVariables` per form (including nest
 ### Cost (stated, not a criterion)
 
 `ClauseSymbols` consumers all move: phasing, phase-contract validation, explain analysis, plus the four scoping-knowledge sites. Largest planner change since the 2026-07 audit began.
+
+## Resolution (step C, executor)
+
+`executeNotClause`'s anti-join keys are `query.FreeVariables(clause.Clauses)`; `filterWithNotClause` intersects them with the input schema (bound variables unify, the rest are existential). `collectInnerVars` is deleted — its explicit-join arm contributed nothing for a nested or-join, which was defect (3).
+
+Consequential fix surfaced by the reproducer: `filterWithNotClause` gated match detection on `innerResult.Size() > 0`, but `Size()` is a materialization indicator, not a count — a streaming relation reports `-1`, and a NOT body containing an or-join yields a lazy `OrFallbackRelation` that nothing realizes. Every such combo read as "no match" and the NOT filtered nothing. Match detection now iterates via `ForEach` — the streaming-correct existence check: no buffering, and a failed inner scan surfaces as an error instead of a silent un-exclusion, the same convention `filterWithNotJoinClause` already used. The gap was unreachable before this fix: plain-pattern bodies collapse to materialized relations, and bodies with explicit-join forms errored at the anti-join-key step, so no streaming relation ever reached the `Size()` gate.

@@ -1824,8 +1824,11 @@ func (e *DefaultQueryExecutor) executeNotClause(ctx Context, clause *query.NotCl
 		return groups, nil
 	}
 
-	// Collect all variables from inner clauses to determine join keys
-	joinVars := collectInnerVars(clause.Clauses)
+	// Anti-join keys are the body's free variables — the same scope
+	// interface the planner schedules on. filterWithNotClause intersects
+	// them with the input schema: bound variables unify, the rest are
+	// existential (Datomic's unification rule).
+	joinVars := query.FreeVariables(clause.Clauses)
 	if len(joinVars) == 0 {
 		return nil, fmt.Errorf("NOT clause has no variables to join on")
 	}
@@ -1917,8 +1920,20 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 			return nil, fmt.Errorf("NOT inner clause execution failed: %w", err)
 		}
 
-		// If inner produced any results, this combo is "matched" and should be excluded
-		if innerResult != nil && innerResult.Size() > 0 {
+		// Count inner results via ForEach so streaming inner relations
+		// (Size() == -1) register as matches and a failed inner scan
+		// surfaces as an error rather than looking like "no match" — which
+		// would wrongly un-exclude this combo and silently corrupt the NOT
+		// result.
+		matched := false
+		if innerResult != nil {
+			count := 0
+			if ferr := ForEach(innerResult, func(Tuple) error { count++; return nil }); ferr != nil {
+				return nil, fmt.Errorf("NOT inner clause execution failed: %w", ferr)
+			}
+			matched = count > 0
+		}
+		if matched {
 			key := NewTupleKeyFull(combo)
 			matchedKeys.Put(key, struct{}{})
 		}

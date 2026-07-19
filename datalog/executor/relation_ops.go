@@ -406,36 +406,6 @@ func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) (
 	return
 }
 
-// collectInnerVars collects all variables from inner clauses
-func collectInnerVars(clauses []query.Clause) []query.Symbol {
-	seen := make(map[query.Symbol]bool)
-	var vars []query.Symbol
-
-	query.WalkClauses(clauses, func(clause query.Clause) bool {
-		switch c := clause.(type) {
-		case *query.DataPattern:
-			for _, sym := range c.Symbols() {
-				if !seen[sym] {
-					seen[sym] = true
-					vars = append(vars, sym)
-				}
-			}
-		case *query.NotJoinClause, *query.OrJoinClause:
-			// Explicit-join bodies are scoped: only the declared JoinVars
-			// are exposed, so the body's variables must not leak here.
-			// NOTE: the JoinVars themselves are not collected either — a
-			// nested (or-join [?x] ...) exposes ?x but contributes nothing
-			// to this collection. Suspected missing case, kept as-is
-			// pending an owner ruling; see executeNotClause, whose
-			// anti-join keys come from this collection.
-			return false
-		}
-		return true
-	})
-
-	return vars
-}
-
 // getUniqueCombinations extracts unique value combinations for the given symbols.
 func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, resultErr error) {
 	if rel == nil || len(syms) == 0 {
