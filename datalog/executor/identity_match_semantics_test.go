@@ -77,20 +77,39 @@ func TestBoundStringEntityThroughMemoryMatcherIsNonMatch(t *testing.T) {
 	}
 }
 
+// TestMatchesConstantRejectsStringForKeyword pins the same rule for
+// keywords: a keyword matches only a keyword (interned pointer equality).
+// Strings become keywords by boundary construction (NewKeyword, :literal in
+// query text), never by comparison-time coercion.
+func TestMatchesConstantRejectsStringForKeyword(t *testing.T) {
+	kw := datalog.NewKeyword(":status/active")
+	other := datalog.NewKeyword(":status/done")
+
+	if !matchesConstant(kw, kw) {
+		t.Error("keyword must match itself")
+	}
+	if matchesConstant(kw, other) {
+		t.Error("distinct keywords must not match")
+	}
+	if matchesConstant(kw, ":status/active") {
+		t.Error("keyword matched its text; comparison-time string coercion must not exist")
+	}
+}
+
 func TestValuesEqualRejectsStringForIdentity(t *testing.T) {
 	id := datalog.NewIdentity("user:alice")
 	other := datalog.NewIdentity("user:bob")
 
-	if !valuesEqual(id, id) {
+	if !datalog.ValuesEqual(id, id) {
 		t.Error("identity must equal itself")
 	}
-	if valuesEqual(id, other) {
+	if datalog.ValuesEqual(id, other) {
 		t.Error("distinct identities must not be equal")
 	}
-	if valuesEqual(id, "user:alice") {
+	if datalog.ValuesEqual(id, "user:alice") {
 		t.Error("identity equaled its seed string; comparison-time string coercion must not exist")
 	}
-	if valuesEqual(id, id.L85()) {
+	if datalog.ValuesEqual(id, id.L85()) {
 		t.Error("identity equaled its L85 text; comparison-time string coercion must not exist")
 	}
 }

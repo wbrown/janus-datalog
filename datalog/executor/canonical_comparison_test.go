@@ -50,41 +50,63 @@ func TestRangeConstraintTypedOrdering(t *testing.T) {
 	}
 }
 
-// TestValuesEqualCanonicalDelegation pins valuesEqual's contract: canonical
-// domain equality, plus the one deliberately retained extension — Keyword and
-// Symbol match their string text (pending its own decision). Identity has no
-// such coercion: strings become entities only by boundary construction.
-func TestValuesEqualCanonicalDelegation(t *testing.T) {
+// TestFilterComparisonEqualityIsStrict pins the filter path's = and != to
+// value equality (type-strict), with the ordering operators remaining the
+// magnitude-based total order — the same split as the predicate layer.
+func TestFilterComparisonEqualityIsStrict(t *testing.T) {
+	if evaluateComparison("=", int64(3), float64(3)) {
+		t.Error("filter (= 3 3.0) must be false: equality is type-strict like join keys")
+	}
+	if !evaluateComparison("!=", int64(3), float64(3)) {
+		t.Error("filter (!= 3 3.0) must be true")
+	}
+	if !evaluateComparison("=", int64(3), int64(3)) {
+		t.Error("filter (= 3 3) must be true")
+	}
+	if !evaluateComparison(">=", int64(3), float64(3)) {
+		t.Error("filter (>= 3 3.0) must be true: ordering compares by magnitude")
+	}
+}
+
+// TestValuesEqualCanonicalStrictness pins the one equality relation
+// (datalog.ValuesEqual): type-strict across the whole domain. Strings become
+// keywords, symbols, and entities only by boundary construction — never by
+// comparison-time coercion — and mixed-numeric values are never conflated.
+// CompareValues may still order int/float by magnitude — that is an ordering
+// statement, not equality.
+func TestValuesEqualCanonicalStrictness(t *testing.T) {
 	kw := datalog.NewKeyword(":status/active")
-	if !valuesEqual(kw, ":status/active") {
-		t.Error("keyword must match its text (retained coercion)")
+	if datalog.ValuesEqual(kw, ":status/active") {
+		t.Error("keyword must not equal its text; comparison-time string coercion must not exist")
+	}
+	if !datalog.ValuesEqual(kw, datalog.NewKeyword(":status/active")) {
+		t.Error("keyword equals itself (interned)")
 	}
 	sym := datalog.NewSymbol("workflow/active")
-	if !valuesEqual(sym, "workflow/active") {
-		t.Error("symbol must match its text (retained coercion)")
+	if datalog.ValuesEqual(sym, "workflow/active") {
+		t.Error("symbol must not equal its text; comparison-time string coercion must not exist")
+	}
+	if !datalog.ValuesEqual(sym, datalog.NewSymbol("workflow/active")) {
+		t.Error("symbol equals itself (interned)")
 	}
 
-	// Equality is type-strict on int-vs-float, matching join semantics
-	// (TupleKeyMap keys on datalog.ValuesEqual): mixed-numeric values are
-	// never conflated. CompareValues may still order them as ties — that is
-	// an ordering statement, not equality.
-	if valuesEqual(int64(3), float64(3)) {
+	if datalog.ValuesEqual(int64(3), float64(3)) {
 		t.Error("int64 and float64 are distinct values; equality is type-strict like join keys")
 	}
-	if valuesEqual(int64(1<<53)+1, float64(1<<53)) {
+	if datalog.ValuesEqual(int64(1<<53)+1, float64(1<<53)) {
 		t.Error("2^53+1 must not equal float64 2^53")
 	}
 
 	id := datalog.NewIdentity("user:alice")
-	if !valuesEqual(id, id) {
+	if !datalog.ValuesEqual(id, id) {
 		t.Error("identity equals itself")
 	}
-	if valuesEqual(id, id.L85()) {
+	if datalog.ValuesEqual(id, id.L85()) {
 		t.Error("identity must not equal its L85 text")
 	}
 
 	now := time.Now()
-	if !valuesEqual(now, now) {
+	if !datalog.ValuesEqual(now, now) {
 		t.Error("time equals itself")
 	}
 }

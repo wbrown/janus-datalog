@@ -195,9 +195,11 @@ func evaluateComparison(function string, left, right interface{}) bool {
 	case ">=":
 		return datalog.CompareValues(left, right) >= 0
 	case "=":
-		return datalog.CompareValues(left, right) == 0
+		// Equality is ValuesEqual (type-strict, the join-key relation);
+		// ordering above is CompareValues. See query.Comparison.Eval.
+		return datalog.ValuesEqual(left, right)
 	case "!=":
-		return datalog.CompareValues(left, right) != 0
+		return !datalog.ValuesEqual(left, right)
 	default:
 		// Unknown comparison
 		return false

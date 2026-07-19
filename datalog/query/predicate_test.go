@@ -95,14 +95,17 @@ func TestComparison(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "Mixed numeric types",
+			// Equality is type-strict (ValuesEqual): int64(5) and float64(5.0)
+			// are distinct datalog values. Ordering comparators still compare
+			// them numerically.
+			name: "Mixed numeric types are not equal",
 			pred: &Comparison{
 				Op:    OpEQ,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: float64(5.0)},
 			},
 			bindings: map[Symbol]interface{}{datalog.NewSymbol("?x"): int64(5)},
-			expected: true,
+			expected: false,
 		},
 	}
 

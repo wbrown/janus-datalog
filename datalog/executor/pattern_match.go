@@ -128,13 +128,11 @@ func matchesConstant(value, constant interface{}) bool {
 		}
 
 	case datalog.Keyword:
-		switch c := constant.(type) {
-		case datalog.Keyword:
-			// Pointer equality - interned keywords are unique
+		// Keywords match only keywords (interned pointer equality). Strings
+		// become keywords by boundary construction (NewKeyword, :literal in
+		// query text), never by comparison-time coercion.
+		if c, ok := constant.(datalog.Keyword); ok {
 			return v == c
-		case string:
-			// Allow matching by string for convenience
-			return v.String() == c
 		}
 
 	case string:

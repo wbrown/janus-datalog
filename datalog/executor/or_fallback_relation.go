@@ -1544,7 +1544,7 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 				match = false
 				break
 			}
-			if !valuesEqual(outerTuple[sp.outerIdx], t[sp.branchIdx]) {
+			if !datalog.ValuesEqual(outerTuple[sp.outerIdx], t[sp.branchIdx]) {
 				match = false
 				break
 			}

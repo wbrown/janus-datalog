@@ -859,7 +859,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 					for k, fi := range filterIdx {
 						_ = k
 						if filterRelIdx[k] < len(oldTuple) {
-							if !valuesEqual(oldTuple[filterRelIdx[k]], bindingValues[fi]) {
+							if !datalog.ValuesEqual(oldTuple[filterRelIdx[k]], bindingValues[fi]) {
 								match = false
 								break
 							}

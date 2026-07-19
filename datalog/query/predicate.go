@@ -107,22 +107,25 @@ func (c Comparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 		return false, fmt.Errorf("cannot resolve right term %s", c.Right)
 	}
 
-	// Compare the values
-	cmp := datalog.CompareValues(leftVal, rightVal)
-
+	// = and != are value equality (ValuesEqual): type-strict, the same
+	// relation join keys use, so the planner's equi-join rewrite of
+	// [(= ?x ?y)] into a join condition preserves semantics. The ordering
+	// operators use the total order (CompareValues), where int and float
+	// compare by magnitude — (>= 3 3.0) is true while (= 3 3.0) is false,
+	// as in Clojure.
 	switch c.Op {
 	case OpEQ:
-		return cmp == 0, nil
+		return datalog.ValuesEqual(leftVal, rightVal), nil
 	case OpNE:
-		return cmp != 0, nil
+		return !datalog.ValuesEqual(leftVal, rightVal), nil
 	case OpLT:
-		return cmp < 0, nil
+		return datalog.CompareValues(leftVal, rightVal) < 0, nil
 	case OpLTE:
-		return cmp <= 0, nil
+		return datalog.CompareValues(leftVal, rightVal) <= 0, nil
 	case OpGT:
-		return cmp > 0, nil
+		return datalog.CompareValues(leftVal, rightVal) > 0, nil
 	case OpGTE:
-		return cmp >= 0, nil
+		return datalog.CompareValues(leftVal, rightVal) >= 0, nil
 	default:
 		return false, fmt.Errorf("unknown comparison operator: %s", c.Op)
 	}
@@ -239,21 +242,21 @@ func (c ChainedComparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 			return false, fmt.Errorf("cannot resolve term %s", c.Terms[i+1])
 		}
 
-		cmp := datalog.CompareValues(leftVal, rightVal)
-
-		// Check if this pair satisfies the operator
+		// Check if this pair satisfies the operator. Equality is
+		// ValuesEqual (type-strict); ordering is CompareValues, as in
+		// Comparison.Eval.
 		ok := false
 		switch c.Op {
 		case OpLT:
-			ok = cmp < 0
+			ok = datalog.CompareValues(leftVal, rightVal) < 0
 		case OpLTE:
-			ok = cmp <= 0
+			ok = datalog.CompareValues(leftVal, rightVal) <= 0
 		case OpGT:
-			ok = cmp > 0
+			ok = datalog.CompareValues(leftVal, rightVal) > 0
 		case OpGTE:
-			ok = cmp >= 0
+			ok = datalog.CompareValues(leftVal, rightVal) >= 0
 		case OpEQ:
-			ok = cmp == 0
+			ok = datalog.ValuesEqual(leftVal, rightVal)
 		}
 
 		if !ok {

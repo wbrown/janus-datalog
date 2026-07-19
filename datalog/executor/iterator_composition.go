@@ -1,6 +1,10 @@
 package executor
 
 import (
+	"fmt"
+	"math"
+
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -291,6 +295,19 @@ func (it *PredicateFilterIterator) Error() error {
 	return it.source.Error()
 }
 
+// admitExpressionResult checks a function result entering relational flow.
+// Expression evaluation is the one producer of NaN inside the engine —
+// arithmetic over Inf operands (Inf - Inf, 0 * Inf, Inf / Inf), where Inf is
+// itself a value and reachable from finite data by overflow — so NaN fails
+// loudly here rather than entering joins and sorts. The write and input
+// boundaries exclude it everywhere else.
+func admitExpressionResult(fn query.Function, result interface{}) error {
+	if f, ok := result.(float64); ok && math.IsNaN(f) {
+		return fmt.Errorf("expression %v produced NaN, which is not a datalog value", fn)
+	}
+	return nil
+}
+
 // FunctionEvaluatorIterator adds a new symbol by evaluating a function
 type FunctionEvaluatorIterator struct {
 	source       Iterator
@@ -371,9 +388,14 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 			result = gsr.Value
 		}
 
+		if err := admitExpressionResult(it.function, result); err != nil {
+			it.err = err
+			return false
+		}
+
 		if it.existingIdx >= 0 {
 			// Unification: check that function result matches existing binding
-			if it.existingIdx < len(sourceTuple) && !valuesEqual(sourceTuple[it.existingIdx], result) {
+			if it.existingIdx < len(sourceTuple) && !datalog.ValuesEqual(sourceTuple[it.existingIdx], result) {
 				continue // Mismatch — filter this tuple
 			}
 			// Match — pass through unchanged (no new symbol added)

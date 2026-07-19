@@ -166,26 +166,6 @@ func (c *timeExtractionConstraint) String() string {
 	return fmt.Sprintf("%s(V) = %v", c.extractFn, c.expected)
 }
 
-// valuesEqual reports equality for join and filter checks. It delegates to
-// datalog.ValuesEqual — the value domain's canonical equality — with one
-// deliberately retained extension, pending its own decision: a Keyword or
-// Symbol on the left additionally matches its string text. Identity has no
-// such coercion; strings become entities only by boundary construction
-// (NewIdentity, #identity literals).
-func valuesEqual(a, b interface{}) bool {
-	if kw, ok := a.(datalog.Keyword); ok {
-		if s, ok := b.(string); ok {
-			return kw.String() == s
-		}
-	}
-	if sym, ok := a.(datalog.Symbol); ok {
-		if s, ok := b.(string); ok {
-			return sym.String() == s
-		}
-	}
-	return datalog.ValuesEqual(a, b)
-}
-
 func ifThen(cond bool, ifTrue, ifFalse string) string {
 	if cond {
 		return ifTrue
