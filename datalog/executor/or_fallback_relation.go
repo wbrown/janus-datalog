@@ -940,7 +940,9 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 	// Initialize: advance to first outer tuple before trying any branches
 	if it.unionInputRel == nil && it.unionBranchIdx == 0 {
 		if !it.outerIter.Next() {
-			it.err = it.outerIter.Error()
+			if e := it.outerIter.Error(); it.err == nil {
+				it.err = e
+			}
 			it.done = true
 			return false
 		}
@@ -1031,7 +1033,9 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 
 		// All branches exhausted for current outer tuple — advance to next
 		if !it.outerIter.Next() {
-			it.err = it.outerIter.Error()
+			if e := it.outerIter.Error(); it.err == nil {
+				it.err = e
+			}
 			it.done = true
 			return false
 		}
@@ -1179,7 +1183,9 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 
 		// Need to advance to next outer tuple
 		if !it.outerIter.Next() {
-			it.err = it.outerIter.Error()
+			if e := it.outerIter.Error(); it.err == nil {
+				it.err = e
+			}
 			// Emit annotation when outer iterator exhausted
 			if collector := it.ctx.Collector(); collector != nil {
 				collector.Add(annotations.Event{

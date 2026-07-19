@@ -73,3 +73,18 @@ func TestChainedComparisonEqualityIsStrict(t *testing.T) {
 		t.Error("chained (< 2.5 ?x 4) with int64 3 must be true: ordering is by magnitude")
 	}
 }
+
+// An unknown operator symbol is a loud error in both comparison forms — the
+// chained form previously left ok=false and returned (false, nil), silently
+// filtering out every tuple.
+func TestChainedComparisonUnknownOperatorErrors(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	c := ChainedComparison{Op: datalog.NewSymbol("bogus"), Terms: []Term{
+		VariableTerm{Symbol: x},
+		ConstantTerm{Value: int64(1)},
+	}}
+	_, err := c.Eval(map[Symbol]interface{}{x: int64(1)})
+	if err == nil {
+		t.Fatal("unknown chained comparison operator must error, not silently filter")
+	}
+}

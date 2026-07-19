@@ -80,7 +80,9 @@ func (c *rangeConstraint) Evaluate(datom *datalog.Datom) bool {
 	case 3: // Transaction
 		value = datom.Tx
 	default:
-		return false
+		// Range constraints are constructed for V or Tx only; any other
+		// position is a bug, not a non-match.
+		panic(fmt.Sprintf("BUG: range constraint on unsupported position %d", c.position))
 	}
 
 	if c.min != nil {

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -364,8 +365,12 @@ func extractPatternValue(elem query.PatternElement) interface{} {
 		return nil
 	case query.Constant:
 		return e.Value
+	case query.VectorConstant:
+		return e.Values
 	default:
-		return nil
+		// PatternElement is a closed taxonomy; an unknown element is a bug,
+		// not an unbound position.
+		panic(fmt.Sprintf("BUG: unknown pattern element %T reached extractPatternValue", elem))
 	}
 }
 

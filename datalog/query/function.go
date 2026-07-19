@@ -2,7 +2,6 @@ package query
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -59,7 +58,10 @@ func (a ArithmeticFunction) Eval(bindings map[Symbol]interface{}) (interface{}, 
 		if !ok {
 			return nil, fmt.Errorf("cannot resolve arithmetic operand %s", argument)
 		}
-		number := toNumber(value)
+		number, err := toNumber(value)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", a.Op, err)
+		}
 		values[i] = number
 		if _, ok := number.(float64); ok {
 			useFloat = true
@@ -290,32 +292,29 @@ func (i IdentityFunction) ReturnType() string {
 	return "any"
 }
 
-// Type conversion functions
-func toNumber(val interface{}) interface{} {
+// toNumber normalizes a numeric operand to int64 or float64 (Go integer and
+// float widths normalize; there are no wrapper types). Anything else —
+// including numeric strings — is a loud error: strings become values of
+// other types by boundary construction, never by evaluation-time parsing.
+func toNumber(val interface{}) (interface{}, error) {
 	switch v := val.(type) {
 	case int:
-		return int64(v)
+		return int64(v), nil
 	case int32:
-		return int64(v)
+		return int64(v), nil
 	case int64:
-		return v
+		return v, nil
 	case float32:
-		return float64(v)
+		return float64(v), nil
 	case float64:
-		return v
-	case string:
-		// Try parsing as int first
-		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return i
-		}
-		// Try parsing as float
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
-		}
+		return v, nil
+	default:
+		return nil, fmt.Errorf("operand %v (%T) is not a number", val, val)
 	}
-	return int64(0)
 }
 
+// toInt64 and toFloat64 convert between the two shapes toNumber produces.
+// Any other type here is a bug: every operand passed through toNumber first.
 func toInt64(val interface{}) int64 {
 	switch v := val.(type) {
 	case int64:
@@ -323,7 +322,7 @@ func toInt64(val interface{}) int64 {
 	case float64:
 		return int64(v)
 	default:
-		return 0
+		panic(fmt.Sprintf("BUG: non-normalized arithmetic operand %T reached toInt64", val))
 	}
 }
 
@@ -334,7 +333,7 @@ func toFloat64(val interface{}) float64 {
 	case float64:
 		return v
 	default:
-		return 0.0
+		panic(fmt.Sprintf("BUG: non-normalized arithmetic operand %T reached toFloat64", val))
 	}
 }
 

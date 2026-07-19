@@ -379,7 +379,9 @@ func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
 		// after RGA resolution. Empty slice means "match empty vector".
 		return e.Values
 	default:
-		return nil
+		// PatternElement is a closed taxonomy; an unknown element is a bug,
+		// not an unbound position.
+		panic(fmt.Sprintf("BUG: unknown pattern element %T reached extractValue", elem))
 	}
 }
 

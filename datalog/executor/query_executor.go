@@ -1236,9 +1236,12 @@ func combineSubqueryResultsSimple(results []Relation) Relation {
 	return mat
 }
 
-// extractBindingSymbols extracts symbols from a binding form
+// extractBindingSymbols extracts symbols from a binding form. BindingForm is
+// a closed taxonomy; an unknown form is a bug, not an empty schema.
 func extractBindingSymbols(binding query.BindingForm) []query.Symbol {
 	switch b := binding.(type) {
+	case query.ScalarBinding:
+		return []query.Symbol{b.Variable}
 	case query.TupleBinding:
 		return b.Variables
 	case query.RelationBinding:
@@ -1246,7 +1249,7 @@ func extractBindingSymbols(binding query.BindingForm) []query.Symbol {
 	case query.CollectionBinding:
 		return []query.Symbol{b.Variable}
 	default:
-		return nil
+		panic(fmt.Sprintf("BUG: unknown binding form %T", binding))
 	}
 }
 

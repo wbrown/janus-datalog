@@ -22,7 +22,7 @@ PR #112 consolidated the engine onto: one total order (`datalog.CompareValues`) 
 
 ### A1. `MaterializedRelation.FilterWithPredicate` swallows predicate evaluation errors
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). The first Eval error stops the loop and surfaces as the result's deferred error; the source relation's own deferred error carries through first. Pinned by `TestMaterializedRelation_FilterWithPredicate_PropagatesEvalError` and `_CarriesSourceError`.
 **Site**: `datalog/executor/relation.go` (`if passes, err := pred.Eval(bindings); err == nil && passes`)
 
 A predicate `Eval` error silently drops the tuple — a truncated-success bug: wrong answer, no signal. Contrast `PredicateFilterIterator.Next` (defers the error) and `filterWithPredicateAndLookup` in `relation_ops.go` (fails fast). Six relation types delegate their `FilterWithPredicate` to this method (`ProductRelation`, `LimitRelation`, `UnionRelation`, `PrependedRelation`, `OrFallbackRelation`, `StreamingAggregateRelation`), so all inherit the swallow.
@@ -31,41 +31,36 @@ Reachability caveat: production predicate filtering flows through `filterWithPre
 
 ### A2. `ChainedComparison.Eval` has no default arm for unknown operators
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). The operator switch errors on unknown symbols, matching `Comparison.Eval`. Pinned by `TestChainedComparisonUnknownOperatorErrors`.
 **Site**: `datalog/query/predicate.go` (operator switch inside the adjacent-pair loop)
 
 An unknown/unhandled `Op` leaves `ok = false` and returns `(false, nil)` — the predicate silently filters out every tuple with no error. Its sibling `Comparison.Eval` returns `fmt.Errorf("unknown comparison operator: %v", c.Op)` for the same condition. The chained form should fail identically loudly.
 
 ### A3. Unguarded deferred-error tails can clobber earlier errors
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). All six sites use the first-error-wins guard.
 **Sites**: `datalog/executor/or_fallback_relation.go:943, 1034, 1182` (three identical copies of the outer-exhaustion tail, `it.err = it.outerIter.Error()` unconditional); `datalog/executor/relation_ops.go:419, 519`; `datalog/executor/relation.go:324` (`CachingIterator` completion)
 
 The codebase discipline is first-error-wins (`if e := it.Error(); err == nil { err = e }`), applied correctly at many sites (e.g. `relation_ops.go:134, 354`, the storage matcher tails, `union_relation.go:273`). The listed sites assign unconditionally; some are safe today only because no earlier assignment exists on that path, which is exactly the fragile shape. The three `or_fallback` copies can overwrite an already-recorded branch error, possibly with nil.
 
 ### A4. `matchesDatom` Tx arm silently returns false where E and A arms panic
 
-**Status**: Open
-**Site**: `datalog/storage/matcher.go` (Tx-position `default: return false`, vs the E and A position default arms which panic)
-
-Within the same function, an unexpected binding type in E or A position is a loud invariant panic, but in Tx position it silently drops every datom. The Tx arm should match its siblings.
+**Status**: Refuted (2026-07-19). The asymmetry is correct under the boundary model. E and A panic because their bindings are validated at the user boundaries and filtered at seek construction (`filterTypedPositionBindings`), so a mistyped value there is an unreachable invariant violation. The Tx position has **no** boundary validation or construction-time filtering — its default arm is reachable by ordinary interior mixed-type data (a V→Tx join over mixed values), and `return false` is the equality join's typed non-match, exactly like the V position. Making it panic would be a data-reachable panic. Extending boundary typing to the Tx position (ElementID plus integer Lamport sugar) would be a separate design decision, not a defect fix.
 
 ### A5. `toStorageValue` default coerces unknown types to strings at the write boundary
 
-**Status**: Open
-**Site**: `datalog/storage/types.go` (`default: return datalog.String(fmt.Sprintf("%v", v))`)
-
-A value outside the enumerated storable set is silently stringified rather than rejected. This is a value-domain absorber at precisely the boundary where the NaN and position-typing validation was just built; the closed value domain says the default should fail loudly.
+**Status**: Resolved (2026-07-19) — by deletion, and the entry's framing was wrong: `toStorageValue` had **zero callers**. It was dead code, not a live write-boundary absorber; the write path never routed through it. Deleted.
 
 ### A6. Silent-nil / silent-zero defaults over closed taxonomies
 
-**Status**: Open
-**Sites**:
-- `datalog/executor/subquery.go:97` — unknown subquery input element appends `nil` as the binding value (wrong results, no error).
-- `datalog/executor/query_executor.go` `bindingSymbols` — unknown `BindingForm` returns nil; the binding's variables silently vanish from the schema.
-- `datalog/query/function.go` `toNumber`/`toInt64`/`toFloat64` and `datalog/executor/vector_functions.go` `toInt64Coerce` — non-numeric values silently become `0`/`0.0` inside arithmetic.
-- `datalog/executor/constraints_impl.go` time-field constraint switch — unknown field silently matches nothing (the query-layer equivalent, `TimeExtractionFunction.Eval`, errors).
-- Lower severity, same shape: `pattern_match.go` `matchesElement` default, `indexed_memory_matcher.go:367`, `matcher.go:381`, numeric-position defaults in `constraints_impl.go:82` and `hash_join_matcher.go:506`.
+**Status**: Resolved (2026-07-19), except the last bullet, with two ratified behavior changes and one discovered live defect:
+- Subquery input assembly (`executor/subquery.go`) errors loudly on unresolved variables and unknown element kinds (was: silent nil binding). Pinned by `subquery_input_validation_test.go`.
+- `extractBindingSymbols` covers `ScalarBinding` (previously silently dropped from empty-result schemas) and panics on unknown forms; `BindingForm` verified closed at four implementers.
+- **Ratified behavior change**: arithmetic operands must be numbers (int64/float64, Go widths normalized). Non-numeric operands error — and numeric strings are no longer parsed: `(+ "42" 1)` was 43, is now an error. Pinned by `arithmetic_strict_test.go`. `toInt64`/`toFloat64` panic on non-normalized operands (unreachable post-`toNumber`).
+- **Ratified behavior change**: vector indices must be integers. `(nth ?vec "1")` returned element 0 (string→0) and `(nth ?vec 1.5)` truncated; both now error (`toVectorIndex`, callers wrap context).
+- **Discovered live defect, fixed**: the memory matchers' element handling omitted `VectorConstant` — `matchesElement` returned false (a vector literal matched nothing) and `extractPatternValue` returned nil (treated as unbound). Both handle vectors now; `PatternElement` verified closed at four implementers; defaults panic. Pinned by `pattern_element_taxonomy_test.go`.
+- Closed-taxonomy defaults now panic: `extractValue` (storage matcher), `extractProbeKey`, `rangeConstraint` position.
+- **Still open**: the `timeExtractionConstraint` field switch (`constraints_impl.go`) — the type has no production constructors, so its fate is the C6 decision; not patched independently.
 
 Verified non-hazards (documented, principled): schemaless cardinality-one defaults across cache/pull/database, `cardFromOp`'s explicit non-decisive `false`, display-type and `String()` fallbacks.
 

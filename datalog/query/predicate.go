@@ -193,6 +193,8 @@ func (c ChainedComparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 			ok = datalog.CompareValues(leftVal, rightVal) >= 0
 		case datalog.SymEQ:
 			ok = datalog.ValuesEqual(leftVal, rightVal)
+		default:
+			return false, fmt.Errorf("unknown comparison operator: %v", c.Op)
 		}
 
 		if !ok {

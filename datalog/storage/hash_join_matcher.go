@@ -504,7 +504,8 @@ func extractProbeKey(datom *datalog.Datom, position int) interface{} {
 	case 3:
 		return datom.Tx
 	default:
-		return nil
+		// Positions are constructor-controlled 0..3; anything else is a bug.
+		panic(fmt.Sprintf("BUG: datom position %d out of range", position))
 	}
 }
 

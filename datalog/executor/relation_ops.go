@@ -416,7 +416,9 @@ func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) (
 		}
 		projected = append(projected, newTuple)
 	}
-	iterErr = iter.Error()
+	if e := iter.Error(); iterErr == nil {
+		iterErr = e
+	}
 
 	result = NewMaterializedRelationWithOptions(syms, projected, opts)
 	return
@@ -516,7 +518,9 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, r
 			combos = append(combos, combo)
 		}
 	}
-	resultErr = iter.Error()
+	if e := iter.Error(); resultErr == nil {
+		resultErr = e
+	}
 	return combos, resultErr
 }
 

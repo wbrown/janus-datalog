@@ -317,11 +317,14 @@ func (ci *CachingIterator) Next() bool {
 	}
 
 	// Iteration complete - capture any deferred source error for cache replay,
-	// then signal waiting goroutines.
+	// then signal waiting goroutines. First error wins: never overwrite an
+	// already-recorded error (possibly with nil).
 	ci.done = true
 	if ci.errPtr != nil {
 		ci.mu.Lock()
-		*ci.errPtr = ci.inner.Error()
+		if *ci.errPtr == nil {
+			*ci.errPtr = ci.inner.Error()
+		}
 		ci.mu.Unlock()
 	}
 	ci.signalComplete()
@@ -777,28 +780,41 @@ func (r *MaterializedRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return r.carryErr(SortRelation(r, orderBy))
 }
 
-// FilterWithPredicate filters the relation using a query.Predicate
+// FilterWithPredicate filters the relation using a query.Predicate. The
+// first evaluation error stops the loop and surfaces as the result's
+// deferred error — an eval failure must not silently drop the tuple. The
+// source relation's own deferred error carries through first.
 func (r *MaterializedRelation) FilterWithPredicate(pred query.Predicate) Relation {
-	// Build bindings map for each tuple
 	var filtered []Tuple
+	var evalErr error
 	for _, tuple := range r.tuples {
 		bindings := make(map[query.Symbol]interface{})
 		for i, sym := range r.symbols {
 			bindings[sym] = tuple[i]
 		}
 
-		// Apply the predicate
-		if passes, err := pred.Eval(bindings); err == nil && passes {
+		passes, err := pred.Eval(bindings)
+		if err != nil {
+			evalErr = err
+			break
+		}
+		if passes {
 			filtered = append(filtered, tuple)
 		}
 	}
 
-	return newMaterializedRelationFromSet(
+	mat := newMaterializedRelationFromSet(
 		r.symbols,
 		filtered,
 		r.options,
 		r.properties,
 	)
+	if r.err != nil {
+		mat.err = r.err
+	} else if evalErr != nil {
+		mat.err = evalErr
+	}
+	return mat
 }
 
 // Select returns a new relation with only tuples that satisfy the predicate

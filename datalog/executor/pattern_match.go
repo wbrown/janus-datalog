@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -110,8 +112,14 @@ func matchesElement(value interface{}, element query.PatternElement) bool {
 		// Constants must match exactly
 		return matchesConstant(value, elem.Value)
 
+	case query.VectorConstant:
+		// Vector literals match resolved vector values by value equality.
+		return datalog.ValuesEqual(value, elem.Values)
+
 	default:
-		return false
+		// PatternElement is a closed taxonomy (Variable, Blank, Constant,
+		// VectorConstant); an unknown element is a bug, not a non-match.
+		panic(fmt.Sprintf("BUG: unknown pattern element %T reached matchesElement", element))
 	}
 }
 

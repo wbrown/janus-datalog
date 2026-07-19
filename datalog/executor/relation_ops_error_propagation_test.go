@@ -167,3 +167,30 @@ func TestUniqueCombinationExtractionPropagatesIteratorAndCloseErrors(t *testing.
 	_, err = getUniqueInputCombinations(closeFailing, []query.Symbol{x})
 	require.ErrorIs(t, err, closeErr)
 }
+
+// TestMaterializedRelation_FilterWithPredicate_PropagatesEvalError: the
+// materialized filter method silently dropped tuples whose predicate failed
+// to evaluate (`err == nil && passes`) — a truncated success. The first eval
+// error must surface as the result's deferred error.
+func TestMaterializedRelation_FilterWithPredicate_PropagatesEvalError(t *testing.T) {
+	src := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}})
+	pred := &query.Comparison{
+		Op:    datalog.SymEQ,
+		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?missing")},
+		Right: query.ConstantTerm{Value: int64(1)},
+	}
+	rel := src.FilterWithPredicate(pred)
+	err := driveErr(rel)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot resolve")
+}
+
+// TestMaterializedRelation_FilterWithPredicate_CarriesSourceError: filtering
+// an errored relation must not launder the source error into a clean result.
+func TestMaterializedRelation_FilterWithPredicate_CarriesSourceError(t *testing.T) {
+	srcErr := errors.New("source relation failure")
+	src := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}})
+	src.err = srcErr
+	rel := src.FilterWithPredicate(alwaysTrue())
+	require.ErrorIs(t, driveErr(rel), srcErr)
+}
