@@ -1,6 +1,6 @@
 # Planner Options Reference
 
-**Last Updated**: 2026-05-25
+**Last Updated**: 2026-07-19
 **Status**: Current with the clause-based planner
 
 ## Overview
@@ -36,9 +36,8 @@ type PlannerOptions struct {
     EnableEntityPrefetch        bool // opt-in
     EnableAttributeFetchFusion bool // default-active
 
-    EnableIteratorComposition bool // default-active
-    EnableTrueStreaming       bool // default-active
-    EnableSymmetricHashJoin   bool // opt-in
+    EnableTrueStreaming     bool // default-active
+    EnableSymmetricHashJoin bool // opt-in
 
     EnableParallelSubqueries bool // default-active
     MaxSubqueryWorkers       int  // 0 = 4 workers
@@ -61,7 +60,6 @@ EnableJoinProjectInsertion: false
 EnableScanSharing:          false
 EnableEntityPrefetch:       false
 EnableAttributeFetchFusion: true
-EnableIteratorComposition:  true
 EnableTrueStreaming:        true
 EnableSymmetricHashJoin:    false
 EnableParallelSubqueries:   true
@@ -115,10 +113,6 @@ decline the fusion. Constant constraints improve focused 1K/10K workloads by
 Consumed in `executor/query_executor.go`.
 
 ### Streaming
-
-#### EnableIteratorComposition — **default-active**
-Lazy evaluation through composed iterators (filter/project/etc.) instead of
-materializing intermediates. Consumed in `executor/relation.go`.
 
 #### EnableTrueStreaming — **default-active**
 Avoids auto-materialization of `StreamingRelation` (`Size()` returns -1 rather
@@ -189,6 +183,7 @@ nothing:
 | `UseComponentizedSubquery` | Removed with the retired componentized subquery executor. |
 | `EnableDebugLogging` | Removed in 2026-07. Join and relation diagnostics are structured annotation events. |
 | `EnableStreamingAggregationDebug` | Removed in 2026-07. Aggregation strategy and materialization diagnostics are structured annotation events. |
+| `EnableIteratorComposition` | Removed in 2026-07. Composed iterators are the only implementation of streaming relation operations; the flag's false arm ("materialize then delegate") recursed without bound because `StreamingRelation.Materialize` returns the receiver, and no production path ever ran with the flag off. Materialization is a consumer decision made through `Materialize()`, not a mode. |
 
 If your code sets any of these, delete the lines — the fields no longer exist.
 

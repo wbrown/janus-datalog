@@ -165,7 +165,7 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 		return NewStreamingRelationWithProperties(
 			symbols,
 			base.Iterator(),
-			ExecutorOptions{EnableIteratorComposition: true},
+			ExecutorOptions{},
 			properties,
 		)
 	}
@@ -227,7 +227,7 @@ func TestStreamingProjectionSkipsDedupWhenKeyIsRetained(t *testing.T) {
 		return NewStreamingRelationWithProperties(
 			symbols,
 			base.Iterator(),
-			ExecutorOptions{EnableIteratorComposition: true},
+			ExecutorOptions{},
 			properties,
 		)
 	}
@@ -248,8 +248,7 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins: true,
 	}
 
 	leftBase := NewMaterializedRelationNoDedupe(
@@ -292,8 +291,7 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins: true,
 	}
 
 	leftBase := NewMaterializedRelationNoDedupe(
@@ -339,8 +337,7 @@ func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
 	leftValue := datalog.NewSymbol("?left")
 	rightValue := datalog.NewSymbol("?right")
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins: true,
 	}
 
 	left := NewMaterializedRelationWithProperties(
@@ -392,11 +389,10 @@ func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 	require.Equal(t, properties, materializedJoin.Properties())
 
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableSymmetricHashJoin:   true,
-		DefaultHashTableSize:      16,
-		EnableTrueStreaming:       true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins:    true,
+		EnableSymmetricHashJoin: true,
+		DefaultHashTableSize:    16,
+		EnableTrueStreaming:     true,
 	}
 	streamingLeftBase := NewMaterializedRelationNoDedupe(leftSymbols, leftTuples)
 	streamingRightBase := NewMaterializedRelationNoDedupe(rightSymbols, rightTuples)

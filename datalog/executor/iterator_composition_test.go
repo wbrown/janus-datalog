@@ -226,10 +226,9 @@ func TestComposedIterators(t *testing.T) {
 }
 
 func TestStreamingRelationWithComposition(t *testing.T) {
-	// Test the StreamingRelation with iterator composition enabled
+	// Test the StreamingRelation with true streaming enabled
 	opts := ExecutorOptions{
-		EnableIteratorComposition: true,
-		EnableTrueStreaming:       true,
+		EnableTrueStreaming: true,
 	}
 
 	tuples := []Tuple{

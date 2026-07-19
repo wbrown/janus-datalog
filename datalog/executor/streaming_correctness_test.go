@@ -52,8 +52,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 
 		// Test with streaming (EnableTrueStreaming=true)
 		streamOpts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       true,
+			EnableTrueStreaming: true,
 		}
 
 		streamSource := newMockIterator(tuples)
@@ -107,10 +106,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		rightSymbols := []query.Symbol{datalog.NewSymbol("?name"), datalog.NewSymbol("?city")}
 
 		// Test with materialized
-		matOpts := ExecutorOptions{
-			EnableIteratorComposition: false,
-			EnableTrueStreaming:       false,
-		}
+		matOpts := ExecutorOptions{}
 
 		matLeft := NewStreamingRelationWithOptions(leftSymbols, newMockIterator(leftTuples), matOpts)
 		matRight := NewStreamingRelationWithOptions(rightSymbols, newMockIterator(rightTuples), matOpts)
@@ -131,8 +127,7 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 
 		// Test with streaming
 		streamOpts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       true,
+			EnableTrueStreaming: true,
 		}
 
 		streamLeft := NewStreamingRelationWithOptions(leftSymbols, newMockIterator(leftTuples), streamOpts)

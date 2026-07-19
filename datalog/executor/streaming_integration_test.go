@@ -13,9 +13,8 @@ func TestStreamingIntegration(t *testing.T) {
 	t.Run("FullStreamingPipeline", func(t *testing.T) {
 		// Create options with all streaming features enabled
 		opts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       true,
-			EnableSymmetricHashJoin:   true,
+			EnableTrueStreaming:     true,
+			EnableSymmetricHashJoin: true,
 		}
 
 		// Create test data for left relation
@@ -119,9 +118,8 @@ func TestStreamingIntegration(t *testing.T) {
 	t.Run("MixedStreamingAndMaterialized", func(t *testing.T) {
 		// Create options with streaming features (no symmetric hash join for mixed)
 		opts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       true,
-			EnableSymmetricHashJoin:   false,
+			EnableTrueStreaming:     true,
+			EnableSymmetricHashJoin: false,
 		}
 
 		// Create streaming relation
@@ -162,8 +160,7 @@ func TestStreamingIntegration(t *testing.T) {
 	t.Run("StreamingWithPredicates", func(t *testing.T) {
 		// Create options with streaming features
 		opts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       true,
+			EnableTrueStreaming: true,
 		}
 
 		tuples := []Tuple{
@@ -209,8 +206,7 @@ func TestStreamingIntegration(t *testing.T) {
 	t.Run("StreamingWithFunctions", func(t *testing.T) {
 		// Create options with streaming features
 		opts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       true,
+			EnableTrueStreaming: true,
 		}
 
 		tuples := []Tuple{
@@ -259,8 +255,7 @@ func TestStreamingIntegration(t *testing.T) {
 	t.Run("StreamingPerformanceCharacteristics", func(t *testing.T) {
 		// Create options with streaming features
 		opts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       true,
+			EnableTrueStreaming: true,
 		}
 
 		// Create a large dataset
@@ -316,10 +311,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 	b.Run("Materialized", func(b *testing.B) {
-		opts := ExecutorOptions{
-			EnableIteratorComposition: false,
-			EnableTrueStreaming:       false,
-		}
+		opts := ExecutorOptions{}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -346,8 +338,7 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 
 	b.Run("Streaming", func(b *testing.B) {
 		opts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       true,
+			EnableTrueStreaming: true,
 		}
 
 		b.ResetTimer()
@@ -374,14 +365,10 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 		}
 	})
 
-	b.Run("CompositionOnly", func(b *testing.B) {
-		// Isolate iterator composition impact
-		// EnableTrueStreaming=false, EnableIteratorComposition=true
-		// This uses composed iterators but allows re-iteration
-		opts := ExecutorOptions{
-			EnableIteratorComposition: true,
-			EnableTrueStreaming:       false,
-		}
+	b.Run("StreamingWithoutTrueStreaming", func(b *testing.B) {
+		// Composed iterators with EnableTrueStreaming off: the streaming
+		// pipeline that still allows re-iteration through caching.
+		opts := ExecutorOptions{}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {

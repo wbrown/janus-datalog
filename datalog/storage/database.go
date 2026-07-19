@@ -89,7 +89,7 @@ func NewDatabaseWithSchema(path string, s schema.SchemaProvider) (*Database, err
 
 // DatabaseOptions configures database creation
 type DatabaseOptions struct {
-	Path  string // Path to the database directory
+	Path string // Path to the database directory
 	// Store injects an ordered backend. The caller retains ownership: construction
 	// error paths do not Close it, and CompressionThreshold options do not mutate
 	// the injected store's encoder (configure the encoder before injection).
@@ -565,10 +565,9 @@ func DefaultPlannerOptions() planner.PlannerOptions {
 		EnableScanSharing:          false, // Share unbound scan results across subqueries via LazySeq (benchmarked: performance-neutral)
 		EnableEntityPrefetch:       false, // Warm EA cache after first DataPattern via PrefetchEntities (benchmarked: performance-neutral)
 
-		// Executor streaming options (NEW: enabled by default for performance)
-		EnableIteratorComposition: true,  // Lazy evaluation throughout pipeline
-		EnableTrueStreaming:       true,  // No auto-materialization
-		EnableSymmetricHashJoin:   false, // Conservative for now
+		// Executor streaming options
+		EnableTrueStreaming:     true,  // No auto-materialization
+		EnableSymmetricHashJoin: false, // Conservative for now
 
 		// Executor parallel options
 		EnableParallelSubqueries: true, // Parallel subquery execution

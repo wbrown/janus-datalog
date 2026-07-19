@@ -10,9 +10,8 @@ type ExecutorOptions struct {
 	Collector *annotations.Collector
 
 	// Streaming options - control memory vs performance tradeoffs
-	EnableIteratorComposition bool
-	EnableTrueStreaming       bool
-	EnableSymmetricHashJoin   bool
+	EnableTrueStreaming     bool
+	EnableSymmetricHashJoin bool
 
 	// Parallel execution options
 	EnableParallelSubqueries bool

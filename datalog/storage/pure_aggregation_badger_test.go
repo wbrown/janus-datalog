@@ -55,7 +55,6 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 	// Create executor with BadgerDB matcher
 	// Note: Matcher options must match executor options for proper propagation
 	execOpts := executor.ExecutorOptions{
-		EnableIteratorComposition:  true,
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
 		EnableParallelSubqueries:   true,
@@ -65,7 +64,6 @@ func TestPureAggregationWithBadgerDB(t *testing.T) {
 	}
 	matcher := NewBadgerMatcherWithOptions(db.Store(), execOpts)
 	opts := planner.PlannerOptions{
-		EnableIteratorComposition:  execOpts.EnableIteratorComposition,
 		EnableTrueStreaming:        execOpts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    execOpts.EnableSymmetricHashJoin,
 		EnableParallelSubqueries:   execOpts.EnableParallelSubqueries,

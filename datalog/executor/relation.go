@@ -1430,34 +1430,27 @@ func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return mat.Sort(orderBy)
 }
 
-// FilterWithPredicate filters the relation using a query.Predicate
+// FilterWithPredicate filters the relation using a query.Predicate.
+// Filtering is a pure streaming transform — one pass, nothing retained —
+// so the result is always a composed stream. Consumers that need replay
+// call Materialize at their point of need.
 func (r *StreamingRelation) FilterWithPredicate(pred query.Predicate) Relation {
-	if r.options.EnableIteratorComposition {
-		// Use iterator composition for true streaming
-		predIter := NewPredicateFilterIterator(r.Iterator(), r.symbols, pred)
-		return NewStreamingRelationWithProperties(r.symbols, predIter, r.options, r.properties)
-	}
-	// Fall back to current behavior - materialize then filter
-	materialized := r.Materialize()
-	return materialized.FilterWithPredicate(pred)
+	predIter := NewPredicateFilterIterator(r.Iterator(), r.symbols, pred)
+	return NewStreamingRelationWithProperties(r.symbols, predIter, r.options, r.properties)
 }
 
-// EvaluateFunction evaluates a function and adds its result as a new symbol
+// EvaluateFunction evaluates a function and adds its result as a new symbol.
+// Like filtering, this is a pure streaming transform: always a composed
+// stream, never a buffer.
 func (r *StreamingRelation) EvaluateFunction(fn query.Function, outputSymbol query.Symbol) Relation {
-	if r.options.EnableIteratorComposition {
-		// Use iterator composition for true streaming
-		evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, fn, outputSymbol)
-		newSymbols := append(r.symbols, outputSymbol)
-		return NewStreamingRelationWithProperties(
-			newSymbols,
-			evalIter,
-			r.options,
-			r.properties.addSymbol(outputSymbol),
-		)
-	}
-	// Fall back to current behavior - materialize then evaluate
-	materialized := r.Materialize()
-	return materialized.EvaluateFunction(fn, outputSymbol)
+	evalIter := NewFunctionEvaluatorIterator(r.Iterator(), r.symbols, fn, outputSymbol)
+	newSymbols := append(r.symbols, outputSymbol)
+	return NewStreamingRelationWithProperties(
+		newSymbols,
+		evalIter,
+		r.options,
+		r.properties.addSymbol(outputSymbol),
+	)
 }
 
 // Select returns a new relation with only tuples that satisfy the predicate

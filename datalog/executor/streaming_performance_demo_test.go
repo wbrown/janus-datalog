@@ -59,11 +59,8 @@ func TestStreamingPerformanceDemo(t *testing.T) {
 }
 
 func runScenarioMaterialized(t *testing.T, size int, filterRatio float64, ops []string) int64 {
-	// Create options with streaming disabled
-	opts := ExecutorOptions{
-		EnableIteratorComposition: false,
-		EnableTrueStreaming:       false,
-	}
+	// Zero options: the pipeline runs over a MaterializedRelation
+	opts := ExecutorOptions{}
 
 	return measureScenarioWithOpts(t, size, filterRatio, ops, opts)
 }
@@ -71,8 +68,7 @@ func runScenarioMaterialized(t *testing.T, size int, filterRatio float64, ops []
 func runScenarioStreaming(t *testing.T, size int, filterRatio float64, ops []string) int64 {
 	// Create options with streaming enabled
 	opts := ExecutorOptions{
-		EnableIteratorComposition: true,
-		EnableTrueStreaming:       true,
+		EnableTrueStreaming: true,
 	}
 
 	return measureScenarioWithOpts(t, size, filterRatio, ops, opts)
@@ -103,7 +99,7 @@ func runPipeline(t *testing.T, size int, filterRatio float64, ops []string, opts
 	// The materialized mode operates on a MaterializedRelation, the streaming
 	// mode on a composed StreamingRelation — the two real relation kinds.
 	var current Relation
-	if opts.EnableIteratorComposition {
+	if opts.EnableTrueStreaming {
 		current = NewStreamingRelationWithOptions(symbols, newMockIterator(tuples), opts)
 	} else {
 		current = NewMaterializedRelationWithOptions(symbols, tuples, opts)
@@ -178,10 +174,7 @@ func BenchmarkStreamingScenarios(b *testing.B) {
 
 	for _, sc := range scenarios {
 		b.Run(sc.name+"_Materialized", func(b *testing.B) {
-			opts := ExecutorOptions{
-				EnableIteratorComposition: false,
-				EnableTrueStreaming:       false,
-			}
+			opts := ExecutorOptions{}
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -191,8 +184,7 @@ func BenchmarkStreamingScenarios(b *testing.B) {
 
 		b.Run(sc.name+"_Streaming", func(b *testing.B) {
 			opts := ExecutorOptions{
-				EnableIteratorComposition: true,
-				EnableTrueStreaming:       true,
+				EnableTrueStreaming: true,
 			}
 
 			b.ResetTimer()
@@ -213,7 +205,7 @@ func benchmarkScenarioWithOpts(b *testing.B, size int, filterRatio float64, opts
 	// The materialized mode operates on a MaterializedRelation, the streaming
 	// mode on a composed StreamingRelation — the two real relation kinds.
 	var rel Relation
-	if opts.EnableIteratorComposition {
+	if opts.EnableTrueStreaming {
 		rel = NewStreamingRelationWithOptions(symbols, newMockIterator(tuples), opts)
 	} else {
 		rel = NewMaterializedRelationWithOptions(symbols, tuples, opts)

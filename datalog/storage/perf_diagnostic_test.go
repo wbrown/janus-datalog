@@ -16,11 +16,10 @@ import (
 func getDefaultExecutorOptions() executor.ExecutorOptions {
 	opts := DefaultPlannerOptions()
 	return executor.ExecutorOptions{
-		EnableIteratorComposition: opts.EnableIteratorComposition,
-		EnableTrueStreaming:       opts.EnableTrueStreaming,
-		EnableStreamingJoins:      opts.EnableStreamingJoins,
-		EnableSymmetricHashJoin:   opts.EnableSymmetricHashJoin,
-		DefaultHashTableSize:      256,
+		EnableTrueStreaming:     opts.EnableTrueStreaming,
+		EnableStreamingJoins:    opts.EnableStreamingJoins,
+		EnableSymmetricHashJoin: opts.EnableSymmetricHashJoin,
+		DefaultHashTableSize:    256,
 	}
 }
 

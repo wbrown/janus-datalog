@@ -123,9 +123,8 @@ type PlannerOptions struct {
 	EnableAttributeFetchFusion bool // Fuse same-entity [?e :const-attr ?fresh] fetches into a per-tuple binding instead of match+join (default: true)
 
 	// Executor streaming options - control memory vs performance tradeoffs
-	EnableIteratorComposition bool // Use composed iterators for lazy evaluation (default: true)
-	EnableTrueStreaming       bool // Avoid auto-materialization of StreamingRelation (default: true)
-	EnableSymmetricHashJoin   bool // Use symmetric hash join for stream-to-stream joins (default: false)
+	EnableTrueStreaming     bool // Avoid auto-materialization of StreamingRelation (default: true)
+	EnableSymmetricHashJoin bool // Use symmetric hash join for stream-to-stream joins (default: false)
 
 	// Executor parallel execution options
 	EnableParallelSubqueries bool // Execute subqueries in parallel (default: true)

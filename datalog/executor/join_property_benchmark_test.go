@@ -16,8 +16,7 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 	rightSymbols := []query.Symbol{id, rightValue}
 	projectedSymbols := []query.Symbol{id, leftValue}
 	opts := ExecutorOptions{
-		EnableStreamingJoins:      true,
-		EnableIteratorComposition: true,
+		EnableStreamingJoins: true,
 	}
 
 	for _, rowCount := range []int{10_000, 100_000} {

@@ -22,7 +22,6 @@ type Executor struct {
 // NewExecutor creates a new query executor with default options
 func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 	defaultOpts := planner.PlannerOptions{
-		EnableIteratorComposition:  true,
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
 		EnableParallelSubqueries:   true,
@@ -67,7 +66,6 @@ func NewExecutorWithOptions(matcher PatternMatcher, resolver EntityResolver, opt
 // their zero value.
 func ExecutorOptionsFromPlanner(opts planner.PlannerOptions) ExecutorOptions {
 	return ExecutorOptions{
-		EnableIteratorComposition:  opts.EnableIteratorComposition,
 		EnableTrueStreaming:        opts.EnableTrueStreaming,
 		EnableSymmetricHashJoin:    opts.EnableSymmetricHashJoin,
 		EnableParallelSubqueries:   opts.EnableParallelSubqueries,
