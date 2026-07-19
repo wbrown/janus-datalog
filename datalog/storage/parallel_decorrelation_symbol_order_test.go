@@ -191,7 +191,7 @@ func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 		}
 
 		// Result slot 5: ?total-volume should be 3050000
-		if val, ok := tuple[5].(float64); !ok || val != 3050000 {
+		if val, ok := tuple[5].(int64); !ok || val != 3050000 {
 			t.Errorf("Result slot 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
 		}
 	})
@@ -238,7 +238,7 @@ func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 		if val, ok := tuple[4].(float64); !ok || val != 102.5 {
 			t.Errorf("Result slot 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
 		}
-		if val, ok := tuple[5].(float64); !ok || val != 3050000 {
+		if val, ok := tuple[5].(int64); !ok || val != 3050000 {
 			t.Errorf("Result slot 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
 		}
 	})

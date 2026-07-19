@@ -123,7 +123,7 @@ func TestExtractSubqueryPatternSymbols(t *testing.T) {
 			pattern: &query.SubqueryPattern{
 				Query: &query.Query{
 					Find: []query.FindElement{
-						query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+						query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 					},
 				},
 				Inputs: []query.PatternElement{
@@ -325,7 +325,7 @@ func TestOrClauseSymbolsUnionVsIntersection(t *testing.T) {
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+								query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{
@@ -372,7 +372,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+								query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{
@@ -486,7 +486,7 @@ func TestOrWithSubqueryPatternAndFallback(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+							query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 						},
 					},
 					Inputs: []query.PatternElement{
@@ -530,7 +530,7 @@ func TestOrJoinClauseRequiresCorrelatedInputs(t *testing.T) {
 					&query.SubqueryPattern{
 						Query: &query.Query{
 							Find: []query.FindElement{
-								query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+								query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 							},
 						},
 						Inputs: []query.PatternElement{

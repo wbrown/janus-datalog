@@ -313,7 +313,7 @@ func TestExecuteAggregates(t *testing.T) {
 			Find: []query.FindElement{
 				query.FindVariable{Symbol: datalog.NewSymbol("?person")},
 				query.FindAggregate{
-					Function: "sum",
+					Function: datalog.SymSum,
 					Arg:      datalog.NewSymbol("?value"),
 				},
 			},
@@ -349,7 +349,7 @@ func TestExecuteAggregates(t *testing.T) {
 		q := &query.Query{
 			Find: []query.FindElement{
 				query.FindAggregate{
-					Function: "sum",
+					Function: datalog.SymSum,
 					Arg:      datalog.NewSymbol("?value"),
 				},
 			},

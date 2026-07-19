@@ -17,7 +17,7 @@ func TestGroupedAggregationPreservesTypedKeys(t *testing.T) {
 	find := []query.FindElement{
 		query.FindVariable{Symbol: groupA},
 		query.FindVariable{Symbol: groupB},
-		query.FindAggregate{Function: "sum", Arg: value},
+		query.FindAggregate{Function: datalog.SymSum, Arg: value},
 	}
 
 	modes := []struct {
@@ -77,8 +77,8 @@ func BenchmarkGroupedAggregationKeying(b *testing.B) {
 	find := []query.FindElement{
 		query.FindVariable{Symbol: groupA},
 		query.FindVariable{Symbol: groupB},
-		query.FindAggregate{Function: "sum", Arg: value},
-		query.FindAggregate{Function: "avg", Arg: value},
+		query.FindAggregate{Function: datalog.SymSum, Arg: value},
+		query.FindAggregate{Function: datalog.SymAvg, Arg: value},
 	}
 
 	const (

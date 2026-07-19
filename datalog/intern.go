@@ -140,6 +140,16 @@ func internSymbol(s string) Symbol {
 // Pre-interned common symbols for hot paths
 var SymDollar = internSymbol("$")
 
+// Pre-interned aggregate function symbols. FindAggregate.Function carries one
+// of these; resolution is pointer equality against them.
+var (
+	SymCount = internSymbol("count")
+	SymSum   = internSymbol("sum")
+	SymAvg   = internSymbol("avg")
+	SymMin   = internSymbol("min")
+	SymMax   = internSymbol("max")
+)
+
 // ClearInterns clears keyword, identity, and symbol intern caches
 // Useful for testing or when memory needs to be reclaimed
 func ClearInterns() {
@@ -148,4 +158,9 @@ func ClearInterns() {
 	symbolIntern = &symbolInternCache{}
 	// Re-intern pre-interned symbols so they remain valid
 	SymDollar = internSymbol("$")
+	SymCount = internSymbol("count")
+	SymSum = internSymbol("sum")
+	SymAvg = internSymbol("avg")
+	SymMin = internSymbol("min")
+	SymMax = internSymbol("max")
 }

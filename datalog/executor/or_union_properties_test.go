@@ -75,7 +75,7 @@ func TestOrDefaultDecorrelatedAggregatePreservesOuterGroupKey(t *testing.T) {
 	decorrelated := &query.SubqueryPattern{
 		Query: &query.Query{Find: []query.FindElement{
 			query.FindVariable{Symbol: entity},
-			query.FindAggregate{Function: "count", Arg: task},
+			query.FindAggregate{Function: datalog.SymCount, Arg: task},
 		}},
 		Binding: query.RelationBinding{Variables: []query.Symbol{entity, count}},
 	}

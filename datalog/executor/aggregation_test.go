@@ -46,7 +46,7 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "single aggregation - count",
 			findElements: []query.FindElement{
-				query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?name")},
+				query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?name")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("(count ?name)")},
 			expectedRows:    1,
@@ -64,7 +64,7 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "single aggregation - avg",
 			findElements: []query.FindElement{
-				query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?age")},
+				query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?age")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("(avg ?age)")},
 			expectedRows:    1,
@@ -82,7 +82,7 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "single aggregation - max",
 			findElements: []query.FindElement{
-				query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?score")},
+				query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?score")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("(max ?score)")},
 			expectedRows:    1,
@@ -101,8 +101,8 @@ func TestExecuteAggregations(t *testing.T) {
 			name: "grouped aggregation - age groups",
 			findElements: []query.FindElement{
 				query.FindVariable{Symbol: datalog.NewSymbol("?age")},
-				query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?name")},
-				query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?score")},
+				query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?name")},
+				query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?score")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("?age"), datalog.NewSymbol("(count ?name)"), datalog.NewSymbol("(avg ?score)")},
 			expectedRows:    3, // 3 unique ages: 25, 30, 35
@@ -131,9 +131,9 @@ func TestExecuteAggregations(t *testing.T) {
 		{
 			name: "multiple aggregates",
 			findElements: []query.FindElement{
-				query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?age")},
-				query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?age")},
-				query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?score")},
+				query.FindAggregate{Function: datalog.SymMin, Arg: datalog.NewSymbol("?age")},
+				query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?age")},
+				query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?score")},
 			},
 			expectedSymbols: []query.Symbol{datalog.NewSymbol("(min ?age)"), datalog.NewSymbol("(max ?age)"), datalog.NewSymbol("(sum ?score)")},
 			expectedRows:    1,
@@ -191,7 +191,7 @@ func TestAggregationEmitsStructuredStrategyAnnotation(t *testing.T) {
 	)
 
 	result := ExecuteAggregationsWithContext(ctx, rel, []query.FindElement{
-		query.FindAggregate{Function: "sum", Arg: value},
+		query.FindAggregate{Function: datalog.SymSum, Arg: value},
 	})
 	if result.Size() != 1 {
 		t.Fatalf("aggregation result size = %d, want 1", result.Size())
@@ -240,7 +240,7 @@ func TestStreamingAggregationEmitsMaterializedAnnotation(t *testing.T) {
 	)
 
 	result := ExecuteAggregationsWithContext(ctx, stream, []query.FindElement{
-		query.FindAggregate{Function: "sum", Arg: value},
+		query.FindAggregate{Function: datalog.SymSum, Arg: value},
 	})
 	if stream.iteratorCalled {
 		t.Fatal("emitting the aggregation strategy annotation consumed the streaming input")
@@ -294,7 +294,7 @@ func TestAggregationRejectsMissingGroupSymbolWithoutPanic(t *testing.T) {
 	require.NotPanics(t, func() {
 		result = ExecuteAggregations(source, []query.FindElement{
 			query.FindVariable{Symbol: missing},
-			query.FindAggregate{Function: "count", Arg: order},
+			query.FindAggregate{Function: datalog.SymCount, Arg: order},
 		})
 	})
 	require.Error(t, driveErr(result))
@@ -410,8 +410,8 @@ func TestAggregationWithTimeValues(t *testing.T) {
 
 	// Test min/max with dates
 	result := ExecuteAggregations(rel, []query.FindElement{
-		query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?date")},
-		query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?date")},
+		query.FindAggregate{Function: datalog.SymMin, Arg: datalog.NewSymbol("?date")},
+		query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?date")},
 	})
 
 	if result.Size() != 1 {
@@ -461,7 +461,7 @@ func TestEmptyRelationAggregation(t *testing.T) {
 	// Following pure relational theory, aggregates on empty relations return empty results
 	// This is consistent with Datomic philosophy: attributes exist or don't exist, no NULL placeholders
 	result := ExecuteAggregations(emptyRel, []query.FindElement{
-		query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?x")},
 	})
 
 	if result.Size() != 0 {
@@ -470,10 +470,10 @@ func TestEmptyRelationAggregation(t *testing.T) {
 
 	// Other aggregates on empty also return empty results
 	result = ExecuteAggregations(emptyRel, []query.FindElement{
-		query.FindAggregate{Function: "sum", Arg: datalog.NewSymbol("?x")},
-		query.FindAggregate{Function: "avg", Arg: datalog.NewSymbol("?x")},
-		query.FindAggregate{Function: "min", Arg: datalog.NewSymbol("?x")},
-		query.FindAggregate{Function: "max", Arg: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: datalog.SymSum, Arg: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: datalog.SymAvg, Arg: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: datalog.SymMin, Arg: datalog.NewSymbol("?x")},
+		query.FindAggregate{Function: datalog.SymMax, Arg: datalog.NewSymbol("?x")},
 	})
 
 	if result.Size() != 0 {

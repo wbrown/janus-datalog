@@ -19,7 +19,7 @@ func TestTerminalSymbolsCoverEveryFinalizationDependency(t *testing.T) {
 	aggregateQuery := &query.Query{
 		Find: []query.FindElement{
 			query.FindVariable{Symbol: group},
-			query.FindAggregate{Function: "max", Arg: value, Predicate: predicate},
+			query.FindAggregate{Function: datalog.SymMax, Arg: value, Predicate: predicate},
 			query.FindPull{Variable: entity, Pattern: &query.PullPattern{}},
 		},
 	}
@@ -66,7 +66,7 @@ func TestRealizedPlanPhysicalContracts(t *testing.T) {
 						query.RelationInput{Symbols: []query.Symbol{entity}},
 					},
 					Find: []query.FindElement{
-						query.FindAggregate{Function: "max", Arg: payload},
+						query.FindAggregate{Function: datalog.SymMax, Arg: payload},
 					},
 					Where: []query.Clause{&query.DataPattern{Elements: []query.PatternElement{
 						query.Variable{Name: entity},
@@ -210,7 +210,7 @@ func TestPhysicalFindSymbolsPreserveTypedOutputOrder(t *testing.T) {
 		},
 		physicalFindSymbols([]query.FindElement{
 			query.FindVariable{Symbol: entity},
-			query.FindAggregate{Function: "sum", Arg: value},
+			query.FindAggregate{Function: datalog.SymSum, Arg: value},
 			query.FindPull{Variable: entity, Pattern: &query.PullPattern{}},
 		}),
 	)

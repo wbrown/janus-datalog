@@ -44,7 +44,7 @@ func TestCombineSubqueryResultsSimple_PropagatesIteratorError(t *testing.T) {
 
 func TestAggregationPropagatesIteratorAndCloseErrors(t *testing.T) {
 	x := datalog.NewSymbol("?x")
-	aggregate := []query.FindAggregate{{Function: "count", Arg: x}}
+	aggregate := []query.FindAggregate{{Function: datalog.SymCount, Arg: x}}
 	closeErr := errors.New("aggregate close failure")
 
 	for _, failAfter := range []int{0, 2} {

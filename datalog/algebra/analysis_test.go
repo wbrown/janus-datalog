@@ -69,7 +69,7 @@ func TestAnalyzeValidatesEveryOperatorContract(t *testing.T) {
 			Children: []*Node{scanScore},
 			Data: &Aggregate{
 				GroupBy:   []query.Symbol{score},
-				Functions: []query.FindAggregate{{Function: "count", Arg: entity}},
+				Functions: []query.FindAggregate{{Function: datalog.SymCount, Arg: entity}},
 				Bindings:  []query.Symbol{score, count},
 				Output:    []query.Symbol{score, count},
 			},
@@ -257,7 +257,7 @@ func TestAnalyzeTracksFreeRequirementsFromEnvironment(t *testing.T) {
 		Children: []*Node{algebraTestScan(result)},
 		Data: &Aggregate{
 			GroupBy:   []query.Symbol{input},
-			Functions: []query.FindAggregate{{Function: "count", Arg: result}},
+			Functions: []query.FindAggregate{{Function: datalog.SymCount, Arg: result}},
 			Bindings:  []query.Symbol{input, datalog.NewSymbol("(count ?result)")},
 			Output:    []query.Symbol{input, datalog.NewSymbol("(count ?result)")},
 		},
@@ -342,7 +342,7 @@ func TestAnalyzeRejectsAggregateOutputWithWrongGroupPrefix(t *testing.T) {
 		Children: []*Node{algebraTestScan(group, value)},
 		Data: &Aggregate{
 			GroupBy:   []query.Symbol{group},
-			Functions: []query.FindAggregate{{Function: "sum", Arg: value}},
+			Functions: []query.FindAggregate{{Function: datalog.SymSum, Arg: value}},
 			Bindings:  []query.Symbol{group, result},
 			Output:    []query.Symbol{wrong, result},
 		},
@@ -363,7 +363,7 @@ func TestRefreshSchemasRepairsAggregateGroupPrefix(t *testing.T) {
 		Children: []*Node{algebraTestScan(group, value)},
 		Data: &Aggregate{
 			GroupBy:   []query.Symbol{group},
-			Functions: []query.FindAggregate{{Function: "sum", Arg: value}},
+			Functions: []query.FindAggregate{{Function: datalog.SymSum, Arg: value}},
 			Bindings:  []query.Symbol{group, result},
 			Output:    []query.Symbol{wrong, result},
 		},

@@ -229,13 +229,13 @@ func TestAggregations(t *testing.T) {
 	tests := []struct {
 		name string
 		agg  Agg
-		fn   string
+		fn   query.Symbol
 	}{
-		{"Sum", Sum(salary), "sum"},
-		{"Count", Count(salary), "count"},
-		{"Avg", Avg(salary), "avg"},
-		{"Min", Min(salary), "min"},
-		{"Max", Max(salary), "max"},
+		{"Sum", Sum(salary), datalog.SymSum},
+		{"Count", Count(salary), datalog.SymCount},
+		{"Avg", Avg(salary), datalog.SymAvg},
+		{"Min", Min(salary), datalog.SymMin},
+		{"Max", Max(salary), datalog.SymMax},
 	}
 
 	for _, tt := range tests {

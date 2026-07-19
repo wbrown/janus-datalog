@@ -173,8 +173,7 @@ func TestOHLCRealisticQueries(t *testing.T) {
 		maxHigh := tuple[4].(float64)
 		_ = tuple[5].(float64) // minLow
 		_ = tuple[6].(float64) // maxClose
-		// BUG: sum should return int64 for int64 input, but returns float64
-		sumVolume := int64(tuple[7].(float64))
+		sumVolume := tuple[7].(int64)
 
 		assert.Equal(t, int64(2025), year)
 		assert.Equal(t, int64(8), month)

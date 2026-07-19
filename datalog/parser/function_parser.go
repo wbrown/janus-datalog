@@ -175,24 +175,6 @@ func parseIdentity(args []query.PatternElement) (query.Function, error) {
 	}, nil
 }
 
-// parseAggregate creates an AggregateFunction from a function name and variable
-func parseAggregate(fn string, varName query.Symbol) (query.AggregateFunction, error) {
-	switch fn {
-	case "count":
-		return &query.CountAggregate{Var: varName}, nil
-	case "sum":
-		return &query.SumAggregate{Var: varName}, nil
-	case "avg":
-		return &query.AvgAggregate{Var: varName}, nil
-	case "min":
-		return &query.MinAggregate{Var: varName}, nil
-	case "max":
-		return &query.MaxAggregate{Var: varName}, nil
-	default:
-		return nil, fmt.Errorf("unsupported aggregate function: %s", fn)
-	}
-}
-
 // =============================================================================
 // Database Function Parsers
 // =============================================================================

@@ -374,7 +374,7 @@ func TestParseSubqueryPatterns(t *testing.T) {
 				}
 
 				agg, ok := subq.Query.Find[0].(query.FindAggregate)
-				if !ok || agg.Function != "max" || agg.Arg != datalog.NewSymbol("?h") {
+				if !ok || agg.Function != datalog.SymMax || agg.Arg != datalog.NewSymbol("?h") {
 					return fmt.Errorf("expected (max ?h) in nested query")
 				}
 

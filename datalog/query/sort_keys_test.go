@@ -110,7 +110,7 @@ func TestRetainedSortSymbols(t *testing.T) {
 		q := &Query{
 			Find: []FindElement{
 				FindVariable{Symbol: name},
-				FindAggregate{Function: "count", Arg: age},
+				FindAggregate{Function: datalog.SymCount, Arg: age},
 			},
 			OrderBy: []OrderByClause{{Variable: age, Direction: OrderAsc}},
 		}

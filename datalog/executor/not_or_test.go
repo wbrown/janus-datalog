@@ -868,7 +868,7 @@ func TestOrFallbackWithSubqueryPattern(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+							query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 						},
 						Where: []query.Clause{
 							&query.DataPattern{
@@ -974,7 +974,7 @@ func TestOrFallbackWithSubqueryPatternAndVariableInput(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+							query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 						},
 						In: []query.InputSpec{
 							query.DatabaseInput{Name: datalog.NewSymbol("$")},
@@ -1310,7 +1310,7 @@ func TestOrFallbackWithSubqueryPatternEmpty(t *testing.T) {
 				&query.SubqueryPattern{
 					Query: &query.Query{
 						Find: []query.FindElement{
-							query.FindAggregate{Function: "count", Arg: datalog.NewSymbol("?t")},
+							query.FindAggregate{Function: datalog.SymCount, Arg: datalog.NewSymbol("?t")},
 						},
 						Where: []query.Clause{
 							&query.DataPattern{

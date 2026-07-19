@@ -29,7 +29,7 @@ func TestConditionalAggregateInternalInfrastructure(t *testing.T) {
 	findElements := []query.FindElement{
 		query.FindVariable{Symbol: datalog.NewSymbol("?hour")},
 		query.FindAggregate{
-			Function:  "min",
+			Function:  datalog.SymMin,
 			Arg:       datalog.NewSymbol("?value"),
 			Predicate: datalog.NewSymbol("?filter"), // Internal: filter on this symbol
 		},
@@ -68,7 +68,7 @@ func TestConditionalAggregateEmptyResult(t *testing.T) {
 	// Conditional aggregate with filter that matches nothing
 	findElements := []query.FindElement{
 		query.FindAggregate{
-			Function:  "min",
+			Function:  datalog.SymMin,
 			Arg:       datalog.NewSymbol("?value"),
 			Predicate: datalog.NewSymbol("?filter"), // All false - no matches
 		},
@@ -96,12 +96,12 @@ func TestConditionalAggregateMixedTypes(t *testing.T) {
 	// Two conditional aggregates with different predicates
 	findElements := []query.FindElement{
 		query.FindAggregate{
-			Function:  "min",
+			Function:  datalog.SymMin,
 			Arg:       datalog.NewSymbol("?price"),
 			Predicate: datalog.NewSymbol("?early"), // Min of early prices
 		},
 		query.FindAggregate{
-			Function:  "max",
+			Function:  datalog.SymMax,
 			Arg:       datalog.NewSymbol("?price"),
 			Predicate: datalog.NewSymbol("?late"), // Max of late prices
 		},
@@ -139,7 +139,7 @@ func TestConditionalAggregateRewriteAnnotationUsesDatalogFindClause(t *testing.T
 		query.Variable{Name: symFilter},
 	}}
 	find := []query.FindElement{query.FindAggregate{
-		Function:  "min",
+		Function:  datalog.SymMin,
 		Arg:       symValue,
 		Predicate: symFilter,
 	}}

@@ -325,16 +325,26 @@ func parseFindElement(node *edn.Node) (query.FindElement, error) {
 			return nil, fmt.Errorf("aggregate argument must be a variable, got %s", argSym)
 		}
 
-		// Validate function name
+		// Resolve the function name to its interned symbol here, once; all
+		// downstream dispatch is pointer equality against the pre-interned set.
+		var fnSym query.Symbol
 		switch fn {
-		case "sum", "avg", "count", "min", "max":
-			// Valid aggregate functions
+		case "sum":
+			fnSym = datalog.SymSum
+		case "avg":
+			fnSym = datalog.SymAvg
+		case "count":
+			fnSym = datalog.SymCount
+		case "min":
+			fnSym = datalog.SymMin
+		case "max":
+			fnSym = datalog.SymMax
 		default:
 			return nil, fmt.Errorf("unknown aggregate function: %s", fn)
 		}
 
 		return query.FindAggregate{
-			Function: fn,
+			Function: fnSym,
 			Arg:      argSym,
 		}, nil
 

@@ -465,7 +465,7 @@ func (f FindVariable) IsAggregate() bool {
 
 // FindAggregate represents an aggregate function in the find clause
 type FindAggregate struct {
-	Function  string // "sum", "avg", "count", "min", "max"
+	Function  Symbol // Interned: datalog.SymSum, SymAvg, SymCount, SymMin, SymMax
 	Arg       Symbol // Variable to aggregate
 	Predicate Symbol // Optional: predicate variable for conditional aggregates (e.g., min-if, max-if)
 }
