@@ -132,3 +132,41 @@ func TestPredicateAndJoinAgreeOnIntInt64(t *testing.T) {
 		"join and predicate must agree for an int parameter")
 	require.Len(t, joinRows, 1, "both paths should match alice")
 }
+
+// TestRetract_GoIntValueMatchesStoredInt64 pins Retract's write-boundary
+// contract: like Add/Set/Remove, an untyped Go int normalizes to the canonical
+// int64 before the retraction is recorded, so it retracts the equivalent
+// stored value rather than silently missing it.
+func TestRetract_GoIntValueMatchesStoredInt64(t *testing.T) {
+	s := schema.NewSchema()
+	numbers := datalog.NewKeyword(":person/lucky-numbers")
+	s.Add(&schema.AttributeDefinition{
+		Ident:       numbers,
+		ValueType:   schema.TypeLong,
+		Cardinality: schema.CardinalityMany,
+	})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:      t.TempDir(),
+		Schema:    s,
+		ReplicaID: 1,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	e := datalog.NewIdentity("alice")
+	tx := db.NewTransaction()
+	require.NoError(t, tx.Add(e, numbers, int64(7)))
+	require.NoError(t, tx.Add(e, numbers, int64(30)))
+	_, err = tx.Commit()
+	require.NoError(t, err)
+
+	tx = db.NewTransaction()
+	require.NoError(t, tx.Retract(e, numbers, 30)) // untyped Go int
+	_, err = tx.Commit()
+	require.NoError(t, err, "retracting a Go int value must not panic or error")
+
+	rows := queryRows(t, db,
+		`[:find ?n :in $ ?e :where [?e :person/lucky-numbers ?n]]`, e)
+	require.Equal(t, []string{"[7]"}, rows,
+		"retract with a Go int must remove the stored int64 value")
+}

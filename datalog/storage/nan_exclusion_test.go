@@ -40,6 +40,9 @@ func TestWritesRejectNaN(t *testing.T) {
 	if err := tx.Remove(e, attr, nan); err == nil {
 		t.Error("Remove must reject NaN")
 	}
+	if err := tx.Retract(e, attr, nan); err == nil {
+		t.Error("Retract must reject NaN")
+	}
 
 	// ±Inf is a value: self-equal, totally ordered, storable.
 	if err := tx.Add(e, attr, math.Inf(1)); err != nil {
@@ -115,4 +118,52 @@ func TestExpressionProducingNaNIsError(t *testing.T) {
 	if r, ok := tuples[0][0].(float64); !ok || !math.IsInf(r, 1) {
 		t.Errorf("expected +Inf, got %v", tuples[0][0])
 	}
+}
+
+// Constant-bindable expressions — scalar :in values hoisted to constant
+// bindings — evaluate once on the executor's constant paths rather than
+// through the streaming function iterator. The result crosses the same
+// boundary into relational flow, so a NaN produced from ±Inf inputs is
+// rejected loudly on every shape instead of entering joins and comparisons
+// (where the comparator treats NaN as an unreachable domain violation and
+// panics).
+func TestConstantExpressionProducingNaNIsError(t *testing.T) {
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	e := datalog.NewIdentity("m:1")
+	attr := datalog.NewKeyword(":m/value")
+	tx := db.NewTransaction()
+	tx.Add(e, attr, 1.5)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	posInf := math.Inf(1)
+
+	assertNaNError := func(t *testing.T, queryStr string) {
+		t.Helper()
+		_, err := executor.CollectTuples(db.Query(queryStr, posInf))
+		if err == nil {
+			t.Fatal("expected an error for a constant expression producing NaN, got none")
+		}
+		if !strings.Contains(err.Error(), "NaN") {
+			t.Errorf("error should name NaN; got: %v", err)
+		}
+	}
+
+	t.Run("no patterns", func(t *testing.T) {
+		assertNaNError(t, `[:find ?r :in $ ?x :where [(- ?x ?x) ?r]]`)
+	})
+
+	t.Run("alongside patterns", func(t *testing.T) {
+		assertNaNError(t, `[:find ?v ?r :in $ ?x :where [?e :m/value ?v] [(- ?x ?x) ?r]]`)
+	})
+
+	t.Run("feeding a comparison", func(t *testing.T) {
+		assertNaNError(t, `[:find ?r :in $ ?x :where [(- ?x ?x) ?r] [(< ?r 1.0)]]`)
+	})
 }

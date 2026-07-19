@@ -2062,6 +2062,12 @@ func (t *Transaction) Retract(e datalog.Identity, a datalog.Keyword, v interface
 		return fmt.Errorf("nil value not allowed for retraction of %s: must specify exact value to retract", a.String())
 	}
 
+	// Normalize integer width to canonical int64 at the API boundary.
+	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return err
+	}
+
 	t.retracts = append(t.retracts, datalog.Datom{
 		E:  e,
 		A:  a,

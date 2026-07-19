@@ -126,8 +126,11 @@ func CompareValues(left, right interface{}) int {
 		return compareByRank(left, right)
 	}
 
-	// Integer widths normalize to int64 (the canonical representation) so
-	// ordering agrees with ValuesEqual.
+	// Integer widths normalize to int64 (the canonical representation), so
+	// every signed width orders and equates identically. Across the
+	// int64/uint64/float64 split, ordering is by numeric magnitude while
+	// equality stays representation-strict — cmp==0 does not imply ValuesEqual
+	// within the numeric rank.
 	if li, ok := asInt64(left); ok {
 		return compareNumeric(li, right)
 	}
@@ -187,6 +190,12 @@ func compareNumeric(left int64, right interface{}) int {
 	if r, ok := right.(float64); ok {
 		return compareInt64Float64(left, r)
 	}
+	if r, ok := right.(uint64); ok {
+		if left < 0 {
+			return -1 // unsigned is always >= 0
+		}
+		return compareUint64s(uint64(left), r)
+	}
 	// Numeric (rank 1) vs non-numeric (higher rank): numeric sorts first. The
 	// reverse direction (non-numeric left vs numeric right) reaches
 	// compareByRank and yields +1, so this is antisymmetric.
@@ -200,6 +209,9 @@ func compareFloat(left float64, right interface{}) int {
 	}
 	if r, ok := right.(float64); ok {
 		return compareFloats(left, r)
+	}
+	if r, ok := right.(uint64); ok {
+		return -compareUint64Float64(r, left)
 	}
 	// Numeric (rank 1) vs non-numeric: numeric sorts first (see compareNumeric).
 	return -1

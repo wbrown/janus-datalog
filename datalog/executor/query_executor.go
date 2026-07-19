@@ -709,6 +709,9 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		if err != nil {
 			return nil, err
 		}
+		if err := admitExpressionResult(expr.Function, result); err != nil {
+			return nil, err
+		}
 
 		// Handle both scalar and tuple bindings
 		switch binding := expr.Binding.(type) {
@@ -791,6 +794,9 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				result, err = expr.Function.Eval(evalBindings)
 			}
 			if err != nil {
+				return nil, err
+			}
+			if err := admitExpressionResult(expr.Function, result); err != nil {
 				return nil, err
 			}
 
@@ -915,6 +921,10 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 					return []Relation{}, nil
 				}
 				result = gsr.Value
+			}
+
+			if err := admitExpressionResult(expr.Function, result); err != nil {
+				return nil, err
 			}
 
 			// Create result relation based on binding type
