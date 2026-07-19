@@ -163,8 +163,7 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 		if len(constantBindable) > 0 {
 			phaseSyms := make(map[query.Symbol]bool)
 			for _, clause := range cp.Clauses {
-				cs := extractClauseSymbols(clause)
-				for _, sym := range cs.Requires {
+				for _, sym := range query.ScopeOf(clause).Correlates {
 					phaseSyms[sym] = true
 				}
 			}

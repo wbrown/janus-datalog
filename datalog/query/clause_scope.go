@@ -17,6 +17,15 @@ import "fmt"
 type ClauseScope struct {
 	Provides   []Symbol
 	Correlates []Symbol
+
+	// CorrelatesOptional: the form tolerates correlates the enclosing
+	// query cannot bind. A plain NOT's body variables are existential when
+	// unbound (Datomic's unification rule), and or-default forms fall back
+	// to global evaluation. Mandatory-correlate forms — predicates,
+	// expressions, subquery inputs, explicit-join headers — need every
+	// correlate bound before execution; one the query cannot bind is a
+	// query error the planner must surface.
+	CorrelatesOptional bool
 }
 
 // ScopeOf returns the scope interface of a clause. The clause taxonomy is
@@ -51,7 +60,7 @@ func ScopeOf(clause Clause) ClauseScope {
 	case *NotClause:
 		// A plain NOT unifies on every free variable of its body that the
 		// enclosing query binds; the rest are existential.
-		return ClauseScope{Correlates: FreeVariables(c.Clauses)}
+		return ClauseScope{Correlates: FreeVariables(c.Clauses), CorrelatesOptional: true}
 
 	case *NotJoinClause:
 		// The header is the complete interface by language contract.
@@ -83,10 +92,24 @@ func ScopeOf(clause Clause) ClauseScope {
 				}
 			}
 		}
-		return ClauseScope{Provides: provides, Correlates: correlates}
+		return ClauseScope{Provides: provides, Correlates: correlates, CorrelatesOptional: true}
 
 	case *OrDefaultJoinClause:
-		return headerScope(c.JoinVars, c.Branches, unionSymbolSets)
+		// The header declares the per-tuple correlation keys, not the
+		// complete interface: branch outputs escape unrestricted (union —
+		// any single branch may execute), and the algebra emitter binds
+		// outputs outside the header. Header variables no branch produces
+		// correlate from outside.
+		// docs/bugs/BUG_OR_DEFAULT_JOIN_HEADER_NOT_COMPLETE_INTERFACE.md
+		// records the ratified change to header-as-complete-interface.
+		provides, externals := branchInterfaces(c.Branches, unionSymbolSets)
+		correlates := externals
+		for _, jv := range c.JoinVars {
+			if !ContainsSymbol(provides, jv) && !ContainsSymbol(correlates, jv) {
+				correlates = append(correlates, jv)
+			}
+		}
+		return ClauseScope{Provides: provides, Correlates: correlates, CorrelatesOptional: true}
 
 	case Predicate:
 		// Every predicate form: consumes, never binds.

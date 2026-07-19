@@ -224,7 +224,7 @@ Sites the consolidation sweep deliberately did not convert; each needs more than
 
 ### D8. Planner `extractClauseSymbols` dispatch: silent default and missing predicate arms
 
-**Status**: Open
+**Status**: Resolved (2026-07-19) — by deletion, via the NOT scoped-body fix (step B). The entire `extractClauseSymbols` family is gone; the planner consumes `query.ScopeOf` (`query/clause_scope.go`), which covers all nine predicate types with one `case Predicate:` arm (`Correlates: RequiredSymbols()`) and panics loudly on unknown clause forms. The four previously uncovered predicate types thereby entered phase-liveness accounting; the scheduling effects rode the step-B red-first tests (`planner/not_scheduling_test.go`, `query/clause_scope_test.go`). See `docs/bugs/BUG_NOT_CLAUSE_SCOPED_BODY_SYMBOLS_UNPLANNABLE.md` ("Refinements ratified during step B").
 
 The dispatch (`clause_utils.go`) has a silent `default: return ClauseSymbols{}` over the closed clause taxonomy, and its explicit predicate arms cover only five of the nine predicate types — `StrStartsWithPredicate`, `FunctionPredicate`, `DatabaseFunctionPredicate`, and `TxRangePredicate` fall through to "requires and provides nothing." The five covered arms are all `Requires: RequiredSymbols(), Provides: nil`, so one `case query.Predicate:` arm plus a loud default would collapse them and close the gap — but that changes phase-liveness accounting for the four uncovered types, so it needs its own red tests and a look at scheduling effects. Related: the NOT/or-join Requires computation in the same file is the subject of `docs/bugs/BUG_NOT_CLAUSE_SCOPED_BODY_SYMBOLS_UNPLANNABLE.md`.
 

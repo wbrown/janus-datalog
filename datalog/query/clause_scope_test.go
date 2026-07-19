@@ -86,6 +86,39 @@ func TestScopeOf(t *testing.T) {
 		scope := ScopeOf(&NotClause{Clauses: []Clause{scopePattern("?d", "seen/val", "?v")}})
 		assertSymbols(t, "Provides", scope.Provides)
 		assertSymbols(t, "Correlates", scope.Correlates, "?d", "?v")
+		if !scope.CorrelatesOptional {
+			t.Error("a plain NOT's correlates are existential when the query cannot bind them")
+		}
+	})
+
+	t.Run("predicate correlates are mandatory", func(t *testing.T) {
+		scope := ScopeOf(&Comparison{
+			Op:    datalog.SymLT,
+			Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
+			Right: ConstantTerm{Value: int64(10)},
+		})
+		if scope.CorrelatesOptional {
+			t.Error("a predicate needs every correlate bound; an unbindable one is a query error")
+		}
+	})
+
+	t.Run("not-join header correlates are mandatory", func(t *testing.T) {
+		scope := ScopeOf(&NotJoinClause{
+			JoinVars: []Symbol{datalog.NewSymbol("?e")},
+			Clauses:  []Clause{scopePattern("?e", "a/b", "?x")},
+		})
+		if scope.CorrelatesOptional {
+			t.Error("an explicit header is a declaration that the variables are bound outside")
+		}
+	})
+
+	t.Run("or-default correlates are optional", func(t *testing.T) {
+		scope := ScopeOf(&OrDefaultClause{Branches: [][]Clause{
+			{scopePattern("?e", "a/b", "?x")},
+		}})
+		if !scope.CorrelatesOptional {
+			t.Error("or-default falls back to global evaluation when correlation is unbindable")
+		}
 	})
 
 	t.Run("not sees a nested or-join's header, not its branch locals", func(t *testing.T) {
@@ -139,14 +172,39 @@ func TestScopeOf(t *testing.T) {
 		assertSymbols(t, "Correlates", scope.Correlates, "?x")
 	})
 
-	t.Run("or-default-join provides only header variables", func(t *testing.T) {
+	t.Run("or-default-join branch outputs escape past the header", func(t *testing.T) {
+		// Live contract: the header declares correlation keys, not the
+		// complete interface — the algebra emitter binds outputs outside
+		// the header (the get-else/fallback decorrelation shape).
 		scope := ScopeOf(&OrDefaultJoinClause{
 			JoinVars: []Symbol{datalog.NewSymbol("?e")},
 			Branches: [][]Clause{
-				{scopePattern("?e", "a/b", "?local")},
+				{scopePattern("?e", "a/b", "?out")},
+				{&Expression{
+					Function: &GroundFunction{Value: int64(0)},
+					Binding:  datalog.NewSymbol("?out"),
+				}},
 			},
 		})
-		assertSymbols(t, "Provides", scope.Provides, "?e")
+		assertSymbols(t, "Provides", scope.Provides, "?e", "?out")
+		assertSymbols(t, "Correlates", scope.Correlates)
+		if !scope.CorrelatesOptional {
+			t.Error("or-default-join falls back per correlation group; unbindable correlates are legal")
+		}
+	})
+
+	t.Run("or-default-join header var no branch produces correlates", func(t *testing.T) {
+		scope := ScopeOf(&OrDefaultJoinClause{
+			JoinVars: []Symbol{datalog.NewSymbol("?e")},
+			Branches: [][]Clause{
+				{&Expression{
+					Function: &GroundFunction{Value: int64(0)},
+					Binding:  datalog.NewSymbol("?out"),
+				}},
+			},
+		})
+		assertSymbols(t, "Provides", scope.Provides, "?out")
+		assertSymbols(t, "Correlates", scope.Correlates, "?e")
 	})
 }
 

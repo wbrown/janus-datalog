@@ -40,7 +40,8 @@ Every clause form has a well-defined **scope interface** — the variables it ex
 | Form | Interface |
 |---|---|
 | data pattern | all its variables |
-| `not-join` / `or-join` / `or-default-join` | exactly the declared header (language contract: the header lists every outer-facing variable; body variables are existentially quantified inside) |
+| `not-join` / `or-join` | exactly the declared header (language contract: the header lists every outer-facing variable; body variables are existentially quantified inside) |
+| `or-default-join` | header = per-tuple correlation keys; branch outputs escape (union of branch provides) — the algebra emitter builds on this. Header-as-complete-interface for this form is ratified follow-up work: `BUG_OR_DEFAULT_JOIN_HEADER_NOT_COMPLETE_INTERFACE.md`. |
 | plain `not` / `or` | the body's/branches' free variables — Datomic's rule: all of them that the enclosing query binds unify; the rest are existential |
 | `SubqueryPattern` | variable inputs (consumed) + `Binding.BoundVariables()` (provided); the inner `:where` is a different scope |
 | predicates | `RequiredSymbols()` (consumed), nothing provided |
@@ -55,6 +56,14 @@ Scoping knowledge currently has **four implementations** that can (and here, do)
 2. **`ClauseSymbols` reshaped to tell the truth**: `Provides` (binds into the enclosing scope) and `Correlates` (free variables that unify with the enclosing scope when bound there) — replacing the lie that every free variable is a hard precondition. NOT: provides nothing, correlates on `FreeVariables(body)`. Or-join: provides its header ∩ what all branches produce; correlates on the remainder plus branch externals.
 3. **Scheduling resolves `Correlates` against the query.** At planning entry compute once: `bindable = inputs ∪ ⋃ Provides(all clauses)`. A filtering clause is ready when `Correlates ∩ bindable ⊆ available`. Existentials drop out arithmetically — no special cases — while correctness holds exactly: the clause waits for every variable the query *can* bind, which is Datomic's unification rule expressed as a scheduling condition.
 4. **The executor uses the same definition.** `executeNotClause`'s anti-join keys become `FreeVariables(body) ∩ input schema`; `collectInnerVars` becomes that call or is deleted. Planner and executor can no longer drift — there is nothing left to drift between.
+
+### Refinements ratified during step B (2026-07-19)
+
+Realized names: the canonical definition is `query.ClauseScope` (`Provides`/`Correlates`) returned by `query.ScopeOf(clause)`, with `query.FreeVariables(clauses)` as the clause-list union. The planner's `extractClauseSymbols` family (including its silent dispatch default, audit finding D8) is deleted; `ScopeOf` has a loud panic default over the closed taxonomy.
+
+- **`ClauseScope.CorrelatesOptional`**: whether the form tolerates correlates the enclosing query cannot bind. True for plain `not` (existential body variables), `or-default`, and `or-default-join` (global fallback). The polarity is deliberately negated so the bool zero value is **strict**: a form that forgets to set the flag gets loud rejection, not lenient skipping. Mandatory-correlate forms — predicates, expressions, subquery inputs, explicit-join headers — never become ready on an unbindable correlate, so the phasing loop still surfaces invalid queries loudly.
+- **Self-exclusion in the scheduling rule**: an optional correlate blocks scheduling only while an input or some **other** clause can still bind it — a clause never waits on a symbol only it provides. This generalizes the old ad-hoc or-default "wait only if another clause can provide it" special case; implemented as a per-symbol provider count (deduplicated per clause) that `clauseReady` decrements by the clause's own contribution. Without self-exclusion, an or-default whose first-pattern entity variable only it binds deadlocks phasing.
+- **or-default-join keeps its live contract in this checkpoint**: header = correlation keys, branch outputs escape (union). Step A initially header-restricted its Provides; the full suite showed the algebra emitter deliberately binds fallback-decorrelation outputs outside the header, so the arm was corrected to the live contract during step B to keep the migration semantics-preserving. The contract change itself (header-as-complete-interface, uniformly) is ratified follow-up work: `BUG_OR_DEFAULT_JOIN_HEADER_NOT_COMPLETE_INTERFACE.md`.
 
 ### Rejected alternative: reuse the algebra bridge's inference
 

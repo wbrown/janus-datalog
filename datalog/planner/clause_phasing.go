@@ -27,12 +27,27 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 		available[sym] = true
 	}
 
+	// How many clauses can bind each symbol. An optional correlate blocks
+	// scheduling only while an input or some OTHER clause can still bind it;
+	// counting providers (deduplicated per clause) lets clauseReady subtract
+	// the clause's own contribution, so a clause never waits on itself.
+	providerCount := make(map[query.Symbol]int)
+	for _, clause := range clauses {
+		provided := make(map[query.Symbol]bool)
+		for _, sym := range query.ScopeOf(clause).Provides {
+			if !provided[sym] {
+				provided[sym] = true
+				providerCount[sym]++
+			}
+		}
+	}
+
 	var phases []ClausePhase
 	remaining := clauses
 
 	// Keep creating phases until all clauses are assigned
 	for len(remaining) > 0 {
-		phase, newRemaining, err := selectPhaseClauses(remaining, available, findSymbols)
+		phase, newRemaining, err := selectPhaseClauses(remaining, available, findSymbols, inputSymbols, providerCount)
 		if err != nil {
 			return nil, err
 		}
@@ -55,8 +70,42 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 	return phases, nil
 }
 
+// clauseReady reports whether a clause can execute now: every correlate that
+// an input or another clause can bind must already be available. For
+// optional-correlate forms, a correlate nothing else can bind never blocks —
+// it is existential (plain NOT) or global-fallback (or-default), and the
+// clause must not wait on a symbol only it provides. Mandatory-correlate
+// forms wait unconditionally; one that can never become available leaves the
+// clause never ready, and the phasing loop surfaces the invalid query loudly.
+func clauseReady(clause query.Clause, available, inputs map[query.Symbol]bool, providerCount map[query.Symbol]int) bool {
+	scope := query.ScopeOf(clause)
+	var selfProvides map[query.Symbol]bool
+	for _, sym := range scope.Correlates {
+		if sym.IsSource() || available[sym] {
+			continue
+		}
+		if scope.CorrelatesOptional {
+			if selfProvides == nil {
+				selfProvides = make(map[query.Symbol]bool, len(scope.Provides))
+				for _, provided := range scope.Provides {
+					selfProvides[provided] = true
+				}
+			}
+			others := providerCount[sym]
+			if selfProvides[sym] {
+				others--
+			}
+			if !inputs[sym] && others <= 0 {
+				continue
+			}
+		}
+		return false
+	}
+	return true
+}
+
 // selectPhaseClauses greedily selects clauses for the next phase
-func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol) (ClausePhase, []query.Clause, error) {
+func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]bool, findSymbols []query.Symbol, inputs map[query.Symbol]bool, providerCount map[query.Symbol]int) (ClausePhase, []query.Clause, error) {
 	var selectedClauses []query.Clause
 	var providedSymbols []query.Symbol
 	providedSet := make(map[query.Symbol]bool)
@@ -89,9 +138,7 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 				}
 			}
 
-			// Compute what OTHER clauses could provide (excluding this one)
-			otherProvidable := computeOtherProvidable(remaining, selected, i)
-			if !canExecuteClauseWithContext(clause, available, otherProvidable) {
+			if !clauseReady(clause, available, inputs, providerCount) {
 				continue
 			}
 
@@ -113,8 +160,7 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 		selectedClauses = append(selectedClauses, clause)
 
 		// Add symbols this clause provides to our local available set and tracking
-		symbols := extractClauseSymbols(clause)
-		for _, sym := range symbols.Provides {
+		for _, sym := range query.ScopeOf(clause).Provides {
 			if !providedSet[sym] {
 				providedSymbols = append(providedSymbols, sym)
 				providedSet[sym] = true
@@ -166,8 +212,7 @@ func computeKeepSymbols(currentPhase ClausePhase, remainingClauses []query.Claus
 
 	// Symbols needed by remaining clauses
 	for _, clause := range remainingClauses {
-		symbols := extractClauseSymbols(clause)
-		for _, sym := range symbols.Requires {
+		for _, sym := range query.ScopeOf(clause).Correlates {
 			needed[sym] = true
 		}
 	}

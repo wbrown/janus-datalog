@@ -139,6 +139,60 @@ func TestNotClauseWithOrJoinBody(t *testing.T) {
 	}
 }
 
+// TestNotClauseWithExistentialBodyVariable pins the plain-pattern sibling of
+// the or-join reproducer: (not [?d :seen/val ?v]) where ?d is existential
+// (body-local) and ?v correlates with the outer relation. Rows whose ?v has
+// any :seen/val match are filtered; ?d must not become a scheduling
+// requirement.
+func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
+	valAttr := datalog.NewKeyword(":item/val")
+	seenAttr := datalog.NewKeyword(":seen/val")
+	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
+	datoms := []datalog.Datom{
+		{E: datalog.NewIdentity("item:1"), A: valAttr, V: int64(1), Tx: tx},
+		{E: datalog.NewIdentity("item:2"), A: valAttr, V: int64(2), Tx: tx},
+		{E: datalog.NewIdentity("item:3"), A: valAttr, V: int64(3), Tx: tx},
+		{E: datalog.NewIdentity("seen:1"), A: seenAttr, V: int64(2), Tx: tx},
+	}
+	matcher := NewMemoryPatternMatcher(datoms)
+	exec := NewExecutor(matcher, nil)
+
+	v := datalog.NewSymbol("?v")
+	q := &query.Query{
+		Find: []query.FindElement{query.FindVariable{Symbol: v}},
+		Where: []query.Clause{
+			&query.DataPattern{Elements: []query.PatternElement{
+				query.Variable{Name: datalog.NewSymbol("?e")},
+				query.Constant{Value: valAttr},
+				query.Variable{Name: v},
+			}},
+			&query.NotClause{Clauses: []query.Clause{
+				&query.DataPattern{Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?d")},
+					query.Constant{Value: seenAttr},
+					query.Variable{Name: v},
+				}},
+			}},
+		},
+	}
+
+	result, err := exec.Execute(q)
+	if err != nil {
+		t.Fatalf("execution failed: %v", err)
+	}
+	rows, err := CollectTuples(result, nil)
+	if err != nil {
+		t.Fatalf("collect failed: %v", err)
+	}
+	got := map[int64]bool{}
+	for _, row := range rows {
+		got[row[0].(int64)] = true
+	}
+	if len(rows) != 2 || !got[1] || !got[3] || got[2] {
+		t.Errorf("expected {1 3} to survive the NOT (2 is seen), got %v", rows)
+	}
+}
+
 func TestNotClauseNoMatches(t *testing.T) {
 	// When NOT clause matches nothing, all results should be kept
 	alice := datalog.NewIdentity("user:alice")
