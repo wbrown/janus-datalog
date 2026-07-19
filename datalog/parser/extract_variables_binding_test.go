@@ -39,3 +39,19 @@ func TestExtractVariablesCoversEveryBindingForm(t *testing.T) {
 		})
 	}
 }
+
+// TestExtractVariablesPredicatesProvideNothing pins that predicate clauses
+// consume variables without providing any.
+func TestExtractVariablesPredicatesProvideNothing(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	clauses := []query.Clause{
+		&query.Comparison{
+			Op:    datalog.SymLT,
+			Left:  query.VariableTerm{Symbol: x},
+			Right: query.ConstantTerm{Value: int64(10)},
+		},
+	}
+	if vars := ExtractVariables(clauses); len(vars) != 0 {
+		t.Errorf("predicates must provide no variables; got %v", vars)
+	}
+}

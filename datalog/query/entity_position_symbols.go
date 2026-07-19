@@ -54,7 +54,7 @@ func PositionSymbols(q *Query) (entity, attribute map[Symbol]bool) {
 }
 
 func positionSymbolsInClauses(clauses []Clause, entity, attribute map[Symbol]bool) {
-	for _, clause := range clauses {
+	WalkClauses(clauses, func(clause Clause) bool {
 		switch c := clause.(type) {
 		case *DataPattern:
 			if v, ok := c.GetE().(Variable); ok {
@@ -63,30 +63,13 @@ func positionSymbolsInClauses(clauses []Clause, entity, attribute map[Symbol]boo
 			if v, ok := c.GetA().(Variable); ok {
 				attribute[v.Name] = true
 			}
-		case *NotClause:
-			positionSymbolsInClauses(c.Clauses, entity, attribute)
-		case *NotJoinClause:
-			positionSymbolsInClauses(c.Clauses, entity, attribute)
-		case *OrClause:
-			for _, branch := range c.Branches {
-				positionSymbolsInClauses(branch, entity, attribute)
-			}
-		case *OrJoinClause:
-			for _, branch := range c.Branches {
-				positionSymbolsInClauses(branch, entity, attribute)
-			}
-		case *OrDefaultClause:
-			for _, branch := range c.Branches {
-				positionSymbolsInClauses(branch, entity, attribute)
-			}
-		case *OrDefaultJoinClause:
-			for _, branch := range c.Branches {
-				positionSymbolsInClauses(branch, entity, attribute)
-			}
 		case *SubqueryPattern:
+			// The subquery's inner positions map back through its argument
+			// list, not through a direct walk of its :where.
 			positionSymbolsFromSubquery(*c, entity, attribute)
 		}
-	}
+		return true
+	})
 }
 
 // positionSymbolsFromSubquery maps the nested query's entity- and

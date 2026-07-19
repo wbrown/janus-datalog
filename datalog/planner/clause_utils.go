@@ -27,8 +27,6 @@ func extractClauseSymbols(clause query.Clause) ClauseSymbols {
 		return extractNotEqualSymbols(c)
 	case *query.MissingPredicate:
 		return extractMissingPredicateSymbols(c)
-	case *query.Subquery:
-		return extractSubquerySymbols(c)
 	case *query.SubqueryPattern:
 		return extractSubqueryPatternSymbols(c)
 	case *query.NotClause:
@@ -133,26 +131,6 @@ func extractMissingPredicateSymbols(mp *query.MissingPredicate) ClauseSymbols {
 	return ClauseSymbols{
 		Requires: mp.Variables, // Missing checks these variables
 		Provides: nil,
-	}
-}
-
-// extractSubquerySymbols extracts symbols from a subquery
-func extractSubquerySymbols(sq *query.Subquery) ClauseSymbols {
-	requires := sq.Inputs
-
-	var provides []query.Symbol
-	switch binding := sq.Binding.(type) {
-	case query.Symbol:
-		provides = append(provides, binding)
-	case query.TupleBinding:
-		provides = append(provides, binding.Variables...)
-	case query.RelationBinding:
-		provides = append(provides, binding.Variables...)
-	}
-
-	return ClauseSymbols{
-		Requires: requires,
-		Provides: provides,
 	}
 }
 
@@ -643,11 +621,6 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 		score += 2
 	}
 
-	// Subqueries are expensive - defer if possible
-	if _, ok := clause.(*query.Subquery); ok {
-		score -= 50
-	}
-
 	return score
 }
 
@@ -756,8 +729,6 @@ func collectDataPatternSymbols(clauses []query.Clause, out map[query.Symbol]bool
 				collectDataPatternSymbols(branch, out)
 			}
 		case *query.SubqueryPattern:
-			collectDataPatternSymbols(c.Query.Where, out)
-		case *query.Subquery:
 			collectDataPatternSymbols(c.Query.Where, out)
 		}
 	}

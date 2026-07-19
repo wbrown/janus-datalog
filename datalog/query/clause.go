@@ -15,7 +15,6 @@ func (*GroundPredicate) clause()        {}
 func (*MissingPredicate) clause()       {}
 func (*StrStartsWithPredicate) clause() {}
 func (*Expression) clause()             {}
-func (*Subquery) clause()               {}
 func (*NotClause) clause()              {}
 func (*NotJoinClause) clause()          {}
 func (*OrClause) clause()               {}
@@ -41,18 +40,6 @@ func (e *Expression) String() string {
 		bindingStr = ""
 	}
 	return "[" + e.Function.String() + " " + bindingStr + "]"
-}
-
-// Subquery represents a nested query with bindings
-type Subquery struct {
-	Query   *Query      // The nested query
-	Inputs  []Symbol    // Input variables from outer query
-	Binding interface{} // Can be Symbol (scalar), TupleBinding, or RelationBinding
-}
-
-func (s *Subquery) String() string {
-	// Simplified string representation
-	return "[(q ...) binding]"
 }
 
 // NotClause represents a negation clause: (not [clauses...])

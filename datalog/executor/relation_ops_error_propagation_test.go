@@ -48,6 +48,43 @@ func alwaysTrue() query.Predicate {
 	}
 }
 
+// TestThetaJoinPair_PropagatesPredicateEvalError: a predicate eval failure
+// during a theta join must surface, not silently drop the pair — the same
+// fail-fast contract filterWithPredicateAndLookup honors.
+func TestThetaJoinPair_PropagatesPredicateEvalError(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	y := datalog.NewSymbol("?y")
+	left := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}})
+	right := NewMaterializedRelation([]query.Symbol{y}, []Tuple{{int64(2)}})
+	pred := &query.FunctionPredicate{
+		Fn:   "no-such-predicate",
+		Args: []query.PatternElement{query.Variable{Name: x}, query.Variable{Name: y}},
+	}
+	rel := thetaJoinWithPredicate([]Relation{left, right}, pred, nil, nil, ExecutorOptions{})
+	_, err := CollectTuples(rel, nil)
+	require.Error(t, err)
+}
+
+// TestThetaJoinPair_PropagatesOuterIteratorError: a failed outer scan must
+// not be presented as a completed join.
+func TestThetaJoinPair_PropagatesOuterIteratorError(t *testing.T) {
+	y := datalog.NewSymbol("?y")
+	outer := newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)})
+	inner := NewMaterializedRelation([]query.Symbol{y}, []Tuple{{int64(9)}})
+	rel := thetaJoinPair(outer, inner, nil, nil, nil, ExecutorOptions{})
+	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+}
+
+// TestThetaJoinPair_PropagatesInnerIteratorError: same for the buffered
+// inner relation.
+func TestThetaJoinPair_PropagatesInnerIteratorError(t *testing.T) {
+	x := datalog.NewSymbol("?x")
+	outer := NewMaterializedRelation([]query.Symbol{x}, []Tuple{{int64(1)}})
+	inner := newFailingStream(1, Tuple{int64(9)}, Tuple{int64(8)})
+	rel := thetaJoinPair(outer, inner, nil, nil, nil, ExecutorOptions{})
+	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
+}
+
 // TestFilterWithPredicateAndLookup_PropagatesIteratorError: a deferred
 // iterator failure must not be laundered into a clean filtered relation.
 func TestFilterWithPredicateAndLookup_PropagatesIteratorError(t *testing.T) {

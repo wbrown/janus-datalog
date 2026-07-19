@@ -1433,41 +1433,24 @@ func branchesNeedCorrelatedExecution(branches [][]query.Clause) bool {
 // clausesNeedCorrelation recursively checks whether any clause in the
 // list (or nested within it) contains expressions or correlated predicates.
 func clausesNeedCorrelation(clauses []query.Clause) bool {
-	for _, c := range clauses {
-		switch cl := c.(type) {
+	needs := false
+	query.WalkClauses(clauses, func(clause query.Clause) bool {
+		if needs {
+			return false // decided; skip remaining descent
+		}
+		switch cl := clause.(type) {
 		case *query.Expression, *query.SubqueryPattern:
-			return true
+			needs = true
+			return false
 		case query.Predicate:
 			if len(cl.RequiredSymbols()) > 0 {
-				return true
-			}
-		case *query.OrClause:
-			if branchesNeedCorrelatedExecution(cl.Branches) {
-				return true
-			}
-		case *query.OrJoinClause:
-			if branchesNeedCorrelatedExecution(cl.Branches) {
-				return true
-			}
-		case *query.OrDefaultClause:
-			if branchesNeedCorrelatedExecution(cl.Branches) {
-				return true
-			}
-		case *query.OrDefaultJoinClause:
-			if branchesNeedCorrelatedExecution(cl.Branches) {
-				return true
-			}
-		case *query.NotClause:
-			if clausesNeedCorrelation(cl.Clauses) {
-				return true
-			}
-		case *query.NotJoinClause:
-			if clausesNeedCorrelation(cl.Clauses) {
-				return true
+				needs = true
+				return false
 			}
 		}
-	}
-	return false
+		return true
+	})
+	return needs
 }
 
 // findOuterRelation collects and joins all groups that provide any of the

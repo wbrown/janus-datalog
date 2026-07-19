@@ -776,9 +776,7 @@ func (r *MaterializedRelation) FilterWithPredicate(pred query.Predicate) Relatio
 	var evalErr error
 	for _, tuple := range r.tuples {
 		bindings := make(map[query.Symbol]interface{})
-		for i, sym := range r.symbols {
-			bindings[sym] = tuple[i]
-		}
+		bindTuple(bindings, r.symbols, tuple)
 
 		passes, err := pred.Eval(bindings)
 		if err != nil {
@@ -853,9 +851,7 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 	for _, tuple := range r.tuples {
 		// Create bindings from tuple
 		bindings := make(map[query.Symbol]interface{})
-		for i, sym := range r.symbols {
-			bindings[sym] = tuple[i]
-		}
+		bindTuple(bindings, r.symbols, tuple)
 
 		// Evaluate the function
 		result, err := fn.Eval(bindings)

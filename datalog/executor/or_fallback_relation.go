@@ -202,21 +202,6 @@ func collectAllBranchOverwrittenSymbols(
 					}
 				}
 			}
-		case *query.Subquery:
-			switch binding := typed.Binding.(type) {
-			case query.Symbol:
-				add(binding)
-			case query.TupleBinding:
-				for _, symbol := range binding.Variables {
-					add(symbol)
-				}
-			case query.RelationBinding:
-				for i, symbol := range binding.Variables {
-					if !subqueryFindVariablePassesOuter(typed.Query, i, symbol, outerSet) {
-						add(symbol)
-					}
-				}
-			}
 		case *query.OrClause:
 			for _, nested := range typed.Branches {
 				for _, nestedClause := range nested {
@@ -263,16 +248,6 @@ func orBranchesEmitAtMostOne(
 			case *query.SubqueryPattern:
 				switch binding := typed.Binding.(type) {
 				case query.ScalarBinding, query.TupleBinding:
-				case query.RelationBinding:
-					if !relationBindingGroupsAreOuterBound(typed.Query, binding.Variables, outerSet) {
-						return false
-					}
-				default:
-					return false
-				}
-			case *query.Subquery:
-				switch binding := typed.Binding.(type) {
-				case query.Symbol, query.TupleBinding:
 				case query.RelationBinding:
 					if !relationBindingGroupsAreOuterBound(typed.Query, binding.Variables, outerSet) {
 						return false

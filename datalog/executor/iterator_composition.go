@@ -191,11 +191,7 @@ func (it *PredicateFilterIterator) Next() bool {
 
 		// Create bindings for predicate evaluation
 		bindings := make(map[query.Symbol]interface{})
-		for i, sym := range it.symbols {
-			if i < len(it.current) {
-				bindings[sym] = it.current[i]
-			}
-		}
+		bindTuple(bindings, it.symbols, it.current)
 
 		// Evaluate predicate
 		result, err := it.predicate.Eval(bindings)
@@ -288,11 +284,7 @@ func (it *FunctionEvaluatorIterator) Next() bool {
 
 		// Create bindings for function evaluation
 		bindings := make(map[query.Symbol]interface{})
-		for i, sym := range it.symbols {
-			if i < len(sourceTuple) {
-				bindings[sym] = sourceTuple[i]
-			}
-		}
+		bindTuple(bindings, it.symbols, sourceTuple)
 
 		// Evaluate function. Fail-fast on eval errors — store the deferred
 		// error so Error() returns it after Next() reports exhaustion.

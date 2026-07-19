@@ -48,9 +48,11 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
 
 	var filtered []Tuple
+	var joinErr error
 
 	outerIt := outer.Iterator()
 	firstOuter := true
+outerLoop:
 	for outerIt.Next() {
 		outerTuple := outerIt.Tuple()
 
@@ -76,12 +78,8 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 				for sym, val := range constants {
 					bindings[sym] = val
 				}
-				for i, sym := range outerSyms {
-					bindings[sym] = outerTuple[i]
-				}
-				for i, sym := range innerSyms {
-					bindings[sym] = innerTuple[i]
-				}
+				bindTuple(bindings, outerSyms, outerTuple)
+				bindTuple(bindings, innerSyms, innerTuple)
 
 				// Evaluate predicate
 				var passes bool
@@ -92,7 +90,11 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 					passes, err = pred.Eval(bindings)
 				}
 				if err != nil {
-					continue
+					// Fail fast — predicate eval errors are real errors, not
+					// "treat as false." Surface to the consumer; do not
+					// silently drop the pair.
+					joinErr = err
+					break outerLoop
 				}
 				if !passes {
 					continue
@@ -102,10 +104,26 @@ func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.Ent
 			filtered = append(filtered, combined)
 		}
 	}
-	outerIt.Close()
-	innerBuf.Close()
+	// Deferred scan errors: a failed outer or inner iteration must not be
+	// presented as a completed join. First error wins.
+	if err := outerIt.Error(); joinErr == nil {
+		joinErr = err
+	}
+	if err := innerBuf.Error(); joinErr == nil {
+		joinErr = err
+	}
+	if closeErr := outerIt.Close(); joinErr == nil {
+		joinErr = closeErr
+	}
+	if closeErr := innerBuf.Close(); joinErr == nil {
+		joinErr = closeErr
+	}
 
-	return NewMaterializedRelationWithOptions(combinedSyms, filtered, opts)
+	result := NewMaterializedRelationWithOptions(combinedSyms, filtered, opts)
+	if joinErr != nil {
+		result.err = joinErr
+	}
+	return result
 }
 
 // crossJoinWithExpression performs a nested-loop cross-join between multiple relations,

@@ -49,12 +49,7 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 
 		// Create a map of bound values
 		boundValues := make(map[query.Symbol]interface{})
-		syms := bindingRel.Symbols()
-		for i, sym := range syms {
-			if i < len(tuple) {
-				boundValues[sym] = tuple[i]
-			}
-		}
+		bindTuple(boundValues, bindingRel.Symbols(), tuple)
 
 		// Check each datom against the bound values
 		for _, d := range allDatoms {

@@ -104,9 +104,7 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		for sym, val := range constantBindings {
 			bindings[sym] = val
 		}
-		for i, sym := range symbols {
-			bindings[sym] = tuple[i]
-		}
+		bindTuple(bindings, symbols, tuple)
 
 		// Evaluate the predicate
 		var passes bool
@@ -221,9 +219,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		for sym, val := range constantBindings {
 			bindings[sym] = val
 		}
-		for i, sym := range symbols {
-			bindings[sym] = tuple[i]
-		}
+		bindTuple(bindings, symbols, tuple)
 
 		// Evaluate the expression
 		// Check if this is a database function that needs lookup access
@@ -415,7 +411,7 @@ func collectInnerVars(clauses []query.Clause) []query.Symbol {
 	seen := make(map[query.Symbol]bool)
 	var vars []query.Symbol
 
-	for _, clause := range clauses {
+	query.WalkClauses(clauses, func(clause query.Clause) bool {
 		switch c := clause.(type) {
 		case *query.DataPattern:
 			for _, sym := range c.Symbols() {
@@ -424,42 +420,18 @@ func collectInnerVars(clauses []query.Clause) []query.Symbol {
 					vars = append(vars, sym)
 				}
 			}
-		case *query.NotClause:
-			for _, sym := range collectInnerVars(c.Clauses) {
-				if !seen[sym] {
-					seen[sym] = true
-					vars = append(vars, sym)
-				}
-			}
-		case *query.OrClause:
-			for _, branch := range c.Branches {
-				for _, sym := range collectInnerVars(branch) {
-					if !seen[sym] {
-						seen[sym] = true
-						vars = append(vars, sym)
-					}
-				}
-			}
-		case *query.OrDefaultClause:
-			for _, branch := range c.Branches {
-				for _, sym := range collectInnerVars(branch) {
-					if !seen[sym] {
-						seen[sym] = true
-						vars = append(vars, sym)
-					}
-				}
-			}
-		case *query.OrDefaultJoinClause:
-			for _, branch := range c.Branches {
-				for _, sym := range collectInnerVars(branch) {
-					if !seen[sym] {
-						seen[sym] = true
-						vars = append(vars, sym)
-					}
-				}
-			}
+		case *query.NotJoinClause, *query.OrJoinClause:
+			// Explicit-join bodies are scoped: only the declared JoinVars
+			// are exposed, so the body's variables must not leak here.
+			// NOTE: the JoinVars themselves are not collected either — a
+			// nested (or-join [?x] ...) exposes ?x but contributes nothing
+			// to this collection. Suspected missing case, kept as-is
+			// pending an owner ruling; see executeNotClause, whose
+			// anti-join keys come from this collection.
+			return false
 		}
-	}
+		return true
+	})
 
 	return vars
 }

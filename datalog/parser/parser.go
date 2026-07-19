@@ -1387,6 +1387,17 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 					vars = append(vars, v)
 				}
 			}
+
+		case *query.Comparison, *query.ChainedComparison, *query.NotEqualPredicate,
+			*query.GroundPredicate, *query.MissingPredicate, *query.StrStartsWithPredicate,
+			*query.FunctionPredicate, *query.DatabaseFunctionPredicate, *query.TxRangePredicate:
+			// Predicates consume variables; they provide none.
+
+		default:
+			// The clause taxonomy is closed; a clause type without a case
+			// here would silently provide nothing — the exact hazard that
+			// hid the missing ScalarBinding and Subquery cases.
+			panic(fmt.Sprintf("BUG: unknown clause type %T in ExtractVariables", clause))
 		}
 	}
 

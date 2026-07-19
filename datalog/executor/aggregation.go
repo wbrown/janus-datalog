@@ -58,6 +58,25 @@ func ExecuteAggregationsWithContext(ctx Context, rel Relation, findElements []qu
 		}
 	}
 
+	// Aggregate argument and predicate symbols must be present, exactly like
+	// group-by symbols. Before this validation the three aggregation paths
+	// diverged silently on an absent argument (collect nothing / read tuple
+	// position 0 / skip).
+	for _, agg := range aggregates {
+		if SymbolIndex(rel, agg.Arg) < 0 {
+			result := NewMaterializedRelationWithOptions(
+				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+			result.err = fmt.Errorf("aggregate argument symbol %s is not present in source relation", agg.Arg)
+			return result
+		}
+		if agg.IsConditional() && SymbolIndex(rel, agg.Predicate) < 0 {
+			result := NewMaterializedRelationWithOptions(
+				aggregateResultSymbols(groupByVars, aggregates), nil, rel.Options())
+			result.err = fmt.Errorf("aggregate predicate symbol %s is not present in source relation", agg.Predicate)
+			return result
+		}
+	}
+
 	// Extract options from relation
 	opts := rel.Options()
 
@@ -213,8 +232,8 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 		}
 	}
 
-	// Hoist each aggregate's argument position out of the per-tuple loop; -1
-	// (argument symbol absent) collects nothing, as before.
+	// Hoist each aggregate's argument position out of the per-tuple loop.
+	// Argument symbols are validated present at entry.
 	argIndices := make([]int, len(aggregates))
 	for i, agg := range aggregates {
 		argIndices[i] = query.SymbolIndex(symbols, agg.Arg)
@@ -302,20 +321,14 @@ func executeGroupedAggregation(
 		return errRel
 	}
 
-	// Create symbol mapping. Group-by symbols are validated present by
-	// ExecuteAggregationsWithContext, so no table entry is -1.
+	// Create symbol mapping. Group-by and aggregate symbols are validated
+	// present by ExecuteAggregationsWithContext, so no table entry is -1.
 	symbols := rel.Symbols()
 	groupIndices := query.SymbolIndexTable(symbols, groupByVars)
 
-	// An aggIndices zero value means an absent argument symbol reads tuple
-	// position 0 — long-standing behavior, preserved by this consolidation.
-	// (The single-aggregation path collects nothing instead; see
-	// executeSingleAggregation.)
 	aggIndices := make([]int, len(aggregates))
 	for i, agg := range aggregates {
-		if j := query.SymbolIndex(symbols, agg.Arg); j >= 0 {
-			aggIndices[i] = j
-		}
+		aggIndices[i] = query.SymbolIndex(symbols, agg.Arg)
 	}
 
 	// Find predicate indices for conditional aggregates

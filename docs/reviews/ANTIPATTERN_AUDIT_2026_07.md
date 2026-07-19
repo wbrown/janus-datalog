@@ -190,13 +190,13 @@ One slice-level `indexOf([]query.Symbol, query.Symbol) int` with the named varia
 
 ### D3. Per-tuple bindings-map construction: 7 core copies
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). One `bindTuple(dst, symbols, tuple)` in `executor/tuple_bindings.go`; nine sites converted. Owner ruling: unified **loud** — a tuple narrower than its symbols is a broken Relation invariant and panics (the four previously guard-skipping sites lost their silent absorption). Pinned by `tuple_bindings_test.go`. Call sites keep their own clear/constant-prelude steps, which legitimately differ.
 
 `bindings := make(map[query.Symbol]interface{}); for i, sym := range symbols { bindings[sym] = tuple[i] }` — simple form in `iterator_composition.go` (×2, guarded) and `relation.go` (×2, unguarded); clear-and-repopulate form in `relation_ops.go` (×2) and `theta_join.go`; variants with extra logic in `subquery.go` and `executor.go`. One populate function (clear + constant prelude + guarded fill) covers them. Note this whole shape is also the per-tuple allocation the predicate-compilation architecture question would eliminate; consolidating now still pays either way.
 
 ### D4. Eight recursive clause-tree walkers
 
-**Status**: Open
+**Status**: Resolved (2026-07-19), with a ratified refinement. `query.WalkClauses` (clause_walk.go) is the single traversal: full 19-type taxonomy enumerated (13 leaves explicit, 6 compounds descend), per-visit descend control, loud default — a new clause type must decide its traversal in exactly one place. Migrated: `positionSymbolsInClauses`, `executor.collectInnerVars`, `executor.clausesNeedCorrelation`. **Refinement (owner-approved)**: walkers whose compound handling is branch-scoped set algebra — `parser.ExtractVariables` (OR-branch intersection), `collectOrBranchRequiredSymbols` (per-branch two-pass), the planner `extractClauseSymbols` family (per-clause Requires/Provides dispatch) — stay bespoke; a flat visitor cannot express their semantics. `ExtractVariables` instead got the loud-enumeration treatment in place (explicit predicate leaves, panic default), which surfaced and fixed its missing `ScalarBinding` case and flushed out the dead `query.Subquery` clause type (deleted, with its six dead consumer arms across planner and executor). Investigating `collectInnerVars`'s explicit-join handling during migration surfaced the open NOT/or-join planning bug — see `docs/bugs/BUG_NOT_CLAUSE_SCOPED_BODY_SYMBOLS_UNPLANNABLE.md`.
 
 Eight functions re-implement the "range clauses → type-switch → recurse into `NotClause`/`Or*Clause` branches/`SubqueryPattern`" skeleton: `parser.ExtractVariables`, `query.positionSymbolsInClauses`, planner's `extractClauseSymbols` family (+ `collectSubqueryInputSymbols`, `collectDataPatternSymbols`), executor's `collectInnerVars`, `collectOrBranchRequiredSymbols`, `branchesNeedCorrelatedExecution`/`clausesNeedCorrelation`. A single clause-walk framework in `query` (visitor over the traversal skeleton) unifies them; this is the largest structural item and needs its own design. `ExtractVariables`' historically missing clause cases were one of the silent-default detonations — a shared walker makes that class impossible to reintroduce per-walker.
 
@@ -221,6 +221,12 @@ Sites the consolidation sweep deliberately did not convert; each needs more than
 - **`evaluateExpressionWithLookup` find-and-assign borderlines** (`executor/relation_ops.go`, the tuple-binding value-placement loops): per-tuple find-index-then-assign over `newSymbols`; hoisting requires restructuring the binding-placement logic around a precomputed table.
 - **`filterBranchToOuterTuple` shared-pair discovery** (`executor/or_fallback_relation.go`): runs per outer tuple, but each call re-executes an entire correlated branch, so the symbol scan is noise; hoisting would couple the filter to schema stability across branch re-executions for no measurable gain. Converted to `query.SymbolIndex` in place, not hoisted.
 - **`executor.go` constant-extraction variant** (`buildBoundRelation`): a conditional one-shot populate at setup, not the per-tuple Shape-2; left as is.
+
+### D8. Planner `extractClauseSymbols` dispatch: silent default and missing predicate arms
+
+**Status**: Open
+
+The dispatch (`clause_utils.go`) has a silent `default: return ClauseSymbols{}` over the closed clause taxonomy, and its explicit predicate arms cover only five of the nine predicate types — `StrStartsWithPredicate`, `FunctionPredicate`, `DatabaseFunctionPredicate`, and `TxRangePredicate` fall through to "requires and provides nothing." The five covered arms are all `Requires: RequiredSymbols(), Provides: nil`, so one `case query.Predicate:` arm plus a loud default would collapse them and close the gap — but that changes phase-liveness accounting for the four uncovered types, so it needs its own red tests and a look at scheduling effects. Related: the NOT/or-join Requires computation in the same file is the subject of `docs/bugs/BUG_NOT_CLAUSE_SCOPED_BODY_SYMBOLS_UNPLANNABLE.md`.
 
 ---
 
