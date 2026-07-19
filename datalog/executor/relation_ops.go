@@ -163,15 +163,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	hasAllBindings := len(bindingSymbols) > 0
 	existingBindingIndices := make(map[query.Symbol]int)
 	for _, bindSym := range bindingSymbols {
-		found := false
-		for i, sym := range symbols {
-			if sym == bindSym {
-				existingBindingIndices[bindSym] = i
-				found = true
-				break
-			}
-		}
-		if !found {
+		if i := query.SymbolIndex(symbols, bindSym); i >= 0 {
+			existingBindingIndices[bindSym] = i
+		} else {
 			hasAllBindings = false
 		}
 	}
@@ -374,17 +368,9 @@ func projectToSymbols(rel Relation, syms []query.Symbol, opts ExecutorOptions) (
 	relSyms := rel.Symbols()
 
 	// Build symbol index mapping
-	symIndices := make([]int, len(syms))
-	for i, sym := range syms {
-		found := false
-		for j, relSym := range relSyms {
-			if relSym == sym {
-				symIndices[i] = j
-				found = true
-				break
-			}
-		}
-		if !found {
+	symIndices := query.SymbolIndexTable(relSyms, syms)
+	for _, idx := range symIndices {
+		if idx < 0 {
 			// Symbol not found - return empty relation
 			return NewMaterializedRelationWithOptions(syms, nil, opts)
 		}
@@ -485,17 +471,9 @@ func getUniqueCombinations(rel Relation, syms []query.Symbol) (combos []Tuple, r
 	}
 
 	relSyms := rel.Symbols()
-	symIndices := make([]int, len(syms))
-	for i, sym := range syms {
-		found := false
-		for j, relSym := range relSyms {
-			if relSym == sym {
-				symIndices[i] = j
-				found = true
-				break
-			}
-		}
-		if !found {
+	symIndices := query.SymbolIndexTable(relSyms, syms)
+	for _, idx := range symIndices {
+		if idx < 0 {
 			return nil, nil
 		}
 	}
@@ -551,19 +529,10 @@ func unionRelations(relations []Relation, syms []query.Symbol, opts ExecutorOpti
 
 	for _, rel := range relations {
 		// Build symbol index mapping
-		relSyms := rel.Symbols()
-		symIndices := make([]int, len(syms))
+		symIndices := query.SymbolIndexTable(rel.Symbols(), syms)
 		valid := true
-		for i, sym := range syms {
-			found := false
-			for j, relSym := range relSyms {
-				if relSym == sym {
-					symIndices[i] = j
-					found = true
-					break
-				}
-			}
-			if !found {
+		for _, idx := range symIndices {
+			if idx < 0 {
 				valid = false
 				break
 			}

@@ -263,17 +263,6 @@ func (it *reusingIterator) Close() error {
 
 func (it *reusingIterator) Error() error { return it.err }
 
-// getSymbolIndex returns the index of a symbol in the binding relation symbols
-func (it *reusingIterator) getSymbolIndex(variable query.Variable) int {
-	symbols := it.bindingRel.Symbols()
-	for i, sym := range symbols {
-		if sym == variable.Name {
-			return i
-		}
-	}
-	return -1
-}
-
 // updateBoundPattern updates the cached bound values based on current binding tuple
 func (it *reusingIterator) updateBoundPattern(bindingTuple executor.Tuple) {
 	// Use the pattern extractor to get all bound values at once

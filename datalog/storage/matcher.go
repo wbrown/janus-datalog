@@ -532,20 +532,10 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
 	eIdx, aIdx := -1, -1
 	if v, ok := pattern.GetE().(query.Variable); ok {
-		for i, sym := range symbols {
-			if sym == v.Name {
-				eIdx = i
-				break
-			}
-		}
+		eIdx = query.SymbolIndex(symbols, v.Name)
 	}
 	if v, ok := pattern.GetA().(query.Variable); ok {
-		for i, sym := range symbols {
-			if sym == v.Name {
-				aIdx = i
-				break
-			}
-		}
+		aIdx = query.SymbolIndex(symbols, v.Name)
 	}
 	if eIdx < 0 && aIdx < 0 {
 		return nil

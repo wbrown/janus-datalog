@@ -174,7 +174,7 @@ Confirmed test-only and *not* the implementation behind time-travel: `Database.A
 
 ### D1. Symbol-position lookup: ~30 inline copies plus 4 duplicate implementations
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). `query.SymbolIndex`, `query.ContainsSymbol`, and `query.SymbolIndexTable` are the canonical operations (pinned by `query/symbol_index_test.go`); the exported variants (`executor.SymbolIndex`, `MaterializedRelation.SymbolIndex`, `query.Relation.SymbolIndex`) forward to them; the unexported duplicates are deleted and ~40 inline copies converted, each preserving its site's absent-symbol handling. The two per-tuple copies are hoisted (batch single-aggregation argument positions; the symmetric hash join's per-pair join-symbol scan). Benchmarks: allocations identical, timing within noise. Deferred sites are recorded in D7.
 
 The shape `for i, sym := range symbols { if sym == target { idx = i; break } }` is the most-repeated block in the codebase. Duplicate named implementations of the same operation: `SymbolIndex` free function (`executor/relation.go`), `MaterializedRelation.SymbolIndex`, `query.Relation.SymbolIndex` (`query/types.go`), `storage.findVariableSymbol` (`matcher_relations.go`, args reversed), `reusingIterator.getSymbolIndex` (`matcher_iterator_reusing.go`). Inline copies cluster in `executor/aggregation.go` (8 sites), `executor/query_executor.go` (5, including two near-verbatim `keyIndices` builders), `executor/pull.go` (3), storage matcher files (5), and others.
 
@@ -184,7 +184,7 @@ One slice-level `indexOf([]query.Symbol, query.Symbol) int` with the named varia
 
 ### D2. `BindingForm` lacks `BoundVariables()` — the 4-case switch is written ~15 times
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). `BoundVariables() []Symbol` on the sealed interface (four one-line implementations, pinned by `TestBindingFormBoundVariables`); the symbol-extraction switches in parser, executor, planner, and algebra collapse to direct method calls (no wrapper functions). Switches over `Expression.Binding`/`Subquery.Binding` keep their form — those `interface{}` fields carry a bare `Symbol` case outside the taxonomy — and the structural per-form switches (`applyBindingForm`, or-fallback cardinality checks) rightly remain. The collapse fixed a live gap: `parser.ExtractVariables` was missing `ScalarBinding`, so scalar-bound subquery variables were invisible to variable extraction (pinned by `TestExtractVariablesCoversEveryBindingForm`).
 
 `BindingForm` (`query/types.go`) exposes only `isBindingForm()`/`String()`, so every consumer re-writes the `TupleBinding`/`RelationBinding`/`ScalarBinding`/`CollectionBinding` switch: `planner/clause_utils.go` (3), `parser/parser.go` (2), `executor/query_executor.go` (5), `planner/explain_analysis.go` (3), `executor/or_fallback_relation.go` (3), `executor/subquery.go`, `executor/relation_ops.go`. One additive interface method (`BoundVariables() []Symbol`, four one-line implementations) collapses all of them. A6's `bindingSymbols` silent default disappears with it.
 
@@ -202,14 +202,25 @@ Eight functions re-implement the "range clauses → type-switch → recurse into
 
 ### D5. Parser's admitted copies have a spurious rationale
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). Both copies deleted; `parseMissingAttrPredicate` calls the originals. (Both files are `package parser`; the circular-import rationale was false.)
 **Sites**: `parser/predicate_parser.go` `validateDatabaseRefPredicate` and `extractKeywordPredicate`, each commented "This is a copy for the predicate parser to avoid circular imports" — but both files are `package parser`. The originals (`validateDatabaseRef`, `extractKeyword` in `function_parser.go`) are directly callable. Delete the copies, repoint the callers.
 
 ### D6. Symbol-membership check: 3 named + 3 inline implementations
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). One `query.ContainsSymbol`. The sweep found more duplicates than the audit's scope: `algebra.containsSymbol` (algebra was outside the audited packages) and `executor.contains`, both deleted alongside the listed ones; `reusingIterator.getSymbolIndex` was already caller-less. All inline membership scans converted, including the E/A/V/T dedup in `DataPattern.Symbols`.
 
 `executor.contains` (`relation.go`), `executor.symbolInSlice` (`relation_properties.go`), `planner.containsSymbol` (`phase_contract.go`), plus inline copies in `query/types.go` (×3, inside the E/A/V/T dedup) and executor join code. One shared function in `query`.
+
+### D7. Deferred conversions from the D1/D3 sweep
+
+**Status**: Open
+
+Sites the consolidation sweep deliberately did not convert; each needs more than a mechanical repoint:
+
+- **Storage matcher per-datom position-resolve-and-assign loops** (~9 sites in `matcher_relations.go`: `buildTuple` and the match paths around its cache/vector/validation branches). Each compares `pattern.GetX().(Variable).Name == sym` per datom and assigns `tuple[i]` — the classic un-hoisted position lookup. The intended replacement already exists (`query.NewPatternExtractor` / the tuple-indexer machinery, which precompute the position table); converting is an adoption refactor, not a repoint.
+- **`evaluateExpressionWithLookup` find-and-assign borderlines** (`executor/relation_ops.go`, the tuple-binding value-placement loops): per-tuple find-index-then-assign over `newSymbols`; hoisting requires restructuring the binding-placement logic around a precomputed table.
+- **`filterBranchToOuterTuple` shared-pair discovery** (`executor/or_fallback_relation.go`): runs per outer tuple, but each call re-executes an entire correlated branch, so the symbol scan is noise; hoisting would couple the filter to schema stability across branch re-executions for no measurable gain. Converted to `query.SymbolIndex` in place, not hoisted.
+- **`executor.go` constant-extraction variant** (`buildBoundRelation`): a conditional one-shot populate at setup, not the per-tuple Shape-2; left as is.
 
 ---
 

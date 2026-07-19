@@ -59,7 +59,7 @@ func TestOrDefaultJoinReplacesConsumedOuterWithoutRedundantJoin(t *testing.T) {
 
 	var expanded Relation
 	for _, group := range groups {
-		if symbolInSlice(group.Symbols(), value) {
+		if query.ContainsSymbol(group.Symbols(), value) {
 			expanded = group
 		}
 	}

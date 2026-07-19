@@ -209,18 +209,20 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 	for i, agg := range aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, sym := range symbols {
-				if sym == agg.Predicate {
-					predicateIndices[i] = j
-					break
-				}
-			}
+			predicateIndices[i] = query.SymbolIndex(symbols, agg.Predicate)
 		}
+	}
+
+	// Hoist each aggregate's argument position out of the per-tuple loop; -1
+	// (argument symbol absent) collects nothing, as before.
+	argIndices := make([]int, len(aggregates))
+	for i, agg := range aggregates {
+		argIndices[i] = query.SymbolIndex(symbols, agg.Arg)
 	}
 
 	for it.Next() {
 		tuple := it.Tuple()
-		for i, agg := range aggregates {
+		for i := range aggregates {
 			// Check predicate for conditional aggregates
 			predicateIdx := predicateIndices[i]
 			if predicateIdx >= 0 {
@@ -235,14 +237,9 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 				}
 			}
 
-			// Predicate passed (or no predicate), find symbol index for this aggregate
-			for j, sym := range symbols {
-				if sym == agg.Arg {
-					if j < len(tuple) {
-						aggValues[i] = append(aggValues[i], tuple[j])
-					}
-					break
-				}
+			// Predicate passed (or no predicate); collect the argument value.
+			if j := argIndices[i]; j >= 0 && j < len(tuple) {
+				aggValues[i] = append(aggValues[i], tuple[j])
 			}
 		}
 	}
@@ -305,25 +302,19 @@ func executeGroupedAggregation(
 		return errRel
 	}
 
-	// Create symbol mapping
+	// Create symbol mapping. Group-by symbols are validated present by
+	// ExecuteAggregationsWithContext, so no table entry is -1.
 	symbols := rel.Symbols()
-	groupIndices := make([]int, len(groupByVars))
-	for i, groupVar := range groupByVars {
-		for j, sym := range symbols {
-			if sym == groupVar {
-				groupIndices[i] = j
-				break
-			}
-		}
-	}
+	groupIndices := query.SymbolIndexTable(symbols, groupByVars)
 
+	// An aggIndices zero value means an absent argument symbol reads tuple
+	// position 0 — long-standing behavior, preserved by this consolidation.
+	// (The single-aggregation path collects nothing instead; see
+	// executeSingleAggregation.)
 	aggIndices := make([]int, len(aggregates))
 	for i, agg := range aggregates {
-		for j, sym := range symbols {
-			if sym == agg.Arg {
-				aggIndices[i] = j
-				break
-			}
+		if j := query.SymbolIndex(symbols, agg.Arg); j >= 0 {
+			aggIndices[i] = j
 		}
 	}
 
@@ -332,13 +323,7 @@ func executeGroupedAggregation(
 	for i, agg := range aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, sym := range symbols {
-				if sym == agg.Predicate {
-					predicateIndices[i] = j
-					break
-				}
-			}
-			// If predicate symbol not found, we'll handle it during execution
+			predicateIndices[i] = query.SymbolIndex(symbols, agg.Predicate)
 		}
 	}
 
@@ -807,33 +792,14 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 		return errRel
 	}
 
-	// Build symbol index mappings
+	// Build symbol index mappings; -1 means not found.
 	symbols := r.source.Symbols()
 
-	groupIndices := make([]int, len(r.groupByVars))
-	for i := range groupIndices {
-		groupIndices[i] = -1 // Initialize to -1 (not found)
-	}
-	for i, groupVar := range r.groupByVars {
-		for j, sym := range symbols {
-			if sym == groupVar {
-				groupIndices[i] = j
-				break
-			}
-		}
-	}
+	groupIndices := query.SymbolIndexTable(symbols, r.groupByVars)
 
 	aggIndices := make([]int, len(r.aggregates))
-	for i := range aggIndices {
-		aggIndices[i] = -1 // Initialize to -1 (not found)
-	}
 	for i, agg := range r.aggregates {
-		for j, sym := range symbols {
-			if sym == agg.Arg {
-				aggIndices[i] = j
-				break
-			}
-		}
+		aggIndices[i] = query.SymbolIndex(symbols, agg.Arg)
 	}
 
 	// Find predicate indices for conditional aggregates
@@ -841,12 +807,7 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 	for i, agg := range r.aggregates {
 		predicateIndices[i] = -1 // -1 means no predicate (unconditional)
 		if agg.IsConditional() {
-			for j, sym := range symbols {
-				if sym == agg.Predicate {
-					predicateIndices[i] = j
-					break
-				}
-			}
+			predicateIndices[i] = query.SymbolIndex(symbols, agg.Predicate)
 		}
 	}
 

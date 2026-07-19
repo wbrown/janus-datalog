@@ -179,7 +179,7 @@ func (p *ClauseBasedPlanner) PlanWithBindings(q *query.Query, initialBindings ma
 		if i > 0 {
 			phaseAvailable = append([]query.Symbol(nil), realizedPhases[i-1].Keep...)
 			for _, symbol := range phaseConstBindable {
-				if !containsSymbol(phaseAvailable, symbol) {
+				if !query.ContainsSymbol(phaseAvailable, symbol) {
 					phaseAvailable = append(phaseAvailable, symbol)
 				}
 			}

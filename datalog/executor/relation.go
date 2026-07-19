@@ -569,12 +569,7 @@ func (r *MaterializedRelation) Get(i int) Tuple {
 
 // SymbolIndex returns the index of a symbol in this relation
 func (r *MaterializedRelation) SymbolIndex(sym query.Symbol) int {
-	for i, s := range r.symbols {
-		if s == sym {
-			return i
-		}
-	}
-	return -1
+	return query.SymbolIndex(r.symbols, sym)
 }
 
 // GetValue returns a specific value by tuple index and symbol
@@ -654,18 +649,18 @@ func (r *MaterializedRelation) ProjectFromPattern(pattern *query.DataPattern) Re
 		}
 	}
 	if sym, ok := pattern.GetA().(query.Variable); ok {
-		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+		if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
 		}
 	}
 	if sym, ok := pattern.GetV().(query.Variable); ok {
-		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+		if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
 		}
 	}
 	if len(pattern.Elements) > 3 {
 		if sym, ok := pattern.GetT().(query.Variable); ok {
-			if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+			if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 				neededSymbols = append(neededSymbols, sym.Name)
 			}
 		}
@@ -722,20 +717,12 @@ func (r *MaterializedRelation) Project(symbols []query.Symbol) (Relation, error)
 	}
 
 	// Find symbol indices
-	indices := make([]int, len(symbols))
-	for i, sym := range symbols {
-		idx := -1
-		for j, existing := range r.symbols {
-			if existing == sym {
-				idx = j
-				break
-			}
-		}
+	indices := query.SymbolIndexTable(r.symbols, symbols)
+	for i, idx := range indices {
 		if idx < 0 {
 			// Symbol not found - this is a query error in Datalog
-			return nil, fmt.Errorf("cannot project: symbol %s not found in relation (has symbols: %v)", sym, r.symbols)
+			return nil, fmt.Errorf("cannot project: symbol %s not found in relation (has symbols: %v)", symbols[i], r.symbols)
 		}
-		indices[i] = idx
 	}
 
 	// Project tuples - directly access our tuples field
@@ -909,16 +896,6 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 		mat.err = r.err
 	}
 	return mat
-}
-
-// contains checks if a symbol is in a slice
-func contains(symbols []query.Symbol, sym query.Symbol) bool {
-	for _, s := range symbols {
-		if s == sym {
-			return true
-		}
-	}
-	return false
 }
 
 // sliceIterator iterates over a slice of tuples
@@ -1297,18 +1274,18 @@ func (r *StreamingRelation) ProjectFromPattern(pattern *query.DataPattern) Relat
 		}
 	}
 	if sym, ok := pattern.GetA().(query.Variable); ok {
-		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+		if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
 		}
 	}
 	if sym, ok := pattern.GetV().(query.Variable); ok {
-		if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+		if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 			neededSymbols = append(neededSymbols, sym.Name)
 		}
 	}
 	if len(pattern.Elements) > 3 {
 		if sym, ok := pattern.GetT().(query.Variable); ok {
-			if _, exists := symbolIndices[sym.Name]; exists && !contains(neededSymbols, sym.Name) {
+			if _, exists := symbolIndices[sym.Name]; exists && !query.ContainsSymbol(neededSymbols, sym.Name) {
 				neededSymbols = append(neededSymbols, sym.Name)
 			}
 		}
@@ -1370,14 +1347,7 @@ func (r *StreamingRelation) Project(symbols []query.Symbol) (Relation, error) {
 	// Streaming is now the default behavior
 	// Validate symbols exist
 	for _, sym := range symbols {
-		found := false
-		for _, existing := range r.symbols {
-			if existing == sym {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !query.ContainsSymbol(r.symbols, sym) {
 			return nil, fmt.Errorf("cannot project: symbol %s not found in relation", sym)
 		}
 	}
@@ -1518,13 +1488,7 @@ type PatternBinding struct {
 
 // SymbolIndex returns the index of a symbol in a relation, or -1 if not found
 func SymbolIndex(rel Relation, sym query.Symbol) int {
-	syms := rel.Symbols()
-	for i, s := range syms {
-		if s == sym {
-			return i
-		}
-	}
-	return -1
+	return query.SymbolIndex(rel.Symbols(), sym)
 }
 
 // CommonSymbols returns symbols that appear in both relations
@@ -1689,15 +1653,9 @@ func (p *ProductRelation) Project(symbols []query.Symbol) (Relation, error) {
 	}
 
 	// Validate symbols exist
+	relSymbols := p.Symbols()
 	for _, sym := range symbols {
-		found := false
-		for _, existing := range p.Symbols() {
-			if existing == sym {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !query.ContainsSymbol(relSymbols, sym) {
 			return nil, fmt.Errorf("cannot project: symbol %s not found in relation", sym)
 		}
 	}

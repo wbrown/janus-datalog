@@ -140,7 +140,7 @@ func validateFinalizationLiveness(
 func terminalSymbols(q *query.Query) []query.Symbol {
 	var symbols []query.Symbol
 	add := func(symbol query.Symbol) {
-		if symbol != nil && !containsSymbol(symbols, symbol) {
+		if symbol != nil && !query.ContainsSymbol(symbols, symbol) {
 			symbols = append(symbols, symbol)
 		}
 	}
@@ -213,13 +213,4 @@ func samePhysicalSchema(left, right []query.Symbol) bool {
 		}
 	}
 	return true
-}
-
-func containsSymbol(symbols []query.Symbol, symbol query.Symbol) bool {
-	for _, candidate := range symbols {
-		if candidate == symbol {
-			return true
-		}
-	}
-	return false
 }

@@ -164,14 +164,7 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	}
 
 	// Find the symbol index of joinSymbol in bindingRel
-	bindingSyms := bindingRel.Symbols()
-	symbolIndex := -1
-	for i, sym := range bindingSyms {
-		if sym == joinSymbol {
-			symbolIndex = i
-			break
-		}
-	}
+	symbolIndex := query.SymbolIndex(bindingRel.Symbols(), joinSymbol)
 
 	if symbolIndex == -1 {
 		// Variable not in binding relation - shouldn't happen if strategy is correct

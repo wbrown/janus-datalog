@@ -110,7 +110,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit em
 	}
 
 	// Output symbols: correlation vars (OUTER names) + original binding vars.
-	originalBindingSyms := bindingFormSymbols(lj.Binding.(query.BindingForm))
+	originalBindingSyms := lj.Binding.(query.BindingForm).BoundVariables()
 	output := make([]query.Symbol, 0, len(lj.CorrelationVars)+len(originalBindingSyms))
 	output = append(output, lj.CorrelationVars...)
 	output = append(output, originalBindingSyms...)

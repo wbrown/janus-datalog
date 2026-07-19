@@ -66,7 +66,7 @@ func getElseScanRewriteTransform(node *parse.Node, children ...interface{}) inte
 
 	// Skip rewrite if entity variable isn't provided by the child relation
 	// (e.g., it's an input parameter from :in, not a pattern variable).
-	if !containsSymbol(childNode.Symbols(), entityVar.Symbol) {
+	if !query.ContainsSymbol(childNode.Symbols(), entityVar.Symbol) {
 		return rebuildWithChildren(node, children)
 	}
 

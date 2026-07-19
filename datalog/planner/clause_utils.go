@@ -167,18 +167,9 @@ func extractSubqueryPatternSymbols(sp *query.SubqueryPattern) ClauseSymbols {
 		}
 	}
 
-	// Binding provides symbols
-	var provides []query.Symbol
-	switch binding := sp.Binding.(type) {
-	case query.TupleBinding:
-		provides = append(provides, binding.Variables...)
-	case query.RelationBinding:
-		provides = append(provides, binding.Variables...)
-	case query.ScalarBinding:
-		provides = append(provides, binding.Variable)
-	case query.CollectionBinding:
-		provides = append(provides, binding.Variable)
-	}
+	// Binding provides symbols. Copy: BoundVariables may return the binding's
+	// own slice, and ClauseSymbols consumers append to Provides.
+	provides := append([]query.Symbol(nil), sp.Binding.BoundVariables()...)
 
 	return ClauseSymbols{
 		Requires: requires,
@@ -299,17 +290,8 @@ func extractOrBranchSymbolsFallback(branches [][]query.Clause) ClauseSymbols {
 		for _, clause := range branch {
 			if pattern, ok := clause.(*query.DataPattern); ok {
 				if len(pattern.Elements) > 0 {
-					if v, ok := pattern.Elements[0].(query.Variable); ok {
-						found := false
-						for _, r := range requires {
-							if r == v.Name {
-								found = true
-								break
-							}
-						}
-						if !found {
-							requires = append(requires, v.Name)
-						}
+					if v, ok := pattern.Elements[0].(query.Variable); ok && !query.ContainsSymbol(requires, v.Name) {
+						requires = append(requires, v.Name)
 					}
 				}
 				break

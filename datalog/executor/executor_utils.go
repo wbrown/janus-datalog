@@ -110,13 +110,7 @@ func SortRelation(rel Relation, orderBy []query.OrderByClause) Relation {
 func orderBySymbolIndices(symbols []query.Symbol, orderBy []query.OrderByClause) ([]int, error) {
 	indices := make([]int, len(orderBy))
 	for i, clause := range orderBy {
-		indices[i] = -1
-		for j, sym := range symbols {
-			if sym == clause.Variable {
-				indices[i] = j
-				break
-			}
-		}
+		indices[i] = query.SymbolIndex(symbols, clause.Variable)
 		if indices[i] < 0 {
 			return indices, fmt.Errorf("order-by variable %s is not a symbol of the relation (symbols: %v)",
 				clause.Variable, symbols)

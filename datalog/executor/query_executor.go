@@ -292,12 +292,7 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				groupsHaveSymbols[i] = make([]bool, len(findSymbols))
 				grpSyms := group.Symbols()
 				for j, fs := range findSymbols {
-					for _, gs := range grpSyms {
-						if gs == fs {
-							groupsHaveSymbols[i][j] = true
-							break
-						}
-					}
+					groupsHaveSymbols[i][j] = query.ContainsSymbol(grpSyms, fs)
 				}
 			}
 
@@ -559,13 +554,7 @@ fetchLoop:
 
 	input := groups[entityGroup]
 	inputSymbols := input.Symbols()
-	entityIndex := -1
-	for i, symbol := range inputSymbols {
-		if symbol == entityVar.Name {
-			entityIndex = i
-			break
-		}
-	}
+	entityIndex := query.SymbolIndex(inputSymbols, entityVar.Name)
 
 	outputSymbols := make([]query.Symbol, 0, len(inputSymbols)+len(fetches))
 	outputSymbols = append(outputSymbols, inputSymbols...)
@@ -754,13 +743,8 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 		hasAny := false
 		relSyms := rel.Symbols()
 		for _, sym := range unresolvedExprSyms {
-			for _, rs := range relSyms {
-				if rs == sym {
-					hasAny = true
-					break
-				}
-			}
-			if hasAny {
+			if query.ContainsSymbol(relSyms, sym) {
+				hasAny = true
 				break
 			}
 		}
@@ -1013,13 +997,8 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 		hasAny := false
 		relSyms := rel.Symbols()
 		for _, sym := range unresolvedSyms {
-			for _, rs := range relSyms {
-				if rs == sym {
-					hasAny = true
-					break
-				}
-			}
-			if hasAny {
+			if query.ContainsSymbol(relSyms, sym) {
+				hasAny = true
 				break
 			}
 		}
@@ -1119,7 +1098,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		}
 		if len(nestedGroups) == 0 {
 			// Empty result - return empty relation with binding symbols
-			return NewMaterializedRelationWithOptions(extractBindingSymbols(subq.Binding), nil, e.options), nil
+			return NewMaterializedRelationWithOptions(subq.Binding.BoundVariables(), nil, e.options), nil
 		}
 		if len(nestedGroups) > 1 {
 			return nil, fmt.Errorf("subquery returned %d disjoint groups - expected 1", len(nestedGroups))
@@ -1189,7 +1168,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 		if len(nestedGroups) == 0 {
 			// No result groups — create empty relation with the subquery's output symbols
 			// so applyBindingForm can produce a properly-typed empty result.
-			nestedResult = NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{})
+			nestedResult = NewMaterializedRelation(subq.Binding.BoundVariables(), []Tuple{})
 		} else if len(nestedGroups) > 1 {
 			return nil, fmt.Errorf("subquery returned %d disjoint groups - expected 1", len(nestedGroups))
 		} else {
@@ -1208,7 +1187,7 @@ func (e *DefaultQueryExecutor) executeSubquery(ctx Context, subq *query.Subquery
 	// Combine all results
 	if len(allResults) == 0 {
 		// No results - return empty relation with appropriate symbols
-		return NewMaterializedRelation(extractBindingSymbols(subq.Binding), []Tuple{}), nil
+		return NewMaterializedRelation(subq.Binding.BoundVariables(), []Tuple{}), nil
 	}
 
 	// Union all results (they should have the same schema)
@@ -1246,23 +1225,6 @@ func combineSubqueryResultsSimple(results []Relation) Relation {
 	return mat
 }
 
-// extractBindingSymbols extracts symbols from a binding form. BindingForm is
-// a closed taxonomy; an unknown form is a bug, not an empty schema.
-func extractBindingSymbols(binding query.BindingForm) []query.Symbol {
-	switch b := binding.(type) {
-	case query.ScalarBinding:
-		return []query.Symbol{b.Variable}
-	case query.TupleBinding:
-		return b.Variables
-	case query.RelationBinding:
-		return b.Variables
-	case query.CollectionBinding:
-		return []query.Symbol{b.Variable}
-	default:
-		panic(fmt.Sprintf("BUG: unknown binding form %T", binding))
-	}
-}
-
 // hasPulls checks if any find element is a pull expression
 func hasPulls(find []query.FindElement) bool {
 	for _, elem := range find {
@@ -1287,14 +1249,11 @@ func applyFindPulls(matcher PatternMatcher, entityResolver EntityResolver, rel R
 	var requests []pullRequest
 	for _, elem := range find {
 		if pull, ok := elem.(query.FindPull); ok {
-			for i, sym := range symbols {
-				if sym == pull.Variable {
-					requests = append(requests, pullRequest{
-						symbolIndex: i,
-						pull:        pull,
-					})
-					break
-				}
+			if i := query.SymbolIndex(symbols, pull.Variable); i >= 0 {
+				requests = append(requests, pullRequest{
+					symbolIndex: i,
+					pull:        pull,
+				})
 			}
 		}
 	}
@@ -1828,19 +1787,8 @@ func collectOrBranchRequiredSymbols(branches [][]query.Clause) []query.Symbol {
 				}
 			case *query.SubqueryPattern:
 				// Subquery provides its binding variables
-				switch b := clause.Binding.(type) {
-				case query.ScalarBinding:
-					branchProvides[b.Variable] = true
-				case query.TupleBinding:
-					for _, v := range b.Variables {
-						branchProvides[v] = true
-					}
-				case query.RelationBinding:
-					for _, v := range b.Variables {
-						branchProvides[v] = true
-					}
-				case query.CollectionBinding:
-					branchProvides[b.Variable] = true
+				for _, v := range clause.Binding.BoundVariables() {
+					branchProvides[v] = true
 				}
 			}
 		}
@@ -1994,15 +1942,7 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 	}
 
 	// Build join key symbol indices for input
-	keyIndices := make([]int, len(actualJoinVars))
-	for i, v := range actualJoinVars {
-		for j, sym := range inputSyms {
-			if sym == v {
-				keyIndices[i] = j
-				break
-			}
-		}
-	}
+	keyIndices := query.SymbolIndexTable(inputSyms, actualJoinVars)
 
 	// Filter input: keep tuples whose join key is NOT in matchedKeys
 	var filtered []Tuple
@@ -2082,16 +2022,8 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 		}
 	}
 
-	// Build key indices
-	keyIndices := make([]int, len(clause.JoinVars))
-	for i, v := range clause.JoinVars {
-		for j, sym := range inputSyms {
-			if sym == v {
-				keyIndices[i] = j
-				break
-			}
-		}
-	}
+	// Build key indices; join vars are validated present in inputSyms above.
+	keyIndices := query.SymbolIndexTable(inputSyms, clause.JoinVars)
 
 	// Filter
 	var filtered []Tuple

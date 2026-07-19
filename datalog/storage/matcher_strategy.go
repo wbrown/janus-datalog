@@ -249,13 +249,7 @@ func chooseBestMultiPositionStrategy(
 			continue
 		}
 
-		symIdx := -1
-		for si, sym := range bindingRel.Symbols() {
-			if sym == varName {
-				symIdx = si
-				break
-			}
-		}
+		symIdx := query.SymbolIndex(bindingRel.Symbols(), varName)
 		info = append(info, posInfo{pos: pos, symIdx: symIdx})
 	}
 

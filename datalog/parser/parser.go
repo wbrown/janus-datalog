@@ -1266,25 +1266,10 @@ func ExtractVariables(clauses []query.Clause) []query.Symbol {
 			}
 		case *query.SubqueryPattern:
 			// Add variables from binding form - these are PROVIDED by the subquery
-			switch b := p.Binding.(type) {
-			case query.TupleBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						vars = append(vars, v)
-					}
-				}
-			case query.CollectionBinding:
-				if !seen[b.Variable] {
-					seen[b.Variable] = true
-					vars = append(vars, b.Variable)
-				}
-			case query.RelationBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						vars = append(vars, v)
-					}
+			for _, v := range p.Binding.BoundVariables() {
+				if !seen[v] {
+					seen[v] = true
+					vars = append(vars, v)
 				}
 			}
 			// Note: Input variables are consumed, not provided

@@ -33,13 +33,6 @@ func TestSubqueryInputAssemblyRejectsUnknownElementKind(t *testing.T) {
 	require.Error(t, err)
 }
 
-// extractBindingSymbols shapes empty subquery results; it must cover every
-// BindingForm. ScalarBinding was previously absorbed by a silent default,
-// dropping the bound symbol from the empty result's schema.
-func TestExtractBindingSymbolsCoversEveryBindingForm(t *testing.T) {
-	x, y := datalog.NewSymbol("?x"), datalog.NewSymbol("?y")
-	require.Equal(t, []query.Symbol{x}, extractBindingSymbols(query.ScalarBinding{Variable: x}))
-	require.Equal(t, []query.Symbol{x}, extractBindingSymbols(query.CollectionBinding{Variable: x}))
-	require.Equal(t, []query.Symbol{x, y}, extractBindingSymbols(query.TupleBinding{Variables: []query.Symbol{x, y}}))
-	require.Equal(t, []query.Symbol{x, y}, extractBindingSymbols(query.RelationBinding{Variables: []query.Symbol{x, y}}))
-}
+// Empty subquery results take their schema from BindingForm.BoundVariables;
+// per-form coverage is pinned by TestBindingFormBoundVariables in the query
+// package.

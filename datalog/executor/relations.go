@@ -192,10 +192,8 @@ func hasSharedSymbols(r1, r2 Relation) bool {
 	syms2 := r2.Symbols()
 
 	for _, c1 := range syms1 {
-		for _, c2 := range syms2 {
-			if c1 == c2 {
-				return true
-			}
+		if query.ContainsSymbol(syms2, c1) {
+			return true
 		}
 	}
 

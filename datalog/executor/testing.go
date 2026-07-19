@@ -74,17 +74,11 @@ func CompareRelationsIgnoreSymbolOrder(a, b Relation) bool {
 	// Build symbol index mapping from b to a's order
 	symMap := make(map[int]int) // b index -> a index
 	for i, aSym := range aSyms {
-		found := false
-		for j, bSym := range bSyms {
-			if aSym == bSym {
-				symMap[j] = i
-				found = true
-				break
-			}
-		}
-		if !found {
+		j := query.SymbolIndex(bSyms, aSym)
+		if j < 0 {
 			return false
 		}
+		symMap[j] = i
 	}
 
 	// Collect tuples

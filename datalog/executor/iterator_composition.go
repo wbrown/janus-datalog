@@ -19,14 +19,12 @@ type ProjectIterator struct {
 
 // NewProjectIterator creates a new projection iterator
 func NewProjectIterator(relation Relation, sourceSymbols []query.Symbol, targetSymbols []query.Symbol) *ProjectIterator {
-	// Compute indices for projection
+	// Compute indices for projection. An absent target reads position 0 —
+	// long-standing behavior; callers validate presence before constructing.
 	indices := make([]int, len(targetSymbols))
 	for i, targetSym := range targetSymbols {
-		for j, sourceSym := range sourceSymbols {
-			if sourceSym == targetSym {
-				indices[i] = j
-				break
-			}
+		if j := query.SymbolIndex(sourceSymbols, targetSym); j >= 0 {
+			indices[i] = j
 		}
 	}
 
@@ -260,13 +258,7 @@ type FunctionEvaluatorIterator struct {
 // instead of appending a duplicate.
 func NewFunctionEvaluatorIterator(source Iterator, symbols []query.Symbol, function query.Function, outputSymbol query.Symbol) *FunctionEvaluatorIterator {
 	// Check if the output symbol already exists (unification case)
-	existingIdx := -1
-	for i, sym := range symbols {
-		if sym == outputSymbol {
-			existingIdx = i
-			break
-		}
-	}
+	existingIdx := query.SymbolIndex(symbols, outputSymbol)
 
 	var newSymbols []query.Symbol
 	if existingIdx >= 0 {

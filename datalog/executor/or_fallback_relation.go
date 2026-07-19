@@ -354,30 +354,10 @@ func collectBranchOutputSymbols(branch []query.Clause) []query.Symbol {
 			}
 		case *query.SubqueryPattern:
 			// Subquery provides its binding variables
-			switch b := clause.Binding.(type) {
-			case query.ScalarBinding:
-				if !seen[b.Variable] {
-					seen[b.Variable] = true
-					outputs = append(outputs, b.Variable)
-				}
-			case query.TupleBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						outputs = append(outputs, v)
-					}
-				}
-			case query.RelationBinding:
-				for _, v := range b.Variables {
-					if !seen[v] {
-						seen[v] = true
-						outputs = append(outputs, v)
-					}
-				}
-			case query.CollectionBinding:
-				if !seen[b.Variable] {
-					seen[b.Variable] = true
-					outputs = append(outputs, b.Variable)
+			for _, v := range clause.Binding.BoundVariables() {
+				if !seen[v] {
+					seen[v] = true
+					outputs = append(outputs, v)
 				}
 			}
 		case *query.OrJoinClause:
@@ -691,13 +671,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 	}
 
 	// Find E position in outer relation symbols
-	eIdx := -1
-	for i, sym := range it.outerSyms {
-		if sym == eVar.Name {
-			eIdx = i
-			break
-		}
-	}
+	eIdx := query.SymbolIndex(it.outerSyms, eVar.Name)
 	if eIdx < 0 {
 		return nil
 	}
@@ -852,27 +826,21 @@ func buildCachedBranch(
 		// Fallback: use all shared symbols (non-or-join path)
 		keySyms = nil
 		for _, osym := range outerSyms {
-			for _, bsym := range branchSyms {
-				if osym == bsym {
-					keySyms = append(keySyms, osym)
-				}
+			if query.ContainsSymbol(branchSyms, osym) {
+				keySyms = append(keySyms, osym)
 			}
 		}
 	}
 
 	var bIdx, oIdx []int
 	for _, ksym := range keySyms {
-		for oi, osym := range outerSyms {
-			if osym == ksym {
-				for bi, bsym := range branchSyms {
-					if bsym == ksym {
-						oIdx = append(oIdx, oi)
-						bIdx = append(bIdx, bi)
-						break
-					}
-				}
-				break
-			}
+		oi := query.SymbolIndex(outerSyms, ksym)
+		if oi < 0 {
+			continue
+		}
+		if bi := query.SymbolIndex(branchSyms, ksym); bi >= 0 {
+			oIdx = append(oIdx, oi)
+			bIdx = append(bIdx, bi)
 		}
 	}
 	if len(bIdx) == 0 {
@@ -1089,16 +1057,9 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 	}
 
 	// Map each join symbol to its tuple position in the outer relation.
-	pos := make([]int, len(it.joinSyms))
-	for i, js := range it.joinSyms {
-		pos[i] = -1
-		for oi, osym := range it.outerSyms {
-			if osym == js {
-				pos[i] = oi
-				break
-			}
-		}
-		if pos[i] < 0 {
+	pos := query.SymbolIndexTable(it.outerSyms, it.joinSyms)
+	for _, p := range pos {
+		if p < 0 {
 			return nil // join symbol not in the outer relation — can't narrow
 		}
 	}
@@ -1525,10 +1486,8 @@ func filterBranchToOuterTuple(branchResult Relation, outerTuple Tuple, outerSyms
 	type symPair struct{ outerIdx, branchIdx int }
 	var shared []symPair
 	for oi, osym := range outerSyms {
-		for bi, bsym := range branchSyms {
-			if osym == bsym {
-				shared = append(shared, symPair{oi, bi})
-			}
+		if bi := query.SymbolIndex(branchSyms, osym); bi >= 0 {
+			shared = append(shared, symPair{oi, bi})
 		}
 	}
 	if len(shared) == 0 {

@@ -134,10 +134,10 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			}
 		} else if aVar, ok := pattern.GetA().(query.Variable); ok {
 			// Phase 2: A varies per tuple in bindingRel (e.g., from join results)
-			aIdx := findVariableSymbol(aVar.Name, bindingRel)
+			aIdx := query.SymbolIndex(bindingRel.Symbols(), aVar.Name)
 			eVar, eIsVar := pattern.GetE().(query.Variable)
 			if aIdx >= 0 && eIsVar {
-				eIdx := findVariableSymbol(eVar.Name, bindingRel)
+				eIdx := query.SymbolIndex(bindingRel.Symbols(), eVar.Name)
 				if eIdx >= 0 {
 					cacheResult, handled := m.matchWithBindingsFromCache(
 						pattern, bindingRel, symbols, nil, aIdx)
@@ -1307,22 +1307,12 @@ func (m *BadgerMatcher) matchFromCache(
 	return nil, false // Unknown cardinality, fallback to storage
 }
 
-// findVariableSymbol returns the symbol index for a variable in a relation, or -1.
-func findVariableSymbol(sym query.Symbol, rel executor.Relation) int {
-	for i, s := range rel.Symbols() {
-		if s == sym {
-			return i
-		}
-	}
-	return -1
-}
-
 // resolveKeywordFromBindings searches all binding relations for a single-tuple relation
 // containing the given variable and returns its value as a Keyword. This covers scalar
 // inputs and single-tuple tuple inputs where A has exactly one known value.
 func resolveKeywordFromBindings(aVar query.Variable, bindings executor.Relations) (datalog.Keyword, bool) {
 	for _, rel := range bindings {
-		idx := findVariableSymbol(aVar.Name, rel)
+		idx := query.SymbolIndex(rel.Symbols(), aVar.Name)
 		if idx < 0 {
 			continue
 		}
@@ -1361,14 +1351,7 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 		return nil, false // E is not a variable, can't get it from bindings
 	}
 
-	bindingSymbols := bindingRel.Symbols()
-	eSymIdx := -1
-	for i, sym := range bindingSymbols {
-		if sym == eVar.Name {
-			eSymIdx = i
-			break
-		}
-	}
+	eSymIdx := query.SymbolIndex(bindingRel.Symbols(), eVar.Name)
 	if eSymIdx < 0 {
 		return nil, false // E variable not in bindings
 	}
@@ -1668,13 +1651,7 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 
 	// Find the entity variable in the pattern and match it to binding symbols
 	if pattern.GetE() != nil && pattern.GetE().IsVariable() {
-		eVar := pattern.GetE().(query.Variable).Name
-		for i, sym := range bindingSyms {
-			if sym == eVar {
-				eSymIdx = i
-				break
-			}
-		}
+		eSymIdx = query.SymbolIndex(bindingSyms, pattern.GetE().(query.Variable).Name)
 	}
 
 	if eSymIdx == -1 {

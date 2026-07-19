@@ -118,7 +118,7 @@ func compileExpression(expr *query.Expression, current *Node) *Node {
 		output = append(output, current.Symbols()...)
 	}
 	for _, bs := range bindingSyms {
-		if !containsSymbol(output, bs) {
+		if !query.ContainsSymbol(output, bs) {
 			output = append(output, bs)
 		}
 	}
@@ -139,7 +139,7 @@ func compileExpression(expr *query.Expression, current *Node) *Node {
 
 // compileSubquery produces a LateralJoin (correlated) or Join (uncorrelated).
 func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
-	bindingSyms := bindingFormSymbols(sp.Binding)
+	bindingSyms := sp.Binding.BoundVariables()
 
 	// Determine correlation variables: inputs that are variable symbols
 	// (excluding source symbols like $ which are always available)
@@ -162,12 +162,12 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 		output = append(output, current.Symbols()...)
 	}
 	for _, cv := range correlationVars {
-		if !containsSymbol(output, cv) {
+		if !query.ContainsSymbol(output, cv) {
 			output = append(output, cv)
 		}
 	}
 	for _, bs := range bindingSyms {
-		if !containsSymbol(output, bs) {
+		if !query.ContainsSymbol(output, bs) {
 			output = append(output, bs)
 		}
 	}
@@ -230,13 +230,13 @@ func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
 		if symbol.IsSource() {
 			continue
 		}
-		if !containsSymbol(current.Symbols(), symbol) {
+		if !query.ContainsSymbol(current.Symbols(), symbol) {
 			return nil, fmt.Errorf("NOT body requires unbound outer symbol %s", symbol)
 		}
-		if !containsSymbol(joinSyms, symbol) {
+		if !query.ContainsSymbol(joinSyms, symbol) {
 			joinSyms = append(joinSyms, symbol)
 		}
-		if !containsSymbol(inner.Symbols(), symbol) {
+		if !query.ContainsSymbol(inner.Symbols(), symbol) {
 			required = append(required, symbol)
 		}
 	}
@@ -269,7 +269,7 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 	}
 	right := analysis[inner]
 	for _, symbol := range nj.JoinVars {
-		if !containsSymbol(current.Symbols(), symbol) {
+		if !query.ContainsSymbol(current.Symbols(), symbol) {
 			return nil, fmt.Errorf("not-join header symbol %s is not bound by the outer relation", symbol)
 		}
 	}
@@ -277,10 +277,10 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 		if symbol.IsSource() {
 			continue
 		}
-		if !containsSymbol(current.Symbols(), symbol) {
+		if !query.ContainsSymbol(current.Symbols(), symbol) {
 			return nil, fmt.Errorf("NOT-JOIN body requires unbound outer symbol %s", symbol)
 		}
-		if !containsSymbol(nj.JoinVars, symbol) {
+		if !query.ContainsSymbol(nj.JoinVars, symbol) {
 			return nil, fmt.Errorf(
 				"not-join header must declare outer requirement %s used by the body",
 				symbol,
@@ -289,10 +289,10 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 	}
 	var required []query.Symbol
 	for _, symbol := range nj.JoinVars {
-		if containsSymbol(inner.Symbols(), symbol) {
+		if query.ContainsSymbol(inner.Symbols(), symbol) {
 			continue
 		}
-		if !containsSymbol(right.Required, symbol) {
+		if !query.ContainsSymbol(right.Required, symbol) {
 			return nil, fmt.Errorf(
 				"not-join header symbol %s is neither produced nor consumed by the body",
 				symbol,
@@ -408,8 +408,8 @@ func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symb
 	if current != nil {
 		for _, child := range children {
 			for _, symbol := range sharedSymbols(current.Symbols(), child.Symbols()) {
-				if (!explicitJoin || containsSymbol(joinVars, symbol)) &&
-					!containsSymbol(required, symbol) {
+				if (!explicitJoin || query.ContainsSymbol(joinVars, symbol)) &&
+					!query.ContainsSymbol(required, symbol) {
 					required = append(required, symbol)
 				}
 			}
@@ -492,7 +492,7 @@ func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.S
 		ljData := lj.Data.(*LateralJoin)
 		ljData.DefaultValues = defaultValues
 		for _, ds := range defaultSymbols {
-			if !containsSymbol(ljData.Output, ds) {
+			if !query.ContainsSymbol(ljData.Output, ds) {
 				ljData.Output = append(ljData.Output, ds)
 			}
 		}
@@ -583,17 +583,17 @@ func normalizedBranchSymbols(branches []*Node, joinVars []query.Symbol) []query.
 		return output
 	}
 	for _, symbol := range branches[0].Symbols() {
-		if containsSymbol(joinVars, symbol) {
+		if query.ContainsSymbol(joinVars, symbol) {
 			continue
 		}
 		common := true
 		for _, branch := range branches[1:] {
-			if !containsSymbol(branch.Symbols(), symbol) {
+			if !query.ContainsSymbol(branch.Symbols(), symbol) {
 				common = false
 				break
 			}
 		}
-		if common && !containsSymbol(output, symbol) {
+		if common && !query.ContainsSymbol(output, symbol) {
 			output = append(output, symbol)
 		}
 	}
@@ -674,21 +674,6 @@ func bindingSymbols(binding interface{}) []query.Symbol {
 	return nil
 }
 
-// bindingFormSymbols extracts symbols from a SubqueryPattern's BindingForm.
-func bindingFormSymbols(binding query.BindingForm) []query.Symbol {
-	switch b := binding.(type) {
-	case query.TupleBinding:
-		return b.Variables
-	case query.ScalarBinding:
-		return []query.Symbol{b.Variable}
-	case query.CollectionBinding:
-		return []query.Symbol{b.Variable}
-	case query.RelationBinding:
-		return b.Variables
-	}
-	return nil
-}
-
 // collectBranchSymbols collects all variable symbols from OR branch clauses.
 func collectBranchSymbols(branches [][]query.Clause) []query.Symbol {
 	seen := make(map[query.Symbol]bool)
@@ -726,7 +711,7 @@ func clauseSymbols(clause query.Clause) []query.Symbol {
 				}
 			}
 		}
-		syms = append(syms, bindingFormSymbols(c.Binding)...)
+		syms = append(syms, c.Binding.BoundVariables()...)
 		return syms
 	default:
 		return nil
@@ -763,16 +748,6 @@ func mergeSymbols(a, b []query.Symbol) []query.Symbol {
 		}
 	}
 	return result
-}
-
-// containsSymbol checks if a symbol is in a slice.
-func containsSymbol(syms []query.Symbol, s query.Symbol) bool {
-	for _, sym := range syms {
-		if sym == s {
-			return true
-		}
-	}
-	return false
 }
 
 // symbolsOf returns the output symbols of a node, or nil if node is nil.

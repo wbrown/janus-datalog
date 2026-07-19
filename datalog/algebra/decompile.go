@@ -358,7 +358,7 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 	// Join vars = symbols shared between the subquery binding and the outer
 	// relation. The default branch only provides NON-join symbols; the join
 	// keys come from the outer relation via or-join semantics.
-	bindingSyms := bindingFormSymbols(sp.Binding)
+	bindingSyms := sp.Binding.BoundVariables()
 
 	var joinVars []query.Symbol
 	if len(lj.CorrelationVars) > 0 {

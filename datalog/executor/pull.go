@@ -228,11 +228,12 @@ func (pe *PullExecutor) lookupAttributeViaPattern(
 	entity datalog.Identity,
 	attr datalog.Keyword,
 ) (value interface{}, found bool, resultErr error) {
+	symV := datalog.NewSymbol("?v")
 	pattern := &query.DataPattern{
 		Elements: []query.PatternElement{
 			query.Constant{Value: entity},
 			query.Constant{Value: attr},
-			query.Variable{Name: datalog.NewSymbol("?v")},
+			query.Variable{Name: symV},
 		},
 	}
 
@@ -254,13 +255,9 @@ func (pe *PullExecutor) lookupAttributeViaPattern(
 
 	if it.Next() {
 		tuple := it.Tuple()
-		syms := rel.Symbols()
-		symV := datalog.NewSymbol("?v")
-		for i, sym := range syms {
-			if sym == symV && i < len(tuple) {
-				resultErr = it.Error()
-				return tuple[i], true, resultErr
-			}
+		if i := query.SymbolIndex(rel.Symbols(), symV); i >= 0 && i < len(tuple) {
+			resultErr = it.Error()
+			return tuple[i], true, resultErr
 		}
 	}
 
@@ -302,17 +299,8 @@ func (pe *PullExecutor) getAllAttributesInternal(entity datalog.Identity) ([]dat
 
 	// Find symbol indices
 	syms := rel.Symbols()
-	symA := datalog.NewSymbol("?a")
-	symV := datalog.NewSymbol("?v")
-	aIdx := -1
-	vIdx := -1
-	for i, sym := range syms {
-		if sym == symA {
-			aIdx = i
-		} else if sym == symV {
-			vIdx = i
-		}
-	}
+	aIdx := query.SymbolIndex(syms, datalog.NewSymbol("?a"))
+	vIdx := query.SymbolIndex(syms, datalog.NewSymbol("?v"))
 
 	if aIdx < 0 || vIdx < 0 {
 		return nil, fmt.Errorf("missing expected symbols in result")
@@ -634,16 +622,7 @@ func (pe *PullExecutor) lookupAllValuesInternal(entity datalog.Identity, attr da
 	}
 
 	// Find value symbol index
-	syms := rel.Symbols()
-	symV := datalog.NewSymbol("?v")
-	vIdx := -1
-	for i, sym := range syms {
-		if sym == symV {
-			vIdx = i
-			break
-		}
-	}
-
+	vIdx := query.SymbolIndex(rel.Symbols(), datalog.NewSymbol("?v"))
 	if vIdx < 0 {
 		return nil
 	}
