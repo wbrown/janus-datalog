@@ -87,7 +87,7 @@ func TestReadyPredicateSchedulingExhaustiveDependencyInvariant(t *testing.T) {
 		}},
 		&query.Expression{
 			Function: query.ArithmeticFunction{
-				Op: query.OpAdd,
+				Op: datalog.SymAdd,
 				Args: []query.Term{
 					query.VariableTerm{Symbol: score},
 					query.ConstantTerm{Value: int64(1)},

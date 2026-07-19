@@ -1,6 +1,7 @@
 package qb
 
 import (
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -20,7 +21,7 @@ func (e *Expression) toClause() query.Clause {
 
 // ArithBuilder builds an arithmetic expression.
 type ArithBuilder struct {
-	op   query.ArithmeticOp
+	op   query.Symbol
 	args []interface{}
 }
 
@@ -32,25 +33,25 @@ type ArithBuilder struct {
 //	total := qb.NewVar("total")
 //	qb.Add(price, tax).As(total)  // [(+ ?price ?tax) ?total]
 func Add(first interface{}, rest ...interface{}) *ArithBuilder {
-	return &ArithBuilder{op: query.OpAdd, args: append([]interface{}{first}, rest...)}
+	return &ArithBuilder{op: datalog.SymAdd, args: append([]interface{}{first}, rest...)}
 }
 
 // Sub creates a subtraction expression.
 // Call .As(resultVar) to bind the result.
 func Sub(first interface{}, rest ...interface{}) *ArithBuilder {
-	return &ArithBuilder{op: query.OpSubtract, args: append([]interface{}{first}, rest...)}
+	return &ArithBuilder{op: datalog.SymSubtract, args: append([]interface{}{first}, rest...)}
 }
 
 // Mul creates a multiplication expression.
 // Call .As(resultVar) to bind the result.
 func Mul(first interface{}, rest ...interface{}) *ArithBuilder {
-	return &ArithBuilder{op: query.OpMultiply, args: append([]interface{}{first}, rest...)}
+	return &ArithBuilder{op: datalog.SymMultiply, args: append([]interface{}{first}, rest...)}
 }
 
 // Div creates a division expression.
 // Call .As(resultVar) to bind the result.
 func Div(first interface{}, rest ...interface{}) *ArithBuilder {
-	return &ArithBuilder{op: query.OpDivide, args: append([]interface{}{first}, rest...)}
+	return &ArithBuilder{op: datalog.SymDivide, args: append([]interface{}{first}, rest...)}
 }
 
 // As binds the arithmetic result to a variable, completing the expression.
@@ -183,7 +184,7 @@ func (i *IdentityBuilder) As(result *Var) *Expression {
 
 // TimeBuilder builds a time extraction expression.
 type TimeBuilder struct {
-	field   string
+	field   query.Symbol
 	timeVar *Var
 }
 
@@ -195,32 +196,32 @@ type TimeBuilder struct {
 //	year := qb.NewVar("year")
 //	qb.Year(createdAt).As(year)
 func Year(timeVar *Var) *TimeBuilder {
-	return &TimeBuilder{field: "year", timeVar: timeVar}
+	return &TimeBuilder{field: datalog.SymYear, timeVar: timeVar}
 }
 
 // Month extracts the month from a time variable.
 func Month(timeVar *Var) *TimeBuilder {
-	return &TimeBuilder{field: "month", timeVar: timeVar}
+	return &TimeBuilder{field: datalog.SymMonth, timeVar: timeVar}
 }
 
 // Day extracts the day from a time variable.
 func Day(timeVar *Var) *TimeBuilder {
-	return &TimeBuilder{field: "day", timeVar: timeVar}
+	return &TimeBuilder{field: datalog.SymDay, timeVar: timeVar}
 }
 
 // Hour extracts the hour from a time variable.
 func Hour(timeVar *Var) *TimeBuilder {
-	return &TimeBuilder{field: "hour", timeVar: timeVar}
+	return &TimeBuilder{field: datalog.SymHour, timeVar: timeVar}
 }
 
 // Minute extracts the minute from a time variable.
 func Minute(timeVar *Var) *TimeBuilder {
-	return &TimeBuilder{field: "minute", timeVar: timeVar}
+	return &TimeBuilder{field: datalog.SymMinute, timeVar: timeVar}
 }
 
 // Second extracts the second from a time variable.
 func Second(timeVar *Var) *TimeBuilder {
-	return &TimeBuilder{field: "second", timeVar: timeVar}
+	return &TimeBuilder{field: datalog.SymSecond, timeVar: timeVar}
 }
 
 // As binds the time extraction result to a variable.

@@ -221,4 +221,3 @@ type Resolver interface {
 	ResolveAttribute(Attribute) datalog.Keyword
 	ResolveTx(Tx) datalog.ElementID
 }
-

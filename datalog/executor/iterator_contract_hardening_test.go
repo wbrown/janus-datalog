@@ -78,7 +78,7 @@ func TestStreamingOpsStreamUnderZeroOptions(t *testing.T) {
 	sum := datalog.NewSymbol("?sum")
 	evaluated := open().EvaluateFunction(
 		&query.ArithmeticFunction{
-			Op:   query.OpAdd,
+			Op:   datalog.SymAdd,
 			Args: []query.Term{query.VariableTerm{Symbol: x}, query.ConstantTerm{Value: int64(1)}},
 		},
 		sum,

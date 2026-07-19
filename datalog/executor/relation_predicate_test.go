@@ -56,7 +56,7 @@ func TestEvaluateFunction(t *testing.T) {
 
 	// Test with an arithmetic function
 	fn := &query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.VariableTerm{Symbol: datalog.NewSymbol("?y")},

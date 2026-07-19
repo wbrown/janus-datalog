@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wbrown/janus-datalog/datalog"
 )
 
 // Function represents an expression that evaluates to a value
@@ -22,19 +24,11 @@ type Function interface {
 	ReturnType() string // "number", "string", "boolean", "time", "any"
 }
 
-// ArithmeticOp represents arithmetic operators
-type ArithmeticOp string
-
-const (
-	OpAdd      ArithmeticOp = "+"
-	OpSubtract ArithmeticOp = "-"
-	OpMultiply ArithmeticOp = "*"
-	OpDivide   ArithmeticOp = "/"
-)
-
-// ArithmeticFunction implements arithmetic operations
+// ArithmeticFunction implements arithmetic operations. Op is one of the
+// pre-interned operator symbols (datalog.SymAdd, SymSubtract, SymMultiply,
+// SymDivide); dispatch is pointer equality.
 type ArithmeticFunction struct {
-	Op   ArithmeticOp
+	Op   Symbol
 	Args []Term
 }
 
@@ -52,7 +46,7 @@ func (a ArithmeticFunction) Eval(bindings map[Symbol]interface{}) (interface{}, 
 	}
 
 	values := make([]interface{}, len(a.Args))
-	useFloat := a.Op == OpDivide
+	useFloat := a.Op == datalog.SymDivide
 	for i, argument := range a.Args {
 		value, ok := argument.Resolve(bindings)
 		if !ok {
@@ -71,22 +65,22 @@ func (a ArithmeticFunction) Eval(bindings map[Symbol]interface{}) (interface{}, 
 	if useFloat {
 		result := toFloat64(values[0])
 		switch a.Op {
-		case OpAdd:
+		case datalog.SymAdd:
 			for _, value := range values[1:] {
 				result += toFloat64(value)
 			}
-		case OpSubtract:
+		case datalog.SymSubtract:
 			if len(values) == 1 {
 				return -result, nil
 			}
 			for _, value := range values[1:] {
 				result -= toFloat64(value)
 			}
-		case OpMultiply:
+		case datalog.SymMultiply:
 			for _, value := range values[1:] {
 				result *= toFloat64(value)
 			}
-		case OpDivide:
+		case datalog.SymDivide:
 			if len(values) == 1 {
 				if result == 0 {
 					return nil, fmt.Errorf("division by zero")
@@ -101,30 +95,30 @@ func (a ArithmeticFunction) Eval(bindings map[Symbol]interface{}) (interface{}, 
 				result /= divisor
 			}
 		default:
-			return nil, fmt.Errorf("unknown arithmetic operator: %s", a.Op)
+			return nil, fmt.Errorf("unknown arithmetic operator: %v", a.Op)
 		}
 		return result, nil
 	}
 
 	result := toInt64(values[0])
 	switch a.Op {
-	case OpAdd:
+	case datalog.SymAdd:
 		for _, value := range values[1:] {
 			result += toInt64(value)
 		}
-	case OpSubtract:
+	case datalog.SymSubtract:
 		if len(values) == 1 {
 			return -result, nil
 		}
 		for _, value := range values[1:] {
 			result -= toInt64(value)
 		}
-	case OpMultiply:
+	case datalog.SymMultiply:
 		for _, value := range values[1:] {
 			result *= toInt64(value)
 		}
 	default:
-		return nil, fmt.Errorf("unknown arithmetic operator: %s", a.Op)
+		return nil, fmt.Errorf("unknown arithmetic operator: %v", a.Op)
 	}
 	return result, nil
 }
@@ -181,9 +175,11 @@ func (s StringConcatFunction) ReturnType() string {
 	return "string"
 }
 
-// TimeExtractionFunction extracts components from time values
+// TimeExtractionFunction extracts components from time values. Field is one
+// of the pre-interned field symbols (datalog.SymYear, SymMonth, SymDay,
+// SymHour, SymMinute, SymSecond); dispatch is pointer equality.
 type TimeExtractionFunction struct {
-	Field    string // "year", "month", "day", "hour", "minute", "second"
+	Field    Symbol
 	TimeTerm Term
 }
 
@@ -203,20 +199,20 @@ func (t TimeExtractionFunction) Eval(bindings map[Symbol]interface{}) (interface
 	}
 
 	switch t.Field {
-	case "year":
+	case datalog.SymYear:
 		return int64(tm.Year()), nil
-	case "month":
+	case datalog.SymMonth:
 		return int64(tm.Month()), nil
-	case "day":
+	case datalog.SymDay:
 		return int64(tm.Day()), nil
-	case "hour":
+	case datalog.SymHour:
 		return int64(tm.Hour()), nil
-	case "minute":
+	case datalog.SymMinute:
 		return int64(tm.Minute()), nil
-	case "second":
+	case datalog.SymSecond:
 		return int64(tm.Second()), nil
 	default:
-		return nil, fmt.Errorf("unknown time field: %s", t.Field)
+		return nil, fmt.Errorf("unknown time field: %v", t.Field)
 	}
 }
 

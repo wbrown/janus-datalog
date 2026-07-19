@@ -162,6 +162,26 @@ var (
 	SymGTE = internSymbol(">=")
 )
 
+// Pre-interned arithmetic operator symbols. ArithmeticFunction.Op carries
+// one of these; dispatch is pointer equality against them.
+var (
+	SymAdd      = internSymbol("+")
+	SymSubtract = internSymbol("-")
+	SymMultiply = internSymbol("*")
+	SymDivide   = internSymbol("/")
+)
+
+// Pre-interned time-extraction field symbols. TimeExtractionFunction.Field
+// carries one of these; dispatch is pointer equality against them.
+var (
+	SymYear   = internSymbol("year")
+	SymMonth  = internSymbol("month")
+	SymDay    = internSymbol("day")
+	SymHour   = internSymbol("hour")
+	SymMinute = internSymbol("minute")
+	SymSecond = internSymbol("second")
+)
+
 // ClearInterns clears keyword, identity, and symbol intern caches
 // Useful for testing or when memory needs to be reclaimed
 func ClearInterns() {
@@ -181,4 +201,14 @@ func ClearInterns() {
 	SymLTE = internSymbol("<=")
 	SymGT = internSymbol(">")
 	SymGTE = internSymbol(">=")
+	SymAdd = internSymbol("+")
+	SymSubtract = internSymbol("-")
+	SymMultiply = internSymbol("*")
+	SymDivide = internSymbol("/")
+	SymYear = internSymbol("year")
+	SymMonth = internSymbol("month")
+	SymDay = internSymbol("day")
+	SymHour = internSymbol("hour")
+	SymMinute = internSymbol("minute")
+	SymSecond = internSymbol("second")
 }

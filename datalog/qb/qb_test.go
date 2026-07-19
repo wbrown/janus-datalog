@@ -262,13 +262,13 @@ func TestArithmeticExpressions(t *testing.T) {
 	tests := []struct {
 		name  string
 		expr  *Expression
-		op    query.ArithmeticOp
+		op    query.Symbol
 		arity int
 	}{
-		{"Add", Add(a, b, c).As(result), query.OpAdd, 3},
-		{"Sub", Sub(a).As(result), query.OpSubtract, 1},
-		{"Mul", Mul(a, b, c).As(result), query.OpMultiply, 3},
-		{"Div", Div(a, b, c).As(result), query.OpDivide, 3},
+		{"Add", Add(a, b, c).As(result), datalog.SymAdd, 3},
+		{"Sub", Sub(a).As(result), datalog.SymSubtract, 1},
+		{"Mul", Mul(a, b, c).As(result), datalog.SymMultiply, 3},
+		{"Div", Div(a, b, c).As(result), datalog.SymDivide, 3},
 	}
 
 	for _, tt := range tests {
@@ -447,14 +447,14 @@ func TestTimeExtraction(t *testing.T) {
 	tests := []struct {
 		name  string
 		expr  *Expression
-		field string
+		field query.Symbol
 	}{
-		{"Year", Year(createdAt).As(y), "year"},
-		{"Month", Month(createdAt).As(y), "month"},
-		{"Day", Day(createdAt).As(y), "day"},
-		{"Hour", Hour(createdAt).As(y), "hour"},
-		{"Minute", Minute(createdAt).As(y), "minute"},
-		{"Second", Second(createdAt).As(y), "second"},
+		{"Year", Year(createdAt).As(y), datalog.SymYear},
+		{"Month", Month(createdAt).As(y), datalog.SymMonth},
+		{"Day", Day(createdAt).As(y), datalog.SymDay},
+		{"Hour", Hour(createdAt).As(y), datalog.SymHour},
+		{"Minute", Minute(createdAt).As(y), datalog.SymMinute},
+		{"Second", Second(createdAt).As(y), datalog.SymSecond},
 	}
 
 	for _, tt := range tests {

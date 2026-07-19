@@ -72,14 +72,14 @@ The disease: an operation's identity is a string, and the decision of what to do
 
 ### B1. `query.ArithmeticOp` — CompareOp's twin
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). `ArithmeticFunction.Op` is an interned `Symbol`; the parser and qb resolve names once to the pre-interned `SymAdd`/`SymSubtract`/`SymMultiply`/`SymDivide`, and Eval dispatches by pointer equality. The `ArithmeticOp` string type and its constants are deleted. Pinned by `TestArithmeticOperatorsResolveToInternedSymbols`.
 **Sites**: `datalog/query/function.go` (`type ArithmeticOp string`, constants `OpAdd`/`OpSubtract`/`OpMultiply`/`OpDivide`; `ArithmeticFunction.Eval` switches on `a.Op` twice per call — float path and int path — plus `useFloat := a.Op == OpDivide`)
 
 Per-tuple, production-reachable through the expression evaluation loop. The parser (`parser/function_parser.go`) and qb (`qb/expression.go`) already resolve names once at setup, so symbolization mirrors the CompareOp change exactly: pre-interned `SymAdd`/`SymSub`/`SymMul`/`SymDiv`, pointer switches in Eval. ~3 production files; note `storage/set_entry.go` has an unrelated `OpAdd` namesake (uint8 CRDT op).
 
 ### B2. `TimeExtractionFunction.Field` — string kind, switch triplicated
 
-**Status**: Open
+**Status**: Resolved (2026-07-19) for the live copy: `Field` is an interned `Symbol` (pre-interned `SymYear`…`SymSecond`), resolved once in `parseTimeExtraction` and in the qb builders, dispatched by pointer equality in Eval. Pinned by `TestTimeExtractionFieldsResolveToInternedSymbols`. The two duplicated dead/test-only copies (`extractTimeComponent` in `custom_functions.go`, `timeExtractionConstraint`) remain with the C5/C6 decisions.
 **Sites**: `datalog/query/function.go` (`Field string`, per-tuple switch in `Eval`); the same six-case switch duplicated in `datalog/executor/custom_functions.go` `extractTimeComponent` (dead — see C5) and `datalog/executor/constraints_impl.go` `timeExtractionConstraint.Evaluate` (per-datom, but test-only-constructed — see C6)
 
 One interned time-field symbol set would replace all three; two of the three copies are better deleted than symbolized.

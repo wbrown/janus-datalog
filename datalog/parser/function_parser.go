@@ -59,16 +59,18 @@ func parseArithmetic(fn string, args []query.PatternElement) (query.Function, er
 		return nil, fmt.Errorf("%s requires at least 1 argument, got 0", fn)
 	}
 
-	var op query.ArithmeticOp
+	// The operator name resolves here, once, to its pre-interned symbol;
+	// downstream dispatch is pointer equality.
+	var op query.Symbol
 	switch fn {
 	case "+":
-		op = query.OpAdd
+		op = datalog.SymAdd
 	case "-":
-		op = query.OpSubtract
+		op = datalog.SymSubtract
 	case "*":
-		op = query.OpMultiply
+		op = datalog.SymMultiply
 	case "/":
-		op = query.OpDivide
+		op = datalog.SymDivide
 	}
 
 	terms := make([]query.Term, len(args))
@@ -128,14 +130,33 @@ func parseStringConcat(args []query.PatternElement) (query.Function, error) {
 	}, nil
 }
 
-// parseTimeExtraction handles time extraction functions
+// parseTimeExtraction handles time extraction functions. The field name
+// resolves here, once, to its pre-interned symbol.
 func parseTimeExtraction(field string, args []query.PatternElement) (query.Function, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s requires exactly 1 argument, got %d", field, len(args))
 	}
 
+	var fieldSym query.Symbol
+	switch field {
+	case "year":
+		fieldSym = datalog.SymYear
+	case "month":
+		fieldSym = datalog.SymMonth
+	case "day":
+		fieldSym = datalog.SymDay
+	case "hour":
+		fieldSym = datalog.SymHour
+	case "minute":
+		fieldSym = datalog.SymMinute
+	case "second":
+		fieldSym = datalog.SymSecond
+	default:
+		return nil, fmt.Errorf("unknown time extraction function: %s", field)
+	}
+
 	return &query.TimeExtractionFunction{
-		Field:    field,
+		Field:    fieldSym,
 		TimeTerm: elementToTerm(args[0]),
 	}, nil
 }

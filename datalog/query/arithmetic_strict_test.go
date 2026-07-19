@@ -16,7 +16,7 @@ import (
 func TestArithmeticRejectsNonNumericOperands(t *testing.T) {
 	x := datalog.NewSymbol("?x")
 	for _, val := range []interface{}{"abc", "42", true, datalog.NewKeyword(":k/w")} {
-		fn := ArithmeticFunction{Op: OpAdd, Args: []Term{
+		fn := ArithmeticFunction{Op: datalog.SymAdd, Args: []Term{
 			VariableTerm{Symbol: x},
 			ConstantTerm{Value: int64(1)},
 		}}
@@ -28,7 +28,7 @@ func TestArithmeticRejectsNonNumericOperands(t *testing.T) {
 
 func TestArithmeticNumericOperandsUnchanged(t *testing.T) {
 	x := datalog.NewSymbol("?x")
-	sum := ArithmeticFunction{Op: OpAdd, Args: []Term{
+	sum := ArithmeticFunction{Op: datalog.SymAdd, Args: []Term{
 		VariableTerm{Symbol: x},
 		ConstantTerm{Value: int64(2)},
 	}}

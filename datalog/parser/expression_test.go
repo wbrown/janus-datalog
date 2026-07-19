@@ -118,7 +118,7 @@ func TestParseExpressionPatterns(t *testing.T) {
 			// Check the function type and properties
 			switch fn := expr.Function.(type) {
 			case *query.ArithmeticFunction:
-				if string(fn.Op) != tt.wantFunc {
+				if fn.Op.String() != tt.wantFunc {
 					t.Errorf("Function = %v, want %v", fn.Op, tt.wantFunc)
 				}
 				// Arithmetic functions always have 2 args (Left and Right)

@@ -179,7 +179,7 @@ func TestExecuteExpression(t *testing.T) {
 		// Expression: [(+ ?x 100) ?y]
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
-				Op: query.OpAdd,
+				Op: datalog.SymAdd,
 				Args: []query.Term{
 					query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					query.ConstantTerm{Value: int64(100)},
@@ -220,7 +220,7 @@ func TestExecuteExpression(t *testing.T) {
 		// Expression: [(+ ?x ?y) ?z] - requires both ?x and ?y
 		expr := &query.Expression{
 			Function: &query.ArithmeticFunction{
-				Op: query.OpAdd,
+				Op: datalog.SymAdd,
 				Args: []query.Term{
 					query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					query.VariableTerm{Symbol: datalog.NewSymbol("?y")},

@@ -101,7 +101,7 @@ func TestOrDefaultReplacesEveryConsumedOuterGroup(t *testing.T) {
 		Branches: [][]query.Clause{
 			{&query.Expression{
 				Function: query.ArithmeticFunction{
-					Op: query.OpAdd,
+					Op: datalog.SymAdd,
 					Args: []query.Term{
 						query.VariableTerm{Symbol: x},
 						query.VariableTerm{Symbol: y},

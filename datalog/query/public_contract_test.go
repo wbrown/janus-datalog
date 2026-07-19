@@ -8,7 +8,7 @@ import (
 
 var (
 	_ query.Function = query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.ConstantTerm{Value: int64(1)},
 			query.ConstantTerm{Value: int64(2)},

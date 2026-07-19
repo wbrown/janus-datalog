@@ -183,7 +183,7 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 
 	evaluated := open().EvaluateFunction(
 		&query.ArithmeticFunction{
-			Op: query.OpAdd,
+			Op: datalog.SymAdd,
 			Args: []query.Term{
 				query.VariableTerm{Symbol: a},
 				query.VariableTerm{Symbol: b},

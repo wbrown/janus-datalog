@@ -197,7 +197,7 @@ func TestLazySeqRelationTransformsRemainLazy(t *testing.T) {
 		)
 		extended := relation.EvaluateFunction(
 			query.ArithmeticFunction{
-				Op: query.OpAdd,
+				Op: datalog.SymAdd,
 				Args: []query.Term{
 					query.VariableTerm{Symbol: x},
 					query.ConstantTerm{Value: int64(10)},

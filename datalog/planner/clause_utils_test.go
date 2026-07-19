@@ -446,7 +446,7 @@ func TestOrClauseRequiresCorrelatedInputs(t *testing.T) {
 				{
 					&query.Expression{
 						Function: &query.ArithmeticFunction{
-							Op: query.OpAdd,
+							Op: datalog.SymAdd,
 							Args: []query.Term{
 								query.VariableTerm{Symbol: datalog.NewSymbol("?input")},
 								query.ConstantTerm{Value: int64(1)},
@@ -656,7 +656,7 @@ func TestNotClauseRequiresAllInnerVariables(t *testing.T) {
 			Clauses: []query.Clause{
 				&query.Expression{
 					Function: &query.ArithmeticFunction{
-						Op: query.OpAdd,
+						Op: datalog.SymAdd,
 						Args: []query.Term{
 							query.VariableTerm{Symbol: datalog.NewSymbol("?count")},
 							query.ConstantTerm{Value: int64(10)},
@@ -704,7 +704,7 @@ func TestExtractExpressionSymbols(t *testing.T) {
 			name: "Arithmetic requires inputs, provides binding",
 			expression: &query.Expression{
 				Function: &query.ArithmeticFunction{
-					Op: query.OpAdd,
+					Op: datalog.SymAdd,
 					Args: []query.Term{
 						query.VariableTerm{Symbol: datalog.NewSymbol("?a")},
 						query.VariableTerm{Symbol: datalog.NewSymbol("?b")},

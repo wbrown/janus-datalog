@@ -328,7 +328,7 @@ func TestFunctionEvaluatorIterator(t *testing.T) {
 
 	// Create an addition function (x + y)
 	fn := query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -370,7 +370,7 @@ func TestFunctionEvaluatorIterator_UnifiesExistingSymbol(t *testing.T) {
 
 	// identity function on ?x, binding back to ?x — should unify (all pass)
 	fn := query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.ConstantTerm{Value: int64(0)},
@@ -409,7 +409,7 @@ func TestFunctionEvaluatorIterator_UnifiesFilters(t *testing.T) {
 
 	// (+ ?x ?y) binding to ?x — unifies: keep only where ?x + ?y == ?x
 	fn := query.ArithmeticFunction{
-		Op: query.OpAdd,
+		Op: datalog.SymAdd,
 		Args: []query.Term{
 			query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
