@@ -172,6 +172,22 @@ func TestScopeOf(t *testing.T) {
 		assertSymbols(t, "Correlates", scope.Correlates, "?x")
 	})
 
+	t.Run("or-default provides the intersection of branch provides", func(t *testing.T) {
+		// The executor's output schema is outer ∪ branch intersection
+		// (computeOrBranchOutputSymbols): a symbol only one branch binds
+		// is absent when the other branch fires and never appears in the
+		// relation. Union-provides was a schema hole.
+		scope := ScopeOf(&OrDefaultClause{Branches: [][]Clause{
+			{scopePattern("?e", "a/b", "?x")},
+			{&Expression{
+				Function: &GroundFunction{Value: int64(0)},
+				Binding:  datalog.NewSymbol("?x"),
+			}},
+		}})
+		assertSymbols(t, "Provides", scope.Provides, "?x")
+		assertSymbols(t, "Correlates", scope.Correlates, "?e")
+	})
+
 	t.Run("or-default-join branch outputs escape past the header", func(t *testing.T) {
 		// Live contract: the header declares correlation keys, not the
 		// complete interface — the algebra emitter binds outputs outside

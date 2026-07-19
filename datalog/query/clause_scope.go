@@ -75,10 +75,14 @@ func ScopeOf(clause Clause) ClauseScope {
 		return headerScope(c.JoinVars, c.Branches, intersectSymbolSets)
 
 	case *OrDefaultClause:
-		// Fallback semantics: any single branch may execute, so any branch's
-		// bindings may appear. Correlation additionally rides the entity
-		// variable of each branch's first pattern (per-tuple evaluation).
-		provides, externals := branchInterfaces(c.Branches, unionSymbolSets)
+		// Fallback semantics: exactly one branch's results are used, so
+		// only symbols every branch binds are reliably in the output — and
+		// the executor's schema is outer ∪ branch intersection
+		// (computeOrBranchOutputSymbols); a union-only symbol never
+		// appears in the relation. Correlation additionally rides the
+		// entity variable of each branch's first pattern (per-tuple
+		// evaluation).
+		provides, externals := branchInterfaces(c.Branches, intersectSymbolSets)
 		correlates := externals
 		for _, branch := range c.Branches {
 			for _, clause := range branch {
