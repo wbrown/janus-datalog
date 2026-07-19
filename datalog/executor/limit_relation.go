@@ -89,7 +89,6 @@ func (r *LimitRelation) Materialize() Relation { return r.ensure() }
 func (r *LimitRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return r.ensure().Sort(orderBy)
 }
-func (r *LimitRelation) Filter(filter Filter) Relation { return r.ensure().Filter(filter) }
 func (r *LimitRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	return r.ensure().FilterWithPredicate(pred)
 }

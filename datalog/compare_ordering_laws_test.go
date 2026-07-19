@@ -144,3 +144,54 @@ func TestCompareValues_NumericCrossTypeUnchanged(t *testing.T) {
 	// Int-width normalization unchanged.
 	require.Equal(t, 0, sign(CompareValues(int32(5), int64(5))))
 }
+
+// TestCompareValues_KnownPairs pins concrete outcomes for representative
+// pairs: same-type orderings, mixed numeric widths, and the specific rank
+// direction between classes (numeric < bool < string), which the law tests
+// above cannot pin.
+func TestCompareValues_KnownPairs(t *testing.T) {
+	tests := []struct {
+		name     string
+		left     interface{}
+		right    interface{}
+		expected int
+	}{
+		// Integer comparisons
+		{"int64 less", int64(10), int64(20), -1},
+		{"int64 equal", int64(20), int64(20), 0},
+		{"int64 greater", int64(30), int64(20), 1},
+
+		// Float comparisons
+		{"float less", 10.5, 20.5, -1},
+		{"float equal", 20.5, 20.5, 0},
+		{"float greater", 30.5, 20.5, 1},
+
+		// String comparisons
+		{"string less", "Alice", "Bob", -1},
+		{"string equal", "Bob", "Bob", 0},
+		{"string greater", "Charlie", "Bob", 1},
+
+		// Boolean comparisons
+		{"bool false < true", false, true, -1},
+		{"bool equal", true, true, 0},
+		{"bool true > false", true, false, 1},
+
+		// Mixed numeric types
+		{"int to int64", int(10), int64(20), -1},
+		{"int64 to float", int64(10), 20.5, -1},
+		{"float to int", 10.5, int(10), 1},
+
+		// Mixed types order by type rank (numeric=1 < bool=2 < string=4).
+		{"string vs int", "test", 123, 1},    // string rank > numeric rank
+		{"bool vs string", true, "test", -1}, // bool rank < string rank
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CompareValues(tt.left, tt.right)
+			if result != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, result)
+			}
+		})
+	}
+}

@@ -84,7 +84,7 @@ func TestFormatQueryEDN(t *testing.T) {
 						},
 					},
 					&query.Comparison{
-						Op:    query.OpLT,
+						Op:    datalog.SymLT,
 						Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 						Right: query.ConstantTerm{Value: int64(30)},
 					},

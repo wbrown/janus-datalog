@@ -147,7 +147,7 @@ func TestParseExpressionPatterns(t *testing.T) {
 					t.Errorf("Identity function should have 1 arg")
 				}
 			case *query.ComparisonFunction:
-				if string(fn.Comparison.Op) != tt.wantFunc {
+				if fn.Comparison.Op.String() != tt.wantFunc {
 					t.Errorf("Comparison Op = %v, want %v", fn.Comparison.Op, tt.wantFunc)
 				}
 				if tt.wantArgs != 2 {
@@ -217,7 +217,7 @@ func TestParseVariadicComparators(t *testing.T) {
 				t.Fatal("Expected to find a chained comparison")
 			}
 
-			if string(chainedComp.Op) != tt.wantFunc {
+			if chainedComp.Op.String() != tt.wantFunc {
 				t.Errorf("Operator = %v, want %v", chainedComp.Op, tt.wantFunc)
 			}
 

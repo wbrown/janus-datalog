@@ -289,9 +289,9 @@ func classifyPredicate(pred query.Predicate) PredicatePlanType {
 	switch p := pred.(type) {
 	case *query.Comparison:
 		switch p.Op {
-		case query.OpEQ:
+		case datalog.SymEQ:
 			return PredicateEquality
-		case query.OpNE:
+		case datalog.SymNE:
 			return PredicateNotEqual
 		default:
 			return PredicateComparison

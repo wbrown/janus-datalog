@@ -101,7 +101,11 @@ func TestRelationPropertyPropagation(t *testing.T) {
 		properties,
 	)
 
-	filtered := rel.Filter(NewSimpleFilter(func(Tuple) bool { return true }))
+	filtered := rel.FilterWithPredicate(&query.Comparison{
+		Op:    datalog.SymGTE,
+		Left:  query.VariableTerm{Symbol: a},
+		Right: query.ConstantTerm{Value: int64(0)},
+	})
 	require.Equal(t, properties, filtered.Properties(), "filter must preserve properties")
 
 	projectedA, err := rel.Project([]query.Symbol{a})
@@ -167,7 +171,11 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 	}
 
 	require.Equal(t, properties,
-		open().Filter(NewSimpleFilter(func(Tuple) bool { return true })).Properties())
+		open().FilterWithPredicate(&query.Comparison{
+			Op:    datalog.SymGTE,
+			Left:  query.VariableTerm{Symbol: a},
+			Right: query.ConstantTerm{Value: int64(0)},
+		}).Properties())
 
 	projected, err := open().Project([]query.Symbol{a})
 	require.NoError(t, err)

@@ -17,23 +17,23 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		size := 10000
 		var tuples []Tuple
 		for i := 0; i < size; i++ {
-			tuples = append(tuples, Tuple{i, i * 2, i * 3})
+			// ?y cycles so the 1% filter below selects every 100th tuple —
+			// scattered matches interleave pass and skip in the filter iterator.
+			tuples = append(tuples, Tuple{i, i % 100, i * 3})
 		}
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
-		// Test with materialized (EnableTrueStreaming=false)
-		matOpts := ExecutorOptions{
-			EnableIteratorComposition: false,
-			EnableTrueStreaming:       false,
-		}
+		// Materialized side: the same pipeline over a MaterializedRelation —
+		// the materialized filter implementation, not a streaming relation in
+		// a legacy mode.
+		matRel := NewMaterializedRelation(symbols, tuples)
 
-		matSource := newMockIterator(tuples)
-		matRel := NewStreamingRelationWithOptions(symbols, matSource, matOpts)
-
-		// Filter to 1%
-		matFiltered := matRel.Filter(NewSimpleFilter(func(t Tuple) bool {
-			return t[0].(int)%100 == 0
-		}))
+		// Filter to 1% (every 100th tuple)
+		matFiltered := matRel.FilterWithPredicate(&query.Comparison{
+			Op:    datalog.SymEQ,
+			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+			Right: query.ConstantTerm{Value: int64(0)},
+		})
 
 		// Project
 		matProjected, err := matFiltered.Project([]query.Symbol{datalog.NewSymbol("?x")})
@@ -59,10 +59,12 @@ func TestStreamingVsMaterializedCorrectness(t *testing.T) {
 		streamSource := newMockIterator(tuples)
 		streamRel := NewStreamingRelationWithOptions(symbols, streamSource, streamOpts)
 
-		// Filter to 1%
-		streamFiltered := streamRel.Filter(NewSimpleFilter(func(t Tuple) bool {
-			return t[0].(int)%100 == 0
-		}))
+		// Filter to 1% (every 100th tuple)
+		streamFiltered := streamRel.FilterWithPredicate(&query.Comparison{
+			Op:    datalog.SymEQ,
+			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+			Right: query.ConstantTerm{Value: int64(0)},
+		})
 
 		// Project
 		streamProjected, err := streamFiltered.Project([]query.Symbol{datalog.NewSymbol("?x")})

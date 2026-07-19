@@ -171,7 +171,7 @@ func TestLazySeqRelationTransformsRemainLazy(t *testing.T) {
 			[]query.Symbol{x},
 		)
 		filtered := relation.FilterWithPredicate(&query.Comparison{
-			Op:    query.OpGT,
+			Op:    datalog.SymGT,
 			Left:  query.VariableTerm{Symbol: x},
 			Right: query.ConstantTerm{Value: int64(1)},
 		})

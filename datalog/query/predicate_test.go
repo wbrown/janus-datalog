@@ -17,7 +17,7 @@ func TestComparison(t *testing.T) {
 		{
 			name: "Variable equals constant",
 			pred: &Comparison{
-				Op:    OpEQ,
+				Op:    datalog.SymEQ,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(5)},
 			},
@@ -27,7 +27,7 @@ func TestComparison(t *testing.T) {
 		{
 			name: "Variable not equals constant",
 			pred: &Comparison{
-				Op:    OpEQ,
+				Op:    datalog.SymEQ,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(5)},
 			},
@@ -37,7 +37,7 @@ func TestComparison(t *testing.T) {
 		{
 			name: "Variable less than constant",
 			pred: &Comparison{
-				Op:    OpLT,
+				Op:    datalog.SymLT,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(10)},
 			},
@@ -47,7 +47,7 @@ func TestComparison(t *testing.T) {
 		{
 			name: "Variable equals variable",
 			pred: &Comparison{
-				Op:    OpEQ,
+				Op:    datalog.SymEQ,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 			},
@@ -57,7 +57,7 @@ func TestComparison(t *testing.T) {
 		{
 			name: "Variable not equals variable",
 			pred: &Comparison{
-				Op:    OpEQ,
+				Op:    datalog.SymEQ,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 			},
@@ -67,7 +67,7 @@ func TestComparison(t *testing.T) {
 		{
 			name: "Constant less than variable",
 			pred: &Comparison{
-				Op:    OpLT,
+				Op:    datalog.SymLT,
 				Left:  ConstantTerm{Value: int64(5)},
 				Right: VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			},
@@ -77,7 +77,7 @@ func TestComparison(t *testing.T) {
 		{
 			name: "String comparison",
 			pred: &Comparison{
-				Op:    OpLT,
+				Op:    datalog.SymLT,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?s")},
 				Right: ConstantTerm{Value: "zebra"},
 			},
@@ -87,7 +87,7 @@ func TestComparison(t *testing.T) {
 		{
 			name: "Time comparison",
 			pred: &Comparison{
-				Op:    OpGT,
+				Op:    datalog.SymGT,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?t")},
 				Right: ConstantTerm{Value: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)},
 			},
@@ -100,7 +100,7 @@ func TestComparison(t *testing.T) {
 			// them numerically.
 			name: "Mixed numeric types are not equal",
 			pred: &Comparison{
-				Op:    OpEQ,
+				Op:    datalog.SymEQ,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: float64(5.0)},
 			},
@@ -132,7 +132,7 @@ func TestChainedComparison(t *testing.T) {
 		{
 			name: "Range check: 0 < x < 10",
 			pred: &ChainedComparison{
-				Op: OpLT,
+				Op: datalog.SymLT,
 				Terms: []Term{
 					ConstantTerm{Value: int64(0)},
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
@@ -145,7 +145,7 @@ func TestChainedComparison(t *testing.T) {
 		{
 			name: "Range check: 0 < x < 10 (out of range)",
 			pred: &ChainedComparison{
-				Op: OpLT,
+				Op: datalog.SymLT,
 				Terms: []Term{
 					ConstantTerm{Value: int64(0)},
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
@@ -158,7 +158,7 @@ func TestChainedComparison(t *testing.T) {
 		{
 			name: "Chained variables: x < y < z",
 			pred: &ChainedComparison{
-				Op: OpLT,
+				Op: datalog.SymLT,
 				Terms: []Term{
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -171,7 +171,7 @@ func TestChainedComparison(t *testing.T) {
 		{
 			name: "Chained variables: x < y < z (not satisfied)",
 			pred: &ChainedComparison{
-				Op: OpLT,
+				Op: datalog.SymLT,
 				Terms: []Term{
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -184,7 +184,7 @@ func TestChainedComparison(t *testing.T) {
 		{
 			name: "All equal",
 			pred: &ChainedComparison{
-				Op: OpEQ,
+				Op: datalog.SymEQ,
 				Terms: []Term{
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},
 					VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -218,7 +218,7 @@ func TestRequiredSymbols(t *testing.T) {
 		{
 			name: "Variable comparison",
 			pred: &Comparison{
-				Op:    OpEQ,
+				Op:    datalog.SymEQ,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: ConstantTerm{Value: int64(5)},
 			},
@@ -227,7 +227,7 @@ func TestRequiredSymbols(t *testing.T) {
 		{
 			name: "Two variables",
 			pred: &Comparison{
-				Op:    OpEQ,
+				Op:    datalog.SymEQ,
 				Left:  VariableTerm{Symbol: datalog.NewSymbol("?x")},
 				Right: VariableTerm{Symbol: datalog.NewSymbol("?y")},
 			},
@@ -236,7 +236,7 @@ func TestRequiredSymbols(t *testing.T) {
 		{
 			name: "Chained comparison",
 			pred: &ChainedComparison{
-				Op: OpLT,
+				Op: datalog.SymLT,
 				Terms: []Term{
 					ConstantTerm{Value: int64(0)},
 					VariableTerm{Symbol: datalog.NewSymbol("?x")},

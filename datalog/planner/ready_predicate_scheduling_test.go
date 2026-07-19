@@ -97,12 +97,12 @@ func TestReadyPredicateSchedulingExhaustiveDependencyInvariant(t *testing.T) {
 			Binding: adjusted,
 		},
 		&query.Comparison{
-			Op:    query.OpGT,
+			Op:    datalog.SymGT,
 			Left:  query.VariableTerm{Symbol: adjusted},
 			Right: query.VariableTerm{Symbol: minimum},
 		},
 		&query.NotEqualPredicate{Comparison: query.Comparison{
-			Op:    query.OpEQ,
+			Op:    datalog.SymEQ,
 			Left:  query.VariableTerm{Symbol: category},
 			Right: query.ConstantTerm{Value: datalog.NewKeyword(":category/blocked")},
 		}},

@@ -164,14 +164,14 @@ func TestPredicates(t *testing.T) {
 	tests := []struct {
 		name string
 		pred *Comparison
-		op   query.CompareOp
+		op   query.Symbol
 	}{
-		{"Lt", Lt(age, V(30)), query.OpLT},
-		{"Lte", Lte(age, V(30)), query.OpLTE},
-		{"Gt", Gt(age, V(30)), query.OpGT},
-		{"Gte", Gte(age, V(30)), query.OpGTE},
-		{"Eq", Eq(age, V(30)), query.OpEQ},
-		{"Ne", Ne(age, V(30)), query.OpNE},
+		{"Lt", Lt(age, V(30)), datalog.SymLT},
+		{"Lte", Lte(age, V(30)), datalog.SymLTE},
+		{"Gt", Gt(age, V(30)), datalog.SymGT},
+		{"Gte", Gte(age, V(30)), datalog.SymGTE},
+		{"Eq", Eq(age, V(30)), datalog.SymEQ},
+		{"Ne", Ne(age, V(30)), datalog.SymNE},
 	}
 
 	for _, tt := range tests {
@@ -193,7 +193,7 @@ func TestChainedComparison(t *testing.T) {
 	x := NewVar("x")
 
 	// Range: 0 < x < 100
-	chain := Chained(query.OpLT, V(0), x, V(100))
+	chain := Chained(datalog.SymLT, V(0), x, V(100))
 
 	clause := chain.toClause()
 	cpc, ok := clause.(*query.ChainedComparison)
@@ -203,8 +203,8 @@ func TestChainedComparison(t *testing.T) {
 	if len(cpc.Terms) != 3 {
 		t.Errorf("Expected 3 terms, got %d", len(cpc.Terms))
 	}
-	if cpc.Op != query.OpLT {
-		t.Errorf("Expected OpLT, got %v", cpc.Op)
+	if cpc.Op != datalog.SymLT {
+		t.Errorf("Expected the interned < symbol, got %v", cpc.Op)
 	}
 }
 
@@ -1005,14 +1005,14 @@ func TestComparisonBindingAs(t *testing.T) {
 	tests := []struct {
 		name string
 		expr *Expression
-		op   query.CompareOp
+		op   query.Symbol
 	}{
-		{"Gt.As", Gt(a, V(0)).As(result), query.OpGT},
-		{"Lt.As", Lt(a, V(100)).As(result), query.OpLT},
-		{"Gte.As", Gte(a, V(21)).As(result), query.OpGTE},
-		{"Lte.As", Lte(a, V(65)).As(result), query.OpLTE},
-		{"Eq.As", Eq(a, V("active")).As(result), query.OpEQ},
-		{"Ne.As", Ne(a, V("deleted")).As(result), query.OpNE},
+		{"Gt.As", Gt(a, V(0)).As(result), datalog.SymGT},
+		{"Lt.As", Lt(a, V(100)).As(result), datalog.SymLT},
+		{"Gte.As", Gte(a, V(21)).As(result), datalog.SymGTE},
+		{"Lte.As", Lte(a, V(65)).As(result), datalog.SymLTE},
+		{"Eq.As", Eq(a, V("active")).As(result), datalog.SymEQ},
+		{"Ne.As", Ne(a, V("deleted")).As(result), datalog.SymNE},
 	}
 
 	for _, tt := range tests {
@@ -1086,7 +1086,7 @@ func TestChainedComparisonBindingAs(t *testing.T) {
 	result := NewVar("result")
 
 	// Chained with OpLT
-	chain := Chained(query.OpLT, V(0), x, V(100)).As(result)
+	chain := Chained(datalog.SymLT, V(0), x, V(100)).As(result)
 	clause := chain.toClause()
 	expr, ok := clause.(*query.Expression)
 	if !ok {
@@ -1098,7 +1098,7 @@ func TestChainedComparisonBindingAs(t *testing.T) {
 		t.Fatalf("Expected *query.ChainedComparisonFunction, got %T", expr.Function)
 	}
 
-	if chainFn.ChainedComparison.Op != query.OpLT {
+	if chainFn.ChainedComparison.Op != datalog.SymLT {
 		t.Errorf("Expected OpLT, got %v", chainFn.ChainedComparison.Op)
 	}
 	if len(chainFn.ChainedComparison.Terms) != 3 {
@@ -1120,7 +1120,7 @@ func TestRangeBindingAs(t *testing.T) {
 	expr := clause.(*query.Expression)
 	chainFn := expr.Function.(*query.ChainedComparisonFunction)
 
-	if chainFn.ChainedComparison.Op != query.OpLT {
+	if chainFn.ChainedComparison.Op != datalog.SymLT {
 		t.Errorf("Range should use OpLT, got %v", chainFn.ChainedComparison.Op)
 	}
 }
@@ -1136,7 +1136,7 @@ func TestRangeInclusiveBindingAs(t *testing.T) {
 	expr := clause.(*query.Expression)
 	chainFn := expr.Function.(*query.ChainedComparisonFunction)
 
-	if chainFn.ChainedComparison.Op != query.OpLTE {
+	if chainFn.ChainedComparison.Op != datalog.SymLTE {
 		t.Errorf("RangeInclusive should use OpLTE, got %v", chainFn.ChainedComparison.Op)
 	}
 }

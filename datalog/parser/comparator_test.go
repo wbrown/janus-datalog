@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -29,7 +30,7 @@ func TestParseComparatorPatterns(t *testing.T) {
 					return fmt.Errorf("expected Comparison, got %T", q.Where[1])
 				}
 
-				if comp.Op != query.OpLT {
+				if comp.Op != datalog.SymLT {
 					return fmt.Errorf("expected '<' operator, got %s", comp.Op)
 				}
 
@@ -51,7 +52,7 @@ func TestParseComparatorPatterns(t *testing.T) {
                             [(> ?price 100.50)]]`,
 			validate: func(q *query.Query) error {
 				comp := q.Where[1].(*query.Comparison)
-				if comp.Op != query.OpGT {
+				if comp.Op != datalog.SymGT {
 					return fmt.Errorf("expected '>' operator, got %s", comp.Op)
 				}
 				return nil
@@ -64,7 +65,7 @@ func TestParseComparatorPatterns(t *testing.T) {
                             [(= ?name "Alice")]]`,
 			validate: func(q *query.Query) error {
 				comp := q.Where[1].(*query.Comparison)
-				if comp.Op != query.OpEQ {
+				if comp.Op != datalog.SymEQ {
 					return fmt.Errorf("expected '=' operator, got %s", comp.Op)
 				}
 				return nil
@@ -98,10 +99,10 @@ func TestParseComparatorPatterns(t *testing.T) {
 				comp1 := q.Where[1].(*query.Comparison)
 				comp2 := q.Where[2].(*query.Comparison)
 
-				if comp1.Op != query.OpGTE {
+				if comp1.Op != datalog.SymGTE {
 					return fmt.Errorf("expected '>=' operator, got %s", comp1.Op)
 				}
-				if comp2.Op != query.OpLTE {
+				if comp2.Op != datalog.SymLTE {
 					return fmt.Errorf("expected '<=' operator, got %s", comp2.Op)
 				}
 

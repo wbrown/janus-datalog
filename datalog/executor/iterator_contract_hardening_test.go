@@ -40,7 +40,7 @@ func TestPredicateFilterIteratorPropagatesEvaluationError(t *testing.T) {
 		).Iterator(),
 		[]query.Symbol{x},
 		&query.Comparison{
-			Op:    query.OpGT,
+			Op:    datalog.SymGT,
 			Left:  query.VariableTerm{Symbol: missing},
 			Right: query.ConstantTerm{Value: int64(0)},
 		},
@@ -62,10 +62,10 @@ func TestStreamingFilterUsesRelationIteratorAndBuildsReplayCache(t *testing.T) {
 		ExecutorOptions{EnableIteratorComposition: true},
 	)
 	stream.Materialize()
-	filtered := stream.Filter(&ComparisonFilter{
-		Function: ">",
-		Symbol:   x,
-		Value:    int64(1),
+	filtered := stream.FilterWithPredicate(&query.Comparison{
+		Op:    datalog.SymGT,
+		Left:  query.VariableTerm{Symbol: x},
+		Right: query.ConstantTerm{Value: int64(1)},
 	})
 	filteredRows, err := CollectTuples(filtered, nil)
 	require.NoError(t, err)

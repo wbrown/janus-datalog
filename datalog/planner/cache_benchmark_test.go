@@ -120,12 +120,12 @@ func createComplexQuery() *query.Query {
 			},
 			// Add some predicates
 			&query.Comparison{
-				Op:    query.OpGT,
+				Op:    datalog.SymGT,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 				Right: query.ConstantTerm{Value: int64(18)},
 			},
 			&query.Comparison{
-				Op:    query.OpNE,
+				Op:    datalog.SymNE,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?city")},
 				Right: query.ConstantTerm{Value: "Unknown"},
 			},

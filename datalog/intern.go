@@ -150,6 +150,18 @@ var (
 	SymMax   = internSymbol("max")
 )
 
+// Pre-interned comparison operator symbols. Comparison.Op and
+// ChainedComparison.Op carry one of these; dispatch is pointer equality
+// against them.
+var (
+	SymEQ  = internSymbol("=")
+	SymNE  = internSymbol("!=")
+	SymLT  = internSymbol("<")
+	SymLTE = internSymbol("<=")
+	SymGT  = internSymbol(">")
+	SymGTE = internSymbol(">=")
+)
+
 // ClearInterns clears keyword, identity, and symbol intern caches
 // Useful for testing or when memory needs to be reclaimed
 func ClearInterns() {
@@ -163,4 +175,10 @@ func ClearInterns() {
 	SymAvg = internSymbol("avg")
 	SymMin = internSymbol("min")
 	SymMax = internSymbol("max")
+	SymEQ = internSymbol("=")
+	SymNE = internSymbol("!=")
+	SymLT = internSymbol("<")
+	SymLTE = internSymbol("<=")
+	SymGT = internSymbol(">")
+	SymGTE = internSymbol(">=")
 }

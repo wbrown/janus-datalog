@@ -50,24 +50,6 @@ func TestRangeConstraintTypedOrdering(t *testing.T) {
 	}
 }
 
-// TestFilterComparisonEqualityIsStrict pins the filter path's = and != to
-// value equality (type-strict), with the ordering operators remaining the
-// magnitude-based total order — the same split as the predicate layer.
-func TestFilterComparisonEqualityIsStrict(t *testing.T) {
-	if evaluateComparison("=", int64(3), float64(3)) {
-		t.Error("filter (= 3 3.0) must be false: equality is type-strict like join keys")
-	}
-	if !evaluateComparison("!=", int64(3), float64(3)) {
-		t.Error("filter (!= 3 3.0) must be true")
-	}
-	if !evaluateComparison("=", int64(3), int64(3)) {
-		t.Error("filter (= 3 3) must be true")
-	}
-	if !evaluateComparison(">=", int64(3), float64(3)) {
-		t.Error("filter (>= 3 3.0) must be true: ordering compares by magnitude")
-	}
-}
-
 // TestValuesEqualCanonicalStrictness pins the one equality relation
 // (datalog.ValuesEqual): type-strict across the whole domain. Strings become
 // keywords, symbols, and entities only by boundary construction — never by

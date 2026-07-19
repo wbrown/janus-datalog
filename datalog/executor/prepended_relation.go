@@ -107,10 +107,6 @@ func (r *PrependedRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return r.Materialize().Sort(orderBy)
 }
 
-func (r *PrependedRelation) Filter(filter Filter) Relation {
-	return FilterRelation(r, filter)
-}
-
 func (r *PrependedRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	return r.Materialize().FilterWithPredicate(pred)
 }

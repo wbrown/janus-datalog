@@ -42,7 +42,7 @@ func (erroringFunction) ReturnType() string { return "any" }
 // marker outside the query package.
 func alwaysTrue() query.Predicate {
 	return &query.Comparison{
-		Op:    query.OpNE,
+		Op:    datalog.SymNE,
 		Left:  query.ConstantTerm{Value: int64(1)},
 		Right: query.ConstantTerm{Value: int64(2)},
 	}
@@ -102,7 +102,7 @@ func TestFilterWithPredicateAndLookup_PropagatesEvalError(t *testing.T) {
 	// ?missing isn't a symbol in `src`, so every tuple's bindings lack it
 	// and Comparison.Eval returns ("cannot resolve left term ?missing").
 	pred := &query.Comparison{
-		Op:    query.OpEQ,
+		Op:    datalog.SymEQ,
 		Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?missing")},
 		Right: query.ConstantTerm{Value: int64(1)},
 	}

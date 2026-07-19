@@ -49,7 +49,7 @@ func parseEquality(args []query.PatternElement) (query.Predicate, error) {
 		right := elementToTerm(args[1])
 
 		return &query.Comparison{
-			Op:    query.OpEQ,
+			Op:    datalog.SymEQ,
 			Left:  left,
 			Right: right,
 		}, nil
@@ -61,7 +61,7 @@ func parseEquality(args []query.PatternElement) (query.Predicate, error) {
 		}
 
 		return &query.ChainedComparison{
-			Op:    query.OpEQ,
+			Op:    datalog.SymEQ,
 			Terms: terms,
 		}, nil
 	}
@@ -69,19 +69,20 @@ func parseEquality(args []query.PatternElement) (query.Predicate, error) {
 	return nil, fmt.Errorf("equality requires at least 2 arguments, got %d", len(args))
 }
 
-// parseComparison handles <, <=, >, >= predicates
+// parseComparison handles <, <=, >, >= predicates. The operator name resolves
+// here, once, to its pre-interned symbol; downstream dispatch is pointer
+// equality.
 func parseComparison(fn string, args []query.PatternElement) (query.Predicate, error) {
-	// Map function name to operator
-	var op query.CompareOp
+	var op query.Symbol
 	switch fn {
 	case "<":
-		op = query.OpLT
+		op = datalog.SymLT
 	case "<=":
-		op = query.OpLTE
+		op = datalog.SymLTE
 	case ">":
-		op = query.OpGT
+		op = datalog.SymGT
 	case ">=":
-		op = query.OpGTE
+		op = datalog.SymGTE
 	default:
 		return nil, fmt.Errorf("unknown comparison operator: %s", fn)
 	}
@@ -124,7 +125,7 @@ func parseNotEqual(args []query.PatternElement) (query.Predicate, error) {
 
 	return &query.NotEqualPredicate{
 		Comparison: query.Comparison{
-			Op:    query.OpEQ,
+			Op:    datalog.SymEQ,
 			Left:  left,
 			Right: right,
 		},

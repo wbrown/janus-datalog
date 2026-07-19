@@ -3,6 +3,7 @@ package parser
 import (
 	"testing"
 
+	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -170,7 +171,7 @@ func TestNotEqualKeywordIntegration(t *testing.T) {
 			t.Logf("Found NotEqualPredicate: %v", pred)
 
 			// Verify it has the right structure
-			if pred.Op != query.OpEQ {
+			if pred.Op != datalog.SymEQ {
 				t.Errorf("NotEqualPredicate.Op should be OpEQ (for inversion), got %v", pred.Op)
 			}
 		}

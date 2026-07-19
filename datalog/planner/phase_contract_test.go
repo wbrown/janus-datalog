@@ -182,7 +182,7 @@ func TestRealizedPlanRejectsSymbolDroppedBeforeNonAdjacentUse(t *testing.T) {
 					},
 					Find: []query.FindElement{query.FindVariable{Symbol: derived}},
 					Where: []query.Clause{&query.Comparison{
-						Op:    query.OpEQ,
+						Op:    datalog.SymEQ,
 						Left:  query.VariableTerm{Symbol: entity},
 						Right: query.ConstantTerm{Value: int64(1)},
 					}},

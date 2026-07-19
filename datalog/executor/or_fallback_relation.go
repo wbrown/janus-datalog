@@ -550,10 +550,6 @@ func (r *OrFallbackRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return r.Materialize().Sort(orderBy)
 }
 
-func (r *OrFallbackRelation) Filter(filter Filter) Relation {
-	return FilterRelation(r, filter)
-}
-
 func (r *OrFallbackRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	return r.Materialize().FilterWithPredicate(pred)
 }

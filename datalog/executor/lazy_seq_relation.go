@@ -97,14 +97,6 @@ func (r *LazySeqRelation) String() string {
 func (r *LazySeqRelation) Table() string                         { return r.realizeAll().Table() }
 func (r *LazySeqRelation) Sorted() ([]Tuple, error)              { return r.realizeAll().Sorted() }
 func (r *LazySeqRelation) Sort(o []query.OrderByClause) Relation { return r.realizeAll().Sort(o) }
-func (r *LazySeqRelation) Filter(f Filter) Relation {
-	return r.fromIterator(
-		NewFilterIterator(r.Iterator(), r.symbols, f),
-		r.symbols,
-		r.properties,
-	)
-}
-
 func (r *LazySeqRelation) Select(pred func(Tuple) bool) Relation {
 	return r.fromIterator(
 		&selectionIterator{source: r.Iterator(), predicate: pred},

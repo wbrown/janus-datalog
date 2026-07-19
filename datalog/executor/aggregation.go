@@ -749,12 +749,6 @@ func (r *StreamingAggregateRelation) Sort(orderBy []query.OrderByClause) Relatio
 	return r.materialized.Sort(orderBy)
 }
 
-// Filter applies a filter function (delegates to materialized result)
-func (r *StreamingAggregateRelation) Filter(filter Filter) Relation {
-	r.Iterator()
-	return r.materialized.Filter(filter)
-}
-
 // FilterWithPredicate applies a predicate filter (delegates to materialized result)
 func (r *StreamingAggregateRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	r.Iterator()

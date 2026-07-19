@@ -49,20 +49,22 @@ func TestStreamingIntegration(t *testing.T) {
 		assert.Equal(t, -1, rightRel.Size())
 
 		// Apply filter on left (score > 150)
-		scoreFilter := NewSimpleFilter(func(t Tuple) bool {
-			return t[2].(int) > 150
+		filteredLeft := leftRel.FilterWithPredicate(&query.Comparison{
+			Op:    datalog.SymGT,
+			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?score")},
+			Right: query.ConstantTerm{Value: int64(150)},
 		})
-		filteredLeft := leftRel.Filter(scoreFilter)
 
 		// Verify filter returns streaming relation
 		_, isStreaming := filteredLeft.(*StreamingRelation)
 		assert.True(t, isStreaming, "Filter should return StreamingRelation")
 
 		// Apply filter on right (age >= 30)
-		ageFilter := NewSimpleFilter(func(t Tuple) bool {
-			return t[2].(int) >= 30
+		filteredRight := rightRel.FilterWithPredicate(&query.Comparison{
+			Op:    datalog.SymGTE,
+			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
+			Right: query.ConstantTerm{Value: int64(30)},
 		})
-		filteredRight := rightRel.Filter(ageFilter)
 
 		// Verify filter returns streaming relation
 		_, isStreaming = filteredRight.(*StreamingRelation)
@@ -177,7 +179,7 @@ func TestStreamingIntegration(t *testing.T) {
 
 		// Apply predicate filter (x > 30)
 		pred := &query.Comparison{
-			Op:    query.OpGT,
+			Op:    datalog.SymGT,
 			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			Right: query.ConstantTerm{Value: 30},
 		}
@@ -264,18 +266,21 @@ func TestStreamingIntegration(t *testing.T) {
 		// Create a large dataset
 		var largeTuples []Tuple
 		for i := 0; i < 1000; i++ {
-			largeTuples = append(largeTuples, Tuple{i, i * 2, i * 3})
+			// ?y cycles so the 1% filter below selects every 100th tuple —
+			// scattered matches interleave pass and skip in the filter iterator.
+			largeTuples = append(largeTuples, Tuple{i, i % 100, i * 3})
 		}
 		symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
 		source := newMockIterator(largeTuples)
 		rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
-		// Apply aggressive filter (only 1% pass)
-		filter := NewSimpleFilter(func(t Tuple) bool {
-			return t[0].(int)%100 == 0
+		// Apply aggressive filter (only 1% pass, every 100th tuple)
+		filtered := rel.FilterWithPredicate(&query.Comparison{
+			Op:    datalog.SymEQ,
+			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+			Right: query.ConstantTerm{Value: int64(0)},
 		})
-		filtered := rel.Filter(filter)
 
 		// Project to single symbol
 		projected, err := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
@@ -305,7 +310,8 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 	size := 10000
 	var tuples []Tuple
 	for i := 0; i < size; i++ {
-		tuples = append(tuples, Tuple{i, i * 2, i * 3})
+		// ?y cycles so the 1% filter below selects every 100th tuple.
+		tuples = append(tuples, Tuple{i, i % 100, i * 3})
 	}
 	symbols := []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y"), datalog.NewSymbol("?z")}
 
@@ -317,13 +323,14 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			source := newMockIterator(tuples)
-			rel := NewStreamingRelationWithOptions(symbols, source, opts)
+			rel := NewMaterializedRelationWithOptions(symbols, tuples, opts)
 
-			// Filter to 1%
-			filtered := rel.Filter(NewSimpleFilter(func(t Tuple) bool {
-				return t[0].(int)%100 == 0
-			}))
+			// Filter to 1% (every 100th tuple)
+			filtered := rel.FilterWithPredicate(&query.Comparison{
+				Op:    datalog.SymEQ,
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				Right: query.ConstantTerm{Value: int64(0)},
+			})
 
 			// Project
 			projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
@@ -348,10 +355,12 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 			source := newMockIterator(tuples)
 			rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
-			// Filter to 1%
-			filtered := rel.Filter(NewSimpleFilter(func(t Tuple) bool {
-				return t[0].(int)%100 == 0
-			}))
+			// Filter to 1% (every 100th tuple)
+			filtered := rel.FilterWithPredicate(&query.Comparison{
+				Op:    datalog.SymEQ,
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				Right: query.ConstantTerm{Value: int64(0)},
+			})
 
 			// Project
 			projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})
@@ -379,10 +388,12 @@ func BenchmarkStreamingVsMaterialized(b *testing.B) {
 			source := newMockIterator(tuples)
 			rel := NewStreamingRelationWithOptions(symbols, source, opts)
 
-			// Filter to 1%
-			filtered := rel.Filter(NewSimpleFilter(func(t Tuple) bool {
-				return t[0].(int)%100 == 0
-			}))
+			// Filter to 1% (every 100th tuple)
+			filtered := rel.FilterWithPredicate(&query.Comparison{
+				Op:    datalog.SymEQ,
+				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
+				Right: query.ConstantTerm{Value: int64(0)},
+			})
 
 			// Project
 			projected, _ := filtered.Project([]query.Symbol{datalog.NewSymbol("?x")})

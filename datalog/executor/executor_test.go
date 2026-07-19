@@ -191,7 +191,7 @@ func TestExecutorWithFilter(t *testing.T) {
 				},
 			},
 			&query.Comparison{
-				Op:    query.OpLT,
+				Op:    datalog.SymLT,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 				Right: query.ConstantTerm{Value: int64(30)},
 			},
@@ -274,17 +274,17 @@ func TestExecutorMultipleFilters(t *testing.T) {
 				},
 			},
 			&query.Comparison{
-				Op:    query.OpGTE,
+				Op:    datalog.SymGTE,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 				Right: query.ConstantTerm{Value: int64(25)},
 			},
 			&query.Comparison{
-				Op:    query.OpLTE,
+				Op:    datalog.SymLTE,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 				Right: query.ConstantTerm{Value: int64(30)},
 			},
 			&query.Comparison{
-				Op:    query.OpGT,
+				Op:    datalog.SymGT,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?salary")},
 				Right: query.ConstantTerm{Value: int64(50000)},
 			},

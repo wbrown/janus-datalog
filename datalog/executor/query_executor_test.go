@@ -266,7 +266,7 @@ func TestExecutePredicate(t *testing.T) {
 
 		// Predicate: [(< ?x 20)]
 		pred := &query.Comparison{
-			Op:    query.OpLT,
+			Op:    datalog.SymLT,
 			Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?x")},
 			Right: query.ConstantTerm{Value: int64(20)},
 		}
@@ -414,7 +414,7 @@ func TestEndToEndQueries(t *testing.T) {
 					},
 				},
 				&query.Comparison{
-					Op:    query.OpGT,
+					Op:    datalog.SymGT,
 					Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
 					Right: query.ConstantTerm{Value: int64(26)},
 				},

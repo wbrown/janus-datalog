@@ -153,9 +153,6 @@ type Relation interface {
 	// Sort returns a new relation sorted by the specified order-by clauses
 	Sort(orderBy []query.OrderByClause) Relation
 
-	// Filter returns a new relation with only tuples that satisfy the filter
-	Filter(filter Filter) Relation
-
 	// FilterWithPredicate returns a new relation filtered by a query.Predicate
 	FilterWithPredicate(pred query.Predicate) Relation
 
@@ -778,39 +775,6 @@ func (r *MaterializedRelation) Materialize() Relation {
 func (r *MaterializedRelation) Sort(orderBy []query.OrderByClause) Relation {
 	// Use the SortRelation function we created
 	return r.carryErr(SortRelation(r, orderBy))
-}
-
-// Filter returns a new relation with only tuples that satisfy the filter
-func (r *MaterializedRelation) Filter(filter Filter) Relation {
-	// Check if all required symbols are present
-	for _, sym := range filter.RequiredSymbols() {
-		found := false
-		for _, s := range r.symbols {
-			if s == sym {
-				found = true
-				break
-			}
-		}
-		if !found {
-			// Missing required symbol - return empty relation
-			return NewMaterializedRelationWithOptions(r.symbols, nil, r.options)
-		}
-	}
-
-	// Apply filter directly to our tuples
-	var filtered []Tuple
-	for _, tuple := range r.tuples {
-		if filter.Evaluate(tuple, r.symbols) {
-			filtered = append(filtered, tuple)
-		}
-	}
-
-	return newMaterializedRelationFromSet(
-		r.symbols,
-		filtered,
-		r.options,
-		r.properties,
-	)
 }
 
 // FilterWithPredicate filters the relation using a query.Predicate
@@ -1466,17 +1430,6 @@ func (r *StreamingRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return mat.Sort(orderBy)
 }
 
-// Filter returns a new relation with only tuples that satisfy the filter
-func (r *StreamingRelation) Filter(filter Filter) Relation {
-	if r.options.EnableIteratorComposition {
-		// Use iterator composition for true streaming
-		filterIter := NewFilterIterator(r.Iterator(), r.symbols, filter)
-		return NewStreamingRelationWithProperties(r.symbols, filterIter, r.options, r.properties)
-	}
-	// Fall back to current behavior
-	return FilterRelation(r, filter)
-}
-
 // FilterWithPredicate filters the relation using a query.Predicate
 func (r *StreamingRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	if r.options.EnableIteratorComposition {
@@ -1756,11 +1709,6 @@ func (p *ProductRelation) Materialize() Relation {
 
 func (p *ProductRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return p.Materialize().Sort(orderBy)
-}
-
-func (p *ProductRelation) Filter(filter Filter) Relation {
-	// Materialize then filter
-	return p.Materialize().Filter(filter)
 }
 
 func (p *ProductRelation) FilterWithPredicate(pred query.Predicate) Relation {

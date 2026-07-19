@@ -41,7 +41,6 @@ func (r *mockUnsafeRelation) Sorted() ([]Tuple, error)                          
 func (r *mockUnsafeRelation) Project([]query.Symbol) (Relation, error)               { return nil, nil }
 func (r *mockUnsafeRelation) Materialize() Relation                                  { return r }
 func (r *mockUnsafeRelation) Sort([]query.OrderByClause) Relation                    { return nil }
-func (r *mockUnsafeRelation) Filter(Filter) Relation                                 { return nil }
 func (r *mockUnsafeRelation) FilterWithPredicate(query.Predicate) Relation           { return nil }
 func (r *mockUnsafeRelation) EvaluateFunction(query.Function, query.Symbol) Relation { return nil }
 func (r *mockUnsafeRelation) Select(func(Tuple) bool) Relation                       { return nil }

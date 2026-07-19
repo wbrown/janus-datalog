@@ -159,11 +159,6 @@ func (ur *UnionRelation) Sort(orderBy []query.OrderByClause) Relation {
 	return ur.Materialize().Sort(orderBy)
 }
 
-// Filter returns a filtered relation
-func (ur *UnionRelation) Filter(filter Filter) Relation {
-	return ur.Materialize().Filter(filter)
-}
-
 // FilterWithPredicate returns a filtered relation
 func (ur *UnionRelation) FilterWithPredicate(pred query.Predicate) Relation {
 	return ur.Materialize().FilterWithPredicate(pred)

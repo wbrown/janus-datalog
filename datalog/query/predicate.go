@@ -23,18 +23,6 @@ type Predicate interface {
 	CanPushToStorage() bool // Can this be evaluated at storage level?
 }
 
-// CompareOp represents comparison operators
-type CompareOp string
-
-const (
-	OpEQ  CompareOp = "="
-	OpNE  CompareOp = "!="
-	OpLT  CompareOp = "<"
-	OpLTE CompareOp = "<="
-	OpGT  CompareOp = ">"
-	OpGTE CompareOp = ">="
-)
-
 // Term represents either a variable or a constant value in a predicate
 type Term interface {
 	// Resolve returns the value of this term given bindings
@@ -84,8 +72,10 @@ func (c ConstantTerm) String() string {
 }
 
 // Comparison implements comparison predicates: [(< ?x 10)], [(>= ?y ?z)], etc.
+// Op is one of the pre-interned operator symbols (datalog.SymEQ, SymNE,
+// SymLT, SymLTE, SymGT, SymGTE); dispatch is pointer equality.
 type Comparison struct {
-	Op    CompareOp
+	Op    Symbol
 	Left  Term
 	Right Term
 }
@@ -114,76 +104,21 @@ func (c Comparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 	// compare by magnitude — (>= 3 3.0) is true while (= 3 3.0) is false,
 	// as in Clojure.
 	switch c.Op {
-	case OpEQ:
+	case datalog.SymEQ:
 		return datalog.ValuesEqual(leftVal, rightVal), nil
-	case OpNE:
+	case datalog.SymNE:
 		return !datalog.ValuesEqual(leftVal, rightVal), nil
-	case OpLT:
+	case datalog.SymLT:
 		return datalog.CompareValues(leftVal, rightVal) < 0, nil
-	case OpLTE:
+	case datalog.SymLTE:
 		return datalog.CompareValues(leftVal, rightVal) <= 0, nil
-	case OpGT:
+	case datalog.SymGT:
 		return datalog.CompareValues(leftVal, rightVal) > 0, nil
-	case OpGTE:
+	case datalog.SymGTE:
 		return datalog.CompareValues(leftVal, rightVal) >= 0, nil
 	default:
-		return false, fmt.Errorf("unknown comparison operator: %s", c.Op)
+		return false, fmt.Errorf("unknown comparison operator: %v", c.Op)
 	}
-}
-
-// Methods for planner analysis
-func (c *Comparison) classifyType() string {
-	if c.Op == OpEQ {
-		return "equality"
-	}
-	return "comparison"
-}
-
-func (c *Comparison) operatorString() string {
-	switch c.Op {
-	case OpEQ:
-		return "="
-	case OpNE:
-		return "!="
-	case OpLT:
-		return "<"
-	case OpLTE:
-		return "<="
-	case OpGT:
-		return ">"
-	case OpGTE:
-		return ">="
-	default:
-		return "unknown"
-	}
-}
-
-func (c *Comparison) extractLeftVar() Symbol {
-	if v, ok := c.Left.(VariableTerm); ok {
-		return v.Symbol
-	}
-	return nil
-}
-
-func (c *Comparison) extractRightVar() Symbol {
-	if v, ok := c.Right.(VariableTerm); ok {
-		return v.Symbol
-	}
-	return nil
-}
-
-func (c *Comparison) extractLeftValue() interface{} {
-	if ct, ok := c.Left.(ConstantTerm); ok {
-		return ct.Value
-	}
-	return nil
-}
-
-func (c *Comparison) extractRightValue() interface{} {
-	if ct, ok := c.Right.(ConstantTerm); ok {
-		return ct.Value
-	}
-	return nil
 }
 
 func (c Comparison) String() string {
@@ -193,11 +128,11 @@ func (c Comparison) String() string {
 func (c Comparison) Selectivity() float64 {
 	// Basic heuristics
 	switch c.Op {
-	case OpEQ:
+	case datalog.SymEQ:
 		return 0.1 // Equality is typically selective
-	case OpLT, OpGT:
+	case datalog.SymLT, datalog.SymGT:
 		return 0.3 // Less/greater typically filter ~70%
-	case OpLTE, OpGTE:
+	case datalog.SymLTE, datalog.SymGTE:
 		return 0.33 // Slightly less selective
 	default:
 		return 0.5
@@ -212,8 +147,9 @@ func (c Comparison) CanPushToStorage() bool {
 }
 
 // ChainedComparison implements Clojure-style chained comparisons: [(< 0 ?x 100)]
+// Op is one of the pre-interned operator symbols, as in Comparison.
 type ChainedComparison struct {
-	Op    CompareOp
+	Op    Symbol
 	Terms []Term
 }
 
@@ -247,15 +183,15 @@ func (c ChainedComparison) Eval(bindings map[Symbol]interface{}) (bool, error) {
 		// Comparison.Eval.
 		ok := false
 		switch c.Op {
-		case OpLT:
+		case datalog.SymLT:
 			ok = datalog.CompareValues(leftVal, rightVal) < 0
-		case OpLTE:
+		case datalog.SymLTE:
 			ok = datalog.CompareValues(leftVal, rightVal) <= 0
-		case OpGT:
+		case datalog.SymGT:
 			ok = datalog.CompareValues(leftVal, rightVal) > 0
-		case OpGTE:
+		case datalog.SymGTE:
 			ok = datalog.CompareValues(leftVal, rightVal) >= 0
-		case OpEQ:
+		case datalog.SymEQ:
 			ok = datalog.ValuesEqual(leftVal, rightVal)
 		}
 

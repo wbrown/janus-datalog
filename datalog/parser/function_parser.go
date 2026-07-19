@@ -85,20 +85,20 @@ func parseComparisonFunction(fn string, args []query.PatternElement) (query.Func
 		return nil, fmt.Errorf("%s requires exactly 2 arguments, got %d", fn, len(args))
 	}
 
-	var op query.CompareOp
+	var op query.Symbol
 	switch fn {
 	case "=":
-		op = query.OpEQ
+		op = datalog.SymEQ
 	case "<":
-		op = query.OpLT
+		op = datalog.SymLT
 	case "<=":
-		op = query.OpLTE
+		op = datalog.SymLTE
 	case ">":
-		op = query.OpGT
+		op = datalog.SymGT
 	case ">=":
-		op = query.OpGTE
+		op = datalog.SymGTE
 	case "!=":
-		op = query.OpNE
+		op = datalog.SymNE
 	}
 
 	comparison := &query.Comparison{
