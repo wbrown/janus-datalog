@@ -58,8 +58,8 @@ func TestEffectiveOrderByDropsConstantKeys(t *testing.T) {
 			ScalarInput{Symbol: status},
 		},
 		OrderBy: []OrderByClause{
-			{Variable: status, Direction: OrderAsc},
-			{Variable: age, Direction: OrderDesc},
+			{Variable: status, Descending: false},
+			{Variable: age, Descending: true},
 		},
 	}
 
@@ -77,7 +77,7 @@ func TestRetainedSortSymbols(t *testing.T) {
 	t.Run("non-projected where-bound key is retained", func(t *testing.T) {
 		q := &Query{
 			Find:    []FindElement{FindVariable{Symbol: name}},
-			OrderBy: []OrderByClause{{Variable: age, Direction: OrderAsc}},
+			OrderBy: []OrderByClause{{Variable: age, Descending: false}},
 		}
 		retained := RetainedSortSymbols(q)
 		if len(retained) != 1 || retained[0] != age {
@@ -88,7 +88,7 @@ func TestRetainedSortSymbols(t *testing.T) {
 	t.Run("projected key is not retained", func(t *testing.T) {
 		q := &Query{
 			Find:    []FindElement{FindVariable{Symbol: name}},
-			OrderBy: []OrderByClause{{Variable: name, Direction: OrderAsc}},
+			OrderBy: []OrderByClause{{Variable: name, Descending: false}},
 		}
 		if retained := RetainedSortSymbols(q); len(retained) != 0 {
 			t.Fatalf("expected no retention, got %v", retained)
@@ -99,7 +99,7 @@ func TestRetainedSortSymbols(t *testing.T) {
 		q := &Query{
 			Find:    []FindElement{FindVariable{Symbol: name}},
 			In:      []InputSpec{ScalarInput{Symbol: status}},
-			OrderBy: []OrderByClause{{Variable: status, Direction: OrderAsc}},
+			OrderBy: []OrderByClause{{Variable: status, Descending: false}},
 		}
 		if retained := RetainedSortSymbols(q); len(retained) != 0 {
 			t.Fatalf("expected no retention, got %v", retained)
@@ -112,7 +112,7 @@ func TestRetainedSortSymbols(t *testing.T) {
 				FindVariable{Symbol: name},
 				FindAggregate{Function: datalog.SymCount, Arg: age},
 			},
-			OrderBy: []OrderByClause{{Variable: age, Direction: OrderAsc}},
+			OrderBy: []OrderByClause{{Variable: age, Descending: false}},
 		}
 		if retained := RetainedSortSymbols(q); len(retained) != 0 {
 			t.Fatalf("aggregate find must never be augmented, got %v", retained)
@@ -122,7 +122,7 @@ func TestRetainedSortSymbols(t *testing.T) {
 	t.Run("pull variable counts as projected", func(t *testing.T) {
 		q := &Query{
 			Find:    []FindElement{FindPull{Variable: name}},
-			OrderBy: []OrderByClause{{Variable: name, Direction: OrderAsc}},
+			OrderBy: []OrderByClause{{Variable: name, Descending: false}},
 		}
 		if retained := RetainedSortSymbols(q); len(retained) != 0 {
 			t.Fatalf("expected no retention for pull variable, got %v", retained)
@@ -133,8 +133,8 @@ func TestRetainedSortSymbols(t *testing.T) {
 		q := &Query{
 			Find: []FindElement{FindVariable{Symbol: name}},
 			OrderBy: []OrderByClause{
-				{Variable: age, Direction: OrderAsc},
-				{Variable: age, Direction: OrderDesc},
+				{Variable: age, Descending: false},
+				{Variable: age, Descending: true},
 			},
 		}
 		if retained := RetainedSortSymbols(q); len(retained) != 1 {

@@ -149,7 +149,7 @@ func TestScanQueryFingerprintIncludesPhysicalRequirements(t *testing.T) {
 	base := &query.Query{Where: []query.Clause{pattern}}
 	ordered := &query.Query{
 		Where:   []query.Clause{pattern},
-		OrderBy: []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+		OrderBy: []query.OrderByClause{{Variable: entity, Descending: false}},
 	}
 	limitedOne := &query.Query{Where: []query.Clause{pattern}, Limit: &limitOne}
 	limitedTwo := &query.Query{Where: []query.Clause{pattern}, Limit: &limitTwo}
@@ -173,11 +173,11 @@ func TestScanQueryFingerprintCanonicalizesRenamedOrderVariables(t *testing.T) {
 	}}
 	leftQuery := &query.Query{
 		Where:   []query.Clause{left},
-		OrderBy: []query.OrderByClause{{Variable: leftEntity, Direction: query.OrderDesc}},
+		OrderBy: []query.OrderByClause{{Variable: leftEntity, Descending: true}},
 	}
 	rightQuery := &query.Query{
 		Where:   []query.Clause{right},
-		OrderBy: []query.OrderByClause{{Variable: rightEntity, Direction: query.OrderDesc}},
+		OrderBy: []query.OrderByClause{{Variable: rightEntity, Descending: true}},
 	}
 
 	assert.Equal(t,

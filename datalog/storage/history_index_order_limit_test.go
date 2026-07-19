@@ -805,8 +805,8 @@ func TestHistoryATEVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	q := &query.Query{
 		Where: []query.Clause{pattern},
 		OrderBy: []query.OrderByClause{
-			{Variable: tx, Direction: query.OrderDesc},
-			{Variable: entity, Direction: query.OrderAsc},
+			{Variable: tx, Descending: true},
+			{Variable: entity, Descending: false},
 		},
 		Limit: &limit,
 	}
@@ -821,7 +821,7 @@ func TestHistoryATEVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	_, ok = historyATEVProperties(q, pattern, false)
 	require.False(t, ok, "latest/as-of modes must decline Tx-primary ATEV")
 
-	q.OrderBy[0].Direction = query.OrderAsc
+	q.OrderBy[0].Descending = false
 	_, ok = historyATEVProperties(q, pattern, true)
 	require.False(t, ok, "forward ATEV cannot satisfy ascending Tx")
 }
@@ -841,9 +841,9 @@ func TestHistoryTAEVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	q := &query.Query{
 		Where: []query.Clause{pattern},
 		OrderBy: []query.OrderByClause{
-			{Variable: tx, Direction: query.OrderDesc},
-			{Variable: attribute, Direction: query.OrderAsc},
-			{Variable: entity, Direction: query.OrderAsc},
+			{Variable: tx, Descending: true},
+			{Variable: attribute, Descending: false},
+			{Variable: entity, Descending: false},
 		},
 		Limit: &limit,
 	}
@@ -869,10 +869,10 @@ func TestHistoryTAEVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	require.False(t, ok, "TAEV order is useful for finalization only with a limit")
 	q.Limit = &limit
 
-	q.OrderBy[0].Direction = query.OrderAsc
+	q.OrderBy[0].Descending = false
 	_, ok = historyTAEVProperties(q, pattern, true)
 	require.False(t, ok, "forward TAEV cannot satisfy ascending Tx")
-	q.OrderBy[0].Direction = query.OrderDesc
+	q.OrderBy[0].Descending = true
 
 	pattern.Elements[1] = query.Constant{Value: datalog.NewKeyword(":event/value")}
 	_, ok = historyTAEVProperties(q, pattern, true)
@@ -893,8 +893,8 @@ func TestHistoryAETVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	q := &query.Query{
 		Where: []query.Clause{pattern},
 		OrderBy: []query.OrderByClause{
-			{Variable: entity, Direction: query.OrderAsc},
-			{Variable: tx, Direction: query.OrderDesc},
+			{Variable: entity, Descending: false},
+			{Variable: tx, Descending: true},
 		},
 		Limit: &limit,
 	}
@@ -915,14 +915,14 @@ func TestHistoryAETVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	_, ok = historyAETVProperties(q, pattern, true)
 	require.False(t, ok, "entity alone is not a total history order across versions")
 	q.OrderBy = []query.OrderByClause{
-		{Variable: entity, Direction: query.OrderAsc},
-		{Variable: tx, Direction: query.OrderAsc},
+		{Variable: entity, Descending: false},
+		{Variable: tx, Descending: false},
 	}
 	_, ok = historyAETVProperties(q, pattern, true)
 	require.False(t, ok, "forward AETV cannot satisfy ascending Tx within an entity")
 
 	pattern.Elements[2] = query.Constant{Value: int64(42)}
-	q.OrderBy[1].Direction = query.OrderDesc
+	q.OrderBy[1].Descending = true
 	_, ok = historyAETVProperties(q, pattern, true)
 	require.False(t, ok, "filtered values are outside the exact-N AETV shape")
 }
@@ -941,8 +941,8 @@ func TestHistoryEATVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	q := &query.Query{
 		Where: []query.Clause{pattern},
 		OrderBy: []query.OrderByClause{
-			{Variable: attribute, Direction: query.OrderAsc},
-			{Variable: tx, Direction: query.OrderDesc},
+			{Variable: attribute, Descending: false},
+			{Variable: tx, Descending: true},
 		},
 		Limit: &limit,
 	}
@@ -963,14 +963,14 @@ func TestHistoryEATVPropertiesRequireSafeDatalogShape(t *testing.T) {
 	_, ok = historyEATVProperties(q, pattern, true)
 	require.False(t, ok, "attribute alone is not a total history order across versions")
 	q.OrderBy = []query.OrderByClause{
-		{Variable: attribute, Direction: query.OrderAsc},
-		{Variable: tx, Direction: query.OrderAsc},
+		{Variable: attribute, Descending: false},
+		{Variable: tx, Descending: false},
 	}
 	_, ok = historyEATVProperties(q, pattern, true)
 	require.False(t, ok, "forward EATV cannot satisfy ascending Tx within an attribute")
 
 	pattern.Elements[2] = query.Constant{Value: int64(42)}
-	q.OrderBy[1].Direction = query.OrderDesc
+	q.OrderBy[1].Descending = true
 	_, ok = historyEATVProperties(q, pattern, true)
 	require.False(t, ok, "filtered values are outside the exact-N EATV shape")
 }

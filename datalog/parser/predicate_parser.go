@@ -16,6 +16,8 @@ func parsePredicate(fn string, args []query.PatternElement) (query.Predicate, er
 		return parseNotEqual(args)
 	case "<", "<=", ">", ">=":
 		return parseComparison(fn, args)
+	case "str/starts-with?":
+		return parseStrStartsWith(args)
 	case "ground":
 		return parseGround(args)
 	case "missing":
@@ -129,6 +131,17 @@ func parseNotEqual(args []query.PatternElement) (query.Predicate, error) {
 			Left:  left,
 			Right: right,
 		},
+	}, nil
+}
+
+// parseStrStartsWith handles str/starts-with? predicates
+func parseStrStartsWith(args []query.PatternElement) (query.Predicate, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("str/starts-with? requires exactly 2 arguments, got %d", len(args))
+	}
+	return &query.StrStartsWithPredicate{
+		Value:  elementToTerm(args[0]),
+		Prefix: elementToTerm(args[1]),
 	}, nil
 }
 

@@ -15,8 +15,8 @@ func TestRelationPropertiesAreStableAtInterfaceBoundary(t *testing.T) {
 	b := datalog.NewSymbol("?b")
 	properties := RelationProperties{
 		Ordering: []query.OrderByClause{
-			{Variable: a, Direction: query.OrderAsc},
-			{Variable: b, Direction: query.OrderDesc},
+			{Variable: a, Descending: false},
+			{Variable: b, Descending: true},
 		},
 		Keys: [][]query.Symbol{{a}, {a, b}},
 	}
@@ -38,8 +38,8 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 	outerB := datalog.NewSymbol("?outer-b")
 	properties := RelationProperties{
 		Ordering: []query.OrderByClause{
-			{Variable: innerA, Direction: query.OrderAsc},
-			{Variable: innerB, Direction: query.OrderDesc},
+			{Variable: innerA, Descending: false},
+			{Variable: innerB, Descending: true},
 		},
 		Keys: [][]query.Symbol{{innerA}, {innerA, innerB}},
 	}
@@ -51,8 +51,8 @@ func TestRelationPropertiesRenameSymbols(t *testing.T) {
 	require.Equal(t,
 		RelationProperties{
 			Ordering: []query.OrderByClause{
-				{Variable: outerA, Direction: query.OrderAsc},
-				{Variable: outerB, Direction: query.OrderDesc},
+				{Variable: outerA, Descending: false},
+				{Variable: outerB, Descending: true},
 			},
 			Keys: [][]query.Symbol{{outerA}, {outerA, outerB}},
 		},
@@ -89,8 +89,8 @@ func TestRelationPropertyPropagation(t *testing.T) {
 	c := datalog.NewSymbol("?c")
 	properties := RelationProperties{
 		Ordering: []query.OrderByClause{
-			{Variable: a, Direction: query.OrderAsc},
-			{Variable: b, Direction: query.OrderDesc},
+			{Variable: a, Descending: false},
+			{Variable: b, Descending: true},
 		},
 		Keys: [][]query.Symbol{{a}, {a, b}},
 	}
@@ -111,7 +111,7 @@ func TestRelationPropertyPropagation(t *testing.T) {
 	projectedA, err := rel.Project([]query.Symbol{a})
 	require.NoError(t, err)
 	require.Equal(t, RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: a, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: a, Descending: false}},
 		Keys:     [][]query.Symbol{{a}},
 	}, projectedA.Properties())
 
@@ -120,9 +120,9 @@ func TestRelationPropertyPropagation(t *testing.T) {
 	require.Equal(t, RelationProperties{}, projectedB.Properties(),
 		"dropping the leading order symbol and every key must clear properties")
 
-	sorted := rel.Sort([]query.OrderByClause{{Variable: b, Direction: query.OrderDesc}})
+	sorted := rel.Sort([]query.OrderByClause{{Variable: b, Descending: true}})
 	require.Equal(t, RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: b, Direction: query.OrderDesc}},
+		Ordering: []query.OrderByClause{{Variable: b, Descending: true}},
 		Keys:     [][]query.Symbol{{a}, {a, b}},
 	}, sorted.Properties())
 
@@ -140,7 +140,7 @@ func TestRelationPropertiesWhenAddingSymbols(t *testing.T) {
 	b := datalog.NewSymbol("?b")
 	fresh := datalog.NewSymbol("?fresh")
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: a, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: a, Descending: false}},
 		Keys:     [][]query.Symbol{{a}, {a, b}},
 	}
 
@@ -157,7 +157,7 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 	symbols := []query.Symbol{a, b}
 	tuples := []Tuple{{int64(1), int64(2)}, {int64(2), int64(1)}}
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: a, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: a, Descending: false}},
 		Keys:     [][]query.Symbol{{a}},
 	}
 	open := func() *StreamingRelation {
@@ -201,19 +201,19 @@ func TestRelationPropertiesSatisfyOrderingPrefixes(t *testing.T) {
 	a := datalog.NewSymbol("?a")
 	b := datalog.NewSymbol("?b")
 	properties := RelationProperties{Ordering: []query.OrderByClause{
-		{Variable: a, Direction: query.OrderAsc},
-		{Variable: b, Direction: query.OrderDesc},
+		{Variable: a, Descending: false},
+		{Variable: b, Descending: true},
 	}}
 
 	require.True(t, properties.satisfiesOrdering([]query.OrderByClause{
-		{Variable: a, Direction: query.OrderAsc},
+		{Variable: a, Descending: false},
 	}))
 	require.True(t, properties.satisfiesOrdering(properties.Ordering))
 	require.False(t, properties.satisfiesOrdering([]query.OrderByClause{
-		{Variable: a, Direction: query.OrderDesc},
+		{Variable: a, Descending: true},
 	}))
 	require.False(t, properties.satisfiesOrdering([]query.OrderByClause{
-		{Variable: b, Direction: query.OrderDesc},
+		{Variable: b, Descending: true},
 	}))
 }
 
@@ -411,7 +411,7 @@ func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
 	id := datalog.NewSymbol("?id")
 	value := datalog.NewSymbol("?value")
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: id, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: id, Descending: false}},
 		Keys:     [][]query.Symbol{{id}},
 	}
 	left := NewMaterializedRelationWithProperties(

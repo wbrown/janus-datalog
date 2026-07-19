@@ -7,20 +7,21 @@ type Clause interface {
 }
 
 // Ensure our types implement Clause
-func (*DataPattern) clause()         {}
-func (*Comparison) clause()          {}
-func (*ChainedComparison) clause()   {}
-func (*NotEqualPredicate) clause()   {}
-func (*GroundPredicate) clause()     {}
-func (*MissingPredicate) clause()    {}
-func (*Expression) clause()          {}
-func (*Subquery) clause()            {}
-func (*NotClause) clause()           {}
-func (*NotJoinClause) clause()       {}
-func (*OrClause) clause()            {}
-func (*OrJoinClause) clause()        {}
-func (*OrDefaultClause) clause()     {}
-func (*OrDefaultJoinClause) clause() {}
+func (*DataPattern) clause()            {}
+func (*Comparison) clause()             {}
+func (*ChainedComparison) clause()      {}
+func (*NotEqualPredicate) clause()      {}
+func (*GroundPredicate) clause()        {}
+func (*MissingPredicate) clause()       {}
+func (*StrStartsWithPredicate) clause() {}
+func (*Expression) clause()             {}
+func (*Subquery) clause()               {}
+func (*NotClause) clause()              {}
+func (*NotJoinClause) clause()          {}
+func (*OrClause) clause()               {}
+func (*OrJoinClause) clause()           {}
+func (*OrDefaultClause) clause()        {}
+func (*OrDefaultJoinClause) clause()    {}
 
 // Expression wraps a Function with an optional binding
 type Expression struct {

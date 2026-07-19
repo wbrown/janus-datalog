@@ -639,14 +639,14 @@ func TestOrderSpecs(t *testing.T) {
 
 	// Test Asc
 	ascSpec := Asc(name)
-	if ascSpec.direction != query.OrderAsc {
-		t.Errorf("Expected OrderAsc, got %v", ascSpec.direction)
+	if ascSpec.descending {
+		t.Errorf("Asc must produce ascending order, got descending")
 	}
 
 	// Test Desc
 	descSpec := Desc(name)
-	if descSpec.direction != query.OrderDesc {
-		t.Errorf("Expected OrderDesc, got %v", descSpec.direction)
+	if !descSpec.descending {
+		t.Errorf("Desc must produce descending order, got ascending")
 	}
 }
 

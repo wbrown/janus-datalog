@@ -20,7 +20,7 @@ func TestOrDefaultSingletonBranchesPreserveOuterProperties(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	name := datalog.NewSymbol("?name")
 	value := datalog.NewSymbol("?value")
-	ordering := []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}}
+	ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
 	outer := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, name},
 		[]Tuple{{int64(1), "one"}, {int64(2), "two"}},
@@ -201,7 +201,7 @@ func TestCorrelatedUnionDeduplicatesAcrossBranches(t *testing.T) {
 func TestOrBranchOverwriteInvalidatesOuterProperty(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	name := datalog.NewSymbol("?name")
-	ordering := []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}}
+	ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
 	outer := NewMaterializedRelationWithProperties(
 		[]query.Symbol{entity, name},
 		[]Tuple{{int64(1), "one"}},
@@ -240,8 +240,8 @@ func TestOrBranchOverwriteRetainsUnaffectedOrderingPrefix(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{
 			Ordering: []query.OrderByClause{
-				{Variable: entity, Direction: query.OrderAsc},
-				{Variable: name, Direction: query.OrderAsc},
+				{Variable: entity, Descending: false},
+				{Variable: name, Descending: false},
 			},
 			Keys: [][]query.Symbol{{entity}},
 		},
@@ -261,7 +261,7 @@ func TestOrBranchOverwriteRetainsUnaffectedOrderingPrefix(t *testing.T) {
 	)
 
 	require.Equal(t,
-		[]query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+		[]query.OrderByClause{{Variable: entity, Descending: false}},
 		rel.Properties().Ordering,
 	)
 	require.True(t, containsSymbolSet(rel.Properties().Keys, []query.Symbol{entity}))
@@ -452,7 +452,7 @@ func runOrPropertyDifferential(t *testing.T, seed int64) {
 				})
 			}
 		}
-		ordering := []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}}
+		ordering := []query.OrderByClause{{Variable: entity, Descending: false}}
 		sort.Slice(outerTuples, func(i, j int) bool {
 			return compareTuplesByOrder(outerTuples[i], outerTuples[j], ordering, []int{0}) < 0
 		})

@@ -30,7 +30,7 @@ func TestTerminalSymbolsCoverEveryFinalizationDependency(t *testing.T) {
 
 	orderedQuery := &query.Query{
 		Find:    []query.FindElement{query.FindVariable{Symbol: group}},
-		OrderBy: []query.OrderByClause{{Variable: sortKey, Direction: query.OrderAsc}},
+		OrderBy: []query.OrderByClause{{Variable: sortKey, Descending: false}},
 	}
 	require.Equal(t,
 		[]query.Symbol{group, sortKey},

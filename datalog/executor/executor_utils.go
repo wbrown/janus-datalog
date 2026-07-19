@@ -130,7 +130,7 @@ func orderBySymbolIndices(symbols []query.Symbol, orderBy []query.OrderByClause)
 func compareTuplesByOrder(left, right Tuple, orderBy []query.OrderByClause, indices []int) int {
 	for i, clause := range orderBy {
 		cmp := datalog.CompareValues(left[indices[i]], right[indices[i]])
-		if clause.Direction == query.OrderDesc {
+		if clause.Descending {
 			cmp = -cmp
 		}
 		if cmp != 0 {

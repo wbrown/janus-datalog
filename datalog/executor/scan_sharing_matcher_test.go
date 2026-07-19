@@ -267,7 +267,7 @@ func TestScanSharingMatcherSeparatesPhysicalRequirements(t *testing.T) {
 	require.NoError(t, err)
 	_, err = matcher.Match(&query.Query{
 		Where:   []query.Clause{pattern},
-		OrderBy: []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+		OrderBy: []query.OrderByClause{{Variable: entity, Descending: false}},
 		Limit:   &one,
 	}, nil)
 	require.NoError(t, err)
@@ -296,7 +296,7 @@ func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
 		symbols: first.Symbols(),
 		options: options,
 		properties: RelationProperties{
-			Ordering: []query.OrderByClause{{Variable: entity, Direction: query.OrderAsc}},
+			Ordering: []query.OrderByClause{{Variable: entity, Descending: false}},
 			Keys:     [][]query.Symbol{{entity}},
 		},
 	}
@@ -311,7 +311,7 @@ func TestScanSharingMatcherPreservesAndRemapsProperties(t *testing.T) {
 	require.Equal(t, options, hit.Options())
 	require.Equal(t, inner.properties, miss.Properties())
 	require.Equal(t, RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: renamedEntity, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: renamedEntity, Descending: false}},
 		Keys:     [][]query.Symbol{{renamedEntity}},
 	}, hit.Properties())
 }

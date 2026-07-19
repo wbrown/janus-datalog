@@ -86,14 +86,14 @@ One interned time-field symbol set would replace all three; two of the three cop
 
 ### B3. `query.FunctionPredicate.Fn` — per-tuple string switch, mostly unimplemented
 
-**Status**: Open
+**Status**: Resolved (2026-07-19), with the extension-mechanism question ruled. `str/starts-with?` is a concrete predicate type (`StrStartsWithPredicate`: unbound term errors, non-string operand is a typed non-match, `strings.HasPrefix` otherwise), constructed by the parser at parse time — no per-tuple string switch. `FunctionPredicate` remains as the placeholder for names the parser doesn't recognize; its `Eval` errors unconditionally. Ruled: user-defined functions ARE a supported feature (`str/starts-with?` was their forcing test), so the placeholder's replacement is the C5 registry wiring, not deletion.
 **Site**: `datalog/query/predicate.go` (`Fn string`; `Eval` switches per tuple; only `"str/starts-with?"` is implemented, everything else errors)
 
 Symbolizing the string is less the point than deciding what this predicate extension mechanism should be (a registry of concrete predicate types, most likely). Constructed only by the parser.
 
 ### B4. `query.OrderDirection` — minor
 
-**Status**: Open
+**Status**: Resolved (2026-07-19). `OrderByClause` carries `Descending bool` (zero value = ascending); `OrderDirection`/`OrderAsc`/`OrderDesc` are deleted. Removed Go API — changelog-worthy.
 **Site**: `datalog/query/types.go` (`type OrderDirection string`; compared per sort-comparison in `executor_utils.go` `compareTuplesByOrder`)
 
 Two-valued flag, typed-constant comparison rather than multi-way dispatch. If touched at all, the fix is a bool/int, not a symbol. Lowest priority in this class.

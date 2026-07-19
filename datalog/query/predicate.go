@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog"
 )
@@ -326,7 +327,60 @@ func (n NotEqualPredicate) String() string {
 	return fmt.Sprintf("[(!= %s %s)]", n.Left, n.Right)
 }
 
-// FunctionPredicate handles arbitrary function predicates like str/starts-with?
+// StrStartsWithPredicate checks that a string value starts with a string
+// prefix: [(str/starts-with? ?name "Dr.")]. It is a concrete predicate type
+// constructed at parse — no name dispatch at evaluation. A non-string value
+// or prefix is the equality join's typed non-match; an unbound variable is
+// an error.
+type StrStartsWithPredicate struct {
+	Value  Term
+	Prefix Term
+}
+
+func (s StrStartsWithPredicate) RequiredSymbols() []Symbol {
+	symbols := s.Value.RequiredSymbols()
+	symbols = append(symbols, s.Prefix.RequiredSymbols()...)
+	return symbols
+}
+
+func (s StrStartsWithPredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
+	value, ok := s.Value.Resolve(bindings)
+	if !ok {
+		return false, fmt.Errorf("cannot resolve term %s", s.Value)
+	}
+	prefix, ok := s.Prefix.Resolve(bindings)
+	if !ok {
+		return false, fmt.Errorf("cannot resolve term %s", s.Prefix)
+	}
+
+	str, ok := value.(string)
+	if !ok {
+		return false, nil // Typed non-match: only strings have prefixes
+	}
+	pre, ok := prefix.(string)
+	if !ok {
+		return false, nil
+	}
+	return strings.HasPrefix(str, pre), nil
+}
+
+func (s StrStartsWithPredicate) String() string {
+	return fmt.Sprintf("[(str/starts-with? %s %s)]", s.Value, s.Prefix)
+}
+
+func (s StrStartsWithPredicate) Selectivity() float64 {
+	return 0.5
+}
+
+func (s StrStartsWithPredicate) CanPushToStorage() bool {
+	return false
+}
+
+// FunctionPredicate carries a predicate function name the engine does not
+// implement as a concrete type. It is the placeholder for user-defined
+// predicate functions, which are intended to be supported but are not yet
+// wired to a registration mechanism (docs/reviews/ANTIPATTERN_AUDIT_2026_07.md,
+// C5). Evaluation errors loudly.
 type FunctionPredicate struct {
 	Fn   string
 	Args []PatternElement
@@ -342,56 +396,8 @@ func (f FunctionPredicate) RequiredSymbols() []Symbol {
 	return syms
 }
 
-func (f FunctionPredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
-	// For now, we'll handle a few common functions
-	switch f.Fn {
-	case "str/starts-with?":
-		if len(f.Args) != 2 {
-			return false, fmt.Errorf("str/starts-with? requires 2 arguments, got %d", len(f.Args))
-		}
-		// Get the string value
-		var str string
-		if v, ok := f.Args[0].(Variable); ok {
-			val, exists := bindings[Symbol(v.Name)]
-			if !exists {
-				return false, fmt.Errorf("variable %s not bound", v.Name)
-			}
-			str, ok = val.(string)
-			if !ok {
-				return false, nil // Not a string, can't start with prefix
-			}
-		} else if c, ok := f.Args[0].(Constant); ok {
-			str, ok = c.Value.(string)
-			if !ok {
-				return false, nil
-			}
-		}
-
-		// Get the prefix
-		var prefix string
-		if v, ok := f.Args[1].(Variable); ok {
-			val, exists := bindings[Symbol(v.Name)]
-			if !exists {
-				return false, fmt.Errorf("variable %s not bound", v.Name)
-			}
-			prefix, ok = val.(string)
-			if !ok {
-				return false, nil
-			}
-		} else if c, ok := f.Args[1].(Constant); ok {
-			prefix, ok = c.Value.(string)
-			if !ok {
-				return false, nil
-			}
-		}
-
-		return len(str) >= len(prefix) && str[:len(prefix)] == prefix, nil
-
-	default:
-		// Unknown function - for now just return false
-		// In a real implementation, we'd have a registry of functions
-		return false, fmt.Errorf("unknown predicate function: %s", f.Fn)
-	}
+func (f FunctionPredicate) Eval(map[Symbol]interface{}) (bool, error) {
+	return false, fmt.Errorf("unknown predicate function: %s", f.Fn)
 }
 
 func (f FunctionPredicate) String() string {

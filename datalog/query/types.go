@@ -619,26 +619,19 @@ type TxInstant uint64
 // TxLatest represents a query for only the latest values
 type TxLatest struct{}
 
-// OrderByClause represents a single ordering specification
+// OrderByClause represents a single ordering specification. The zero value
+// of Descending is ascending order, the default.
 type OrderByClause struct {
-	Variable  Symbol
-	Direction OrderDirection
+	Variable   Symbol
+	Descending bool
 }
-
-// OrderDirection specifies ascending or descending order
-type OrderDirection string
-
-const (
-	OrderAsc  OrderDirection = "asc"
-	OrderDesc OrderDirection = "desc"
-)
 
 // String returns the string representation of an OrderByClause
 func (o OrderByClause) String() string {
-	if o.Direction == "" || o.Direction == OrderAsc {
+	if !o.Descending {
 		return o.Variable.String()
 	}
-	return fmt.Sprintf("[%s :%s]", o.Variable, o.Direction)
+	return fmt.Sprintf("[%s :desc]", o.Variable)
 }
 
 // DatomToTuple converts a datom to a tuple based on the pattern and requested symbols.

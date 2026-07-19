@@ -13,8 +13,8 @@ func BenchmarkOrderedLimit(b *testing.B) {
 		symbols, tuples := orderedLimitBenchmarkData(rowCount)
 		base := NewMaterializedRelationNoDedupe(symbols, tuples)
 		orderBy := []query.OrderByClause{{
-			Variable:  symbols[0],
-			Direction: query.OrderDesc,
+			Variable:   symbols[0],
+			Descending: true,
 		}}
 
 		for _, limit := range []int{1, 10, 100} {

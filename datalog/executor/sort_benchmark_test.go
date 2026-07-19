@@ -20,7 +20,7 @@ func BenchmarkSortRelation(b *testing.B) {
 		tuples[i] = Tuple{fmt.Sprintf("user%d", i), int64((i * 7919) % n)}
 	}
 	rel := NewMaterializedRelation(syms, tuples)
-	orderBy := []query.OrderByClause{{Variable: syms[1], Direction: query.OrderAsc}}
+	orderBy := []query.OrderByClause{{Variable: syms[1], Descending: false}}
 
 	b.ReportAllocs()
 	b.ResetTimer()

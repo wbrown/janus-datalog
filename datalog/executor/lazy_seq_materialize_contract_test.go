@@ -48,8 +48,8 @@ func TestLazySeqRelationEagerConsumersStillRealizeCompleteRelation(t *testing.T)
 	)
 
 	sorted := relation.Sort([]query.OrderByClause{{
-		Variable:  x,
-		Direction: query.OrderAsc,
+		Variable:   x,
+		Descending: false,
 	}})
 	rows, err := CollectTuples(sorted, nil)
 	require.NoError(t, err)

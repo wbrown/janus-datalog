@@ -27,8 +27,8 @@ func TestOrderByParsing(t *testing.T) {
 				if q.OrderBy[0].Variable != datalog.NewSymbol("?age") {
 					t.Errorf("expected ?age, got %s", q.OrderBy[0].Variable)
 				}
-				if q.OrderBy[0].Direction != query.OrderAsc {
-					t.Errorf("expected asc, got %s", q.OrderBy[0].Direction)
+				if q.OrderBy[0].Descending {
+					t.Errorf("expected ascending order")
 				}
 			},
 		},
@@ -45,8 +45,8 @@ func TestOrderByParsing(t *testing.T) {
 				if q.OrderBy[0].Variable != datalog.NewSymbol("?score") {
 					t.Errorf("expected ?score, got %s", q.OrderBy[0].Variable)
 				}
-				if q.OrderBy[0].Direction != query.OrderDesc {
-					t.Errorf("expected desc, got %s", q.OrderBy[0].Direction)
+				if !q.OrderBy[0].Descending {
+					t.Errorf("expected descending order")
 				}
 			},
 		},
@@ -61,10 +61,10 @@ func TestOrderByParsing(t *testing.T) {
 				if len(q.OrderBy) != 2 {
 					t.Errorf("expected 2 order-by clauses, got %d", len(q.OrderBy))
 				}
-				if q.OrderBy[0].Variable != datalog.NewSymbol("?dept") || q.OrderBy[0].Direction != query.OrderAsc {
+				if q.OrderBy[0].Variable != datalog.NewSymbol("?dept") || q.OrderBy[0].Descending {
 					t.Errorf("first clause should be ?dept asc")
 				}
-				if q.OrderBy[1].Variable != datalog.NewSymbol("?salary") || q.OrderBy[1].Direction != query.OrderDesc {
+				if q.OrderBy[1].Variable != datalog.NewSymbol("?salary") || !q.OrderBy[1].Descending {
 					t.Errorf("second clause should be ?salary desc")
 				}
 			},
@@ -80,13 +80,13 @@ func TestOrderByParsing(t *testing.T) {
 				if len(q.OrderBy) != 3 {
 					t.Errorf("expected 3 order-by clauses, got %d", len(q.OrderBy))
 				}
-				if q.OrderBy[0].Direction != query.OrderAsc {
+				if q.OrderBy[0].Descending {
 					t.Errorf("?x should be ascending")
 				}
-				if q.OrderBy[1].Direction != query.OrderDesc {
+				if !q.OrderBy[1].Descending {
 					t.Errorf("?y should be descending")
 				}
-				if q.OrderBy[2].Direction != query.OrderAsc {
+				if q.OrderBy[2].Descending {
 					t.Errorf("?z should be ascending")
 				}
 			},
@@ -171,8 +171,8 @@ func TestOrderByFormatting(t *testing.T) {
 				if q.OrderBy[i].Variable != q2.OrderBy[i].Variable {
 					t.Errorf("variable mismatch at %d: %s vs %s", i, q.OrderBy[i].Variable, q2.OrderBy[i].Variable)
 				}
-				if q.OrderBy[i].Direction != q2.OrderBy[i].Direction {
-					t.Errorf("direction mismatch at %d: %s vs %s", i, q.OrderBy[i].Direction, q2.OrderBy[i].Direction)
+				if q.OrderBy[i].Descending != q2.OrderBy[i].Descending {
+					t.Errorf("descending mismatch at %d: %t vs %t", i, q.OrderBy[i].Descending, q2.OrderBy[i].Descending)
 				}
 			}
 		})

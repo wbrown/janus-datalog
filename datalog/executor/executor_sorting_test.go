@@ -901,7 +901,7 @@ func TestSortRelationUnresolvableKeyIsDeferredError(t *testing.T) {
 	rel := NewMaterializedRelation([]query.Symbol{name}, []Tuple{{"Alice"}, {"Bob"}})
 
 	sorted := SortRelation(rel, []query.OrderByClause{
-		{Variable: datalog.NewSymbol("?missing"), Direction: query.OrderAsc},
+		{Variable: datalog.NewSymbol("?missing"), Descending: false},
 	})
 
 	it := sorted.Iterator()
@@ -978,7 +978,7 @@ func TestSortRelationRejectsNonValueTuples(t *testing.T) {
 	})
 
 	SortRelation(rel, []query.OrderByClause{
-		{Variable: age, Direction: query.OrderAsc},
+		{Variable: age, Descending: false},
 	})
 }
 

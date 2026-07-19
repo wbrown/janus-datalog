@@ -97,7 +97,7 @@ func TestPredicateSyntaxCoverage(t *testing.T) {
 		{
 			name:         "str/starts-with?",
 			queryStr:     `[:find ?x :where [?e :attr ?x] [(str/starts-with? ?x "foo")]]`,
-			expectedType: "*query.FunctionPredicate",
+			expectedType: "*query.StrStartsWithPredicate",
 		},
 	}
 
@@ -198,6 +198,8 @@ func typeStr(v interface{}) string {
 		return "*query.GroundPredicate"
 	case *query.MissingPredicate:
 		return "*query.MissingPredicate"
+	case *query.StrStartsWithPredicate:
+		return "*query.StrStartsWithPredicate"
 	case *query.FunctionPredicate:
 		return "*query.FunctionPredicate"
 	default:

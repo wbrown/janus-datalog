@@ -238,10 +238,7 @@ func parseOrderByClause(node *edn.Node) (query.OrderByClause, error) {
 		if !sym.IsVariable() {
 			return query.OrderByClause{}, fmt.Errorf("order-by must use variables, got %s", sym)
 		}
-		return query.OrderByClause{
-			Variable:  sym,
-			Direction: query.OrderAsc,
-		}, nil
+		return query.OrderByClause{Variable: sym}, nil
 
 	case edn.NodeVector:
 		// [?var :direction] format
@@ -262,19 +259,19 @@ func parseOrderByClause(node *edn.Node) (query.OrderByClause, error) {
 			return query.OrderByClause{}, fmt.Errorf("order-by direction must be a keyword (:asc or :desc)")
 		}
 
-		var direction query.OrderDirection
+		var descending bool
 		switch node.Nodes[1].Value {
 		case ":asc":
-			direction = query.OrderAsc
+			descending = false
 		case ":desc":
-			direction = query.OrderDesc
+			descending = true
 		default:
 			return query.OrderByClause{}, fmt.Errorf("order-by direction must be :asc or :desc, got %s", node.Nodes[1].Value)
 		}
 
 		return query.OrderByClause{
-			Variable:  sym,
-			Direction: direction,
+			Variable:   sym,
+			Descending: descending,
 		}, nil
 
 	default:
@@ -1490,7 +1487,7 @@ func formatQueryWithIndent(q *query.Query, indent string) string {
 			if i > 0 {
 				sb.WriteString(" ")
 			}
-			if clause.Direction == query.OrderDesc {
+			if clause.Descending {
 				sb.WriteString("[")
 				sb.WriteString(clause.Variable.String())
 				sb.WriteString(" :desc]")

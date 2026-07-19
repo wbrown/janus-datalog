@@ -135,12 +135,12 @@ func TestParseComparatorPatterns(t *testing.T) {
                      :where [?e :person/name ?name]
                             [(str/starts-with? ?name "Dr.")]]`,
 			validate: func(q *query.Query) error {
-				fnPred, ok := q.Where[1].(*query.FunctionPredicate)
+				pred, ok := q.Where[1].(*query.StrStartsWithPredicate)
 				if !ok {
-					return fmt.Errorf("expected FunctionPredicate, got %T", q.Where[1])
+					return fmt.Errorf("expected StrStartsWithPredicate, got %T", q.Where[1])
 				}
-				if fnPred.Fn != "str/starts-with?" {
-					return fmt.Errorf("expected 'str/starts-with?' function, got %s", fnPred.Fn)
+				if _, ok := pred.Prefix.(query.ConstantTerm); !ok {
+					return fmt.Errorf("expected constant prefix term, got %T", pred.Prefix)
 				}
 				return nil
 			},

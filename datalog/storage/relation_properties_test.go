@@ -47,7 +47,7 @@ func TestAETVCardinalityOneRelationProperties(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, executor.RelationProperties{
 		Ordering: []query.OrderByClause{{
-			Variable: entity, Direction: query.OrderAsc,
+			Variable: entity, Descending: false,
 		}},
 		Keys: [][]query.Symbol{{entity}},
 	}, rel.Properties())
@@ -92,7 +92,7 @@ func TestValidatedVBoundProperties(t *testing.T) {
 
 	require.Equal(t, executor.RelationProperties{
 		Ordering: []query.OrderByClause{{
-			Variable: entity, Direction: query.OrderAsc,
+			Variable: entity, Descending: false,
 		}},
 		Keys: [][]query.Symbol{{entity}},
 	}, validatedVBoundProperties(pattern, ReuseStrategy{
@@ -141,7 +141,7 @@ func TestAVETValidatedRelationProperties(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, executor.RelationProperties{
 		Ordering: []query.OrderByClause{{
-			Variable: entity, Direction: query.OrderAsc,
+			Variable: entity, Descending: false,
 		}},
 		Keys: [][]query.Symbol{{entity}},
 	}, rel.Properties())

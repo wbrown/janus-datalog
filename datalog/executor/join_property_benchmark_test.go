@@ -74,7 +74,7 @@ func BenchmarkSemiAntiJoinPropertyPropagation(b *testing.B) {
 	leftSymbols := []query.Symbol{id, value}
 	rightSymbols := []query.Symbol{id}
 	properties := RelationProperties{
-		Ordering: []query.OrderByClause{{Variable: id, Direction: query.OrderAsc}},
+		Ordering: []query.OrderByClause{{Variable: id, Descending: false}},
 		Keys:     [][]query.Symbol{{id}},
 	}
 

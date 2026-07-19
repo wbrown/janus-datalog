@@ -76,7 +76,7 @@ func ScanQueryFingerprint(q *query.Query, pattern *query.DataPattern) string {
 		} else {
 			fmt.Fprintf(&b, "var%d", position)
 		}
-		fmt.Fprintf(&b, ":%s;", clause.Direction)
+		fmt.Fprintf(&b, ":%t;", clause.Descending)
 	}
 	b.WriteString("|limit:")
 	if q.Limit == nil {

@@ -167,7 +167,7 @@ func (c *PlanCache) computeKeyWithOptions(q *query.Query, opts PlannerOptions) s
 	if q.OrderBy != nil {
 		fmt.Fprintf(h, "ORDERBY:")
 		for _, order := range q.OrderBy {
-			fmt.Fprintf(h, "%v:%v;", order.Variable, order.Direction)
+			fmt.Fprintf(h, "%v:%v;", order.Variable, order.Descending)
 		}
 	}
 

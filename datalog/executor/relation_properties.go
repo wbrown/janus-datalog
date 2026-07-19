@@ -49,8 +49,8 @@ func (p RelationProperties) renameSymbols(from, to []query.Symbol) RelationPrope
 			break
 		}
 		result.Ordering = append(result.Ordering, query.OrderByClause{
-			Variable:  symbol,
-			Direction: clause.Direction,
+			Variable:   symbol,
+			Descending: clause.Descending,
 		})
 	}
 	for _, key := range p.Keys {

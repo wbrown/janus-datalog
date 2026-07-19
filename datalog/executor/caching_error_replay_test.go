@@ -33,7 +33,7 @@ func TestMaterialize_ReplaysSourceError_ImmediateFailure(t *testing.T) {
 
 // TestSort_ReplaysSourceError: order-by materializes; the error must survive.
 func TestSort_ReplaysSourceError(t *testing.T) {
-	orderBy := []query.OrderByClause{{Variable: datalog.NewSymbol("?x"), Direction: query.OrderAsc}}
+	orderBy := []query.OrderByClause{{Variable: datalog.NewSymbol("?x"), Descending: false}}
 	sorted := newFailingStream(1, Tuple{int64(2)}, Tuple{int64(1)}, Tuple{int64(3)}).Sort(orderBy)
 	require.ErrorIs(t, driveErr(sorted), errInjectedIterator)
 }
