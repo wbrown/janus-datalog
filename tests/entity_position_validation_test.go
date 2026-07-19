@@ -144,6 +144,130 @@ func TestStringInputBoundToEntityPositionVectorAttributeIsError(t *testing.T) {
 	}
 }
 
+// The attribute position is inhabited only by Keyword — the same boundary
+// rules as the entity position: constants and :in inputs fail loudly,
+// interior data flow is a typed non-match.
+
+func TestStringConstantInAttributePositionIsError(t *testing.T) {
+	dir, err := os.MkdirTemp("", "attr-position-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := storage.NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	alice := datalog.NewIdentity("user:alice")
+	tx := db.NewTransaction()
+	tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = executor.CollectTuples(db.Query(
+		`[:find ?v :where [?e ":user/name" ?v]]`,
+	))
+	if err == nil {
+		t.Fatal("expected an error for a string constant in attribute position, got none")
+	}
+	if !strings.Contains(err.Error(), "attribute position") {
+		t.Errorf("error should name the attribute position; got: %v", err)
+	}
+}
+
+func TestStringInputBoundToAttributePositionIsError(t *testing.T) {
+	dir, err := os.MkdirTemp("", "attr-input-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := storage.NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	alice := datalog.NewIdentity("user:alice")
+	nameAttr := datalog.NewKeyword(":user/name")
+	tx := db.NewTransaction()
+	tx.Add(alice, nameAttr, "Alice")
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = executor.CollectTuples(db.Query(
+		`[:find ?v :in $ ?a :where [?e ?a ?v]]`,
+		":user/name",
+	))
+	if err == nil {
+		t.Fatal("expected an error for a string input bound to attribute position, got none")
+	}
+	if !strings.Contains(err.Error(), "attribute position") {
+		t.Errorf("error should name the attribute position; got: %v", err)
+	}
+
+	// The sanctioned path: a Keyword input works.
+	tuples, err := executor.CollectTuples(db.Query(
+		`[:find ?v :in $ ?a :where [?e ?a ?v]]`,
+		nameAttr,
+	))
+	if err != nil {
+		t.Fatalf("Keyword input must work: %v", err)
+	}
+	if len(tuples) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(tuples))
+	}
+}
+
+// TestVAJoinOverMixedDataMatchesOnlyKeywords pins the interior shape for the
+// attribute position: a value joined from V position into A position over
+// data holding both keywords and strings keeps keyword-partnered rows and
+// drops the rest; no error.
+func TestVAJoinOverMixedDataMatchesOnlyKeywords(t *testing.T) {
+	dir, err := os.MkdirTemp("", "va-join-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := storage.NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	alice := datalog.NewIdentity("user:alice")
+	meta1 := datalog.NewIdentity("meta:1")
+	meta2 := datalog.NewIdentity("meta:2")
+	nameAttr := datalog.NewKeyword(":user/name")
+
+	tx := db.NewTransaction()
+	tx.Add(alice, nameAttr, "Alice")
+	tx.Add(meta1, datalog.NewKeyword(":meta/attr"), nameAttr)     // a real keyword
+	tx.Add(meta2, datalog.NewKeyword(":meta/attr"), ":user/name") // its text
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	tuples, err := executor.CollectTuples(db.Query(
+		`[:find ?v :where [?m :meta/attr ?a] [?e ?a ?v]]`,
+	))
+	if err != nil {
+		t.Fatalf("mixed V→A join must not error: %v", err)
+	}
+	if len(tuples) != 1 {
+		t.Fatalf("expected 1 row (only the keyword joins), got %d: %v", len(tuples), tuples)
+	}
+	if v, ok := tuples[0][0].(string); !ok || v != "Alice" {
+		t.Errorf("expected \"Alice\", got %v", tuples[0][0])
+	}
+}
+
 func TestStringConstantInValuePositionIsTypedNonMatch(t *testing.T) {
 	dir, err := os.MkdirTemp("", "value-position-*")
 	if err != nil {

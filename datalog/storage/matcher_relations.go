@@ -43,7 +43,10 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateEntityBinding(m.extractValue(pattern.GetE())); err != nil {
+	if err := query.ValidateEntityBinding(m.extractValue(pattern.GetE())); err != nil {
+		return nil, err
+	}
+	if err := query.ValidateAttributeBinding(m.extractValue(pattern.GetA())); err != nil {
 		return nil, err
 	}
 	// Determine pattern symbols
@@ -514,7 +517,7 @@ func (m *BadgerMatcher) matchWithoutIteratorReuse(pattern *query.DataPattern, bi
 	}); err != nil {
 		return nil, err
 	}
-	bindingTuples = filterEntityBindableTuples(pattern, bindingRel.Symbols(), bindingTuples)
+	bindingTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), bindingTuples)
 
 	// Create iterator that will scan for each binding tuple
 	iter := &nonReusingIterator{
@@ -549,7 +552,7 @@ func (m *BadgerMatcher) matchWithIteratorReuse(
 	if err != nil {
 		return nil, err
 	}
-	sortedTuples = filterEntityBindableTuples(pattern, bindingRel.Symbols(), sortedTuples)
+	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
 
 	// Create streaming iterator that will reuse storage iterator
 	iter := &reusingIterator{

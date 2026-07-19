@@ -906,6 +906,11 @@ func (r *MaterializedRelation) EvaluateFunction(fn query.Function, outputSymbol 
 			result = gsr.Value
 		}
 
+		if err := admitExpressionResult(fn, result); err != nil {
+			evalErr = err
+			break
+		}
+
 		// Create new tuple with function result
 		newTuple := append(tuple, result)
 		newTuples = append(newTuples, newTuple)

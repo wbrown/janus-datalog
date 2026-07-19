@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"reflect"
 	"strings"
@@ -1402,6 +1403,9 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 	// stores and matches the same as int64 (and never reaches the encoder as a
 	// non-int64 width).
 	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return err
+	}
 
 	// Schema validation (if schema present)
 	if err := schema.ValidateDatom(t.db.Schema(), a, v); err != nil {
@@ -1535,6 +1539,9 @@ func (t *Transaction) Remove(e datalog.Identity, a datalog.Keyword, v interface{
 
 	// Normalize integer width to canonical int64 at the API boundary.
 	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return err
+	}
 
 	// Determine cardinality for Remove semantics
 	s := t.db.Schema()
@@ -1737,6 +1744,9 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 
 	// Normalize integer width to canonical int64 at the API boundary.
 	v = datalog.NormalizeValue(v)
+	if err := validateValueStorable(a, v); err != nil {
+		return err
+	}
 
 	// Check cardinality first - determines validation strategy
 	card := schema.CardinalityOne
@@ -2348,14 +2358,81 @@ func (d *Database) Stats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
-// validateEntityPositionInput rejects a non-Identity user input bound to a
-// symbol that occupies the entity position of a data pattern. This is the
-// input half of the entity-position boundary — the other half is query-text
-// constants, validated at match entry. Interior data flow is never validated:
-// there a non-Identity is the equality join's ordinary typed non-match.
-func validateEntityPositionInput(sym query.Symbol, value interface{}) error {
-	if _, ok := value.(datalog.Identity); !ok {
-		return fmt.Errorf("input %s binds the entity position of a data pattern and requires an identity, got %T (construct one with NewIdentity or an #identity literal)", sym, value)
+// convertInputValue admits one user input value for one symbol: it applies
+// the entity- and attribute-position typing rules, then normalizes the value
+// into the domain (integer widths → int64). Every input form converts its
+// values through here.
+func convertInputValue(entityBound, attrBound map[query.Symbol]bool, sym query.Symbol, value interface{}) (interface{}, error) {
+	if containsNaN(value) {
+		return nil, fmt.Errorf("input %s is NaN, which is not a datalog value", sym)
+	}
+	if entityBound[sym] {
+		if err := query.ValidateEntityBinding(value); err != nil {
+			return nil, fmt.Errorf("input %s: %w", sym, err)
+		}
+	}
+	if attrBound[sym] {
+		if err := query.ValidateAttributeBinding(value); err != nil {
+			return nil, fmt.Errorf("input %s: %w", sym, err)
+		}
+	}
+	return datalog.NormalizeValue(value), nil
+}
+
+// inputSpecSymbols names the symbols an input spec binds, for error messages.
+func inputSpecSymbols(spec query.InputSpec) interface{} {
+	switch s := spec.(type) {
+	case query.ScalarInput:
+		return s.Symbol
+	case query.CollectionInput:
+		return s.Symbol
+	case query.TupleInput:
+		return s.Symbols
+	case query.RelationInput:
+		return s.Symbols
+	}
+	return spec
+}
+
+// reflectRow copies a reflected slice's elements into one value row.
+func reflectRow(slice reflect.Value) []interface{} {
+	row := make([]interface{}, slice.Len())
+	for i := 0; i < slice.Len(); i++ {
+		row[i] = slice.Index(i).Interface()
+	}
+	return row
+}
+
+// containsNaN reports whether v is NaN or a slice containing one. NaN is not
+// a datalog value — it is not self-equal under IEEE comparison, so no
+// container law (set membership, LWW resolution, join equality) can hold for
+// it — and every boundary where a float enters relational flow rejects it.
+// ±Inf is a value: self-equal and totally ordered.
+func containsNaN(v interface{}) bool {
+	switch val := v.(type) {
+	case float64:
+		return math.IsNaN(val)
+	case []interface{}:
+		for _, elem := range val {
+			if containsNaN(elem) {
+				return true
+			}
+		}
+	case []float64:
+		for _, elem := range val {
+			if math.IsNaN(elem) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateValueStorable rejects values outside the storable domain at the
+// transaction write boundary.
+func validateValueStorable(a datalog.Keyword, v interface{}) error {
+	if containsNaN(v) {
+		return fmt.Errorf("NaN is not a datalog value and cannot be stored for attribute %s", a.String())
 	}
 	return nil
 }
@@ -2364,129 +2441,89 @@ func validateEntityPositionInput(sym query.Symbol, value interface{}) error {
 func (d *Database) convertInputsToRelations(q *query.Query, inputs []interface{}) ([]executor.Relation, error) {
 	inputRelations := make([]executor.Relation, 0, len(inputs))
 	inputIdx := 0
-	entityBound := query.EntityPositionSymbols(q)
+	entityBound, attrBound := query.PositionSymbols(q)
 
 	for _, inputSpec := range q.In {
-		switch spec := inputSpec.(type) {
-		case query.DatabaseInput:
-			// Skip source markers ($, $users, etc.) - don't consume a regular input
+		if _, ok := inputSpec.(query.DatabaseInput); ok {
+			// Source markers ($, $users, ...) don't consume a regular input
 			continue
+		}
 
+		if inputIdx >= len(inputs) {
+			return nil, fmt.Errorf("not enough inputs: expected input for %v (have %d inputs, need %d)", inputSpecSymbols(inputSpec), len(inputs), inputIdx+1)
+		}
+		input := inputs[inputIdx]
+
+		// Every input form binds a set of rows over a symbol list; the switch
+		// below only reads each form's shape. A scalar is one row of one
+		// column, a collection is n rows of one column, a tuple is one row of
+		// n columns, and a relation is n rows of n columns.
+		var symbols []query.Symbol
+		var rows [][]interface{}
+
+		switch spec := inputSpec.(type) {
 		case query.ScalarInput:
-			if inputIdx >= len(inputs) {
-				return nil, fmt.Errorf("not enough inputs: expected input for %s (have %d inputs, need %d)", spec.Symbol, len(inputs), inputIdx+1)
-			}
-			if entityBound[spec.Symbol] {
-				if err := validateEntityPositionInput(spec.Symbol, inputs[inputIdx]); err != nil {
-					return nil, err
-				}
-			}
-
-			// Create single-value relation (normalize integer width to int64 so
-			// an int parameter matches stored int64 data).
-			rel := executor.NewMaterializedRelation(
-				[]query.Symbol{spec.Symbol},
-				[]executor.Tuple{{datalog.NormalizeValue(inputs[inputIdx])}},
-			)
-			inputRelations = append(inputRelations, rel)
-			inputIdx++
+			symbols = []query.Symbol{spec.Symbol}
+			rows = [][]interface{}{{input}}
 
 		case query.CollectionInput:
-			if inputIdx >= len(inputs) {
-				return nil, fmt.Errorf("not enough inputs: expected collection for %s", spec.Symbol)
-			}
-
-			// Convert slice to relation
-			slice := reflect.ValueOf(inputs[inputIdx])
+			slice := reflect.ValueOf(input)
 			if slice.Kind() != reflect.Slice && slice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice or array for collection input %s, got %T", spec.Symbol, inputs[inputIdx])
+				return nil, fmt.Errorf("expected slice or array for collection input %s, got %T", spec.Symbol, input)
 			}
-
-			tuples := make([]executor.Tuple, slice.Len())
+			symbols = []query.Symbol{spec.Symbol}
+			rows = make([][]interface{}, slice.Len())
 			for i := 0; i < slice.Len(); i++ {
-				if entityBound[spec.Symbol] {
-					if err := validateEntityPositionInput(spec.Symbol, slice.Index(i).Interface()); err != nil {
-						return nil, err
-					}
-				}
-				tuples[i] = executor.Tuple{datalog.NormalizeValue(slice.Index(i).Interface())}
+				rows[i] = []interface{}{slice.Index(i).Interface()}
 			}
-
-			rel := executor.NewMaterializedRelation(
-				[]query.Symbol{spec.Symbol},
-				tuples,
-			)
-			inputRelations = append(inputRelations, rel)
-			inputIdx++
 
 		case query.TupleInput:
-			if inputIdx >= len(inputs) {
-				return nil, fmt.Errorf("not enough inputs: expected tuple for %v", spec.Symbols)
-			}
-
-			// Expect a slice for tuple input
-			slice := reflect.ValueOf(inputs[inputIdx])
+			slice := reflect.ValueOf(input)
 			if slice.Kind() != reflect.Slice && slice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice or array for tuple input, got %T", inputs[inputIdx])
+				return nil, fmt.Errorf("expected slice or array for tuple input, got %T", input)
 			}
-
-			if slice.Len() != len(spec.Symbols) {
-				return nil, fmt.Errorf("tuple input length mismatch: expected %d values, got %d", len(spec.Symbols), slice.Len())
-			}
-
-			// Create single tuple
-			tuple := make(executor.Tuple, slice.Len())
-			for i := 0; i < slice.Len(); i++ {
-				if entityBound[spec.Symbols[i]] {
-					if err := validateEntityPositionInput(spec.Symbols[i], slice.Index(i).Interface()); err != nil {
-						return nil, err
-					}
-				}
-				tuple[i] = datalog.NormalizeValue(slice.Index(i).Interface())
-			}
-
-			rel := executor.NewMaterializedRelation(spec.Symbols, []executor.Tuple{tuple})
-			inputRelations = append(inputRelations, rel)
-			inputIdx++
+			symbols = spec.Symbols
+			rows = [][]interface{}{reflectRow(slice)}
 
 		case query.RelationInput:
-			if inputIdx >= len(inputs) {
-				return nil, fmt.Errorf("not enough inputs: expected relation for %v", spec.Symbols)
-			}
-
-			// Expect a slice of slices for relation input
-			outerSlice := reflect.ValueOf(inputs[inputIdx])
+			outerSlice := reflect.ValueOf(input)
 			if outerSlice.Kind() != reflect.Slice && outerSlice.Kind() != reflect.Array {
-				return nil, fmt.Errorf("expected slice of slices for relation input, got %T", inputs[inputIdx])
+				return nil, fmt.Errorf("expected slice of slices for relation input, got %T", input)
 			}
-
-			tuples := make([]executor.Tuple, outerSlice.Len())
+			symbols = spec.Symbols
+			rows = make([][]interface{}, outerSlice.Len())
 			for i := 0; i < outerSlice.Len(); i++ {
 				innerSlice := outerSlice.Index(i)
 				if innerSlice.Kind() != reflect.Slice && innerSlice.Kind() != reflect.Array {
 					return nil, fmt.Errorf("expected slice for relation tuple %d, got %T", i, innerSlice.Interface())
 				}
-
-				if innerSlice.Len() != len(spec.Symbols) {
-					return nil, fmt.Errorf("relation tuple %d length mismatch: expected %d values, got %d", i, len(spec.Symbols), innerSlice.Len())
-				}
-
-				tuple := make(executor.Tuple, innerSlice.Len())
-				for j := 0; j < innerSlice.Len(); j++ {
-					if entityBound[spec.Symbols[j]] {
-						if err := validateEntityPositionInput(spec.Symbols[j], innerSlice.Index(j).Interface()); err != nil {
-							return nil, err
-						}
-					}
-					tuple[j] = datalog.NormalizeValue(innerSlice.Index(j).Interface())
-				}
-				tuples[i] = tuple
+				rows[i] = reflectRow(innerSlice)
 			}
 
-			rel := executor.NewMaterializedRelation(spec.Symbols, tuples)
-			inputRelations = append(inputRelations, rel)
-			inputIdx++
+		default:
+			return nil, fmt.Errorf("unsupported input spec %T", inputSpec)
 		}
+
+		// One conversion path for every form: row width against the symbol
+		// list, then per-value position typing and normalization through
+		// convertInputValue.
+		tuples := make([]executor.Tuple, len(rows))
+		for i, row := range rows {
+			if len(row) != len(symbols) {
+				return nil, fmt.Errorf("input row %d for %v: expected %d values, got %d", i, symbols, len(symbols), len(row))
+			}
+			tuple := make(executor.Tuple, len(row))
+			for j, val := range row {
+				v, err := convertInputValue(entityBound, attrBound, symbols[j], val)
+				if err != nil {
+					return nil, err
+				}
+				tuple[j] = v
+			}
+			tuples[i] = tuple
+		}
+		inputRelations = append(inputRelations, executor.NewMaterializedRelation(symbols, tuples))
+		inputIdx++
 	}
 
 	// Check we used all inputs

@@ -71,11 +71,10 @@ func decodeDatomFromKey(index IndexType, key []byte, encoder *BinaryKeyEncoder, 
 		v = append([]byte(nil), bytes...)
 	}
 
-	// E is reconstructed from the stored 20-byte hash only: the original name
-	// string is not persisted (entities are content-addressed — see the
-	// datalog.identity doc). The returned Identity's String() is therefore the
-	// L85 hash unless the same name was also interned in-process. Store the name
-	// as an attribute if you need it back.
+	// E is reconstructed from the stored 20-byte hash only: entities are
+	// content-addressed and the seed string is never persisted (see the
+	// datalog.identity doc). String() renders the L85 of the hash; store the
+	// name as an attribute if you need it back.
 	return datalog.Datom{
 		E:        datalog.InternIdentityFromHash(entity),
 		A:        datalog.InternKeywordFromBytes(attr),

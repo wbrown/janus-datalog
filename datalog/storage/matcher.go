@@ -228,91 +228,6 @@ func (m *BadgerMatcher) bindPattern(pattern *query.DataPattern, tuple executor.T
 	return &query.DataPattern{Elements: elements}
 }
 
-// matchWithoutRelation matches a pattern without any binding constraints
-func (m *BadgerMatcher) matchWithoutRelation(pattern *query.DataPattern) ([]datalog.Datom, error) {
-	return m.matchBoundPattern(pattern)
-}
-
-// matchBoundPattern matches a pattern that may have some constants bound
-func (m *BadgerMatcher) matchBoundPattern(pattern *query.DataPattern) ([]datalog.Datom, error) {
-	// Extract values from pattern
-	var e, a, v, tx interface{}
-
-	if elem := pattern.GetE(); elem != nil {
-		e = m.extractValue(elem)
-	}
-	if elem := pattern.GetA(); elem != nil {
-		a = m.extractValue(elem)
-	}
-	if elem := pattern.GetV(); elem != nil {
-		v = m.extractValue(elem)
-	}
-	if elem := pattern.GetT(); elem != nil {
-		tx = m.extractValue(elem)
-	}
-	if err := validateEntityBinding(e); err != nil {
-		return nil, err
-	}
-
-	// Determine cardinality for CRDT resolution
-	// For cardinality-one with E+A bound, V unbound: return only current value (first result)
-	returnOnlyFirst := false
-	if e != nil && a != nil && v == nil {
-		// E and A are bound, V is unbound - check cardinality
-		card := schema.CardinalityOne // Default for schemaless
-		if m.schema != nil {
-			if aKw, ok := a.(datalog.Keyword); ok {
-				if def := m.schema.GetAttribute(aKw); def != nil {
-					card = def.Cardinality
-				}
-			}
-		}
-		// For cardinality-one (and vector), return only the first (= current) value
-		// For cardinality-many, we need all values for add-wins resolution
-		if card == schema.CardinalityOne || card == schema.CardinalityVector {
-			returnOnlyFirst = true
-		}
-	}
-
-	// Choose index and create scan range
-	index, start, end := m.chooseIndex(e, a, v, tx)
-
-	// Use key-only scanning since all datom information is encoded in the key
-	// This avoids fetching redundant values from storage
-	iter, err := m.store.ScanKeysOnly(index, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("scan failed: %w", err)
-	}
-	defer iter.Close()
-
-	var results []datalog.Datom
-
-	// Scan and collect matching datoms
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			return nil, err
-		}
-
-		// Check if datom is valid for our transaction view
-		if m.shouldFilterTx(datom.Tx) {
-			continue
-		}
-
-		// Check if datom matches all pattern constraints
-		if m.matchesDatom(datom, e, a, v, tx) {
-			results = append(results, *datom)
-
-			// For cardinality-one/vector: first result is current value
-			// EATV index with descending Tx means first = highest ElementID = current
-			if returnOnlyFirst {
-				break
-			}
-		}
-	}
-
-	return results, nil
-}
 
 // MatchWithHistory matches a pattern and returns ALL historical values, not just current.
 // This is used for history queries where the user wants to see all versions of an attribute.
@@ -337,7 +252,10 @@ func (m *BadgerMatcher) MatchWithHistory(pattern *query.DataPattern) ([]datalog.
 	if elem := pattern.GetT(); elem != nil {
 		tx = m.extractValue(elem)
 	}
-	if err := validateEntityBinding(e); err != nil {
+	if err := query.ValidateEntityBinding(e); err != nil {
+		return nil, err
+	}
+	if err := query.ValidateAttributeBinding(a); err != nil {
 		return nil, err
 	}
 
@@ -393,7 +311,10 @@ func (m *BadgerMatcher) MatchAsOf(pattern *query.DataPattern, targetTx datalog.E
 	if elem := pattern.GetT(); elem != nil {
 		tx = m.extractValue(elem)
 	}
-	if err := validateEntityBinding(e); err != nil {
+	if err := query.ValidateEntityBinding(e); err != nil {
+		return nil, err
+	}
+	if err := query.ValidateAttributeBinding(a); err != nil {
 		return nil, err
 	}
 
@@ -602,62 +523,64 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	return EATV, start, end
 }
 
-// validateEntityBinding rejects non-Identity values bound to a data pattern's
-// entity position. The entity position is inhabited only by Identity; a string
-// or other value there is a query defect that must fail loudly rather than
-// silently matching nothing. Strings become entities by boundary construction
-// (NewIdentity, #identity literals), never by comparison-time coercion.
-func validateEntityBinding(e interface{}) error {
-	if e == nil {
-		return nil
+// filterTypedPositionBindings drops binding tuples whose value for the
+// pattern's entity-position variable is not an Identity, or whose value for
+// the attribute-position variable is not a Keyword. Such values name no
+// entity or attribute — the typed non-match of the equality join — so they
+// contribute zero rows and no seek is constructed for them. The hash and
+// merge joins reach the same result through their typed keys and the
+// canonical comparator; the seek-based strategies drop these bindings here,
+// at construction, so matchesDatom only ever sees correctly typed position
+// bindings. Tuples are returned unchanged (and unallocated) when neither
+// typed position is bound by these symbols or every binding already has its
+// position's type.
+func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Symbol, tuples []executor.Tuple) []executor.Tuple {
+	eIdx, aIdx := -1, -1
+	if v, ok := pattern.GetE().(query.Variable); ok {
+		for i, sym := range symbols {
+			if sym == v.Name {
+				eIdx = i
+				break
+			}
+		}
 	}
-	if _, ok := e.(datalog.Identity); !ok {
-		return fmt.Errorf("data pattern entity position requires an identity, got %T (construct one with NewIdentity or an #identity literal)", e)
+	if v, ok := pattern.GetA().(query.Variable); ok {
+		for i, sym := range symbols {
+			if sym == v.Name {
+				aIdx = i
+				break
+			}
+		}
 	}
-	return nil
-}
+	if eIdx < 0 && aIdx < 0 {
+		return tuples
+	}
 
-// filterEntityBindableTuples drops binding tuples whose value for the
-// pattern's entity-position variable is not an Identity. Such a value names no
-// entity — the typed non-match of the equality join — so it contributes zero
-// rows and no seek is constructed for it. The hash and merge joins reach the
-// same result through their typed keys and the canonical comparator; the
-// seek-based strategies drop these bindings here, at construction, so
-// matchesDatom only ever sees Identity entity bindings. Tuples are returned
-// unchanged (and unallocated) when the pattern's entity position is not bound
-// by these symbols or every binding is already an Identity.
-func filterEntityBindableTuples(pattern *query.DataPattern, symbols []query.Symbol, tuples []executor.Tuple) []executor.Tuple {
-	eVar, ok := pattern.GetE().(query.Variable)
-	if !ok {
-		return tuples
-	}
-	idx := -1
-	for i, sym := range symbols {
-		if sym == eVar.Name {
-			idx = i
-			break
+	typed := func(tuple executor.Tuple) bool {
+		if eIdx >= 0 && eIdx < len(tuple) {
+			if _, ok := tuple[eIdx].(datalog.Identity); !ok {
+				return false
+			}
 		}
+		if aIdx >= 0 && aIdx < len(tuple) {
+			if _, ok := tuple[aIdx].(datalog.Keyword); !ok {
+				return false
+			}
+		}
+		return true
 	}
-	if idx < 0 {
-		return tuples
-	}
+
 	for i, tuple := range tuples {
-		if idx >= len(tuple) {
+		if typed(tuple) {
 			continue
 		}
-		if _, ok := tuple[idx].(datalog.Identity); ok {
-			continue
-		}
-		// First non-Identity binding found: copy-filter the remainder.
+		// First untyped binding found: copy-filter the remainder.
 		filtered := make([]executor.Tuple, 0, len(tuples)-1)
 		filtered = append(filtered, tuples[:i]...)
 		for _, rest := range tuples[i+1:] {
-			if idx < len(rest) {
-				if _, ok := rest[idx].(datalog.Identity); !ok {
-					continue
-				}
+			if typed(rest) {
+				filtered = append(filtered, rest)
 			}
-			filtered = append(filtered, rest)
 		}
 		return filtered
 	}
@@ -698,12 +621,11 @@ func (m *BadgerMatcher) matchesDatom(datom *datalog.Datom, e, a, v, tx interface
 			if datom.A != av {
 				return false
 			}
-		case string:
-			if datom.A.String() != av {
-				return false
-			}
 		default:
-			return false
+			// Unreachable when attribute bindings are validated at extraction
+			// (validateAttributeBinding) and filtered at construction. Fail
+			// loudly: the attribute position is inhabited only by Keyword.
+			panic(fmt.Sprintf("BUG: non-Keyword attribute binding reached matchesDatom: %T", a))
 		}
 	}
 

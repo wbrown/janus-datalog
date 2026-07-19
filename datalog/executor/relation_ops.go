@@ -258,6 +258,11 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			evalResult = gsr.Value
 		}
 
+		if err := admitExpressionResult(expr.Function, evalResult); err != nil {
+			iterErr = err
+			break
+		}
+
 		// Handle multi-tuple expansion (e.g., enumerate returns [][]interface{})
 		if multiRows, ok := evalResult.([][]interface{}); ok {
 			if tb, ok := expr.Binding.(query.TupleBinding); ok {

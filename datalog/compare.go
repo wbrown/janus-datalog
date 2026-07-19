@@ -209,11 +209,11 @@ func compareFloat(left float64, right interface{}) int {
 // integer through float64 collapses adjacent values above 2^53; instead the
 // float's integer part is compared as int64, with any fractional part
 // breaking the tie.
+//
+// Precondition: f is not NaN. NaN is not a datalog value — it is rejected at
+// the write, input, and expression-output boundaries — so it cannot reach a
+// comparison. (compareFloats' exhaustive arms panic if that ever breaks.)
 func compareInt64Float64(i int64, f float64) int {
-	if math.IsNaN(f) {
-		// Preserves compareFloats' existing NaN behavior (incomparable → 0).
-		return 0
-	}
 	if f >= 9223372036854775808.0 { // 2^63: above every int64
 		return -1
 	}
@@ -232,11 +232,8 @@ func compareInt64Float64(i int64, f float64) int {
 }
 
 // compareUint64Float64 compares a uint64 with a float64 exactly, mirroring
-// compareInt64Float64 for the unsigned range.
+// compareInt64Float64 for the unsigned range (same NaN precondition).
 func compareUint64Float64(u uint64, f float64) int {
-	if math.IsNaN(f) {
-		return 0
-	}
 	if f >= 18446744073709551616.0 { // 2^64: above every uint64
 		return -1
 	}
@@ -264,14 +261,21 @@ func compareInt64s(a, b int64) int {
 	return 0
 }
 
-// compareFloats compares two float64 values
+// compareFloats compares two float64 values. The three arms are exhaustive
+// for every valid float pair — only NaN, which is not a datalog value and is
+// rejected at every boundary, can fall through — so the panic costs valid
+// comparisons nothing.
 func compareFloats(a, b float64) int {
 	if a < b {
 		return -1
-	} else if a > b {
+	}
+	if a > b {
 		return 1
 	}
-	return 0
+	if a == b {
+		return 0
+	}
+	panic("CompareValues: NaN is not a datalog value")
 }
 
 // compareUint64 compares a uint64 with another numeric value

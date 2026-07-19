@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -174,14 +173,11 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 	if err != nil {
 		return nil, err
 	}
-	// The entity position is inhabited only by Identity; a string or other
-	// value there is a query defect that must fail loudly rather than silently
-	// matching nothing. Strings become entities by boundary construction
-	// (NewIdentity, #identity literals), never by comparison-time coercion.
-	if e := extractPatternValue(pattern.GetE()); e != nil {
-		if _, ok := e.(datalog.Identity); !ok {
-			return nil, fmt.Errorf("data pattern entity position requires an identity, got %T (construct one with NewIdentity or an #identity literal)", e)
-		}
+	if err := query.ValidateEntityBinding(extractPatternValue(pattern.GetE())); err != nil {
+		return nil, err
+	}
+	if err := query.ValidateAttributeBinding(extractPatternValue(pattern.GetA())); err != nil {
+		return nil, err
 	}
 	// Build indices on first use (lazy initialization)
 	m.buildIndices()
