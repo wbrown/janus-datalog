@@ -350,31 +350,85 @@ func TestParseOrDefaultClause(t *testing.T) {
 }
 
 func TestParseOrDefaultJoinClause(t *testing.T) {
-	input := `[:find ?x
-               :where [?e :user/name ?name]
-                      (or-default-join [?x]
-                        [?e :user/score ?x]
-                        [(ground 0) ?x])]`
-	q, err := ParseQuery(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(q.Where) != 2 {
-		t.Fatalf("expected 2 where clauses, got %d", len(q.Where))
-	}
-	odj, ok := q.Where[1].(*query.OrDefaultJoinClause)
-	if !ok {
-		t.Fatalf("expected OrDefaultJoinClause, got %T", q.Where[1])
-	}
-	if len(odj.JoinVars) != 1 {
-		t.Fatalf("expected 1 join var, got %d", len(odj.JoinVars))
-	}
-	if odj.JoinVars[0] != datalog.NewSymbol("?x") {
-		t.Fatalf("expected join var ?x, got %s", odj.JoinVars[0])
-	}
-	if len(odj.Branches) != 2 {
-		t.Fatalf("expected 2 branches, got %d", len(odj.Branches))
-	}
+	t.Run("flat header declares outputs (global fallback)", func(t *testing.T) {
+		// ?e in the branch deliberately shadows the outer ?e: a branch
+		// variable outside the header is a local, and the name collision
+		// is meaningless (alpha-equivalence). It parses, validates, and
+		// does not correlate.
+		input := `[:find ?x
+	               :where [?e :user/name ?name]
+	                      (or-default-join [?x]
+	                        [?e :user/score ?x]
+	                        [(ground 0) ?x])]`
+		q, err := ParseQuery(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(q.Where) != 2 {
+			t.Fatalf("expected 2 where clauses, got %d", len(q.Where))
+		}
+		odj, ok := q.Where[1].(*query.OrDefaultJoinClause)
+		if !ok {
+			t.Fatalf("expected OrDefaultJoinClause, got %T", q.Where[1])
+		}
+		if len(odj.RequiredVars) != 0 {
+			t.Fatalf("expected no required vars, got %v", odj.RequiredVars)
+		}
+		if len(odj.OutputVars) != 1 || odj.OutputVars[0] != datalog.NewSymbol("?x") {
+			t.Fatalf("expected output var ?x, got %v", odj.OutputVars)
+		}
+		if len(odj.Branches) != 2 {
+			t.Fatalf("expected 2 branches, got %d", len(odj.Branches))
+		}
+	})
+
+	t.Run("nested first element declares required vars (per-group fallback)", func(t *testing.T) {
+		input := `[:find ?x
+	               :where [?e :user/name ?name]
+	                      (or-default-join [[?e] ?x]
+	                        [?e :user/score ?x]
+	                        [(ground 0) ?x])]`
+		q, err := ParseQuery(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		odj, ok := q.Where[1].(*query.OrDefaultJoinClause)
+		if !ok {
+			t.Fatalf("expected OrDefaultJoinClause, got %T", q.Where[1])
+		}
+		if len(odj.RequiredVars) != 1 || odj.RequiredVars[0] != datalog.NewSymbol("?e") {
+			t.Fatalf("expected required var ?e, got %v", odj.RequiredVars)
+		}
+		if len(odj.OutputVars) != 1 || odj.OutputVars[0] != datalog.NewSymbol("?x") {
+			t.Fatalf("expected output var ?x, got %v", odj.OutputVars)
+		}
+	})
+
+	t.Run("old correlation-key flat header errors loudly", func(t *testing.T) {
+		// Migration: a flat header names ?e as an output the ground branch
+		// cannot bind — an error pointing at the required-vars form, never
+		// a silent meaning change.
+		input := `[:find ?v
+	               :where [?e :user/name ?name]
+	                      (or-default-join [?e ?v]
+	                        [?e :user/score ?v]
+	                        [(ground 0) ?v])]`
+		_, err := ParseQuery(input)
+		if err == nil {
+			t.Fatal("expected error: ground branch does not bind ?e")
+		}
+	})
+
+	t.Run("required vars only in first position", func(t *testing.T) {
+		input := `[:find ?x
+	               :where (or-default-join [?x [?e]]
+	                        [?e :user/score ?x]
+	                        [(ground 0) ?x])]`
+		_, err := ParseQuery(input)
+		if err == nil {
+			t.Fatal("expected error: nested vector not in first position")
+		}
+	})
 }
 
 func TestParseOrDefaultErrors(t *testing.T) {
@@ -391,7 +445,7 @@ func TestParseOrDefaultErrors(t *testing.T) {
 		{
 			name:  "or-default-join without enough elements",
 			input: `[:find ?e :where (or-default-join [?e])]`,
-			error: "or-default-join clause must have join vars and at least two branches",
+			error: "or-default-join clause must have a header vector and at least two branches",
 		},
 	}
 

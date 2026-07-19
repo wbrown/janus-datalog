@@ -193,6 +193,179 @@ func TestNotClauseWithExistentialBodyVariable(t *testing.T) {
 	}
 }
 
+// TestOrDefaultJoinBranchLocalAlphaEquivalence pins branch-local scoping on
+// the declared interface: a branch variable outside the header is a local,
+// so renaming it — including onto a name the outer relation binds — must not
+// change results. The shadowing variant fails if branch evaluation leaks
+// outer bindings beyond the header (name capture).
+func TestOrDefaultJoinBranchLocalAlphaEquivalence(t *testing.T) {
+	valAttr := datalog.NewKeyword(":item/val")
+	seenAttr := datalog.NewKeyword(":seen/val")
+	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
+	datoms := []datalog.Datom{
+		{E: datalog.NewIdentity("item:1"), A: valAttr, V: int64(1), Tx: tx},
+		{E: datalog.NewIdentity("item:2"), A: valAttr, V: int64(2), Tx: tx},
+		{E: datalog.NewIdentity("item:3"), A: valAttr, V: int64(3), Tx: tx},
+		{E: datalog.NewIdentity("seen:1"), A: seenAttr, V: int64(2), Tx: tx},
+	}
+
+	v := datalog.NewSymbol("?v")
+	flag := datalog.NewSymbol("?flag")
+
+	// (or-default-join [[?v] ?flag]
+	//   (and [<local> :seen/val ?v] [(ground true) ?flag])
+	//   [(ground false) ?flag])
+	buildQuery := func(local query.Symbol) *query.Query {
+		return &query.Query{
+			Find: []query.FindElement{
+				query.FindVariable{Symbol: v},
+				query.FindVariable{Symbol: flag},
+			},
+			Where: []query.Clause{
+				&query.DataPattern{Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: valAttr},
+					query.Variable{Name: v},
+				}},
+				&query.OrDefaultJoinClause{
+					RequiredVars: []query.Symbol{v},
+					OutputVars:   []query.Symbol{flag},
+					Branches: [][]query.Clause{
+						{
+							&query.DataPattern{Elements: []query.PatternElement{
+								query.Variable{Name: local},
+								query.Constant{Value: seenAttr},
+								query.Variable{Name: v},
+							}},
+							&query.Expression{
+								Function: &query.GroundFunction{Value: true},
+								Binding:  flag,
+							},
+						},
+						{
+							&query.Expression{
+								Function: &query.GroundFunction{Value: false},
+								Binding:  flag,
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	run := func(local query.Symbol) map[int64]bool {
+		t.Helper()
+		matcher := NewMemoryPatternMatcher(datoms)
+		exec := NewExecutor(matcher, nil)
+		result, err := exec.Execute(buildQuery(local))
+		if err != nil {
+			t.Fatalf("execution failed with branch local %s: %v", local, err)
+		}
+		rows, err := CollectTuples(result, nil)
+		if err != nil {
+			t.Fatalf("collect failed with branch local %s: %v", local, err)
+		}
+		got := map[int64]bool{}
+		for _, row := range rows {
+			got[row[0].(int64)] = row[1].(bool)
+		}
+		if len(got) != 3 {
+			t.Fatalf("expected 3 distinct ?v with branch local %s, got %v", local, rows)
+		}
+		return got
+	}
+
+	fresh := run(datalog.NewSymbol("?d"))
+	if fresh[1] || !fresh[2] || fresh[3] {
+		t.Errorf("expected only ?v=2 flagged seen with fresh local, got %v", fresh)
+	}
+
+	// Shadowing the outer ?e must not change anything: the local is scoped
+	// to the branch.
+	shadowing := run(datalog.NewSymbol("?e"))
+	if shadowing[1] || !shadowing[2] || shadowing[3] {
+		t.Errorf("expected only ?v=2 flagged seen with shadowing local, got %v", shadowing)
+	}
+}
+
+// TestOrJoinBranchLocalAlphaEquivalence pins the same scoping invariant on
+// the or-join correlated-union path: a branch variable outside the header is
+// a local, and shadowing an outer name must not change the union's results.
+func TestOrJoinBranchLocalAlphaEquivalence(t *testing.T) {
+	valAttr := datalog.NewKeyword(":item/val")
+	seenAttr := datalog.NewKeyword(":seen/val")
+	alsoAttr := datalog.NewKeyword(":also/val")
+	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
+	datoms := []datalog.Datom{
+		{E: datalog.NewIdentity("item:1"), A: valAttr, V: int64(1), Tx: tx},
+		{E: datalog.NewIdentity("item:2"), A: valAttr, V: int64(2), Tx: tx},
+		{E: datalog.NewIdentity("item:3"), A: valAttr, V: int64(3), Tx: tx},
+		{E: datalog.NewIdentity("seen:1"), A: seenAttr, V: int64(2), Tx: tx},
+		{E: datalog.NewIdentity("also:1"), A: alsoAttr, V: int64(3), Tx: tx},
+	}
+
+	v := datalog.NewSymbol("?v")
+
+	// [?e :item/val ?v] (or-join [?v] [<local> :seen/val ?v] [<local> :also/val ?v])
+	buildQuery := func(local query.Symbol) *query.Query {
+		return &query.Query{
+			Find: []query.FindElement{query.FindVariable{Symbol: v}},
+			Where: []query.Clause{
+				&query.DataPattern{Elements: []query.PatternElement{
+					query.Variable{Name: datalog.NewSymbol("?e")},
+					query.Constant{Value: valAttr},
+					query.Variable{Name: v},
+				}},
+				&query.OrJoinClause{
+					JoinVars: []query.Symbol{v},
+					Branches: [][]query.Clause{
+						{&query.DataPattern{Elements: []query.PatternElement{
+							query.Variable{Name: local},
+							query.Constant{Value: seenAttr},
+							query.Variable{Name: v},
+						}}},
+						{&query.DataPattern{Elements: []query.PatternElement{
+							query.Variable{Name: local},
+							query.Constant{Value: alsoAttr},
+							query.Variable{Name: v},
+						}}},
+					},
+				},
+			},
+		}
+	}
+
+	run := func(local query.Symbol) map[int64]bool {
+		t.Helper()
+		matcher := NewMemoryPatternMatcher(datoms)
+		exec := NewExecutor(matcher, nil)
+		result, err := exec.Execute(buildQuery(local))
+		if err != nil {
+			t.Fatalf("execution failed with branch local %s: %v", local, err)
+		}
+		rows, err := CollectTuples(result, nil)
+		if err != nil {
+			t.Fatalf("collect failed with branch local %s: %v", local, err)
+		}
+		got := map[int64]bool{}
+		for _, row := range rows {
+			got[row[0].(int64)] = true
+		}
+		return got
+	}
+
+	fresh := run(datalog.NewSymbol("?d"))
+	if len(fresh) != 2 || !fresh[2] || !fresh[3] {
+		t.Errorf("expected {2 3} (seen or also) with fresh local, got %v", fresh)
+	}
+
+	shadowing := run(datalog.NewSymbol("?e"))
+	if len(shadowing) != 2 || !shadowing[2] || !shadowing[3] {
+		t.Errorf("expected {2 3} (seen or also) with shadowing local, got %v", shadowing)
+	}
+}
+
 func TestNotClauseNoMatches(t *testing.T) {
 	// When NOT clause matches nothing, all results should be kept
 	alice := datalog.NewIdentity("user:alice")

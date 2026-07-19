@@ -47,7 +47,7 @@ The engine has four OR-family clause types:
 | `(or ...)` | Union | Execute ALL branches, union results |
 | `(or-join [...] ...)` | Union + explicit join | Same as or, with declared join vars |
 | `(or-default ...)` | Fallback | Try branches in order, stop at first match |
-| `(or-default-join [...] ...)` | Fallback + explicit join | Same as or-default, with declared join vars |
+| `(or-default-join [[?req ...] ?out ...] ...)` | Fallback + declared interface | Per-group fallback on the required vars; outputs bound by every branch |
 
 **Critical distinction**: union vs fallback.
 

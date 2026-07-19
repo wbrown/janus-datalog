@@ -178,6 +178,29 @@ filter inputs out of the header:
   [?e :entity/world ?world])
 ```
 
+**OR-default clauses** — fallback semantics (janus extension). Branches are tried in order; the first non-empty result wins:
+```clojure
+;; Value with a default when the attribute is missing
+(or-default [?e :user/status ?status]
+            [(ground :status/unknown) ?status])
+```
+
+`or-default-join` declares its complete interface in the header: an optional nested vector of **required vars** (the per-group correlation keys, which the enclosing query must bind first) followed by the **output vars**, which every branch must bind:
+```clojure
+;; Per-entity fallback: each ?e gets its score, or 0
+(or-default-join [[?e] ?score]
+  [?e :entity/score ?score]
+  [(ground 0) ?score])
+
+;; Per-entity count from an uncorrelated subquery, defaulting to 0
+(or-default-join [[?e] ?count]
+  [(q [:find ?e (count ?c) :in $ :where [?c :child/parent ?e]] $)
+   [[?e ?count] ...]]
+  [(ground 0) ?count])
+```
+
+A flat header declares outputs only — the fallback decision is then **global**: branch 1 evaluates once, and the default fires only when it returns nothing. Declare the grouping keys deliberately: which keys the fallback is decided per changes the results, not just the plan. Branch variables outside the header are locals — a name shared with an outer variable does not correlate. A per-group filter with no outputs is `or-join`'s job.
+
 **Vector functions** — operate on cardinality-vector attributes:
 ```clojure
 [(nth ?vec 0) ?first-element]           ;; get element by index

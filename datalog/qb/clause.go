@@ -199,13 +199,24 @@ func (o *OrDefaultBuilder) toClause() query.Clause {
 
 // OrDefaultJoinBuilder accumulates branches for an OR-DEFAULT-JOIN clause.
 type OrDefaultJoinBuilder struct {
-	joinVars []*Var
-	branches [][]interface{}
+	requiredVars []*Var
+	outputVars   []*Var
+	branches     [][]interface{}
 }
 
-// OrDefaultJoin starts building an OR-DEFAULT-JOIN clause with explicit join variables.
-func OrDefaultJoin(joinVars ...*Var) *OrDefaultJoinBuilder {
-	return &OrDefaultJoinBuilder{joinVars: joinVars}
+// OrDefaultJoin starts building an OR-DEFAULT-JOIN clause. The arguments are
+// the output variables — bound by every branch. Per-group correlation keys
+// are declared with Required; without them the fallback decision is global.
+func OrDefaultJoin(outputVars ...*Var) *OrDefaultJoinBuilder {
+	return &OrDefaultJoinBuilder{outputVars: outputVars}
+}
+
+// Required declares the per-group correlation keys — variables the enclosing
+// query must bind before the clause runs. or-default is non-monotone: these
+// keys quantify the fallback decision, so they are declared, never inferred.
+func (o *OrDefaultJoinBuilder) Required(vars ...*Var) *OrDefaultJoinBuilder {
+	o.requiredVars = append(o.requiredVars, vars...)
+	return o
 }
 
 // Branch adds a branch with one or more clauses.
@@ -215,9 +226,13 @@ func (o *OrDefaultJoinBuilder) Branch(clauses ...interface{}) *OrDefaultJoinBuil
 }
 
 func (o *OrDefaultJoinBuilder) toClause() query.Clause {
-	joinSyms := make([]query.Symbol, len(o.joinVars))
-	for i, v := range o.joinVars {
-		joinSyms[i] = v.Symbol()
+	requiredSyms := make([]query.Symbol, len(o.requiredVars))
+	for i, v := range o.requiredVars {
+		requiredSyms[i] = v.Symbol()
+	}
+	outputSyms := make([]query.Symbol, len(o.outputVars))
+	for i, v := range o.outputVars {
+		outputSyms[i] = v.Symbol()
 	}
 
 	qbranches := make([][]query.Clause, len(o.branches))
@@ -232,8 +247,13 @@ func (o *OrDefaultJoinBuilder) toClause() query.Clause {
 		}
 	}
 
-	return &query.OrDefaultJoinClause{
-		JoinVars: joinSyms,
-		Branches: qbranches,
+	clause := &query.OrDefaultJoinClause{
+		RequiredVars: requiredSyms,
+		OutputVars:   outputSyms,
+		Branches:     qbranches,
 	}
+	if err := clause.Validate(); err != nil {
+		panic(fmt.Sprintf("OrDefaultJoin: %v", err))
+	}
+	return clause
 }

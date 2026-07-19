@@ -1399,18 +1399,31 @@ func (e *DefaultQueryExecutor) executeOrDefaultClause(ctx Context, clause *query
 	return rel, nil
 }
 
-// executeOrDefaultJoinClause implements fallback semantics for or-default-join clauses.
+// executeOrDefaultJoinClause implements fallback semantics for or-default-join
+// clauses. The declared required vars are the per-group correlation keys and
+// must be bound at entry; with none declared, the fallback decision is global.
 func (e *DefaultQueryExecutor) executeOrDefaultJoinClause(ctx Context, clause *query.OrDefaultJoinClause, groups Relations) (Relation, error) {
-	joinVarSet := make(map[query.Symbol]bool, len(clause.JoinVars))
-	for _, v := range clause.JoinVars {
-		joinVarSet[v] = true
+	if err := clause.Validate(); err != nil {
+		return nil, err
 	}
 
-	outerRel, consumed := e.findOuterRelationBySymbols(joinVarSet, groups)
+	requiredSet := make(map[query.Symbol]bool, len(clause.RequiredVars))
+	for _, v := range clause.RequiredVars {
+		requiredSet[v] = true
+	}
+
+	outerRel, consumed := e.findOuterRelationBySymbols(requiredSet, groups)
+	outerSyms := outerRel.Symbols()
+	for _, v := range clause.RequiredVars {
+		if !query.ContainsSymbol(outerSyms, v) {
+			return nil, fmt.Errorf("or-default-join required variable %s is not bound", v)
+		}
+	}
 
 	prefetched := false
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, true)
-	rel.joinSyms = clause.JoinVars
+	rel.joinSyms = clause.RequiredVars
+	rel.headerSyms = append(append([]query.Symbol(nil), clause.RequiredVars...), clause.OutputVars...)
 	rel.prefetched = prefetched
 	rel.consumedGroups = consumed
 	return rel, nil
@@ -1697,6 +1710,7 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, c
 
 	rel := NewOrFallbackRelation(e, ctx, clause.Branches, outerRel, e.options, false)
 	rel.joinSyms = clause.JoinVars
+	rel.headerSyms = clause.JoinVars
 	rel.consumedGroups = consumed
 	return rel, nil
 }

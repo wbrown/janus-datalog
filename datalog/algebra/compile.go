@@ -325,10 +325,15 @@ func compileOr(oc *query.OrClause, current *Node) (*Node, error) {
 }
 
 // compileOrJoin handles OR-JOIN clauses — union semantics with join vars.
-// Same correlated-predicate detection as compileOr.
+// Same correlated-predicate detection as compileOr. The correlated route
+// emits an or-default-join, whose interface must be declared: ScopeOf
+// splits the flat or-join header canonically — Provides (header vars every
+// branch binds) become the outputs, Correlates (the rest, plus branch
+// externals) become the required vars.
 func compileOrJoin(oj *query.OrJoinClause, current *Node) (*Node, error) {
 	if branchesRequireOuterContext(oj.Branches) {
-		return compileOrFallbackWithJoinVars(oj.Branches, oj.JoinVars, current)
+		scope := query.ScopeOf(oj)
+		return compileOrFallbackWithVars(oj.Branches, scope.Correlates, scope.Provides, current)
 	}
 	return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current)
 }
@@ -378,9 +383,10 @@ func compileOrDefault(oc *query.OrDefaultClause, current *Node) (*Node, error) {
 	return compileOrFallback(oc.Branches, current)
 }
 
-// compileOrDefaultJoin handles OR-DEFAULT-JOIN clauses — fallback with join vars.
+// compileOrDefaultJoin handles OR-DEFAULT-JOIN clauses — fallback with a
+// declared required/output interface.
 func compileOrDefaultJoin(oj *query.OrDefaultJoinClause, current *Node) (*Node, error) {
-	return compileOrFallbackWithJoinVars(oj.Branches, oj.JoinVars, current)
+	return compileOrFallbackWithVars(oj.Branches, oj.RequiredVars, oj.OutputVars, current)
 }
 
 // compileOrUnion compiles each branch and unions the results.
@@ -441,12 +447,12 @@ func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symb
 // compileOrFallback handles OR-fallback: subquery branch + ground default branch.
 // This is the pattern that produces LateralJoin with defaults.
 func compileOrFallback(branches [][]query.Clause, current *Node) (*Node, error) {
-	return compileOrFallbackWithJoinVars(branches, nil, current)
+	return compileOrFallbackWithVars(branches, nil, nil, current)
 }
 
-// compileOrFallbackWithJoinVars handles OR-fallback, preserving explicit join
-// variables from or-join on Union nodes.
-func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.Symbol, current *Node) (*Node, error) {
+// compileOrFallbackWithVars handles OR-fallback, preserving or-default-join's
+// declared required/output interface through the IR.
+func compileOrFallbackWithVars(branches [][]query.Clause, requiredVars, outputVars []query.Symbol, current *Node) (*Node, error) {
 	if len(branches) < 2 {
 		return nil, fmt.Errorf("OR fallback requires at least 2 branches")
 	}
@@ -473,7 +479,7 @@ func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.S
 		// compileOrFallbackExclusive returns a Union node (not joined with
 		// current). We join it here so the decompiler emits outer clauses
 		// separately from the OR.
-		union, err := compileOrFallbackExclusive(branches, joinVars, current)
+		union, err := compileOrFallbackExclusive(branches, requiredVars, outputVars, current)
 		if err != nil {
 			return nil, err
 		}
@@ -535,7 +541,7 @@ func compileOrFallbackWithJoinVars(branches [][]query.Clause, joinVars []query.S
 //
 // This correctly implements "try branch 1, else branch 2 per tuple" because
 // branch 2 only runs on tuples where branch 1 produced no results.
-func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symbol, current *Node) (*Node, error) {
+func compileOrFallbackExclusive(branches [][]query.Clause, requiredVars, outputVars []query.Symbol, current *Node) (*Node, error) {
 	if current == nil {
 		return nil, fmt.Errorf("OR fallback requires prior relation")
 	}
@@ -568,9 +574,10 @@ func compileOrFallbackExclusive(branches [][]query.Clause, joinVars []query.Symb
 	lateralUnion := &Node{
 		Op: RuleLateralUnion,
 		Data: &LateralUnion{
-			Output:   output,
-			JoinVars: joinVars,
-			Required: append([]query.Symbol(nil), current.Symbols()...),
+			Output:       output,
+			RequiredVars: requiredVars,
+			OutputVars:   outputVars,
+			Required:     append([]query.Symbol(nil), current.Symbols()...),
 		},
 		Children: compiled,
 	}

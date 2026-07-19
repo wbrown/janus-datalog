@@ -99,21 +99,11 @@ func ScopeOf(clause Clause) ClauseScope {
 		return ClauseScope{Provides: provides, Correlates: correlates, CorrelatesOptional: true}
 
 	case *OrDefaultJoinClause:
-		// The header declares the per-tuple correlation keys, not the
-		// complete interface: branch outputs escape unrestricted (union —
-		// any single branch may execute), and the algebra emitter binds
-		// outputs outside the header. Header variables no branch produces
-		// correlate from outside.
-		// docs/bugs/BUG_OR_DEFAULT_JOIN_HEADER_NOT_COMPLETE_INTERFACE.md
-		// records the ratified change to header-as-complete-interface.
-		provides, externals := branchInterfaces(c.Branches, unionSymbolSets)
-		correlates := externals
-		for _, jv := range c.JoinVars {
-			if !ContainsSymbol(provides, jv) && !ContainsSymbol(correlates, jv) {
-				correlates = append(correlates, jv)
-			}
-		}
-		return ClauseScope{Provides: provides, Correlates: correlates, CorrelatesOptional: true}
+		// The declared header is the complete interface (Validate enforces
+		// it at the boundaries): required vars correlate — mandatory, they
+		// quantify the per-group fallback decision — and output vars are
+		// bound by every branch. Branch locals never escape.
+		return ClauseScope{Provides: c.OutputVars, Correlates: c.RequiredVars}
 
 	case Predicate:
 		// Every predicate form: consumes, never binds.
@@ -159,20 +149,7 @@ func branchInterfaces(
 
 	branchProvides := make([][]Symbol, len(branches))
 	for i, branch := range branches {
-		var provided, correlated []Symbol
-		for _, clause := range branch {
-			scope := ScopeOf(clause)
-			for _, sym := range scope.Provides {
-				if !ContainsSymbol(provided, sym) {
-					provided = append(provided, sym)
-				}
-			}
-			for _, sym := range scope.Correlates {
-				if !ContainsSymbol(correlated, sym) {
-					correlated = append(correlated, sym)
-				}
-			}
-		}
+		provided, correlated := branchInterface(branch)
 		branchProvides[i] = provided
 		for _, sym := range correlated {
 			if !ContainsSymbol(provided, sym) && !sym.IsSource() && !ContainsSymbol(externals, sym) {
@@ -182,6 +159,63 @@ func branchInterfaces(
 	}
 
 	return combine(branchProvides), externals
+}
+
+// branchInterface computes one branch's interface: the symbols its clauses
+// provide and the symbols they correlate on, each deduplicated in
+// first-appearance order.
+func branchInterface(branch []Clause) (provided, correlated []Symbol) {
+	for _, clause := range branch {
+		scope := ScopeOf(clause)
+		for _, sym := range scope.Provides {
+			if !ContainsSymbol(provided, sym) {
+				provided = append(provided, sym)
+			}
+		}
+		for _, sym := range scope.Correlates {
+			if !ContainsSymbol(correlated, sym) {
+				correlated = append(correlated, sym)
+			}
+		}
+	}
+	return provided, correlated
+}
+
+// Validate enforces the declared interface: at least one output variable, at
+// least two branches, required and output sets disjoint, every branch binds
+// every output variable, and every variable a branch consumes without
+// binding is a declared required variable. The parser, the qb builder, and
+// the executor call this at their boundaries; ScopeOf reads the declaration
+// without re-checking.
+func (o *OrDefaultJoinClause) Validate() error {
+	if len(o.OutputVars) == 0 {
+		return fmt.Errorf("or-default-join must declare at least one output variable")
+	}
+	if len(o.Branches) < 2 {
+		return fmt.Errorf("or-default-join must have at least two branches")
+	}
+	for _, req := range o.RequiredVars {
+		if ContainsSymbol(o.OutputVars, req) {
+			return fmt.Errorf("or-default-join variable %s cannot be both required and output", req)
+		}
+	}
+	for i, branch := range o.Branches {
+		provided, correlated := branchInterface(branch)
+		for _, out := range o.OutputVars {
+			if !ContainsSymbol(provided, out) {
+				return fmt.Errorf("or-default-join branch %d does not bind output variable %s; every branch must bind every output", i+1, out)
+			}
+		}
+		for _, sym := range correlated {
+			if sym.IsSource() || ContainsSymbol(provided, sym) {
+				continue
+			}
+			if !ContainsSymbol(o.RequiredVars, sym) {
+				return fmt.Errorf("or-default-join branch %d consumes %s, which is neither bound in the branch nor a declared required variable", i+1, sym)
+			}
+		}
+	}
+	return nil
 }
 
 // headerScope computes the scope of an explicit-join form: Provides is the

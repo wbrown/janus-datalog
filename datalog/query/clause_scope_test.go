@@ -188,12 +188,14 @@ func TestScopeOf(t *testing.T) {
 		assertSymbols(t, "Correlates", scope.Correlates, "?e")
 	})
 
-	t.Run("or-default-join branch outputs escape past the header", func(t *testing.T) {
-		// Live contract: the header declares correlation keys, not the
-		// complete interface — the algebra emitter binds outputs outside
-		// the header (the get-else/fallback decorrelation shape).
+	t.Run("or-default-join provides its outputs, correlates on its required vars", func(t *testing.T) {
+		// The declared header is the complete interface: required vars
+		// quantify the per-group fallback decision (mandatory — or-default
+		// is non-monotone), output vars are bound by every branch, and
+		// branch locals never escape.
 		scope := ScopeOf(&OrDefaultJoinClause{
-			JoinVars: []Symbol{datalog.NewSymbol("?e")},
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			OutputVars:   []Symbol{datalog.NewSymbol("?out")},
 			Branches: [][]Clause{
 				{scopePattern("?e", "a/b", "?out")},
 				{&Expression{
@@ -202,17 +204,18 @@ func TestScopeOf(t *testing.T) {
 				}},
 			},
 		})
-		assertSymbols(t, "Provides", scope.Provides, "?e", "?out")
-		assertSymbols(t, "Correlates", scope.Correlates)
-		if !scope.CorrelatesOptional {
-			t.Error("or-default-join falls back per correlation group; unbindable correlates are legal")
+		assertSymbols(t, "Provides", scope.Provides, "?out")
+		assertSymbols(t, "Correlates", scope.Correlates, "?e")
+		if scope.CorrelatesOptional {
+			t.Error("declared required vars are mandatory; global fallback is an empty required set, not leniency")
 		}
 	})
 
-	t.Run("or-default-join header var no branch produces correlates", func(t *testing.T) {
+	t.Run("or-default-join with no required vars is the global form", func(t *testing.T) {
 		scope := ScopeOf(&OrDefaultJoinClause{
-			JoinVars: []Symbol{datalog.NewSymbol("?e")},
+			OutputVars: []Symbol{datalog.NewSymbol("?out")},
 			Branches: [][]Clause{
+				{scopePattern("?d", "a/b", "?out")},
 				{&Expression{
 					Function: &GroundFunction{Value: int64(0)},
 					Binding:  datalog.NewSymbol("?out"),
@@ -220,7 +223,109 @@ func TestScopeOf(t *testing.T) {
 			},
 		})
 		assertSymbols(t, "Provides", scope.Provides, "?out")
-		assertSymbols(t, "Correlates", scope.Correlates, "?e")
+		assertSymbols(t, "Correlates", scope.Correlates)
+	})
+}
+
+// TestOrDefaultJoinValidate pins the declared-interface enforcement: every
+// branch binds every output, branch externals must be declared required,
+// required and output sets are disjoint, and the degenerate forms error.
+func TestOrDefaultJoinValidate(t *testing.T) {
+	ground := func(sym string) Clause {
+		return &Expression{
+			Function: &GroundFunction{Value: int64(0)},
+			Binding:  datalog.NewSymbol(sym),
+		}
+	}
+
+	t.Run("valid per-group form", func(t *testing.T) {
+		clause := &OrDefaultJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			OutputVars:   []Symbol{datalog.NewSymbol("?out")},
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?out")},
+				{ground("?out")},
+			},
+		}
+		if err := clause.Validate(); err != nil {
+			t.Errorf("expected valid, got: %v", err)
+		}
+	})
+
+	t.Run("branch missing an output errors", func(t *testing.T) {
+		clause := &OrDefaultJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			OutputVars:   []Symbol{datalog.NewSymbol("?out")},
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?out")},
+				{scopePattern("?e", "a/c", "?other")},
+			},
+		}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: branch 2 does not bind ?out")
+		}
+	})
+
+	t.Run("old correlation-key header errors loudly", func(t *testing.T) {
+		// The migration case: a flat header whose var was a correlation key
+		// is now an output declaration the ground branch cannot satisfy.
+		clause := &OrDefaultJoinClause{
+			OutputVars: []Symbol{datalog.NewSymbol("?e")},
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?out")},
+				{ground("?out")},
+			},
+		}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: ground branch does not bind ?e")
+		}
+	})
+
+	t.Run("undeclared branch external errors", func(t *testing.T) {
+		clause := &OrDefaultJoinClause{
+			OutputVars: []Symbol{datalog.NewSymbol("?out")},
+			Branches: [][]Clause{
+				{scopePattern("?d", "a/b", "?out")},
+				{&Expression{
+					Function: &GetElseFunction{
+						Entity:  VariableTerm{Symbol: datalog.NewSymbol("?e")},
+						Attr:    datalog.NewKeyword(":a/b"),
+						Default: int64(0),
+					},
+					Binding: datalog.NewSymbol("?out"),
+				}},
+			},
+		}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: branch 2 consumes ?e, which is not declared required")
+		}
+	})
+
+	t.Run("required and output overlap errors", func(t *testing.T) {
+		clause := &OrDefaultJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?out")},
+			OutputVars:   []Symbol{datalog.NewSymbol("?out")},
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?out")},
+				{ground("?out")},
+			},
+		}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: ?out is both required and output")
+		}
+	})
+
+	t.Run("no outputs errors", func(t *testing.T) {
+		clause := &OrDefaultJoinClause{
+			RequiredVars: []Symbol{datalog.NewSymbol("?e")},
+			Branches: [][]Clause{
+				{scopePattern("?e", "a/b", "?out")},
+				{ground("?out")},
+			},
+		}
+		if err := clause.Validate(); err == nil {
+			t.Error("expected error: no output variables declared")
+		}
 	})
 }
 

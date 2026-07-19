@@ -71,7 +71,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 		results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?score
 			 :where [?e :entity/name ?name]
-			        (or-default-join [?e ?score]
+			        (or-default-join [[?e] ?score]
 			          [?e :entity/score ?score]
 			          (and (not [?e :entity/score _])
 			               [(ground 0) ?score]))]`))
@@ -132,7 +132,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			[:find ?self-name ?related-name
 			 :where [?self :entity/name ?self-name]
 			        [?self :entity/type ?stype]
-			        (or-default-join [?related ?self ?stype]
+			        (or-default-join [[?self ?stype] ?related]
 			          (and [(ground :type/parent) ?stype]
 			               (or-join [?related ?self]
 			                 [?related :child/parent ?self]
@@ -222,7 +222,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			 :where
 			 [?self :entity/name "A1"]
 			 [?self :entity/type ?stype]
-			 (or-default-join [?related ?self ?stype]
+			 (or-default-join [[?self ?stype] ?related]
 			   (and [(ground :type/alpha) ?stype]
 			        (or-join [?related ?self]
 			          [?related :rel/location ?self]
@@ -272,7 +272,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			[:find ?name ?stype
 			 :where [?e :entity/name ?name]
 			        [?e :entity/type ?stype]
-			        (or-default-join [?e ?stype]
+			        (or-join [?e ?stype]
 			          (and [(ground :type/parent) ?stype]
 			               [?e :entity/friend _])
 			          (and [(ground :type/child) ?stype]
@@ -289,7 +289,7 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 		results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?count
 			 :where [?e :entity/name ?name]
-			        (or-default-join [?e ?count]
+			        (or-default-join [[?e] ?count]
 			          [(q [:find ?e (count ?c)
 			               :in $
 			               :where [?c :child/parent ?e]]

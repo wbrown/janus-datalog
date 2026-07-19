@@ -616,21 +616,44 @@ func TestOrDefaultJoinClauseQB(t *testing.T) {
 	x := NewVar("x")
 	attr := Kw(":user/score")
 
-	odj := OrDefaultJoin(x).
-		Branch(Pat(e, attr, x)).
-		Branch(Ground(int64(0)).As(x))
+	t.Run("outputs only (global fallback)", func(t *testing.T) {
+		odj := OrDefaultJoin(x).
+			Branch(Pat(e, attr, x)).
+			Branch(Ground(int64(0)).As(x))
 
-	clause := odj.toClause()
-	odjc, ok := clause.(*query.OrDefaultJoinClause)
-	if !ok {
-		t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
-	}
-	if len(odjc.JoinVars) != 1 {
-		t.Errorf("Expected 1 join var, got %d", len(odjc.JoinVars))
-	}
-	if len(odjc.Branches) != 2 {
-		t.Errorf("Expected 2 branches, got %d", len(odjc.Branches))
-	}
+		clause := odj.toClause()
+		odjc, ok := clause.(*query.OrDefaultJoinClause)
+		if !ok {
+			t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
+		}
+		if len(odjc.RequiredVars) != 0 {
+			t.Errorf("Expected no required vars, got %v", odjc.RequiredVars)
+		}
+		if len(odjc.OutputVars) != 1 || odjc.OutputVars[0] != x.Symbol() {
+			t.Errorf("Expected output var %s, got %v", x.Symbol(), odjc.OutputVars)
+		}
+		if len(odjc.Branches) != 2 {
+			t.Errorf("Expected 2 branches, got %d", len(odjc.Branches))
+		}
+	})
+
+	t.Run("Required declares the correlation keys", func(t *testing.T) {
+		odj := OrDefaultJoin(x).Required(e).
+			Branch(Pat(e, attr, x)).
+			Branch(Ground(int64(0)).As(x))
+
+		clause := odj.toClause()
+		odjc, ok := clause.(*query.OrDefaultJoinClause)
+		if !ok {
+			t.Fatalf("Expected *query.OrDefaultJoinClause, got %T", clause)
+		}
+		if len(odjc.RequiredVars) != 1 || odjc.RequiredVars[0] != e.Symbol() {
+			t.Errorf("Expected required var %s, got %v", e.Symbol(), odjc.RequiredVars)
+		}
+		if len(odjc.OutputVars) != 1 || odjc.OutputVars[0] != x.Symbol() {
+			t.Errorf("Expected output var %s, got %v", x.Symbol(), odjc.OutputVars)
+		}
+	})
 }
 
 // TestOrderSpecs tests ordering specifications

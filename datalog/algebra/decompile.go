@@ -229,13 +229,14 @@ func decompileLeftOuterJoin(n *Node) ([]query.Clause, error) {
 		}
 	}
 
-	// Use or-default-join with explicit join variables so the phaser knows this OR
-	// depends on the join symbols from the outer relation. Without explicit
-	// join vars, the phaser may reorder the OR before the DataPattern that
-	// provides the join symbols.
+	// Declare the interface: the join symbols are the per-group correlation
+	// keys the outer relation must bind (so the phaser schedules this after
+	// the DataPattern that provides them), and the default symbols are the
+	// outputs every branch binds.
 	orDefaultJoinClause := &query.OrDefaultJoinClause{
-		JoinVars: join.JoinSymbols,
-		Branches: [][]query.Clause{rightClauses, defaultBranch},
+		RequiredVars: join.JoinSymbols,
+		OutputVars:   defaultSyms,
+		Branches:     [][]query.Clause{rightClauses, defaultBranch},
 	}
 
 	return append(leftClauses, orDefaultJoinClause), nil
@@ -306,10 +307,11 @@ func decompileLateralUnion(n *Node) ([]query.Clause, error) {
 		}
 		branches = append(branches, branch)
 	}
-	if len(lu.JoinVars) > 0 {
+	if len(lu.RequiredVars) > 0 || len(lu.OutputVars) > 0 {
 		return []query.Clause{&query.OrDefaultJoinClause{
-			JoinVars: lu.JoinVars,
-			Branches: branches,
+			RequiredVars: lu.RequiredVars,
+			OutputVars:   lu.OutputVars,
+			Branches:     branches,
 		}}, nil
 	}
 	return []query.Clause{&query.OrDefaultClause{Branches: branches}}, nil
@@ -414,8 +416,9 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 
 	if len(joinVars) > 0 {
 		orDefaultJoinClause := &query.OrDefaultJoinClause{
-			JoinVars: joinVars,
-			Branches: [][]query.Clause{subqueryBranch, defaultBranch},
+			RequiredVars: joinVars,
+			OutputVars:   defaultSyms,
+			Branches:     [][]query.Clause{subqueryBranch, defaultBranch},
 		}
 		clauses = append(clauses, orDefaultJoinClause)
 	} else {

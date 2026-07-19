@@ -100,7 +100,8 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			}
 			copy := *data
 			copy.Output = cloneSymbols(data.Output)
-			copy.JoinVars = cloneSymbols(data.JoinVars)
+			copy.RequiredVars = cloneSymbols(data.RequiredVars)
+			copy.OutputVars = cloneSymbols(data.OutputVars)
 			copy.Required = cloneSymbols(data.Required)
 			refreshed.Data = &copy
 		case *LateralJoin:
@@ -401,7 +402,7 @@ func analyzeLateralUnion(node *Node, children []Analysis) (Analysis, error) {
 	if !ok {
 		return Analysis{}, dataTypeError(node, "*algebra.LateralUnion")
 	}
-	return analyzeUnionBranches(data.Output, data.JoinVars, data.Required, children)
+	return analyzeUnionBranches(data.Output, data.RequiredVars, data.Required, children)
 }
 
 func analyzeUnionBranches(output, joinVars, outerRequired []query.Symbol, children []Analysis) (Analysis, error) {
