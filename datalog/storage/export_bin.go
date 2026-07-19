@@ -16,16 +16,16 @@ import (
 )
 
 const (
-	binaryExportMagic       = "JDZL"
-	binaryIndexMagic        = "JDZI"
-	binaryExportVersion     = 1
-	binaryHeaderSize        = 32
-	binaryChunkHeaderSize   = 10
-	binaryIndexEntrySize    = 56
-	binaryChunkTypeData     = 1
-	binaryChunkFlagRaw      = 0x01
+	binaryExportMagic        = "JDZL"
+	binaryIndexMagic         = "JDZI"
+	binaryExportVersion      = 1
+	binaryHeaderSize         = 32
+	binaryChunkHeaderSize    = 10
+	binaryIndexEntrySize     = 56
+	binaryChunkTypeData      = 1
+	binaryChunkFlagRaw       = 0x01
 	binaryRecordFlagAfterRef = 0x01
-	defaultBinarySoftBudget = 256 << 10
+	defaultBinarySoftBudget  = 256 << 10
 )
 
 // BinaryExportOptions configures JDZL binary export.
@@ -46,11 +46,11 @@ type BinaryImportOptions struct {
 }
 
 type binaryIndexEntry struct {
-	offset  uint64
-	cmpLen  uint32
-	uncLen  uint32
-	firstE  [20]byte
-	lastE   [20]byte
+	offset uint64
+	cmpLen uint32
+	uncLen uint32
+	firstE [20]byte
+	lastE  [20]byte
 }
 
 type binaryTrailer struct {

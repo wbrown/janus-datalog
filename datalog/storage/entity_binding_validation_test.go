@@ -132,9 +132,9 @@ func TestVEJoinOverMixedDataMatchesOnlyRefs(t *testing.T) {
 
 	tx := db.NewTransaction()
 	tx.Add(group, nameAttr, "Admins")
-	tx.Add(alice, refAttr, group)                                            // a real ref
-	tx.Add(datalog.NewIdentity("user:bob"), refAttr, "group:admins")         // a seed string
-	tx.Add(datalog.NewIdentity("user:carol"), refAttr, group.L85())          // an L85 text
+	tx.Add(alice, refAttr, group)                                    // a real ref
+	tx.Add(datalog.NewIdentity("user:bob"), refAttr, "group:admins") // a seed string
+	tx.Add(datalog.NewIdentity("user:carol"), refAttr, group.L85())  // an L85 text
 	if _, err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}

@@ -231,4 +231,3 @@ func TestGroundFunctionString(t *testing.T) {
 		}
 	})
 }
-

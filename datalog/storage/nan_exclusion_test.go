@@ -116,4 +116,3 @@ func TestExpressionProducingNaNIsError(t *testing.T) {
 		t.Errorf("expected +Inf, got %v", tuples[0][0])
 	}
 }
-

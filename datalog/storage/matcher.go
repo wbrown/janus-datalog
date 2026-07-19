@@ -228,7 +228,6 @@ func (m *BadgerMatcher) bindPattern(pattern *query.DataPattern, tuple executor.T
 	return &query.DataPattern{Elements: elements}
 }
 
-
 // MatchWithHistory matches a pattern and returns ALL historical values, not just current.
 // This is used for history queries where the user wants to see all versions of an attribute.
 // Returns all datoms including their ElementIDs for temporal ordering.

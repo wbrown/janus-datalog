@@ -12,10 +12,13 @@ import (
 // always produce same output for a given version.
 //
 // v1 (0x01): sequence/match counts are uint16 — overflowed and silently
-//   truncated above 65535 sequences, producing unreadable blobs for large,
-//   compressible, densely-structured values. Read-only now; never written.
+//
+//	truncated above 65535 sequences, producing unreadable blobs for large,
+//	compressible, densely-structured values. Read-only now; never written.
+//
 // v2 (0x02): sequence/match counts widened to uint32. Decompress reads both
-//   versions; Compress always writes v2.
+//
+//	versions; Compress always writes v2.
 const CompressionVersion byte = 0x02
 
 // maxSequenceCount is the largest sequence/match count the v2 header can encode

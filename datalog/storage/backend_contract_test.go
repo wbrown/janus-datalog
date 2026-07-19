@@ -238,13 +238,13 @@ func TestDatabaseBackendsPublicSemantics(t *testing.T) {
 	require.NoError(t, err)
 
 	type backendResult struct {
-		latest   [][]interface{}
-		asOf     [][]interface{}
-		history  int
-		queryInto []string
-		unique   datalog.Identity
-		pulled   map[datalog.Keyword]interface{}
-		exported string
+		latest        [][]interface{}
+		asOf          [][]interface{}
+		history       int
+		queryInto     []string
+		unique        datalog.Identity
+		pulled        map[datalog.Keyword]interface{}
+		exported      string
 		afterTruncate [][]interface{}
 	}
 	results := make(map[string]backendResult)
