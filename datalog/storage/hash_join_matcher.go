@@ -97,11 +97,13 @@ func (m *BadgerMatcher) chooseJoinStrategy(
 	// sort (CompareValues via Sorted()), the advance comparator (CompareValues),
 	// and the storage scan order of the probe stream. That agreement is provable
 	// for E-position keys — probe datoms arrive in hash-byte order, which is
-	// exactly Identity's CompareValues order, and the projected single-column
-	// binding set makes cmp==0 coincide with ValuesEqual (interned pointer
-	// equality). Value-position scan order is the on-disk type-tag order, which
-	// deliberately differs from CompareValues' rank order (see datalog/compare.go),
-	// so those joins use the order-free hash join instead.
+	// exactly Identity's CompareValues order, and every binding key is an
+	// interned Identity (the typed-position filter drops the rest), so cmp==0
+	// coincides with ValuesEqual. Multi-column bindings may repeat a key;
+	// mergeJoinIterator pairs each datom with its whole key group. Value-position
+	// scan order is the on-disk type-tag order, which deliberately differs from
+	// CompareValues' rank order (see datalog/compare.go), so those joins use the
+	// order-free hash join instead.
 	if position == 0 {
 		return MergeJoin
 	}
@@ -177,7 +179,8 @@ func (m *BadgerMatcher) matchWithHashJoin(
 	}
 
 	// Build hash set using symbol index (not datom position)
-	hashSet, keyCount, boundValue, err := m.buildHashSet(bindingRel, symbolIndex)
+	hashSet, keyCount, boundValue, err := m.buildHashSet(
+		bindingRel, symbolIndex, typedPositionBindingCheck(pattern, bindingRel.Symbols()))
 	if err != nil {
 		return nil, fmt.Errorf("hash join bindings failed: %w", err)
 	}
@@ -450,10 +453,15 @@ func (m *BadgerMatcher) chooseIndexForValues(index IndexType, e, a, v, tx interf
 
 // buildHashSet creates a typed hash set from the binding relation. It returns
 // all tuples per key plus the distinct-key count and sole key value, when one
-// exists, so a single binding can narrow the storage scan.
+// exists, so a single binding can narrow the storage scan. Tuples failing the
+// typed-position check (non-Identity entity, non-Keyword attribute — see
+// filterTypedPositionBindings) are dropped here: they are typed non-matches,
+// and dropping them at construction keeps them away from the probe's
+// full-tuple verification.
 func (m *BadgerMatcher) buildHashSet(
 	bindingRel executor.Relation,
 	position int,
+	typed func(executor.Tuple) bool,
 ) (*executor.TupleKeyMap, int, interface{}, error) {
 	capacity := bindingRel.Size()
 	if capacity < 0 {
@@ -467,6 +475,13 @@ func (m *BadgerMatcher) buildHashSet(
 	for iter.Next() {
 		tuple := iter.Tuple()
 		if position >= len(tuple) {
+			continue
+		}
+		if typed != nil && !typed(tuple) {
+			// Typed non-match: this tuple's entity/attribute-position value
+			// names nothing, so it joins zero rows by definition. Dropping it
+			// here is the same result the probe would compute, without ever
+			// presenting a mistyped binding to matchesDatom.
 			continue
 		}
 
@@ -644,6 +659,10 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 	if err != nil {
 		return nil, err
 	}
+	// Typed non-matches join zero rows by definition; drop them before
+	// merging, exactly as the seek paths do. Filtering preserves the sorted
+	// order.
+	sortedTuples = filterTypedPositionBindings(pattern, bindingRel.Symbols(), sortedTuples)
 
 	if len(sortedTuples) == 0 {
 		// No bindings - return empty result
@@ -808,7 +827,9 @@ type mergeJoinIterator struct {
 	index        IndexType
 	constraints  []executor.StorageConstraint
 	sortedTuples []executor.Tuple // Sorted binding tuples
-	bindingIdx   int              // Current position in sorted tuples
+	bindingIdx   int              // Start of the current key group in sortedTuples
+	groupDatom   *datalog.Datom   // Datom being paired with its key group; nil = pull the next datom
+	groupOffset  int              // Next tuple within the key group to try against groupDatom
 	iter         Iterator         // Storage iterator
 	tupleBuilder *query.InternedTupleBuilder
 	current      executor.Tuple
@@ -816,8 +837,41 @@ type mergeJoinIterator struct {
 	err          error          // First error from storage operations
 }
 
+// Next advances to the next joined row. Binding tuples are sorted by join
+// key, so tuples sharing a key form a consecutive group, and every datom is
+// paired with each tuple of its key group — checking only the group's first
+// tuple loses rows (it can fail full-pattern verification while a later
+// tuple passes, and distinct datoms sharing a key can each match different
+// tuples). Group state persists across Next() calls so rows are emitted one
+// at a time; groupDatom stays valid between calls because the storage
+// iterator only advances after the group is exhausted (see the Iterator
+// workspace contract in store.go).
 func (it *mergeJoinIterator) Next() bool {
-	for it.iter.Next() {
+	for {
+		// Pair the current datom with the remaining tuples of its key group.
+		if it.groupDatom != nil {
+			probeKey := extractProbeKey(it.groupDatom, it.position)
+			for it.bindingIdx+it.groupOffset < len(it.sortedTuples) {
+				tuple := it.sortedTuples[it.bindingIdx+it.groupOffset]
+				if datalog.CompareValues(extractBindingKey(tuple, it.position), probeKey) != 0 {
+					break // past the key group
+				}
+				it.groupOffset++
+				if it.matcher.matchesWithBindingTuple(it.groupDatom, it.pattern, it.bindingRel, tuple) {
+					it.tupleBuilder.BuildTupleInternedInto(it.groupDatom, it.workspace)
+					it.current = it.workspace
+					return true
+				}
+			}
+			// Group exhausted for this datom. bindingIdx stays at the group
+			// start: the next datom may carry the same key.
+			it.groupDatom = nil
+			it.groupOffset = 0
+		}
+
+		if !it.iter.Next() {
+			break
+		}
 		datom, err := it.iter.Datom()
 		if err != nil {
 			it.err = err
@@ -829,52 +883,39 @@ func (it *mergeJoinIterator) Next() bool {
 			continue
 		}
 
-		// Extract datom key
 		probeKey := extractProbeKey(datom, it.position)
 
-		// Advance binding index while binding < datom
-		for it.bindingIdx < len(it.sortedTuples) {
-			bindingKey := extractBindingKey(it.sortedTuples[it.bindingIdx], it.position)
-			cmp := datalog.CompareValues(bindingKey, probeKey)
-
-			if cmp < 0 {
-				// Binding < datom: advance binding
-				it.bindingIdx++
-			} else {
-				// Binding >= datom: stop advancing
-				break
-			}
+		// Advance past binding key groups below the datom's key.
+		for it.bindingIdx < len(it.sortedTuples) &&
+			datalog.CompareValues(extractBindingKey(it.sortedTuples[it.bindingIdx], it.position), probeKey) < 0 {
+			it.bindingIdx++
 		}
-
 		if it.bindingIdx >= len(it.sortedTuples) {
-			// No more bindings
-			return false
+			// No bindings remain; the rest of the scan cannot join.
+			break
 		}
 
-		// Check if binding == datom
-		bindingKey := extractBindingKey(it.sortedTuples[it.bindingIdx], it.position)
-		cmp := datalog.CompareValues(bindingKey, probeKey)
-
-		if cmp == 0 {
-			// Keys match! Check full pattern match
-			if it.matcher.matchesWithBindingTuple(datom, it.pattern, it.bindingRel, it.sortedTuples[it.bindingIdx]) {
-				// Apply storage constraints
-				satisfiesAll := true
-				for _, constraint := range it.constraints {
-					if !constraint.Evaluate(datom) {
-						satisfiesAll = false
-						break
-					}
-				}
-
-				if satisfiesAll {
-					it.tupleBuilder.BuildTupleInternedInto(datom, it.workspace)
-					it.current = it.workspace
-					return true
+		if datalog.CompareValues(extractBindingKey(it.sortedTuples[it.bindingIdx], it.position), probeKey) == 0 {
+			// Constraints depend only on the datom; evaluate once before
+			// pairing it with the group.
+			satisfiesAll := true
+			for _, constraint := range it.constraints {
+				if !constraint.Evaluate(datom) {
+					satisfiesAll = false
+					break
 				}
 			}
+			if satisfiesAll {
+				it.groupDatom = datom
+				it.groupOffset = 0
+			}
 		}
-		// If cmp > 0, datom is less than current binding, skip it
+		// cmp > 0: datom below the current binding group; pull the next datom.
+	}
+	// Scan ended — surface any deferred error rather than presenting a
+	// failed scan as an empty one.
+	if srcErr := it.iter.Error(); srcErr != nil && it.err == nil {
+		it.err = srcErr
 	}
 	return false
 }

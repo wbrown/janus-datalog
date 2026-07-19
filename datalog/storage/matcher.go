@@ -524,18 +524,12 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	return EATV, start, end
 }
 
-// filterTypedPositionBindings drops binding tuples whose value for the
-// pattern's entity-position variable is not an Identity, or whose value for
-// the attribute-position variable is not a Keyword. Such values name no
-// entity or attribute — the typed non-match of the equality join — so they
-// contribute zero rows and no seek is constructed for them. The hash and
-// merge joins reach the same result through their typed keys and the
-// canonical comparator; the seek-based strategies drop these bindings here,
-// at construction, so matchesDatom only ever sees correctly typed position
-// bindings. Tuples are returned unchanged (and unallocated) when neither
-// typed position is bound by these symbols or every binding already has its
-// position's type.
-func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Symbol, tuples []executor.Tuple) []executor.Tuple {
+// typedPositionBindingCheck returns the per-tuple check behind
+// filterTypedPositionBindings: whether the tuple's value for the pattern's
+// entity-position variable is an Identity and its value for the
+// attribute-position variable is a Keyword. Returns nil when neither typed
+// position is bound by these symbols — no check is needed.
+func typedPositionBindingCheck(pattern *query.DataPattern, symbols []query.Symbol) func(executor.Tuple) bool {
 	eIdx, aIdx := -1, -1
 	if v, ok := pattern.GetE().(query.Variable); ok {
 		for i, sym := range symbols {
@@ -554,10 +548,9 @@ func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Sym
 		}
 	}
 	if eIdx < 0 && aIdx < 0 {
-		return tuples
+		return nil
 	}
-
-	typed := func(tuple executor.Tuple) bool {
+	return func(tuple executor.Tuple) bool {
 		if eIdx >= 0 && eIdx < len(tuple) {
 			if _, ok := tuple[eIdx].(datalog.Identity); !ok {
 				return false
@@ -569,6 +562,24 @@ func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Sym
 			}
 		}
 		return true
+	}
+}
+
+// filterTypedPositionBindings drops binding tuples whose value for the
+// pattern's entity-position variable is not an Identity, or whose value for
+// the attribute-position variable is not a Keyword. Such values name no
+// entity or attribute — the typed non-match of the equality join — so they
+// contribute zero rows and no seek is constructed for them. Every join
+// strategy applies this check at construction (the seek paths and the merge
+// join filter their tuple slices; the hash join drops tuples while building
+// its hash set), so matchesDatom only ever sees correctly typed position
+// bindings. Tuples are returned unchanged (and unallocated) when neither
+// typed position is bound by these symbols or every binding already has its
+// position's type.
+func filterTypedPositionBindings(pattern *query.DataPattern, symbols []query.Symbol, tuples []executor.Tuple) []executor.Tuple {
+	typed := typedPositionBindingCheck(pattern, symbols)
+	if typed == nil {
+		return tuples
 	}
 
 	for i, tuple := range tuples {
