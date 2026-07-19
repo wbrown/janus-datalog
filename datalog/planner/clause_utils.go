@@ -621,6 +621,29 @@ func scoreClause(clause query.Clause, available map[query.Symbol]bool) int {
 		score += 2
 	}
 
+	// Correlated subqueries — any variable among the inputs — execute the
+	// nested query once per input combination, so they must schedule after
+	// every simultaneously-ready clause that can narrow that input;
+	// dependency ordering cannot separate them when both need only the same
+	// bound symbol. The magnitude is -1000, not an incremental nudge: the
+	// deferral must dominate the provides bonus above (+10 per binding
+	// variable) at any arity — an additive -50 flips back above a NOT
+	// clause at six binding variables — and -1000 is already this scorer's
+	// dominance constant for ready predicates. Uncorrelated subqueries are
+	// exempt: they execute exactly once wherever placed, so deferral cannot
+	// reduce their cost and would only withhold their bindings from earlier
+	// joins. Derived 2026-07 on BenchmarkSubqueryDeferralScheduling (~8×
+	// time and allocations on the tie-break shape; plan-neutral across the
+	// existing benchmark corpus).
+	if sp, ok := clause.(*query.SubqueryPattern); ok {
+		for _, input := range sp.Inputs {
+			if _, isVar := input.(query.Variable); isVar {
+				score -= 1000
+				break
+			}
+		}
+	}
+
 	return score
 }
 
