@@ -231,30 +231,27 @@ func setupGetElseNarrowingDB(t *testing.T, popts *planner.PlannerOptions) (db *D
 	return db, want, cleanup
 }
 
-// TestGetElseMultiEntityScanNarrowed confirms the fix isn't singleton-only: a
-// get-else over several pattern-bound entities returns correct values (stored
-// note or default) AND narrows the :repro/note access to the bound entities
-// instead of scanning the whole attribute extent.
-func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
+// TestGetElseMultiEntityStoredOrDefault pins get-else row semantics over
+// several pattern-bound entities in both optimizer modes: one row per
+// kind-bearing entity, carrying its stored note or the default, with the
+// filler extent excluded. The scan-narrowing structure of the same query is
+// pinned separately in TestGetElseMultiEntityScanNarrowed (algebra path only).
+func TestGetElseMultiEntityStoredOrDefault(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {
 			popts := mode.plannerOptions()
 			db, want, cleanup := setupGetElseNarrowingDB(t, &popts)
 			defer cleanup()
 
-			var events []annotations.Event
-			db.SetAnnotationHandler(func(e annotations.Event) { events = append(events, e) })
 			results, err := executor.CollectTuples(db.Query(
 				`[:find ?e ?note
 		  :where [?e :repro/kind _]
 		         [(get-else $ ?e :repro/note "MISSING") ?note]]`,
 			))
-			db.SetAnnotationHandler(nil)
 			if err != nil {
 				t.Fatalf("query failed: %v", err)
 			}
 
-			// One row per kind-bearing entity, each with its stored note or the default.
 			got := make(map[datalog.Identity]string, len(results))
 			for _, row := range results {
 				e, ok := row[0].(datalog.Identity)
@@ -275,35 +272,85 @@ func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
 					t.Errorf("entity %v: expected note %q, got %q", e, w, got[e])
 				}
 			}
-
-			// Bound matcher paths emit storage/reuse-strategy or cache events, never the
-			// unbound pattern/index-selection (emitted only by matchUnboundAsRelation —
-			// the full attribute scan). So an attribute-primary index-selection on
-			// :repro/note means the scan was not narrowed to the bound entities.
-			// Primary, direct assertion: the or-fallback branch reports it narrowed the
-			// scan to the bound join keys (one per kind-bearing entity), rather than
-			// silently falling back to a full attribute scan.
-			ev := narrowingEvent(events)
-			if ev == nil {
-				t.Fatalf("expected an or-fallback/branch.narrowed annotation; none emitted")
-			}
-			if narrowed, _ := ev.Data["narrowed"].(bool); !narrowed {
-				t.Fatalf("get-else branch was NOT narrowed to the bound entities (fell back to a full scan): %v", ev.Data)
-			}
-			if jk, _ := ev.Data["join_keys"].(int); jk != len(want) {
-				t.Errorf("expected join_keys=%d (one per bound entity), got %v", len(want), ev.Data["join_keys"])
-			}
-
-			// Defense in depth: a narrowed branch takes the bound matcher path (cache /
-			// reuse strategy), which never emits the unbound pattern/index-selection that
-			// matchUnboundAsRelation (the full attribute scan) emits.
-			idx, _, _ := indexForAttrPattern(events, ":repro/note")
-			attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
-			if attrPrimary[idx] {
-				t.Fatalf("get-else over %d bound entities scanned :repro/note via attribute-primary "+
-					"index %s (full extent) instead of narrowing to the bound entities", len(want), idx)
-			}
 		})
+	}
+}
+
+// TestGetElseMultiEntityScanNarrowed confirms the narrowing fix isn't
+// singleton-only: a get-else over several pattern-bound entities narrows the
+// :repro/note access to the bound entities instead of scanning the whole
+// attribute extent. It pins the algebra path's plan structure — the
+// or-fallback branch lowering that emits or-fallback/branch.narrowed exists
+// only there — so per docs/wip/OPTIMIZER_MODE_MATRIX.md it declares its mode
+// explicitly. Row semantics for the same query run on both modes in
+// TestGetElseMultiEntityStoredOrDefault, and cross-mode row equivalence in
+// TestGetElseScanNarrowing_SemanticPreservation.
+func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
+	popts := DefaultPlannerOptions()
+	popts.EnableAlgebraOptimizer = true
+	db, want, cleanup := setupGetElseNarrowingDB(t, &popts)
+	defer cleanup()
+
+	var events []annotations.Event
+	db.SetAnnotationHandler(func(e annotations.Event) { events = append(events, e) })
+	results, err := executor.CollectTuples(db.Query(
+		`[:find ?e ?note
+		  :where [?e :repro/kind _]
+		         [(get-else $ ?e :repro/note "MISSING") ?note]]`,
+	))
+	db.SetAnnotationHandler(nil)
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+
+	// One row per kind-bearing entity, each with its stored note or the default.
+	got := make(map[datalog.Identity]string, len(results))
+	for _, row := range results {
+		e, ok := row[0].(datalog.Identity)
+		if !ok {
+			t.Fatalf("expected Identity in ?e, got %T", row[0])
+		}
+		n, ok := row[1].(string)
+		if !ok {
+			t.Fatalf("expected string in ?note, got %T", row[1])
+		}
+		got[e] = n
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d rows, got %d: %v", len(want), len(got), results)
+	}
+	for e, w := range want {
+		if got[e] != w {
+			t.Errorf("entity %v: expected note %q, got %q", e, w, got[e])
+		}
+	}
+
+	// Bound matcher paths emit storage/reuse-strategy or cache events, never the
+	// unbound pattern/index-selection (emitted only by matchUnboundAsRelation —
+	// the full attribute scan). So an attribute-primary index-selection on
+	// :repro/note means the scan was not narrowed to the bound entities.
+	// Primary, direct assertion: the or-fallback branch reports it narrowed the
+	// scan to the bound join keys (one per kind-bearing entity), rather than
+	// silently falling back to a full attribute scan.
+	ev := narrowingEvent(events)
+	if ev == nil {
+		t.Fatalf("expected an or-fallback/branch.narrowed annotation; none emitted")
+	}
+	if narrowed, _ := ev.Data["narrowed"].(bool); !narrowed {
+		t.Fatalf("get-else branch was NOT narrowed to the bound entities (fell back to a full scan): %v", ev.Data)
+	}
+	if jk, _ := ev.Data["join_keys"].(int); jk != len(want) {
+		t.Errorf("expected join_keys=%d (one per bound entity), got %v", len(want), ev.Data["join_keys"])
+	}
+
+	// Defense in depth: a narrowed branch takes the bound matcher path (cache /
+	// reuse strategy), which never emits the unbound pattern/index-selection that
+	// matchUnboundAsRelation (the full attribute scan) emits.
+	idx, _, _ := indexForAttrPattern(events, ":repro/note")
+	attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
+	if attrPrimary[idx] {
+		t.Fatalf("get-else over %d bound entities scanned :repro/note via attribute-primary "+
+			"index %s (full extent) instead of narrowing to the bound entities", len(want), idx)
 	}
 }
 

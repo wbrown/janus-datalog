@@ -1,6 +1,18 @@
 # Optimizer Mode Matrix — every query test runs both paths
 
-**Status**: Ruled 2026-07-19; migration not started. This document is the plan of record.
+**Status**: Ruled 2026-07-19; `datalog/storage` migrated 2026-07-20 (~294 tests, committed `44edd06`). Remaining packages per the migration plan below. This document is the plan of record.
+
+## Storage migration outcome (2026-07-20)
+
+The sweep surfaced three real divergences, each ledgered in `docs/bugs/`:
+
+- `BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md` — algebra-path-only validation.
+- `BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md` — algebra-path-only error.
+- `BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md` — baseline-path-only error (the "optimizer makes it work" class); its regression guard is the red `algebra_off` leg of `TestNotClauseComplexQuery_E2E`, which stands red in-tree until fixed.
+
+Three tests were ruled plan-structure pins under exemption 4 below (ruled 2026-07-20): `TestComplexQuerySubqueryExecutionCounts` (decorrelated execution counts and optimizer event counters), `TestComplexQueryRetainsScenarioKeyThroughFallbacks` (or-fallback derived key metadata), and `TestGetElseMultiEntityScanNarrowed` (branch-narrowing annotation and index choice). The last was split: its row semantics run on the matrix as `TestGetElseMultiEntityStoredOrDefault`, its narrowing structure declares `EnableAlgebraOptimizer` explicitly.
+
+Benchmarks are outside the ruling's scope (tests were the ruling); they keep their explicit options.
 
 ## The ruling
 

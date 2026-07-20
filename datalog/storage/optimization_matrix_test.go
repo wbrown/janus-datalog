@@ -181,48 +181,55 @@ func TestOptimizationMatrix(t *testing.T) {
 	}
 }
 
+// TestComplexQueryRetainsScenarioKeyThroughFallbacks pins the algebra
+// path's plan structure: the relation keys asserted below come from the
+// optimizer's or-fallback property derivation (or/properties.derived).
+// The baseline path derives no such keys and compensates with conservative
+// deduplication — correct rows, no key metadata — so the assertions cannot
+// hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test declares its
+// mode explicitly. Cross-mode result equivalence for the same query body
+// is covered by TestOptimizationMatrix.
 func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			var propertyEvents []annotations.Event
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         optimizationMatrixSchema(),
-				PlannerOptions: &popts,
-				AnnotationHandler: func(event annotations.Event) {
-					if event.Name == annotations.OrPropertiesDerived {
-						propertyEvents = append(propertyEvents, event)
-					}
-				},
-			})
-			require.NoError(t, err)
-			defer db.Close()
+	popts := DefaultPlannerOptions()
+	popts.EnableAlgebraOptimizer = true
+	var propertyEvents []annotations.Event
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           t.TempDir(),
+		Schema:         optimizationMatrixSchema(),
+		PlannerOptions: &popts,
+		AnnotationHandler: func(event annotations.Event) {
+			if event.Name == annotations.OrPropertiesDerived {
+				propertyEvents = append(propertyEvents, event)
+			}
+		},
+	})
+	require.NoError(t, err)
+	defer db.Close()
 
-			populateOptimizationMatrix(t, db, 3, 2)
-			base, err := db.Query(`[:find ?scenario ?title ?createdAt
+	populateOptimizationMatrix(t, db, 3, 2)
+	base, err := db.Query(`[:find ?scenario ?title ?createdAt
 		:where
 		[?scenario :entity/type :entity.type/scenario]
 		[?scenario :scenario/title ?title]
 		[?scenario :scenario/created-at ?createdAt]]`)
-			require.NoError(t, err)
-			scenario := datalog.NewSymbol("?scenario")
-			baseHasScenarioKey := false
-			for _, key := range base.Properties().Keys {
-				if len(key) == 1 && key[0] == scenario {
-					baseHasScenarioKey = true
-					break
-				}
-			}
-			require.True(t, baseHasScenarioKey, "the scenario key must exist before fallback clauses")
+	require.NoError(t, err)
+	scenario := datalog.NewSymbol("?scenario")
+	baseHasScenarioKey := false
+	for _, key := range base.Properties().Keys {
+		if len(key) == 1 && key[0] == scenario {
+			baseHasScenarioKey = true
+			break
+		}
+	}
+	require.True(t, baseHasScenarioKey, "the scenario key must exist before fallback clauses")
 
-			fallbackStages := []struct {
-				name  string
-				query string
-			}{
-				{
-					name: "aggregate tuple fallback",
-					query: `[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration
+	fallbackStages := []struct {
+		name  string
+		query string
+	}{
+		{
+			name: "aggregate tuple fallback",
+			query: `[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration
 				:where
 				[?scenario :entity/type :entity.type/scenario]
 				[?scenario :scenario/title ?title]
@@ -235,10 +242,10 @@ func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
 					       [(get-else $ ?t :task/duration 0) ?dur]]
 					$ ?scenario) [[?taskCount ?totalTokens ?totalDuration]]]
 					[(ground [0 0 0]) [[?taskCount ?totalTokens ?totalDuration]]])]`,
-				},
-				{
-					name: "scalar fallback and expression",
-					query: `[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration ?complete
+		},
+		{
+			name: "scalar fallback and expression",
+			query: `[:find ?scenario ?title ?createdAt ?taskCount ?totalTokens ?totalDuration ?complete
 				:where
 				[?scenario :entity/type :entity.type/scenario]
 				[?scenario :scenario/title ?title]
@@ -259,49 +266,47 @@ func TestComplexQueryRetainsScenarioKeyThroughFallbacks(t *testing.T) {
 					$ ?scenario) [[?openingCount]]]
 					[(ground 0) ?openingCount])
 				[[(> ?openingCount 0)] ?complete]]`,
-				},
-			}
-			for _, stage := range fallbackStages {
-				stageResult, err := db.Query(stage.query)
-				require.NoError(t, err, stage.name)
-				found := false
-				for _, key := range stageResult.Properties().Keys {
-					if len(key) == 1 && key[0] == scenario {
-						found = true
-						break
-					}
-				}
-				require.True(t, found, "%s must preserve the scenario key; keys=%v events=%v",
-					stage.name, stageResult.Properties().Keys, propertyEvents)
-			}
-
-			result, err := db.Query(optimizationMatrixQuery(0))
-			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
-			require.NoError(t, err)
-			require.Len(t, rows, 3)
-
-			lastKey := datalog.NewSymbol("?lastKey")
-			lastUpdatedAt := datalog.NewSymbol("?lastUpdatedAt")
-			foundComposite := false
-			for _, key := range result.Properties().Keys {
-				if len(key) != 3 {
-					continue
-				}
-				members := map[query.Symbol]bool{}
-				for _, symbol := range key {
-					members[symbol] = true
-				}
-				if members[scenario] && members[lastKey] && members[lastUpdatedAt] {
-					foundComposite = true
-					break
-				}
-			}
-			require.True(t, foundComposite,
-				"the multi-row argmax fallback must retain its proven composite key; keys=%v",
-				result.Properties().Keys)
-		})
+		},
 	}
+	for _, stage := range fallbackStages {
+		stageResult, err := db.Query(stage.query)
+		require.NoError(t, err, stage.name)
+		found := false
+		for _, key := range stageResult.Properties().Keys {
+			if len(key) == 1 && key[0] == scenario {
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "%s must preserve the scenario key; keys=%v events=%v",
+			stage.name, stageResult.Properties().Keys, propertyEvents)
+	}
+
+	result, err := db.Query(optimizationMatrixQuery(0))
+	require.NoError(t, err)
+	rows, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+
+	lastKey := datalog.NewSymbol("?lastKey")
+	lastUpdatedAt := datalog.NewSymbol("?lastUpdatedAt")
+	foundComposite := false
+	for _, key := range result.Properties().Keys {
+		if len(key) != 3 {
+			continue
+		}
+		members := map[query.Symbol]bool{}
+		for _, symbol := range key {
+			members[symbol] = true
+		}
+		if members[scenario] && members[lastKey] && members[lastUpdatedAt] {
+			foundComposite = true
+			break
+		}
+	}
+	require.True(t, foundComposite,
+		"the multi-row argmax fallback must retain its proven composite key; keys=%v",
+		result.Properties().Keys)
 }
 
 // BenchmarkComplexQueryCheckpoint measures the default production path through
@@ -312,56 +317,62 @@ func BenchmarkComplexQueryCheckpoint(b *testing.B) {
 	benchmarkComplexQueryCheckpoint(b, nil)
 }
 
+// TestComplexQuerySubqueryExecutionCounts pins the algebra path's plan
+// structure. Every counter asserted below is an optimizer artifact: one
+// global execution per subquery body (4 total), or-fallback cache builds,
+// fused constraints, replaced outer groups, narrowed materializations. The
+// baseline path executes correlated subqueries once per outer combination
+// by definition (10 scenarios × 4 subquery bodies = 40 executions), so the
+// counts cannot hold there; per docs/wip/OPTIMIZER_MODE_MATRIX.md this test
+// declares its mode explicitly. Cross-mode result equivalence for the same
+// query body is covered by TestOptimizationMatrix.
 func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
-	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			popts := mode.plannerOptions()
-			var subqueryExecutions atomic.Int64
-			var fallbackCacheBuilds atomic.Int64
-			var fusedConstraints atomic.Int64
-			var uniqueJoinBuilds atomic.Int64
-			var replacedOuterGroups atomic.Int64
-			var narrowedOuterMaterializations atomic.Int64
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Path:           t.TempDir(),
-				Schema:         optimizationMatrixSchema(),
-				PlannerOptions: &popts,
-				AnnotationHandler: func(event annotations.Event) {
-					switch event.Name {
-					case "subquery/executor-path":
-						subqueryExecutions.Add(1)
-					case "or-fallback/cache-build":
-						fallbackCacheBuilds.Add(1)
-					case "pattern/fused-constraint":
-						fusedConstraints.Add(1)
-					case annotations.JoinStrategy:
-						if unique, _ := event.Data["build_key_unique"].(bool); unique {
-							uniqueJoinBuilds.Add(1)
-						}
-					case "or/outer-replaced":
-						replacedOuterGroups.Add(1)
-					case "or-fallback/outer.materialized":
-						narrowedOuterMaterializations.Add(1)
-					}
-				},
-			})
-			require.NoError(t, err)
-			defer db.Close()
+	popts := DefaultPlannerOptions()
+	popts.EnableAlgebraOptimizer = true
+	var subqueryExecutions atomic.Int64
+	var fallbackCacheBuilds atomic.Int64
+	var fusedConstraints atomic.Int64
+	var uniqueJoinBuilds atomic.Int64
+	var replacedOuterGroups atomic.Int64
+	var narrowedOuterMaterializations atomic.Int64
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           t.TempDir(),
+		Schema:         optimizationMatrixSchema(),
+		PlannerOptions: &popts,
+		AnnotationHandler: func(event annotations.Event) {
+			switch event.Name {
+			case "subquery/executor-path":
+				subqueryExecutions.Add(1)
+			case "or-fallback/cache-build":
+				fallbackCacheBuilds.Add(1)
+			case "pattern/fused-constraint":
+				fusedConstraints.Add(1)
+			case annotations.JoinStrategy:
+				if unique, _ := event.Data["build_key_unique"].(bool); unique {
+					uniqueJoinBuilds.Add(1)
+				}
+			case "or/outer-replaced":
+				replacedOuterGroups.Add(1)
+			case "or-fallback/outer.materialized":
+				narrowedOuterMaterializations.Add(1)
+			}
+		},
+	})
+	require.NoError(t, err)
+	defer db.Close()
 
-			populateOptimizationMatrix(t, db, 10, 20)
-			result, err := db.Query(optimizationMatrixQuery(10))
-			require.NoError(t, err)
-			rows, err := executor.CollectTuples(result, nil)
-			require.NoError(t, err)
-			require.Len(t, rows, 10)
-			require.Equal(t, int64(4), subqueryExecutions.Load())
-			require.Equal(t, int64(5), fallbackCacheBuilds.Load())
-			require.Equal(t, int64(5), fusedConstraints.Load())
-			require.Zero(t, uniqueJoinBuilds.Load())
-			require.Equal(t, int64(5), replacedOuterGroups.Load())
-			require.Equal(t, int64(1), narrowedOuterMaterializations.Load())
-		})
-	}
+	populateOptimizationMatrix(t, db, 10, 20)
+	result, err := db.Query(optimizationMatrixQuery(10))
+	require.NoError(t, err)
+	rows, err := executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 10)
+	require.Equal(t, int64(4), subqueryExecutions.Load())
+	require.Equal(t, int64(5), fallbackCacheBuilds.Load())
+	require.Equal(t, int64(5), fusedConstraints.Load())
+	require.Zero(t, uniqueJoinBuilds.Load())
+	require.Equal(t, int64(5), replacedOuterGroups.Load())
+	require.Equal(t, int64(1), narrowedOuterMaterializations.Load())
 }
 
 func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
