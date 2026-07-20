@@ -166,6 +166,16 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 				}
 			}
 
+			// Defer subqueries whose binding variables have ready pending
+			// providers. A subquery relation joins on its already-bound
+			// binding variables; selecting it before those providers run
+			// under-keys the join.
+			if sp, ok := clause.(*query.SubqueryPattern); ok {
+				if subqueryDependsOnPendingProvider(sp, available, inputs, providerCount, remaining, selected) {
+					continue
+				}
+			}
+
 			if !clauseReady(clause, available, inputs, providerCount) {
 				continue
 			}

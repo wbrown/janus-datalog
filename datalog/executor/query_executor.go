@@ -811,66 +811,19 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				}
 			}
 
-			// For each binding symbol: if already in the relation, filter
-			// (unify) instead of extending. If not present, extend.
+			// For each binding symbol: bound positions unify (filter), new
+			// symbols extend the tuple. alignBinding is the single home of
+			// this semantics — shared with the per-tuple path.
 			var resultRels []Relation
 			for _, rel := range groups {
-				relSyms := rel.Symbols()
-
-				// Partition binding symbols into existing (filter) and new (extend)
-				var filterIdx []int    // indices into bindingSyms that already exist in rel
-				var filterRelIdx []int // corresponding positions in relSyms
-				var extendIdx []int    // indices into bindingSyms that are new
-
-				for i, bs := range bindingSyms {
-					found := false
-					for j, rs := range relSyms {
-						if bs == rs {
-							filterIdx = append(filterIdx, i)
-							filterRelIdx = append(filterRelIdx, j)
-							found = true
-							break
-						}
-					}
-					if !found {
-						extendIdx = append(extendIdx, i)
-					}
-				}
-
-				// Build output symbols: existing + only the new binding symbols
-				outputSyms := make([]query.Symbol, len(relSyms))
-				copy(outputSyms, relSyms)
-				for _, ei := range extendIdx {
-					outputSyms = append(outputSyms, bindingSyms[ei])
-				}
+				align := alignBinding(rel.Symbols(), bindingSyms)
 
 				var outputTuples []Tuple
 				iter := rel.Iterator()
 				for iter.Next() {
-					oldTuple := iter.Tuple()
-
-					// Check filter conditions: existing symbols must match ground values
-					match := true
-					for k, fi := range filterIdx {
-						_ = k
-						if filterRelIdx[k] < len(oldTuple) {
-							if !datalog.ValuesEqual(oldTuple[filterRelIdx[k]], bindingValues[fi]) {
-								match = false
-								break
-							}
-						}
+					if out, ok := align.apply(iter.Tuple(), bindingValues); ok {
+						outputTuples = append(outputTuples, out)
 					}
-					if !match {
-						continue
-					}
-
-					// Build output tuple: old values + new extension values
-					newTuple := make(Tuple, len(outputSyms))
-					copy(newTuple, oldTuple)
-					for i, ei := range extendIdx {
-						newTuple[len(relSyms)+i] = bindingValues[ei]
-					}
-					outputTuples = append(outputTuples, newTuple)
 				}
 				scanErr := iter.Error()
 				if closeErr := iter.Close(); scanErr == nil {
@@ -879,7 +832,7 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 				if scanErr != nil {
 					return nil, scanErr
 				}
-				resultRels = append(resultRels, NewMaterializedRelationWithOptions(outputSyms, outputTuples, e.options))
+				resultRels = append(resultRels, NewMaterializedRelationWithOptions(align.symbols, outputTuples, e.options))
 			}
 			return resultRels, nil
 		}

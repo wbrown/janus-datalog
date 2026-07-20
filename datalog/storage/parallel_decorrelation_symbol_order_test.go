@@ -8,12 +8,17 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
-// TestParallelDecorrelationSymbolOrderBadger tests parallel decorrelation symbol ordering with BadgerDB
-// This reproduces the gopher-street bug where BadgerMatcher + parallel decorrelation
-// scrambles symbol order due to inconsistent transaction snapshots across goroutines
+// TestParallelDecorrelationSymbolOrderBadger pins OHLC subquery execution
+// against BadgerMatcher: four correlated aggregate subqueries whose
+// correlation parameters are consumed only by equality predicates, verified
+// slot-by-slot so a symbol-order scramble or a decorrelation regression
+// fails loudly. Originally reproduced a symbol-order scramble from
+// inconsistent transaction snapshots across goroutines; it now also runs the
+// optimizer mode matrix, whose algebra leg exercises the equality-bound
+// decorrelation translation end-to-end on storage-backed relations. See
+// docs/bugs/resolved/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md.
 func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 	// Create temporary BadgerDB
 	tmpDir, err := os.MkdirTemp("", "badger-symbol-order-test-*")
@@ -138,106 +143,61 @@ func TestParallelDecorrelationSymbolOrderBadger(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	t.Run("ParallelDecorrelation", func(t *testing.T) {
-		matcher := db.Matcher()
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			matcher := db.Matcher()
+			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
-		result, err := exec.Execute(parsedQuery)
-		if err != nil {
-			t.Fatalf("Query execution failed: %v", err)
-		}
+			result, err := exec.Execute(parsedQuery)
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
 
-		if result.Size() != 1 {
-			t.Fatalf("Expected 1 result, got %d", result.Size())
-		}
+			if result.Size() != 1 {
+				t.Fatalf("Expected 1 result, got %d", result.Size())
+			}
 
-		it := result.Iterator()
-		defer it.Close()
-		if !it.Next() {
-			t.Fatal("No results returned")
-		}
-		tuple := it.Tuple()
+			it := result.Iterator()
+			defer it.Close()
+			if !it.Next() {
+				t.Fatal("No results returned")
+			}
+			tuple := it.Tuple()
 
-		t.Logf("Parallel OHLC result: %v", tuple)
-		for i, val := range tuple {
-			t.Logf("  [%d] = %v (%T)", i, val, val)
-		}
+			t.Logf("OHLC result: %v", tuple)
+			for i, val := range tuple {
+				t.Logf("  [%d] = %v (%T)", i, val, val)
+			}
 
-		// Verify correct symbol ordering: [?date, ?open-price, ?daily-high, ?daily-low, ?close-price, ?total-volume]
-		if len(tuple) != 6 {
-			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
-		}
+			// Verify correct symbol ordering: [?date, ?open-price, ?daily-high, ?daily-low, ?close-price, ?total-volume]
+			if len(tuple) != 6 {
+				t.Fatalf("Expected 6 symbols, got %d", len(tuple))
+			}
 
-		// Result slot 1: ?open-price should be 100.00
-		if val, ok := tuple[1].(float64); !ok || val != 100.0 {
-			t.Errorf("Result slot 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
-		}
+			// Result slot 1: ?open-price should be 100.00
+			if val, ok := tuple[1].(float64); !ok || val != 100.0 {
+				t.Errorf("Result slot 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
+			}
 
-		// Result slot 2: ?daily-high should be 103.00
-		if val, ok := tuple[2].(float64); !ok || val != 103.0 {
-			t.Errorf("Result slot 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
-		}
+			// Result slot 2: ?daily-high should be 103.00
+			if val, ok := tuple[2].(float64); !ok || val != 103.0 {
+				t.Errorf("Result slot 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
+			}
 
-		// Result slot 3: ?daily-low should be 99.50
-		if val, ok := tuple[3].(float64); !ok || val != 99.5 {
-			t.Errorf("Result slot 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
-		}
+			// Result slot 3: ?daily-low should be 99.50
+			if val, ok := tuple[3].(float64); !ok || val != 99.5 {
+				t.Errorf("Result slot 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
+			}
 
-		// Result slot 4: ?close-price should be 102.50
-		if val, ok := tuple[4].(float64); !ok || val != 102.5 {
-			t.Errorf("Result slot 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
-		}
+			// Result slot 4: ?close-price should be 102.50
+			if val, ok := tuple[4].(float64); !ok || val != 102.5 {
+				t.Errorf("Result slot 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
+			}
 
-		// Result slot 5: ?total-volume should be 3050000
-		if val, ok := tuple[5].(int64); !ok || val != 3050000 {
-			t.Errorf("Result slot 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
-		}
-	})
-
-	t.Run("SequentialDecorrelation", func(t *testing.T) {
-		matcher := db.Matcher()
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
-
-		result, err := exec.Execute(parsedQuery)
-		if err != nil {
-			t.Fatalf("Query execution failed: %v", err)
-		}
-
-		if result.Size() != 1 {
-			t.Fatalf("Expected 1 result, got %d", result.Size())
-		}
-
-		it := result.Iterator()
-		defer it.Close()
-		if !it.Next() {
-			t.Fatal("No results returned")
-		}
-		tuple := it.Tuple()
-
-		t.Logf("Sequential OHLC result: %v", tuple)
-		for i, val := range tuple {
-			t.Logf("  [%d] = %v (%T)", i, val, val)
-		}
-
-		// Same verification as parallel
-		if len(tuple) != 6 {
-			t.Fatalf("Expected 6 symbols, got %d", len(tuple))
-		}
-
-		if val, ok := tuple[1].(float64); !ok || val != 100.0 {
-			t.Errorf("Result slot 1 (?open-price) should be 100.0, got %v (%T)", tuple[1], tuple[1])
-		}
-		if val, ok := tuple[2].(float64); !ok || val != 103.0 {
-			t.Errorf("Result slot 2 (?daily-high) should be 103.0, got %v (%T)", tuple[2], tuple[2])
-		}
-		if val, ok := tuple[3].(float64); !ok || val != 99.5 {
-			t.Errorf("Result slot 3 (?daily-low) should be 99.5, got %v (%T)", tuple[3], tuple[3])
-		}
-		if val, ok := tuple[4].(float64); !ok || val != 102.5 {
-			t.Errorf("Result slot 4 (?close-price) should be 102.5, got %v (%T)", tuple[4], tuple[4])
-		}
-		if val, ok := tuple[5].(int64); !ok || val != 3050000 {
-			t.Errorf("Result slot 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
-		}
-	})
+			// Result slot 5: ?total-volume should be 3050000
+			if val, ok := tuple[5].(int64); !ok || val != 3050000 {
+				t.Errorf("Result slot 5 (?total-volume) should be 3050000, got %v (%T)", tuple[5], tuple[5])
+			}
+		})
+	}
 }

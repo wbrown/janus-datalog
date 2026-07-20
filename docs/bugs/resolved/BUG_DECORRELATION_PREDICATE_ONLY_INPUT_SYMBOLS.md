@@ -1,6 +1,16 @@
 # BUG: Decorrelated subquery errors when input symbols are consumed only by predicates — optimizer path only
 
-**Status**: Open (2026-07-20). Found by the optimizer mode matrix migration (wave 1, executor-path batch) — the second divergence the regime has surfaced. Loud error on the optimizer path, no wrong data; the baseline path executes the same query correctly.
+**Status**: RESOLVED (2026-07-20). Found by the optimizer mode matrix migration (wave 1, executor-path batch) — the second divergence the regime has surfaced. Loud error on the optimizer path, no wrong data; the baseline path executes the same query correctly.
+
+## Resolution
+
+Both symptoms fixed in the algebra layer, and the corrected rewrite output then exposed two independent engine defects fixed under their own ledgers:
+
+1. **Classification + equality translation** (`datalog/algebra/rewrite_decorrelate.go`): correlation parameters are classified before the rewrite fires. Data-bound parameters group by themselves. A parameter whose only consumption is a single `[(= ?inner ?param)]` whose other side the inner body provides groups by that inner side — the correlation predicate IS the join condition, so it is consumed and the relation binding renames the column to the outer name positionally. Every other shape (inequalities, expression operands, compound-clause use, multiple equalities, scalar inputs beyond the correlation parameters) declines the rewrite with an `algebra/decorrelate-skip` annotation and keeps per-combination execution. Structure pinned by `TestDecorrelation_EqualityBoundTranslation`.
+2. **Second symptom** (lost `:in` bindings): `LateralJoin` now carries the call site's argument list verbatim; the compile→decompile round trip no longer drops constant arguments or re-points named sources at `$`.
+3. **Downstream defects exposed by the correct rewrite**, each with isolated reproducers and resolved separately: `BUG_UNCORRELATED_SUBQUERY_SCHEDULES_BEFORE_BINDING_PROVIDERS.md` (planner scheduling gate) and `BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md` (expression unification).
+
+All seven executor reproducers below are green on both matrix legs, and `TestParallelDecorrelationSymbolOrderBadger` is migrated onto the matrix per the protocol at the bottom of this entry.
 
 ## Symptom
 

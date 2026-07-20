@@ -44,20 +44,35 @@ func patternDependsOnPendingExpression(p *query.DataPattern, available map[query
 }
 
 // subqueryDependsOnPendingProvider checks if a subquery binds a variable that
-// a pending (unselected) non-subquery clause also provides but that isn't yet
-// available. A subquery's result relation joins the accumulated relation on
-// whichever of its binding variables are already bound; selecting it while a
-// join key's provider is still pending joins on a subset of the keys — an
-// under-keyed join that admits spurious row combinations. This is
-// patternDependsOnPendingExpression's invariant applied to the subquery
-// relation's interface (a decorrelated grouped subquery binds its group keys
-// to outer names precisely so they join).
+// a pending (unselected), currently-ready, non-subquery clause also provides
+// but that isn't yet available. A subquery's result relation joins the
+// accumulated relation on whichever of its binding variables are already
+// bound; selecting it while a join key's provider is still pending joins on
+// a subset of the keys — an under-keyed join that inflates the intermediate
+// relation. This is patternDependsOnPendingExpression's invariant applied to
+// the subquery relation's interface (a decorrelated grouped subquery binds
+// its group keys to outer names precisely so they join).
 //
-// Pending subqueries are excluded from the provider scan: two subqueries
-// providing the same symbol would otherwise defer on each other forever.
-// Once every non-subquery provider has run, whichever subquery executes
-// first supplies the keys the next one joins on.
-func subqueryDependsOnPendingProvider(sp *query.SubqueryPattern, available map[query.Symbol]bool, remaining []query.Clause, selected map[int]bool) bool {
+// Both restrictions on the provider scan make deferral unable to block
+// progress, by construction rather than by convention:
+//
+//   - Non-subquery only: two subqueries providing the same symbol (e.g. two
+//     decorrelated grouped subqueries binding the same group keys) must not
+//     defer on each other; once every other provider has run, whichever
+//     executes first supplies the keys the next one joins on.
+//   - Currently ready only: a deferring subquery therefore implies a
+//     selectable provider exists, so the phase always advances. A provider
+//     that is not yet ready cannot be waited on safely — it may need a
+//     symbol only this subquery provides — so the subquery runs first and
+//     the provider unifies against its output instead.
+func subqueryDependsOnPendingProvider(
+	sp *query.SubqueryPattern,
+	available map[query.Symbol]bool,
+	inputs map[query.Symbol]bool,
+	providerCount map[query.Symbol]int,
+	remaining []query.Clause,
+	selected map[int]bool,
+) bool {
 	needed := make(map[query.Symbol]bool)
 	for _, sym := range query.ScopeOf(sp).Provides {
 		if !available[sym] {
@@ -73,6 +88,9 @@ func subqueryDependsOnPendingProvider(sp *query.SubqueryPattern, available map[q
 			continue
 		}
 		if _, ok := clause.(*query.SubqueryPattern); ok {
+			continue
+		}
+		if !clauseReady(clause, available, inputs, providerCount) {
 			continue
 		}
 		for _, sym := range query.ScopeOf(clause).Provides {

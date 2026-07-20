@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -157,26 +159,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		bindingSymbols = b.Variables
 	}
 
-	// Check which binding symbols already exist
-	hasAllBindings := len(bindingSymbols) > 0
-	existingBindingIndices := make(map[query.Symbol]int)
-	for _, bindSym := range bindingSymbols {
-		if i := query.SymbolIndex(symbols, bindSym); i >= 0 {
-			existingBindingIndices[bindSym] = i
-		} else {
-			hasAllBindings = false
-		}
-	}
-
-	newSymbols := symbols
-	if !hasAllBindings && len(bindingSymbols) > 0 {
-		newSymbols = append([]query.Symbol{}, symbols...)
-		for _, bindSym := range bindingSymbols {
-			if _, exists := existingBindingIndices[bindSym]; !exists {
-				newSymbols = append(newSymbols, bindSym)
-			}
-		}
-	}
+	// Bound binding symbols unify (filter); new ones extend the tuple.
+	align := alignBinding(symbols, bindingSymbols)
+	newSymbols := align.symbols
 
 	// Reuse single bindings map to avoid repeated allocations
 	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(constantBindings))
@@ -259,99 +244,62 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 				expanded = true
 				for _, subTuple := range multiRows {
 					if len(subTuple) != len(tb.Variables) {
-						continue
+						iterErr = fmt.Errorf("tuple mismatch: %d values, %d variables",
+							len(subTuple), len(tb.Variables))
+						break
 					}
-					if hasAllBindings {
-						newTuple := make(Tuple, len(tuple))
-						copy(newTuple, tuple)
-						for i, bindSym := range tb.Variables {
-							if idx, exists := existingBindingIndices[bindSym]; exists {
-								newTuple[idx] = subTuple[i]
-							}
-						}
-						newTuples = append(newTuples, newTuple)
-					} else {
-						newTuple := make(Tuple, len(newSymbols))
-						copy(newTuple, tuple)
-						for i, bindSym := range tb.Variables {
-							for j := len(symbols); j < len(newSymbols); j++ {
-								if newSymbols[j] == bindSym {
-									newTuple[j] = subTuple[i]
-									break
-								}
-							}
-						}
-						newTuples = append(newTuples, newTuple)
+					if out, ok := align.apply(tuple, subTuple); ok {
+						newTuples = append(newTuples, out)
 					}
+				}
+				if iterErr != nil {
+					break
 				}
 				continue
 			}
 		}
 
-		// Create new tuple with result
+		// Apply the result: bound binding positions unify (filter), new
+		// binding symbols extend the tuple.
 		if len(bindingSymbols) == 0 {
 			// No binding, just keep original tuple
 			newTuples = append(newTuples, tuple)
-		} else if hasAllBindings {
-			// Update existing symbols
-			newTuple := make(Tuple, len(tuple))
-			copy(newTuple, tuple)
-			// Handle tuple binding - evalResult should be []interface{}
-			if tb, ok := expr.Binding.(query.TupleBinding); ok {
-				values, ok := evalResult.([]interface{})
-				if ok && len(values) == len(tb.Variables) {
-					for i, bindSym := range tb.Variables {
-						if idx, exists := existingBindingIndices[bindSym]; exists {
-							newTuple[idx] = values[i]
-						}
-					}
-				}
-			} else {
-				// Scalar binding
-				for i, sym := range symbols {
-					if bindSym, ok := expr.Binding.(query.Symbol); ok && sym == bindSym {
-						newTuple[i] = evalResult
-						break
-					}
-				}
+			continue
+		}
+		var values []interface{}
+		if _, ok := expr.Binding.(query.TupleBinding); ok {
+			vs, ok := evalResult.([]interface{})
+			if !ok {
+				iterErr = fmt.Errorf("tuple binding requires tuple result, got %T", evalResult)
+				break
 			}
-			newTuples = append(newTuples, newTuple)
+			if len(vs) != len(bindingSymbols) {
+				iterErr = fmt.Errorf("tuple mismatch: %d values, %d variables",
+					len(vs), len(bindingSymbols))
+				break
+			}
+			values = vs
 		} else {
-			// Add new symbols
-			newTuple := make(Tuple, len(newSymbols))
-			copy(newTuple, tuple)
-			// Handle tuple binding - evalResult should be []interface{}
-			if tb, ok := expr.Binding.(query.TupleBinding); ok {
-				values, ok := evalResult.([]interface{})
-				if ok && len(values) == len(tb.Variables) {
-					for i, bindSym := range tb.Variables {
-						// Find the position of this symbol in newSymbols.
-						for j := len(symbols); j < len(newSymbols); j++ {
-							if newSymbols[j] == bindSym {
-								newTuple[j] = values[i]
-								break
-							}
-						}
-					}
-				}
-			} else {
-				// Scalar binding - add to end
-				newTuple[len(tuple)] = evalResult
-			}
-			newTuples = append(newTuples, newTuple)
+			values = []interface{}{evalResult}
+		}
+		if out, ok := align.apply(tuple, values); ok {
+			newTuples = append(newTuples, out)
 		}
 	}
 	if iterErr == nil {
 		iterErr = iter.Error()
 	}
 
-	// Extract options from source relation to preserve configuration
+	// Extract options from source relation to preserve configuration.
+	// Only extension symbols touch the properties: bound positions are
+	// filtered, never rewritten, so orderings and keys naming them stay
+	// valid.
 	opts := rel.Options()
 	properties := rel.Properties()
 	if expanded {
 		properties = expansionProperties(properties, bindingSymbols, newSymbols)
 	} else {
-		for _, symbol := range bindingSymbols {
+		for _, symbol := range align.extensionSymbols() {
 			properties = properties.addSymbol(symbol)
 		}
 	}
