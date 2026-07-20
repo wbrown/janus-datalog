@@ -110,24 +110,24 @@ The deleted-`Filter` profile: exported machinery whose only in-repo initiators a
 
 ### C1. `UnionRelation` — entire subsystem test-only
 
-**Status**: Open
+**Status**: Resolved (2026-07-20) — deleted by owner ruling, made with the role facts on the table: this was the concurrent result-merge relation (channel-fed union with streaming dedup and build-once-replay-many caching) whose producer half — the worker pool — was already gone, leaving the orphaned consumer half of parallel subquery execution. Subsystem file and its dedicated tests removed; scaffolding tests converted or pruned. Not the algebra's ∪: a future `Relation.Union` (see C4's ruling) is specified set-natively as pass-through plus anti-membership, so nothing here is a rebuild target.
 **Site**: `datalog/executor/union_relation.go` (type, `NewUnionRelation`, `UnionIterator`, `relationItem`, `newUnionBuildIterator`)
 
 Every constructor call is in tests. Production OR/union execution goes through `executeOrClauseUnion` and `OrFallbackRelation`.
 
 ### C2. `PrependedRelation` — whole file test-only
 
-**Status**: Open
+**Status**: Resolved (2026-07-20) — deleted by owner ruling with the role stated: peek-without-losing-the-first-tuple was a third mechanism for the single-use-iterator tension that `BufferedIterator` and the LazySeq cells already solve; the owner chose not to keep three.
 **Site**: `datalog/executor/prepended_relation.go`; `NewPrependedRelation` is called only from `wrapper_relation_copy_test.go`.
 
 ### C3. `TransformIterator` and `ConcatIterator` — test-only
 
-**Status**: Open
+**Status**: Resolved (2026-07-20) — deleted by owner ruling: generic map/concat combinators that purpose-built iterators displaced. No return path exists even for a future `Relation.Union`: union over Relations is specified set-natively (left streamed through, right anti-membership-filtered — Relations at every point, no bag intermediate), so no concatenation primitive is ever needed. The file's other iterators (`ProjectIterator`, `DedupIterator`, `PredicateFilterIterator`, `FunctionEvaluatorIterator`) remain — the latter two are live organs of the streaming algebra-method implementations retained under C4's ruling.
 **Site**: `datalog/executor/iterator_composition.go`; only `iterator_composition_test.go` references them.
 
 ### C4. `Relation` interface methods with no production initiator
 
-**Status**: Open
+**Status**: Ruled (2026-07-20) — **keep and reunify**; execution pending as a designed arc. The finding's framing was incomplete: these six methods are the relational-algebra operator set — σ (`Select`, `FilterWithPredicate`), ⋉ (`SemiJoin`), ▷ (`AntiJoin`), extend (`EvaluateFunction`), γ (`Aggregate`) — on the engine's fundamental abstraction, which together with `Join`/`HashJoin`/`Project`/`Sort` make `Relation` algebraically closed. The owner ruled the *engine's free-standing operators* are the deviation, not the methods: the engine is to consume the algebra through the interface, each operator getting one generic body dispatching on both operands' declared properties (`Properties().Keys`/`Ordering`, `RequiresCopy()`, plus a new `Replayable()` declaration), with `Union` added as the missing ∪ operator (set-native: pass-through plus anti-membership). Design document for signatures and the conversion inventory is owed for ratification before implementation.
 **Sites**: `Select`, `SemiJoin`, `AntiJoin`, `FilterWithPredicate`, `EvaluateFunction`, `Aggregate` on the `Relation` interface (`datalog/executor/relation.go`), plus the free functions `Select`, `SemiJoin`, `AntiJoin`
 
 Every implementation delegates (to a free function or a sibling implementation); only tests initiate the calls. Production equivalents actually used: `filterWithPredicateAndLookup` + `thetaJoinWithPredicate` (filtering), `executeExpression` (function evaluation), `filterWithNotClause`/`filterWithNotJoinClause` via the NOT executors (anti-join; `antiJoinOnSymbols` was deleted 2026-07-19 as a dead pair), `ExecuteAggregations` (aggregation — its free function is core-live; only the *method* is test-only). This is exactly how the dead `Filter` method hid. These are public API surface, so each removal is an owner decision; A1's swallow lives on one of them.
@@ -156,12 +156,12 @@ The in-repo registration in `executor_subquery_test.go` registers `same-date?` a
 
 ### C7. Small dead exports
 
-**Status**: Open
-- `executor.WrapStreamingAsLazy` (`lazy_seq_relation.go`) — zero references anywhere, including tests.
-- `executor.Result` alias (`executor_utils.go`) — zero references anywhere; retained only as a compat shim.
-- `executor.NewLazySeqRelation` — test-only (the *type* is production-live via struct literals and `scan_sharing_matcher.go`).
-- `executor.NewMaterializedRelationNoDedupe` (no-options variant) — test-only; production uses the `WithOptions` variant.
-- `executor.MaterializeResult` — test-only.
+**Status**: Resolved (2026-07-20), split by owner ruling on role facts:
+- `executor.WrapStreamingAsLazy` — **KEPT** by explicit ruling. Zero references was true and irrelevant: it is the streaming→replayable bridge (lifts a single-use stream into the shared-cell LazySeq algebra without materializing), the lazy implementation the E1 `Materialize()` convention needs on the table.
+- `executor.NewLazySeqRelation` — **KEPT** with it (same ruling).
+- `executor.NewMaterializedRelationNoDedupe` / `NewMaterializedRelationNoDedupeWithOptions` — **deleted/renamed**: the name advertised an anti-relational capability; the real contract is a set warranty. Superseded by the boundary constructor `NewMaterializedRelationFromSet` (admission-checks raw values entering relational flow) and the interior `newMaterializedRelationFromSet` (operator-constructed, carries derived properties, no re-validation). The two `join.go` sites moved to the interior constructor, eliminating their post-hoc `result.properties = …` pokes; the three empty-relation `hash_join_matcher.go` sites moved to the ordinary constructor; test sites converted per-site, with deliberate-duplicate fixtures (the semi/anti dedup pin, the duplicate-stress benchmark) rebuilt as raw struct literals so no constructor lies about set-ness.
+- `executor.Result` alias — deleted (compat shim from the 2025 Result/Relation unification, decayed to zero references).
+- `executor.MaterializeResult` — deleted (materialize-with-symbol-relabel utility; the engine renames at binding boundaries, not via relation operators).
 
 ### C8. `BadgerMatcher.MatchWithHistory` / `MatchAsOf` — superseded temporal API
 

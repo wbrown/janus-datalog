@@ -37,6 +37,8 @@ Composed with the planner defect, outcome-level: the three OHLC reproducers list
 
 See the Resolution in the Status line: `bindingAlignment` in `datalog/executor/expression_binding.go` is the single home; both former implementations consume it. Compare with `datalog.ValuesEqual`, keep the tuple unchanged on match (once per matching expansion row for multi-row results), drop on mismatch, never write to a bound position.
 
+**Correction (2026-07-20, found during the audit Class C work):** the "audited the sibling paths, no third copy" claim above was wrong. `FunctionEvaluatorIterator` (`iterator_composition.go`) — the streaming implementation behind the `EvaluateFunction` algebra method — carries its own unification-on-bound-output logic. It unifies *correctly* (filters on mismatch, never overwrites), so no behavior defect, but it is a third implementation of the semantic, and it is production-retained under the C4 keep-and-reunify ruling. The reunification arc (audit C4) converts it to consume `bindingAlignment`, at which point the single-home claim becomes true.
+
 ## Cross-references
 
 - `docs/bugs/resolved/BUG_UNCORRELATED_SUBQUERY_SCHEDULES_BEFORE_BINDING_PROVIDERS.md` — the planner half of the composed OHLC failure, including the composition note on why each fix alone masks the other.

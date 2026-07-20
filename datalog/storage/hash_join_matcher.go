@@ -168,7 +168,7 @@ func (m *BadgerMatcher) matchWithHashJoin(
 
 	if symbolIndex == -1 {
 		// Variable not in binding relation - shouldn't happen if strategy is correct
-		return executor.NewMaterializedRelationNoDedupeWithOptions(symbols, nil, m.options), nil
+		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
 	}
 
 	// Build hash set using symbol index (not datom position)
@@ -180,7 +180,7 @@ func (m *BadgerMatcher) matchWithHashJoin(
 
 	if keyCount == 0 {
 		// No bindings - return empty result
-		return executor.NewMaterializedRelationNoDedupeWithOptions(symbols, nil, m.options), nil
+		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
 	}
 
 	// PHASE 2: Determine scan range for the pattern
@@ -659,7 +659,7 @@ func (m *BadgerMatcher) matchWithMergeJoin(
 
 	if len(sortedTuples) == 0 {
 		// No bindings - return empty result
-		return executor.NewMaterializedRelationNoDedupeWithOptions(symbols, nil, m.options), nil
+		return executor.NewMaterializedRelationWithOptions(symbols, nil, m.options), nil
 	}
 
 	// PHASE 2: Determine scan range for the pattern

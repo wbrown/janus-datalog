@@ -36,7 +36,7 @@ func BenchmarkKeyPreservingJoinProjection(b *testing.B) {
 		b.Run(fmt.Sprintf("rows_%d", rowCount), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				leftBase := NewMaterializedRelationNoDedupe(leftSymbols, leftTuples)
+				leftBase := NewMaterializedRelationFromSet(leftSymbols, leftTuples, ExecutorOptions{})
 				left := NewStreamingRelationWithProperties(
 					leftSymbols,
 					leftBase.Iterator(),

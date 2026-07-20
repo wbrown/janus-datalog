@@ -48,7 +48,7 @@ The subquery call site supplies inputs positionally after the nested query EDN (
 
 ## Related (2026-07-20)
 
-The optimizer mode matrix migration surfaced the algebra-path side of this family: subqueries whose second `:in` input is a *variable* work on the baseline path but fail loudly under the algebra optimizer (`cannot resolve right term` — see the second-symptom section of `BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md`, reproducers `TestSubqueryDatomicCompatible/MultipleInputsWithDatabase` and `TestSubqueryMultiValueFindClauseBug`). This entry's silent-empty applies to call-site *constants* on the baseline path. Distinct defects, same input-forwarding territory; root-cause work on either should read both.
+The optimizer mode matrix migration surfaced the algebra-path side of this family: subqueries whose second `:in` input is a *variable* worked on the baseline path but failed loudly under the algebra optimizer (`cannot resolve right term`). That side is RESOLVED (2026-07-20): the decorrelation rewrite now classifies correlation parameters and preserves the call site's argument list through the compile→decompile round trip — see the resolution in `resolved/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md` (reproducers `TestSubqueryDatomicCompatible/MultipleInputsWithDatabase` and `TestSubqueryMultiValueFindClauseBug`, both green both modes). This entry's silent-empty applies to call-site *constants* on the baseline path and remains open. Distinct defects, same input-forwarding territory; root-cause work here should read that resolution first.
 
 ## Status of the Skip
 

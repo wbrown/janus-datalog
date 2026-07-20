@@ -295,23 +295,6 @@ func TestDeduplicatingUnionAdvertisesOnlyFullOutputKey(t *testing.T) {
 	require.Equal(t, 2, result.Size())
 }
 
-func TestUnionRelationAndMaterializationPreserveFullOutputKey(t *testing.T) {
-	id := datalog.NewSymbol("?id")
-	payload := datalog.NewSymbol("?payload")
-	symbols := []query.Symbol{id, payload}
-	source := make(chan relationItem, 2)
-	source <- relationItem{relation: NewMaterializedRelation(symbols, []Tuple{{int64(1), "same"}})}
-	source <- relationItem{relation: NewMaterializedRelation(symbols, []Tuple{{int64(1), "same"}})}
-	close(source)
-
-	union := NewUnionRelation(source, symbols, ExecutorOptions{})
-	require.True(t, containsSymbolSet(union.Properties().Keys, symbols))
-
-	materialized := union.Materialize()
-	require.Equal(t, union.Properties(), materialized.Properties())
-	require.Equal(t, 1, materialized.Size())
-}
-
 func TestOrFallbackMaterializationPreservesProperties(t *testing.T) {
 	entity := datalog.NewSymbol("?entity")
 	value := datalog.NewSymbol("?value")

@@ -131,12 +131,6 @@ func TestSelectCarriesScanError(t *testing.T) {
 	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
 }
 
-func TestPrependedRelationMaterializeCarriesScanError(t *testing.T) {
-	rest := newFailingRelation(1, Tuple{int64(2)}, Tuple{int64(3)})
-	rel := NewPrependedRelation(testSymbols(), Tuple{int64(1)}, rest, ExecutorOptions{})
-	require.ErrorIs(t, driveErr(rel.Materialize()), errInjectedIterator)
-}
-
 func TestBufferedIteratorCloneCarriesSourceError(t *testing.T) {
 	inner := NewMaterializedRelation(testSymbols(), []Tuple{{int64(1)}, {int64(2)}}).Iterator()
 	src := &failingIterator{inner: inner, failAfter: 1}

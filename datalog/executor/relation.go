@@ -451,19 +451,16 @@ func newMaterializedRelationFromSet(
 	}
 }
 
-// NewMaterializedRelationNoDedupe creates a materialized relation without deduplication
-// Use this when you know the tuples are already unique (e.g., from storage scans)
-func NewMaterializedRelationNoDedupe(symbols []query.Symbol, tuples []Tuple) *MaterializedRelation {
-	validateTupleValueDomain(tuples)
-	return &MaterializedRelation{
-		symbols: symbols,
-		tuples:  tuples,
-		options: ExecutorOptions{}, // Default options
-	}
-}
-
-// NewMaterializedRelationNoDedupeWithOptions creates a new relation without deduplication, with options
-func NewMaterializedRelationNoDedupeWithOptions(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
+// NewMaterializedRelationFromSet constructs a Relation at the package
+// boundary from a tuple stream the caller warrants is already a set — each
+// complete tuple appears at most once, as produced by a distinct scan or a
+// set-preserving operator. The warranty replaces the deduplication pass;
+// the value-domain admission check still runs because boundary callers
+// inject raw Go values into relational flow. Interior operators, whose
+// tuples never left relational flow and which carry derived
+// RelationProperties, construct through newMaterializedRelationFromSet
+// instead.
+func NewMaterializedRelationFromSet(symbols []query.Symbol, tuples []Tuple, opts ExecutorOptions) *MaterializedRelation {
 	validateTupleValueDomain(tuples)
 	return &MaterializedRelation{
 		symbols: symbols,

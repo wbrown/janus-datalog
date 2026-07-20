@@ -35,36 +35,6 @@ func extractFindSymbols(findElements []query.FindElement) []query.Symbol {
 	return symbols
 }
 
-// MaterializeResult converts a streaming relation to a materialized result with the specified symbols.
-// This is a pure function that collects all tuples from the iterator into memory.
-func MaterializeResult(rel Relation, symbols []query.Symbol) Relation {
-	var tuples []Tuple
-	err := collectTuplesInto(&tuples, rel)
-
-	// Note: an earlier debug assertion here panicked with
-	// "BUG DETECTED" when the first and last tuples were
-	// interface-equal on every element. It was intended to catch a
-	// historical iterator-workspace-reuse bug. Under the current
-	// interning and BufferedIterator invariants, the original bug is
-	// fixed; the assertion became a false-positive trap for
-	// legitimate queries whose results happened to contain repeated
-	// interned values (two entities with the same name, for example).
-	// Removed in the EXTERNAL_REVIEW_2026_04 item-5 fix pass.
-
-	// Extract options from source relation to preserve configuration
-	opts := rel.Options()
-	mat := NewMaterializedRelationWithOptions(symbols, tuples, opts)
-	if err != nil {
-		// Carry a deferred source error so it isn't laundered by materialization.
-		mat.err = err
-	}
-	return mat
-}
-
-// Result is deprecated - use Relation instead.
-// This type alias exists for backward compatibility.
-type Result = MaterializedRelation
-
 // SortRelation sorts a relation according to the order-by clauses.
 // This is a pure function that performs multi-symbol sorting with configurable direction.
 // It materializes the relation if not already materialized.

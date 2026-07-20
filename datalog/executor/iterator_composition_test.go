@@ -75,67 +75,6 @@ func TestProjectIterator(t *testing.T) {
 	assert.Equal(t, "LA", results[1][1])
 }
 
-func TestTransformIterator(t *testing.T) {
-	// Create test data
-	tuples := []Tuple{
-		{1, 10},
-		{2, 20},
-		{3, 30},
-	}
-
-	// Transform function: double the second value
-	transform := func(t Tuple) Tuple {
-		return Tuple{t[0], t[1].(int) * 2}
-	}
-
-	// Create transform iterator
-	source := newMockIterator(tuples)
-	transformIter := NewTransformIterator(source, transform)
-
-	// Collect transformed results
-	var results []Tuple
-	for transformIter.Next() {
-		tuple := transformIter.Tuple()
-		tupleCopy := make(Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		results = append(results, tupleCopy)
-	}
-	transformIter.Close()
-
-	// Verify results
-	assert.Len(t, results, 3)
-	assert.Equal(t, 20, results[0][1])
-	assert.Equal(t, 40, results[1][1])
-	assert.Equal(t, 60, results[2][1])
-}
-
-func TestConcatIterator(t *testing.T) {
-	// Create multiple iterators with different data
-	iter1 := newMockIterator([]Tuple{{1, "a"}, {2, "b"}})
-	iter2 := newMockIterator([]Tuple{{3, "c"}})
-	iter3 := newMockIterator([]Tuple{{4, "d"}, {5, "e"}})
-
-	// Create concat iterator
-	concatIter := NewConcatIterator(iter1, iter2, iter3)
-
-	// Collect all results
-	var results []Tuple
-	for concatIter.Next() {
-		tuple := concatIter.Tuple()
-		tupleCopy := make(Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		results = append(results, tupleCopy)
-	}
-	concatIter.Close()
-
-	// Verify results
-	assert.Len(t, results, 5)
-	assert.Equal(t, 1, results[0][0])
-	assert.Equal(t, "a", results[0][1])
-	assert.Equal(t, 5, results[4][0])
-	assert.Equal(t, "e", results[4][1])
-}
-
 func TestDedupIterator(t *testing.T) {
 	// Create test data with duplicates
 	tuples := []Tuple{
@@ -170,8 +109,7 @@ func TestDedupIterator(t *testing.T) {
 }
 
 func TestComposedIterators(t *testing.T) {
-	// Test chaining multiple iterators together
-	// Filter -> Project -> Transform
+	// Test chaining multiple iterators together: Filter -> Project
 	tuples := []Tuple{
 		{1, "alice", 25, 1000},
 		{2, "bob", 30, 1500},
@@ -197,32 +135,22 @@ func TestComposedIterators(t *testing.T) {
 		newSymbols: projectedSymbols,
 	}
 
-	// Step 3: Transform to add bonus (10% of salary)
-	transform := func(t Tuple) Tuple {
-		salary := t[1].(int)
-		bonus := salary / 10
-		return Tuple{t[0], salary, bonus}
-	}
-	transformIter := NewTransformIterator(projIter, transform)
-
 	// Collect final results
 	var results []Tuple
-	for transformIter.Next() {
-		tuple := transformIter.Tuple()
+	for projIter.Next() {
+		tuple := projIter.Tuple()
 		tupleCopy := make(Tuple, len(tuple))
 		copy(tupleCopy, tuple)
 		results = append(results, tupleCopy)
 	}
-	transformIter.Close()
+	projIter.Close()
 
 	// Verify results
 	assert.Len(t, results, 2) // Only bob and diana (age >= 30)
 	assert.Equal(t, "bob", results[0][0])
 	assert.Equal(t, 1500, results[0][1])
-	assert.Equal(t, 150, results[0][2]) // 10% bonus
 	assert.Equal(t, "diana", results[1][0])
 	assert.Equal(t, 2000, results[1][1])
-	assert.Equal(t, 200, results[1][2]) // 10% bonus
 }
 
 func TestStreamingRelationWithComposition(t *testing.T) {
@@ -448,7 +376,7 @@ func BenchmarkIteratorComposition(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			source := newMockIterator(tuples)
 
-			// Filter -> Project -> Transform
+			// Filter -> Project
 			filterIter := NewPredicateFilterIterator(source, symbols, &query.Comparison{
 				Op:    datalog.SymEQ,
 				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?y")},
@@ -459,17 +387,12 @@ func BenchmarkIteratorComposition(b *testing.B) {
 			filteredRel := NewStreamingRelation(symbols, filterIter)
 			projIter := NewProjectIterator(filteredRel, symbols, []query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?z")})
 
-			transform := func(t Tuple) Tuple {
-				return Tuple{t[0], t[1].(int) * 10}
-			}
-			transformIter := NewTransformIterator(projIter, transform)
-
 			// Consume results
 			count := 0
-			for transformIter.Next() {
+			for projIter.Next() {
 				count++
 			}
-			transformIter.Close()
+			projIter.Close()
 		}
 	})
 

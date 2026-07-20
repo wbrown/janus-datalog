@@ -1057,10 +1057,10 @@ func TestSortRelationRejectsNonValueTuples(t *testing.T) {
 
 	e := datalog.NewSymbol("?e")
 	age := datalog.NewSymbol("?age")
-	rel := NewMaterializedRelationNoDedupe([]query.Symbol{e, age}, []Tuple{
+	rel := NewMaterializedRelationFromSet([]query.Symbol{e, age}, []Tuple{
 		{map[string]interface{}{"user/name": "Alice"}, int64(34)},
 		{map[string]interface{}{"user/name": "Bob"}, int64(34)},
-	})
+	}, ExecutorOptions{})
 
 	SortRelation(rel, []query.OrderByClause{
 		{Variable: age, Descending: false},

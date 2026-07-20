@@ -37,7 +37,7 @@ func TestGroupedAggregationPreservesTypedKeys(t *testing.T) {
 		{
 			name: "streaming",
 			open: func(tuples []Tuple) Relation {
-				base := NewMaterializedRelationNoDedupe(symbols, tuples)
+				base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
 				return NewStreamingRelationWithOptions(
 					symbols,
 					base.Iterator(),
@@ -90,10 +90,10 @@ func BenchmarkGroupedAggregationKeying(b *testing.B) {
 		group := i % groupCount
 		tuples[i] = Tuple{int64(group), fmt.Sprintf("group-%d", group), float64(i)}
 	}
-	base := NewMaterializedRelationNoDedupe(symbols, tuples)
+	base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
 
 	b.Run("batch", func(b *testing.B) {
-		rel := NewMaterializedRelationNoDedupeWithOptions(
+		rel := NewMaterializedRelationFromSet(
 			symbols,
 			tuples,
 			ExecutorOptions{EnableStreamingAggregation: false},

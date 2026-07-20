@@ -161,7 +161,7 @@ func TestStreamingRelationPropertyPropagation(t *testing.T) {
 		Keys:     [][]query.Symbol{{a}},
 	}
 	open := func() *StreamingRelation {
-		base := NewMaterializedRelationNoDedupe(symbols, tuples)
+		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
 		return NewStreamingRelationWithProperties(
 			symbols,
 			base.Iterator(),
@@ -223,7 +223,7 @@ func TestStreamingProjectionSkipsDedupWhenKeyIsRetained(t *testing.T) {
 	symbols := []query.Symbol{a, b}
 	tuples := []Tuple{{int64(1), "same"}, {int64(2), "same"}}
 	open := func(properties RelationProperties) *StreamingRelation {
-		base := NewMaterializedRelationNoDedupe(symbols, tuples)
+		base := NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{})
 		return NewStreamingRelationWithProperties(
 			symbols,
 			base.Iterator(),
@@ -251,9 +251,10 @@ func TestHashJoinPreservesLeftKeyWhenRightJoinSymbolsAreKey(t *testing.T) {
 		EnableStreamingJoins: true,
 	}
 
-	leftBase := NewMaterializedRelationNoDedupe(
+	leftBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, leftValue},
 		[]Tuple{{int64(1), "left-1"}, {int64(2), "left-2"}},
+		ExecutorOptions{},
 	)
 	left := NewStreamingRelationWithProperties(
 		leftBase.Symbols(),
@@ -294,9 +295,10 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 		EnableStreamingJoins: true,
 	}
 
-	leftBase := NewMaterializedRelationNoDedupe(
+	leftBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, leftValue},
 		[]Tuple{{int64(1), "left-1"}},
+		ExecutorOptions{},
 	)
 	left := NewStreamingRelationWithProperties(
 		leftBase.Symbols(),
@@ -304,7 +306,7 @@ func TestHashJoinDoesNotPreserveLeftKeyWhenRightJoinSymbolsAreNotKey(t *testing.
 		opts,
 		RelationProperties{Keys: [][]query.Symbol{{id}}},
 	)
-	right := NewMaterializedRelationNoDedupeWithOptions(
+	right := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, rightValue},
 		[]Tuple{{int64(1), "right-1"}, {int64(1), "right-2"}},
 		opts,
@@ -346,9 +348,10 @@ func TestHashJoinPreservesRightKeyWhenLeftJoinSymbolsAreKey(t *testing.T) {
 		opts,
 		RelationProperties{Keys: [][]query.Symbol{{id}}},
 	)
-	rightBase := NewMaterializedRelationNoDedupe(
+	rightBase := NewMaterializedRelationFromSet(
 		[]query.Symbol{id, rightValue},
 		[]Tuple{{int64(1), "right-1"}, {int64(2), "right-2"}},
+		ExecutorOptions{},
 	)
 	right := NewStreamingRelationWithProperties(
 		rightBase.Symbols(),
@@ -394,8 +397,8 @@ func TestMaterializedAndSymmetricHashJoinsPreserveCandidateKeys(t *testing.T) {
 		DefaultHashTableSize:    16,
 		EnableTrueStreaming:     true,
 	}
-	streamingLeftBase := NewMaterializedRelationNoDedupe(leftSymbols, leftTuples)
-	streamingRightBase := NewMaterializedRelationNoDedupe(rightSymbols, rightTuples)
+	streamingLeftBase := NewMaterializedRelationFromSet(leftSymbols, leftTuples, ExecutorOptions{})
+	streamingRightBase := NewMaterializedRelationFromSet(rightSymbols, rightTuples, ExecutorOptions{})
 	streamingLeft := NewStreamingRelationWithProperties(
 		leftSymbols, streamingLeftBase.Iterator(), opts, properties)
 	streamingRight := NewStreamingRelationWithProperties(
@@ -444,10 +447,13 @@ func TestSemiAndAntiJoinsPreserveLeftProperties(t *testing.T) {
 
 func TestSemiAndAntiJoinsDeduplicateUnkeyedLeftInput(t *testing.T) {
 	id := datalog.NewSymbol("?id")
-	left := NewMaterializedRelationNoDedupe(
-		[]query.Symbol{id},
-		[]Tuple{{int64(1)}, {int64(1)}, {int64(2)}, {int64(2)}},
-	)
+	// Deliberately constructs a duplicate-carrying relation — an invariant
+	// violation no constructor admits — to pin that semi/anti-joins
+	// deduplicate unkeyed input rather than trusting it.
+	left := &MaterializedRelation{
+		symbols: []query.Symbol{id},
+		tuples:  []Tuple{{int64(1)}, {int64(1)}, {int64(2)}, {int64(2)}},
+	}
 	right := NewMaterializedRelation(
 		[]query.Symbol{id},
 		[]Tuple{{int64(1)}},
@@ -547,9 +553,10 @@ func TestStreamingRelationCacheEmitsStructuredAnnotation(t *testing.T) {
 		events = append(events, event)
 	})
 	symbol := datalog.NewSymbol("?value")
-	base := NewMaterializedRelationNoDedupe(
+	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{symbol},
 		[]Tuple{{int64(1)}, {int64(2)}},
+		ExecutorOptions{},
 	)
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),

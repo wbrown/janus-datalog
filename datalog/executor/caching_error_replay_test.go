@@ -38,18 +38,6 @@ func TestSort_ReplaysSourceError(t *testing.T) {
 	require.ErrorIs(t, driveErr(sorted), errInjectedIterator)
 }
 
-// TestUnionRelation_MaterializeReplaysSourceError: union bug verification #4 —
-// materializing a union whose inner relation fails must surface the error, not a
-// silent prefix.
-func TestUnionRelation_MaterializeReplaysSourceError(t *testing.T) {
-	ch := make(chan relationItem, 1)
-	ch <- relationItem{relation: newFailingRelation(1, Tuple{int64(1)}, Tuple{int64(2)})}
-	close(ch)
-
-	ur := NewUnionRelation(ch, testSymbols(), ExecutorOptions{})
-	require.ErrorIs(t, driveErr(ur.Materialize()), errInjectedIterator)
-}
-
 // TestCollectTuples_OverMaterializedFailingRelation: the end-to-end property —
 // a boundary over a materialized failing relation returns the error (Part 1 +
 // Part 2 together).

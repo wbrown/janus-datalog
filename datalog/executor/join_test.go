@@ -365,9 +365,10 @@ func TestJoinStrategyAnnotationDoesNotConsumeStreamingRelation(t *testing.T) {
 		events = append(events, event)
 	})
 	joinSymbol := datalog.NewSymbol("?id")
-	base := NewMaterializedRelationNoDedupe(
+	base := NewMaterializedRelationFromSet(
 		[]query.Symbol{joinSymbol},
 		[]Tuple{{int64(1)}},
+		ExecutorOptions{},
 	)
 	stream := NewStreamingRelationWithOptions(
 		base.Symbols(),

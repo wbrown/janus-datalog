@@ -55,14 +55,14 @@ func TestTopNRelationMatchesSortThenLimit(t *testing.T) {
 		for _, limit := range []int{0, 1, 3, len(tuples), len(tuples) + 5} {
 			t.Run(order.name+"/limit_"+strconv.Itoa(limit), func(t *testing.T) {
 				wantRel := NewLimitRelation(
-					NewMaterializedRelationNoDedupe(symbols, tuples).Sort(order.orderBy),
+					NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}).Sort(order.orderBy),
 					limit,
 				)
 				want, err := CollectTuples(wantRel, nil)
 				require.NoError(t, err)
 
 				gotRel := TopNRelation(
-					NewMaterializedRelationNoDedupe(symbols, tuples),
+					NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}),
 					order.orderBy,
 					limit,
 				)
@@ -108,7 +108,7 @@ func TestTopNRelationUsesSecondarySortKeys(t *testing.T) {
 		{int64(10), "a"},
 	}
 
-	result := TopNRelation(NewMaterializedRelationNoDedupe(symbols, tuples), orderBy, 2)
+	result := TopNRelation(NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}), orderBy, 2)
 	got, err := CollectTuples(result, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(10), "a"}, {int64(10), "b"}}, got)
@@ -163,7 +163,7 @@ func runTopNDifferential(t *testing.T, seed int64) {
 		limit := random.Intn(count + 3)
 		expected := nativeTopNReference(tuples, orderBy, limit)
 		actual, err := collectTypedTuples(TopNRelation(
-			NewMaterializedRelationNoDedupe(symbols, tuples),
+			NewMaterializedRelationFromSet(symbols, tuples, ExecutorOptions{}),
 			orderBy,
 			limit,
 		))
@@ -212,7 +212,7 @@ func TestTopNRelationCompleteTiesRemainValid(t *testing.T) {
 		tuples = append(tuples, Tuple{int64(1), fmt.Sprintf("payload-%d", i)})
 	}
 	result := TopNRelation(
-		NewMaterializedRelationNoDedupe([]query.Symbol{score, payload}, tuples),
+		NewMaterializedRelationFromSet([]query.Symbol{score, payload}, tuples, ExecutorOptions{}),
 		[]query.OrderByClause{{Variable: score, Descending: false}},
 		5,
 	)

@@ -17,14 +17,6 @@ import (
 // relation. Each must instead carry the error onto the derived relation (replayed
 // at the next public boundary via Iterator().Error()).
 
-// TestMaterializeResult_PropagatesIteratorError: MaterializeResult must not launder
-// a failed source into a clean materialized relation.
-func TestMaterializeResult_PropagatesIteratorError(t *testing.T) {
-	src := newFailingStream(1, Tuple{int64(1)}, Tuple{int64(2)}, Tuple{int64(3)})
-	rel := MaterializeResult(src, testSymbols())
-	require.ErrorIs(t, driveErr(rel), errInjectedIterator)
-}
-
 // TestSortRelation_PropagatesIteratorError: SortRelation collects then sorts; a
 // source failure must survive materialization rather than yield clean sorted rows.
 func TestSortRelation_PropagatesIteratorError(t *testing.T) {
