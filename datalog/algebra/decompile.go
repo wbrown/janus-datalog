@@ -333,11 +333,17 @@ func decompileLateralJoin(n *Node) ([]query.Clause, error) {
 		clauses = append(clauses, childClauses...)
 	}
 
-	// Build the SubqueryPattern
-	inputs := make([]query.PatternElement, 0, len(lj.CorrelationVars)+1)
-	inputs = append(inputs, query.Constant{Value: datalog.SymDollar})
-	for _, cv := range lj.CorrelationVars {
-		inputs = append(inputs, query.Variable{Name: cv})
+	// Rebuild the SubqueryPattern from the preserved call-site arguments —
+	// they carry constants and named sources that CorrelationVars cannot
+	// express. Fabricate [$ ...correlation vars] only for nodes constructed
+	// without an original call site.
+	inputs := lj.Inputs
+	if inputs == nil {
+		inputs = make([]query.PatternElement, 0, len(lj.CorrelationVars)+1)
+		inputs = append(inputs, query.Constant{Value: datalog.SymDollar})
+		for _, cv := range lj.CorrelationVars {
+			inputs = append(inputs, query.Variable{Name: cv})
+		}
 	}
 
 	sp := &query.SubqueryPattern{

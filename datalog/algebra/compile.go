@@ -178,6 +178,7 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 			Op: RuleLateralJoin,
 			Data: &LateralJoin{
 				CorrelationVars: correlationVars,
+				Inputs:          sp.Inputs,
 				InnerQuery:      sp.Query,
 				Binding:         sp.Binding,
 				Output:          output,
@@ -194,6 +195,7 @@ func compileSubquery(sp *query.SubqueryPattern, current *Node) *Node {
 	lj := &Node{
 		Op: RuleLateralJoin,
 		Data: &LateralJoin{
+			Inputs:     sp.Inputs,
 			InnerQuery: sp.Query,
 			Binding:    sp.Binding,
 			Output:     bindingSyms,

@@ -43,6 +43,47 @@ func patternDependsOnPendingExpression(p *query.DataPattern, available map[query
 	return false
 }
 
+// subqueryDependsOnPendingProvider checks if a subquery binds a variable that
+// a pending (unselected) non-subquery clause also provides but that isn't yet
+// available. A subquery's result relation joins the accumulated relation on
+// whichever of its binding variables are already bound; selecting it while a
+// join key's provider is still pending joins on a subset of the keys — an
+// under-keyed join that admits spurious row combinations. This is
+// patternDependsOnPendingExpression's invariant applied to the subquery
+// relation's interface (a decorrelated grouped subquery binds its group keys
+// to outer names precisely so they join).
+//
+// Pending subqueries are excluded from the provider scan: two subqueries
+// providing the same symbol would otherwise defer on each other forever.
+// Once every non-subquery provider has run, whichever subquery executes
+// first supplies the keys the next one joins on.
+func subqueryDependsOnPendingProvider(sp *query.SubqueryPattern, available map[query.Symbol]bool, remaining []query.Clause, selected map[int]bool) bool {
+	needed := make(map[query.Symbol]bool)
+	for _, sym := range query.ScopeOf(sp).Provides {
+		if !available[sym] {
+			needed[sym] = true
+		}
+	}
+	if len(needed) == 0 {
+		return false
+	}
+
+	for i, clause := range remaining {
+		if selected[i] {
+			continue
+		}
+		if _, ok := clause.(*query.SubqueryPattern); ok {
+			continue
+		}
+		for _, sym := range query.ScopeOf(clause).Provides {
+			if needed[sym] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // scoreClause assigns a score to a clause for greedy selection
 // Higher score = better to execute now
 //

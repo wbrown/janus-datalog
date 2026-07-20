@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -96,6 +97,52 @@ func TestUncorrelatedSubqueryKeepsDataSourceScheduling(t *testing.T) {
 
 	assertScheduledAfter(t, phases, notClause, uncorrelated,
 		"uncorrelated subquery keeps data-source scoring and precedes the NOT filter")
+}
+
+// TestUncorrelatedSubqueryDefersBehindPendingBindingProviders pins the limit
+// of the uncorrelated-subquery exemption above: "executes exactly once
+// wherever placed" is true of its cost, not of its join. A subquery relation
+// joins the accumulated relation on whichever of its binding variables are
+// bound at selection time; scheduling it while another pending clause still
+// provides one of those variables joins on a subset of the keys, and the
+// under-keyed join admits row combinations no later clause is entitled to
+// remove. The subquery must defer until the pending providers of its binding
+// variables have run. The exemption pin above still holds: a binding
+// variable nothing else provides never defers the subquery.
+//
+// This is the planner half of the OHLC decorrelation failure — structural,
+// independent of executor expression semantics. See
+// docs/bugs/BUG_UNCORRELATED_SUBQUERY_SCHEDULES_BEFORE_BINDING_PROVIDERS.md
+// and its executor sibling BUG_EXPRESSION_BINDING_OVERWRITES_BOUND_VARIABLE.md.
+func TestUncorrelatedSubqueryDefersBehindPendingBindingProviders(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?year ?high
+	  :where
+	  [?e :price/time ?t]
+	  [(year ?t) ?year]
+	  [(q [:find ?py (max ?h)
+	       :in $
+	       :where [?b :price/time ?time]
+	              [(year ?time) ?py]
+	              [?b :price/high ?h]]
+	      $) [[?year ?high] ...]]]`)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	yearExpr := q.Where[1].(*query.Expression)
+	grouped := q.Where[2].(*query.SubqueryPattern)
+
+	phases, err := createPhasesGreedy(
+		q.Where,
+		[]query.Symbol{datalog.NewSymbol("?year"), datalog.NewSymbol("?high")},
+		map[query.Symbol]bool{},
+	)
+	if err != nil {
+		t.Fatalf("phasing failed: %v", err)
+	}
+
+	assertScheduledAfter(t, phases, grouped, yearExpr,
+		"uncorrelated subquery binding ?year must schedule after the pending expression that provides ?year")
 }
 
 // assertScheduledAfter fails unless later appears after earlier in the
