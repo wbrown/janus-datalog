@@ -296,6 +296,16 @@ func executeSingleAggregation(rel Relation, aggregates []query.FindAggregate) (r
 		return empty
 	}
 
+	// Emission invariant: an aggregate that folded no values beside siblings
+	// that did has no representable result — nil is not a datalog value. The
+	// all-empty case returns empty above; the mixed case is an error, never a
+	// nil in the tuple.
+	for i, v := range results {
+		if v == nil && aggErr == nil {
+			aggErr = fmt.Errorf("aggregate %s folded no values while sibling aggregates did; nil is not a datalog value", aggregates[i].String())
+		}
+	}
+
 	result = newMaterializedRelationFromSet(
 		resultSymbols,
 		[]Tuple{results},
@@ -426,6 +436,13 @@ func executeGroupedAggregation(
 			if aggValErr != nil && aggregateErr == nil {
 				aggregateErr = aggValErr
 			}
+			// Emission invariant: mixed groups (this aggregate empty,
+			// a sibling non-empty) have no representable result — nil
+			// is not a datalog value. All-empty groups are skipped
+			// above.
+			if v == nil && aggregateErr == nil {
+				aggregateErr = fmt.Errorf("aggregate %s folded no values for a group while sibling aggregates did; nil is not a datalog value", aggregates[i].String())
+			}
 			resultTuple[len(groupByVars)+i] = v
 		}
 
@@ -481,9 +498,12 @@ type aggregateAccumulator struct {
 // interned function symbol: update folds one value into an accumulator,
 // result finalizes it. Aggregation is a producer boundary for NaN — Inf and
 // -Inf inputs cancel in a sum — so result errors rather than emitting a
-// non-value.
+// non-value. update enforces the value domain: a non-domain input (a Go int
+// that bypassed boundary normalization, a nil) errors loudly instead of
+// being skipped — a silent skip manufactures a nil aggregate beside healthy
+// siblings (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
 type aggregateOps struct {
-	update func(*aggregateAccumulator, interface{})
+	update func(*aggregateAccumulator, interface{}) error
 	result func(*aggregateAccumulator) (interface{}, error)
 }
 
@@ -522,17 +542,19 @@ func resolveAggregates(aggregates []query.FindAggregate) ([]aggregateOps, error)
 }
 
 // updateCount counts non-nil values (SQL semantics).
-func updateCount(acc *aggregateAccumulator, value interface{}) {
+func updateCount(acc *aggregateAccumulator, value interface{}) error {
 	if value == nil {
-		return
+		return nil
 	}
 	acc.count++
+	return nil
 }
 
 // updateSum accumulates for sum and avg. Values are boundary-normalized, so
-// int64 and float64 are the only numeric shapes in relational flow; nil and
-// non-numeric values are skipped, as before.
-func updateSum(acc *aggregateAccumulator, value interface{}) {
+// int64 and float64 are the only numeric shapes in relational flow; anything
+// else is a domain violation upstream and errors loudly — a silent skip
+// folds to a nil aggregate with no signal.
+func updateSum(acc *aggregateAccumulator, value interface{}) error {
 	switch n := value.(type) {
 	case int64:
 		if acc.isFloat {
@@ -548,27 +570,32 @@ func updateSum(acc *aggregateAccumulator, value interface{}) {
 		}
 		acc.sumFloat += n
 		acc.count++
+	default:
+		return fmt.Errorf("sum/avg input %T (%v) is not int64/float64; integer widths normalize to int64 at the engine boundary", value, value)
 	}
+	return nil
 }
 
-func updateMin(acc *aggregateAccumulator, value interface{}) {
+func updateMin(acc *aggregateAccumulator, value interface{}) error {
 	if value == nil {
-		return
+		return fmt.Errorf("min input is nil; nil is not a datalog value")
 	}
 	if acc.min == nil || datalog.CompareValues(value, acc.min) < 0 {
 		acc.min = value
 	}
 	acc.count++
+	return nil
 }
 
-func updateMax(acc *aggregateAccumulator, value interface{}) {
+func updateMax(acc *aggregateAccumulator, value interface{}) error {
 	if value == nil {
-		return
+		return fmt.Errorf("max input is nil; nil is not a datalog value")
 	}
 	if acc.max == nil || datalog.CompareValues(value, acc.max) > 0 {
 		acc.max = value
 	}
 	acc.count++
+	return nil
 }
 
 func resultCount(acc *aggregateAccumulator) (interface{}, error) {
@@ -622,7 +649,9 @@ func resultMax(acc *aggregateAccumulator) (interface{}, error) {
 func foldAggregateValues(op aggregateOps, values []interface{}) (interface{}, error) {
 	var acc aggregateAccumulator
 	for _, v := range values {
-		op.update(&acc, v)
+		if err := op.update(&acc, v); err != nil {
+			return nil, err
+		}
 	}
 	return op.result(&acc)
 }
@@ -878,14 +907,28 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 				}
 
 				// Predicate passed (or no predicate), update aggregate
-				ops[i].update(&group.states[i], tuple[idx])
+				group.sawValue = true
+				if err := ops[i].update(&group.states[i], tuple[idx]); err != nil {
+					aggregateErr = err
+					break
+				}
 			}
+		}
+		if aggregateErr != nil {
+			break
 		}
 	}
 
 	// Convert groups to result tuples
 	resultTuples := make([]Tuple, 0, len(groupOrder))
 	for _, group := range groupOrder {
+		// Batch parity: a group whose every aggregate folded nothing is
+		// excluded (relational empty input → empty output), never emitted
+		// as a tuple of nils.
+		if !group.sawValue {
+			continue
+		}
+
 		resultTuple := make(Tuple, len(r.groupByVars)+len(r.aggregates))
 
 		// Add group-by values
@@ -896,6 +939,12 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 			v, resultErr := ops[i].result(&group.states[i])
 			if resultErr != nil && aggregateErr == nil {
 				aggregateErr = resultErr
+			}
+			// Emission invariant: mixed groups (this aggregate empty, a
+			// sibling non-empty) have no representable result — nil is
+			// not a datalog value.
+			if v == nil && aggregateErr == nil {
+				aggregateErr = fmt.Errorf("aggregate %s folded no values while sibling aggregates did; nil is not a datalog value", r.aggregates[i].String())
 			}
 			resultTuple[len(r.groupByVars)+i] = v
 		}
@@ -930,4 +979,8 @@ func (r *StreamingAggregateRelation) materialize() (result *MaterializedRelation
 type streamingAggregateGroup struct {
 	key    Tuple
 	states []aggregateAccumulator
+	// sawValue records whether any aggregate accepted any input for this
+	// group — the streaming twin of the batch paths' hasAnyValues: a group
+	// whose every aggregate folded nothing is dropped, not emitted as nils.
+	sawValue bool
 }

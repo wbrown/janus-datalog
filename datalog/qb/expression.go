@@ -110,7 +110,7 @@ type GroundBuilder struct {
 //	taxRate := qb.NewVar("taxRate")
 //	qb.Ground(0.08).As(taxRate)  // [(ground 0.08) ?taxRate]
 func Ground(value interface{}) *GroundBuilder {
-	return &GroundBuilder{value: value}
+	return &GroundBuilder{value: normalizeConstant(value)}
 }
 
 // As binds the ground value to a variable.
@@ -134,7 +134,11 @@ type TupleGroundBuilder struct {
 //	a, b, c := qb.NewVar("a"), qb.NewVar("b"), qb.NewVar("c")
 //	qb.TupleGround(0, 0, 0).As(a, b, c)  // [(ground [0 0 0]) [?a ?b ?c]]
 func TupleGround(values ...interface{}) *TupleGroundBuilder {
-	return &TupleGroundBuilder{values: values}
+	normalized := make([]interface{}, len(values))
+	for i, v := range values {
+		normalized[i] = normalizeConstant(v)
+	}
+	return &TupleGroundBuilder{values: normalized}
 }
 
 // As binds the tuple values to multiple variables.

@@ -223,6 +223,32 @@ func TestNotClauseComplexQuery_E2E(t *testing.T) {
 				assert.NotEqual(t, "proj:3", projID.String(),
 					"Deleted project should not appear in results")
 			}
+
+			// Pin the aggregate columns exactly, as int64 — nil here means an
+			// aggregate silently skipped its inputs, and a bare Go int means a
+			// builder constant bypassed boundary normalization
+			// (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md).
+			// Find positions: 9 itemCount, 10 totalCost, 11 totalWeight,
+			// 12 totalVolume, 13 totalUnits, 14 ready.
+			byName := make(map[string]executor.Tuple, len(tuples))
+			for _, tuple := range tuples {
+				byName[tuple[1].(string)] = tuple
+			}
+			alpha := byName["Alpha"]
+			require.NotNil(t, alpha)
+			require.Equal(t, int64(2), alpha[9], "Alpha item count")
+			require.Equal(t, int64(300), alpha[10], "Alpha total cost")
+			require.Equal(t, int64(8000), alpha[11], "Alpha total weight")
+			require.Equal(t, int64(0), alpha[12], "Alpha total volume (get-else default, no :item/volume datoms)")
+			require.Equal(t, int64(0), alpha[13], "Alpha total units (get-else default, no :item/units datoms)")
+			require.Equal(t, true, alpha[14], "Alpha ready")
+
+			beta := byName["Beta"]
+			require.NotNil(t, beta)
+			for pos := 9; pos <= 13; pos++ {
+				require.Equal(t, int64(0), beta[pos], "Beta fallback tuple position %d", pos)
+			}
+			require.Equal(t, false, beta[14], "Beta ready")
 		})
 	}
 }

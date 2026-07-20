@@ -8,7 +8,7 @@ The sweep surfaced three real divergences, each ledgered in `docs/bugs/`:
 
 - `BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md` — algebra-path-only validation.
 - `BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md` — algebra-path-only error.
-- `BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md` — baseline-path-only error (the "optimizer makes it work" class); its regression guard is the red `algebra_off` leg of `TestNotClauseComplexQuery_E2E`, which stands red in-tree until fixed.
+- `resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md` — surfaced as a baseline-only error (the "optimizer makes it work" class); root cause was a qb boundary violation both paths shared — the baseline's nil guard caught what the algebra path silently emitted. RESOLVED 2026-07-20 with a three-layer fix (qb int64 normalization, loud aggregate fold, emission nil guard); `TestNotClauseComplexQuery_E2E` passes both modes with exact row pins.
 
 Three tests were ruled plan-structure pins under exemption 4 below (ruled 2026-07-20): `TestComplexQuerySubqueryExecutionCounts` (decorrelated execution counts and optimizer event counters), `TestComplexQueryRetainsScenarioKeyThroughFallbacks` (or-fallback derived key metadata), and `TestGetElseMultiEntityScanNarrowed` (branch-narrowing annotation and index choice). The last was split: its row semantics run on the matrix as `TestGetElseMultiEntityStoredOrDefault`, its narrowing structure declares `EnableAlgebraOptimizer` explicitly.
 

@@ -97,3 +97,27 @@ func TestResolveAggregateUnknownSymbolErrors(t *testing.T) {
 		t.Fatal("unknown aggregate function must resolve to a loud error, not a silent nil aggregate")
 	}
 }
+
+// The fold enforces the value domain: silently skipping a non-domain input
+// manufactures a nil aggregate beside healthy siblings — how a qb-built
+// get-else default of int(0) became a nil sum in a 2-row group
+// (docs/bugs/resolved/BUG_BASELINE_ORDEFAULT_SUBQUERY_NIL_AGGREGATE.md). count keeps
+// its documented SQL semantics (counts non-nil) and is not part of this pin.
+func TestAggregateFoldRejectsNonDomainValues(t *testing.T) {
+	for _, fn := range []datalog.Symbol{datalog.SymSum, datalog.SymAvg} {
+		if _, err := resolveAndFold(t, fn, []interface{}{0}); err == nil {
+			t.Errorf("%s over a Go int must error loudly, not skip to nil", fn)
+		}
+		if _, err := resolveAndFold(t, fn, []interface{}{nil}); err == nil {
+			t.Errorf("%s over nil must error loudly, not skip to nil", fn)
+		}
+		if _, err := resolveAndFold(t, fn, []interface{}{"s"}); err == nil {
+			t.Errorf("%s over a string must error loudly, not skip to nil", fn)
+		}
+	}
+	for _, fn := range []datalog.Symbol{datalog.SymMin, datalog.SymMax} {
+		if _, err := resolveAndFold(t, fn, []interface{}{nil}); err == nil {
+			t.Errorf("%s over nil must error loudly, not skip", fn)
+		}
+	}
+}

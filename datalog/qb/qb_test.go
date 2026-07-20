@@ -372,8 +372,9 @@ func TestTupleGroundMixedTypes(t *testing.T) {
 	if values[0] != "hello" {
 		t.Errorf("Expected 'hello', got %v", values[0])
 	}
-	if values[1] != 42 {
-		t.Errorf("Expected 42, got %v", values[1])
+	// Integer widths normalize to int64 at the builder boundary.
+	if values[1] != int64(42) {
+		t.Errorf("Expected int64 42, got %T %v", values[1], values[1])
 	}
 }
 
