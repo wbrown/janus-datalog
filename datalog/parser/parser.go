@@ -1041,7 +1041,8 @@ func parseNotJoinClause(node *edn.Node) (*query.NotJoinClause, error) {
 		return nil, fmt.Errorf("not-join second element must be a vector of join variables, got %v", node.Nodes[1].Type)
 	}
 
-	// Parse join variables
+	// Parse join variables. parseJoinVars rejects an empty header — a
+	// not-join must declare at least one unification variable.
 	joinVars, err := parseJoinVars(&node.Nodes[1])
 	if err != nil {
 		return nil, fmt.Errorf("error parsing not-join vars: %w", err)

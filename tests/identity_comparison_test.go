@@ -9,20 +9,15 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
-// TestIdentityComparisonBestPractices demonstrates the correct way to compare
-// Identity values in query results.
+// TestIdentityComparisonBestPractices demonstrates how Identity values in
+// query results compare.
 //
-// IMPORTANT: Use .Equal() to compare Identities, NOT == or !=
-//
-// Identity structs contain multiple fields:
-// - value: [20]byte - the actual SHA1 hash (the true identity)
-// - l85: string - lazily computed L85 encoding
-// - str: string - original string (if known)
-// - l85Computed: bool
-//
-// Identities loaded from storage have different auxiliary fields than the
-// original Identities created in code. Struct equality compares ALL fields,
-// so it will fail even when the hashes match.
+// Identity is an interned pointer (*identity): every constructor and the
+// storage decode path intern by hash, so two Identities with the same hash
+// are the same pointer. == is therefore hash equality — including between
+// an Identity created in code and one decoded from storage. .Equal()
+// compares the hashes directly and states the same fact without relying on
+// the interning invariant.
 func TestIdentityComparisonBestPractices(t *testing.T) {
 	dir, err := os.MkdirTemp("", "identity-comparison-*")
 	if err != nil {
@@ -69,28 +64,20 @@ func TestIdentityComparisonBestPractices(t *testing.T) {
 		t.Fatalf("Result is not an Identity: %T", tuples[0][0])
 	}
 
-	// WRONG: struct equality (compares all fields including str, l85)
-	// This will FAIL even when the identities represent the same entity!
-	if foundID == child {
-		t.Log("Struct equality (==) matched - this is luck, not guaranteed!")
-	} else {
-		// This is the EXPECTED case - struct fields differ
-		t.Log("Struct equality (==) did NOT match - expected behavior")
-		t.Logf("  original child.str: %q", child.String())
-		t.Logf("  returned foundID:   %q (from storage, no original string)", foundID.String())
+	// Interning: identities with the same hash are the same pointer, so ==
+	// matches even though foundID was decoded from storage.
+	if foundID != child {
+		t.Errorf("== did not match: interning guarantees one pointer per hash")
 	}
 
-	// CORRECT: use .Equal() which compares only the hash
-	if foundID.Equal(child) {
-		t.Log("Hash equality (.Equal()) matched - CORRECT!")
-	} else {
+	// .Equal() compares hashes — the semantic comparison, independent of
+	// the interning invariant.
+	if !foundID.Equal(child) {
 		t.Errorf("Hash equality (.Equal()) failed - this indicates a real bug!")
 	}
 
-	// Also correct: compare hashes directly
-	if foundID.Hash() == child.Hash() {
-		t.Log("Direct hash comparison matched - also correct")
-	} else {
+	// Hash() comparison states the same fact.
+	if foundID.Hash() != child.Hash() {
 		t.Errorf("Direct hash comparison failed - this indicates a real bug!")
 	}
 }

@@ -240,6 +240,16 @@ func compileNot(nc *query.NotClause, current *Node) (*Node, error) {
 			required = append(required, symbol)
 		}
 	}
+	// Zero join symbols means the anti-join has no keys: the NOT does not
+	// unify with the outer relation, and the not-join this node decompiles
+	// to would have an empty header — a form the language rejects. Error
+	// here rather than emit an inexpressible clause.
+	if len(joinSyms) == 0 {
+		return nil, fmt.Errorf(
+			"NOT clause %s shares no variable with the outer relation; a NOT body must unify with the enclosing query through at least one variable",
+			nc,
+		)
+	}
 
 	return &Node{
 		Op: RuleAntiJoin,
@@ -315,25 +325,22 @@ func compileNotJoin(nj *query.NotJoinClause, current *Node) (*Node, error) {
 
 // compileOr handles OR clauses — union semantics.
 // When branches contain correlated predicates (NOT, missing?) that require
-// outer context, routes to the fallback/lateral-join path since independent
-// union branches can't express anti-joins against the outer relation.
+// outer context, independent union branch compilation can't give them a
+// relation to anti-join against; the correlated route compiles branches
+// against the outer schema and the clause round-trips unchanged.
 func compileOr(oc *query.OrClause, current *Node) (*Node, error) {
 	if branchesRequireOuterContext(oc.Branches) {
-		return compileOrFallback(oc.Branches, current)
+		return compileOrUnionCorrelated(oc.Branches, nil, query.ScopeOf(oc), current)
 	}
 	return compileOrUnion(oc.Branches, current)
 }
 
 // compileOrJoin handles OR-JOIN clauses — union semantics with join vars.
-// Same correlated-predicate detection as compileOr. The correlated route
-// emits an or-default-join, whose interface must be declared: ScopeOf
-// splits the flat or-join header canonically — Provides (header vars every
-// branch binds) become the outputs, Correlates (the rest, plus branch
-// externals) become the required vars.
+// Same correlated-predicate detection as compileOr; the correlated route
+// preserves the declared header verbatim.
 func compileOrJoin(oj *query.OrJoinClause, current *Node) (*Node, error) {
 	if branchesRequireOuterContext(oj.Branches) {
-		scope := query.ScopeOf(oj)
-		return compileOrFallbackWithVars(oj.Branches, scope.Correlates, scope.Provides, current)
+		return compileOrUnionCorrelated(oj.Branches, oj.JoinVars, query.ScopeOf(oj), current)
 	}
 	return compileOrUnionWithJoinVars(oj.Branches, oj.JoinVars, current)
 }
@@ -440,6 +447,60 @@ func compileOrUnionWithJoinVars(branches [][]query.Clause, joinVars []query.Symb
 			Required: required,
 		},
 		Children: children,
+	}
+	return joinWith(current, union), nil
+}
+
+// compileOrUnionCorrelated compiles or/or-join whose branches contain
+// correlated predicates (NOT, missing?). Branches compile against a schema
+// placeholder so anti-joins see the outer symbols without embedding outer
+// scans, and the node's interface comes from the clause's canonical scope —
+// never inferred from the placeholder-inflated children, which would leak
+// outer symbols into the header. The fallback machinery is not a valid
+// target here: fallback short-circuits per group, union does not, and
+// encoding union through it drops rows (see
+// docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md).
+// Correlated union has no semantics-preserving rewrite, so the node
+// decompiles back to the original clause and execution uses the executor's
+// or/or-join path.
+func compileOrUnionCorrelated(branches [][]query.Clause, joinVars []query.Symbol, scope query.ClauseScope, current *Node) (*Node, error) {
+	if len(branches) < 2 {
+		return nil, fmt.Errorf("OR requires at least 2 branches")
+	}
+
+	var initial *Node
+	if current != nil {
+		initial = &Node{
+			Op:   RuleProject,
+			Data: &Project{Symbols: current.Symbols()},
+		}
+	}
+	compiled := make([]*Node, len(branches))
+	for i, branch := range branches {
+		node, err := compileClausesFrom(branch, initial)
+		if err != nil {
+			return nil, fmt.Errorf("OR branch %d: %w", i, err)
+		}
+		compiled[i] = node
+	}
+
+	// Header vars the branches cannot produce ride Required (they unify
+	// with the outer relation); everything the clause provides is output.
+	output := append([]query.Symbol(nil), joinVars...)
+	for _, sym := range scope.Provides {
+		if !query.ContainsSymbol(output, sym) {
+			output = append(output, sym)
+		}
+	}
+
+	union := &Node{
+		Op: RuleUnion,
+		Data: &Union{
+			Output:   output,
+			JoinVars: joinVars,
+			Required: append([]query.Symbol(nil), scope.Correlates...),
+		},
+		Children: compiled,
 	}
 	return joinWith(current, union), nil
 }

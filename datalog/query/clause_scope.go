@@ -262,17 +262,3 @@ func intersectSymbolSets(sets [][]Symbol) []Symbol {
 	}
 	return result
 }
-
-// unionSymbolSets returns the symbols present in any set, deduplicated in
-// first-appearance order.
-func unionSymbolSets(sets [][]Symbol) []Symbol {
-	var result []Symbol
-	for _, set := range sets {
-		for _, sym := range set {
-			if !ContainsSymbol(result, sym) {
-				result = append(result, sym)
-			}
-		}
-	}
-	return result
-}

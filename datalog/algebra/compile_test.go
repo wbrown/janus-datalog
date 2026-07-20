@@ -68,6 +68,78 @@ func TestCompileDecompileRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRoundTrip_CorrelatedOrJoinPreservesClauseType pins the correlated
+// or-join round-trip: branches with correlated predicates compile against
+// the outer schema and decompile back to the or-join itself. Union
+// semantics have no fallback encoding — decompiling to an or-default form
+// re-executes the clause as first-match-wins and drops rows (see
+// docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md).
+func TestRoundTrip_CorrelatedOrJoinPreservesClauseType(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?v
+	  :where
+	  [?e :x/tag ?tag]
+	  (or-join [?e ?v]
+	    (and [?e :x/a ?v]
+	         (not [?e :x/flag true]))
+	    [?e :x/b ?v])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	clauses, err := Decompile(root)
+	require.NoError(t, err)
+
+	var orJoin *query.OrJoinClause
+	for _, c := range clauses {
+		if oj, ok := c.(*query.OrJoinClause); ok {
+			orJoin = oj
+		}
+	}
+	require.NotNil(t, orJoin, "correlated or-join must decompile as or-join, got %v", clauses)
+	require.Equal(t,
+		[]query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")},
+		orJoin.JoinVars,
+	)
+	require.Len(t, orJoin.Branches, 2)
+	// The bridge normalizes plain not to not-join with statically resolved
+	// join vars (compileNot sets ExplicitJoin); the branch must keep its
+	// anti-join in that form.
+	var branchNot *query.NotJoinClause
+	for _, c := range orJoin.Branches[0] {
+		if nc, ok := c.(*query.NotJoinClause); ok {
+			branchNot = nc
+		}
+	}
+	require.NotNil(t, branchNot, "correlated branch must keep its NOT clause")
+	require.Equal(t, []query.Symbol{datalog.NewSymbol("?e")}, branchNot.JoinVars)
+}
+
+// TestRoundTrip_CorrelatedOrPreservesClauseType pins the same identity
+// round-trip for plain (or ...) with a correlated predicate branch.
+func TestRoundTrip_CorrelatedOrPreservesClauseType(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?e ?v
+	  :where
+	  [?e :x/tag ?tag]
+	  (or (and [?e :x/a ?v]
+	           (not [?e :x/flag true]))
+	      [?e :x/b ?v])]`)
+	require.NoError(t, err)
+
+	root, err := Compile(q)
+	require.NoError(t, err)
+	clauses, err := Decompile(root)
+	require.NoError(t, err)
+
+	var or *query.OrClause
+	for _, c := range clauses {
+		if oc, ok := c.(*query.OrClause); ok {
+			or = oc
+		}
+	}
+	require.NotNil(t, or, "correlated or must decompile as or, got %v", clauses)
+	require.Len(t, or.Branches, 2)
+}
+
 // TestCompileOrFallback verifies that OR-fallback with subquery compiles
 // to a LateralJoin with defaults.
 func TestCompileOrFallback(t *testing.T) {

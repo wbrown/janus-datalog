@@ -130,7 +130,7 @@ Every constructor call is in tests. Production OR/union execution goes through `
 **Status**: Open
 **Sites**: `Select`, `SemiJoin`, `AntiJoin`, `FilterWithPredicate`, `EvaluateFunction`, `Aggregate` on the `Relation` interface (`datalog/executor/relation.go`), plus the free functions `Select`, `SemiJoin`, `AntiJoin`
 
-Every implementation delegates (to a free function or a sibling implementation); only tests initiate the calls. Production equivalents actually used: `filterWithPredicateAndLookup` + `thetaJoinWithPredicate` (filtering), `executeExpression` (function evaluation), `antiJoinOnSymbols` via `executeNotClause` (anti-join), `ExecuteAggregations` (aggregation — its free function is core-live; only the *method* is test-only). This is exactly how the dead `Filter` method hid. These are public API surface, so each removal is an owner decision; A1's swallow lives on one of them.
+Every implementation delegates (to a free function or a sibling implementation); only tests initiate the calls. Production equivalents actually used: `filterWithPredicateAndLookup` + `thetaJoinWithPredicate` (filtering), `executeExpression` (function evaluation), `filterWithNotClause`/`filterWithNotJoinClause` via the NOT executors (anti-join; `antiJoinOnSymbols` was deleted 2026-07-19 as a dead pair), `ExecuteAggregations` (aggregation — its free function is core-live; only the *method* is test-only). This is exactly how the dead `Filter` method hid. These are public API surface, so each removal is an owner decision; A1's swallow lives on one of them.
 
 Production-initiated interface methods (keep): `ProjectFromPattern`, `Join`, `HashJoin`, `Materialize`, `Sort`, `Project`, `Iterator`, `Symbols`, `Options`, and the rest of the core surface.
 
@@ -245,6 +245,20 @@ The dispatch (`clause_utils.go`) has a silent `default: return ClauseSymbols{}` 
 `StreamingRelation.Materialize()` and `LazySeqRelation.Materialize()` return the **receiver** (lazy replay caching); `ProductRelation`, `UnionRelation`, `PrependedRelation`, `OrFallbackRelation`, `LimitRelation`, `StreamingAggregateRelation` return a **fresh** `*MaterializedRelation`. Every `r.Materialize().Method()` delegation in the codebase terminates *only because* the receiver-returning types happen never to write that shape (they route through `realizeAll()` or iterate locally). All current chains were proven terminating in this audit — but the `EnableIteratorComposition` recursion was exactly a violation of this unwritten invariant, and nothing prevents the next one. Either document the invariant with guard comments on both receiver-returning `Materialize()` implementations, or unify the convention.
 
 ---
+
+## Addendum — external review of 2026-07-19 (against `4a43b5d`), audited and confirmed
+
+The review's two live findings are ledgered: `docs/bugs/resolved/BUG_CORRELATED_ORJOIN_GLOBAL_FALLBACK_DROPS_ROWS.md` — confirmed by reproduction, fixed 2026-07-19 (correlated or/or-join now round-trips through the algebra bridge as itself; the fallback encoding was never a valid lowering for union semantics, a wider defect than the review's correlation-key symptom); `docs/bugs/resolved/BUG_DISJOINT_NOT_FAILS_AT_EXECUTOR.md` — confirmed mechanically, ruled and resolved 2026-07-19: fully-disjoint NOT is rejected at planning, the global-anti-join reading declined, with the aggregate-subquery idiom as the expressible existence gate. Its two cleanups, confirmed:
+
+### R1. `query.unionSymbolSets` is dead
+
+**Status**: Resolved (2026-07-19). Deleted with the or-join fix; `gopls references` re-confirmed zero callers at deletion time. Zero callers after the or-default union→intersection change and the or-default-join declared-outputs change orphaned it (`datalog/query/clause_scope.go`). Unexported, so deadness was provable in-repo.
+
+### R2. `tests/identity_comparison_test.go` narration is inverted
+
+**Status**: Resolved (2026-07-19). Rewritten to the current model, which is interned-pointer, not the `[20]byte` value this entry guessed: `Identity = *identity` and every constructor (including the storage decode path) interns by hash, so `==` is pointer equality that interning makes hash equality. The test now asserts `==`, `.Equal()`, and `Hash()` all positively — the interning invariant is load-bearing and deserves the pin.
+
+Original finding: the comments at lines 72-79 referenced `str`/`l85` struct fields that no longer exist, and the test's narration was backwards — the branch the test called "expected" (struct fields differ) was the impossible one and the "luck" branch the guaranteed one.
 
 ## Suggested sequencing
 

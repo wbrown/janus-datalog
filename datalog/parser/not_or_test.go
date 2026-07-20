@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -124,6 +125,23 @@ func TestParseNotJoinClause(t *testing.T) {
 			}
 			tt.verify(t, q)
 		})
+	}
+}
+
+// TestParseNotJoinEmptyHeaderRejected pins the disjoint-NOT ruling at the
+// syntax boundary: an empty not-join header would declare "unifies with the
+// outer on nothing", a form the language rejects rather than giving global
+// semantics. parseJoinVars is the enforcement point.
+func TestParseNotJoinEmptyHeaderRejected(t *testing.T) {
+	_, err := ParseQuery(`[:find ?name
+	                       :where [?e :person/name ?name]
+	                              (not-join []
+	                                        [?x :archived true])]`)
+	if err == nil {
+		t.Fatal("expected empty not-join header to be rejected at parse")
+	}
+	if !strings.Contains(err.Error(), "join vars cannot be empty") {
+		t.Fatalf("rejection must state the header rule, got: %v", err)
 	}
 }
 

@@ -208,17 +208,35 @@ func executePlannerOptions(
 	options planner.PlannerOptions,
 ) [][]interface{} {
 	t.Helper()
+	tuples, err := runPlannerOptions(db, source, inputs, options)
+	require.NoError(t, err)
+	return tuples
+}
+
+// runPlannerOptions executes source against db under the given planner
+// options, returning the error instead of failing the test — for pins that
+// assert a query is rejected.
+func runPlannerOptions(
+	db *Database,
+	source string,
+	inputs []interface{},
+	options planner.PlannerOptions,
+) ([][]interface{}, error) {
 	q, err := db.resolveQuery(source)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	relations, err := db.convertInputsToRelations(q, inputs)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 
 	options.Cache = nil
 	router := executor.NewSourceRouter(buildSourceMap(nil, db.Matcher()))
 	exec := executor.NewExecutorWithOptions(router, db, planner.PlannerOptions(options))
 	result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, relations)
-	require.NoError(t, err)
-	tuples, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	return tuples
+	if err != nil {
+		return nil, err
+	}
+	return executor.CollectTuples(result, nil)
 }

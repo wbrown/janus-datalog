@@ -42,6 +42,34 @@ func createPhasesGreedy(clauses []query.Clause, findSymbols []query.Symbol, inpu
 		}
 	}
 
+	// A NOT body must unify with the enclosing query through at least one
+	// variable the query can bind — by input or by some clause. With zero
+	// unifiable variables the anti-join has no keys and the clause's
+	// quantification would silently turn global; reject here, before any
+	// execution, naming the clause (Datomic's insufficient-binding rule).
+	for _, clause := range clauses {
+		nc, ok := clause.(*query.NotClause)
+		if !ok {
+			continue
+		}
+		unifiable := false
+		for _, sym := range query.FreeVariables(nc.Clauses) {
+			if sym.IsSource() {
+				continue
+			}
+			if available[sym] || providerCount[sym] > 0 {
+				unifiable = true
+				break
+			}
+		}
+		if !unifiable {
+			return nil, fmt.Errorf(
+				"NOT clause %s shares no variable the enclosing query can bind; a NOT body must unify with the enclosing query through at least one variable",
+				nc,
+			)
+		}
+	}
+
 	var phases []ClausePhase
 	remaining := clauses
 
