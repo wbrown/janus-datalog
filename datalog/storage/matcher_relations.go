@@ -730,7 +730,7 @@ func (it *validatingVBoundIterator) Next() bool {
 				}
 
 				// Build result tuple
-				it.currentTuple = it.buildTuple(datom)
+				it.currentTuple = it.tupleBuilder.BuildTupleInterned(datom)
 				return true
 			}
 			// Inner iterator exhausted — propagate any deferred error
@@ -838,7 +838,7 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 		V:  it.currentBoundV,
 		Tx: ownerTx,
 	}
-	it.currentTuple = it.buildTuple(winner)
+	it.currentTuple = it.tupleBuilder.BuildTupleInterned(winner)
 	return true, nil
 }
 
@@ -1111,32 +1111,6 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 // encodeValue converts a value to bytes for index prefix
 func (it *validatingVBoundIterator) encodeValue(v any) []byte {
 	return encodeValueForSearch(v, it.matcher.encoder)
-}
-
-// buildTuple creates a result tuple from a validated datom
-func (it *validatingVBoundIterator) buildTuple(datom *datalog.Datom) executor.Tuple {
-	tuple := make(executor.Tuple, len(it.symbols))
-	for i, sym := range it.symbols {
-		// Check each pattern element - might be Variable or Constant
-		if v, ok := it.pattern.GetE().(query.Variable); ok && sym == v.Name {
-			tuple[i] = datom.E
-			continue
-		}
-		if v, ok := it.pattern.GetA().(query.Variable); ok && sym == v.Name {
-			tuple[i] = datom.A
-			continue
-		}
-		if v, ok := it.pattern.GetV().(query.Variable); ok && sym == v.Name {
-			tuple[i] = datom.V
-			continue
-		}
-		if len(it.pattern.Elements) > 3 {
-			if v, ok := it.pattern.GetT().(query.Variable); ok && sym == v.Name {
-				tuple[i] = datom.Tx
-			}
-		}
-	}
-	return tuple
 }
 
 func (it *validatingVBoundIterator) Tuple() executor.Tuple {
@@ -2117,6 +2091,7 @@ type cardinalityManyAVETValueIterator struct {
 	matcher     *BadgerMatcher
 	pattern     *query.DataPattern
 	symbols     []query.Symbol
+	indexer     *query.TupleIndexer
 	a, v        interface{}
 	aBytes      [32]byte
 	storageIter Iterator
@@ -2230,22 +2205,21 @@ func (it *cardinalityManyAVETValueIterator) isCurrentEntityMember() bool {
 }
 
 func (it *cardinalityManyAVETValueIterator) buildTuple() {
+	// Positions precomputed once at construction (query.TupleIndexer); this
+	// iterator fills from add-wins state rather than a datom, so the indexer
+	// applies directly instead of an InternedTupleBuilder.
 	tuple := make(executor.Tuple, len(it.symbols))
-	for i, sym := range it.symbols {
-		switch {
-		case it.pattern.GetE() != nil && it.pattern.GetE().IsVariable() &&
-			it.pattern.GetE().(query.Variable).Name == sym:
-			tuple[i] = it.currentEntity
-		case it.pattern.GetA() != nil && it.pattern.GetA().IsVariable() &&
-			it.pattern.GetA().(query.Variable).Name == sym:
-			tuple[i] = it.a
-		case it.pattern.GetV() != nil && it.pattern.GetV().IsVariable() &&
-			it.pattern.GetV().(query.Variable).Name == sym:
-			tuple[i] = it.v
-		case it.pattern.GetT() != nil && it.pattern.GetT().IsVariable() &&
-			it.pattern.GetT().(query.Variable).Name == sym:
-			tuple[i] = datalog.ElementID{}
-		}
+	if it.indexer.EIndex >= 0 {
+		tuple[it.indexer.EIndex] = it.currentEntity
+	}
+	if it.indexer.AIndex >= 0 {
+		tuple[it.indexer.AIndex] = it.a
+	}
+	if it.indexer.VIndex >= 0 {
+		tuple[it.indexer.VIndex] = it.v
+	}
+	if it.indexer.TIndex >= 0 {
+		tuple[it.indexer.TIndex] = datalog.ElementID{}
 	}
 	it.currentTuple = tuple
 }
@@ -2392,6 +2366,7 @@ func (m *BadgerMatcher) matchCardinalityManyFindEntitiesWithValue(
 		matcher:     m,
 		pattern:     pattern,
 		symbols:     symbols,
+		indexer:     query.NewTupleIndexer(pattern, symbols),
 		a:           a,
 		v:           v,
 		aBytes:      aBytes,

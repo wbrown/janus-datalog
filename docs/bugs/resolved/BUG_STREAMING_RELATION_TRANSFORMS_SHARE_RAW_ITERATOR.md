@@ -1,6 +1,18 @@
 # NOTE: StreamingRelation Transforms Share Raw Iterator
 
-**Date**: 2026-05-25 **Severity**: Low — Latent code-hygiene inconsistency, no observed failure **Status**: Open (low priority) **Affected**: `StreamingRelation.Filter`, `FilterWithPredicate`, `EvaluateFunction`
+**Date**: 2026-05-25 **Severity**: Low — Latent code-hygiene inconsistency, no observed failure **Status**: RESOLVED (2026-07-20 triage) — overtaken by intervening work; every named site is cured in the current tree **Affected**: `StreamingRelation.Filter`, `FilterWithPredicate`, `EvaluateFunction`
+
+## Resolution (2026-07-20 triage)
+
+All three named transforms stopped wrapping the raw `r.iterator` field:
+
+- `StreamingRelation.Filter` no longer exists — it went with the `Filter` system's deletion (`NewFilterIterator` has no definition in the tree).
+- `FilterWithPredicate` and `EvaluateFunction` (`datalog/executor/relation.go`) construct their composed iterators from **`r.Iterator()`** — the guarded accessor with the single-use guard, replay-cache participation, and deferred-error replay this report wanted.
+- The `EnableIteratorComposition` option this report's quoted code branched on was removed; streaming ops have one path (`TestStreamingOpsStreamUnderZeroOptions` pins it, and records that the former false arm recursed without bound).
+
+The verification plan's substance is in the tree and green: `TestStreamingFilterUsesRelationIteratorAndBuildsReplayCache` (`iterator_contract_hardening_test.go`) is exactly requested test 1 — `Materialize()` then `FilterWithPredicate`, both the derived relation and the source driven, uniform cache replay verified. Requested test 2 (deferred-error replay through the composed transforms) is covered by `TestPredicateFilterIteratorPropagatesEvaluationError`, `TestFunctionEvaluatorIterator_PropagatesEvalError`, and the `relation_ops_error_propagation_test.go` suite. Requested test 3 (both `EnableIteratorComposition` modes agree) is moot — the option is gone.
+
+The original report is retained below.
 
 ## Summary
 
