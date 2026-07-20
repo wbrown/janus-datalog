@@ -117,37 +117,37 @@ func TestBoundEntityNonMatchAgreesAcrossJoinStrategies(t *testing.T) {
 // strings that are the L85 text of real entities. The join keeps ref-partnered
 // rows and drops the rest; no error.
 func TestVEJoinOverMixedDataMatchesOnlyRefs(t *testing.T) {
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	alice := datalog.NewIdentity("user:alice")
-	group := datalog.NewIdentity("group:admins")
-	refAttr := datalog.NewKeyword(":user/group")
-	nameAttr := datalog.NewKeyword(":group/name")
+			alice := datalog.NewIdentity("user:alice")
+			group := datalog.NewIdentity("group:admins")
+			refAttr := datalog.NewKeyword(":user/group")
+			nameAttr := datalog.NewKeyword(":group/name")
 
-	tx := db.NewTransaction()
-	tx.Add(group, nameAttr, "Admins")
-	tx.Add(alice, refAttr, group)                                    // a real ref
-	tx.Add(datalog.NewIdentity("user:bob"), refAttr, "group:admins") // a seed string
-	tx.Add(datalog.NewIdentity("user:carol"), refAttr, group.L85())  // an L85 text
-	if _, err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
+			tx := db.NewTransaction()
+			tx.Add(group, nameAttr, "Admins")
+			tx.Add(alice, refAttr, group)                                    // a real ref
+			tx.Add(datalog.NewIdentity("user:bob"), refAttr, "group:admins") // a seed string
+			tx.Add(datalog.NewIdentity("user:carol"), refAttr, group.L85())  // an L85 text
+			if _, err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
 
-	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?name :where [?u :user/group ?g] [?g :group/name ?name]]`,
-	))
-	if err != nil {
-		t.Fatalf("mixed V→E join must not error: %v", err)
-	}
-	if len(tuples) != 1 {
-		t.Fatalf("expected 1 row (only the real ref joins), got %d: %v", len(tuples), tuples)
-	}
-	if name, ok := tuples[0][0].(string); !ok || name != "Admins" {
-		t.Errorf("expected \"Admins\", got %v", tuples[0][0])
+			tuples, err := executor.CollectTuples(db.Query(
+				`[:find ?name :where [?u :user/group ?g] [?g :group/name ?name]]`,
+			))
+			if err != nil {
+				t.Fatalf("mixed V→E join must not error: %v", err)
+			}
+			if len(tuples) != 1 {
+				t.Fatalf("expected 1 row (only the real ref joins), got %d: %v", len(tuples), tuples)
+			}
+			if name, ok := tuples[0][0].(string); !ok || name != "Admins" {
+				t.Errorf("expected \"Admins\", got %v", tuples[0][0])
+			}
+		})
 	}
 }
 

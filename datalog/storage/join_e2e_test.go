@@ -182,63 +182,67 @@ func TestStorageBackedJoinE2E(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Parse query
-			q, err := parser.ParseQuery(tc.query)
-			if err != nil {
-				t.Fatalf("Parse failed: %v", err)
-			}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, tc := range testCases {
+				t.Run(tc.name, func(t *testing.T) {
+					// Parse query
+					q, err := parser.ParseQuery(tc.query)
+					if err != nil {
+						t.Fatalf("Parse failed: %v", err)
+					}
 
-			// Create executor with appropriate options
-			opts := executor.ExecutorOptions{
-				EnableStreamingJoins:    true,
-				EnableSymmetricHashJoin: tc.symmetric,
-				DefaultHashTableSize:    256,
-			}
+					// Create executor with appropriate options
+					opts := executor.ExecutorOptions{
+						EnableStreamingJoins:    true,
+						EnableSymmetricHashJoin: tc.symmetric,
+						DefaultHashTableSize:    256,
+					}
 
-			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-			exec := executor.NewExecutor(matcher, db)
+					matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
-			// Execute through full pipeline
-			result, err := exec.Execute(q)
-			if err != nil {
-				t.Fatalf("Execute failed: %v", err)
-			}
+					// Execute through full pipeline
+					result, err := exec.Execute(q)
+					if err != nil {
+						t.Fatalf("Execute failed: %v", err)
+					}
 
-			// Collect results
-			var results []executor.Tuple
-			it := result.Iterator()
-			defer it.Close()
+					// Collect results
+					var results []executor.Tuple
+					it := result.Iterator()
+					defer it.Close()
 
-			for it.Next() {
-				tuple := it.Tuple()
+					for it.Next() {
+						tuple := it.Tuple()
 
-				// CRITICAL: Copy tuple to detect corruption
-				// If iterator reuses buffer, copy will preserve corrupted values
-				tupleCopy := make(executor.Tuple, len(tuple))
-				copy(tupleCopy, tuple)
-				results = append(results, tupleCopy)
-			}
+						// CRITICAL: Copy tuple to detect corruption
+						// If iterator reuses buffer, copy will preserve corrupted values
+						tupleCopy := make(executor.Tuple, len(tuple))
+						copy(tupleCopy, tuple)
+						results = append(results, tupleCopy)
+					}
 
-			// Check count
-			if len(results) != tc.expectedCount {
-				t.Errorf("Expected %d results, got %d", tc.expectedCount, len(results))
-			}
+					// Check count
+					if len(results) != tc.expectedCount {
+						t.Errorf("Expected %d results, got %d", tc.expectedCount, len(results))
+					}
 
-			// Check no duplicates
-			seen := make(map[string]bool)
-			for i, tuple := range results {
-				key := fmt.Sprintf("%v", tuple)
-				if seen[key] {
-					t.Errorf("Duplicate tuple at index %d: %v", i, tuple)
-				}
-				seen[key] = true
-			}
+					// Check no duplicates
+					seen := make(map[string]bool)
+					for i, tuple := range results {
+						key := fmt.Sprintf("%v", tuple)
+						if seen[key] {
+							t.Errorf("Duplicate tuple at index %d: %v", i, tuple)
+						}
+						seen[key] = true
+					}
 
-			// Check correctness
-			if tc.checkCorrectness != nil {
-				tc.checkCorrectness(t, results)
+					// Check correctness
+					if tc.checkCorrectness != nil {
+						tc.checkCorrectness(t, results)
+					}
+				})
 			}
 		})
 	}
@@ -296,61 +300,65 @@ func TestStorageBackedJoinLimitE2E(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			q, err := parser.ParseQuery(tc.query)
-			if err != nil {
-				t.Fatalf("Parse failed: %v", err)
-			}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, tc := range testCases {
+				t.Run(tc.name, func(t *testing.T) {
+					q, err := parser.ParseQuery(tc.query)
+					if err != nil {
+						t.Fatalf("Parse failed: %v", err)
+					}
 
-			opts := executor.ExecutorOptions{
-				EnableStreamingJoins:    true,
-				EnableSymmetricHashJoin: tc.symmetric,
-				DefaultHashTableSize:    256,
-			}
+					opts := executor.ExecutorOptions{
+						EnableStreamingJoins:    true,
+						EnableSymmetricHashJoin: tc.symmetric,
+						DefaultHashTableSize:    256,
+					}
 
-			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-			exec := executor.NewExecutor(matcher, db)
+					matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+					exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
 
-			result, err := exec.Execute(q)
-			if err != nil {
-				t.Fatalf("Execute failed: %v", err)
-			}
+					result, err := exec.Execute(q)
+					if err != nil {
+						t.Fatalf("Execute failed: %v", err)
+					}
 
-			// Count results (manually enforce LIMIT by stopping after N results)
-			count := 0
-			it := result.Iterator()
-			defer it.Close()
+					// Count results (manually enforce LIMIT by stopping after N results)
+					count := 0
+					it := result.Iterator()
+					defer it.Close()
 
-			for count < tc.limit && it.Next() {
-				tuple := it.Tuple()
+					for count < tc.limit && it.Next() {
+						tuple := it.Tuple()
 
-				// Verify tuple is valid (not corrupted)
-				if len(tuple) != 2 {
-					t.Errorf("Invalid tuple length: %d", len(tuple))
-				}
+						// Verify tuple is valid (not corrupted)
+						if len(tuple) != 2 {
+							t.Errorf("Invalid tuple length: %d", len(tuple))
+						}
 
-				name, ok1 := tuple[0].(string)
-				email, ok2 := tuple[1].(string)
-				if !ok1 || !ok2 {
-					t.Errorf("Type corruption: %T, %T", tuple[0], tuple[1])
-				}
+						name, ok1 := tuple[0].(string)
+						email, ok2 := tuple[1].(string)
+						if !ok1 || !ok2 {
+							t.Errorf("Type corruption: %T, %T", tuple[0], tuple[1])
+						}
 
-				// Verify name and email match
-				var personID int
-				fmt.Sscanf(name, "Name%d", &personID)
-				expectedEmail := fmt.Sprintf("email%d@example.com", personID)
-				if email != expectedEmail {
-					t.Errorf("Join corruption: %s has email %s, expected %s",
-						name, email, expectedEmail)
-				}
+						// Verify name and email match
+						var personID int
+						fmt.Sscanf(name, "Name%d", &personID)
+						expectedEmail := fmt.Sprintf("email%d@example.com", personID)
+						if email != expectedEmail {
+							t.Errorf("Join corruption: %s has email %s, expected %s",
+								name, email, expectedEmail)
+						}
 
-				count++
-			}
+						count++
+					}
 
-			// LIMIT should be respected
-			if count != tc.limit {
-				t.Errorf("Expected exactly %d results, got %d", tc.limit, count)
+					// LIMIT should be respected
+					if count != tc.limit {
+						t.Errorf("Expected exactly %d results, got %d", tc.limit, count)
+					}
+				})
 			}
 		})
 	}

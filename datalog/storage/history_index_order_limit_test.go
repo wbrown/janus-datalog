@@ -11,6 +11,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -55,6 +56,16 @@ func (c *historyOrderScanCapture) snapshot() (int, string) {
 }
 
 func openHistoryOrderDatabase(tb testing.TB, capture *historyOrderScanCapture) *Database {
+	return openHistoryOrderDatabaseWithPlanner(tb, capture, nil)
+}
+
+// openHistoryOrderDatabaseWithPlanner seeds the multi-entity history fixture.
+// popts sets the database's default planner options (nil = defaults).
+func openHistoryOrderDatabaseWithPlanner(
+	tb testing.TB,
+	capture *historyOrderScanCapture,
+	popts *planner.PlannerOptions,
+) *Database {
 	tb.Helper()
 	valueAttr := datalog.NewKeyword(":event/value")
 	s := schema.NewSchema()
@@ -65,8 +76,9 @@ func openHistoryOrderDatabase(tb testing.TB, capture *historyOrderScanCapture) *
 	})
 
 	options := DatabaseOptions{
-		Path:   tb.TempDir(),
-		Schema: s,
+		Path:           tb.TempDir(),
+		Schema:         s,
+		PlannerOptions: popts,
 	}
 	if capture != nil {
 		options.AnnotationHandler = capture.handler
@@ -94,6 +106,17 @@ func openHistoryEntityOrderDatabase(
 	tb testing.TB,
 	capture *historyOrderScanCapture,
 ) (*Database, datalog.Identity) {
+	return openHistoryEntityOrderDatabaseWithPlanner(tb, capture, nil)
+}
+
+// openHistoryEntityOrderDatabaseWithPlanner seeds the single-entity,
+// multi-attribute history fixture. popts sets the database's default planner
+// options (nil = defaults).
+func openHistoryEntityOrderDatabaseWithPlanner(
+	tb testing.TB,
+	capture *historyOrderScanCapture,
+	popts *planner.PlannerOptions,
+) (*Database, datalog.Identity) {
 	tb.Helper()
 	attributes := make([]datalog.Keyword, historyOrderEntities)
 	s := schema.NewSchema()
@@ -107,8 +130,9 @@ func openHistoryEntityOrderDatabase(
 	}
 
 	options := DatabaseOptions{
-		Path:   tb.TempDir(),
-		Schema: s,
+		Path:           tb.TempDir(),
+		Schema:         s,
+		PlannerOptions: popts,
 	}
 	if capture != nil {
 		options.AnnotationHandler = capture.handler
@@ -172,202 +196,251 @@ func historyAttributeOrderedLimitQuery(entity datalog.Identity, limit int) strin
 
 func TestHistoryOrderedLimitUsesATEV(t *testing.T) {
 	const limit = 10
-	capture := &historyOrderScanCapture{}
-	db := openHistoryOrderDatabase(t, capture)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			capture := &historyOrderScanCapture{}
+			popts := mode.plannerOptions()
+			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
 
-	capture.reset()
-	result, err := db.History().Query(historyOrderedLimitQuery(limit))
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Len(t, rows, limit)
-	for i := 1; i < len(rows); i++ {
-		previousTx, ok := datalog.DerefElementID(rows[i-1][2])
-		require.True(t, ok)
-		currentTx, ok := datalog.DerefElementID(rows[i][2])
-		require.True(t, ok)
-		require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
-		if previousTx.Equal(currentTx) {
-			previousEntity := rows[i-1][0].(datalog.Identity)
-			currentEntity := rows[i][0].(datalog.Identity)
-			require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
-		}
+			capture.reset()
+			result, err := db.History().Query(historyOrderedLimitQuery(limit))
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Len(t, rows, limit)
+			for i := 1; i < len(rows); i++ {
+				previousTx, ok := datalog.DerefElementID(rows[i-1][2])
+				require.True(t, ok)
+				currentTx, ok := datalog.DerefElementID(rows[i][2])
+				require.True(t, ok)
+				require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
+				if previousTx.Equal(currentTx) {
+					previousEntity := rows[i-1][0].(datalog.Identity)
+					currentEntity := rows[i][0].(datalog.Identity)
+					require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
+				}
+			}
+
+			scanned, index := capture.snapshot()
+			require.Equal(t, "ATEV", index)
+			require.LessOrEqual(t, scanned, limit,
+				"history ATEV ordering must stop after the requested rows")
+		})
 	}
-
-	scanned, index := capture.snapshot()
-	require.Equal(t, "ATEV", index)
-	require.LessOrEqual(t, scanned, limit,
-		"history ATEV ordering must stop after the requested rows")
 }
 
 func TestLatestOrderedLimitDeclinesATEV(t *testing.T) {
-	capture := &historyOrderScanCapture{}
-	db := openHistoryOrderDatabase(t, capture)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			capture := &historyOrderScanCapture{}
+			popts := mode.plannerOptions()
+			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
 
-	capture.reset()
-	result, err := db.Query(historyOrderedLimitQuery(10))
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Len(t, rows, 10)
+			capture.reset()
+			result, err := db.Query(historyOrderedLimitQuery(10))
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Len(t, rows, 10)
 
-	_, index := capture.snapshot()
-	require.NotEqual(t, "ATEV", index,
-		"latest CRDT resolution must not use Tx-primary ATEV")
+			_, index := capture.snapshot()
+			require.NotEqual(t, "ATEV", index,
+				"latest CRDT resolution must not use Tx-primary ATEV")
+		})
+	}
 }
 
 func TestHistoryTransactionOrderedLimitUsesTAEV(t *testing.T) {
 	const limit = 10
-	capture := &historyOrderScanCapture{}
-	db := openHistoryOrderDatabase(t, capture)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			capture := &historyOrderScanCapture{}
+			popts := mode.plannerOptions()
+			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
 
-	capture.reset()
-	result, err := db.History().Query(historyTransactionOrderedLimitQuery(limit))
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Len(t, rows, limit)
-	for i := 1; i < len(rows); i++ {
-		previousTx, ok := datalog.DerefElementID(rows[i-1][3])
-		require.True(t, ok)
-		currentTx, ok := datalog.DerefElementID(rows[i][3])
-		require.True(t, ok)
-		require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
-		if previousTx.Equal(currentTx) {
-			previousAttr := rows[i-1][1].(datalog.Keyword)
-			currentAttr := rows[i][1].(datalog.Keyword)
-			require.LessOrEqual(t, previousAttr.Compare(currentAttr), 0)
-			if previousAttr.Compare(currentAttr) == 0 {
-				previousEntity := rows[i-1][0].(datalog.Identity)
-				currentEntity := rows[i][0].(datalog.Identity)
-				require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
+			capture.reset()
+			result, err := db.History().Query(historyTransactionOrderedLimitQuery(limit))
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Len(t, rows, limit)
+			for i := 1; i < len(rows); i++ {
+				previousTx, ok := datalog.DerefElementID(rows[i-1][3])
+				require.True(t, ok)
+				currentTx, ok := datalog.DerefElementID(rows[i][3])
+				require.True(t, ok)
+				require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
+				if previousTx.Equal(currentTx) {
+					previousAttr := rows[i-1][1].(datalog.Keyword)
+					currentAttr := rows[i][1].(datalog.Keyword)
+					require.LessOrEqual(t, previousAttr.Compare(currentAttr), 0)
+					if previousAttr.Compare(currentAttr) == 0 {
+						previousEntity := rows[i-1][0].(datalog.Identity)
+						currentEntity := rows[i][0].(datalog.Identity)
+						require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
+					}
+				}
 			}
-		}
-	}
 
-	scanned, index := capture.snapshot()
-	require.Equal(t, "TAEV", index)
-	require.LessOrEqual(t, scanned, limit,
-		"history TAEV ordering must stop after the requested rows")
+			scanned, index := capture.snapshot()
+			require.Equal(t, "TAEV", index)
+			require.LessOrEqual(t, scanned, limit,
+				"history TAEV ordering must stop after the requested rows")
+		})
+	}
 }
 
 func TestLatestTransactionOrderedLimitDeclinesTAEV(t *testing.T) {
-	capture := &historyOrderScanCapture{}
-	db := openHistoryOrderDatabase(t, capture)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			capture := &historyOrderScanCapture{}
+			popts := mode.plannerOptions()
+			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
 
-	capture.reset()
-	result, err := db.Query(historyTransactionOrderedLimitQuery(10))
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Len(t, rows, 10)
+			capture.reset()
+			result, err := db.Query(historyTransactionOrderedLimitQuery(10))
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Len(t, rows, 10)
 
-	_, index := capture.snapshot()
-	require.NotEqual(t, "TAEV", index,
-		"latest CRDT resolution must not use global Tx-primary TAEV")
+			_, index := capture.snapshot()
+			require.NotEqual(t, "TAEV", index,
+				"latest CRDT resolution must not use global Tx-primary TAEV")
+		})
+	}
 }
 
 func TestHistoryEntityOrderedLimitUsesAETV(t *testing.T) {
 	const limit = 10
-	capture := &historyOrderScanCapture{}
-	db := openHistoryOrderDatabase(t, capture)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			capture := &historyOrderScanCapture{}
+			popts := mode.plannerOptions()
+			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
 
-	capture.reset()
-	result, err := db.History().Query(historyEntityOrderedLimitQuery(limit))
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Len(t, rows, limit)
-	for i := 1; i < len(rows); i++ {
-		previousEntity := rows[i-1][0].(datalog.Identity)
-		currentEntity := rows[i][0].(datalog.Identity)
-		require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
-		if previousEntity.Equal(currentEntity) {
-			previousTx, ok := datalog.DerefElementID(rows[i-1][2])
-			require.True(t, ok)
-			currentTx, ok := datalog.DerefElementID(rows[i][2])
-			require.True(t, ok)
-			require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
-		}
+			capture.reset()
+			result, err := db.History().Query(historyEntityOrderedLimitQuery(limit))
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Len(t, rows, limit)
+			for i := 1; i < len(rows); i++ {
+				previousEntity := rows[i-1][0].(datalog.Identity)
+				currentEntity := rows[i][0].(datalog.Identity)
+				require.LessOrEqual(t, previousEntity.Compare(currentEntity), 0)
+				if previousEntity.Equal(currentEntity) {
+					previousTx, ok := datalog.DerefElementID(rows[i-1][2])
+					require.True(t, ok)
+					currentTx, ok := datalog.DerefElementID(rows[i][2])
+					require.True(t, ok)
+					require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
+				}
+			}
+
+			scanned, index := capture.snapshot()
+			require.Equal(t, "AETV", index)
+			require.LessOrEqual(t, scanned, limit,
+				"history AETV ordering must stop after the requested rows")
+		})
 	}
-
-	scanned, index := capture.snapshot()
-	require.Equal(t, "AETV", index)
-	require.LessOrEqual(t, scanned, limit,
-		"history AETV ordering must stop after the requested rows")
 }
 
 func TestLatestEntityOrderedLimitDoesNotUseHistoryAETVProperty(t *testing.T) {
 	const limit = 10
-	capture := &historyOrderScanCapture{}
-	db := openHistoryOrderDatabase(t, capture)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			capture := &historyOrderScanCapture{}
+			popts := mode.plannerOptions()
+			db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
 
-	capture.reset()
-	result, err := db.Query(historyEntityOrderedLimitQuery(limit))
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Len(t, rows, limit)
+			capture.reset()
+			result, err := db.Query(historyEntityOrderedLimitQuery(limit))
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Len(t, rows, limit)
 
-	scanned, index := capture.snapshot()
-	require.Equal(t, "AETV", index)
-	require.Greater(t, scanned, limit,
-		"latest CRDT resolution must not inherit raw-history early termination")
+			scanned, index := capture.snapshot()
+			require.Equal(t, "AETV", index)
+			require.Greater(t, scanned, limit,
+				"latest CRDT resolution must not inherit raw-history early termination")
+		})
+	}
 }
 
 func TestHistoryAttributeOrderedLimitUsesEATV(t *testing.T) {
 	const limit = 10
-	capture := &historyOrderScanCapture{}
-	db, entity := openHistoryEntityOrderDatabase(t, capture)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			capture := &historyOrderScanCapture{}
+			popts := mode.plannerOptions()
+			db, entity := openHistoryEntityOrderDatabaseWithPlanner(t, capture, &popts)
 
-	capture.reset()
-	result, err := db.History().Query(historyAttributeOrderedLimitQuery(entity, limit))
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Len(t, rows, limit)
-	for i := 1; i < len(rows); i++ {
-		previousAttr := rows[i-1][0].(datalog.Keyword)
-		currentAttr := rows[i][0].(datalog.Keyword)
-		require.LessOrEqual(t, previousAttr.Compare(currentAttr), 0)
-		if previousAttr.Compare(currentAttr) == 0 {
-			previousTx, ok := datalog.DerefElementID(rows[i-1][2])
-			require.True(t, ok)
-			currentTx, ok := datalog.DerefElementID(rows[i][2])
-			require.True(t, ok)
-			require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
-		}
+			capture.reset()
+			result, err := db.History().Query(historyAttributeOrderedLimitQuery(entity, limit))
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Len(t, rows, limit)
+			for i := 1; i < len(rows); i++ {
+				previousAttr := rows[i-1][0].(datalog.Keyword)
+				currentAttr := rows[i][0].(datalog.Keyword)
+				require.LessOrEqual(t, previousAttr.Compare(currentAttr), 0)
+				if previousAttr.Compare(currentAttr) == 0 {
+					previousTx, ok := datalog.DerefElementID(rows[i-1][2])
+					require.True(t, ok)
+					currentTx, ok := datalog.DerefElementID(rows[i][2])
+					require.True(t, ok)
+					require.GreaterOrEqual(t, previousTx.Compare(currentTx), 0)
+				}
+			}
+
+			scanned, index := capture.snapshot()
+			require.Equal(t, "EATV", index)
+			require.LessOrEqual(t, scanned, limit,
+				"history EATV ordering must stop after the requested rows")
+		})
 	}
-
-	scanned, index := capture.snapshot()
-	require.Equal(t, "EATV", index)
-	require.LessOrEqual(t, scanned, limit,
-		"history EATV ordering must stop after the requested rows")
 }
 
 func TestLatestAttributeOrderedLimitDoesNotUseHistoryEATVProperty(t *testing.T) {
 	const limit = 10
-	capture := &historyOrderScanCapture{}
-	db, entity := openHistoryEntityOrderDatabase(t, capture)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			capture := &historyOrderScanCapture{}
+			popts := mode.plannerOptions()
+			db, entity := openHistoryEntityOrderDatabaseWithPlanner(t, capture, &popts)
 
-	capture.reset()
-	result, err := db.Query(historyAttributeOrderedLimitQuery(entity, limit))
-	require.NoError(t, err)
-	rows, err := executor.CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Len(t, rows, limit)
+			capture.reset()
+			result, err := db.Query(historyAttributeOrderedLimitQuery(entity, limit))
+			require.NoError(t, err)
+			rows, err := executor.CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Len(t, rows, limit)
 
-	scanned, index := capture.snapshot()
-	require.Equal(t, "EATV", index)
-	require.Greater(t, scanned, limit,
-		"latest CRDT resolution must not inherit raw-history early termination")
+			scanned, index := capture.snapshot()
+			require.Equal(t, "EATV", index)
+			require.Greater(t, scanned, limit,
+				"latest CRDT resolution must not inherit raw-history early termination")
+		})
+	}
 }
 
 func TestHistoryOrderedLimitDifferentialRandomized(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			runHistoryOrderedLimitDifferentialRandomized(t, mode)
+		})
+	}
+}
+
+func runHistoryOrderedLimitDifferentialRandomized(t *testing.T, mode optimizerMode) {
 	random := rand.New(rand.NewSource(0x1d85))
 	capture := &historyOrderScanCapture{}
-	db := openHistoryOrderDatabase(t, capture)
-	entityDB, entity := openHistoryEntityOrderDatabase(t, capture)
+	popts := mode.plannerOptions()
+	db := openHistoryOrderDatabaseWithPlanner(t, capture, &popts)
+	entityDB, entity := openHistoryEntityOrderDatabaseWithPlanner(t, capture, &popts)
 
 	type shape struct {
 		name      string
@@ -482,6 +555,14 @@ func TestHistoryOrderedLimitDifferentialRandomized(t *testing.T) {
 }
 
 func TestHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			runHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t, mode)
+		})
+	}
+}
+
+func runHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t *testing.T, mode optimizerMode) {
 	capture := &historyOrderScanCapture{}
 	valueAttr := datalog.NewKeyword(":event/value")
 	otherAttr := datalog.NewKeyword(":event/other")
@@ -493,10 +574,12 @@ func TestHistoryOrderedLimitUsesFullElementIDAcrossReplicas(t *testing.T) {
 			Cardinality: schema.CardinalityOne,
 		})
 	}
+	popts := mode.plannerOptions()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:              t.TempDir(),
 		Schema:            s,
 		AnnotationHandler: capture.handler,
+		PlannerOptions:    &popts,
 	})
 	require.NoError(t, err)
 	defer db.Close()
@@ -629,6 +712,14 @@ func requireHistoryRowsEqual(
 }
 
 func TestAsOfOrderedLimitDifferentialAroundTombstone(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			runAsOfOrderedLimitDifferentialAroundTombstone(t, mode)
+		})
+	}
+}
+
+func runAsOfOrderedLimitDifferentialAroundTombstone(t *testing.T, mode optimizerMode) {
 	capture := &historyOrderScanCapture{}
 	attributeA := datalog.NewKeyword(":boundary/a")
 	attributeB := datalog.NewKeyword(":boundary/b")
@@ -640,10 +731,12 @@ func TestAsOfOrderedLimitDifferentialAroundTombstone(t *testing.T) {
 			Cardinality: schema.CardinalityOne,
 		})
 	}
+	popts := mode.plannerOptions()
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:              t.TempDir(),
 		Schema:            s,
 		AnnotationHandler: capture.handler,
+		PlannerOptions:    &popts,
 	})
 	require.NoError(t, err)
 	defer db.Close()

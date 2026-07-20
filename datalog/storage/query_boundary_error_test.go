@@ -12,6 +12,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -26,18 +27,20 @@ import (
 
 // writeTier3ValueThenCorruptBlob writes one datom whose value lands in the Tier-3
 // blob store, then deletes every blob key so the value can no longer be decoded.
-func writeTier3ValueThenCorruptBlob(t *testing.T) (*Database, datalog.Identity, datalog.Keyword) {
+func writeTier3ValueThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Keyword) {
 	t.Helper()
 	dir := t.TempDir()
 
 	// DisableCache so reads hit storage (and thus the blob) rather than a warm
 	// resolved value. Small compression threshold so the value is compressed;
 	// large incompressible payload so the compressed form exceeds the in-key
-	// size limit and routes to Tier 3.
+	// size limit and routes to Tier 3. popts sets the database's default
+	// planner options (nil = defaults).
 	db, err := NewDatabaseWithOptions(DatabaseOptions{
 		Path:                 dir,
 		DisableCache:         true,
 		CompressionThreshold: 64,
+		PlannerOptions:       popts,
 	})
 	require.NoError(t, err)
 
@@ -83,15 +86,20 @@ func writeTier3ValueThenCorruptBlob(t *testing.T) (*Database, datalog.Identity, 
 }
 
 func TestCollectTuples_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := executor.CollectTuples(db.Query(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e))
-	require.ErrorContains(t, err, "blob", "a missing blob must not be reported as an empty result")
+			_, err := executor.CollectTuples(db.Query(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e))
+			require.ErrorContains(t, err, "blob", "a missing blob must not be reported as an empty result")
+		})
+	}
 }
 
 func TestKeyOnlyIteratorRetainsBlobErrorAfterRepeatedNext(t *testing.T) {
-	db, entity, attr := writeTier3ValueThenCorruptBlob(t)
+	db, entity, attr := writeTier3ValueThenCorruptBlob(t, nil)
 	defer db.Close()
 
 	entityBytes := entity.Bytes()
@@ -150,50 +158,75 @@ func TestKeyOnlyIterator_DatomRejectsEndBoundSuccessor(t *testing.T) {
 // blob-decode failure must surface as an error from Analyze itself — not be
 // deferred past the API boundary into a lazy result the caller iterates later.
 func TestAnalyze_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := db.Analyze(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e)
-	require.ErrorContains(t, err, "blob", "Analyze must surface a deferred decode error, not return a clean lazy result")
+			_, err := db.Analyze(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e)
+			require.ErrorContains(t, err, "blob", "Analyze must surface a deferred decode error, not return a clean lazy result")
+		})
+	}
 }
 
 func TestQueryInto_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	var out [][]byte
-	err := db.QueryInto(&out, `[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e)
-	require.ErrorContains(t, err, "blob", "a missing blob must not be reported as an empty slice")
+			var out [][]byte
+			err := db.QueryInto(&out, `[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e)
+			require.ErrorContains(t, err, "blob", "a missing blob must not be reported as an empty slice")
+		})
+	}
 }
 
 func TestQueryOneInto_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	var out []byte
-	found, err := db.QueryOneInto(&out, `[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e)
-	require.ErrorContains(t, err, "blob", "a missing blob must not be reported as found=false,nil")
-	require.False(t, found)
+			var out []byte
+			found, err := db.QueryOneInto(&out, `[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`, e)
+			require.ErrorContains(t, err, "blob", "a missing blob must not be reported as found=false,nil")
+			require.False(t, found)
+		})
+	}
 }
 
 // TestQueryOrderBy_SurfacesBlobDecodeError: order-by materializes (Sort) the
 // failing scan; the error must survive that transform to the boundary.
 func TestQueryOrderBy_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := executor.CollectTuples(db.Query(`[:find ?v :in $ ?e :where [?e :doc/blob ?v] :order-by [?v]]`, e))
-	require.ErrorContains(t, err, "blob", "order-by over a missing blob must surface the error")
+			_, err := executor.CollectTuples(db.Query(`[:find ?v :in $ ?e :where [?e :doc/blob ?v] :order-by [?v]]`, e))
+			require.ErrorContains(t, err, "blob", "order-by over a missing blob must surface the error")
+		})
+	}
 }
 
 // TestQueryAggregate_SurfacesBlobDecodeError: aggregation consumes the failing
 // scan; the error must survive that transform to the boundary.
 func TestQueryAggregate_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := executor.CollectTuples(db.Query(`[:find (count ?v) :in $ ?e :where [?e :doc/blob ?v]]`, e))
-	require.ErrorContains(t, err, "blob", "aggregate over a missing blob must surface the error")
+			_, err := executor.CollectTuples(db.Query(`[:find (count ?v) :in $ ?e :where [?e :doc/blob ?v]]`, e))
+			require.ErrorContains(t, err, "blob", "aggregate over a missing blob must surface the error")
+		})
+	}
 }
 
 // TestQueryNot_SurfacesBlobDecodeError: the (not [?e :doc/blob ?v]) inner scan
@@ -201,16 +234,21 @@ func TestQueryAggregate_SurfacesBlobDecodeError(t *testing.T) {
 // would wrongly include the entity. The error must surface instead of producing
 // a silently-wrong result.
 func TestQueryNot_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e, datalog.NewKeyword(":doc/name"), "doc-one"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e, datalog.NewKeyword(":doc/name"), "doc-one"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	_, err = executor.CollectTuples(db.Query(`[:find ?n :in $ ?e :where [?e :doc/name ?n] (not [?e :doc/blob ?v])]`, e))
-	require.ErrorContains(t, err, "blob", "a failed inner scan must surface, not silently un-exclude the entity")
+			_, err = executor.CollectTuples(db.Query(`[:find ?n :in $ ?e :where [?e :doc/name ?n] (not [?e :doc/blob ?v])]`, e))
+			require.ErrorContains(t, err, "blob", "a failed inner scan must surface, not silently un-exclude the entity")
+		})
+	}
 }
 
 // TestIndexNestedLoop_SurfacesBlobDecodeError: the index-nested-loop strategy
@@ -218,7 +256,7 @@ func TestQueryNot_SurfacesBlobDecodeError(t *testing.T) {
 // HashJoinScan), so this drives it directly with IndexNestedLoopThreshold high.
 // The reusingIterator must surface the inner scan's deferred error on exhaustion.
 func TestIndexNestedLoop_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
+	db, e, _ := writeTier3ValueThenCorruptBlob(t, nil)
 	defer db.Close()
 
 	q, err := parser.ParseQuery(`[:find ?v :in $ ?e :where [?e :doc/blob ?v]]`)
@@ -241,49 +279,69 @@ func TestIndexNestedLoop_SurfacesBlobDecodeError(t *testing.T) {
 // (group-by var in :find) routes through the grouped path; the failing scan's
 // error must survive.
 func TestQueryGroupedAggregate_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := executor.CollectTuples(db.Query(`[:find ?e (count ?v) :in $ ?e :where [?e :doc/blob ?v]]`, e))
-	require.ErrorContains(t, err, "blob", "grouped aggregate over a missing blob must surface the error")
+			_, err := executor.CollectTuples(db.Query(`[:find ?e (count ?v) :in $ ?e :where [?e :doc/blob ?v]]`, e))
+			require.ErrorContains(t, err, "blob", "grouped aggregate over a missing blob must surface the error")
+		})
+	}
 }
 
 // TestQueryRelationInput_SurfacesBlobDecodeError: a RelationInput query
 // (:in $ [[?e] ...]) iterates per input tuple and collects the per-tuple results;
 // that collection must propagate a failing scan's error, not drop it.
 func TestQueryRelationInput_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ [[?e] ...] :where [?e :doc/blob ?v]]`,
-		[][]any{{e}}))
-	require.ErrorContains(t, err, "blob", "relation-input iteration over a missing blob must surface the error")
+			_, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ [[?e] ...] :where [?e :doc/blob ?v]]`,
+				[][]any{{e}}))
+			require.ErrorContains(t, err, "blob", "relation-input iteration over a missing blob must surface the error")
+		})
+	}
 }
 
 // TestQuerySubquery_SurfacesBlobDecodeError: a subquery whose inner scan decodes
 // the corrupted blob must surface the error through subquery result combination.
 func TestQuerySubquery_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e
+			_, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e
 		  :where [(q [:find ?bv :in $ ?e2 :where [?e2 :doc/blob ?bv]] $ ?e) [[?v]]]]`,
-		e))
-	require.ErrorContains(t, err, "blob", "subquery over a missing blob must surface the error")
+				e))
+			require.ErrorContains(t, err, "blob", "subquery over a missing blob must surface the error")
+		})
+	}
 }
 
 // TestQueryOr_SurfacesBlobDecodeError: an (or ...) branch that scans the
 // corrupted blob must surface the error through union of branch results.
 func TestQueryOr_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e :where (or [?e :doc/blob ?v] [?e :doc/missing ?v])]`,
-		e))
-	require.ErrorContains(t, err, "blob", "OR branch over a missing blob must surface the error")
+			_, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e :where (or [?e :doc/blob ?v] [?e :doc/missing ?v])]`,
+				e))
+			require.ErrorContains(t, err, "blob", "OR branch over a missing blob must surface the error")
+		})
+	}
 }
 
 // TestQueryMultiPhase_SurfacesBlobDecodeError: a two-pattern join over the
@@ -292,13 +350,18 @@ func TestQueryOr_SurfacesBlobDecodeError(t *testing.T) {
 // scan into a non-last phase's Keep projection in executor.go — that laundering
 // site (Site 1) is not yet triggered and remains open.
 func TestQueryMultiPhase_SurfacesBlobDecodeError(t *testing.T) {
-	db, e, _ := writeTier3ValueThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, e, _ := writeTier3ValueThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	_, err := executor.CollectTuples(db.Query(
-		`[:find ?e2 :in $ ?e :where [?e :doc/blob ?v] [?e2 :doc/blob ?v]]`,
-		e))
-	require.ErrorContains(t, err, "blob", "multi-phase join over a missing blob must surface the error")
+			_, err := executor.CollectTuples(db.Query(
+				`[:find ?e2 :in $ ?e :where [?e :doc/blob ?v] [?e2 :doc/blob ?v]]`,
+				e))
+			require.ErrorContains(t, err, "blob", "multi-phase join over a missing blob must surface the error")
+		})
+	}
 }
 
 // writeValidThenCorruptBlob writes two :doc/blob datoms so an unbound scan yields
@@ -309,7 +372,7 @@ func TestQueryMultiPhase_SurfacesBlobDecodeError(t *testing.T) {
 // the other gets a large Tier-3 value whose blob is then deleted. Deleting every
 // blob key corrupts only the Tier-3 entity, so the failure lands on the SECOND
 // Next() — exercising the truncation / second-Next() boundary paths.
-func writeValidThenCorruptBlob(t *testing.T) *Database {
+func writeValidThenCorruptBlob(t *testing.T, popts *planner.PlannerOptions) *Database {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -317,6 +380,7 @@ func writeValidThenCorruptBlob(t *testing.T) *Database {
 		Path:                 dir,
 		DisableCache:         true,
 		CompressionThreshold: 64,
+		PlannerOptions:       popts,
 	})
 	require.NoError(t, err)
 
@@ -370,13 +434,18 @@ func writeValidThenCorruptBlob(t *testing.T) *Database {
 // prefix. If the ForEach error check were missing, out would hold the valid "ok"
 // row and err would be nil.
 func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
-	db := writeValidThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db := writeValidThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	var out [][]byte
-	err := db.QueryInto(&out, `[:find ?v :where [?e :doc/blob ?v]]`)
-	require.ErrorContains(t, err, "blob", "a mid-iteration failure must surface, not yield a truncated success")
-	require.Nil(t, out, "destination must not be populated with the partial prefix on error")
+			var out [][]byte
+			err := db.QueryInto(&out, `[:find ?v :where [?e :doc/blob ?v]]`)
+			require.ErrorContains(t, err, "blob", "a mid-iteration failure must surface, not yield a truncated success")
+			require.Nil(t, out, "destination must not be populated with the partial prefix on error")
+		})
+	}
 }
 
 // TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext: QueryOneInto reads a
@@ -384,13 +453,18 @@ func TestQueryInto_SurfacesBlobDecodeErrorAfterPartialResults(t *testing.T) {
 // must surface as found=false. If the second-Next() Error() check were missing,
 // the first row would be mapped and the call would return found=true, nil.
 func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {
-	db := writeValidThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db := writeValidThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	var out []byte
-	found, err := db.QueryOneInto(&out, `[:find ?v :where [?e :doc/blob ?v]]`)
-	require.ErrorContains(t, err, "blob", "a failure on the second Next() must surface, not look like exactly one result")
-	require.False(t, found, "a failed second Next() must not be reported as a found single result")
+			var out []byte
+			found, err := db.QueryOneInto(&out, `[:find ?v :where [?e :doc/blob ?v]]`)
+			require.ErrorContains(t, err, "blob", "a failure on the second Next() must surface, not look like exactly one result")
+			require.False(t, found, "a failed second Next() must not be reported as a found single result")
+		})
+	}
 }
 
 // TestScan_YieldsValidRowThenFails asserts the precondition the two tests above
@@ -399,18 +473,23 @@ func TestQueryOneInto_SurfacesBlobDecodeErrorOnSecondNext(t *testing.T) {
 // already-covered first-Next() path. If the scan order ever changes, this fails
 // and flags the coverage regression directly.
 func TestScan_YieldsValidRowThenFails(t *testing.T) {
-	db := writeValidThenCorruptBlob(t)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db := writeValidThenCorruptBlob(t, &popts)
+			defer db.Close()
 
-	rel, err := db.Query(`[:find ?v :where [?e :doc/blob ?v]]`)
-	require.NoError(t, err)
-	it := rel.Iterator()
-	defer it.Close()
+			rel, err := db.Query(`[:find ?v :where [?e :doc/blob ?v]]`)
+			require.NoError(t, err)
+			it := rel.Iterator()
+			defer it.Close()
 
-	yielded := 0
-	for it.Next() {
-		yielded++
+			yielded := 0
+			for it.Next() {
+				yielded++
+			}
+			require.ErrorContains(t, it.Error(), "blob")
+			require.Equal(t, 1, yielded, "exactly one valid row must precede the failing row (truncation precondition)")
+		})
 	}
-	require.ErrorContains(t, it.Error(), "blob")
-	require.Equal(t, 1, yielded, "exactly one valid row must precede the failing row (truncation precondition)")
 }

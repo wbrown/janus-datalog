@@ -10,6 +10,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // indexForAttrPattern returns the index chosen for the pattern/index-selection
@@ -46,115 +47,117 @@ func indexForAttrPattern(events []annotations.Event, attrFragment string) (index
 // pattern is logged to show the human-visible impact, which scales with the
 // :repro/note extent rather than with the (singleton) result.
 func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
-	dir, err := os.MkdirTemp("", "getelse-narrowing-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	db, err := NewDatabase(dir)
-	if err != nil {
-		t.Fatalf("create db: %v", err)
-	}
-	defer db.Close()
-
-	// Inflate the :repro/note extent: every entity carries the optional field.
-	// Only the target additionally carries the anchor attribute :repro/kind, so
-	// the child relation [?e :repro/kind _] is a singleton — N=1 point lookup is
-	// exactly what get-else should cost here.
-	const extent = 3000
-	kind := datalog.NewKeyword(":repro/kind")
-	note := datalog.NewKeyword(":repro/note")
-
-	tx := db.NewTransaction()
-	var target datalog.Identity
-	for i := 0; i < extent; i++ {
-		e := datalog.NewIdentity(fmt.Sprintf("repro-e-%d", i))
-		if err := tx.Add(e, note, fmt.Sprintf("note-%d", i)); err != nil {
-			t.Fatal(err)
-		}
-		if i == 0 {
-			target = e
-			if err := tx.Add(e, kind, "task"); err != nil {
-				t.Fatal(err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("create db: %v", err)
 			}
-		}
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
+			defer db.Close()
 
-	captureQuery := func(q string, args ...interface{}) (results [][]interface{}, dur time.Duration, events []annotations.Event) {
-		db.SetAnnotationHandler(func(e annotations.Event) {
-			events = append(events, e)
-		})
-		start := time.Now()
-		results, err := executor.CollectTuples(db.Query(q, args...))
-		dur = time.Since(start)
-		db.SetAnnotationHandler(nil)
-		if err != nil {
-			t.Fatalf("query failed: %v\nquery: %s", err, q)
-		}
-		return results, dur, events
-	}
+			// Inflate the :repro/note extent: every entity carries the optional field.
+			// Only the target additionally carries the anchor attribute :repro/kind, so
+			// the child relation [?e :repro/kind _] is a singleton — N=1 point lookup is
+			// exactly what get-else should cost here.
+			const extent = 3000
+			kind := datalog.NewKeyword(":repro/kind")
+			note := datalog.NewKeyword(":repro/note")
 
-	// Baseline: plain pattern read of the same optional field on the same bound
-	// entity. ?e is bound by [?e :repro/kind _], so [?e :repro/note ?note] is a
-	// point lookup. This is the cost get-else should match.
-	plainResults, plainDur, plainEvents := captureQuery(
-		`[:find ?note
+			tx := db.NewTransaction()
+			var target datalog.Identity
+			for i := 0; i < extent; i++ {
+				e := datalog.NewIdentity(fmt.Sprintf("repro-e-%d", i))
+				if err := tx.Add(e, note, fmt.Sprintf("note-%d", i)); err != nil {
+					t.Fatal(err)
+				}
+				if i == 0 {
+					target = e
+					if err := tx.Add(e, kind, "task"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+
+			captureQuery := func(q string, args ...interface{}) (results [][]interface{}, dur time.Duration, events []annotations.Event) {
+				db.SetAnnotationHandler(func(e annotations.Event) {
+					events = append(events, e)
+				})
+				start := time.Now()
+				results, err := executor.CollectTuples(db.Query(q, args...))
+				dur = time.Since(start)
+				db.SetAnnotationHandler(nil)
+				if err != nil {
+					t.Fatalf("query failed: %v\nquery: %s", err, q)
+				}
+				return results, dur, events
+			}
+
+			// Baseline: plain pattern read of the same optional field on the same bound
+			// entity. ?e is bound by [?e :repro/kind _], so [?e :repro/note ?note] is a
+			// point lookup. This is the cost get-else should match.
+			plainResults, plainDur, plainEvents := captureQuery(
+				`[:find ?note
 		  :in $ ?e
 		  :where [?e :repro/kind _]
 		         [?e :repro/note ?note]]`,
-		target,
-	)
-	if len(plainResults) != 1 || plainResults[0][0] != "note-0" {
-		t.Fatalf("plain: expected [[note-0]], got %v", plainResults)
-	}
-	plainIdx, _, _ := indexForAttrPattern(plainEvents, ":repro/note")
-	t.Logf("plain    [?e :repro/note ?note]: index=%s  wall=%s  results=%d",
-		plainIdx, plainDur, len(plainResults))
+				target,
+			)
+			if len(plainResults) != 1 || plainResults[0][0] != "note-0" {
+				t.Fatalf("plain: expected [[note-0]], got %v", plainResults)
+			}
+			plainIdx, _, _ := indexForAttrPattern(plainEvents, ":repro/note")
+			t.Logf("plain    [?e :repro/note ?note]: index=%s  wall=%s  results=%d",
+				plainIdx, plainDur, len(plainResults))
 
-	// get-else read of the same optional field on the same bound entity.
-	geResults, geDur, geEvents := captureQuery(
-		`[:find ?note
+			// get-else read of the same optional field on the same bound entity.
+			geResults, geDur, geEvents := captureQuery(
+				`[:find ?note
 		  :in $ ?e
 		  :where [?e :repro/kind _]
 		         [(get-else $ ?e :repro/note "none") ?note]]`,
-		target,
-	)
-	if len(geResults) != 1 || geResults[0][0] != "note-0" {
-		t.Fatalf("get-else: expected [[note-0]], got %v", geResults)
-	}
-	geIdx, geStart, geEnd := indexForAttrPattern(geEvents, ":repro/note")
-	t.Logf("get-else (get-else $ ?e :repro/note): index=%s  wall=%s  results=%d",
-		geIdx, geDur, len(geResults))
-	t.Logf(":repro/note extent=%d datoms; get-else scan range [%s, %s)", extent, geStart, geEnd)
-	if plainDur > 0 {
-		t.Logf("get-else / plain wall-time ratio: %.1fx", float64(geDur)/float64(plainDur))
-	}
+				target,
+			)
+			if len(geResults) != 1 || geResults[0][0] != "note-0" {
+				t.Fatalf("get-else: expected [[note-0]], got %v", geResults)
+			}
+			geIdx, geStart, geEnd := indexForAttrPattern(geEvents, ":repro/note")
+			t.Logf("get-else (get-else $ ?e :repro/note): index=%s  wall=%s  results=%d",
+				geIdx, geDur, len(geResults))
+			t.Logf(":repro/note extent=%d datoms; get-else scan range [%s, %s)", extent, geStart, geEnd)
+			if plainDur > 0 {
+				t.Logf("get-else / plain wall-time ratio: %.1fx", float64(geDur)/float64(plainDur))
+			}
 
-	// The plain pattern, on a bound ?e, must NOT full-scan :repro/note. In
-	// practice it emits no :repro/note scan event at all (empty index) because
-	// the executor's attribute-fetch fusion serves it as a per-entity, cache-
-	// backed LookupAttribute — a pure point lookup. That (or an EATV-narrowed
-	// scan) is the cost get-else should match.
-	attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
-	if attrPrimary[plainIdx] {
-		t.Fatalf("setup invalid: the plain pattern itself full-scanned :repro/note "+
-			"via %s; the baseline is supposed to be a bound-entity point lookup", plainIdx)
-	}
+			// The plain pattern, on a bound ?e, must NOT full-scan :repro/note. In
+			// practice it emits no :repro/note scan event at all (empty index) because
+			// the executor's attribute-fetch fusion serves it as a per-entity, cache-
+			// backed LookupAttribute — a pure point lookup. That (or an EATV-narrowed
+			// scan) is the cost get-else should match.
+			attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
+			if attrPrimary[plainIdx] {
+				t.Fatalf("setup invalid: the plain pattern itself full-scanned :repro/note "+
+					"via %s; the baseline is supposed to be a bound-entity point lookup", plainIdx)
+			}
 
-	// The bug: get-else scans :repro/note via an attribute-primary index (the
-	// whole extent) instead of narrowing to the single bound ?e. When fixed, the
-	// :repro/note scan should be narrowed to ?e (EATV) or not scan-matched at all
-	// (fused per-entity lookup → empty index, matching the plain baseline).
-	if attrPrimary[geIdx] {
-		t.Fatalf("BUG REPRODUCED: get-else scanned :repro/note via attribute-primary "+
-			"index %s — the full extent of %d datoms — for a single bound entity; "+
-			"the equivalent plain pattern used %s (point lookup). "+
-			"get-else on a bound entity should be a point lookup, not a full attribute scan.",
-			geIdx, extent, plainIdx)
+			// The bug: get-else scans :repro/note via an attribute-primary index (the
+			// whole extent) instead of narrowing to the single bound ?e. When fixed, the
+			// :repro/note scan should be narrowed to ?e (EATV) or not scan-matched at all
+			// (fused per-entity lookup → empty index, matching the plain baseline).
+			if attrPrimary[geIdx] {
+				t.Fatalf("BUG REPRODUCED: get-else scanned :repro/note via attribute-primary "+
+					"index %s — the full extent of %d datoms — for a single bound entity; "+
+					"the equivalent plain pattern used %s (point lookup). "+
+					"get-else on a bound entity should be a point lookup, not a full attribute scan.",
+					geIdx, extent, plainIdx)
+			}
+		})
 	}
 }
 
@@ -165,16 +168,22 @@ func TestGetElseBoundEntityScanNotNarrowed(t *testing.T) {
 // the :repro/note extent so a full-attribute scan is observably different from a
 // narrowed, entity-bound scan, and the filler must never appear in results.
 //
+// popts sets the database's default planner options (nil = defaults);
+// differential tests that route options per execution pass nil.
+//
 // Identities are interned by hash, so the returned `want` keys (fresh
 // NewIdentity values) are the same pointers as the entities read back from
 // storage — safe to use as map keys for result assertions.
-func setupGetElseNarrowingDB(t *testing.T) (db *Database, want map[datalog.Identity]string, cleanup func()) {
+func setupGetElseNarrowingDB(t *testing.T, popts *planner.PlannerOptions) (db *Database, want map[datalog.Identity]string, cleanup func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "getelse-narrowing-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err = NewDatabase(dir)
+	db, err = NewDatabaseWithOptions(DatabaseOptions{
+		Path:           dir,
+		PlannerOptions: popts,
+	})
 	if err != nil {
 		os.RemoveAll(dir)
 		t.Fatalf("create db: %v", err)
@@ -227,69 +236,74 @@ func setupGetElseNarrowingDB(t *testing.T) (db *Database, want map[datalog.Ident
 // note or default) AND narrows the :repro/note access to the bound entities
 // instead of scanning the whole attribute extent.
 func TestGetElseMultiEntityScanNarrowed(t *testing.T) {
-	db, want, cleanup := setupGetElseNarrowingDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, want, cleanup := setupGetElseNarrowingDB(t, &popts)
+			defer cleanup()
 
-	var events []annotations.Event
-	db.SetAnnotationHandler(func(e annotations.Event) { events = append(events, e) })
-	results, err := executor.CollectTuples(db.Query(
-		`[:find ?e ?note
+			var events []annotations.Event
+			db.SetAnnotationHandler(func(e annotations.Event) { events = append(events, e) })
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?e ?note
 		  :where [?e :repro/kind _]
 		         [(get-else $ ?e :repro/note "MISSING") ?note]]`,
-	))
-	db.SetAnnotationHandler(nil)
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
+			))
+			db.SetAnnotationHandler(nil)
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
 
-	// One row per kind-bearing entity, each with its stored note or the default.
-	got := make(map[datalog.Identity]string, len(results))
-	for _, row := range results {
-		e, ok := row[0].(datalog.Identity)
-		if !ok {
-			t.Fatalf("expected Identity in ?e, got %T", row[0])
-		}
-		n, ok := row[1].(string)
-		if !ok {
-			t.Fatalf("expected string in ?note, got %T", row[1])
-		}
-		got[e] = n
-	}
-	if len(got) != len(want) {
-		t.Fatalf("expected %d rows, got %d: %v", len(want), len(got), results)
-	}
-	for e, w := range want {
-		if got[e] != w {
-			t.Errorf("entity %v: expected note %q, got %q", e, w, got[e])
-		}
-	}
+			// One row per kind-bearing entity, each with its stored note or the default.
+			got := make(map[datalog.Identity]string, len(results))
+			for _, row := range results {
+				e, ok := row[0].(datalog.Identity)
+				if !ok {
+					t.Fatalf("expected Identity in ?e, got %T", row[0])
+				}
+				n, ok := row[1].(string)
+				if !ok {
+					t.Fatalf("expected string in ?note, got %T", row[1])
+				}
+				got[e] = n
+			}
+			if len(got) != len(want) {
+				t.Fatalf("expected %d rows, got %d: %v", len(want), len(got), results)
+			}
+			for e, w := range want {
+				if got[e] != w {
+					t.Errorf("entity %v: expected note %q, got %q", e, w, got[e])
+				}
+			}
 
-	// Bound matcher paths emit storage/reuse-strategy or cache events, never the
-	// unbound pattern/index-selection (emitted only by matchUnboundAsRelation —
-	// the full attribute scan). So an attribute-primary index-selection on
-	// :repro/note means the scan was not narrowed to the bound entities.
-	// Primary, direct assertion: the or-fallback branch reports it narrowed the
-	// scan to the bound join keys (one per kind-bearing entity), rather than
-	// silently falling back to a full attribute scan.
-	ev := narrowingEvent(events)
-	if ev == nil {
-		t.Fatalf("expected an or-fallback/branch.narrowed annotation; none emitted")
-	}
-	if narrowed, _ := ev.Data["narrowed"].(bool); !narrowed {
-		t.Fatalf("get-else branch was NOT narrowed to the bound entities (fell back to a full scan): %v", ev.Data)
-	}
-	if jk, _ := ev.Data["join_keys"].(int); jk != len(want) {
-		t.Errorf("expected join_keys=%d (one per bound entity), got %v", len(want), ev.Data["join_keys"])
-	}
+			// Bound matcher paths emit storage/reuse-strategy or cache events, never the
+			// unbound pattern/index-selection (emitted only by matchUnboundAsRelation —
+			// the full attribute scan). So an attribute-primary index-selection on
+			// :repro/note means the scan was not narrowed to the bound entities.
+			// Primary, direct assertion: the or-fallback branch reports it narrowed the
+			// scan to the bound join keys (one per kind-bearing entity), rather than
+			// silently falling back to a full attribute scan.
+			ev := narrowingEvent(events)
+			if ev == nil {
+				t.Fatalf("expected an or-fallback/branch.narrowed annotation; none emitted")
+			}
+			if narrowed, _ := ev.Data["narrowed"].(bool); !narrowed {
+				t.Fatalf("get-else branch was NOT narrowed to the bound entities (fell back to a full scan): %v", ev.Data)
+			}
+			if jk, _ := ev.Data["join_keys"].(int); jk != len(want) {
+				t.Errorf("expected join_keys=%d (one per bound entity), got %v", len(want), ev.Data["join_keys"])
+			}
 
-	// Defense in depth: a narrowed branch takes the bound matcher path (cache /
-	// reuse strategy), which never emits the unbound pattern/index-selection that
-	// matchUnboundAsRelation (the full attribute scan) emits.
-	idx, _, _ := indexForAttrPattern(events, ":repro/note")
-	attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
-	if attrPrimary[idx] {
-		t.Fatalf("get-else over %d bound entities scanned :repro/note via attribute-primary "+
-			"index %s (full extent) instead of narrowing to the bound entities", len(want), idx)
+			// Defense in depth: a narrowed branch takes the bound matcher path (cache /
+			// reuse strategy), which never emits the unbound pattern/index-selection that
+			// matchUnboundAsRelation (the full attribute scan) emits.
+			idx, _, _ := indexForAttrPattern(events, ":repro/note")
+			attrPrimary := map[string]bool{"AETV": true, "AEVT": true, "AVET": true, "ATEV": true}
+			if attrPrimary[idx] {
+				t.Fatalf("get-else over %d bound entities scanned :repro/note via attribute-primary "+
+					"index %s (full extent) instead of narrowing to the bound entities", len(want), idx)
+			}
+		})
 	}
 }
 
@@ -312,7 +326,7 @@ func narrowingEvent(events []annotations.Event) *annotations.Event {
 // rows — defaults included — as the un-rewritten, per-tuple get-else (algebra
 // optimizer OFF).
 func TestGetElseScanNarrowing_SemanticPreservation(t *testing.T) {
-	db, _, cleanup := setupGetElseNarrowingDB(t)
+	db, _, cleanup := setupGetElseNarrowingDB(t, nil)
 	defer cleanup()
 
 	q := `[:find ?e ?note

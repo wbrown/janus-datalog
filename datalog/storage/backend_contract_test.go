@@ -247,123 +247,130 @@ func TestDatabaseBackendsPublicSemantics(t *testing.T) {
 		exported      string
 		afterTruncate [][]interface{}
 	}
-	results := make(map[string]backendResult)
 
-	for _, testCase := range storeContractCases() {
-		t.Run(testCase.name, func(t *testing.T) {
-			database := openContractDatabase(t, testCase, DatabaseOptions{
-				Schema:       s,
-				DisableCache: true,
-				ReplicaID:    42,
-			})
-			entity := datalog.NewIdentity("backend:item")
-			name := datalog.NewKeyword(":item/name")
-			email := datalog.NewKeyword(":item/email")
-			tags := datalog.NewKeyword(":item/tags")
-			steps := datalog.NewKeyword(":item/steps")
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			results := make(map[string]backendResult)
 
-			tx := database.NewTransaction()
-			require.NoError(t, tx.Set(entity, name, "first"))
-			require.NoError(t, tx.Set(entity, email, "item@example.com"))
-			require.NoError(t, tx.Add(entity, tags, "a"))
-			require.NoError(t, tx.Add(entity, tags, "b"))
-			require.NoError(t, tx.Add(entity, steps, "one"))
-			require.NoError(t, tx.Add(entity, steps, "two"))
-			firstTx, err := tx.Commit()
-			require.NoError(t, err)
+			for _, testCase := range storeContractCases() {
+				t.Run(testCase.name, func(t *testing.T) {
+					database := openContractDatabase(t, testCase, DatabaseOptions{
+						Schema:         s,
+						DisableCache:   true,
+						ReplicaID:      42,
+						PlannerOptions: &popts,
+					})
+					entity := datalog.NewIdentity("backend:item")
+					name := datalog.NewKeyword(":item/name")
+					email := datalog.NewKeyword(":item/email")
+					tags := datalog.NewKeyword(":item/tags")
+					steps := datalog.NewKeyword(":item/steps")
 
-			_, err = database.Snapshot("base")
-			require.NoError(t, err)
+					tx := database.NewTransaction()
+					require.NoError(t, tx.Set(entity, name, "first"))
+					require.NoError(t, tx.Set(entity, email, "item@example.com"))
+					require.NoError(t, tx.Add(entity, tags, "a"))
+					require.NoError(t, tx.Add(entity, tags, "b"))
+					require.NoError(t, tx.Add(entity, steps, "one"))
+					require.NoError(t, tx.Add(entity, steps, "two"))
+					firstTx, err := tx.Commit()
+					require.NoError(t, err)
 
-			tx = database.NewTransaction()
-			require.NoError(t, tx.Set(entity, name, "second"))
-			_, err = tx.Commit()
-			require.NoError(t, err)
+					_, err = database.Snapshot("base")
+					require.NoError(t, err)
 
-			latest, err := executor.CollectTuples(database.Query(
-				`[:find ?name :where [?entity :item/name ?name]]`,
-			))
-			require.NoError(t, err)
-			asOf, err := executor.CollectTuples(database.AsOf(firstTx).Query(
-				`[:find ?name :where [?entity :item/name ?name]]`,
-			))
-			require.NoError(t, err)
-			history, err := executor.CollectTuples(database.History().Query(
-				`[:find ?name ?tx :where [?entity :item/name ?name ?tx]]`,
-			))
-			require.NoError(t, err)
+					tx = database.NewTransaction()
+					require.NoError(t, tx.Set(entity, name, "second"))
+					_, err = tx.Commit()
+					require.NoError(t, err)
 
-			var names []string
-			require.NoError(t, database.QueryInto(
-				&names,
-				`[:find ?name :where [?entity :item/name ?name]]`,
-			))
-			owner, err := database.LookupByUnique(email, "item@example.com")
-			require.NoError(t, err)
-			require.True(t, owner.Equal(entity))
+					latest, err := executor.CollectTuples(database.Query(
+						`[:find ?name :where [?entity :item/name ?name]]`,
+					))
+					require.NoError(t, err)
+					asOf, err := executor.CollectTuples(database.AsOf(firstTx).Query(
+						`[:find ?name :where [?entity :item/name ?name]]`,
+					))
+					require.NoError(t, err)
+					history, err := executor.CollectTuples(database.History().Query(
+						`[:find ?name ?tx :where [?entity :item/name ?name ?tx]]`,
+					))
+					require.NoError(t, err)
 
-			pulled, err := database.ResolveAllAttributesMany([]datalog.Identity{entity})
-			require.NoError(t, err)
+					var names []string
+					require.NoError(t, database.QueryInto(
+						&names,
+						`[:find ?name :where [?entity :item/name ?name]]`,
+					))
+					owner, err := database.LookupByUnique(email, "item@example.com")
+					require.NoError(t, err)
+					require.True(t, owner.Equal(entity))
 
-			var dump bytes.Buffer
-			require.NoError(t, database.Export(&dump))
-			imported := openContractDatabase(t, testCase, DatabaseOptions{})
-			require.NoError(t, imported.Import(bytes.NewReader(dump.Bytes())))
-			importedRows, err := executor.CollectTuples(imported.Query(
-				`[:find ?name :where [?entity :item/name ?name]]`,
-			))
-			require.NoError(t, err)
-			require.Equal(t, latest, importedRows)
+					pulled, err := database.ResolveAllAttributesMany([]datalog.Identity{entity})
+					require.NoError(t, err)
 
-			require.NoError(t, database.TruncateTo("base"))
-			afterTruncate, err := executor.CollectTuples(database.Query(
-				`[:find ?name :in $ ?entity :where [?entity :item/name ?name]]`,
-				entity,
-			))
-			require.NoError(t, err)
+					var dump bytes.Buffer
+					require.NoError(t, database.Export(&dump))
+					imported := openContractDatabase(t, testCase, DatabaseOptions{PlannerOptions: &popts})
+					require.NoError(t, imported.Import(bytes.NewReader(dump.Bytes())))
+					importedRows, err := executor.CollectTuples(imported.Query(
+						`[:find ?name :where [?entity :item/name ?name]]`,
+					))
+					require.NoError(t, err)
+					require.Equal(t, latest, importedRows)
 
-			got := backendResult{
-				latest:        latest,
-				asOf:          asOf,
-				history:       len(history),
-				queryInto:     names,
-				unique:        owner,
-				pulled:        pulled[0],
-				exported:      dump.String(),
-				afterTruncate: afterTruncate,
+					require.NoError(t, database.TruncateTo("base"))
+					afterTruncate, err := executor.CollectTuples(database.Query(
+						`[:find ?name :in $ ?entity :where [?entity :item/name ?name]]`,
+						entity,
+					))
+					require.NoError(t, err)
+
+					got := backendResult{
+						latest:        latest,
+						asOf:          asOf,
+						history:       len(history),
+						queryInto:     names,
+						unique:        owner,
+						pulled:        pulled[0],
+						exported:      dump.String(),
+						afterTruncate: afterTruncate,
+					}
+					results[testCase.name] = got
+					require.Equal(t, [][]interface{}{{"second"}}, got.latest)
+					require.Equal(t, [][]interface{}{{"first"}}, got.asOf)
+					require.GreaterOrEqual(t, got.history, 2)
+					require.Equal(t, []string{"second"}, got.queryInto)
+					require.Equal(t, "second", got.pulled[name])
+					require.ElementsMatch(t, []interface{}{"a", "b"}, got.pulled[tags])
+					require.Equal(t, []string{"one", "two"}, got.pulled[steps])
+					require.Equal(t, [][]interface{}{{"first"}}, got.afterTruncate)
+				})
 			}
-			results[testCase.name] = got
-			require.Equal(t, [][]interface{}{{"second"}}, got.latest)
-			require.Equal(t, [][]interface{}{{"first"}}, got.asOf)
-			require.GreaterOrEqual(t, got.history, 2)
-			require.Equal(t, []string{"second"}, got.queryInto)
-			require.Equal(t, "second", got.pulled[name])
-			require.ElementsMatch(t, []interface{}{"a", "b"}, got.pulled[tags])
-			require.Equal(t, []string{"one", "two"}, got.pulled[steps])
-			require.Equal(t, [][]interface{}{{"first"}}, got.afterTruncate)
-		})
-	}
 
-	if _, ok := results["badger"]; ok {
-		require.Equal(t, results["badger"].latest, results["memory"].latest)
-		require.Equal(t, results["badger"].asOf, results["memory"].asOf)
-		require.Equal(t, results["badger"].history, results["memory"].history)
-		require.Equal(t, results["badger"].queryInto, results["memory"].queryInto)
-		require.True(t, results["badger"].unique.Equal(results["memory"].unique))
-		require.Equal(t, results["badger"].pulled[datalog.NewKeyword(":item/name")], results["memory"].pulled[datalog.NewKeyword(":item/name")])
-		require.ElementsMatch(t,
-			results["badger"].pulled[datalog.NewKeyword(":item/tags")],
-			results["memory"].pulled[datalog.NewKeyword(":item/tags")],
-		)
-		require.Equal(t,
-			results["badger"].pulled[datalog.NewKeyword(":item/steps")],
-			results["memory"].pulled[datalog.NewKeyword(":item/steps")],
-		)
-		require.Equal(t, results["badger"].afterTruncate, results["memory"].afterTruncate)
-		require.Equal(t,
-			stabilizeExport(results["badger"].exported),
-			stabilizeExport(results["memory"].exported),
-		)
+			if _, ok := results["badger"]; ok {
+				require.Equal(t, results["badger"].latest, results["memory"].latest)
+				require.Equal(t, results["badger"].asOf, results["memory"].asOf)
+				require.Equal(t, results["badger"].history, results["memory"].history)
+				require.Equal(t, results["badger"].queryInto, results["memory"].queryInto)
+				require.True(t, results["badger"].unique.Equal(results["memory"].unique))
+				require.Equal(t, results["badger"].pulled[datalog.NewKeyword(":item/name")], results["memory"].pulled[datalog.NewKeyword(":item/name")])
+				require.ElementsMatch(t,
+					results["badger"].pulled[datalog.NewKeyword(":item/tags")],
+					results["memory"].pulled[datalog.NewKeyword(":item/tags")],
+				)
+				require.Equal(t,
+					results["badger"].pulled[datalog.NewKeyword(":item/steps")],
+					results["memory"].pulled[datalog.NewKeyword(":item/steps")],
+				)
+				require.Equal(t, results["badger"].afterTruncate, results["memory"].afterTruncate)
+				require.Equal(t,
+					stabilizeExport(results["badger"].exported),
+					stabilizeExport(results["memory"].exported),
+				)
+			}
+		})
 	}
 }
 

@@ -156,45 +156,54 @@ func TestOrderedSet_SetReplacement(t *testing.T) {
 
 // TestOrderedSet_QueryIntegration verifies OrderedSet works with queries
 func TestOrderedSet_QueryIntegration(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "orderedset-query-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "orderedset-query-test")
+			require.NoError(t, err)
+			defer os.RemoveAll(tmpDir)
 
-	s, err := schema.NewBuilder().
-		Attribute(":character/name").Type(schema.TypeString).Add().
-		Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
-		Build()
-	require.NoError(t, err)
+			s, err := schema.NewBuilder().
+				Attribute(":character/name").Type(schema.TypeString).Add().
+				Attribute(":character/prefs").Type(schema.TypeString).OrderedSet().Add().
+				Build()
+			require.NoError(t, err)
 
-	db, err := NewDatabaseWithSchema(tmpDir, s)
-	require.NoError(t, err)
-	defer db.Close()
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           tmpDir,
+				Schema:         s,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	alice := datalog.NewIdentity("alice")
-	name := datalog.NewKeyword(":character/name")
-	prefs := datalog.NewKeyword(":character/prefs")
+			alice := datalog.NewIdentity("alice")
+			name := datalog.NewKeyword(":character/name")
+			prefs := datalog.NewKeyword(":character/prefs")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Add(alice, name, "Alice"))
-	require.NoError(t, tx.Add(alice, prefs, "dark-mode"))
-	require.NoError(t, tx.Add(alice, prefs, "compact"))
-	require.NoError(t, tx.Add(alice, prefs, "dark-mode")) // Duplicate
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Add(alice, name, "Alice"))
+			require.NoError(t, tx.Add(alice, prefs, "dark-mode"))
+			require.NoError(t, tx.Add(alice, prefs, "compact"))
+			require.NoError(t, tx.Add(alice, prefs, "dark-mode")) // Duplicate
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Query returns vector as single array value
-	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?prefs :in $ ?e :where [?e :character/prefs ?prefs]]`,
-		alice,
-	))
-	require.NoError(t, err)
+			// Query returns vector as single array value
+			tuples, err := executor.CollectTuples(db.Query(
+				`[:find ?prefs :in $ ?e :where [?e :character/prefs ?prefs]]`,
+				alice,
+			))
+			require.NoError(t, err)
 
-	t.Logf("Query result: %v", tuples)
-	require.Len(t, tuples, 1, "should return 1 tuple (vector as single value)")
+			t.Logf("Query result: %v", tuples)
+			require.Len(t, tuples, 1, "should return 1 tuple (vector as single value)")
 
-	vec, ok := tuples[0][0].([]string)
-	require.True(t, ok, "should be []string")
-	assert.Len(t, vec, 2, "should have 2 unique values")
+			vec, ok := tuples[0][0].([]string)
+			require.True(t, ok, "should be []string")
+			assert.Len(t, vec, 2, "should have 2 unique values")
+		})
+	}
 }
 
 // TestOrderedSet_RefType verifies OrderedSet works with Identity references

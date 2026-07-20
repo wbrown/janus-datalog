@@ -328,144 +328,148 @@ func TestVerifyStrategyUsed(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	t.Run("default_behavior", func(t *testing.T) {
-		var strategies []string
-		opts := executor.ExecutorOptions{
-			EnableStreamingJoins:    true,
-			EnableSymmetricHashJoin: false,
-			DefaultHashTableSize:    256,
-		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Run("default_behavior", func(t *testing.T) {
+				var strategies []string
+				opts := executor.ExecutorOptions{
+					EnableStreamingJoins:    true,
+					EnableSymmetricHashJoin: false,
+					DefaultHashTableSize:    256,
+				}
+				matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
 
-		// Add event handler
-		matcher.SetHandler(func(event annotations.Event) {
-			if event.Name == "storage/join-strategy" {
-				strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
-				strategies = append(strategies, strategy)
-			}
+				// Add event handler
+				matcher.SetHandler(func(event annotations.Event) {
+					if event.Name == "storage/join-strategy" {
+						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
+						strategies = append(strategies, strategy)
+					}
+				})
+
+				exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("Execute failed: %v", err)
+				}
+
+				// Consume only 10 results
+				count := 0
+				it := result.Iterator()
+				for count < 10 && it.Next() {
+					_ = it.Tuple()
+					count++
+				}
+				it.Close()
+
+				t.Logf("Default strategies used: %v", strategies)
+				t.Logf("Got %d results", count)
+			})
+
+			t.Run("forced_hash_join", func(t *testing.T) {
+				var strategies []string
+				opts := executor.ExecutorOptions{
+					EnableStreamingJoins:    true,
+					EnableSymmetricHashJoin: false,
+					DefaultHashTableSize:    256,
+				}
+				matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+
+				// Force HashJoinScan
+				hashJoin := HashJoinScan
+				matcher.ForceJoinStrategy(&hashJoin)
+
+				// Add event handler to verify
+				matcher.SetHandler(func(event annotations.Event) {
+					if event.Name == "storage/join-strategy" {
+						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
+						strategies = append(strategies, strategy)
+					}
+				})
+
+				exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("Execute failed: %v", err)
+				}
+
+				// Consume only 10 results
+				count := 0
+				it := result.Iterator()
+				for count < 10 && it.Next() {
+					_ = it.Tuple()
+					count++
+				}
+				it.Close()
+
+				t.Logf("Forced strategies used: %v", strategies)
+				t.Logf("Got %d results", count)
+
+				// Verify HashJoinScan was used
+				if len(strategies) == 0 {
+					t.Error("Expected at least one strategy selection event")
+				}
+				for _, s := range strategies {
+					if s != "hash-join-scan" {
+						t.Errorf("Expected hash-join-scan, got %s", s)
+					}
+				}
+			})
+
+			t.Run("forced_index_nested_loop", func(t *testing.T) {
+				var strategies []string
+				opts := executor.ExecutorOptions{
+					EnableStreamingJoins:    true,
+					EnableSymmetricHashJoin: false,
+					DefaultHashTableSize:    256,
+				}
+				matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+
+				// Force IndexNestedLoop
+				indexNested := IndexNestedLoop
+				matcher.ForceJoinStrategy(&indexNested)
+
+				// Add event handler to verify
+				matcher.SetHandler(func(event annotations.Event) {
+					if event.Name == "storage/join-strategy" {
+						strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
+						strategies = append(strategies, strategy)
+					}
+				})
+
+				exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("Execute failed: %v", err)
+				}
+
+				// Consume only 10 results
+				count := 0
+				it := result.Iterator()
+				for count < 10 && it.Next() {
+					_ = it.Tuple()
+					count++
+				}
+				it.Close()
+
+				t.Logf("Forced strategies used: %v", strategies)
+				t.Logf("Got %d results", count)
+
+				// Verify IndexNestedLoop was used
+				if len(strategies) == 0 {
+					t.Error("Expected at least one strategy selection event")
+				}
+				for _, s := range strategies {
+					if s != "index-nested-loop" {
+						t.Errorf("Expected index-nested-loop, got %s", s)
+					}
+				}
+			})
 		})
-
-		exec := executor.NewExecutor(matcher, db)
-
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("Execute failed: %v", err)
-		}
-
-		// Consume only 10 results
-		count := 0
-		it := result.Iterator()
-		for count < 10 && it.Next() {
-			_ = it.Tuple()
-			count++
-		}
-		it.Close()
-
-		t.Logf("Default strategies used: %v", strategies)
-		t.Logf("Got %d results", count)
-	})
-
-	t.Run("forced_hash_join", func(t *testing.T) {
-		var strategies []string
-		opts := executor.ExecutorOptions{
-			EnableStreamingJoins:    true,
-			EnableSymmetricHashJoin: false,
-			DefaultHashTableSize:    256,
-		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-
-		// Force HashJoinScan
-		hashJoin := HashJoinScan
-		matcher.ForceJoinStrategy(&hashJoin)
-
-		// Add event handler to verify
-		matcher.SetHandler(func(event annotations.Event) {
-			if event.Name == "storage/join-strategy" {
-				strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
-				strategies = append(strategies, strategy)
-			}
-		})
-
-		exec := executor.NewExecutor(matcher, db)
-
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("Execute failed: %v", err)
-		}
-
-		// Consume only 10 results
-		count := 0
-		it := result.Iterator()
-		for count < 10 && it.Next() {
-			_ = it.Tuple()
-			count++
-		}
-		it.Close()
-
-		t.Logf("Forced strategies used: %v", strategies)
-		t.Logf("Got %d results", count)
-
-		// Verify HashJoinScan was used
-		if len(strategies) == 0 {
-			t.Error("Expected at least one strategy selection event")
-		}
-		for _, s := range strategies {
-			if s != "hash-join-scan" {
-				t.Errorf("Expected hash-join-scan, got %s", s)
-			}
-		}
-	})
-
-	t.Run("forced_index_nested_loop", func(t *testing.T) {
-		var strategies []string
-		opts := executor.ExecutorOptions{
-			EnableStreamingJoins:    true,
-			EnableSymmetricHashJoin: false,
-			DefaultHashTableSize:    256,
-		}
-		matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-
-		// Force IndexNestedLoop
-		indexNested := IndexNestedLoop
-		matcher.ForceJoinStrategy(&indexNested)
-
-		// Add event handler to verify
-		matcher.SetHandler(func(event annotations.Event) {
-			if event.Name == "storage/join-strategy" {
-				strategy := fmt.Sprintf("%v", event.Data["join_strategy"])
-				strategies = append(strategies, strategy)
-			}
-		})
-
-		exec := executor.NewExecutor(matcher, db)
-
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("Execute failed: %v", err)
-		}
-
-		// Consume only 10 results
-		count := 0
-		it := result.Iterator()
-		for count < 10 && it.Next() {
-			_ = it.Tuple()
-			count++
-		}
-		it.Close()
-
-		t.Logf("Forced strategies used: %v", strategies)
-		t.Logf("Got %d results", count)
-
-		// Verify IndexNestedLoop was used
-		if len(strategies) == 0 {
-			t.Error("Expected at least one strategy selection event")
-		}
-		for _, s := range strategies {
-			if s != "index-nested-loop" {
-				t.Errorf("Expected index-nested-loop, got %s", s)
-			}
-		}
-	})
+	}
 }
 
 // TestMaterializationDetection adds instrumentation to detect when
@@ -528,53 +532,57 @@ func TestMaterializationDetection(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	// Create matcher with instrumentation
-	opts := executor.ExecutorOptions{
-		EnableStreamingJoins:    true,
-		EnableSymmetricHashJoin: false,
-		DefaultHashTableSize:    256,
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Create matcher with instrumentation
+			opts := executor.ExecutorOptions{
+				EnableStreamingJoins:    true,
+				EnableSymmetricHashJoin: false,
+				DefaultHashTableSize:    256,
+			}
+			matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
+
+			// Add event handler to track what's happening
+			var events []string
+			handler := func(event annotations.Event) {
+				if event.Name == "storage/join-strategy" {
+					joinStrategy := event.Data["join_strategy"]
+					bindingSize := event.Data["binding_size"]
+					events = append(events, fmt.Sprintf("Join strategy: %v (binding size: %v)", joinStrategy, bindingSize))
+				}
+				if event.Name == "storage/reuse-strategy" {
+					strategyType := event.Data["strategy_type"]
+					events = append(events, fmt.Sprintf("Reuse strategy: %v", strategyType))
+				}
+			}
+			matcher.SetHandler(handler)
+
+			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+
+			t.Log("Executing query...")
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+
+			// Log all events captured during query execution
+			t.Log("Events during query execution:")
+			for _, event := range events {
+				t.Log("  ", event)
+			}
+
+			// Consume only 10 results
+			t.Log("Consuming first 10 results...")
+			count := 0
+			it := result.Iterator()
+			for count < 10 && it.Next() {
+				_ = it.Tuple()
+				count++
+			}
+			it.Close()
+
+			t.Logf("Got %d results", count)
+			t.Log("Check if HashJoinScan strategy was used (indicates materialization)")
+		})
 	}
-	matcher := NewBadgerMatcherWithOptions(db.Store(), opts)
-
-	// Add event handler to track what's happening
-	var events []string
-	handler := func(event annotations.Event) {
-		if event.Name == "storage/join-strategy" {
-			joinStrategy := event.Data["join_strategy"]
-			bindingSize := event.Data["binding_size"]
-			events = append(events, fmt.Sprintf("Join strategy: %v (binding size: %v)", joinStrategy, bindingSize))
-		}
-		if event.Name == "storage/reuse-strategy" {
-			strategyType := event.Data["strategy_type"]
-			events = append(events, fmt.Sprintf("Reuse strategy: %v", strategyType))
-		}
-	}
-	matcher.SetHandler(handler)
-
-	exec := executor.NewExecutor(matcher, db)
-
-	t.Log("Executing query...")
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Execute failed: %v", err)
-	}
-
-	// Log all events captured during query execution
-	t.Log("Events during query execution:")
-	for _, event := range events {
-		t.Log("  ", event)
-	}
-
-	// Consume only 10 results
-	t.Log("Consuming first 10 results...")
-	count := 0
-	it := result.Iterator()
-	for count < 10 && it.Next() {
-		_ = it.Tuple()
-		count++
-	}
-	it.Close()
-
-	t.Logf("Got %d results", count)
-	t.Log("Check if HashJoinScan strategy was used (indicates materialization)")
 }

@@ -35,40 +35,50 @@ func jsonishStorage(n int) string {
 // round-trip exactly, on every backend. CompressionThreshold is explicit so
 // the injected-store backends route through Tier 3 identically.
 func TestLargeCompressedValue_RoundTripsThroughStorage(t *testing.T) {
-	for _, c := range reopenBackendCases() {
+	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			s := schema.NewSchema()
-			s.Add(&schema.AttributeDefinition{
-				Ident:       datalog.NewKeyword(":doc/body"),
-				ValueType:   schema.TypeString,
-				Cardinality: schema.CardinalityOne,
-			})
-			e := datalog.NewIdentity("doc1")
-			body := jsonishStorage(2 * 1024 * 1024)
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					// Fresh backend case per mode: each case's stored state
+					// lives in its closure, and the writes must not leak
+					// across optimizer legs.
+					c := reopenBackendCases()[i]
+					popts := mode.plannerOptions()
 
-			db := c.open(t, DatabaseOptions{Schema: s, ReplicaID: 1, CompressionThreshold: 256})
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Set(e, datalog.NewKeyword(":doc/body"), body))
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					s := schema.NewSchema()
+					s.Add(&schema.AttributeDefinition{
+						Ident:       datalog.NewKeyword(":doc/body"),
+						ValueType:   schema.TypeString,
+						Cardinality: schema.CardinalityOne,
+					})
+					e := datalog.NewIdentity("doc1")
+					body := jsonishStorage(2 * 1024 * 1024)
 
-			// Reopen over the same stored state and read the value back
-			// through the full decode path.
-			db2 := c.open(t, DatabaseOptions{Schema: s, ReplicaID: 1, CompressionThreshold: 256})
+					db := c.open(t, DatabaseOptions{Schema: s, ReplicaID: 1, CompressionThreshold: 256, PlannerOptions: &popts})
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Set(e, datalog.NewKeyword(":doc/body"), body))
+					_, err := tx.Commit()
+					require.NoError(t, err)
 
-			rel, err := db2.Query(`[:find ?v :where [?e :doc/body ?v]]`)
-			require.NoError(t, err)
-			it := rel.Iterator()
-			defer it.Close()
+					// Reopen over the same stored state and read the value back
+					// through the full decode path.
+					db2 := c.open(t, DatabaseOptions{Schema: s, ReplicaID: 1, CompressionThreshold: 256, PlannerOptions: &popts})
 
-			require.True(t, it.Next(), "expected the stored value")
-			got, ok := it.Tuple()[0].(string)
-			require.True(t, ok, "value should decode as a string")
-			// Compare without dumping 2 MB on mismatch.
-			assert.Equal(t, len(body), len(got), "decoded length must match")
-			assert.True(t, body == got, "2 MB value must round-trip through storage")
-			assert.False(t, it.Next(), "expected exactly one row")
-			require.NoError(t, it.Error())
+					rel, err := db2.Query(`[:find ?v :where [?e :doc/body ?v]]`)
+					require.NoError(t, err)
+					it := rel.Iterator()
+					defer it.Close()
+
+					require.True(t, it.Next(), "expected the stored value")
+					got, ok := it.Tuple()[0].(string)
+					require.True(t, ok, "value should decode as a string")
+					// Compare without dumping 2 MB on mismatch.
+					assert.Equal(t, len(body), len(got), "decoded length must match")
+					assert.True(t, body == got, "2 MB value must round-trip through storage")
+					assert.False(t, it.Next(), "expected exactly one row")
+					require.NoError(t, it.Error())
+				})
+			}
 		})
 	}
 }

@@ -5,10 +5,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 func TestCorrelatedNotJoinPredicateInputMatchesUnoptimizedExecution(t *testing.T) {
-	db, retained := openCorrelatedNotJoinDatabase(t)
+	db, retained := openCorrelatedNotJoinDatabase(t, nil)
 	source := `[:find ?goal
 		:where
 		[?goal :entity/type :type/goal]
@@ -31,7 +32,7 @@ func TestCorrelatedNotJoinPredicateInputMatchesUnoptimizedExecution(t *testing.T
 }
 
 func TestCorrelatedNotPredicateInputExecutesWithAlgebra(t *testing.T) {
-	db, retained := openCorrelatedNotJoinDatabase(t)
+	db, retained := openCorrelatedNotJoinDatabase(t, nil)
 	source := `[:find ?goal
 		:where
 		[?goal :entity/type :type/goal]
@@ -188,7 +189,7 @@ func TestCorrelatedOrWithOutputsMatchesUnoptimizedExecution(t *testing.T) {
 // planned and then failed deep in the executor with "NOT clause variables
 // not found in input relation".
 func TestFullyDisjointNotRejectedAtQueryOutset(t *testing.T) {
-	db, _ := openCorrelatedNotJoinDatabase(t)
+	db, _ := openCorrelatedNotJoinDatabase(t, nil)
 	source := `[:find ?goal
 		:where
 		[?goal :entity/type :type/goal]
@@ -205,7 +206,6 @@ func TestFullyDisjointNotRejectedAtQueryOutset(t *testing.T) {
 }
 
 func TestCorrelatedNotJoinRequiresOuterInputsInHeader(t *testing.T) {
-	db, _ := openCorrelatedNotJoinDatabase(t)
 	source := `[:find ?goal
 		:where
 		[?goal :entity/type :type/goal]
@@ -216,15 +216,35 @@ func TestCorrelatedNotJoinRequiresOuterInputsInHeader(t *testing.T) {
 			[?termEvent :event/type ?termType]
 			[(!= ?termType ?goalSet)])]`
 
-	_, err := db.Query(source)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not-join header")
-	require.Contains(t, err.Error(), "?goalSet")
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, _ := openCorrelatedNotJoinDatabase(t, &popts)
+			_, err := db.Query(source)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "?goalSet")
+			if mode.algebra {
+				// The header-completeness rule is currently enforced only by
+				// the algebra bridge; the baseline path fails late in the
+				// executor instead. Divergence ledgered:
+				// docs/bugs/BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md
+				// When the planner-level check lands, this pin tightens to
+				// both modes.
+				require.Contains(t, err.Error(), "not-join header")
+			}
+		})
+	}
 }
 
-func openCorrelatedNotJoinDatabase(t *testing.T) (*Database, datalog.Identity) {
+// openCorrelatedNotJoinDatabase seeds the goal/event fixture. popts sets the
+// database's default planner options (nil = defaults); differential tests
+// that route options per execution pass nil.
+func openCorrelatedNotJoinDatabase(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity) {
 	t.Helper()
-	db, err := NewDatabase(t.TempDir())
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           t.TempDir(),
+		PlannerOptions: popts,
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, db.Close())

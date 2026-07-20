@@ -126,52 +126,55 @@ func TestAsOfVectorResolution_AddOnly(t *testing.T) {
 // TestAsOfVectorResolution_PullInto verifies that PullInto on an AsOf
 // database correctly returns historical vector content.
 func TestAsOfVectorResolution_PullInto(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	s, err := schema.NewBuilder().
-		Attribute(":doc/content").Type(schema.TypeString).Vector().Add().
-		Attribute(":doc/title").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			s, err := schema.NewBuilder().
+				Attribute(":doc/content").Type(schema.TypeString).Vector().Add().
+				Attribute(":doc/title").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	contentAttr := datalog.NewKeyword(":doc/content")
-	titleAttr := datalog.NewKeyword(":doc/title")
-	entity := datalog.NewIdentity("doc1")
+			contentAttr := datalog.NewKeyword(":doc/content")
+			titleAttr := datalog.NewKeyword(":doc/title")
+			entity := datalog.NewIdentity("doc1")
 
-	// Transaction 1: Original content
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Set(entity, titleAttr, "My Document"))
-	require.NoError(t, tx1.Add(entity, contentAttr, "First paragraph."))
-	require.NoError(t, tx1.Add(entity, contentAttr, "Second paragraph."))
-	tx1ID, err := tx1.Commit()
-	require.NoError(t, err)
+			// Transaction 1: Original content
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Set(entity, titleAttr, "My Document"))
+			require.NoError(t, tx1.Add(entity, contentAttr, "First paragraph."))
+			require.NoError(t, tx1.Add(entity, contentAttr, "Second paragraph."))
+			tx1ID, err := tx1.Commit()
+			require.NoError(t, err)
 
-	// Transaction 2: Replace content
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(entity, contentAttr, []interface{}{"Rewritten paragraph."}))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			// Transaction 2: Replace content
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(entity, contentAttr, []interface{}{"Rewritten paragraph."}))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// PullInto on current database
-	type Doc struct {
-		Title   string   `datalog:"doc/title"`
-		Content []string `datalog:"doc/content"`
+			// PullInto on current database
+			type Doc struct {
+				Title   string   `datalog:"doc/title"`
+				Content []string `datalog:"doc/content"`
+			}
+
+			var current Doc
+			err = db.PullInto(entity, &current)
+			require.NoError(t, err)
+			assert.Equal(t, "My Document", current.Title)
+			assert.Equal(t, []string{"Rewritten paragraph."}, current.Content)
+
+			// PullInto on AsOf database — should show original content
+			asOfDB := db.AsOf(tx1ID)
+			var historical Doc
+			err = asOfDB.PullInto(entity, &historical)
+			require.NoError(t, err)
+			assert.Equal(t, "My Document", historical.Title)
+			assert.Equal(t, []string{"First paragraph.", "Second paragraph."}, historical.Content,
+				"PullInto on AsOf database should return historical vector content")
+		})
 	}
-
-	var current Doc
-	err = db.PullInto(entity, &current)
-	require.NoError(t, err)
-	assert.Equal(t, "My Document", current.Title)
-	assert.Equal(t, []string{"Rewritten paragraph."}, current.Content)
-
-	// PullInto on AsOf database — should show original content
-	asOfDB := db.AsOf(tx1ID)
-	var historical Doc
-	err = asOfDB.PullInto(entity, &historical)
-	require.NoError(t, err)
-	assert.Equal(t, "My Document", historical.Title)
-	assert.Equal(t, []string{"First paragraph.", "Second paragraph."}, historical.Content,
-		"PullInto on AsOf database should return historical vector content")
 }

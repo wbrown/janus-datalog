@@ -96,44 +96,51 @@ func TestBinaryExportImport_RoundTrip(t *testing.T) {
 }
 
 func TestBinaryExportImport_PreservesCRDTOps(t *testing.T) {
-	sch, err := schema.NewBuilder().
-		Attribute(":item/tags").Type(schema.TypeString).Many().Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			sch, err := schema.NewBuilder().
+				Attribute(":item/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
 
-	db1, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: sch,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db1.Close() })
+			popts := mode.plannerOptions()
+			db1, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { db1.Close() })
 
-	e := datalog.NewIdentity("bin:crdt")
-	tx := db1.NewTransaction()
-	require.NoError(t, tx.Add(e, datalog.NewKeyword(":item/tags"), "a"))
-	require.NoError(t, tx.Add(e, datalog.NewKeyword(":item/tags"), "b"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			e := datalog.NewIdentity("bin:crdt")
+			tx := db1.NewTransaction()
+			require.NoError(t, tx.Add(e, datalog.NewKeyword(":item/tags"), "a"))
+			require.NoError(t, tx.Add(e, datalog.NewKeyword(":item/tags"), "b"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx2 := db1.NewTransaction()
-	require.NoError(t, tx2.Remove(e, datalog.NewKeyword(":item/tags"), "a"))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db1.NewTransaction()
+			require.NoError(t, tx2.Remove(e, datalog.NewKeyword(":item/tags"), "a"))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	var out seekBuffer
-	require.NoError(t, db1.ExportBinary(&out))
+			var out seekBuffer
+			require.NoError(t, db1.ExportBinary(&out))
 
-	db2, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: sch,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db2.Close() })
-	require.NoError(t, db2.ImportBinary(&out))
+			db2, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { db2.Close() })
+			require.NoError(t, db2.ImportBinary(&out))
 
-	tags, err := db2.GetStrings(e, datalog.NewKeyword(":item/tags"))
-	require.NoError(t, err)
-	require.ElementsMatch(t, []string{"b"}, tags)
+			tags, err := db2.GetStrings(e, datalog.NewKeyword(":item/tags"))
+			require.NoError(t, err)
+			require.ElementsMatch(t, []string{"b"}, tags)
+		})
+	}
 }
 
 func TestBinaryExport_EntityAlignedSoftClose(t *testing.T) {
@@ -228,82 +235,89 @@ func TestBinaryImport_ParallelWorkers(t *testing.T) {
 }
 
 func TestBinaryExportImport_RGAAfterRef(t *testing.T) {
-	sch, err := schema.NewBuilder().
-		Attribute(":doc/items").Type(schema.TypeString).Vector().Add().
-		Build()
-	require.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			sch, err := schema.NewBuilder().
+				Attribute(":doc/items").Type(schema.TypeString).Vector().Add().
+				Build()
+			require.NoError(t, err)
 
-	db1, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: sch,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db1.Close() })
+			popts := mode.plannerOptions()
+			db1, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { db1.Close() })
 
-	id := datalog.NewIdentity("bin:rga")
-	items := datalog.NewKeyword(":doc/items")
-	tx := db1.NewTransaction()
-	require.NoError(t, tx.Add(id, items, "first"))
-	require.NoError(t, tx.Add(id, items, "second"))
-	require.NoError(t, tx.Add(id, items, "third"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			id := datalog.NewIdentity("bin:rga")
+			items := datalog.NewKeyword(":doc/items")
+			tx := db1.NewTransaction()
+			require.NoError(t, tx.Add(id, items, "first"))
+			require.NoError(t, tx.Add(id, items, "second"))
+			require.NoError(t, tx.Add(id, items, "third"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	var out seekBuffer
-	require.NoError(t, db1.ExportBinary(&out))
+			var out seekBuffer
+			require.NoError(t, db1.ExportBinary(&out))
 
-	// Decode every RGA record and require a real AfterRef chain: first insert
-	// after HEAD (zero ElementID), later inserts after a prior insert's Tx.
-	// Byte-identity alone would miss an encode that truncates AfterRef.
-	hdr, err := readBinaryHeader(&out)
-	require.NoError(t, err)
-	trailer, err := readBinaryIndex(&out, hdr.indexOffset)
-	require.NoError(t, err)
-	var seekMu sync.Mutex
-	type rgaRec struct {
-		v        string
-		tx       datalog.ElementID
-		afterRef datalog.ElementID
-	}
-	var rga []rgaRec
-	for _, entry := range trailer.entries {
-		unc, err := readBinaryChunkPayload(&out, entry, &seekMu)
-		require.NoError(t, err)
-		datoms, err := decodeBinaryChunk(unc)
-		require.NoError(t, err)
-		for _, d := range datoms {
-			if !d.Op.HasAfterRef() {
-				continue
+			// Decode every RGA record and require a real AfterRef chain: first insert
+			// after HEAD (zero ElementID), later inserts after a prior insert's Tx.
+			// Byte-identity alone would miss an encode that truncates AfterRef.
+			hdr, err := readBinaryHeader(&out)
+			require.NoError(t, err)
+			trailer, err := readBinaryIndex(&out, hdr.indexOffset)
+			require.NoError(t, err)
+			var seekMu sync.Mutex
+			type rgaRec struct {
+				v        string
+				tx       datalog.ElementID
+				afterRef datalog.ElementID
 			}
-			v, ok := d.V.(string)
-			require.True(t, ok, "RGA value should be string, got %T", d.V)
-			rga = append(rga, rgaRec{v: v, tx: d.Tx, afterRef: d.AfterRef})
-		}
+			var rga []rgaRec
+			for _, entry := range trailer.entries {
+				unc, err := readBinaryChunkPayload(&out, entry, &seekMu)
+				require.NoError(t, err)
+				datoms, err := decodeBinaryChunk(unc)
+				require.NoError(t, err)
+				for _, d := range datoms {
+					if !d.Op.HasAfterRef() {
+						continue
+					}
+					v, ok := d.V.(string)
+					require.True(t, ok, "RGA value should be string, got %T", d.V)
+					rga = append(rga, rgaRec{v: v, tx: d.Tx, afterRef: d.AfterRef})
+				}
+			}
+			require.Len(t, rga, 3, "expected three RGA insert records")
+			require.True(t, rga[0].afterRef.IsZero(), "first insert AfterRef should be HEAD (zero)")
+			require.Equal(t, rga[0].tx, rga[1].afterRef, "second insert AfterRef must equal first Tx")
+			require.Equal(t, rga[1].tx, rga[2].afterRef, "third insert AfterRef must equal second Tx")
+			require.Equal(t, []string{"first", "second", "third"}, []string{rga[0].v, rga[1].v, rga[2].v})
+
+			db2, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { db2.Close() })
+			require.NoError(t, db2.ImportBinary(&out))
+
+			type docItems struct {
+				Items []string `datalog:"doc/items"`
+			}
+			var got docItems
+			require.NoError(t, db2.PullInto(id, &got))
+			require.Equal(t, []string{"first", "second", "third"}, got.Items)
+
+			var again seekBuffer
+			require.NoError(t, db2.ExportBinary(&again))
+			require.Equal(t, out.buf, again.buf)
+		})
 	}
-	require.Len(t, rga, 3, "expected three RGA insert records")
-	require.True(t, rga[0].afterRef.IsZero(), "first insert AfterRef should be HEAD (zero)")
-	require.Equal(t, rga[0].tx, rga[1].afterRef, "second insert AfterRef must equal first Tx")
-	require.Equal(t, rga[1].tx, rga[2].afterRef, "third insert AfterRef must equal second Tx")
-	require.Equal(t, []string{"first", "second", "third"}, []string{rga[0].v, rga[1].v, rga[2].v})
-
-	db2, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path:   t.TempDir(),
-		Schema: sch,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { db2.Close() })
-	require.NoError(t, db2.ImportBinary(&out))
-
-	type docItems struct {
-		Items []string `datalog:"doc/items"`
-	}
-	var got docItems
-	require.NoError(t, db2.PullInto(id, &got))
-	require.Equal(t, []string{"first", "second", "third"}, got.Items)
-
-	var again seekBuffer
-	require.NoError(t, db2.ExportBinary(&again))
-	require.Equal(t, out.buf, again.buf)
 }
 
 func TestDecodeBinaryChunk_TruncatedAfterRef(t *testing.T) {

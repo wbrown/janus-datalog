@@ -82,23 +82,30 @@ func scanFailureShapes(err error) map[string]Iterator {
 // The CardinalityMany and CardinalityVector arms carry the same guard.
 func TestResolveEntityAttributesSurfacesScanErrors(t *testing.T) {
 	injected := fmt.Errorf("simulated scan failure")
-	for name, iter := range scanFailureShapes(injected) {
-		t.Run(name, func(t *testing.T) {
-			store := NewMemoryStore(&BinaryKeyEncoder{})
-			db, err := NewDatabaseWithOptions(DatabaseOptions{
-				Store:        &indexScanOverrideStore{Store: store, index: EATV, iter: iter},
-				DisableCache: true,
-			})
-			if err != nil {
-				t.Fatalf("failed to create database: %v", err)
-			}
-			t.Cleanup(func() { _ = db.Close() })
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			// Failure-shape iterators are stateful; build a fresh set per mode.
+			for name, iter := range scanFailureShapes(injected) {
+				t.Run(name, func(t *testing.T) {
+					store := NewMemoryStore(&BinaryKeyEncoder{})
+					db, err := NewDatabaseWithOptions(DatabaseOptions{
+						Store:          &indexScanOverrideStore{Store: store, index: EATV, iter: iter},
+						DisableCache:   true,
+						PlannerOptions: &popts,
+					})
+					if err != nil {
+						t.Fatalf("failed to create database: %v", err)
+					}
+					t.Cleanup(func() { _ = db.Close() })
 
-			entity := datalog.NewIdentity("user:alice")
-			attr := datalog.NewKeyword(":user/email")
-			_, err = db.ResolveEntityAttributes(entity, []datalog.Keyword{attr})
-			if err == nil {
-				t.Fatal("expected the scan failure to surface, got nil error")
+					entity := datalog.NewIdentity("user:alice")
+					attr := datalog.NewKeyword(":user/email")
+					_, err = db.ResolveEntityAttributes(entity, []datalog.Keyword{attr})
+					if err == nil {
+						t.Fatal("expected the scan failure to surface, got nil error")
+					}
+				})
 			}
 		})
 	}

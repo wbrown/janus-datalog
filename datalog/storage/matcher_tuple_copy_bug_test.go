@@ -58,32 +58,36 @@ func TestMatcherTupleCopyBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	require.NoError(t, err)
 
-	// CRITICAL: Use streaming to trigger the buffer reuse bug
-	opts := executor.ExecutorOptions{
-		EnableTrueStreaming: true,
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// CRITICAL: Use streaming to trigger the buffer reuse bug
+			opts := executor.ExecutorOptions{
+				EnableTrueStreaming: true,
+			}
+			matcher := NewBadgerMatcherWithOptions(db.store, opts)
+			exec := executor.NewExecutorWithOptions(matcher, db, mode.plannerOptions())
+
+			result, err := exec.Execute(q)
+			require.NoError(t, err)
+
+			// Count results by iterating
+			count := 0
+			it := result.Iterator()
+			defer it.Close()
+
+			for it.Next() {
+				count++
+			}
+
+			// Expected: 1000 results (10 symbols × 100 bars each)
+			// With bug: 0 results or incorrect count (bindingTuples all point to same garbage memory)
+			//
+			// This assertion will FAIL until matcher_relations.go:241 is fixed
+			require.Equal(t, 1000, count,
+				"Expected 2000 results but got %d. "+
+					"Bug: matcher_relations.go:241 doesn't copy tuples, "+
+					"causing all bindingTuples to point to same reused buffer. "+
+					"Scan finds datoms but relation shows 0 tuples.", count)
+		})
 	}
-	matcher := NewBadgerMatcherWithOptions(db.store, opts)
-	exec := executor.NewExecutor(matcher, db)
-
-	result, err := exec.Execute(q)
-	require.NoError(t, err)
-
-	// Count results by iterating
-	count := 0
-	it := result.Iterator()
-	defer it.Close()
-
-	for it.Next() {
-		count++
-	}
-
-	// Expected: 1000 results (10 symbols × 100 bars each)
-	// With bug: 0 results or incorrect count (bindingTuples all point to same garbage memory)
-	//
-	// This assertion will FAIL until matcher_relations.go:241 is fixed
-	require.Equal(t, 1000, count,
-		"Expected 2000 results but got %d. "+
-			"Bug: matcher_relations.go:241 doesn't copy tuples, "+
-			"causing all bindingTuples to point to same reused buffer. "+
-			"Scan finds datoms but relation shows 0 tuples.", count)
 }

@@ -118,30 +118,34 @@ func TestTemporalHandle_NewExecutorWithOptions_UsesTemporalMode(t *testing.T) {
 	_, err = tx2.Commit()
 	require.NoError(t, err)
 
-	// As-of tx1: should see "Alice", not "Alice2".
-	asOf := db.AsOf(tx1ID)
-	exec := asOf.NewExecutorWithOptions(DefaultPlannerOptions())
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// As-of tx1: should see "Alice", not "Alice2".
+			asOf := db.AsOf(tx1ID)
+			exec := asOf.NewExecutorWithOptions(mode.plannerOptions())
 
-	q, err := parser.ParseQuery(`[:find ?name :where [?e :person/name ?name]]`)
-	require.NoError(t, err)
+			q, err := parser.ParseQuery(`[:find ?name :where [?e :person/name ?name]]`)
+			require.NoError(t, err)
 
-	result, err := exec.Execute(q)
-	require.NoError(t, err)
+			result, err := exec.Execute(q)
+			require.NoError(t, err)
 
-	var names []string
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if n, ok := tuple[0].(string); ok {
-				names = append(names, n)
+			var names []string
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if n, ok := tuple[0].(string); ok {
+						names = append(names, n)
+					}
+				}
 			}
-		}
-	}
-	iter.Close()
+			iter.Close()
 
-	require.Len(t, names, 1, "as-of query should return 1 result")
-	assert.Equal(t, "Alice", names[0], "as-of query should see the value at tx1")
+			require.Len(t, names, 1, "as-of query should return 1 result")
+			assert.Equal(t, "Alice", names[0], "as-of query should see the value at tx1")
+		})
+	}
 }
 
 // TestNewExecutorWithOptions_HasSchemaAndCache verifies that
@@ -168,29 +172,33 @@ func TestNewExecutorWithOptions_HasSchemaAndCache(t *testing.T) {
 	_, err = tx.Commit()
 	require.NoError(t, err)
 
-	// Query via NewExecutorWithOptions — should return both tags (add-wins).
-	// Before fix: bare matcher has no schema, treats :person/tags as
-	// cardinality-one, returns only the LWW winner (one tag).
-	exec := db.NewExecutorWithOptions(DefaultPlannerOptions())
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Query via NewExecutorWithOptions — should return both tags (add-wins).
+			// Before fix: bare matcher has no schema, treats :person/tags as
+			// cardinality-one, returns only the LWW winner (one tag).
+			exec := db.NewExecutorWithOptions(mode.plannerOptions())
 
-	q, err := parser.ParseQuery(`[:find ?tag :where [?e :person/tags ?tag]]`)
-	require.NoError(t, err)
+			q, err := parser.ParseQuery(`[:find ?tag :where [?e :person/tags ?tag]]`)
+			require.NoError(t, err)
 
-	result, err := exec.Execute(q)
-	require.NoError(t, err)
+			result, err := exec.Execute(q)
+			require.NoError(t, err)
 
-	var tags []string
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if tag, ok := tuple[0].(string); ok {
-				tags = append(tags, tag)
+			var tags []string
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if tag, ok := tuple[0].(string); ok {
+						tags = append(tags, tag)
+					}
+				}
 			}
-		}
-	}
-	iter.Close()
+			iter.Close()
 
-	assert.Len(t, tags, 2,
-		"NewExecutorWithOptions should use schema-aware matcher; cardinality-many should return all members")
+			assert.Len(t, tags, 2,
+				"NewExecutorWithOptions should use schema-aware matcher; cardinality-many should return all members")
+		})
+	}
 }

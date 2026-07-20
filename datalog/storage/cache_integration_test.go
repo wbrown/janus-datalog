@@ -332,159 +332,168 @@ func TestCacheResolverInterface(t *testing.T) {
 // TestQueryExecutionUsesCache verifies that actual Datalog queries
 // (not just LookupAttribute) use the cache through the Match() path.
 func TestQueryExecutionUsesCache(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Attribute(":person/age").Type(schema.TypeLong).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Attribute(":person/age").Type(schema.TypeLong).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	err = tx.Set(e, datalog.NewKeyword(":person/age"), int64(30))
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			err = tx.Set(e, datalog.NewKeyword(":person/age"), int64(30))
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Clear the cache to test that query populates it
-	db.Cache().Clear()
+			// Clear the cache to test that query populates it
+			db.Cache().Clear()
 
-	// Execute a Datalog query - this should use the cache path
-	result, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :person/name ?name]]`))
-	require.NoError(t, err)
-	require.Len(t, result, 1)
-	assert.Equal(t, "Alice", result[0][0])
+			// Execute a Datalog query - this should use the cache path
+			result, err := executor.CollectTuples(db.Query(`[:find ?name :where [?e :person/name ?name]]`))
+			require.NoError(t, err)
+			require.Len(t, result, 1)
+			assert.Equal(t, "Alice", result[0][0])
 
-	// Verify the cache was populated by the query
-	eBytes := Entity(e.Hash())
-	var nameAttr Attribute
-	copy(nameAttr[:], ":person/name")
-	key := CacheKey{E: eBytes, A: nameAttr}
+			// Verify the cache was populated by the query
+			eBytes := Entity(e.Hash())
+			var nameAttr Attribute
+			copy(nameAttr[:], ":person/name")
+			key := CacheKey{E: eBytes, A: nameAttr}
 
-	// The cache should now have an entry from the query execution
-	entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
-	require.NotNil(t, entry, "cache should be populated after query execution")
-	assert.Equal(t, "Alice", entry.OneValue())
+			// The cache should now have an entry from the query execution
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
+			require.NotNil(t, entry, "cache should be populated after query execution")
+			assert.Equal(t, "Alice", entry.OneValue())
+		})
+	}
 }
 
 // TestJoinQueryUsesCache verifies that join queries with bound E from bindings
 // also use the cache path.
 func TestJoinQueryUsesCache(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	// Create schema
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Attribute(":person/city").Type(schema.TypeString).One().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Attribute(":person/city").Type(schema.TypeString).One().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add data
-	tx := db.NewTransaction()
-	e1 := datalog.NewIdentity("person1")
-	e2 := datalog.NewIdentity("person2")
-	err = tx.Set(e1, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	err = tx.Set(e1, datalog.NewKeyword(":person/city"), "NYC")
-	require.NoError(t, err)
-	err = tx.Set(e2, datalog.NewKeyword(":person/name"), "Bob")
-	require.NoError(t, err)
-	err = tx.Set(e2, datalog.NewKeyword(":person/city"), "LA")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db.NewTransaction()
+			e1 := datalog.NewIdentity("person1")
+			e2 := datalog.NewIdentity("person2")
+			err = tx.Set(e1, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			err = tx.Set(e1, datalog.NewKeyword(":person/city"), "NYC")
+			require.NoError(t, err)
+			err = tx.Set(e2, datalog.NewKeyword(":person/name"), "Bob")
+			require.NoError(t, err)
+			err = tx.Set(e2, datalog.NewKeyword(":person/city"), "LA")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Clear the cache
-	db.Cache().Clear()
+			// Clear the cache
+			db.Cache().Clear()
 
-	// Execute a join query - the second pattern should use cache after ?e is bound
-	// from the first pattern
-	result, err := executor.CollectTuples(db.Query(`[:find ?name ?city :where [?e :person/name ?name] [?e :person/city ?city]]`))
-	require.NoError(t, err)
-	require.Len(t, result, 2, "should return 2 person results")
+			// Execute a join query - the second pattern should use cache after ?e is bound
+			// from the first pattern
+			result, err := executor.CollectTuples(db.Query(`[:find ?name ?city :where [?e :person/name ?name] [?e :person/city ?city]]`))
+			require.NoError(t, err)
+			require.Len(t, result, 2, "should return 2 person results")
 
-	// Verify results contain expected data
-	names := make(map[string]string)
-	for _, tuple := range result {
-		names[tuple[0].(string)] = tuple[1].(string)
+			// Verify results contain expected data
+			names := make(map[string]string)
+			for _, tuple := range result {
+				names[tuple[0].(string)] = tuple[1].(string)
+			}
+			assert.Equal(t, "NYC", names["Alice"])
+			assert.Equal(t, "LA", names["Bob"])
+
+			// Verify the cache was populated for the city attribute
+			e1Bytes := Entity(e1.Hash())
+			var cityAttr Attribute
+			copy(cityAttr[:], ":person/city")
+			key := CacheKey{E: e1Bytes, A: cityAttr}
+
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
+			require.NotNil(t, entry, "cache should be populated after join query")
+			assert.Equal(t, "NYC", entry.OneValue())
+		})
 	}
-	assert.Equal(t, "NYC", names["Alice"])
-	assert.Equal(t, "LA", names["Bob"])
-
-	// Verify the cache was populated for the city attribute
-	e1Bytes := Entity(e1.Hash())
-	var cityAttr Attribute
-	copy(cityAttr[:], ":person/city")
-	key := CacheKey{E: e1Bytes, A: cityAttr}
-
-	entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
-	require.NotNil(t, entry, "cache should be populated after join query")
-	assert.Equal(t, "NYC", entry.OneValue())
 }
 
 // TestCardinalityManyQueryUsesCache verifies queries on cardinality-many
 // attributes use the cache.
 func TestCardinalityManyQueryUsesCache(t *testing.T) {
-	db, cleanup := createCacheIntegrationTestDatabase(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	// Create schema with cardinality-many attribute
-	s, err := schema.NewBuilder().
-		Attribute(":person/name").Type(schema.TypeString).One().Add().
-		Attribute(":person/tags").Type(schema.TypeString).Many().Add().
-		Build()
-	require.NoError(t, err)
-	db.SetSchema(s)
+			// Create schema with cardinality-many attribute
+			s, err := schema.NewBuilder().
+				Attribute(":person/name").Type(schema.TypeString).One().Add().
+				Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+				Build()
+			require.NoError(t, err)
+			db.SetSchema(s)
 
-	// Add data
-	tx := db.NewTransaction()
-	e := datalog.NewIdentity("person1")
-	err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
-	require.NoError(t, err)
-	err = tx.Add(e, datalog.NewKeyword(":person/tags"), "developer")
-	require.NoError(t, err)
-	err = tx.Add(e, datalog.NewKeyword(":person/tags"), "golang")
-	require.NoError(t, err)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			// Add data
+			tx := db.NewTransaction()
+			e := datalog.NewIdentity("person1")
+			err = tx.Set(e, datalog.NewKeyword(":person/name"), "Alice")
+			require.NoError(t, err)
+			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "developer")
+			require.NoError(t, err)
+			err = tx.Add(e, datalog.NewKeyword(":person/tags"), "golang")
+			require.NoError(t, err)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Clear the cache
-	db.Cache().Clear()
+			// Clear the cache
+			db.Cache().Clear()
 
-	// Execute query for cardinality-many attribute
-	result, err := executor.CollectTuples(db.Query(`[:find ?tag :where [?e :person/name "Alice"] [?e :person/tags ?tag]]`))
-	require.NoError(t, err)
-	require.Len(t, result, 2, "should return 2 tags")
+			// Execute query for cardinality-many attribute
+			result, err := executor.CollectTuples(db.Query(`[:find ?tag :where [?e :person/name "Alice"] [?e :person/tags ?tag]]`))
+			require.NoError(t, err)
+			require.Len(t, result, 2, "should return 2 tags")
 
-	// Verify results
-	tags := make(map[interface{}]bool)
-	for _, tuple := range result {
-		tags[tuple[0]] = true
+			// Verify results
+			tags := make(map[interface{}]bool)
+			for _, tuple := range result {
+				tags[tuple[0]] = true
+			}
+			assert.True(t, tags["developer"])
+			assert.True(t, tags["golang"])
+
+			// Verify the cache was populated
+			eBytes := Entity(e.Hash())
+			var tagsAttr Attribute
+			copy(tagsAttr[:], ":person/tags")
+			key := CacheKey{E: eBytes, A: tagsAttr}
+
+			entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
+			require.NotNil(t, entry, "cache should be populated after cardinality-many query")
+			_, hasDeveloper := entry.ManySet()["developer"]
+			_, hasGolang := entry.ManySet()["golang"]
+			assert.True(t, hasDeveloper)
+			assert.True(t, hasGolang)
+		})
 	}
-	assert.True(t, tags["developer"])
-	assert.True(t, tags["golang"])
-
-	// Verify the cache was populated
-	eBytes := Entity(e.Hash())
-	var tagsAttr Attribute
-	copy(tagsAttr[:], ":person/tags")
-	key := CacheKey{E: eBytes, A: tagsAttr}
-
-	entry := db.Cache().GetOrResolve(key, db.Matcher().(*BadgerMatcher))
-	require.NotNil(t, entry, "cache should be populated after cardinality-many query")
-	_, hasDeveloper := entry.ManySet()["developer"]
-	_, hasGolang := entry.ManySet()["golang"]
-	assert.True(t, hasDeveloper)
-	assert.True(t, hasGolang)
 }
 
 // TestCacheConcurrency verifies that concurrent cache access with real storage

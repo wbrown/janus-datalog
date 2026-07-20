@@ -71,41 +71,46 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	// Force HashJoinScan by setting threshold to 0 (default behavior after fix)
-	matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-		IndexNestedLoopThreshold: 0, // Always use HashJoinScan
-	})
-	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Force HashJoinScan by setting threshold to 0 (default behavior after fix)
+			matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+				IndexNestedLoopThreshold: 0, // Always use HashJoinScan
+			})
+			exec := executor.NewExecutorWithOptions(matcher, db,
+				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-	result, err := exec.Execute(q)
-	assert.NoError(t, err)
-	assert.False(t, result.IsEmpty(), "Should have results when HashJoinScan correctly uses symbol index")
+			result, err := exec.Execute(q)
+			assert.NoError(t, err)
+			assert.False(t, result.IsEmpty(), "Should have results when HashJoinScan correctly uses symbol index")
 
-	// Should find all 5 price entities
-	assert.Equal(t, 5, result.Size(), "Should find 5 price entities")
+			// Should find all 5 price entities
+			assert.Equal(t, 5, result.Size(), "Should find 5 price entities")
 
-	// Verify we actually got the right entities
-	it := result.Iterator()
-	defer it.Close()
-	count := 0
-	for it.Next() {
-		tuple := it.Tuple()
-		assert.Len(t, tuple, 2, "Should have 2 symbols: ?e and ?value")
-		// Verify entity is an Identity
-		switch v := tuple[0].(type) {
-		case datalog.Identity:
-			// Valid Identity type
-		default:
-			t.Errorf("First tuple position should be Identity, got %T: %v", v, v)
-		}
-		// Verify value is a float64
-		value, ok := tuple[1].(float64)
-		assert.True(t, ok, "Second symbol should be float64, got %T", tuple[1])
-		assert.GreaterOrEqual(t, value, 100.0)
-		assert.LessOrEqual(t, value, 104.0)
-		count++
+			// Verify we actually got the right entities
+			it := result.Iterator()
+			defer it.Close()
+			count := 0
+			for it.Next() {
+				tuple := it.Tuple()
+				assert.Len(t, tuple, 2, "Should have 2 symbols: ?e and ?value")
+				// Verify entity is an Identity
+				switch v := tuple[0].(type) {
+				case datalog.Identity:
+					// Valid Identity type
+				default:
+					t.Errorf("First tuple position should be Identity, got %T: %v", v, v)
+				}
+				// Verify value is a float64
+				value, ok := tuple[1].(float64)
+				assert.True(t, ok, "Second symbol should be float64, got %T", tuple[1])
+				assert.GreaterOrEqual(t, value, 100.0)
+				assert.LessOrEqual(t, value, 104.0)
+				count++
+			}
+			assert.Equal(t, 5, count, "Iterator should return 5 tuples")
+		})
 	}
-	assert.Equal(t, 5, count, "Iterator should return 5 tuples")
 }
 
 // TestHashJoinSymbolIndexMultiSymbol tests the fix works with multiple symbols
@@ -149,37 +154,42 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-		IndexNestedLoopThreshold: 0,
-	})
-	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+				IndexNestedLoopThreshold: 0,
+			})
+			exec := executor.NewExecutorWithOptions(matcher, db,
+				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-	result, err := exec.Execute(q)
-	assert.NoError(t, err)
-	assert.False(t, result.IsEmpty(), "Should find the joined entities")
-	assert.Equal(t, 1, result.Size(), "Should find one pair")
+			result, err := exec.Execute(q)
+			assert.NoError(t, err)
+			assert.False(t, result.IsEmpty(), "Should find the joined entities")
+			assert.Equal(t, 1, result.Size(), "Should find one pair")
 
-	it := result.Iterator()
-	defer it.Close()
-	assert.True(t, it.Next())
-	tuple := it.Tuple()
+			it := result.Iterator()
+			defer it.Close()
+			assert.True(t, it.Next())
+			tuple := it.Tuple()
 
-	// Verify we got Identity types (the actual values are hashes, not the original strings)
-	switch v := tuple[0].(type) {
-	case datalog.Identity:
-		// Valid Identity type
-	default:
-		t.Fatalf("Expected Identity in first tuple position, got %T", v)
+			// Verify we got Identity types (the actual values are hashes, not the original strings)
+			switch v := tuple[0].(type) {
+			case datalog.Identity:
+				// Valid Identity type
+			default:
+				t.Fatalf("Expected Identity in first tuple position, got %T", v)
+			}
+			switch v := tuple[1].(type) {
+			case datalog.Identity:
+				// Valid Identity type
+			default:
+				t.Fatalf("Expected Identity for second symbol, got %T", v)
+			}
+
+			// Both entities should be present and different
+			// (we can't easily compare against "A" and "B" since Identity uses hashes)
+		})
 	}
-	switch v := tuple[1].(type) {
-	case datalog.Identity:
-		// Valid Identity type
-	default:
-		t.Fatalf("Expected Identity for second symbol, got %T", v)
-	}
-
-	// Both entities should be present and different
-	// (we can't easily compare against "A" and "B" since Identity uses hashes)
 }
 
 func TestCompiledBindingMatchUsesPrecomputedSymbolSlots(t *testing.T) {
@@ -232,14 +242,19 @@ func TestStorageHashJoinMatchesSignedZero(t *testing.T) {
 		         [?right :number/right ?value]]`,
 	)
 	assert.NoError(t, err)
-	matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
-		IndexNestedLoopThreshold: 0,
-	})
-	exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			matcher := NewBadgerMatcherWithOptions(db.Store(), executor.ExecutorOptions{
+				IndexNestedLoopThreshold: 0,
+			})
+			exec := executor.NewExecutorWithOptions(matcher, db,
+				planner.PlannerOptions{EnableAlgebraOptimizer: mode.algebra})
 
-	result, err := exec.Execute(parsed)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, result.Size())
+			result, err := exec.Execute(parsed)
+			assert.NoError(t, err)
+			assert.Equal(t, 1, result.Size())
+		})
+	}
 }
 
 func TestCompiledBindingMatchPlanAllDatomPositions(t *testing.T) {

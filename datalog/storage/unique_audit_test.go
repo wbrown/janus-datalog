@@ -29,37 +29,40 @@ import (
 // Locks in the regression guard — Pull wildcard uses ResolveAllAttributes
 // which uses ResolveLWW which applies the walk for unique attrs.
 func TestWildcardPull_UniqueFallback(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := openUniqueModeDB(t, mode)
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
-	name := datalog.NewKeyword(":user/name")
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			email := datalog.NewKeyword(":user/email")
+			name := datalog.NewKeyword(":user/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, name, "Alice"))
-	require.NoError(t, tx.Set(alice, email, "v1@example.com"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, name, "Alice"))
+			require.NoError(t, tx.Set(alice, email, "v1@example.com"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(alice, email, "v2@example.com"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(alice, email, "v2@example.com"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(bob, email, "v2@example.com"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(bob, email, "v2@example.com"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	result, err := db.Pull(alice, `[*]`)
-	require.NoError(t, err)
-	require.NotNil(t, result)
+			result, err := db.Pull(alice, `[*]`)
+			require.NoError(t, err)
+			require.NotNil(t, result)
 
-	assert.Equal(t, "Alice", result["user/name"])
-	assert.Equal(t, "v1@example.com", result["user/email"],
-		"wildcard pull should return alice's fallback email, not superseded latest")
+			assert.Equal(t, "Alice", result["user/name"])
+			assert.Equal(t, "v1@example.com", result["user/email"],
+				"wildcard pull should return alice's fallback email, not superseded latest")
+		})
+	}
 }
 
 // ================================================================
@@ -89,45 +92,48 @@ func TestWildcardPull_UniqueFallback(t *testing.T) {
 // would also return something weird in history mode). Documented as
 // an audit finding; fix or defer based on reviewer preference.
 func TestHistoryHandle_Pull_DoesNotApplyWalk(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := openUniqueModeDB(t, mode)
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			email := datalog.NewKeyword(":user/email")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, email, "v1@example.com"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, email, "v1@example.com"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(alice, email, "v2@example.com"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(alice, email, "v2@example.com"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(bob, email, "v2@example.com"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(bob, email, "v2@example.com"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// History handle.
-	hist := db.History()
-	result, err := hist.Pull(alice, `[:user/email]`)
-	require.NoError(t, err)
+			// History handle.
+			hist := db.History()
+			result, err := hist.Pull(alice, `[:user/email]`)
+			require.NoError(t, err)
 
-	// Under history semantics, we should NOT see the walk-derived
-	// fallback v1. We should see alice's latest raw Set: v2.
-	// (Her assertion of v2 is real even though it's superseded by bob
-	// under current-state resolution — history mode shows the raw
-	// assertion.)
-	if result == nil {
-		t.Fatal("history handle Pull returned nil result — at minimum, alice has a Set(email, v2) assertion visible in history")
+			// Under history semantics, we should NOT see the walk-derived
+			// fallback v1. We should see alice's latest raw Set: v2.
+			// (Her assertion of v2 is real even though it's superseded by bob
+			// under current-state resolution — history mode shows the raw
+			// assertion.)
+			if result == nil {
+				t.Fatal("history handle Pull returned nil result — at minimum, alice has a Set(email, v2) assertion visible in history")
+			}
+			got, hasEmail := result["user/email"]
+			require.True(t, hasEmail, "history handle Pull should return alice's email assertion; got %v", result)
+			assert.Equal(t, "v2@example.com", got,
+				"history-handle Pull should return raw latest Set (v2), not walk-derived fallback (v1)")
+		})
 	}
-	got, hasEmail := result["user/email"]
-	require.True(t, hasEmail, "history handle Pull should return alice's email assertion; got %v", result)
-	assert.Equal(t, "v2@example.com", got,
-		"history-handle Pull should return raw latest Set (v2), not walk-derived fallback (v1)")
 }
 
 // TestHistoryHandle_WildcardPull: wildcard pull on a history handle
@@ -140,43 +146,46 @@ func TestHistoryHandle_Pull_DoesNotApplyWalk(t *testing.T) {
 // the audit. If the test surfaces unexpected walk behavior, we need
 // to add a history-mode guard to ResolveLWW.
 func TestHistoryHandle_WildcardPull(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := openUniqueModeDB(t, mode)
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
-	name := datalog.NewKeyword(":user/name")
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			email := datalog.NewKeyword(":user/email")
+			name := datalog.NewKeyword(":user/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(alice, name, "Alice"))
-	require.NoError(t, tx.Set(alice, email, "v1@example.com"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(alice, name, "Alice"))
+			require.NoError(t, tx.Set(alice, email, "v1@example.com"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(alice, email, "v2@example.com"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(alice, email, "v2@example.com"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx = db.NewTransaction()
-	require.NoError(t, tx.Set(bob, email, "v2@example.com"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx = db.NewTransaction()
+			require.NoError(t, tx.Set(bob, email, "v2@example.com"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	hist := db.History()
-	result, err := hist.Pull(alice, `[*]`)
-	require.NoError(t, err)
-	require.NotNil(t, result)
+			hist := db.History()
+			result, err := hist.Pull(alice, `[*]`)
+			require.NoError(t, err)
+			require.NotNil(t, result)
 
-	// History semantics: alice's latest Set assertion is v2. That should
-	// be what wildcard pull returns, not the walk-derived fallback v1.
-	got, hasEmail := result["user/email"]
-	require.True(t, hasEmail)
-	assert.Equal(t, "v2@example.com", got,
-		"history-handle wildcard pull should return raw latest Set (v2), "+
-			"not walk-derived fallback (v1). This requires ResolveLWW to "+
-			"respect history-mode semantics.")
+			// History semantics: alice's latest Set assertion is v2. That should
+			// be what wildcard pull returns, not the walk-derived fallback v1.
+			got, hasEmail := result["user/email"]
+			require.True(t, hasEmail)
+			assert.Equal(t, "v2@example.com", got,
+				"history-handle wildcard pull should return raw latest Set (v2), "+
+					"not walk-derived fallback (v1). This requires ResolveLWW to "+
+					"respect history-mode semantics.")
+		})
+	}
 }
 
 // ================================================================

@@ -57,66 +57,71 @@ func TestIteratorLeak_BuiltinPatternDiscoveredEntity(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir, err := os.MkdirTemp("", "iter-leak-*")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer os.RemoveAll(dir)
-
-			db, err := NewDatabase(dir)
-			if err != nil {
-				t.Fatalf("Failed to create database: %v", err)
-			}
-
-			// Insert entities — some with :entity/code, some without
-			tx := db.NewTransaction()
-			for i := range 10 {
-				id := datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
-				tx.Add(id, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/room"))
-				tx.Add(id, datalog.NewKeyword(":entity/name"), fmt.Sprintf("Room %d", i))
-				if i%2 == 0 {
-					tx.Add(id, datalog.NewKeyword(":entity/code"), fmt.Sprintf("R%d", i))
-				}
-			}
-			_, err = tx.Commit()
-			if err != nil {
-				t.Fatalf("Commit failed: %v", err)
-			}
-
-			// Run query with pattern-discovered entities
-			var results []any
-			err = db.QueryInto(&results, tc.query)
-			if err != nil {
-				t.Fatalf("Query failed: %v", err)
-			}
-			if len(results) == 0 {
-				t.Fatal("Expected results, got none")
-			}
-
-			// Close database
-			if err := db.Close(); err != nil {
-				t.Fatalf("Close failed: %v", err)
-			}
-			runtime.GC()
-
-			// After db.Close(), the WAL file (00001.mem) should have been
-			// deleted by the memtable skiplist's OnClose callback. If the
-			// iterator was leaked, the skiplist ref count never reached zero
-			// and the WAL persists.
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				t.Fatalf("ReadDir failed: %v", err)
-			}
-			for _, entry := range entries {
-				if filepath.Ext(entry.Name()) == ".mem" {
-					info, _ := entry.Info()
-					size := int64(0)
-					if info != nil {
-						size = info.Size()
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					dir, err := os.MkdirTemp("", "iter-leak-*")
+					if err != nil {
+						t.Fatal(err)
 					}
-					t.Errorf("WAL file %s (%d MB) persists after db.Close() — iterator not closed",
-						entry.Name(), size/(1024*1024))
-				}
+					defer os.RemoveAll(dir)
+
+					popts := mode.plannerOptions()
+					db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: &popts})
+					if err != nil {
+						t.Fatalf("Failed to create database: %v", err)
+					}
+
+					// Insert entities — some with :entity/code, some without
+					tx := db.NewTransaction()
+					for i := range 10 {
+						id := datalog.NewIdentity(fmt.Sprintf("entity-%d", i))
+						tx.Add(id, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":entity.type/room"))
+						tx.Add(id, datalog.NewKeyword(":entity/name"), fmt.Sprintf("Room %d", i))
+						if i%2 == 0 {
+							tx.Add(id, datalog.NewKeyword(":entity/code"), fmt.Sprintf("R%d", i))
+						}
+					}
+					_, err = tx.Commit()
+					if err != nil {
+						t.Fatalf("Commit failed: %v", err)
+					}
+
+					// Run query with pattern-discovered entities
+					var results []any
+					err = db.QueryInto(&results, tc.query)
+					if err != nil {
+						t.Fatalf("Query failed: %v", err)
+					}
+					if len(results) == 0 {
+						t.Fatal("Expected results, got none")
+					}
+
+					// Close database
+					if err := db.Close(); err != nil {
+						t.Fatalf("Close failed: %v", err)
+					}
+					runtime.GC()
+
+					// After db.Close(), the WAL file (00001.mem) should have been
+					// deleted by the memtable skiplist's OnClose callback. If the
+					// iterator was leaked, the skiplist ref count never reached zero
+					// and the WAL persists.
+					entries, err := os.ReadDir(dir)
+					if err != nil {
+						t.Fatalf("ReadDir failed: %v", err)
+					}
+					for _, entry := range entries {
+						if filepath.Ext(entry.Name()) == ".mem" {
+							info, _ := entry.Info()
+							size := int64(0)
+							if info != nil {
+								size = info.Size()
+							}
+							t.Errorf("WAL file %s (%d MB) persists after db.Close() — iterator not closed",
+								entry.Name(), size/(1024*1024))
+						}
+					}
+				})
 			}
 		})
 	}

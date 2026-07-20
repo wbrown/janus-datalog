@@ -362,56 +362,67 @@ func TestPlannerPredicatePushdownIntegration(t *testing.T) {
 	}
 
 	t.Run("WithoutPredicatePushdown", func(t *testing.T) {
-		// Create executor with default options
-		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{})
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				// Create executor with default options
+				matcher := NewBadgerMatcher(db.store)
+				exec := executor.NewExecutorWithOptions(matcher, db, planner.PlannerOptions{
+					EnableAlgebraOptimizer: mode.algebra,
+				})
 
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatal(err)
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				// Iterate and count results
+				it := result.Iterator()
+				barCount := 0
+				for it.Next() {
+					barCount++
+				}
+				it.Close()
+
+				// Without pushdown, we fetch all days then filter
+				// Result should still be correct (390 bars for day 20)
+				if barCount != barsPerDay {
+					t.Errorf("Expected %d bars, got %d", barsPerDay, barCount)
+				}
+
+				t.Logf("Without pushdown: %d results (filtered from all %d days)",
+					barCount, 20)
+			})
 		}
-
-		// Iterate and count results
-		it := result.Iterator()
-		barCount := 0
-		for it.Next() {
-			barCount++
-		}
-		it.Close()
-
-		// Without pushdown, we fetch all days then filter
-		// Result should still be correct (390 bars for day 20)
-		if barCount != barsPerDay {
-			t.Errorf("Expected %d bars, got %d", barsPerDay, barCount)
-		}
-
-		t.Logf("Without pushdown: %d results (filtered from all %d days)",
-			barCount, 20)
 	})
 
 	t.Run("WithPredicatePushdown", func(t *testing.T) {
-		// Create executor with predicate pushdown enabled (default)
-		matcher := NewBadgerMatcher(db.store)
-		exec := executor.NewExecutor(matcher, db) // Has pushdown enabled by default
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				// Create executor with predicate pushdown enabled (default)
+				matcher := NewBadgerMatcher(db.store)
+				popts := mode.plannerOptions()
+				exec := executor.NewExecutorWithOptions(matcher, db, popts) // Has pushdown enabled by default
 
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatal(err)
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				// Iterate and count results
+				it := result.Iterator()
+				barCount := 0
+				for it.Next() {
+					barCount++
+				}
+				it.Close()
+
+				// With pushdown, storage only fetches day 20 data
+				if barCount != barsPerDay {
+					t.Errorf("Expected %d bars, got %d", barsPerDay, barCount)
+				}
+
+				t.Logf("With pushdown: %d results (filtered at storage layer)", barCount)
+			})
 		}
-
-		// Iterate and count results
-		it := result.Iterator()
-		barCount := 0
-		for it.Next() {
-			barCount++
-		}
-		it.Close()
-
-		// With pushdown, storage only fetches day 20 data
-		if barCount != barsPerDay {
-			t.Errorf("Expected %d bars, got %d", barsPerDay, barCount)
-		}
-
-		t.Logf("With pushdown: %d results (filtered at storage layer)", barCount)
 	})
 }

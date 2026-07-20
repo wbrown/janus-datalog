@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,35 +12,35 @@ import (
 // TestDecorrelatedOrJoinBranchResults traces what each or-join branch produces
 // to debug why scenario 2 (no tasks) is missing from results.
 func TestDecorrelatedOrJoinBranchResults(t *testing.T) {
-	dir, err := os.MkdirTemp("", "decorrelated-debug-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path: t.TempDir(),
+				AnnotationHandler: func(e annotations.Event) {
+					if e.Name == "or/branch.complete" {
+						t.Logf("[ANNOTATION] %s: %v", e.Name, e.Data)
+					}
+				},
+				PlannerOptions: &popts,
+			})
+			require.NoError(t, err)
+			defer db.Close()
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dir,
-		AnnotationHandler: func(e annotations.Event) {
-			if e.Name == "or/branch.complete" {
-				t.Logf("[ANNOTATION] %s: %v", e.Name, e.Data)
-			}
-		},
-	})
-	require.NoError(t, err)
-	defer db.Close()
+			tx := db.NewTransaction()
+			scenario1 := datalog.NewIdentity("scenario:1")
+			scenario2 := datalog.NewIdentity("scenario:2")
+			task1 := datalog.NewIdentity("task:1")
 
-	tx := db.NewTransaction()
-	scenario1 := datalog.NewIdentity("scenario:1")
-	scenario2 := datalog.NewIdentity("scenario:2")
-	task1 := datalog.NewIdentity("task:1")
+			tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1")
+			tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2")
+			tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1)
+			tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete"))
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	tx.Add(scenario1, datalog.NewKeyword(":scenario/id"), "test-1")
-	tx.Add(scenario2, datalog.NewKeyword(":scenario/id"), "test-2")
-	tx.Add(task1, datalog.NewKeyword(":task/scenario"), scenario1)
-	tx.Add(task1, datalog.NewKeyword(":task/status"), datalog.NewKeyword(":status/complete"))
-	_, err = tx.Commit()
-	require.NoError(t, err)
-
-	// Exact query from TestOrWithGetElseInsideSubquery_E2E
-	results, err := executor.CollectTuples(db.Query(`
+			// Exact query from TestOrWithGetElseInsideSubquery_E2E
+			results, err := executor.CollectTuples(db.Query(`
 		[:find ?scenario ?taskCount ?totalTokens
 		 :where
 		 [?scenario :scenario/id ?id]
@@ -53,7 +52,9 @@ func TestDecorrelatedOrJoinBranchResults(t *testing.T) {
 		         $ ?scenario) [[?taskCount ?totalTokens]]]
 		     (and [(ground 0) ?taskCount]
 		          [(ground 0) ?totalTokens]))]`))
-	require.NoError(t, err)
-	t.Logf("Results: %v", results)
-	require.Len(t, results, 2, "should return both scenarios")
+			require.NoError(t, err)
+			t.Logf("Results: %v", results)
+			require.Len(t, results, 2, "should return both scenarios")
+		})
+	}
 }

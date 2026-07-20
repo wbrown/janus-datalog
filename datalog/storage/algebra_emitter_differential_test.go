@@ -11,7 +11,7 @@ import (
 )
 
 func TestAlgebraBridgeOptimizedOffExactTupleDifferential(t *testing.T) {
-	db, cleanup := setupAlgebraTestDB(t)
+	db, cleanup := setupAlgebraTestDB(t, nil)
 	defer cleanup()
 
 	testCases := []struct {

@@ -35,71 +35,70 @@ import (
 // where a CardinalityOne attribute query returns all historical values instead of
 // the LWW-resolved single value.
 func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dir,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	// Create schema with CardinalityOne
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
+			// Create schema with CardinalityOne
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	personID := datalog.NewIdentity("person-1")
-	nameAttr := datalog.NewKeyword(":person/name")
+			personID := datalog.NewIdentity("person-1")
+			nameAttr := datalog.NewKeyword(":person/name")
 
-	// Write multiple values to the same CardinalityOne attribute
-	// Under LWW semantics, only the last value should be "current"
-	names := []string{"Alice", "Bob", "Charlie", "Diana"}
-	for _, name := range names {
-		tx := db.NewTransaction()
-		err = tx.Set(personID, nameAttr, name)
-		require.NoError(t, err)
-		_, err = tx.Commit()
-		require.NoError(t, err)
-	}
+			// Write multiple values to the same CardinalityOne attribute
+			// Under LWW semantics, only the last value should be "current"
+			names := []string{"Alice", "Bob", "Charlie", "Diana"}
+			for _, name := range names {
+				tx := db.NewTransaction()
+				err := tx.Set(personID, nameAttr, name)
+				require.NoError(t, err)
+				_, err = tx.Commit()
+				require.NoError(t, err)
+			}
 
-	expectedName := "Diana" // Last value = LWW winner
+			expectedName := "Diana" // Last value = LWW winner
 
-	// Verify PullInto works correctly (control case)
-	type Person struct {
-		ID   datalog.Identity `datalog:"-,id"`
-		Name string           `datalog:"person/name"`
-	}
-	var person Person
-	err = db.PullInto(personID, &person)
-	require.NoError(t, err)
-	assert.Equal(t, expectedName, person.Name, "PullInto should return LWW-resolved value")
+			// Verify PullInto works correctly (control case)
+			type Person struct {
+				ID   datalog.Identity `datalog:"-,id"`
+				Name string           `datalog:"person/name"`
+			}
+			var person Person
+			err := db.PullInto(personID, &person)
+			require.NoError(t, err)
+			assert.Equal(t, expectedName, person.Name, "PullInto should return LWW-resolved value")
 
-	// THE BUG: ExecuteQueryWithInputs returns ALL historical values
-	results, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-		personID, nameAttr))
-	require.NoError(t, err)
+			// THE BUG: ExecuteQueryWithInputs returns ALL historical values
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+				personID, nameAttr))
+			require.NoError(t, err)
 
-	t.Logf("ExecuteQueryWithInputs returned %d results: %v", len(results), results)
+			t.Logf("ExecuteQueryWithInputs returned %d results: %v", len(results), results)
 
-	// This assertion will FAIL until the bug is fixed
-	// Currently returns: [[Alice] [Bob] [Charlie] [Diana]]
-	// Should return: [[Diana]]
-	if len(results) != 1 {
-		t.Errorf("BUG CONFIRMED: CardinalityOne query returned %d values instead of 1", len(results))
-		t.Log("Expected: 1 result (LWW-resolved value)")
-		t.Logf("Got: %d results (all historical values)", len(results))
-		for i, r := range results {
-			t.Logf("  [%d]: %v", i, r)
-		}
-	}
+			// This assertion will FAIL until the bug is fixed
+			// Currently returns: [[Alice] [Bob] [Charlie] [Diana]]
+			// Should return: [[Diana]]
+			if len(results) != 1 {
+				t.Errorf("BUG CONFIRMED: CardinalityOne query returned %d values instead of 1", len(results))
+				t.Log("Expected: 1 result (LWW-resolved value)")
+				t.Logf("Got: %d results (all historical values)", len(results))
+				for i, r := range results {
+					t.Logf("  [%d]: %v", i, r)
+				}
+			}
 
-	assert.Len(t, results, 1, "CardinalityOne should return exactly 1 value")
-	if len(results) == 1 {
-		assert.Equal(t, expectedName, results[0][0], "Should return LWW-resolved value")
+			assert.Len(t, results, 1, "CardinalityOne should return exactly 1 value")
+			if len(results) == 1 {
+				assert.Equal(t, expectedName, results[0][0], "Should return LWW-resolved value")
+			}
+		})
 	}
 }
 
@@ -107,162 +106,160 @@ func TestExecuteQueryWithInputs_CardinalityOne_ReturnsMultipleValues(t *testing.
 // the bug where a CardinalityMany attribute query returns all ever-added values
 // instead of the current set (with tombstoned values excluded).
 func TestExecuteQueryWithInputs_CardinalityMany_ReturnsAllHistoricalValues(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dir,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	// Create schema with CardinalityMany
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/tags"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityMany,
-	})
-	db.SetSchema(s)
+			// Create schema with CardinalityMany
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/tags"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityMany,
+			})
+			db.SetSchema(s)
 
-	personID := datalog.NewIdentity("person-1")
-	tagsAttr := datalog.NewKeyword(":person/tags")
+			personID := datalog.NewIdentity("person-1")
+			tagsAttr := datalog.NewKeyword(":person/tags")
 
-	// Set tags multiple times - each Set replaces the entire set
-	tagSets := [][]string{
-		{"red", "green", "blue"},
-		{"alpha", "beta"},
-		{"one", "two", "three"},
+			// Set tags multiple times - each Set replaces the entire set
+			tagSets := [][]string{
+				{"red", "green", "blue"},
+				{"alpha", "beta"},
+				{"one", "two", "three"},
+			}
+			for _, tags := range tagSets {
+				tx := db.NewTransaction()
+				// Convert to []interface{} for Set
+				tagValues := make([]interface{}, len(tags))
+				for i, tag := range tags {
+					tagValues[i] = tag
+				}
+				err := tx.Set(personID, tagsAttr, tagValues)
+				require.NoError(t, err)
+				_, err = tx.Commit()
+				require.NoError(t, err)
+			}
+
+			expectedTags := []string{"one", "two", "three"} // Last set
+
+			// Verify PullInto works correctly (control case)
+			type Person struct {
+				ID   datalog.Identity `datalog:"-,id"`
+				Tags []string         `datalog:"person/tags"`
+			}
+			var person Person
+			err := db.PullInto(personID, &person)
+			require.NoError(t, err)
+			assert.Len(t, person.Tags, len(expectedTags), "PullInto should return current set only")
+			t.Logf("PullInto returned tags: %v", person.Tags)
+
+			// THE BUG: ExecuteQueryWithInputs returns ALL ever-added tags
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+				personID, tagsAttr))
+			require.NoError(t, err)
+
+			t.Logf("ExecuteQueryWithInputs returned %d results", len(results))
+			for i, r := range results {
+				t.Logf("  [%d]: %v", i, r)
+			}
+
+			// This assertion will FAIL until the bug is fixed
+			// Currently returns all 8 unique tags ever added
+			// Should return only the current 3 tags
+			if len(results) != len(expectedTags) {
+				t.Errorf("BUG CONFIRMED: CardinalityMany query returned %d values instead of %d",
+					len(results), len(expectedTags))
+				t.Logf("Expected: %d results (current set members)", len(expectedTags))
+				t.Logf("Got: %d results (all historical values)", len(results))
+			}
+
+			assert.Len(t, results, len(expectedTags),
+				"CardinalityMany should return only current set members")
+		})
 	}
-	for _, tags := range tagSets {
-		tx := db.NewTransaction()
-		// Convert to []interface{} for Set
-		tagValues := make([]interface{}, len(tags))
-		for i, tag := range tags {
-			tagValues[i] = tag
-		}
-		err = tx.Set(personID, tagsAttr, tagValues)
-		require.NoError(t, err)
-		_, err = tx.Commit()
-		require.NoError(t, err)
-	}
-
-	expectedTags := []string{"one", "two", "three"} // Last set
-
-	// Verify PullInto works correctly (control case)
-	type Person struct {
-		ID   datalog.Identity `datalog:"-,id"`
-		Tags []string         `datalog:"person/tags"`
-	}
-	var person Person
-	err = db.PullInto(personID, &person)
-	require.NoError(t, err)
-	assert.Len(t, person.Tags, len(expectedTags), "PullInto should return current set only")
-	t.Logf("PullInto returned tags: %v", person.Tags)
-
-	// THE BUG: ExecuteQueryWithInputs returns ALL ever-added tags
-	results, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-		personID, tagsAttr))
-	require.NoError(t, err)
-
-	t.Logf("ExecuteQueryWithInputs returned %d results", len(results))
-	for i, r := range results {
-		t.Logf("  [%d]: %v", i, r)
-	}
-
-	// This assertion will FAIL until the bug is fixed
-	// Currently returns all 8 unique tags ever added
-	// Should return only the current 3 tags
-	if len(results) != len(expectedTags) {
-		t.Errorf("BUG CONFIRMED: CardinalityMany query returned %d values instead of %d",
-			len(results), len(expectedTags))
-		t.Logf("Expected: %d results (current set members)", len(expectedTags))
-		t.Logf("Got: %d results (all historical values)", len(results))
-	}
-
-	assert.Len(t, results, len(expectedTags),
-		"CardinalityMany should return only current set members")
 }
 
 // TestDirectMatch_VsExecuteQuery_CRDTResolution compares direct Match with ExecuteQuery
 // to isolate whether the bug is in the matcher or the query executor.
 func TestDirectMatch_VsExecuteQuery_CRDTResolution(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dir,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
 
-	// Create schema with CardinalityOne
-	s := schema.NewSchema()
-	s.Add(&schema.AttributeDefinition{
-		Ident:       datalog.NewKeyword(":person/name"),
-		ValueType:   schema.TypeString,
-		Cardinality: schema.CardinalityOne,
-	})
-	db.SetSchema(s)
+			// Create schema with CardinalityOne
+			s := schema.NewSchema()
+			s.Add(&schema.AttributeDefinition{
+				Ident:       datalog.NewKeyword(":person/name"),
+				ValueType:   schema.TypeString,
+				Cardinality: schema.CardinalityOne,
+			})
+			db.SetSchema(s)
 
-	personID := datalog.NewIdentity("person-1")
-	nameAttr := datalog.NewKeyword(":person/name")
+			personID := datalog.NewIdentity("person-1")
+			nameAttr := datalog.NewKeyword(":person/name")
 
-	// Write multiple values
-	for _, name := range []string{"Alice", "Bob", "Charlie"} {
-		tx := db.NewTransaction()
-		err = tx.Set(personID, nameAttr, name)
-		require.NoError(t, err)
-		_, err = tx.Commit()
-		require.NoError(t, err)
-	}
+			// Write multiple values
+			for _, name := range []string{"Alice", "Bob", "Charlie"} {
+				tx := db.NewTransaction()
+				err := tx.Set(personID, nameAttr, name)
+				require.NoError(t, err)
+				_, err = tx.Commit()
+				require.NoError(t, err)
+			}
 
-	// Test direct Match (via db.Matcher())
-	matcher := NewBadgerMatcher(db.Store())
-	matcher.SetSchema(s)
+			// Test direct Match (via db.Matcher())
+			matcher := NewBadgerMatcher(db.Store())
+			matcher.SetSchema(s)
 
-	pattern := &query.DataPattern{
-		Elements: []query.PatternElement{
-			query.Constant{Value: personID},
-			query.Constant{Value: nameAttr},
-			query.Variable{Name: datalog.NewSymbol("?name")},
-			query.Blank{},
-		},
-	}
+			pattern := &query.DataPattern{
+				Elements: []query.PatternElement{
+					query.Constant{Value: personID},
+					query.Constant{Value: nameAttr},
+					query.Variable{Name: datalog.NewSymbol("?name")},
+					query.Blank{},
+				},
+			}
 
-	results, err := matcher.Match(query.PatternQuery(pattern), nil)
-	require.NoError(t, err)
+			results, err := matcher.Match(query.PatternQuery(pattern), nil)
+			require.NoError(t, err)
 
-	// Count results from Match
-	matchCount := 0
-	iter := results.Iterator()
-	for iter.Next() {
-		matchCount++
-		t.Logf("Direct Match result: %v", iter.Tuple())
-	}
+			// Count results from Match
+			matchCount := 0
+			iter := results.Iterator()
+			for iter.Next() {
+				matchCount++
+				t.Logf("Direct Match result: %v", iter.Tuple())
+			}
 
-	t.Logf("Direct Match returned %d results", matchCount)
+			t.Logf("Direct Match returned %d results", matchCount)
 
-	// The matcher SHOULD return only 1 result for CardinalityOne
-	// If it returns multiple, the bug is in the matcher
-	// If it returns 1 but ExecuteQuery returns multiple, the bug is in the executor
-	if matchCount == 1 {
-		t.Log("Direct Match correctly returns 1 result - bug is in query executor")
-	} else {
-		t.Logf("Direct Match returns %d results - bug may be in matcher CRDT logic", matchCount)
-	}
+			// The matcher SHOULD return only 1 result for CardinalityOne
+			// If it returns multiple, the bug is in the matcher
+			// If it returns 1 but ExecuteQuery returns multiple, the bug is in the executor
+			if matchCount == 1 {
+				t.Log("Direct Match correctly returns 1 result - bug is in query executor")
+			} else {
+				t.Logf("Direct Match returns %d results - bug may be in matcher CRDT logic", matchCount)
+			}
 
-	// Also test ExecuteQueryWithInputs for comparison
-	queryResults, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
-		personID, nameAttr))
-	require.NoError(t, err)
+			// Also test ExecuteQueryWithInputs for comparison
+			queryResults, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e ?a :where [?e ?a ?v]]`,
+				personID, nameAttr))
+			require.NoError(t, err)
 
-	t.Logf("ExecuteQueryWithInputs returned %d results", len(queryResults))
+			t.Logf("ExecuteQueryWithInputs returned %d results", len(queryResults))
 
-	// Compare the two approaches
-	if matchCount == 1 && len(queryResults) > 1 {
-		t.Log("DIAGNOSIS: Direct Match works, ExecuteQueryWithInputs doesn't")
-		t.Log("The bug is in how the query executor uses the matcher")
-	} else if matchCount > 1 && len(queryResults) > 1 {
-		t.Log("DIAGNOSIS: Both return multiple - bug is in matcher CRDT resolution")
+			// Compare the two approaches
+			if matchCount == 1 && len(queryResults) > 1 {
+				t.Log("DIAGNOSIS: Direct Match works, ExecuteQueryWithInputs doesn't")
+				t.Log("The bug is in how the query executor uses the matcher")
+			} else if matchCount > 1 && len(queryResults) > 1 {
+				t.Log("DIAGNOSIS: Both return multiple - bug is in matcher CRDT resolution")
+			}
+		})
 	}
 }
 
@@ -307,12 +304,15 @@ func TestSchemaAwareness_InQueryExecution(t *testing.T) {
 // correctly apply CRDT resolution. This provides a comprehensive matrix of
 // working vs broken methods.
 func TestAllQueryMethods_CRDTResolution(t *testing.T) {
-	dir := t.TempDir()
-	db, err := NewDatabaseWithOptions(DatabaseOptions{
-		Path: dir,
-	})
-	require.NoError(t, err)
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			testAllQueryMethodsCRDTResolution(t, mode)
+		})
+	}
+}
+
+func testAllQueryMethodsCRDTResolution(t *testing.T, mode optimizerMode) {
+	db := createOptimizerModeDB(t, mode)
 
 	// Create schema with CardinalityOne
 	s := schema.NewSchema()
@@ -329,7 +329,7 @@ func TestAllQueryMethods_CRDTResolution(t *testing.T) {
 	// Write multiple values - only "Charlie" should be visible (LWW)
 	for _, name := range []string{"Alice", "Bob", "Charlie"} {
 		tx := db.NewTransaction()
-		err = tx.Set(personID, nameAttr, name)
+		err := tx.Set(personID, nameAttr, name)
 		require.NoError(t, err)
 		_, err = tx.Commit()
 		require.NoError(t, err)

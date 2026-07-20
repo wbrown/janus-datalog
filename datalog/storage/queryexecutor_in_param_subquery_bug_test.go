@@ -102,36 +102,40 @@ func TestQueryExecutorInParamWithCorrelatedSubquery(t *testing.T) {
 	q, err := parser.ParseQuery(queryStr)
 	assert.NoError(t, err)
 
-	// Convert inputs
-	inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
-	assert.NoError(t, err)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Convert inputs
+			inputRels, err := db.convertInputsToRelations(q, []interface{}{"AAPL"})
+			assert.NoError(t, err)
 
-	// Execute with GOPHER-STREET options
-	gopherStreetOpts := DefaultPlannerOptions()
+			// Execute with GOPHER-STREET options
+			gopherStreetOpts := mode.plannerOptions()
 
-	// Execute (like ExecuteQueryWithInputs but with custom options)
-	exec := db.NewExecutorWithOptions(gopherStreetOpts)
-	result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
+			// Execute (like ExecuteQueryWithInputs but with custom options)
+			exec := db.NewExecutorWithOptions(gopherStreetOpts)
+			result, err := exec.ExecuteWithRelations(executor.NewContext(nil), q, inputRels)
 
-	if err != nil {
-		t.Logf("BUG REPRODUCED! Error: %v", err)
-		t.Logf("QueryExecutor fails with :in + correlated subqueries")
-		t.Fatalf("BUG: %v", err)
-	}
+			if err != nil {
+				t.Logf("BUG REPRODUCED! Error: %v", err)
+				t.Logf("QueryExecutor fails with :in + correlated subqueries")
+				t.Fatalf("BUG: %v", err)
+			}
 
-	// Convert result to [][]interface{}
-	results := make([][]interface{}, 0)
-	it := result.Iterator()
-	defer it.Close()
-	for it.Next() {
-		results = append(results, it.Tuple())
-	}
+			// Convert result to [][]interface{}
+			results := make([][]interface{}, 0)
+			it := result.Iterator()
+			defer it.Close()
+			for it.Next() {
+				results = append(results, it.Tuple())
+			}
 
-	// If we get here, the bug is fixed
-	t.Logf("Bug NOT reproduced - test PASSES")
-	assert.Len(t, results, 2, "Should have 2 results (one per day)")
-	for _, tuple := range results {
-		assert.Len(t, tuple, 4, "Each result should have 4 symbols")
-		t.Logf("Result: date=%v, high=%v, low=%v, open=%v", tuple[0], tuple[1], tuple[2], tuple[3])
+			// If we get here, the bug is fixed
+			t.Logf("Bug NOT reproduced - test PASSES")
+			assert.Len(t, results, 2, "Should have 2 results (one per day)")
+			for _, tuple := range results {
+				assert.Len(t, tuple, 4, "Each result should have 4 symbols")
+				t.Logf("Result: date=%v, high=%v, low=%v, open=%v", tuple[0], tuple[1], tuple[2], tuple[3])
+			}
+		})
 	}
 }

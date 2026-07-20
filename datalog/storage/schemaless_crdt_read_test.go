@@ -99,37 +99,47 @@ func vectorSchema() schema.SchemaProvider {
 // CRDTResolvingIterator) and bound-E (cache) query paths, cache enabled and
 // disabled.
 func TestSchemalessRead_VectorMatchesSchemaAware(t *testing.T) {
-	for _, c := range reopenBackendCases() {
+	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			const n = 5
-			e := datalog.NewIdentity("doc-1")
-			writeVector(t, c, n, e)
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					// Fresh backend case per mode: each case's stored state
+					// lives in its closure, and the writes must not leak
+					// across optimizer legs.
+					c := reopenBackendCases()[i]
+					popts := mode.plannerOptions()
 
-			want := make([]string, n)
-			for i := range want {
-				want[i] = fmt.Sprintf("line %d", i)
-			}
+					const n = 5
+					e := datalog.NewIdentity("doc-1")
+					writeVector(t, c, n, e)
 
-			// Establish the schema-aware truth on the same bytes.
-			schemaDB := c.open(t, DatabaseOptions{Schema: vectorSchema(), ReplicaID: 1})
-			require.Equal(t, want, readVectorAsStrings(t, schemaDB, e, ":doc/lines", false),
-				"schema-aware unbound must see the full ordered vector")
-			require.Equal(t, want, readVectorAsStrings(t, schemaDB, e, ":doc/lines", true),
-				"schema-aware bound must see the full ordered vector")
+					want := make([]string, n)
+					for i := range want {
+						want[i] = fmt.Sprintf("line %d", i)
+					}
 
-			for _, tc := range []struct {
-				name string
-				opts DatabaseOptions
-			}{
-				{name: "schemaless_cache_on", opts: DatabaseOptions{ReplicaID: 1}},
-				{name: "schemaless_cache_off", opts: DatabaseOptions{ReplicaID: 1, DisableCache: true}},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					db := c.open(t, tc.opts)
-					require.Equal(t, want, readVectorAsStrings(t, db, e, ":doc/lines", false),
-						"schemaless unbound-E read must equal schema-aware read, not collapse to the last element")
-					require.Equal(t, want, readVectorAsStrings(t, db, e, ":doc/lines", true),
-						"schemaless bound-E read must equal schema-aware read, not collapse to the last element")
+					// Establish the schema-aware truth on the same bytes.
+					schemaDB := c.open(t, DatabaseOptions{Schema: vectorSchema(), ReplicaID: 1, PlannerOptions: &popts})
+					require.Equal(t, want, readVectorAsStrings(t, schemaDB, e, ":doc/lines", false),
+						"schema-aware unbound must see the full ordered vector")
+					require.Equal(t, want, readVectorAsStrings(t, schemaDB, e, ":doc/lines", true),
+						"schema-aware bound must see the full ordered vector")
+
+					for _, tc := range []struct {
+						name string
+						opts DatabaseOptions
+					}{
+						{name: "schemaless_cache_on", opts: DatabaseOptions{ReplicaID: 1, PlannerOptions: &popts}},
+						{name: "schemaless_cache_off", opts: DatabaseOptions{ReplicaID: 1, DisableCache: true, PlannerOptions: &popts}},
+					} {
+						t.Run(tc.name, func(t *testing.T) {
+							db := c.open(t, tc.opts)
+							require.Equal(t, want, readVectorAsStrings(t, db, e, ":doc/lines", false),
+								"schemaless unbound-E read must equal schema-aware read, not collapse to the last element")
+							require.Equal(t, want, readVectorAsStrings(t, db, e, ":doc/lines", true),
+								"schemaless bound-E read must equal schema-aware read, not collapse to the last element")
+						})
+					}
 				})
 			}
 		})
@@ -175,52 +185,62 @@ func TestSchemalessLookupAttribute_VectorMatchesSchemaAware(t *testing.T) {
 // TestSchemalessRead_ManyMatchesSchemaAware is the CardinalityMany counterpart:
 // a schemaless read must return the full set, not a single member.
 func TestSchemalessRead_ManyMatchesSchemaAware(t *testing.T) {
-	for _, c := range reopenBackendCases() {
+	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			e := datalog.NewIdentity("doc-1")
-			attr := datalog.NewKeyword(":doc/tags")
-			members := []string{"alpha", "beta", "gamma", "delta"}
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					// Fresh backend case per mode: each case's stored state
+					// lives in its closure, and the writes must not leak
+					// across optimizer legs.
+					c := reopenBackendCases()[i]
+					popts := mode.plannerOptions()
 
-			manySchema := func() schema.SchemaProvider {
-				return schema.NewBuilder().
-					Attribute(":doc/tags").Type(schema.TypeString).Many().Add().
-					MustBuild()
+					e := datalog.NewIdentity("doc-1")
+					attr := datalog.NewKeyword(":doc/tags")
+					members := []string{"alpha", "beta", "gamma", "delta"}
+
+					manySchema := func() schema.SchemaProvider {
+						return schema.NewBuilder().
+							Attribute(":doc/tags").Type(schema.TypeString).Many().Add().
+							MustBuild()
+					}
+
+					dbw := c.open(t, DatabaseOptions{Schema: manySchema(), ReplicaID: 1})
+					tx := dbw.NewTransaction()
+					for _, m := range members {
+						require.NoError(t, tx.Add(e, attr, m))
+					}
+					_, err := tx.Commit()
+					require.NoError(t, err)
+
+					collectSet := func(t *testing.T, db *Database) []string {
+						t.Helper()
+						rel, err := db.Query(`[:find ?v :in $ ?e :where [?e :doc/tags ?v]]`, e)
+						require.NoError(t, err)
+						it := rel.Iterator()
+						defer it.Close()
+						var got []string
+						for it.Next() {
+							s, ok := it.Tuple()[0].(string)
+							require.True(t, ok)
+							got = append(got, s)
+						}
+						require.NoError(t, it.Error())
+						sort.Strings(got)
+						return got
+					}
+
+					want := append([]string(nil), members...)
+					sort.Strings(want)
+
+					schemaDB := c.open(t, DatabaseOptions{Schema: manySchema(), ReplicaID: 1, PlannerOptions: &popts})
+					require.Equal(t, want, collectSet(t, schemaDB), "schema-aware must see full set")
+
+					db := c.open(t, DatabaseOptions{ReplicaID: 1, PlannerOptions: &popts})
+					require.Equal(t, want, collectSet(t, db),
+						"schemaless read must return the full add-wins set, not a single member")
+				})
 			}
-
-			dbw := c.open(t, DatabaseOptions{Schema: manySchema(), ReplicaID: 1})
-			tx := dbw.NewTransaction()
-			for _, m := range members {
-				require.NoError(t, tx.Add(e, attr, m))
-			}
-			_, err := tx.Commit()
-			require.NoError(t, err)
-
-			collectSet := func(t *testing.T, db *Database) []string {
-				t.Helper()
-				rel, err := db.Query(`[:find ?v :in $ ?e :where [?e :doc/tags ?v]]`, e)
-				require.NoError(t, err)
-				it := rel.Iterator()
-				defer it.Close()
-				var got []string
-				for it.Next() {
-					s, ok := it.Tuple()[0].(string)
-					require.True(t, ok)
-					got = append(got, s)
-				}
-				require.NoError(t, it.Error())
-				sort.Strings(got)
-				return got
-			}
-
-			want := append([]string(nil), members...)
-			sort.Strings(want)
-
-			schemaDB := c.open(t, DatabaseOptions{Schema: manySchema(), ReplicaID: 1})
-			require.Equal(t, want, collectSet(t, schemaDB), "schema-aware must see full set")
-
-			db := c.open(t, DatabaseOptions{ReplicaID: 1})
-			require.Equal(t, want, collectSet(t, db),
-				"schemaless read must return the full add-wins set, not a single member")
 		})
 	}
 }
@@ -234,27 +254,37 @@ func TestSchemalessRead_ManyMatchesSchemaAware(t *testing.T) {
 // would carry the highest Tx and the read would reclassify the group as
 // cardinality-one and return only the new element.
 func TestSchemalessReopen_WriteUsesInferredCardinality(t *testing.T) {
-	for _, c := range reopenBackendCases() {
+	for i, c := range reopenBackendCases() {
 		t.Run(c.name, func(t *testing.T) {
-			const n = 5
-			e := datalog.NewIdentity("doc-1")
-			writeVector(t, c, n, e) // :doc/lines written as a vector, with schema
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					// Fresh backend case per mode: each case's stored state
+					// lives in its closure, and the writes must not leak
+					// across optimizer legs.
+					c := reopenBackendCases()[i]
+					popts := mode.plannerOptions()
 
-			// Reopen WITHOUT a schema; cardinality is reconstructed from stored ops.
-			db := c.open(t, DatabaseOptions{ReplicaID: 1})
+					const n = 5
+					e := datalog.NewIdentity("doc-1")
+					writeVector(t, c, n, e) // :doc/lines written as a vector, with schema
 
-			// Append a new element through the schemaless handle.
-			tx := db.NewTransaction()
-			require.NoError(t, tx.Add(e, datalog.NewKeyword(":doc/lines"), fmt.Sprintf("line %d", n)))
-			_, err := tx.Commit()
-			require.NoError(t, err)
+					// Reopen WITHOUT a schema; cardinality is reconstructed from stored ops.
+					db := c.open(t, DatabaseOptions{ReplicaID: 1, PlannerOptions: &popts})
 
-			want := make([]string, n+1)
-			for i := range want {
-				want[i] = fmt.Sprintf("line %d", i)
+					// Append a new element through the schemaless handle.
+					tx := db.NewTransaction()
+					require.NoError(t, tx.Add(e, datalog.NewKeyword(":doc/lines"), fmt.Sprintf("line %d", n)))
+					_, err := tx.Commit()
+					require.NoError(t, err)
+
+					want := make([]string, n+1)
+					for i := range want {
+						want[i] = fmt.Sprintf("line %d", i)
+					}
+					require.Equal(t, want, readVectorAsStrings(t, db, e, ":doc/lines", false),
+						"schemaless append to an inferred vector attribute must extend the vector (RGA), not LWW-overwrite it")
+				})
 			}
-			require.Equal(t, want, readVectorAsStrings(t, db, e, ":doc/lines", false),
-				"schemaless append to an inferred vector attribute must extend the vector (RGA), not LWW-overwrite it")
 		})
 	}
 }

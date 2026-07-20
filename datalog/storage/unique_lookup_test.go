@@ -26,20 +26,42 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
-// setupUniqueTestDB creates a database with :user/email (UniqueValue) and
-// :user/name (not unique) attributes.
-func setupUniqueTestDB(t *testing.T) (*Database, func()) {
+// uniqueTestSchema builds the schema shared by the unique-resolution tests:
+// :user/email (UniqueValue) and :user/name (not unique).
+func uniqueTestSchema(t *testing.T) *schema.Schema {
 	t.Helper()
-	dir := t.TempDir()
 	s, err := schema.NewBuilder().
 		Attribute(":user/email").Type(schema.TypeString).Unique(schema.UniqueValue).Add().
 		Attribute(":user/name").Type(schema.TypeString).One().Add().
 		Build()
 	require.NoError(t, err)
+	return s
+}
 
-	db, err := NewDatabaseWithSchema(dir, s)
+// setupUniqueTestDB creates a database with :user/email (UniqueValue) and
+// :user/name (not unique) attributes.
+func setupUniqueTestDB(t *testing.T) (*Database, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	db, err := NewDatabaseWithSchema(dir, uniqueTestSchema(t))
 	require.NoError(t, err)
 	return db, func() { db.Close() }
+}
+
+// openUniqueModeDB creates the same database as setupUniqueTestDB with the
+// optimizer mode's planner options as the database default; query-executing
+// tests construct one per mode.
+func openUniqueModeDB(t *testing.T, mode optimizerMode) *Database {
+	t.Helper()
+	popts := mode.plannerOptions()
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           t.TempDir(),
+		Schema:         uniqueTestSchema(t),
+		PlannerOptions: &popts,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	return db
 }
 
 // setupUniqueIdentityTestDB creates a database with :user/email declared as
@@ -312,43 +334,46 @@ func TestLookupByUnique_NoSchema(t *testing.T) {
 // attribute with multiple claimants returns exactly the (A, V)-LWW winner,
 // not all claimants.
 func TestVBoundQuery_MultiClaimant_SingleWinner(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := openUniqueModeDB(t, mode)
 
-	alice := datalog.NewIdentity("alice")
-	bob := datalog.NewIdentity("bob")
-	email := datalog.NewKeyword(":user/email")
-	shared := "shared@example.com"
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			email := datalog.NewKeyword(":user/email")
+			shared := "shared@example.com"
 
-	tx1 := db.NewTransaction()
-	require.NoError(t, tx1.Set(alice, email, shared))
-	_, err := tx1.Commit()
-	require.NoError(t, err)
+			tx1 := db.NewTransaction()
+			require.NoError(t, tx1.Set(alice, email, shared))
+			_, err := tx1.Commit()
+			require.NoError(t, err)
 
-	tx2 := db.NewTransaction()
-	require.NoError(t, tx2.Set(bob, email, shared))
-	_, err = tx2.Commit()
-	require.NoError(t, err)
+			tx2 := db.NewTransaction()
+			require.NoError(t, tx2.Set(bob, email, shared))
+			_, err = tx2.Commit()
+			require.NoError(t, err)
 
-	// [?e :user/email "shared@example.com"] should return exactly one E.
-	q := fmt.Sprintf(`[:find ?e :where [?e :user/email "%s"]]`, shared)
-	result, err := db.Query(q)
-	require.NoError(t, err)
+			// [?e :user/email "shared@example.com"] should return exactly one E.
+			q := fmt.Sprintf(`[:find ?e :where [?e :user/email "%s"]]`, shared)
+			result, err := db.Query(q)
+			require.NoError(t, err)
 
-	var entities []datalog.Identity
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		if len(tuple) > 0 {
-			if id, ok := tuple[0].(datalog.Identity); ok {
-				entities = append(entities, id)
+			var entities []datalog.Identity
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				if len(tuple) > 0 {
+					if id, ok := tuple[0].(datalog.Identity); ok {
+						entities = append(entities, id)
+					}
+				}
 			}
-		}
-	}
-	iter.Close()
+			iter.Close()
 
-	require.Len(t, entities, 1, "V-bound query on unique attribute should return exactly one entity (A, V)-LWW winner; got %d", len(entities))
-	assert.True(t, entities[0].Equal(bob), "winner should be bob (higher Tx); got %s", entities[0].String())
+			require.Len(t, entities, 1, "V-bound query on unique attribute should return exactly one entity (A, V)-LWW winner; got %d", len(entities))
+			assert.True(t, entities[0].Equal(bob), "winner should be bob (higher Tx); got %s", entities[0].String())
+		})
+	}
 }
 
 // TestVBoundQuery_NonUnique_ReturnsAll: for a non-unique cardinality-one
@@ -358,29 +383,32 @@ func TestVBoundQuery_MultiClaimant_SingleWinner(t *testing.T) {
 // With :user/name declared cardinality-one but not unique, two entities
 // can both have name="Alice" and both should appear in a V-bound query.
 func TestVBoundQuery_NonUnique_ReturnsAll(t *testing.T) {
-	db, cleanup := setupUniqueTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := openUniqueModeDB(t, mode)
 
-	e1 := datalog.NewIdentity("e1")
-	e2 := datalog.NewIdentity("e2")
-	name := datalog.NewKeyword(":user/name")
+			e1 := datalog.NewIdentity("e1")
+			e2 := datalog.NewIdentity("e2")
+			name := datalog.NewKeyword(":user/name")
 
-	tx := db.NewTransaction()
-	require.NoError(t, tx.Set(e1, name, "Alice"))
-	require.NoError(t, tx.Set(e2, name, "Alice"))
-	_, err := tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			require.NoError(t, tx.Set(e1, name, "Alice"))
+			require.NoError(t, tx.Set(e2, name, "Alice"))
+			_, err := tx.Commit()
+			require.NoError(t, err)
 
-	q := `[:find ?e :where [?e :user/name "Alice"]]`
-	result, err := db.Query(q)
-	require.NoError(t, err)
+			q := `[:find ?e :where [?e :user/name "Alice"]]`
+			result, err := db.Query(q)
+			require.NoError(t, err)
 
-	count := 0
-	iter := result.Iterator()
-	for iter.Next() {
-		count++
+			count := 0
+			iter := result.Iterator()
+			for iter.Next() {
+				count++
+			}
+			iter.Close()
+
+			assert.Equal(t, 2, count, "non-unique attribute V-view should return all matching entities; regression check")
+		})
 	}
-	iter.Close()
-
-	assert.Equal(t, 2, count, "non-unique attribute V-view should return all matching entities; regression check")
 }

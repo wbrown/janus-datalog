@@ -9,17 +9,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // setupBaseEntities creates a fresh database with 3 named entities.
 // Alice has score 100, Bob has score 200, Carol has no score.
-func setupBaseEntities(t *testing.T) (*Database, datalog.Identity, datalog.Identity, datalog.Identity) {
+// popts sets the database's default planner options (nil = defaults).
+func setupBaseEntities(t *testing.T, popts *planner.PlannerOptions) (*Database, datalog.Identity, datalog.Identity, datalog.Identity) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "or-union-expr-*")
 	require.NoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(dir) })
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
+	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: popts})
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 
@@ -64,69 +66,87 @@ func addChildrenTypesAndFriends(t *testing.T, db *Database, e1, e2, e3 datalog.I
 
 func TestOrUnionWithExpressionBranches(t *testing.T) {
 	t.Run("or_join_union_with_ground_default", func(t *testing.T) {
-		db, _, _, _ := setupBaseEntities(t)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
+				db, _, _, _ := setupBaseEntities(t, &popts)
 
-		results, err := executor.CollectTuples(db.Query(`
+				results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?score
 			 :where [?e :entity/name ?name]
 			        (or-default-join [[?e] ?score]
 			          [?e :entity/score ?score]
 			          (and (not [?e :entity/score _])
 			               [(ground 0) ?score]))]`))
-		require.NoError(t, err)
-		t.Logf("Results: %v", results)
-		require.Len(t, results, 3)
+				require.NoError(t, err)
+				t.Logf("Results: %v", results)
+				require.Len(t, results, 3)
 
-		byName := make(map[string]int64)
-		for _, row := range results {
-			byName[row[0].(string)] = row[1].(int64)
+				byName := make(map[string]int64)
+				for _, row := range results {
+					byName[row[0].(string)] = row[1].(int64)
+				}
+				assert.Equal(t, int64(100), byName["Alice"])
+				assert.Equal(t, int64(200), byName["Bob"])
+				assert.Equal(t, int64(0), byName["Carol"])
+			})
 		}
-		assert.Equal(t, int64(100), byName["Alice"])
-		assert.Equal(t, int64(200), byName["Bob"])
-		assert.Equal(t, int64(0), byName["Carol"])
 	})
 
 	t.Run("or_union_with_ground_default", func(t *testing.T) {
-		db, _, _, _ := setupBaseEntities(t)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
+				db, _, _, _ := setupBaseEntities(t, &popts)
 
-		results, err := executor.CollectTuples(db.Query(`
+				results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?score
 			 :where [?e :entity/name ?name]
 			        (or-default [?e :entity/score ?score]
 			            (and (not [?e :entity/score _])
 			                 [(ground 0) ?score]))]`))
-		require.NoError(t, err)
-		t.Logf("Results: %v", results)
-		require.Len(t, results, 3)
+				require.NoError(t, err)
+				t.Logf("Results: %v", results)
+				require.Len(t, results, 3)
 
-		byName := make(map[string]int64)
-		for _, row := range results {
-			byName[row[0].(string)] = row[1].(int64)
+				byName := make(map[string]int64)
+				for _, row := range results {
+					byName[row[0].(string)] = row[1].(int64)
+				}
+				assert.Equal(t, int64(100), byName["Alice"])
+				assert.Equal(t, int64(200), byName["Bob"])
+				assert.Equal(t, int64(0), byName["Carol"])
+			})
 		}
-		assert.Equal(t, int64(100), byName["Alice"])
-		assert.Equal(t, int64(200), byName["Bob"])
-		assert.Equal(t, int64(0), byName["Carol"])
 	})
 
 	t.Run("not_branch_standalone", func(t *testing.T) {
-		db, e1, e2, e3 := setupBaseEntities(t)
-		addChildrenTypesAndFriends(t, db, e1, e2, e3)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
+				db, e1, e2, e3 := setupBaseEntities(t, &popts)
+				addChildrenTypesAndFriends(t, db, e1, e2, e3)
 
-		results, err := executor.CollectTuples(db.Query(`
+				results, err := executor.CollectTuples(db.Query(`
 			[:find ?name
 			 :where [?e :entity/name ?name]
 			        (not [_ :child/parent ?e])]`))
-		require.NoError(t, err)
-		t.Logf("Entities without children: %v", results)
-		require.Len(t, results, 1)
-		assert.Equal(t, "Carol", results[0][0])
+				require.NoError(t, err)
+				t.Logf("Entities without children: %v", results)
+				require.Len(t, results, 1)
+				assert.Equal(t, "Carol", results[0][0])
+			})
+		}
 	})
 
 	t.Run("nested_or_join_in_and_branches", func(t *testing.T) {
-		db, e1, e2, e3 := setupBaseEntities(t)
-		addChildrenTypesAndFriends(t, db, e1, e2, e3)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
+				db, e1, e2, e3 := setupBaseEntities(t, &popts)
+				addChildrenTypesAndFriends(t, db, e1, e2, e3)
 
-		results, err := executor.CollectTuples(db.Query(`
+				results, err := executor.CollectTuples(db.Query(`
 			[:find ?self-name ?related-name
 			 :where [?self :entity/name ?self-name]
 			        [?self :entity/type ?stype]
@@ -138,17 +158,19 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			          (and [(ground :type/child) ?stype]
 			               [?self :entity/friend ?related]))
 			        [?related :entity/name ?related-name]]`))
-		require.NoError(t, err)
-		t.Logf("Results: %v", results)
-		require.Greater(t, len(results), 0)
+				require.NoError(t, err)
+				t.Logf("Results: %v", results)
+				require.Greater(t, len(results), 0)
 
-		byPair := make(map[string]bool)
-		for _, row := range results {
-			byPair[row[0].(string)+"→"+row[1].(string)] = true
+				byPair := make(map[string]bool)
+				for _, row := range results {
+					byPair[row[0].(string)+"→"+row[1].(string)] = true
+				}
+				assert.True(t, byPair["Alice→Bob"], "Alice should find friend Bob")
+				assert.True(t, byPair["Bob→Alice"], "Bob should find friend Alice")
+				assert.True(t, byPair["Carol→Alice"], "Carol should find friend Alice")
+			})
 		}
-		assert.True(t, byPair["Alice→Bob"], "Alice should find friend Bob")
-		assert.True(t, byPair["Bob→Alice"], "Bob should find friend Alice")
-		assert.True(t, byPair["Carol→Alice"], "Carol should find friend Alice")
 	})
 
 	// Generic version of the 4-branch nested or-join pattern.
@@ -159,63 +181,66 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 	//   gamma: related by co-location (or location itself)
 	//   delta: related by link OR parent link chain
 	t.Run("deeply_nested_or_join_4_branches_generic", func(t *testing.T) {
-		dir, err := os.MkdirTemp("", "deep-nested-generic-*")
-		require.NoError(t, err)
-		t.Cleanup(func() { os.RemoveAll(dir) })
-		db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
-		require.NoError(t, err)
-		t.Cleanup(func() { db.Close() })
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				dir, err := os.MkdirTemp("", "deep-nested-generic-*")
+				require.NoError(t, err)
+				t.Cleanup(func() { os.RemoveAll(dir) })
+				popts := mode.plannerOptions()
+				db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: &popts})
+				require.NoError(t, err)
+				t.Cleanup(func() { db.Close() })
 
-		// Entities:
-		//   A1 (alpha) — located at A2, in region R1
-		//   A2 (alpha) — in region R1
-		//   R1 (region, no type)
-		//   B1 (beta) — at A2 location, provider for A1
-		//   G1 (gamma) — at A2 location
-		//   D1 (delta) — linked to D2 (parent)
-		//   D2 (delta) — parent
+				// Entities:
+				//   A1 (alpha) — located at A2, in region R1
+				//   A2 (alpha) — in region R1
+				//   R1 (region, no type)
+				//   B1 (beta) — at A2 location, provider for A1
+				//   G1 (gamma) — at A2 location
+				//   D1 (delta) — linked to D2 (parent)
+				//   D2 (delta) — parent
 
-		a1 := datalog.NewIdentity("a1")
-		a2 := datalog.NewIdentity("a2")
-		r1 := datalog.NewIdentity("r1")
-		b1 := datalog.NewIdentity("b1")
-		g1 := datalog.NewIdentity("g1")
-		d1 := datalog.NewIdentity("d1")
-		d2 := datalog.NewIdentity("d2")
+				a1 := datalog.NewIdentity("a1")
+				a2 := datalog.NewIdentity("a2")
+				r1 := datalog.NewIdentity("r1")
+				b1 := datalog.NewIdentity("b1")
+				g1 := datalog.NewIdentity("g1")
+				d1 := datalog.NewIdentity("d1")
+				d2 := datalog.NewIdentity("d2")
 
-		tx := db.NewTransaction()
+				tx := db.NewTransaction()
 
-		tx.Add(a1, datalog.NewKeyword(":entity/name"), "A1")
-		tx.Add(a2, datalog.NewKeyword(":entity/name"), "A2")
-		tx.Add(r1, datalog.NewKeyword(":entity/name"), "R1")
-		tx.Add(b1, datalog.NewKeyword(":entity/name"), "B1")
-		tx.Add(g1, datalog.NewKeyword(":entity/name"), "G1")
-		tx.Add(d1, datalog.NewKeyword(":entity/name"), "D1")
-		tx.Add(d2, datalog.NewKeyword(":entity/name"), "D2")
+				tx.Add(a1, datalog.NewKeyword(":entity/name"), "A1")
+				tx.Add(a2, datalog.NewKeyword(":entity/name"), "A2")
+				tx.Add(r1, datalog.NewKeyword(":entity/name"), "R1")
+				tx.Add(b1, datalog.NewKeyword(":entity/name"), "B1")
+				tx.Add(g1, datalog.NewKeyword(":entity/name"), "G1")
+				tx.Add(d1, datalog.NewKeyword(":entity/name"), "D1")
+				tx.Add(d2, datalog.NewKeyword(":entity/name"), "D2")
 
-		tx.Add(a1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/alpha"))
-		tx.Add(a2, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/alpha"))
-		tx.Add(b1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/beta"))
-		tx.Add(g1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/gamma"))
-		tx.Add(d1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/delta"))
-		tx.Add(d2, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/delta"))
+				tx.Add(a1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/alpha"))
+				tx.Add(a2, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/alpha"))
+				tx.Add(b1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/beta"))
+				tx.Add(g1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/gamma"))
+				tx.Add(d1, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/delta"))
+				tx.Add(d2, datalog.NewKeyword(":entity/type"), datalog.NewKeyword(":type/delta"))
 
-		tx.Add(a1, datalog.NewKeyword(":rel/location"), a2)
-		tx.Add(a1, datalog.NewKeyword(":rel/region"), r1)
-		tx.Add(a2, datalog.NewKeyword(":rel/region"), r1)
+				tx.Add(a1, datalog.NewKeyword(":rel/location"), a2)
+				tx.Add(a1, datalog.NewKeyword(":rel/region"), r1)
+				tx.Add(a2, datalog.NewKeyword(":rel/region"), r1)
 
-		tx.Add(b1, datalog.NewKeyword(":rel/location"), a2)
-		tx.Add(b1, datalog.NewKeyword(":rel/provider"), a1)
+				tx.Add(b1, datalog.NewKeyword(":rel/location"), a2)
+				tx.Add(b1, datalog.NewKeyword(":rel/provider"), a1)
 
-		tx.Add(g1, datalog.NewKeyword(":rel/location"), a2)
+				tx.Add(g1, datalog.NewKeyword(":rel/location"), a2)
 
-		tx.Add(d1, datalog.NewKeyword(":rel/link"), d2)
+				tx.Add(d1, datalog.NewKeyword(":rel/link"), d2)
 
-		_, err = tx.Commit()
-		require.NoError(t, err)
+				_, err = tx.Commit()
+				require.NoError(t, err)
 
-		// Same 4-branch structure with generic attributes
-		results, err := executor.CollectTuples(db.Query(`
+				// Same 4-branch structure with generic attributes
+				results, err := executor.CollectTuples(db.Query(`
 			[:find ?rname ?rtype
 			 :where
 			 [?self :entity/name "A1"]
@@ -244,29 +269,34 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			                   [?related :rel/link ?parent])))))
 			 [?related :entity/name ?rname]
 			 [?related :entity/type ?rtype]]`))
-		require.NoError(t, err)
-		t.Logf("Results (%d):", len(results))
-		for _, row := range results {
-			t.Logf("  %s (%s)", row[0], row[1])
-		}
+				require.NoError(t, err)
+				t.Logf("Results (%d):", len(results))
+				for _, row := range results {
+					t.Logf("  %s (%s)", row[0], row[1])
+				}
 
-		// A1 is type alpha. Branch 1 applies:
-		//   [?related :rel/location ?self] → nothing located AT A1
-		//   [?self :rel/region ?rgn] [?related :rel/region ?rgn]
-		//     → A1 in R1, A2 also in R1 → A2 is related via shared region
-		byName := make(map[string]bool)
-		for _, row := range results {
-			byName[row[0].(string)] = true
+				// A1 is type alpha. Branch 1 applies:
+				//   [?related :rel/location ?self] → nothing located AT A1
+				//   [?self :rel/region ?rgn] [?related :rel/region ?rgn]
+				//     → A1 in R1, A2 also in R1 → A2 is related via shared region
+				byName := make(map[string]bool)
+				for _, row := range results {
+					byName[row[0].(string)] = true
+				}
+				require.Greater(t, len(results), 0, "A1 should find related entities")
+				assert.True(t, byName["A2"], "should find A2 via shared region")
+			})
 		}
-		require.Greater(t, len(results), 0, "A1 should find related entities")
-		assert.True(t, byName["A2"], "should find A2 via shared region")
 	})
 
 	t.Run("ground_rebinding_existing_symbol", func(t *testing.T) {
-		db, e1, e2, e3 := setupBaseEntities(t)
-		addChildrenTypesAndFriends(t, db, e1, e2, e3)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
+				db, e1, e2, e3 := setupBaseEntities(t, &popts)
+				addChildrenTypesAndFriends(t, db, e1, e2, e3)
 
-		results, err := executor.CollectTuples(db.Query(`
+				results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?stype
 			 :where [?e :entity/name ?name]
 			        [?e :entity/type ?stype]
@@ -275,16 +305,21 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			               [?e :entity/friend _])
 			          (and [(ground :type/child) ?stype]
 			               [?e :entity/friend _]))]`))
-		require.NoError(t, err)
-		t.Logf("Results: %v", results)
-		require.Greater(t, len(results), 0, "ground rebinding existing symbol should produce results")
+				require.NoError(t, err)
+				t.Logf("Results: %v", results)
+				require.Greater(t, len(results), 0, "ground rebinding existing symbol should produce results")
+			})
+		}
 	})
 
 	t.Run("or_join_decorrelated_subquery_with_default", func(t *testing.T) {
-		db, e1, e2, e3 := setupBaseEntities(t)
-		addChildrenTypesAndFriends(t, db, e1, e2, e3)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
+				db, e1, e2, e3 := setupBaseEntities(t, &popts)
+				addChildrenTypesAndFriends(t, db, e1, e2, e3)
 
-		results, err := executor.CollectTuples(db.Query(`
+				results, err := executor.CollectTuples(db.Query(`
 			[:find ?name ?count
 			 :where [?e :entity/name ?name]
 			        (or-default-join [[?e] ?count]
@@ -294,17 +329,19 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 			              $) [[?e ?count] ...]]
 			          (and (not [_ :child/parent ?e])
 			               [(ground 0) ?count]))]`))
-		require.NoError(t, err)
-		t.Logf("Results: %v", results)
-		require.Len(t, results, 3)
+				require.NoError(t, err)
+				t.Logf("Results: %v", results)
+				require.Len(t, results, 3)
 
-		byName := make(map[string]int64)
-		for _, row := range results {
-			byName[row[0].(string)] = row[1].(int64)
+				byName := make(map[string]int64)
+				for _, row := range results {
+					byName[row[0].(string)] = row[1].(int64)
+				}
+				assert.Equal(t, int64(3), byName["Alice"])
+				assert.Equal(t, int64(1), byName["Bob"])
+				assert.Equal(t, int64(0), byName["Carol"])
+			})
 		}
-		assert.Equal(t, int64(3), byName["Alice"])
-		assert.Equal(t, int64(1), byName["Bob"])
-		assert.Equal(t, int64(0), byName["Carol"])
 	})
 }
 
@@ -318,34 +355,37 @@ func TestOrUnionWithExpressionBranches(t *testing.T) {
 // the collection), causing identity to return wrong types (string, bool
 // instead of Identity).
 func TestOrCorrelatedUnionWithNestedOrExpression_E2E(t *testing.T) {
-	dir, err := os.MkdirTemp("", "or-nested-expr-*")
-	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "or-nested-expr-*")
+			require.NoError(t, err)
+			t.Cleanup(func() { os.RemoveAll(dir) })
 
-	db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir})
-	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{Path: dir, PlannerOptions: &popts})
+			require.NoError(t, err)
+			t.Cleanup(func() { db.Close() })
 
-	area1 := datalog.NewIdentity("area:caves")
-	room1 := datalog.NewIdentity("room:guard")
-	room2 := datalog.NewIdentity("room:shrine")
-	npc1 := datalog.NewIdentity("npc:merchant")
+			area1 := datalog.NewIdentity("area:caves")
+			room1 := datalog.NewIdentity("room:guard")
+			room2 := datalog.NewIdentity("room:shrine")
+			npc1 := datalog.NewIdentity("npc:merchant")
 
-	tx := db.NewTransaction()
-	tx.Add(area1, datalog.NewKeyword(":entity/name"), "Coastal Caves")
-	tx.Add(room1, datalog.NewKeyword(":entity/name"), "Guard Chamber")
-	tx.Add(room2, datalog.NewKeyword(":entity/name"), "Shrine Hall")
-	tx.Add(npc1, datalog.NewKeyword(":entity/name"), "Merchant")
-	// room1 and room2 share area1
-	tx.Add(room1, datalog.NewKeyword(":entity/area"), area1)
-	tx.Add(room2, datalog.NewKeyword(":entity/area"), area1)
-	// npc1 is located in room1
-	tx.Add(npc1, datalog.NewKeyword(":entity/location"), room1)
-	_, err = tx.Commit()
-	require.NoError(t, err)
+			tx := db.NewTransaction()
+			tx.Add(area1, datalog.NewKeyword(":entity/name"), "Coastal Caves")
+			tx.Add(room1, datalog.NewKeyword(":entity/name"), "Guard Chamber")
+			tx.Add(room2, datalog.NewKeyword(":entity/name"), "Shrine Hall")
+			tx.Add(npc1, datalog.NewKeyword(":entity/name"), "Merchant")
+			// room1 and room2 share area1
+			tx.Add(room1, datalog.NewKeyword(":entity/area"), area1)
+			tx.Add(room2, datalog.NewKeyword(":entity/area"), area1)
+			// npc1 is located in room1
+			tx.Add(npc1, datalog.NewKeyword(":entity/location"), room1)
+			_, err = tx.Commit()
+			require.NoError(t, err)
 
-	// Exact production pattern: variable attributes from collection inputs
-	results, err := executor.CollectTuples(db.Query(`
+			// Exact production pattern: variable attributes from collection inputs
+			results, err := executor.CollectTuples(db.Query(`
 		[:find ?related
 		 :in $ ?self [?fwd ...] [?rev ...]
 		 :where
@@ -353,29 +393,31 @@ func TestOrCorrelatedUnionWithNestedOrExpression_E2E(t *testing.T) {
 		          (or [?related ?fwd ?target]
 		              [(identity ?target) ?related]))
 		     [?related ?rev ?self])]`,
-		room1,
-		[]datalog.Keyword{datalog.NewKeyword(":entity/area")},
-		[]datalog.Keyword{datalog.NewKeyword(":entity/location")},
-	))
-	require.NoError(t, err)
+				room1,
+				[]datalog.Keyword{datalog.NewKeyword(":entity/area")},
+				[]datalog.Keyword{datalog.NewKeyword(":entity/location")},
+			))
+			require.NoError(t, err)
 
-	t.Logf("Results (%d):", len(results))
-	identities := make(map[datalog.Identity]bool)
-	for i, row := range results {
-		val := row[0]
-		id, ok := val.(datalog.Identity)
-		if !ok {
-			t.Errorf("result[%d]: expected Identity, got %T (%v)", i, val, val)
-			continue
-		}
-		identities[id] = true
-		t.Logf("  [%d] %v", i, id)
+			t.Logf("Results (%d):", len(results))
+			identities := make(map[datalog.Identity]bool)
+			for i, row := range results {
+				val := row[0]
+				id, ok := val.(datalog.Identity)
+				if !ok {
+					t.Errorf("result[%d]: expected Identity, got %T (%v)", i, val, val)
+					continue
+				}
+				identities[id] = true
+				t.Logf("  [%d] %v", i, id)
+			}
+
+			// room2 shares :entity/area with room1
+			assert.True(t, identities[room2], "missing room2 (shares area via forward ref)")
+			// area1 via (identity ?target)
+			assert.True(t, identities[area1], "missing area1 (area entity via identity)")
+			// npc1 has :entity/location = room1 (reverse ref)
+			assert.True(t, identities[npc1], "missing npc1 (located in room1 via reverse ref)")
+		})
 	}
-
-	// room2 shares :entity/area with room1
-	assert.True(t, identities[room2], "missing room2 (shares area via forward ref)")
-	// area1 via (identity ?target)
-	assert.True(t, identities[area1], "missing area1 (area entity via identity)")
-	// npc1 has :entity/location = room1 (reverse ref)
-	assert.True(t, identities[npc1], "missing npc1 (located in room1 via reverse ref)")
 }

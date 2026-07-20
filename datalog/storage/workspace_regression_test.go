@@ -8,6 +8,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -21,7 +22,9 @@ import (
 // Query: find ages >= 25 (should return 25, 30)
 // =============================================================================
 
-func createWorkspaceTestDB(t *testing.T) (*Database, func()) {
+// createWorkspaceTestDB seeds the 10-person fixture. popts sets the database's
+// default planner options (nil = defaults).
+func createWorkspaceTestDB(t *testing.T, popts *planner.PlannerOptions) (*Database, func()) {
 	t.Helper()
 
 	tmpDir, err := os.MkdirTemp("", "workspace_regression_test")
@@ -30,7 +33,10 @@ func createWorkspaceTestDB(t *testing.T) (*Database, func()) {
 	}
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := NewDatabase(dbPath)
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:           dbPath,
+		PlannerOptions: popts,
+	})
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create database: %v", err)
@@ -60,7 +66,7 @@ func createWorkspaceTestDB(t *testing.T) (*Database, func()) {
 
 // Test 1: Raw storage iterator - verify tuples are produced correctly
 func TestWorkspaceRegression_RawIterator(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t)
+	db, cleanup := createWorkspaceTestDB(t, nil)
 	defer cleanup()
 
 	// Create pattern to match all ages
@@ -129,7 +135,7 @@ func TestWorkspaceRegression_RawIterator(t *testing.T) {
 
 // Test 2: Verify workspace reuse - immediate reads are correct, stored refs share memory
 func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t)
+	db, cleanup := createWorkspaceTestDB(t, nil)
 	defer cleanup()
 
 	pattern := &query.DataPattern{
@@ -211,130 +217,145 @@ func TestWorkspaceRegression_WorkspaceReuse(t *testing.T) {
 
 // Test 3: Verify predicate filtering works correctly
 func TestWorkspaceRegression_PredicateFilter(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createWorkspaceTestDB(t, &popts)
+			defer cleanup()
 
-	// Query with predicate
-	results, err := executor.CollectTuples(db.Query(`
-		[:find ?e ?age
-		 :where [?e :person/age ?age]
-		        [(>= ?age 25)]]
-	`))
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
-
-	t.Logf("Predicate filter returned %d results", len(results))
-
-	// Should have 6 results (3 with age 25, 3 with age 30)
-	if len(results) != 6 {
-		t.Errorf("expected 6 results (ages >= 25), got %d", len(results))
-	}
-
-	// Check that all ages are >= 25
-	for i, tuple := range results {
-		if len(tuple) >= 2 {
-			age, ok := tuple[1].(int64)
-			if !ok {
-				t.Errorf("tuple %d: unexpected age type %T", i, tuple[1])
-				continue
+			// Query with predicate
+			results, err := executor.CollectTuples(db.Query(`
+				[:find ?e ?age
+				 :where [?e :person/age ?age]
+				        [(>= ?age 25)]]
+			`))
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
 			}
-			if age < 25 {
-				t.Errorf("tuple %d: age %d should not pass filter >= 25", i, age)
+
+			t.Logf("Predicate filter returned %d results", len(results))
+
+			// Should have 6 results (3 with age 25, 3 with age 30)
+			if len(results) != 6 {
+				t.Errorf("expected 6 results (ages >= 25), got %d", len(results))
 			}
-			t.Logf("Tuple %d: age=%d", i, age)
-		}
+
+			// Check that all ages are >= 25
+			for i, tuple := range results {
+				if len(tuple) >= 2 {
+					age, ok := tuple[1].(int64)
+					if !ok {
+						t.Errorf("tuple %d: unexpected age type %T", i, tuple[1])
+						continue
+					}
+					if age < 25 {
+						t.Errorf("tuple %d: age %d should not pass filter >= 25", i, age)
+					}
+					t.Logf("Tuple %d: age=%d", i, age)
+				}
+			}
+		})
 	}
 }
 
 // Test 4: Projection to single symbol
 func TestWorkspaceRegression_Projection(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createWorkspaceTestDB(t, &popts)
+			defer cleanup()
 
-	// Query projecting only age
-	results, err := executor.CollectTuples(db.Query(`
-		[:find ?age
-		 :where [?e :person/age ?age]]
-	`))
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
-
-	t.Logf("Projection returned %d results", len(results))
-
-	// With set semantics, should have 3 unique ages
-	if len(results) != 3 {
-		t.Errorf("expected 3 unique ages, got %d: %v", len(results), results)
-	}
-
-	// Collect ages
-	ageSet := make(map[int64]bool)
-	for _, tuple := range results {
-		if len(tuple) >= 1 {
-			if age, ok := tuple[0].(int64); ok {
-				ageSet[age] = true
-				t.Logf("Age: %d", age)
+			// Query projecting only age
+			results, err := executor.CollectTuples(db.Query(`
+				[:find ?age
+				 :where [?e :person/age ?age]]
+			`))
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
 			}
-		}
-	}
 
-	// Should have 20, 25, 30
-	for _, expected := range []int64{20, 25, 30} {
-		if !ageSet[expected] {
-			t.Errorf("missing expected age %d", expected)
-		}
+			t.Logf("Projection returned %d results", len(results))
+
+			// With set semantics, should have 3 unique ages
+			if len(results) != 3 {
+				t.Errorf("expected 3 unique ages, got %d: %v", len(results), results)
+			}
+
+			// Collect ages
+			ageSet := make(map[int64]bool)
+			for _, tuple := range results {
+				if len(tuple) >= 1 {
+					if age, ok := tuple[0].(int64); ok {
+						ageSet[age] = true
+						t.Logf("Age: %d", age)
+					}
+				}
+			}
+
+			// Should have 20, 25, 30
+			for _, expected := range []int64{20, 25, 30} {
+				if !ageSet[expected] {
+					t.Errorf("missing expected age %d", expected)
+				}
+			}
+		})
 	}
 }
 
 // Test 5: Filter + projection (the failing case)
 func TestWorkspaceRegression_FilterThenProject(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t)
-	defer cleanup()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, cleanup := createWorkspaceTestDB(t, &popts)
+			defer cleanup()
 
-	results, err := executor.CollectTuples(db.Query(`
-		[:find ?age
-		 :where [?e :person/age ?age]
-		        [(>= ?age 25)]]
-	`))
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
+			results, err := executor.CollectTuples(db.Query(`
+				[:find ?age
+				 :where [?e :person/age ?age]
+				        [(>= ?age 25)]]
+			`))
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
 
-	t.Logf("Filter+Project returned %d results: %v", len(results), results)
+			t.Logf("Filter+Project returned %d results: %v", len(results), results)
 
-	// Should have 2 unique ages: 25 and 30
-	if len(results) != 2 {
-		t.Errorf("expected 2 unique ages (25, 30), got %d: %v", len(results), results)
-	}
+			// Should have 2 unique ages: 25 and 30
+			if len(results) != 2 {
+				t.Errorf("expected 2 unique ages (25, 30), got %d: %v", len(results), results)
+			}
 
-	// Verify the ages are correct
-	ageSet := make(map[int64]bool)
-	for _, tuple := range results {
-		if len(tuple) >= 1 {
-			if age, ok := tuple[0].(int64); ok {
-				ageSet[age] = true
-				if age < 25 {
-					t.Errorf("age %d should not be in results (filter >= 25)", age)
+			// Verify the ages are correct
+			ageSet := make(map[int64]bool)
+			for _, tuple := range results {
+				if len(tuple) >= 1 {
+					if age, ok := tuple[0].(int64); ok {
+						ageSet[age] = true
+						if age < 25 {
+							t.Errorf("age %d should not be in results (filter >= 25)", age)
+						}
+					}
 				}
 			}
-		}
-	}
 
-	if !ageSet[25] {
-		t.Errorf("missing expected age 25")
-	}
-	if !ageSet[30] {
-		t.Errorf("missing expected age 30")
-	}
-	if ageSet[20] {
-		t.Errorf("age 20 should not be in results (filter >= 25)")
+			if !ageSet[25] {
+				t.Errorf("missing expected age 25")
+			}
+			if !ageSet[30] {
+				t.Errorf("missing expected age 30")
+			}
+			if ageSet[20] {
+				t.Errorf("age 20 should not be in results (filter >= 25)")
+			}
+		})
 	}
 }
 
 // Test 6: Verify StreamingRelation caching copies tuples
 func TestWorkspaceRegression_StreamingRelationCache(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t)
+	db, cleanup := createWorkspaceTestDB(t, nil)
 	defer cleanup()
 
 	pattern := &query.DataPattern{
@@ -393,7 +414,7 @@ func TestWorkspaceRegression_StreamingRelationCache(t *testing.T) {
 
 // Test 7: BufferedIterator correctly copies from workspace-reusing iterator
 func TestWorkspaceRegression_BufferedIterator(t *testing.T) {
-	db, cleanup := createWorkspaceTestDB(t)
+	db, cleanup := createWorkspaceTestDB(t, nil)
 	defer cleanup()
 
 	agePattern := &query.DataPattern{
