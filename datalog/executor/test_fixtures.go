@@ -58,7 +58,13 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 			}
 		}
 	}
-	it.Close()
+	scanErr := it.Error()
+	if closeErr := it.Close(); scanErr == nil {
+		scanErr = closeErr
+	}
+	if scanErr != nil {
+		return nil, scanErr
+	}
 
 	return PatternToRelation(filteredDatoms, pattern), nil
 }

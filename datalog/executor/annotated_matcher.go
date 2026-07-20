@@ -221,8 +221,9 @@ func (m *AnnotatedMatcher) CanFuseAttributeFetch(attr datalog.Keyword) bool {
 }
 
 // PrefetchEntities implements EntityPrefetcher if the underlying matcher supports it.
-func (m *AnnotatedMatcher) PrefetchEntities(entities []datalog.Identity) {
+func (m *AnnotatedMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	if ep, ok := m.underlying.(EntityPrefetcher); ok {
-		ep.PrefetchEntities(entities)
+		return ep.PrefetchEntities(entities)
 	}
+	return nil
 }

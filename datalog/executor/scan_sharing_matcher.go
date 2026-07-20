@@ -169,10 +169,11 @@ func (m *ScanSharingMatcher) TypeDefault(attr datalog.Keyword, defaultVal interf
 }
 
 // PrefetchEntities forwards to inner matcher if it supports prefetch.
-func (m *ScanSharingMatcher) PrefetchEntities(entities []datalog.Identity) {
+func (m *ScanSharingMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	if ep, ok := m.inner.(EntityPrefetcher); ok {
-		ep.PrefetchEntities(entities)
+		return ep.PrefetchEntities(entities)
 	}
+	return nil
 }
 
 // remapSymbols creates a new symbol list by mapping the shared scan's

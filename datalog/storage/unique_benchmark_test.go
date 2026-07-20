@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Benchmarks for unique-attribute walk resolution, comparing against
 // non-unique CardinalityOne first-entry reads.
 //

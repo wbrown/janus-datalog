@@ -106,20 +106,8 @@ func TestBlobStore_KeyPrefix(t *testing.T) {
 
 // ---- Tier 3 Integration Tests ----
 
-// makeTier3Data creates a []byte that compresses but stays above 60KB compressed.
-// Uses pseudo-random bytes with limited alphabet (128 values) so FSE provides
-// some compression, but LZ77 finds few matches. This gives ~1.3-1.5x compression,
-// so 100KB of this data compresses to ~70-80KB, exceeding the 60KB Tier 2 limit.
-func makeTier3Data(size int) []byte {
-	data := make([]byte, size)
-	// Linear congruential generator for deterministic pseudo-random bytes
-	state := uint64(42)
-	for i := range data {
-		state = state*6364136223846793005 + 1442695040888963407
-		data[i] = byte((state >> 33) & 0x7F) // 128-value alphabet: compresses ~1.3x
-	}
-	return data
-}
+// makeTier3Data lives in compressed_export_test.go, which is wasm-portable;
+// this file is not.
 
 // makeTier3String creates a string version of Tier 3 test data.
 // Uses printable ASCII subset for valid string content.

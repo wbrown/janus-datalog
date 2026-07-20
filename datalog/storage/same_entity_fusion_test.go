@@ -1,10 +1,9 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -469,7 +468,10 @@ func TestFusionLookupFailureIsNotAttributeAbsence(t *testing.T) {
 
 			_, err = db.Query(queryText, entity)
 			require.Error(t, err)
-			require.Contains(t, err.Error(), "DB Closed")
+			// Backends phrase it differently (Badger: "DB Closed"; memory
+			// store: "memory store closed") — the contract is a closed-store
+			// error, not absence or a panic.
+			require.Contains(t, strings.ToLower(err.Error()), "closed")
 		})
 	}
 }

@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Reproduction for docs/bugs/BUG_PLANNER_OPTIONS_NOT_PROPAGATED_TO_MATCHER.md
 //
 // Database.Query builds the executor from the database's effective
@@ -17,8 +15,20 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
+
+// getDefaultExecutorOptions returns the default executor options for testing
+func getDefaultExecutorOptions() executor.ExecutorOptions {
+	opts := DefaultPlannerOptions()
+	return executor.ExecutorOptions{
+		EnableTrueStreaming:     opts.EnableTrueStreaming,
+		EnableStreamingJoins:    opts.EnableStreamingJoins,
+		EnableSymmetricHashJoin: opts.EnableSymmetricHashJoin,
+		DefaultHashTableSize:    256,
+	}
+}
 
 // TestDatabaseMatcher_HonorsCustomPlannerOptions asserts that relations
 // produced by the default-source matcher carry the database's effective

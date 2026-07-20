@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 // Bug #5 Test Cases

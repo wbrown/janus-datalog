@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Tests that ResolveEntityAttributes and ResolveAllAttributes work
 // correctly under DisableCache: true.
 //

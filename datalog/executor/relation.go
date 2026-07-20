@@ -1509,7 +1509,6 @@ func Select(rel Relation, pred func(Tuple) bool) Relation {
 	var selected []Tuple
 	needsCopy := rel.RequiresCopy()
 	it := rel.Iterator()
-	defer it.Close()
 
 	for it.Next() {
 		tuple := it.Tuple()
@@ -1520,13 +1519,21 @@ func Select(rel Relation, pred func(Tuple) bool) Relation {
 			selected = append(selected, tuple)
 		}
 	}
+	scanErr := it.Error()
+	if closeErr := it.Close(); scanErr == nil {
+		scanErr = closeErr
+	}
 
-	return newMaterializedRelationFromSet(
+	// A failed scan is not an empty selection — carry it as the result's
+	// deferred error.
+	result := newMaterializedRelationFromSet(
 		rel.Symbols(),
 		selected,
 		rel.Options(),
 		rel.Properties(),
 	)
+	result.err = scanErr
+	return result
 }
 
 // ProductRelation represents a streaming Cartesian product of multiple relations

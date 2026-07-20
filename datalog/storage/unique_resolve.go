@@ -146,7 +146,7 @@ func (m *BadgerMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, excep
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			continue
+			return datalog.ElementID{}, err
 		}
 		if datom.E == nil {
 			continue
@@ -179,6 +179,11 @@ func (m *BadgerMatcher) resolveMaxOtherTxForValue(aBytes Attribute, v any, excep
 			maxTx = datom.Tx
 		}
 	}
+	// A failed scan is not "no competing assertion" — the walk would emit a
+	// value that may actually be superseded. Surface it.
+	if err := iter.Error(); err != nil {
+		return datalog.ElementID{}, err
+	}
 	return maxTx, nil
 }
 
@@ -203,13 +208,15 @@ func (m *BadgerMatcher) resolveAVLWW(a Attribute, vBytes []byte, v any) (datalog
 	}
 
 	var (
-		bestE  datalog.Identity
-		bestTx datalog.ElementID
+		bestE   datalog.Identity
+		bestTx  datalog.ElementID
+		scanErr error
 	)
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
-			continue
+			scanErr = err
+			break
 		}
 		if datom.E == nil {
 			continue
@@ -222,7 +229,14 @@ func (m *BadgerMatcher) resolveAVLWW(a Attribute, vBytes []byte, v any) (datalog
 			bestTx = datom.Tx
 		}
 	}
+	// A failed scan is not "no owner" — surface it (first error wins).
+	if scanErr == nil {
+		scanErr = iter.Error()
+	}
 	iter.Close()
+	if scanErr != nil {
+		return nil, datalog.ElementID{}, scanErr
+	}
 
 	if bestE == nil {
 		return nil, datalog.ElementID{}, nil

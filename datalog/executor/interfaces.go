@@ -61,8 +61,10 @@ type AttributeFetchFusable interface {
 // EntityPrefetcher extends PatternMatcher with batch entity prefetch capability.
 // When a large set of entity IDs is known upfront, prefetching all their
 // attributes into the EA cache avoids per-entity storage scans later.
+// A returned error means the store failed mid-scan; callers propagate it —
+// a failing store fails the query.
 type EntityPrefetcher interface {
-	PrefetchEntities(entities []datalog.Identity)
+	PrefetchEntities(entities []datalog.Identity) error
 }
 
 // EntityResolver provides CRDT-aware entity resolution.

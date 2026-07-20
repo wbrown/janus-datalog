@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 package storage
 
 import (
@@ -691,19 +689,8 @@ func TestMergeJoinDuplicateKeyBindings(t *testing.T) {
 	})
 }
 
-// deferredErrorIterator models a storage scan that ends with a sticky error:
-// Next() reports exhaustion and Error() carries the failure, per the Iterator
-// contract in store.go.
-type deferredErrorIterator struct {
-	err error
-}
-
-func (it *deferredErrorIterator) Next() bool                     { return false }
-func (it *deferredErrorIterator) Datom() (*datalog.Datom, error) { return nil, nil }
-func (it *deferredErrorIterator) Close() error                   { return nil }
-func (it *deferredErrorIterator) Seek(key []byte)                {}
-func (it *deferredErrorIterator) ElementID() datalog.ElementID   { return datalog.ElementID{} }
-func (it *deferredErrorIterator) Error() error                   { return it.err }
+// deferredErrorIterator (used below) lives in scan_error_propagation_test.go,
+// which is wasm-portable; this file is not.
 
 // TestMergeJoinPropagatesDeferredScanError pins the exhaustion tail: a storage
 // iterator whose Next() returns false with a sticky Error() is a failed scan,

@@ -98,9 +98,16 @@ func (r *PrependedRelation) Materialize() Relation {
 		}
 		tuples = append(tuples, tuple)
 	}
-	it.Close()
+	scanErr := it.Error()
+	if closeErr := it.Close(); scanErr == nil {
+		scanErr = closeErr
+	}
 
-	return newMaterializedRelationFromSet(r.symbols, tuples, r.options, r.Properties())
+	// A failed rest-relation scan must not materialize as a clean result —
+	// carry it as the materialization's deferred error.
+	result := newMaterializedRelationFromSet(r.symbols, tuples, r.options, r.Properties())
+	result.err = scanErr
+	return result
 }
 
 func (r *PrependedRelation) Sort(orderBy []query.OrderByClause) Relation {

@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Regression + investigation tests covering audit items from the
 // CRDT-unique redesign audit (see the audit report in the branch
 // discussion). Each test locks in or investigates one concern:

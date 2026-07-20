@@ -333,7 +333,9 @@ func (d *Database) WarmCache(attributes []datalog.Keyword) error {
 			iter.Close()
 			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
 		}
-		iter.Close()
+		if err := iter.Close(); err != nil {
+			return fmt.Errorf("warming cache for %s: %w", attr.String(), err)
+		}
 
 		// Update attribute-level version
 		d.cache.UpdateAttributeVersion(aBytes, maxAttrVersion)
@@ -2792,6 +2794,10 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 				values = append(values, tuple[0])
 			}
 		}
+		// A failed scan is not an empty member set — surface it.
+		if err := iter.Error(); err != nil {
+			return nil, err
+		}
 		if len(values) == 0 {
 			return nil, nil
 		}
@@ -2811,6 +2817,10 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 				// Unexpected type — return as-is rather than dropping data.
 				return tuple[0], nil
 			}
+		}
+		// A failed scan is not an absent vector — surface it.
+		if err := iter.Error(); err != nil {
+			return nil, err
 		}
 		return nil, nil
 

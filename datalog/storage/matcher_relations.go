@@ -118,7 +118,10 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		if aResolved != nil {
 			// Phase 1: A has a single known value (from constant or single-tuple binding)
 			if aKw, ok := aResolved.(datalog.Keyword); ok {
-				cacheResult, handled := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw, -1)
+				cacheResult, handled, err := m.matchWithBindingsFromCache(pattern, bindingRel, symbols, aKw, -1)
+				if err != nil {
+					return nil, err
+				}
 				if handled {
 					if m.handler != nil {
 						m.handler(annotations.Event{
@@ -139,8 +142,11 @@ func (m *BadgerMatcher) MatchWithConstraints(
 			if aIdx >= 0 && eIsVar {
 				eIdx := query.SymbolIndex(bindingRel.Symbols(), eVar.Name)
 				if eIdx >= 0 {
-					cacheResult, handled := m.matchWithBindingsFromCache(
+					cacheResult, handled, err := m.matchWithBindingsFromCache(
 						pattern, bindingRel, symbols, nil, aIdx)
+					if err != nil {
+						return nil, err
+					}
 					if handled {
 						return cacheResult, nil
 					}
@@ -712,7 +718,12 @@ func (it *validatingVBoundIterator) Next() bool {
 				// an empty bound value matches every value of the type, and a
 				// non-empty value prefix-matches. Validation enforces exact equality.
 				if card == schema.CardinalityOne || card == schema.CardinalityUnknown {
-					if !it.validateCandidate(datom.E, datom.A) {
+					ok, err := it.validateCandidate(datom.E, datom.A)
+					if err != nil {
+						it.err = err
+						return false
+					}
+					if !ok {
 						// Stale candidate - LWW winner has different V
 						continue
 					}
@@ -729,7 +740,9 @@ func (it *validatingVBoundIterator) Next() bool {
 			if srcErr := it.crdtIter.Error(); srcErr != nil && it.err == nil {
 				it.err = srcErr
 			}
-			it.crdtIter.Close()
+			if closeErr := it.crdtIter.Close(); closeErr != nil && it.err == nil {
+				it.err = closeErr
+			}
 			it.crdtIter = nil
 			it.rawIter = nil
 		}
@@ -829,8 +842,10 @@ func (it *validatingVBoundIterator) tryEmitUniqueWinner() (bool, error) {
 	return true, nil
 }
 
-// validateCandidate checks if the current value of (E, A) matches boundV
-func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) bool {
+// validateCandidate checks if the current value of (E, A) matches boundV.
+// A storage or decode failure surfaces as an error — it must never collapse
+// to "candidate doesn't match", which would silently drop valid results.
+func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a datalog.Keyword) (bool, error) {
 	encoder := it.matcher.encoder
 
 	// Convert E to storage bytes
@@ -880,7 +895,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 					},
 				})
 			}
-			return matches
+			return matches, nil
 		}
 	}
 
@@ -888,7 +903,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	start, end := encoder.EncodePrefixRange(it.validationIndex, eBytes[:], aStorage[:])
 	rawIter, err := it.matcher.store.ScanKeysOnly(it.validationIndex, start, end)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer rawIter.Close()
 
@@ -904,7 +919,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	for rawIter.Next() {
 		winner, err := rawIter.Datom()
 		if err != nil {
-			return false
+			return false, err
 		}
 		if it.matcher.shouldFilterTx(winner.Tx) {
 			continue
@@ -913,7 +928,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 		// Check Op: if the latest visible operation is a tombstone, the
 		// attribute doesn't exist. No V can match a tombstoned attribute.
 		if winner.Op == datalog.OpCRDTRemove {
-			return false
+			return false, nil
 		}
 
 		// Check if winner's V matches our bound V. Use ValuesEqual (not raw ==)
@@ -939,7 +954,11 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			})
 		}
 
-		return matches
+		return matches, nil
+	}
+	// A failed scan is not "no winner" — surface it.
+	if err := rawIter.Error(); err != nil {
+		return false, err
 	}
 
 	// No entry visible under this snapshot — the attribute has no value as-of T.
@@ -954,7 +973,7 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 			},
 		})
 	}
-	return false
+	return false, nil
 }
 
 // getCardinality looks up the cardinality for an attribute (for annotations)
@@ -1344,16 +1363,16 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 	symbols []query.Symbol,
 	a datalog.Keyword,
 	aSymIdx int,
-) (executor.Relation, bool) {
+) (executor.Relation, bool, error) {
 	// Find which symbol in the binding relation has E
 	eVar, isVar := pattern.GetE().(query.Variable)
 	if !isVar {
-		return nil, false // E is not a variable, can't get it from bindings
+		return nil, false, nil // E is not a variable, can't get it from bindings
 	}
 
 	eSymIdx := query.SymbolIndex(bindingRel.Symbols(), eVar.Name)
 	if eSymIdx < 0 {
-		return nil, false // E variable not in bindings
+		return nil, false, nil // E variable not in bindings
 	}
 
 	// Pre-compute fixed-A values when A is constant across all tuples
@@ -1450,14 +1469,14 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 		eBytes := Entity(eIdent.Hash())
 		key, ok := m.cacheKey(eBytes, rowAAttr)
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
 
 		// Get from cache
 		entry := m.cache.GetOrResolve(key, m)
 		if entry == nil {
 			// Cache miss - fallback to storage for entire query
-			return nil, false
+			return nil, false, nil
 		}
 
 		// Process based on cardinality
@@ -1500,13 +1519,18 @@ func (m *BadgerMatcher) matchWithBindingsFromCache(
 			}
 			if v != nil {
 				// Can't efficiently check vector membership
-				return nil, false
+				return nil, false, nil
 			}
 			resultTuples = append(resultTuples, buildTuple(eIdent, typedVector(list, rowValueType), entry.Version()))
 		}
 	}
+	// A failed bindings scan is not an exhausted one — surface it rather
+	// than answering from a truncated binding set.
+	if err := iter.Error(); err != nil {
+		return nil, false, err
+	}
 
-	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true
+	return executor.NewMaterializedRelationWithOptions(symbols, resultTuples, m.options), true, nil
 }
 
 // matchCardinalityManyAsRelation handles cardinality-many patterns using add-wins resolution
@@ -1734,6 +1758,10 @@ func (m *BadgerMatcher) matchVectorWithBindings(
 		}
 
 		tuples = append(tuples, tuple)
+	}
+	// A failed bindings scan is not an exhausted one — surface it.
+	if err := it.Error(); err != nil {
+		return nil, err
 	}
 
 	return executor.NewMaterializedRelation(symbols, tuples), nil

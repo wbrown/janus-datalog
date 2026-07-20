@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Tests for cache invalidation on writes to unique attributes.
 //
 // Commit 4 of the CRDT-unique redesign. Per design decision D3

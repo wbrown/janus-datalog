@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Tests for entity-view fallback and walk-based (A, V)-LWW symmetry.
 //
 // Commit 3 of the CRDT-unique redesign. Walk-based resolution:

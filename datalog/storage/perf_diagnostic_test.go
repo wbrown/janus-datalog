@@ -12,17 +12,6 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// getDefaultExecutorOptions returns the default executor options for testing
-func getDefaultExecutorOptions() executor.ExecutorOptions {
-	opts := DefaultPlannerOptions()
-	return executor.ExecutorOptions{
-		EnableTrueStreaming:     opts.EnableTrueStreaming,
-		EnableStreamingJoins:    opts.EnableStreamingJoins,
-		EnableSymmetricHashJoin: opts.EnableSymmetricHashJoin,
-		DefaultHashTableSize:    256,
-	}
-}
-
 // BenchmarkDatomDecoding benchmarks the DatomFromKey function
 func BenchmarkDatomDecoding(b *testing.B) {
 	// Create a minimal store just for the encoder

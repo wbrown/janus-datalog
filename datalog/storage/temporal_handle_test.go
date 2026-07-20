@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Tests for temporal database handle safety.
 //
 // AsOf() and History() return read-only *Database views sharing the parent's

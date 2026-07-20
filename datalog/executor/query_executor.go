@@ -120,7 +120,10 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 						g = g.Materialize()
 						groups[len(groups)-1] = g
 					}
-					entities := extractEntityIDs(g, g.Symbols())
+					entities, err := extractEntityIDs(g, g.Symbols())
+					if err != nil {
+						return nil, fmt.Errorf("prefetch entity extraction failed: %w", err)
+					}
 					if len(entities) > 50 {
 						if collector := ctx.Collector(); collector != nil {
 							collector.Add(annotations.Event{
@@ -131,7 +134,9 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 								},
 							})
 						}
-						prefetcher.PrefetchEntities(entities)
+						if err := prefetcher.PrefetchEntities(entities); err != nil {
+							return nil, fmt.Errorf("entity prefetch failed: %w", err)
+						}
 					}
 				}
 			}
@@ -867,7 +872,13 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 					}
 					outputTuples = append(outputTuples, newTuple)
 				}
-				iter.Close()
+				scanErr := iter.Error()
+				if closeErr := iter.Close(); scanErr == nil {
+					scanErr = closeErr
+				}
+				if scanErr != nil {
+					return nil, scanErr
+				}
 				resultRels = append(resultRels, NewMaterializedRelationWithOptions(outputSyms, outputTuples, e.options))
 			}
 			return resultRels, nil
@@ -1554,54 +1565,6 @@ func findCommonSymbols(relations []Relation) []query.Symbol {
 }
 
 // antiJoinOnSymbols returns tuples from left that have no matching tuple in right on the given symbols
-func antiJoinOnSymbols(left, right Relation, symbols []query.Symbol) Relation {
-	if left == nil || right == nil || len(symbols) == 0 {
-		return left
-	}
-
-	// Build set of key values from right
-	rightKeys := make(map[string]bool)
-	rightIter := right.Iterator()
-	rightSyms := right.Symbols()
-	for rightIter.Next() {
-		tuple := rightIter.Tuple()
-		key := extractKeyFromTuple(tuple, rightSyms, symbols)
-		rightKeys[key] = true
-	}
-	rightIter.Close()
-
-	// Filter left to only tuples not in right
-	var remaining []Tuple
-	leftIter := left.Iterator()
-	leftSyms := left.Symbols()
-	for leftIter.Next() {
-		tuple := leftIter.Tuple()
-		key := extractKeyFromTuple(tuple, leftSyms, symbols)
-		if !rightKeys[key] {
-			remaining = append(remaining, tuple)
-		}
-	}
-	leftIter.Close()
-
-	return NewMaterializedRelationWithOptions(leftSyms, remaining, left.Options())
-}
-
-// extractKeyFromTuple extracts a string key from tuple for the given symbols
-func extractKeyFromTuple(tuple Tuple, syms []query.Symbol, symbols []query.Symbol) string {
-	symIdx := make(map[query.Symbol]int)
-	for i, sym := range syms {
-		symIdx[sym] = i
-	}
-
-	var key string
-	for _, sym := range symbols {
-		if idx, ok := symIdx[sym]; ok && idx < len(tuple) {
-			key += fmt.Sprintf("%v|", tuple[idx])
-		}
-	}
-	return key
-}
-
 // executeOrClauseUnion implements standard Datalog union semantics
 func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
 	collector := ctx.Collector()
@@ -1717,7 +1680,10 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, c
 
 // extractEntityIDs extracts datalog.Identity values from the specified symbol
 // bindings of a materialized relation. Used to collect entity IDs for prefetch.
-func extractEntityIDs(rel Relation, syms []query.Symbol) []datalog.Identity {
+// A failed scan surfaces as an error; the caller decides (prefetch is
+// best-effort and skips — the relation's own deferred error still reaches the
+// consumer downstream).
+func extractEntityIDs(rel Relation, syms []query.Symbol) ([]datalog.Identity, error) {
 	symIdx := make(map[query.Symbol]int)
 	for i, s := range rel.Symbols() {
 		symIdx[s] = i
@@ -1730,7 +1696,7 @@ func extractEntityIDs(rel Relation, syms []query.Symbol) []datalog.Identity {
 		}
 	}
 	if len(indices) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	seen := make(map[datalog.Identity]bool)
@@ -1748,9 +1714,15 @@ func extractEntityIDs(rel Relation, syms []query.Symbol) []datalog.Identity {
 			}
 		}
 	}
-	it.Close()
+	scanErr := it.Error()
+	if closeErr := it.Close(); scanErr == nil {
+		scanErr = closeErr
+	}
+	if scanErr != nil {
+		return nil, scanErr
+	}
 
-	return entities
+	return entities, nil
 }
 
 // collectOrBranchRequiredSymbols collects symbols that OR branches need from outer context
@@ -1972,7 +1944,13 @@ func (e *DefaultQueryExecutor) filterWithNotClause(ctx Context, clause *query.No
 			filtered = append(filtered, tuple)
 		}
 	}
-	iter.Close()
+	scanErr := iter.Error()
+	if closeErr := iter.Close(); scanErr == nil {
+		scanErr = closeErr
+	}
+	if scanErr != nil {
+		return nil, scanErr
+	}
 
 	return NewMaterializedRelationWithOptions(inputSyms, filtered, e.options), nil
 }
@@ -2052,7 +2030,13 @@ func (e *DefaultQueryExecutor) filterWithNotJoinClause(ctx Context, clause *quer
 			filtered = append(filtered, tuple)
 		}
 	}
-	iter.Close()
+	scanErr := iter.Error()
+	if closeErr := iter.Close(); scanErr == nil {
+		scanErr = closeErr
+	}
+	if scanErr != nil {
+		return nil, scanErr
+	}
 
 	return NewMaterializedRelationWithOptions(inputSyms, filtered, e.options), nil
 }

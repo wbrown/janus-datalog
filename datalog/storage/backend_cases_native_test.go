@@ -20,6 +20,34 @@ func appendNativeBackendCases(cases []storeContractCase) []storeContractCase {
 	})
 }
 
+func appendNativeReopenCases(cases []reopenBackendCase) []reopenBackendCase {
+	badgerCase := reopenBackendCase{name: "badger"}
+	var (
+		path  string
+		prior *Database
+	)
+	badgerCase.open = func(t testing.TB, opts DatabaseOptions) *Database {
+		t.Helper()
+		if path == "" {
+			path = t.TempDir()
+			t.Cleanup(func() {
+				if prior != nil {
+					_ = prior.Close()
+				}
+			})
+		}
+		if prior != nil {
+			require.NoError(t, prior.Close())
+		}
+		opts.Path = path
+		db, err := NewDatabaseWithOptions(opts)
+		require.NoError(t, err)
+		prior = db
+		return db
+	}
+	return append(cases, badgerCase)
+}
+
 func deleteNativeStoreBlobs(t *testing.T, store Store) (int, bool) {
 	t.Helper()
 	badgerStore, ok := store.(*BadgerStore)

@@ -16,9 +16,14 @@ import (
 // Cache.PopulateFromDatoms which uses the canonical Resolve*FromDatoms functions.
 //
 // See ALGEBRA.md "Rule 6: Entity Prefetch into EA Cache" for design rationale.
-func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
+//
+// The first storage failure aborts the prefetch and returns it: an error
+// from the store means the store is broken, and callers fail the query —
+// prefetch being an optimization does not make store failures ignorable.
+// Groups cached before the failure hold valid data.
+func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) error {
 	if m.cache == nil || len(entities) == 0 || m.isHistoryMode() {
-		return
+		return nil
 	}
 
 	// Sort entities by their 20-byte hash (= disk order)
@@ -47,7 +52,7 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 
 		iter, err := m.store.Scan(EATV, start, end)
 		if err != nil {
-			continue
+			return err
 		}
 
 		// Single-pass: iterate EATV, accumulate datoms per (E, A) group,
@@ -60,7 +65,7 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 			d, err := iter.Datom()
 			if err != nil {
 				_ = iter.Close()
-				return
+				return err
 			}
 			if m.shouldFilterTx(d.Tx) {
 				continue
@@ -84,7 +89,7 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 		}
 		if err := iter.Error(); err != nil {
 			_ = iter.Close()
-			return
+			return err
 		}
 		// Flush last group
 		if hasGroup && len(currentDatoms) > 0 {
@@ -93,6 +98,9 @@ func (m *BadgerMatcher) PrefetchEntities(entities []datalog.Identity) {
 				m.cache.PopulateFromDatoms(key, card, currentDatoms)
 			}
 		}
-		iter.Close()
+		if err := iter.Close(); err != nil {
+			return err
+		}
 	}
+	return nil
 }

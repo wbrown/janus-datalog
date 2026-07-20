@@ -274,7 +274,14 @@ func chooseBestMultiPositionStrategy(
 			}
 		}
 	}
+	scanErr := it.Error()
 	it.Close()
+	if scanErr != nil {
+		// The counts are truncated garbage — take the no-preference strategy.
+		// The returned relation still carries the deferred error, which the
+		// caller's match path surfaces when it consumes the bindings.
+		return ReuseStrategy{Type: NoReuse}, bindingRel
+	}
 
 	for i := range info {
 		info[i].distinct = len(sets[i])

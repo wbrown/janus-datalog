@@ -1,5 +1,3 @@
-//go:build !(js && wasm)
-
 // Tests that errors from the storage Iterator chain propagate through
 // to the executor layer instead of being silently swallowed.
 //

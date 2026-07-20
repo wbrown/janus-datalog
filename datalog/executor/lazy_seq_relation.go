@@ -216,7 +216,15 @@ func (it *lazySeqIterator) Next() bool {
 	}
 	it.current = tuple
 
-	rest, _ := it.cur.Rest()
+	rest, err := it.cur.Rest()
+	if err != nil {
+		// The current tuple is valid — emit it; the realization failure
+		// surfaces on the next advance via Error().
+		it.err = err
+		it.done = true
+		it.cur = nil
+		return true
+	}
 	if rest == nil {
 		it.cur = nil
 	} else {

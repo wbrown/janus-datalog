@@ -4,6 +4,8 @@
 **Scope**: `datalog/query`, `datalog/executor`, `datalog/parser`, `datalog/planner`, `datalog/storage`, `datalog/qb`
 **Method**: static caller analysis (production vs `_test.go` callers separated for every flagged symbol), switch/default enumeration, delegation-chain termination proofs, and pattern sweeps for the antipattern classes eliminated by the value-semantics consolidation (PR #112).
 
+**Evidence-scope caveat (added 2026-07-19)**: every "zero callers" / "test-only" claim in this document is an **in-repository** observation. Exported symbols of this published module may have downstream consumers no workspace index can see; whether they do is the owner's knowledge. Unexported symbols' deadness IS decidable in-repo. Deletions of exported surface are compatibility decisions, never derivable from reference counts alone.
+
 **Status convention** (same as `docs/bugs/`): every finding below carries a `Status:` line. A finding without `Status: Resolved (date, commit)` is believed open *as of the audit date*. Before treating any entry as live, re-read the cited code; when you fix or refute one, update its `Status:` line in place so the next reader does not re-derive it.
 
 ## Context
@@ -163,10 +165,14 @@ The in-repo registration in `executor_subquery_test.go` registers `same-date?` a
 
 ### C8. `BadgerMatcher.MatchWithHistory` / `MatchAsOf` — superseded temporal API
 
-**Status**: Open
+**Status**: Resolved (2026-07-19) — deleted by owner ruling. The six test call sites converted to the supported path (`matcher.History()` / `matcher.AsOf(txID)` + `Match`), binding `?tx` where distinct history entries would otherwise deduplicate in the relation, and expressing "as-of before any writes" as a nonzero pre-first-write ElementID (the zero ElementID means history mode in the three-mode convention).
 **Site**: `datalog/storage/matcher.go`
 
 Confirmed test-only and *not* the implementation behind time-travel: `Database.AsOf(txID)`/`Database.History()` flow through the normal match path gated by `isHistoryMode()`. These two are an older direct-pattern API that the gated path superseded.
+
+### C9. `executor/testing.go` — exported test utilities with no in-repo references
+
+**Status**: Open, pending owner ruling (found 2026-07-19 during the error-swallow cleanup). Every exported function in the file (`DualTestExecutorVariants`, `DualTestExecutorVariantsWithBase`, `CompareRelations`, `CompareRelationsIgnoreSymbolOrder`, `RelationDiff`, `FormatRelationSummary`) has **zero references in this repository**, and the unexported layer (`compareSymbols`, `collectSortedTuples`, `collectSortedTuplesReordered`, `compareTuplesOrder`, `compareTuplesEqual`) serves only them. Three of the error-swallow sweep's B-shape sites live in these functions. **In-repo reference counts do not establish deadness here**: these are exported symbols of a published module, and the file's own doc comments declare the audience — "Exported for use by external test packages" — which is exactly what a workspace index cannot see. Whether downstream consumers use this surface is the owner's knowledge. The decision is a public-API-surface one: delete (a compatibility-notes change) or keep, and if kept, fix the three swallows in place.
 
 ---
 
