@@ -49,6 +49,17 @@ func parseFunction(fn string, args []query.PatternElement) (query.Function, erro
 	case "enumerate":
 		return parseEnumerate(args)
 	default:
+		// User-defined functions: a name with a registered implementation
+		// (query.DefaultRegistry.RegisterImplementation) parses to a
+		// CustomFunction; anything else is unknown, rejected here at the
+		// boundary. Registration must precede parsing.
+		if _, ok := query.DefaultRegistry.Implementation(fn); ok {
+			terms := make([]query.Term, len(args))
+			for i, arg := range args {
+				terms[i] = elementToTerm(arg)
+			}
+			return query.CustomFunction{Fn: fn, Args: terms}, nil
+		}
 		return nil, fmt.Errorf("unsupported function: %s", fn)
 	}
 }

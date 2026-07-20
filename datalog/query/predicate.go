@@ -377,10 +377,11 @@ func (s StrStartsWithPredicate) CanPushToStorage() bool {
 }
 
 // FunctionPredicate carries a predicate function name the engine does not
-// implement as a concrete type. It is the placeholder for user-defined
-// predicate functions, which are intended to be supported but are not yet
-// wired to a registration mechanism (docs/reviews/ANTIPATTERN_AUDIT_2026_07.md,
-// C5). Evaluation errors loudly.
+// implement as a concrete type: the invocation form for user-defined
+// predicate functions. Eval consults DefaultRegistry for the registered
+// implementation (RegisterImplementation); an unregistered name errors
+// loudly. The result must be bool — a predicate filters, and any other
+// return type is a contract error, not a truthiness question.
 type FunctionPredicate struct {
 	Fn   string
 	Args []PatternElement
@@ -396,8 +397,35 @@ func (f FunctionPredicate) RequiredSymbols() []Symbol {
 	return syms
 }
 
-func (f FunctionPredicate) Eval(map[Symbol]interface{}) (bool, error) {
-	return false, fmt.Errorf("unknown predicate function: %s", f.Fn)
+func (f FunctionPredicate) Eval(bindings map[Symbol]interface{}) (bool, error) {
+	impl, ok := DefaultRegistry.Implementation(f.Fn)
+	if !ok {
+		return false, fmt.Errorf("unknown predicate function: %s", f.Fn)
+	}
+	args := make([]interface{}, len(f.Args))
+	for i, arg := range f.Args {
+		switch a := arg.(type) {
+		case Variable:
+			val, bound := bindings[a.Name]
+			if !bound {
+				return false, fmt.Errorf("predicate function %s: unbound variable %s", f.Fn, a.Name)
+			}
+			args[i] = val
+		case Constant:
+			args[i] = a.Value
+		default:
+			return false, fmt.Errorf("predicate function %s: unsupported argument %T", f.Fn, arg)
+		}
+	}
+	result, err := impl(args)
+	if err != nil {
+		return false, fmt.Errorf("predicate function %s: %w", f.Fn, err)
+	}
+	passes, isBool := result.(bool)
+	if !isBool {
+		return false, fmt.Errorf("predicate function %s returned %T, want bool", f.Fn, result)
+	}
+	return passes, nil
 }
 
 func (f FunctionPredicate) String() string {

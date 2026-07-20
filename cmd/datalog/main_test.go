@@ -507,21 +507,25 @@ func TestCLI_QueryWithScalarInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	// Query with scalar input: find person with age 30
-	cmd := exec.Command(binPath, "-db", dbPath,
-		"-query", `[:find ?name :in $ ?age :where [?p :person/age ?age] [?p :person/name ?name]]`,
-		"-in", "30")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Query with scalar input failed: %v\n%s", err, out)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Query with scalar input: find person with age 30
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
+				"-query", `[:find ?name :in $ ?age :where [?p :person/age ?age] [?p :person/name ?name]]`,
+				"-in", "30")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query with scalar input failed: %v\n%s", err, out)
+			}
 
-	output := string(out)
-	if !strings.Contains(output, "Alice") {
-		t.Errorf("Expected Alice (age 30), got: %s", output)
-	}
-	if strings.Contains(output, "Bob") {
-		t.Errorf("Should not contain Bob (age 25), got: %s", output)
+			output := string(out)
+			if !strings.Contains(output, "Alice") {
+				t.Errorf("Expected Alice (age 30), got: %s", output)
+			}
+			if strings.Contains(output, "Bob") {
+				t.Errorf("Should not contain Bob (age 25), got: %s", output)
+			}
+		})
 	}
 }
 
@@ -529,21 +533,25 @@ func TestCLI_QueryWithCollectionInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	// Query with collection input: find people with age 25 or 30
-	cmd := exec.Command(binPath, "-db", dbPath,
-		"-query", `[:find ?name :in $ [?age ...] :where [?p :person/age ?age] [?p :person/name ?name]]`,
-		"-in", "[25 30]")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Query with collection input failed: %v\n%s", err, out)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Query with collection input: find people with age 25 or 30
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
+				"-query", `[:find ?name :in $ [?age ...] :where [?p :person/age ?age] [?p :person/name ?name]]`,
+				"-in", "[25 30]")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query with collection input failed: %v\n%s", err, out)
+			}
 
-	output := string(out)
-	if !strings.Contains(output, "Alice") {
-		t.Errorf("Expected Alice, got: %s", output)
-	}
-	if !strings.Contains(output, "Bob") {
-		t.Errorf("Expected Bob, got: %s", output)
+			output := string(out)
+			if !strings.Contains(output, "Alice") {
+				t.Errorf("Expected Alice, got: %s", output)
+			}
+			if !strings.Contains(output, "Bob") {
+				t.Errorf("Expected Bob, got: %s", output)
+			}
+		})
 	}
 }
 
@@ -551,18 +559,22 @@ func TestCLI_QueryWithStringInput(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	// Query with string scalar input
-	cmd := exec.Command(binPath, "-db", dbPath,
-		"-query", `[:find ?age :in $ ?name :where [?p :person/name ?name] [?p :person/age ?age]]`,
-		"-in", `"Bob"`)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Query with string input failed: %v\n%s", err, out)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Query with string scalar input
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
+				"-query", `[:find ?age :in $ ?name :where [?p :person/name ?name] [?p :person/age ?age]]`,
+				"-in", `"Bob"`)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query with string input failed: %v\n%s", err, out)
+			}
 
-	output := string(out)
-	if !strings.Contains(output, "25") {
-		t.Errorf("Expected 25 (Bob's age), got: %s", output)
+			output := string(out)
+			if !strings.Contains(output, "25") {
+				t.Errorf("Expected 25 (Bob's age), got: %s", output)
+			}
+		})
 	}
 }
 
@@ -570,21 +582,25 @@ func TestCLI_QueryWithMultipleInputs(t *testing.T) {
 	binPath := buildCLI(t)
 	dbPath := createTestDatabase(t)
 
-	// Query with two scalar inputs
-	cmd := exec.Command(binPath, "-db", dbPath,
-		"-query", `[:find ?name :in $ ?min-age ?max-age :where [?p :person/age ?age] [?p :person/name ?name] [(>= ?age ?min-age)] [(<= ?age ?max-age)]]`,
-		"-in", "26", "-in", "35")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Query with multiple inputs failed: %v\n%s", err, out)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Query with two scalar inputs
+			cmd := exec.Command(binPath, "-db", dbPath, mode.cliFlag(),
+				"-query", `[:find ?name :in $ ?min-age ?max-age :where [?p :person/age ?age] [?p :person/name ?name] [(>= ?age ?min-age)] [(<= ?age ?max-age)]]`,
+				"-in", "26", "-in", "35")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Query with multiple inputs failed: %v\n%s", err, out)
+			}
 
-	output := string(out)
-	if !strings.Contains(output, "Alice") {
-		t.Errorf("Expected Alice (age 30), got: %s", output)
-	}
-	if strings.Contains(output, "Bob") {
-		t.Errorf("Should not contain Bob (age 25), got: %s", output)
+			output := string(out)
+			if !strings.Contains(output, "Alice") {
+				t.Errorf("Expected Alice (age 30), got: %s", output)
+			}
+			if strings.Contains(output, "Bob") {
+				t.Errorf("Should not contain Bob (age 25), got: %s", output)
+			}
+		})
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/wbrown/janus-datalog/datalog/edn"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/parser"
+	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -27,6 +28,7 @@ func main() {
 	var verbose bool
 	var queryStr string
 	var enableDecorrelation bool
+	var optimize bool
 	var exportPath string
 	var importPath string
 	var exportBinPath string
@@ -42,6 +44,7 @@ func main() {
 	flag.BoolVar(&verbose, "verbose", false, "verbose mode (show query annotations)")
 	flag.StringVar(&queryStr, "query", "", "run a single query and exit")
 	flag.BoolVar(&enableDecorrelation, "decorrelate", true, "deprecated no-op; legacy executor decorrelation has been retired")
+	flag.BoolVar(&optimize, "optimize", true, "enable the algebra query optimizer; -optimize=false runs the baseline planner")
 	flag.StringVar(&exportPath, "export", "", "export database to EDN file")
 	flag.BoolVar(&compressedExport, "compressed", false, "use #lzj compressed tagged literals in export")
 	flag.StringVar(&importPath, "import", "", "import database from EDN file")
@@ -69,6 +72,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -db mydata.db -stats            # Print cardinality and value statistics\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db dump.edn -query '...'       # Query an EDN dump directly (temporary database)\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -db dump.jdzl -query '...'      # Query a JDZL dump directly (temporary database)\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -optimize=false -query '...'    # Run on the baseline planner (algebra optimizer off)\n", os.Args[0])
 	}
 	flag.Parse()
 
@@ -135,8 +139,12 @@ func main() {
 		return
 	}
 
-	// Open database (BadgerDB directory, or .edn/.jdzl dump)
-	db, cleanup, err := openDatabaseOrEDN(dbPath)
+	// Open database (BadgerDB directory, or .edn/.jdzl dump). The optimizer
+	// mode rides the database's planner options, so every query path — Query
+	// with inputs, NewExecutor, interactive — runs on the selected mode.
+	plannerOpts := storage.DefaultPlannerOptions()
+	plannerOpts.EnableAlgebraOptimizer = optimize
+	db, cleanup, err := openDatabaseOrEDN(dbPath, &plannerOpts)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -169,8 +177,9 @@ func runInteractive(db *storage.Database, handler annotations.Handler, enableDec
 	fmt.Println()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	opts := storage.DefaultPlannerOptions()
-	exec := db.NewExecutorWithOptions(opts)
+	// The database's planner options carry the -optimize mode; NewExecutor
+	// inherits them (plus the plan cache) instead of rebuilding defaults here.
+	exec := db.NewExecutor()
 
 	for {
 		fmt.Print("> ")
@@ -315,13 +324,20 @@ func isDumpFilePath(path string) bool {
 // directory. The returned cleanup function closes the database and removes
 // the temporary directory; callers must invoke it. Writes to a dump-backed
 // database are discarded when the process exits.
-func openDatabaseOrEDN(dbPath string) (*storage.Database, func(), error) {
+// openDatabaseOrEDN opens a BadgerDB directory, or loads an .edn/.jdzl dump
+// into a temporary database. plannerOpts, when non-nil, becomes the database's
+// planner-options override (the -optimize flag rides it); nil keeps the
+// engine defaults — the export/import/stats paths run no queries and pass nil.
+func openDatabaseOrEDN(dbPath string, plannerOpts *planner.PlannerOptions) (*storage.Database, func(), error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, nil, fmt.Errorf("database does not exist: %s", dbPath)
 	}
 
 	if !isDumpFilePath(dbPath) {
-		db, err := storage.NewDatabase(dbPath)
+		db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+			Path:           dbPath,
+			PlannerOptions: plannerOpts,
+		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to open database: %w", err)
 		}
@@ -332,7 +348,10 @@ func openDatabaseOrEDN(dbPath string) (*storage.Database, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	db, err := storage.NewDatabase(filepath.Join(tmpDir, "temp.db"))
+	db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+		Path:           filepath.Join(tmpDir, "temp.db"),
+		PlannerOptions: plannerOpts,
+	})
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		return nil, nil, fmt.Errorf("failed to create temp database: %w", err)
@@ -370,7 +389,7 @@ func openDatabaseOrEDN(dbPath string) (*storage.Database, func(), error) {
 // runExport exports the database to an EDN file. The source may itself be an
 // .edn or .jdzl dump (re-encode / convert via a temporary database).
 func runExport(dbPath, exportPath string, compressed bool) {
-	db, cleanup, err := openDatabaseOrEDN(dbPath)
+	db, cleanup, err := openDatabaseOrEDN(dbPath, nil)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -436,7 +455,7 @@ func runExportBin(dbPath, exportPath string) {
 }
 
 func exportBinaryDatabase(dbPath, exportPath string) error {
-	db, cleanup, err := openDatabaseOrEDN(dbPath)
+	db, cleanup, err := openDatabaseOrEDN(dbPath, nil)
 	if err != nil {
 		return err
 	}
@@ -505,8 +524,9 @@ func runSingleQuery(db *storage.Database, handler annotations.Handler, queryStr 
 	if len(goInputs) > 0 {
 		result, err = db.Query(q, goInputs...)
 	} else {
-		opts := storage.DefaultPlannerOptions()
-		exec := db.NewExecutorWithOptions(opts)
+		// The database's planner options carry the -optimize mode; NewExecutor
+		// inherits them (plus the plan cache), matching the db.Query path.
+		exec := db.NewExecutor()
 		if handler != nil {
 			ctx := executor.NewContext(handler)
 			result, err = exec.ExecuteWithContext(ctx, q)

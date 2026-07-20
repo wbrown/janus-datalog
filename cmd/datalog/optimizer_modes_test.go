@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/wbrown/janus-datalog/datalog/planner"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
@@ -43,4 +45,10 @@ func (m optimizerMode) plannerOptions() planner.PlannerOptions {
 	opts := storage.DefaultPlannerOptions()
 	opts.EnableAlgebraOptimizer = m.algebra
 	return opts
+}
+
+// cliFlag renders this mode as the built CLI's -optimize flag, for the
+// subprocess tests that run queries through the binary.
+func (m optimizerMode) cliFlag() string {
+	return fmt.Sprintf("-optimize=%v", m.algebra)
 }

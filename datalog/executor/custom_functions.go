@@ -3,31 +3,27 @@ package executor
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
-// customFunctions is a registry for custom functions (mainly for testing)
-var customFunctions = make(map[string]func([]interface{}) (interface{}, error))
-var customFuncMutex sync.RWMutex
-
-// RegisterCustomFunction registers a custom function for use in expressions
+// RegisterCustomFunction registers a user-defined function for use in
+// queries: predicate position ([(my/fn ?x)]) and expression position
+// ([(my/fn ?x) ?y]). The registry lives with the function namespace in
+// query.DefaultRegistry; register before parsing queries that use the name.
 func RegisterCustomFunction(name string, fn func([]interface{}) (interface{}, error)) {
-	customFuncMutex.Lock()
-	defer customFuncMutex.Unlock()
-	customFunctions[name] = fn
+	query.DefaultRegistry.RegisterImplementation(name, fn)
 }
 
-// CallCustomFunction calls a custom function if it exists
+// CallCustomFunction calls a registered user-defined function if it exists.
 func CallCustomFunction(name string, args []interface{}) (interface{}, bool, error) {
-	customFuncMutex.RLock()
-	defer customFuncMutex.RUnlock()
-
-	if fn, ok := customFunctions[name]; ok {
-		result, err := fn(args)
-		return result, true, err
+	fn, ok := query.DefaultRegistry.Implementation(name)
+	if !ok {
+		return nil, false, nil
 	}
-	return nil, false, nil
+	result, err := fn(args)
+	return result, true, err
 }
 
 // addValues adds numeric values (variadic)
