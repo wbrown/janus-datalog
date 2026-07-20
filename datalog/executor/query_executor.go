@@ -1564,7 +1564,6 @@ func findCommonSymbols(relations []Relation) []query.Symbol {
 	return result
 }
 
-// antiJoinOnSymbols returns tuples from left that have no matching tuple in right on the given symbols
 // executeOrClauseUnion implements standard Datalog union semantics
 func (e *DefaultQueryExecutor) executeOrClauseUnion(ctx Context, clause *query.OrClause, groups Relations) (Relation, error) {
 	collector := ctx.Collector()
@@ -1680,9 +1679,9 @@ func (e *DefaultQueryExecutor) executeOrJoinClauseCorrelatedUnion(ctx Context, c
 
 // extractEntityIDs extracts datalog.Identity values from the specified symbol
 // bindings of a materialized relation. Used to collect entity IDs for prefetch.
-// A failed scan surfaces as an error; the caller decides (prefetch is
-// best-effort and skips — the relation's own deferred error still reaches the
-// consumer downstream).
+// A failed scan surfaces as an error and the caller fails the query: an error
+// from the store indicates something wrong with the store, whether or not the
+// operation that hit it was optional.
 func extractEntityIDs(rel Relation, syms []query.Symbol) ([]datalog.Identity, error) {
 	symIdx := make(map[query.Symbol]int)
 	for i, s := range rel.Symbols() {

@@ -260,6 +260,26 @@ The review's two live findings are ledgered: `docs/bugs/resolved/BUG_CORRELATED_
 
 Original finding: the comments at lines 72-79 referenced `str`/`l85` struct fields that no longer exist, and the test's narration was backwards — the branch the test called "expected" (struct fields differ) was the impossible one and the "luck" branch the guaranteed one.
 
+## Addendum — external review round 2 (against `a58c0f8`), audited and confirmed
+
+All four findings confirmed against the code:
+
+### R3. `resolveAttributeViaMatcher` CardinalityOne arm swallowed scan errors
+
+**Status**: Resolved (2026-07-19). The error-swallow sweep added the `iter.Error()` guard to the CardinalityMany and CardinalityVector arms but missed the `default:` CardinalityOne arm — the schemaless default on the cache-less/history path. Fixed with the same guard; pinned red-first by `TestResolveEntityAttributesSurfacesScanErrors`. Sweep doc carries the addendum.
+
+### R4. Algebra bridge compiles in source order — NOT before its binder fails only with the optimizer on
+
+**Status**: Open. Ledgered as `docs/bugs/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md`; fix direction pending an owner ruling (pre-order clauses entering Compile by ScopeOf readiness, or defer unplaceable clauses in compileClausesFrom). This finding also produced the owner ruling that every query test must exercise both optimizer modes — plan of record: `docs/wip/OPTIMIZER_MODE_MATRIX.md`.
+
+### R5. Orphaned `antiJoinOnSymbols` doc comment
+
+**Status**: Resolved (2026-07-19). The deleted function's doc line had survived above `executeOrClauseUnion`; removed.
+
+### R6. `extractEntityIDs` comment described the rejected best-effort contract
+
+**Status**: Resolved (2026-07-19). The comment narrated "prefetch is best-effort and skips" — the design the annotations-are-never-an-error-channel ruling vetoed — while the caller hard-fails the query. Rewritten to state the actual contract.
+
 ## Suggested sequencing
 
 1. **Class A** — the live defects: A1 (surface the Eval error), A2 (default arm), A3 (first-error-wins guards), A4 (Tx panic), A5 (reject at write boundary), A6 (loud defaults). Small, independent, each pinnable with a test.

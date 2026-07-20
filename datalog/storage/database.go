@@ -2833,6 +2833,10 @@ func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr data
 				return tuple[0], nil
 			}
 		}
+		// A failed scan is not an absent attribute — surface it.
+		if err := iter.Error(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 }

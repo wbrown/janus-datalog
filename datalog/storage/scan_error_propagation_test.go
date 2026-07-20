@@ -74,6 +74,36 @@ func scanFailureShapes(err error) map[string]Iterator {
 	}
 }
 
+// TestResolveEntityAttributesSurfacesScanErrors pins the cache-less
+// resolution path's error contract for the CardinalityOne arm — the
+// schemaless default, so the most common arm on that path: a failed or
+// partially-decodable scan must surface as an error, never read as
+// "attribute absent", which would return a partial entity with no signal.
+// The CardinalityMany and CardinalityVector arms carry the same guard.
+func TestResolveEntityAttributesSurfacesScanErrors(t *testing.T) {
+	injected := fmt.Errorf("simulated scan failure")
+	for name, iter := range scanFailureShapes(injected) {
+		t.Run(name, func(t *testing.T) {
+			store := NewMemoryStore(&BinaryKeyEncoder{})
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Store:        &indexScanOverrideStore{Store: store, index: EATV, iter: iter},
+				DisableCache: true,
+			})
+			if err != nil {
+				t.Fatalf("failed to create database: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+
+			entity := datalog.NewIdentity("user:alice")
+			attr := datalog.NewKeyword(":user/email")
+			_, err = db.ResolveEntityAttributes(entity, []datalog.Keyword{attr})
+			if err == nil {
+				t.Fatal("expected the scan failure to surface, got nil error")
+			}
+		})
+	}
+}
+
 // TestResolveMaxOtherTxForValueSurfacesScanErrors pins the supersession
 // check's error contract: a failed or partially-decodable AVET scan must
 // surface as an error, never read as "no competing assertion" — that would

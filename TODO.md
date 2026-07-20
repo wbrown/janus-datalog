@@ -161,6 +161,8 @@ These were originally listed as "out of scope" but got implemented anyway:
 ## Technical Debt to Address
 
 ### High Priority
+- [ ] **Optimizer mode matrix migration** — owner ruling 2026-07-19: every query-executing test runs both optimizer modes via the existing matrix-test convention (`optimizerModes` axis, `t.Run` per mode); the optimizer must never change results and must never make things work. Plan of record: `docs/wip/OPTIMIZER_MODE_MATRIX.md`. Package order: storage → tests → db → qb → executor.
+- [ ] **Algebra bridge source-order dependence** — NOT before its binder fails only with the optimizer on; fix direction pending ruling. `docs/bugs/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md`.
 - [ ] Archive historical optimization docs → Move to `docs/archive/`
 
 ### Medium Priority
