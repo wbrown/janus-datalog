@@ -1,9 +1,6 @@
 # BUG: V-Bound Cardinality-One Validation Panics on Byte Values
 
-**Date**: 2026-05-22
-**Severity**: Stability / Correctness (Medium)
-**Status**: Resolved (2026-05-22)
-**Affected**: V-bound queries on cardinality-one `TypeBytes` attributes, especially candidate + validate paths using AVET/VAET
+**Date**: 2026-05-22 **Severity**: Stability / Correctness (Medium) **Status**: Resolved (2026-05-22) **Affected**: V-bound queries on cardinality-one `TypeBytes` attributes, especially candidate + validate paths using AVET/VAET
 
 ## Summary
 
@@ -112,30 +109,19 @@ Run the tests through the public `db.Query` API, not only direct matcher calls, 
 
 ## Resolution (2026-05-22)
 
-One-line fix: `validatingVBoundIterator.validateCandidate` in
-`datalog/storage/matcher_relations.go` now compares the EATV winner to the
-bound value with `datalog.ValuesEqual` instead of raw `==`:
+One-line fix: `validatingVBoundIterator.validateCandidate` in `datalog/storage/matcher_relations.go` now compares the EATV winner to the bound value with `datalog.ValuesEqual` instead of raw `==`:
 
 ```go
 matches := datalog.ValuesEqual(winner.V, it.currentBoundV)
 ```
 
-`ValuesEqual` compares `[]byte` by content (`bytes.Equal`), so the comparison
-no longer panics on the uncomparable `[]uint8` dynamic type. This was the only
-offending site — the other `==` uses in that file are `== nil` and a comment.
+`ValuesEqual` compares `[]byte` by content (`bytes.Equal`), so the comparison no longer panics on the uncomparable `[]uint8` dynamic type. This was the only offending site — the other `==` uses in that file are `== nil` and a comment.
 
-The `Op == OpCRDTRemove` check (line 817) precedes the comparison, so a
-tombstoned winner returns `false` before reaching `ValuesEqual`; the
-`AfterRemove` test confirms this branch is unaffected.
+The `Op == OpCRDTRemove` check (line 817) precedes the comparison, so a tombstoned winner returns `false` before reaching `ValuesEqual`; the `AfterRemove` test confirms this branch is unaffected.
 
 ### Tests
 
-`datalog/storage/vbound_bytes_validation_test.go` — all five from the plan,
-through the public `db.Query` API. `NoPanic`, `MatchesByContent`,
-`RejectsStaleCandidate`, and `AfterOverwrite` reproduced the panic before the
-fix and pass after it; `AfterRemove` passes throughout (it exercises the
-tombstone branch that never reaches the comparison). Full suite green:
-15 packages, 0 failures.
+`datalog/storage/vbound_bytes_validation_test.go` — all five from the plan, through the public `db.Query` API. `NoPanic`, `MatchesByContent`, `RejectsStaleCandidate`, and `AfterOverwrite` reproduced the panic before the fix and pass after it; `AfterRemove` passes throughout (it exercises the tombstone branch that never reaches the comparison). Full suite green: 15 packages, 0 failures.
 
 ### Files changed
 

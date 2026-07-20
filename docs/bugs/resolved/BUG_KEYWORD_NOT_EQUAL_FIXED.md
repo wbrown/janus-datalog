@@ -1,8 +1,6 @@
 # Bug Report: `not=` Predicate Not Working With Keywords [FIXED]
 
-**Status**: FIXED (October 2025)
-**Reported**: October 5, 2025
-**Fixed**: October 8, 2025
+**Status**: FIXED (October 2025) **Reported**: October 5, 2025 **Fixed**: October 8, 2025
 
 ## Summary
 

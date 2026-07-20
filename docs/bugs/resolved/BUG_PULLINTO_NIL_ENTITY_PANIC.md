@@ -1,14 +1,10 @@
 # BUG: PullInto Panics on Nil Entity (LookupAttribute)
 
-**Date**: 2026-02-07
-**Severity**: Critical — unrecoverable panic, crashes the process
-**Status**: FIXED
+**Date**: 2026-02-07 **Severity**: Critical — unrecoverable panic, crashes the process **Status**: FIXED
 
 ## Summary
 
-`Database.PullInto()` panics with a nil entity ID. `LookupAttribute` converts
-`entity.Bytes()` (nil for nil identity) to `Entity` (`[20]byte`) via a
-slice-to-array conversion, which panics when the slice length is 0.
+`Database.PullInto()` panics with a nil entity ID. `LookupAttribute` converts `entity.Bytes()` (nil for nil identity) to `Entity` (`[20]byte`) via a slice-to-array conversion, which panics when the slice length is 0.
 
 ## Reproduction
 
@@ -49,9 +45,7 @@ github.com/wbrown/janus-datalog/datalog/storage.(*Database).PullInto(...)
 
 ## Expected Behavior
 
-`PullInto(nil, &result)` should return an error, not panic. A nil entity ID
-is a recoverable condition — the caller may have a nil identity from a failed
-lookup. Panicking crashes the entire process.
+`PullInto(nil, &result)` should return an error, not panic. A nil entity ID is a recoverable condition — the caller may have a nil identity from a failed lookup. Panicking crashes the entire process.
 
 ## Actual Behavior
 
@@ -65,29 +59,19 @@ func (m *BadgerMatcher) LookupAttribute(entity datalog.Identity, attr datalog.Ke
         eEntity := Entity(eBytes)  // Entity is [20]byte — PANICS on nil slice
 ```
 
-`Identity.Bytes()` correctly returns nil for nil identity (`identity.go:137-138`),
-but `LookupAttribute` does not guard against this before the slice-to-array
-conversion.
+`Identity.Bytes()` correctly returns nil for nil identity (`identity.go:137-138`), but `LookupAttribute` does not guard against this before the slice-to-array conversion.
 
 ## Root Cause
 
-`LookupAttribute` (`matcher.go:789`) has no nil check on the entity parameter.
-The `Entity(eBytes)` conversion at line 806 assumes `eBytes` is always 20 bytes.
-Go panics on `[N]T(slice)` when `len(slice) < N`.
+`LookupAttribute` (`matcher.go:789`) has no nil check on the entity parameter. The `Entity(eBytes)` conversion at line 806 assumes `eBytes` is always 20 bytes. Go panics on `[N]T(slice)` when `len(slice) < N`.
 
-This path is only reachable when the cache is non-nil (`m.cache != nil`), which
-is why it may not have been caught before — tests without cache would take a
-different code path.
+This path is only reachable when the cache is non-nil (`m.cache != nil`), which is why it may not have been caught before — tests without cache would take a different code path.
 
 ## Discovery Context
 
-Found in a downstream project after upgrading janus-datalog. A test panicked
-during entity loading when a lookup function returned nil (entity not found)
-and the caller passed the nil identity directly to `PullInto` without checking
-the return value first.
+Found in a downstream project after upgrading janus-datalog. A test panicked during entity loading when a lookup function returned nil (entity not found) and the caller passed the nil identity directly to `PullInto` without checking the return value first.
 
-While the caller should check for nil, `PullInto` must not panic on nil input.
-Every public API function that takes an `Identity` should handle nil gracefully.
+While the caller should check for nil, `PullInto` must not panic on nil input. Every public API function that takes an `Identity` should handle nil gracefully.
 
 ## Fix
 
@@ -117,8 +101,7 @@ func (d *Database) PullInto(entityID Identity, v interface{}) error {
 
 ### 3. Audit other `Identity.Bytes()` → array conversion sites
 
-Search for `Entity(` conversions in the storage package that don't guard
-against nil. The same pattern likely exists in other methods.
+Search for `Entity(` conversions in the storage package that don't guard against nil. The same pattern likely exists in other methods.
 
 ```bash
 grep -n 'Entity(' datalog/storage/matcher.go | grep -v '//'
@@ -128,10 +111,8 @@ grep -n 'Entity(' datalog/storage/matcher.go | grep -v '//'
 
 All three fixes applied:
 
-1. **`database.go:PullInto`** — nil check at API boundary, returns
-   `fmt.Errorf("PullInto: entity ID is nil")`
+1. **`database.go:PullInto`** — nil check at API boundary, returns `fmt.Errorf("PullInto: entity ID is nil")`
 2. **`matcher.go:LookupAttribute`** — nil check, returns `nil, false`
-3. **`matcher.go:LookupAllAttributes`** — nil check, returns `nil`
-   (found via audit; same `Entity(eBytes)` conversion at line 947)
+3. **`matcher.go:LookupAllAttributes`** — nil check, returns `nil` (found via audit; same `Entity(eBytes)` conversion at line 947)
 
 Regression test: `TestPullInto_NilEntity_NoPanic` in `pullinto_crdt_test.go`.

@@ -1,8 +1,6 @@
 # Investigation: Join Returning Zero Results After Lazy Materialization
 
-**Date**: 2025-10-15
-**Status**: IN PROGRESS
-**Severity**: HIGH - Breaks basic join queries
+**Date**: 2025-10-15 **Status**: IN PROGRESS **Severity**: HIGH - Breaks basic join queries
 
 ## Summary
 
@@ -21,8 +19,7 @@ TestDebugBasicQuery demonstrates the issue:
         [?e :person/age ?age]]
 ```
 
-**Expected**: 1 result (person1 with name="Alice" and age=30)
-**Actual**: 0 results
+**Expected**: 1 result (person1 with name="Alice" and age=30) **Actual**: 0 results
 
 ## What We Ruled Out
 

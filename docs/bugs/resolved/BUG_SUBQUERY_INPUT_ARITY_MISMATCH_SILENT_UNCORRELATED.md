@@ -114,51 +114,28 @@ Do not interpret nil as a valid relation list unless the nested query truly has 
 
 **Resolved**, with a correction to the contract this report assumed.
 
-`createInputRelationsFromValuesWithOptions`, `createInputRelationsFromPattern`,
-and `createInputRelationsFromPatternWithOptions` now return `([]Relation, error)`,
-and the error propagates through every subquery execution path (sequential and
-parallel, materialized and streaming, OR / OR-default branches, and the
-QueryExecutor path). The silent `return nil` on mismatch is gone.
+`createInputRelationsFromValuesWithOptions`, `createInputRelationsFromPattern`, and `createInputRelationsFromPatternWithOptions` now return `([]Relation, error)`, and the error propagates through every subquery execution path (sequential and parallel, materialized and streaming, OR / OR-default branches, and the QueryExecutor path). The silent `return nil` on mismatch is gone.
 
 ### Correction: arity is validated against Datomic's defaulted :in
 
-The report assumed *any* arity mismatch is an error, and listed "a nested query
-declares no `$` but the subquery call includes one" as such a case. That is
-wrong, and enforcing it broke the most common subquery form. In Datomic an
-**omitted `:in` defaults to `[$]`** — it is not a zero-input query. So
-`[(q [:find (max ?a) :where [?p :age ?a]] $) ...]`, whose nested query has no
-`:in`, correctly receives the implicit default source; supplying `$` is right,
-not an over-supply.
+The report assumed *any* arity mismatch is an error, and listed "a nested query declares no `$` but the subquery call includes one" as such a case. That is wrong, and enforcing it broke the most common subquery form. In Datomic an **omitted `:in` defaults to `[$]`** — it is not a zero-input query. So `[(q [:find (max ?a) :where [?p :age ?a]] $) ...]`, whose nested query has no `:in`, correctly receives the implicit default source; supplying `$` is right, not an over-supply.
 
-The fix defaults an absent `:in` to `[$]` before checking arity, then validates
-exactly. This matches Datomic on both ends:
+The fix defaults an absent `:in` to `[$]` before checking arity, then validates exactly. This matches Datomic on both ends:
 
-- nested `:in $ ?x ?y`, call supplies `$ ?x` → expected 3, got 2 → **error**
-  (the report's real bug: a missing correlation variable that would otherwise run
-  the subquery uncorrelated).
-- nested with no `:in`, call supplies `$` → defaulted to expected 1, got 1 →
-  **accepted** (the common form; the source binds the default database).
+- nested `:in $ ?x ?y`, call supplies `$ ?x` → expected 3, got 2 → **error** (the report's real bug: a missing correlation variable that would otherwise run the subquery uncorrelated).
+- nested with no `:in`, call supplies `$` → defaulted to expected 1, got 1 → **accepted** (the common form; the source binds the default database).
 
-Datomic likewise raises on a genuine wrong-arity call and never silently runs a
-correlated subquery as a global one, so behavior now agrees with it.
+Datomic likewise raises on a genuine wrong-arity call and never silently runs a correlated subquery as a global one, so behavior now agrees with it.
 
 ### Code
 
-- `datalog/executor/subquery.go` — error returns plus the `:in`→`[$]` default;
-  deleted the dead `createInputRelationsFromValues`.
-- `datalog/executor/query_executor.go` —
-  `createInputRelationsForSubqueryWithOptions` returns an error and its four
-  callers propagate it; deleted the dead `createInputRelationsForSubquery`.
+- `datalog/executor/subquery.go` — error returns plus the `:in`→`[$]` default; deleted the dead `createInputRelationsFromValues`.
+- `datalog/executor/query_executor.go` — `createInputRelationsForSubqueryWithOptions` returns an error and its four callers propagate it; deleted the dead `createInputRelationsForSubquery`.
 
 ### Tests
 
-- `datalog/executor/subquery_input_arity_test.go` — too-few inputs and a
-  non-source value at the database position each return an error; the correct
-  shape succeeds.
-- Two OR-fallback tests in `not_or_test.go` hand-built the source as the string
-  `"db"`; normalized to a real `$` symbol (the parser's representation — the
-  comments in those tests already showed `$`). Their OR-default assertions are
-  unchanged.
+- `datalog/executor/subquery_input_arity_test.go` — too-few inputs and a non-source value at the database position each return an error; the correct shape succeeds.
+- Two OR-fallback tests in `not_or_test.go` hand-built the source as the string `"db"`; normalized to a real `$` symbol (the parser's representation — the comments in those tests already showed `$`). Their OR-default assertions are unchanged.
 
 ### Verification
 

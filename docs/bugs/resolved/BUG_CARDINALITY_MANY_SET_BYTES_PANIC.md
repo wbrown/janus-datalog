@@ -1,9 +1,6 @@
 # BUG: Cardinality-Many `Set` Panics on Byte Slice Members
 
-**Date**: 2026-05-22
-**Severity**: Stability / Correctness (High)
-**Status**: Resolved (2026-05-22)
-**Affected**: `Transaction.Set` for `CardinalityMany` attributes whose values are `[]byte` or other non-comparable slice types
+**Date**: 2026-05-22 **Severity**: Stability / Correctness (High) **Status**: Resolved (2026-05-22) **Affected**: `Transaction.Set` for `CardinalityMany` attributes whose values are `[]byte` or other non-comparable slice types
 
 ## Summary
 
@@ -113,14 +110,9 @@ Run each relevant test with cache enabled and disabled where readback uses query
 
 ## Resolution (2026-05-22)
 
-The cardinality-many `Set` path in `datalog/storage/database.go` keyed five
-membership maps directly by the set member, which panics for `[]byte`. It was
-also internally inconsistent — it read `currentResult.Members` (already keyed by
-a derived hashable key) while building `newSet` from raw values, mixing two
-keying schemes.
+The cardinality-many `Set` path in `datalog/storage/database.go` keyed five membership maps directly by the set member, which panics for `[]byte`. It was also internally inconsistent — it read `currentResult.Members` (already keyed by a derived hashable key) while building `newSet` from raw values, mixing two keying schemes.
 
-Fix: introduced `memberKey(v)`, a hashable map key built from a type tag plus
-`datalog.ValueBytes(v)`:
+Fix: introduced `memberKey(v)`, a hashable map key built from a type tag plus `datalog.ValueBytes(v)`:
 
 ```go
 func memberKey(v interface{}) string {
@@ -128,36 +120,22 @@ func memberKey(v interface{}) string {
 }
 ```
 
-This is byte-for-byte the same key `resolveAddWinsSet` already uses internally,
-so the Set diff lines up with stored membership. (It is *not* canonical in the
-strict sense — it keys floats by raw bits, which differs from
-`datalog.ValuesEqual` at `±0.0`/`NaN` — but it matches the read path, which is
-the property that matters. The old raw-value keying actually disagreed with
-storage on floats; this change makes write and read agree.)
+This is byte-for-byte the same key `resolveAddWinsSet` already uses internally, so the Set diff lines up with stored membership. (It is *not* canonical in the strict sense — it keys floats by raw bits, which differs from `datalog.ValuesEqual` at `±0.0`/`NaN` — but it matches the read path, which is the property that matters. The old raw-value keying actually disagreed with storage on floats; this change makes write and read agree.)
 
-All five maps in the path now key by `memberKey` and carry the original value
-for emission: `newSet`, `effectiveSet`, `pendingAdds`, `pendingRemoves`, and the
-merged `pendingValues` (replacing the old `allPendingValues`). The Remove/Add
-emission loops range `(key, originalValue)` and write `V: originalValue`, so
-datoms keep their real `[]byte` type. Keying by content also dedups duplicate
-slice members.
+All five maps in the path now key by `memberKey` and carry the original value for emission: `newSet`, `effectiveSet`, `pendingAdds`, `pendingRemoves`, and the merged `pendingValues` (replacing the old `allPendingValues`). The Remove/Add emission loops range `(key, originalValue)` and write `V: originalValue`, so datoms keep their real `[]byte` type. Keying by content also dedups duplicate slice members.
 
 ### Tests
 
-`datalog/storage/cardinality_many_set_bytes_test.go` — all four from the plan,
-reading back through the public `db.Query` API:
+`datalog/storage/cardinality_many_set_bytes_test.go` — all four from the plan, reading back through the public `db.Query` API:
 
 - `NoPanic`, `ReplacesExistingSet`, `DuplicateMembersDedupByContent`
-- `PendingOpsInSameTransaction` specifically exercises the pending-op maps
-  (the second panic site), guarding against a fix that only repairs `newSet`.
+- `PendingOpsInSameTransaction` specifically exercises the pending-op maps (the second panic site), guarding against a fix that only repairs `newSet`.
 
-All reproduced the panic before the fix and pass after it. Full suite green:
-15 packages, 0 failures.
+All reproduced the panic before the fix and pass after it. Full suite green: 15 packages, 0 failures.
 
 ### Not covered
 
-The cardinality-**vector** `Set` path (RGA prefix-diff) has a similar
-value-comparison shape and was not audited here — flagged as a follow-up.
+The cardinality-**vector** `Set` path (RGA prefix-diff) has a similar value-comparison shape and was not audited here — flagged as a follow-up.
 
 ### Files changed
 

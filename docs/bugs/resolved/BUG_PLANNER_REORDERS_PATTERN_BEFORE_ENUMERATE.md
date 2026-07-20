@@ -1,9 +1,6 @@
 # Bug: Planner Reorders Data Pattern Before Enumerate Expression
 
-**Status:** Fixed
-**Fix:** `datalog/planner/clause_utils.go` — `patternDependsOnPendingExpression`, `datalog/planner/clause_phasing.go` — deferral check in `selectPhaseClauses`
-**Repro:** `TestPlannerReordersDataPatternBeforeEnumerate` in `datalog/storage/crdt_vector_test.go`
-**Diagnostic test:** `TestVectorEnumerateRefWithJoinsAndFilter` (same file, multi-step narrowing)
+**Status:** Fixed **Fix:** `datalog/planner/clause_utils.go` — `patternDependsOnPendingExpression`, `datalog/planner/clause_phasing.go` — deferral check in `selectPhaseClauses` **Repro:** `TestPlannerReordersDataPatternBeforeEnumerate` in `datalog/storage/crdt_vector_test.go` **Diagnostic test:** `TestVectorEnumerateRefWithJoinsAndFilter` (same file, multi-step narrowing)
 
 ## Summary
 
@@ -25,8 +22,7 @@ Two containers in the same room. Container A holds a red item, container B holds
  [?item :item/label ?label]]
 ```
 
-**Expected:** `[["A" "Apple"]]` -- only container A has a red item.
-**Actual:** `[["A" "Apple"] ["B" "Apple"]]` -- both containers appear with the red item's label.
+**Expected:** `[["A" "Apple"]]` -- only container A has a red item. **Actual:** `[["A" "Apple"] ["B" "Apple"]]` -- both containers appear with the red item's label.
 
 ## Root Cause
 

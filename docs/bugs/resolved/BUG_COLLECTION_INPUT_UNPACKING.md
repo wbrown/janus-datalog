@@ -1,8 +1,6 @@
 # Bug: CollectionInput Not Unpacked Into Multiple Tuples
 
-**Status**: Fixed
-**Discovered**: 2026-02-05
-**Fixed**: 2026-02-05
+**Status**: Fixed **Discovered**: 2026-02-05 **Fixed**: 2026-02-05
 
 ## Symptoms
 
@@ -24,8 +22,7 @@ With 2 entities and 2 attributes, expected 4 results but only got 2 (only `:pers
 db.ExecuteQueryWithInputs(query, []datalog.Identity{})  // empty collection
 ```
 
-Expected: 0 results (nothing matches empty set)
-Actual: Returns all matching data (collection constraint ignored)
+Expected: 0 results (nothing matches empty set) Actual: Returns all matching data (collection constraint ignored)
 
 ## Root Causes
 

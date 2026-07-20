@@ -1,9 +1,6 @@
 # Conditional Aggregate Rewriting Requires Streaming
 
-**Date**: 2025-10-13
-**Status**: 🟡 KNOWN LIMITATION
-**Severity**: MEDIUM - Works with defaults, fails with non-standard config
-**Priority**: LOW - Default configuration works correctly
+**Date**: 2025-10-13 **Status**: 🟡 KNOWN LIMITATION **Severity**: MEDIUM - Works with defaults, fails with non-standard config **Priority**: LOW - Default configuration works correctly
 
 ## Problem Statement
 

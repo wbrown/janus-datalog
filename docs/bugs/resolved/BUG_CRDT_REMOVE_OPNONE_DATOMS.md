@@ -6,10 +6,7 @@
 
 ## Summary
 
-`tx.Remove()` on a cardinality-many attribute has no effect when the existing
-value was asserted via `Store().Assert()` with `Op: datalog.OpNone` (the
-default for EDN import). The CRDT resolver does not treat `OpNone` as an add
-that can be cancelled by `OpCRDTRemove`.
+`tx.Remove()` on a cardinality-many attribute has no effect when the existing value was asserted via `Store().Assert()` with `Op: datalog.OpNone` (the default for EDN import). The CRDT resolver does not treat `OpNone` as an add that can be cancelled by `OpCRDTRemove`.
 
 ## Reproduction
 
@@ -60,15 +57,9 @@ func TestRemoveDoesNotCancelOpNoneDatom(t *testing.T) {
 
 ## How it manifests
 
-A downstream application imports module data from EDN files via
-`db.Store().Import(f)`, which calls `Store().Assert()` for each batch of
-datoms. These datoms have `Op: datalog.OpNone`.
+A downstream application imports module data from EDN files via `db.Store().Import(f)`, which calls `Store().Assert()` for each batch of datoms. These datoms have `Op: datalog.OpNone`.
 
-Later, test code tries to clear the `:entity/state` attribute on an entity
-using `SaveStruct` with an empty `State` slice. `SaveStruct` calls
-`tx.Remove()` for each existing value, which writes a `OpCRDTRemove` tombstone
-datom. However, the CRDT resolver does not cancel the original `OpNone` datom,
-so the state persists.
+Later, test code tries to clear the `:entity/state` attribute on an entity using `SaveStruct` with an empty `State` slice. `SaveStruct` calls `tx.Remove()` for each existing value, which writes a `OpCRDTRemove` tombstone datom. However, the CRDT resolver does not cancel the original `OpNone` datom, so the state persists.
 
 The same issue affects any code path that:
 1. Reads data imported from EDN (OpNone)
@@ -76,11 +67,7 @@ The same issue affects any code path that:
 
 ## Root cause (hypothesis)
 
-The CRDT set resolver for cardinality-many attributes uses add-wins semantics:
-a value is present if its latest add has a higher Lamport than its latest
-remove. But `OpNone` datoms (from EDN import / `Assert()`) may not be
-recognized as "adds" by the resolver, so the `OpCRDTRemove` tombstone has
-nothing to cancel.
+The CRDT set resolver for cardinality-many attributes uses add-wins semantics: a value is present if its latest add has a higher Lamport than its latest remove. But `OpNone` datoms (from EDN import / `Assert()`) may not be recognized as "adds" by the resolver, so the `OpCRDTRemove` tombstone has nothing to cancel.
 
 The relevant code path:
 - `Transaction.Remove()` at `database.go:1383` writes `OpCRDTRemove` tombstone
@@ -89,16 +76,13 @@ The relevant code path:
 
 ## Impact
 
-- `SaveStruct` with empty slice on cardinality-many fields silently fails to
-  clear values that were imported from EDN
+- `SaveStruct` with empty slice on cardinality-many fields silently fails to clear values that were imported from EDN
 - Any CRDT Remove against EDN-imported data is a no-op
-- The `SaveStruct` documentation promises "empty slice clears all existing
-  values" but this contract is broken for EDN-imported data
+- The `SaveStruct` documentation promises "empty slice clears all existing values" but this contract is broken for EDN-imported data
 
 ## Workaround
 
-None known within the current API. Direct `Retract()` may work but uses a
-different code path (legacy retraction vs CRDT tombstones).
+None known within the current API. Direct `Retract()` may work but uses a different code path (legacy retraction vs CRDT tombstones).
 
 ---
 
@@ -106,25 +90,19 @@ different code path (legacy retraction vs CRDT tombstones).
 
 ### Initial hypothesis was wrong
 
-Per `BUG_CRDT_REMOVE_OPNONE_DATOMS_INVESTIGATION.md`, the OpNone premise is
-incorrect. The EDN preserves CRDT ops faithfully:
+Per `BUG_CRDT_REMOVE_OPNONE_DATOMS_INVESTIGATION.md`, the OpNone premise is incorrect. The EDN preserves CRDT ops faithfully:
 
 - CardinalityMany attributes are exported/imported with `:op/add` (`OpCRDTAdd`)
 - CardinalityOne attributes use `:op/none` (`OpNone`)
 - The full pipeline (Transaction.Add → Export → Import → Assert) preserves ops
 
-Checked actual EDN data for the failing entity — the `:entity/state` datom
-has `:op/add`, not `:op/none`.
+Checked actual EDN data for the failing entity — the `:entity/state` datom has `:op/add`, not `:op/none`.
 
-The Op is `:op/add`, not `:op/none`. The reproduction test in the original
-report is artificial and doesn't match the real pipeline.
+The Op is `:op/add`, not `:op/none`. The reproduction test in the original report is artificial and doesn't match the real pipeline.
 
 ### Actual root cause: Lamport clock not advanced after Import
 
-`Database.Import()` calls `d.store.Assert(datoms)` — raw `BadgerStore.Assert()`.
-This writes datoms with their original Lamport values (e.g., Lamport=2830 from
-the source database) directly to badger. **It does NOT advance the Database's
-Lamport clock.**
+`Database.Import()` calls `d.store.Assert(datoms)` — raw `BadgerStore.Assert()`. This writes datoms with their original Lamport values (e.g., Lamport=2830 from the source database) directly to badger. **It does NOT advance the Database's Lamport clock.**
 
 The sequence:
 1. `NewDatabase(...)` — opens DB, clock restored from `MaxElementID` (0 for fresh DB)
@@ -135,9 +113,7 @@ The sequence:
 
 ### Fix
 
-`Database.Import()` must advance the Lamport clock after importing. The clock's
-`Restore()` method does exactly this. After all batches are imported, scan for
-the max ElementID and restore:
+`Database.Import()` must advance the Lamport clock after importing. The clock's `Restore()` method does exactly this. After all batches are imported, scan for the max ElementID and restore:
 
 ```go
 // At end of Import(), after all batches:
@@ -158,5 +134,4 @@ This is the same call made in `NewDatabase()` at database open time
 
 **Resolved.** Caveat: this report's title and original hypothesis (CRDT Remove failing to cancel `OpNone` datoms) were a misdiagnosis — the doc's own investigation section corrected it. EDN export writes CardinalityMany values as `:op/add`, not `:op/none`; the real defect was that `Database.Import()` wrote datoms with their original (high) Lamport values **without advancing the database's Lamport clock**, so a subsequent `Remove()` received a lower Lamport and lost under add-wins resolution.
 
-Fix: `Import()` (`export.go`) now scans `MaxElementID()` after importing and calls `clock.Restore(maxElementID)`, mirroring `NewDatabase()` at open time. Verified: `TestImport_ClockAdvancedAfterImport` passes — it imports a CardinalityMany value at Lamport 5000 via EDN (`:op/add`), confirms presence, calls `tx.Remove()`, and asserts the value is gone (the Remove now outranks the import).
-(database.go:139-145). Import just needs to repeat it after writing.
+Fix: `Import()` (`export.go`) now scans `MaxElementID()` after importing and calls `clock.Restore(maxElementID)`, mirroring `NewDatabase()` at open time. Verified: `TestImport_ClockAdvancedAfterImport` passes — it imports a CardinalityMany value at Lamport 5000 via EDN (`:op/add`), confirms presence, calls `tx.Remove()`, and asserts the value is gone (the Remove now outranks the import). (database.go:139-145). Import just needs to repeat it after writing.

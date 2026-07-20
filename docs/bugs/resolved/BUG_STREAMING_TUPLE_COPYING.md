@@ -1,9 +1,6 @@
 # BUG: Streaming Iterator Tuple Copying - Critical Data Loss
 
-**Date**: 2025-10-24
-**Severity**: CRITICAL - Data loss in query execution
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Impact**: Queries return empty results or incorrect data with streaming enabled
+**Date**: 2025-10-24 **Severity**: CRITICAL - Data loss in query execution **Status**: Resolved (2026-05-25) — see Resolution below **Impact**: Queries return empty results or incorrect data with streaming enabled
 
 ## Summary
 
@@ -31,8 +28,7 @@ All entries in `tuples` point to the same memory location containing the last it
 ./datalog-cli -db datalog-db -query '[:find (count ?e) :where [?e ?a ?v]]'
 ```
 
-**Before fix**: Returns empty table (but should show 28040)
-**After fixing table_formatter.go**: Returns `28040` ✅
+**Before fix**: Returns empty table (but should show 28040) **After fixing table_formatter.go**: Returns `28040` ✅
 
 ### Symptom 2: Query Execution Returns 0 Tuples
 

@@ -1,10 +1,6 @@
 # BUG: Expression Phase Assignment After Reordering
 
-**Status**: RESOLVED
-**Severity**: HIGH - Both executors affected
-**Affects**: Planner (planner.go, planner_expressions.go, planner_phases.go)
-**Date Discovered**: 2025-10-16
-**Date Fixed**: 2025-10-16
+**Status**: RESOLVED **Severity**: HIGH - Both executors affected **Affects**: Planner (planner.go, planner_expressions.go, planner_phases.go) **Date Discovered**: 2025-10-16 **Date Fixed**: 2025-10-16
 
 ## Summary
 

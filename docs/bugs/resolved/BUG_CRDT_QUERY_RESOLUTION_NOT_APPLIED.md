@@ -1,9 +1,6 @@
 # CRDT Query Resolution Not Applied to ExecuteQuery
 
-**Date**: 2026-02-05
-**Severity**: Critical
-**Status**: Resolved (2026-05-25) — see Resolution (2026-05-25) at end
-**Affected**: All query methods except Pull API
+**Date**: 2026-02-05 **Severity**: Critical **Status**: Resolved (2026-05-25) — see Resolution (2026-05-25) at end **Affected**: All query methods except Pull API
 
 ## Resolution Summary
 
@@ -143,8 +140,7 @@ func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
 `extractValue()` returns `nil` for Variables:
 
 ```go
-// matcher.go:473-487
-func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
+// matcher.go:473-487 func (m *BadgerMatcher) extractValue(elem query.PatternElement) interface{} {
     switch e := elem.(type) {
     case query.Variable:
         return nil  // ← Variables return nil!
@@ -170,12 +166,7 @@ The attribute `?a` is a **Variable** (bound via input parameter), not a **Consta
 The join strategy methods scan storage directly:
 
 ```go
-// matchWithoutIteratorReuse, matchWithIteratorReuse, matchWithHashJoin, etc.
-// These methods:
-// 1. Iterate storage directly
-// 2. Build tuples from raw datoms
-// 3. Return ALL matching datoms (including historical values)
-// 4. NEVER apply CRDT resolution
+// matchWithoutIteratorReuse, matchWithIteratorReuse, matchWithHashJoin, etc. // These methods: // 1. Iterate storage directly // 2. Build tuples from raw datoms // 3. Return ALL matching datoms (including historical values) // 4. NEVER apply CRDT resolution
 ```
 
 The code assumes that if A is a Variable, CRDT resolution isn't needed. But this is fundamentally wrong for two reasons:
@@ -269,8 +260,7 @@ Post-CRDT, this gap became critical because:
 The CRDT implementation plan (`CRDT_VECTOR_STORAGE_IMPLEMENTATION_PLAN.md`) shows only one test pattern:
 
 ```go
-// Line 5374 - The ONLY query test in the plan
-result, err := db.ExecuteQuery(`[:find ?name :where [?e :name ?name]]`)
+// Line 5374 - The ONLY query test in the plan result, err := db.ExecuteQuery(`[:find ?name :where [?e :name ?name]]`)
 ```
 
 Here `:name` is a **Constant** in the pattern. The plan never tested:
@@ -308,8 +298,7 @@ The "with bindings" path handles ~90% of real-world queries (anything using `:in
 The Pull API works correctly because it uses a completely different resolution path:
 
 ```go
-// Pull uses ResolveEntityAttributes → cache.GetOrResolve
-// Query uses matcher.Match → join strategies → raw storage
+// Pull uses ResolveEntityAttributes → cache.GetOrResolve // Query uses matcher.Match → join strategies → raw storage
 ```
 
 When `PullInto` tests passed, there was confidence that "CRDT resolution works." But Pull and Query use different code paths.
@@ -616,8 +605,7 @@ The cache can then be layered on top as a pure optimization - caching the result
 Once correctness is established at the scan level, the cache path can be extended as an optimization for when E and A are both bound via inputs:
 
 ```go
-// When bindings provide (E, A) pairs, use cache for each pair
-for _, tuple := range bindings {
+// When bindings provide (E, A) pairs, use cache for each pair for _, tuple := range bindings {
     e, a := tuple[eIdx], tuple[aIdx]
     entry := cache.GetOrResolve(CacheKey{E: e, A: a}, resolver)
     // build result tuple from entry.Value / entry.SetMembers / entry.VectorValues
@@ -647,18 +635,14 @@ Currently, the cache is skipped when A is **any** Variable because `extractValue
 **Optimization opportunity**: Before falling back to join strategies, check if A is a Variable with known value(s) from bindings:
 
 ```go
-// Current: only uses cache when A is Constant
-if a := m.extractValue(pattern.GetA()); a != nil { ... }
+// Current: only uses cache when A is Constant if a := m.extractValue(pattern.GetA()); a != nil { ... }
 
-// Improved: also check bindings for A's value
-aValue := m.extractValue(pattern.GetA())
-if aValue == nil {
+// Improved: also check bindings for A's value aValue := m.extractValue(pattern.GetA()) if aValue == nil {
     // A is a Variable - check if bindings provide its value
     if aVar, ok := pattern.GetA().(query.Variable); ok {
         aValue = extractFromBindings(bindings, aVar.Name)
     }
-}
-if aValue != nil {
+} if aValue != nil {
     // Use cache path
 }
 ```
@@ -677,10 +661,7 @@ This optimization is independent of the correctness fix. It makes queries faster
 The fix should be at the **storage scan level**, inside the matcher. The `cache_resolver.go` code shows the *resolution pattern* (not the fix location):
 
 ```go
-// Pattern from cache_resolver.go - shows HOW to resolve, not WHERE to fix
-// EATV is ordered (E, A, T desc) - first entry for each (E, A) is the LWW winner
-iter, err := m.store.Scan(EATV, prefix, prefixEnd(prefix))
-if iter.Next() {
+// Pattern from cache_resolver.go - shows HOW to resolve, not WHERE to fix // EATV is ordered (E, A, T desc) - first entry for each (E, A) is the LWW winner iter, err := m.store.Scan(EATV, prefix, prefixEnd(prefix)) if iter.Next() {
     datom, _ := iter.Datom()
     return datom.V, datom.Tx, nil  // First = latest Tx = winner
 }
@@ -870,47 +851,33 @@ func TestCRDTResolution_Matrix(t *testing.T) {
 ### Specific Test Patterns
 
 ```datalog
-;; 1. A as constant (baseline - should work)
-[:find ?v :where [?e :person/name ?v]]
+;; 1. A as constant (baseline - should work) [:find ?v :where [?e :person/name ?v]]
 
-;; 2. A from scalar input
-[:find ?v :in $ ?e ?a :where [?e ?a ?v]]
+;; 2. A from scalar input [:find ?v :in $ ?e ?a :where [?e ?a ?v]]
 
-;; 3. A from collection input
-[:find ?e ?v :in $ [?a ...] :where [?e ?a ?v]]
+;; 3. A from collection input [:find ?e ?v :in $ [?a ...] :where [?e ?a ?v]]
 
-;; 4. A from tuple input (with E)
-[:find ?v :in $ [?e ?a] :where [?e ?a ?v]]
+;; 4. A from tuple input (with E) [:find ?v :in $ [?e ?a] :where [?e ?a ?v]]
 
-;; 5. A from relation input (multiple E,A pairs)
-[:find ?e ?a ?v :in $ [[?e ?a]] :where [?e ?a ?v]]
+;; 5. A from relation input (multiple E,A pairs) [:find ?e ?a ?v :in $ [[?e ?a]] :where [?e ?a ?v]]
 
-;; 6. A completely unbound
-[:find ?e ?a ?v :where [?e ?a ?v]]
+;; 6. A completely unbound [:find ?e ?a ?v :where [?e ?a ?v]]
 
-;; 7. A bound via join
-[:find ?v :where [?e :has-attr ?a] [?e ?a ?v]]
+;; 7. A bound via join [:find ?v :where [?e :has-attr ?a] [?e ?a ?v]]
 
-;; 8. A bound via subquery
-[:find ?v :where [(subquery [:find ?a :where [_ :attr-list ?a]]) [[?a]]] [?e ?a ?v]]
+;; 8. A bound via subquery [:find ?v :where [(subquery [:find ?a :where [_ :attr-list ?a]]) [[?a]]] [?e ?a ?v]]
 
-;; 9. E from collection, A from scalar
-[:find ?e ?v :in $ [?e ...] ?a :where [?e ?a ?v]]
+;; 9. E from collection, A from scalar [:find ?e ?v :in $ [?e ...] ?a :where [?e ?a ?v]]
 
-;; 10. Both E and A from collections (cross-product)
-[:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]
+;; 10. Both E and A from collections (cross-product) [:find ?e ?a ?v :in $ [?e ...] [?a ...] :where [?e ?a ?v]]
 
-;; 11. With NOT clause
-[:find ?v :in $ ?e ?a :where [?e ?a ?v] (not [?e :deleted true])]
+;; 11. With NOT clause [:find ?v :in $ ?e ?a :where [?e ?a ?v] (not [?e :deleted true])]
 
-;; 12. With OR clause
-[:find ?v :in $ ?e ?a :where (or [?e ?a ?v] [?e :fallback ?v])]
+;; 12. With OR clause [:find ?v :in $ ?e ?a :where (or [?e ?a ?v] [?e :fallback ?v])]
 
-;; 13. With aggregation
-[:find ?a (count ?v) :in $ ?e :where [?e ?a ?v]]
+;; 13. With aggregation [:find ?a (count ?v) :in $ ?e :where [?e ?a ?v]]
 
-;; 14. History query (should NOT resolve) — use d.History().Query(...)
-;; 15. As-of query — use d.AsOf(elementID).Query(...)
+;; 14. History query (should NOT resolve) — use d.History().Query(...) ;; 15. As-of query — use d.AsOf(elementID).Query(...)
 ```
 
 ### For Each Test Pattern
@@ -993,8 +960,7 @@ The `CRDTResolvingIterator` IS being applied (in hash_join_matcher.go, matcher_i
 
 **The issue**: When E is bound via input and A is a constant pattern:
 ```go
-// matcher_strategy.go:107-112
-case 0: // E is bound
+// matcher_strategy.go:107-112 case 0: // E is bound
     if _, isConstant := pattern.GetA().(query.Constant); isConstant {
         // E is bound, A is constant → use AEVT for direct lookups
         indexType = AEVT // ← WRONG for CRDT resolution!
@@ -1007,8 +973,7 @@ case 0: // E is bound
 
 The `CRDTResolvingIterator` assumes EATV ordering (line 11):
 ```go
-// Key insight: EATV index stores Tx in descending order (highest Tx first).
-// This means resolution is just filtering - no buffering needed.
+// Key insight: EATV index stores Tx in descending order (highest Tx first). // This means resolution is just filtering - no buffering needed.
 ```
 
 But when iterating AEVT, "first entry" is NOT the highest Tx! The iterator emits the wrong value.

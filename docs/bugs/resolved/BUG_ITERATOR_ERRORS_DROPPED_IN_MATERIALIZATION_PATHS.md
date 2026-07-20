@@ -122,44 +122,22 @@ For formatting/debug functions, include the error in the rendered output or retu
 
 ## Resolution (2026-05-25)
 
-**Resolved.** All ten paths that consumed an iterator and dropped the error now
-propagate it — either by returning it (functions that already return an error) or
-by carrying it onto the derived `MaterializedRelation.err` (functions that return
-only a `Relation`), which is replayed at the next public boundary via
-`Iterator().Error()`. No whitelist was needed: every `collectTuplesInto` call now
-captures its result.
+**Resolved.** All ten paths that consumed an iterator and dropped the error now propagate it — either by returning it (functions that already return an error) or by carrying it onto the derived `MaterializedRelation.err` (functions that return only a `Relation`), which is replayed at the next public boundary via `Iterator().Error()`. No whitelist was needed: every `collectTuplesInto` call now captures its result.
 
 ### `collectTuplesInto` sites (9)
 
-- Attach to `mat.err`: `MaterializeResult`, `SortRelation`, `BindQueryInputs`
-  (input binding), `StreamingUnionBuilder.unionMaterialized`,
-  `OrFallbackRelation.Materialize`, `combineSubqueryResultsSimple`.
-- Return the error: `combineSubqueryResults`, the parallel-subquery collector in
-  `executor.go`.
-- Formatter: `TableFormatter.FormatRelation` renders the error inline instead of
-  silently showing partial rows.
+- Attach to `mat.err`: `MaterializeResult`, `SortRelation`, `BindQueryInputs` (input binding), `StreamingUnionBuilder.unionMaterialized`, `OrFallbackRelation.Materialize`, `combineSubqueryResultsSimple`.
+- Return the error: `combineSubqueryResults`, the parallel-subquery collector in `executor.go`.
+- Formatter: `TableFormatter.FormatRelation` renders the error inline instead of silently showing partial rows.
 
 ### `Relation.Sorted()` (the 10th path) — interface change
 
-`Sorted()` returned `[]Tuple` with no error channel, so it could only drop a
-failed sort source. Leaving it lossy vs. fixing it is itself an architectural
-choice, so it was decided explicitly (not whitelisted): **the interface method
-became `Sorted() ([]Tuple, error)`**, updated across all implementations
-(`Materialized`, `Streaming`, `Product`, `OrFallback`, `Prepended`, `Union`,
-`LazySeq`, `StreamingAggregate`) and all callers (the storage matchers in
-`hash_join_matcher.go` / `matcher_relations.go` and `indexed_memory_matcher.go`
-now return the error). `MaterializedRelation.Sorted()` surfaces a carried
-`r.err`; `StreamingRelation.Sorted()` returns the collect error.
+`Sorted()` returned `[]Tuple` with no error channel, so it could only drop a failed sort source. Leaving it lossy vs. fixing it is itself an architectural choice, so it was decided explicitly (not whitelisted): **the interface method became `Sorted() ([]Tuple, error)`**, updated across all implementations (`Materialized`, `Streaming`, `Product`, `OrFallback`, `Prepended`, `Union`, `LazySeq`, `StreamingAggregate`) and all callers (the storage matchers in `hash_join_matcher.go` / `matcher_relations.go` and `indexed_memory_matcher.go` now return the error). `MaterializedRelation.Sorted()` surfaces a carried `r.err`; `StreamingRelation.Sorted()` returns the collect error.
 
 ### Tests
 
-- `materialization_error_propagation_test.go` — a failing iterator
-  (`newFailingStream`) through `MaterializeResult`, `SortRelation`, and
-  `combineSubqueryResultsSimple` must surface the error (fails before, passes
-  after).
-- `collect_tuples_guard_test.go` — static guard that scans the package source and
-  fails if any `collectTuplesInto` call is a bare statement (error dropped). No
-  whitelist entries.
+- `materialization_error_propagation_test.go` — a failing iterator (`newFailingStream`) through `MaterializeResult`, `SortRelation`, and `combineSubqueryResultsSimple` must surface the error (fails before, passes after).
+- `collect_tuples_guard_test.go` — static guard that scans the package source and fails if any `collectTuplesInto` call is a bare statement (error dropped). No whitelist entries.
 
 ### Verification
 

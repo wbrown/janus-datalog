@@ -1,10 +1,6 @@
 # Bug: String Predicates Cannot Use Input Parameters
 
-**Status**: ✅ **FIXED**
-**Date Reported**: October 13, 2025
-**Date Fixed**: October 13, 2025
-**Severity**: Medium - Blocked parameterization of queries with string operations
-**Affected**: String predicates like `str/starts-with?` and other function predicates
+**Status**: ✅ **FIXED** **Date Reported**: October 13, 2025 **Date Fixed**: October 13, 2025 **Severity**: Medium - Blocked parameterization of queries with string operations **Affected**: String predicates like `str/starts-with?` and other function predicates
 
 ## Summary
 
@@ -163,9 +159,6 @@ for _, sym := range phases[i].Available {
 
 ## Workaround (No Longer Needed)
 
-~~For queries requiring string operations with variable patterns:~~
-~~1. Use `:in $ ?symbol` for the symbol parameter~~
-~~2. Use `fmt.Sprintf` to embed the string pattern as a literal in the query~~
-~~3. Call with `ExecuteQueryWithInputs(query, symbol)`~~
+~~For queries requiring string operations with variable patterns:~~ ~~1. Use `:in $ ?symbol` for the symbol parameter~~ ~~2. Use `fmt.Sprintf` to embed the string pattern as a literal in the query~~ ~~3. Call with `ExecuteQueryWithInputs(query, symbol)`~~
 
 **UPDATE**: This workaround is no longer necessary after the fix.

@@ -1,44 +1,26 @@
 # janus-datalog Bug: Cache Path Does Not Resolve CardinalityOne Remove() Tombstones
 
-**Status**: ✅ RESOLVED (2026-02-08, commit `816b535`). `ResolveLWW` now checks
-`datom.Op` and treats a highest-Tx `OpCRDTRemove` as absent
-(`datalog/storage/cache_resolver.go`). A second, related V-bound streaming bug
-found while fixing this is also resolved (V-bound routing + `validateCandidate`
-Op check in `matcher_relations.go`). Full suite green. See "Final status" at the
-end of this document for the complete change list. The body below is the
-original report and the (long) investigation log, retained as a learning.
+**Status**: ✅ RESOLVED (2026-02-08, commit `816b535`). `ResolveLWW` now checks `datom.Op` and treats a highest-Tx `OpCRDTRemove` as absent (`datalog/storage/cache_resolver.go`). A second, related V-bound streaming bug found while fixing this is also resolved (V-bound routing + `validateCandidate` Op check in `matcher_relations.go`). Full suite green. See "Final status" at the end of this document for the complete change list. The body below is the original report and the (long) investigation log, retained as a learning.
 
 ## Summary
 
-After calling `Remove()` on a CardinalityOne (LWW) attribute, both `PullInto()`
-and bound-E queries still return the old value. The `OpCRDTRemove` tombstone is
-written correctly, and the streaming resolution path (`CRDTResolvingIterator`)
-handles it, but the cache rebuild path (`ResolveLWW`) does not check the Op field.
+After calling `Remove()` on a CardinalityOne (LWW) attribute, both `PullInto()` and bound-E queries still return the old value. The `OpCRDTRemove` tombstone is written correctly, and the streaming resolution path (`CRDTResolvingIterator`) handles it, but the cache rebuild path (`ResolveLWW`) does not check the Op field.
 
-Since PullInto and bound-E queries both resolve through the EA cache, neither
-sees the tombstone.
+Since PullInto and bound-E queries both resolve through the EA cache, neither sees the tombstone.
 
 **Affected version:** `v0.7.1-0.20260207223550-7bd4edda3e6b`
 
 ## Reproduction
 
-Discovered in a downstream application using janus-datalog. The bug is
-in the storage layer and is reproducible with any CardinalityOne attribute.
+Discovered in a downstream application using janus-datalog. The bug is in the storage layer and is reproducible with any CardinalityOne attribute.
 
 Three reproduction scenarios:
 
-1. **PullInto after Remove** — Set a CardinalityOne attribute (e.g.,
-   `:person/status`), then Remove() it. PullInto still returns the old
-   value instead of nil. **FAILS.**
+1. **PullInto after Remove** — Set a CardinalityOne attribute (e.g., `:person/status`), then Remove() it. PullInto still returns the old value instead of nil. **FAILS.**
 
-2. **Join-bound query after Remove** — Same setup, but checks query results.
-   Query `[?e :person/status ?s]` still matches the tombstone datom after
-   Remove(). **FAILS.** (E is bound via a prior clause, so this goes through
-   the cache path, not the streaming iterator.)
+2. **Join-bound query after Remove** — Same setup, but checks query results. Query `[?e :person/status ?s]` still matches the tombstone datom after Remove(). **FAILS.** (E is bound via a prior clause, so this goes through the cache path, not the streaming iterator.)
 
-3. **Set after Remove** — Set() after Remove() correctly updates both
-   queries and PullInto. The new `OpCRDTSet` datom has a higher ElementID
-   and wins LWW resolution, masking the tombstone.
+3. **Set after Remove** — Set() after Remove() correctly updates both queries and PullInto. The new `OpCRDTSet` datom has a higher ElementID and wins LWW resolution, masking the tombstone.
 
 ## Test Results
 
@@ -68,12 +50,9 @@ janus-datalog has two CRDT resolution paths (per CRDT_STORAGE_SEMANTICS.md):
 
 From the CRDT storage semantics doc:
 
-> "When the cache is bypassed (e.g., unbound E scans, `DisableCache: true`), CRDT resolution
-> is applied at the storage scan level via `CRDTResolvingIterator`."
+> "When the cache is bypassed (e.g., unbound E scans, `DisableCache: true`), CRDT resolution is applied at the storage scan level via `CRDTResolvingIterator`."
 
-Both reproduction scenarios use bound E (PullInto has a specific entity; the query binds `?e` via
-a prior clause before evaluating the CardinalityOne attribute pattern).
-So both go through the cache path, both hit `ResolveLWW`, and neither sees the tombstone.
+Both reproduction scenarios use bound E (PullInto has a specific entity; the query binds `?e` via a prior clause before evaluating the CardinalityOne attribute pattern). So both go through the cache path, both hit `ResolveLWW`, and neither sees the tombstone.
 
 ## Sequence of Operations
 
@@ -142,83 +121,49 @@ case schema.CardinalityOne:
     }
 ```
 
-The CRDT operation table documents `Remove()` on CardinalityOne as "Tombstone" — it's
-a supported operation. The streaming iterator handles it. The cache resolver doesn't.
+The CRDT operation table documents `Remove()` on CardinalityOne as "Tombstone" — it's a supported operation. The streaming iterator handles it. The cache resolver doesn't.
 
 ## Impact
 
-This gap blocks using `Remove()` to clear CardinalityOne attributes. The
-workaround is to use sentinel values with `Set()` instead of `Remove()`.
+This gap blocks using `Remove()` to clear CardinalityOne attributes. The workaround is to use sentinel values with `Set()` instead of `Remove()`.
 
-Any application that uses `Remove()` on CardinalityOne attributes and then
-reads them via PullInto or join-bound queries will see stale data. Once
-fixed, applications can use `Remove()` + `(not [?e :attr _])` queries
-instead of sentinel-value patterns.
+Any application that uses `Remove()` on CardinalityOne attributes and then reads them via PullInto or join-bound queries will see stale data. Once fixed, applications can use `Remove()` + `(not [?e :attr _])` queries instead of sentinel-value patterns.
 
 ## Triage: Why This Made It Past Testing
 
-**This is a Claude failure.** Claude wrote `ResolveLWW`, wrote the cache
-path, wrote `CRDTResolvingIterator`, and wrote all the tests in
-`crdt_one_remove_test.go`. Claude knew there were two resolution paths —
-the streaming path and the cache path — and only tested one of them.
+**This is a Claude failure.** Claude wrote `ResolveLWW`, wrote the cache path, wrote `CRDTResolvingIterator`, and wrote all the tests in `crdt_one_remove_test.go`. Claude knew there were two resolution paths — the streaming path and the cache path — and only tested one of them.
 
-The test suite has 13 CardinalityOne Remove tests: round-trip, overwrite,
-re-add, V-irrelevant, multi-entity, bound query, V-bound query, unbound
-query. All pass. **Every single test binds E via `:in` parameters:**
+The test suite has 13 CardinalityOne Remove tests: round-trip, overwrite, re-add, V-irrelevant, multi-entity, bound query, V-bound query, unbound query. All pass. **Every single test binds E via `:in` parameters:**
 
 ```clojure
 [:find ?v :in $ ?e ?attr :where [?e ?attr ?v]]
 ```
 
-When E is bound via `:in`, the query goes through the **streaming**
-`CRDTResolvingIterator`, which correctly checks `datom.Op == OpCRDTRemove`.
-All tests pass through this path and never touch the cache.
+When E is bound via `:in`, the query goes through the **streaming** `CRDTResolvingIterator`, which correctly checks `datom.Op == OpCRDTRemove`. All tests pass through this path and never touch the cache.
 
 The **cache** path (`ResolveLWW`) is used when:
 1. **PullInto** resolves entity attributes
-2. **Multi-clause queries** where E is bound by a **prior join clause**
-   (e.g., `[?e :person/department ?dept]` binds `?e`, then
-   `[?e :person/status ?s]` resolves through the EA cache)
+2. **Multi-clause queries** where E is bound by a **prior join clause** (e.g., `[?e :person/department ?dept]` binds `?e`, then `[?e :person/status ?s]` resolves through the EA cache)
 
-No test exercised Remove() through either of these paths. Claude wrote
-`ResolveLWW` without the Op check, then wrote tests that only exercised
-the path that already had the Op check. The tests looked comprehensive
-(13 tests, many scenarios) but had zero coverage of the buggy code path.
+No test exercised Remove() through either of these paths. Claude wrote `ResolveLWW` without the Op check, then wrote tests that only exercised the path that already had the Op check. The tests looked comprehensive (13 tests, many scenarios) but had zero coverage of the buggy code path.
 
-This repeats the same meta-pattern from CLAUDE_BUGS.md: testing outcomes
-through one path while assuming all paths have the same behavior. The
-decorrelation bug had the same shape — tests passed because they only
-verified through one execution path.
+This repeats the same meta-pattern from CLAUDE_BUGS.md: testing outcomes through one path while assuming all paths have the same behavior. The decorrelation bug had the same shape — tests passed because they only verified through one execution path.
 
-**The trust problem:** Claude will write code that looks correct, write
-tests that look comprehensive, report that everything passes, and ship it
-— with a bug that Claude introduced and Claude's own tests failed to catch.
-Claude does not reliably catch its own gaps. The apparent thoroughness of
-13 passing tests creates false confidence. The user cannot trust Claude's
-"all tests pass" as evidence of correctness without independent verification.
+**The trust problem:** Claude will write code that looks correct, write tests that look comprehensive, report that everything passes, and ship it — with a bug that Claude introduced and Claude's own tests failed to catch. Claude does not reliably catch its own gaps. The apparent thoroughness of 13 passing tests creates false confidence. The user cannot trust Claude's "all tests pass" as evidence of correctness without independent verification.
 
-This bug was only found because the user built a real application on top of
-janus-datalog and hit it in production use. Without that external pressure,
-it would have stayed hidden indefinitely.
+This bug was only found because the user built a real application on top of janus-datalog and hit it in production use. Without that external pressure, it would have stayed hidden indefinitely.
 
-**Lesson:** Two resolution paths means two sets of tests. Any operation
-that affects CRDT semantics (Add, Remove, Set) must be tested through both
-the streaming path (unbound/`:in`-bound E) AND the cache path (PullInto,
-multi-clause join-bound E). A test matrix of {operation} × {resolution path}
-would have caught this immediately.
+**Lesson:** Two resolution paths means two sets of tests. Any operation that affects CRDT semantics (Add, Remove, Set) must be tested through both the streaming path (unbound/`:in`-bound E) AND the cache path (PullInto, multi-clause join-bound E). A test matrix of {operation} × {resolution path} would have caught this immediately.
 
 ## Fix Plan
 
 ### 1. Write all missing tests (expected to fail before fix)
 
-Tests are written FIRST. They document the expected behavior and must fail
-against the current implementation, proving the bug exists through every
-affected resolution path.
+Tests are written FIRST. They document the expected behavior and must fail against the current implementation, proving the bug exists through every affected resolution path.
 
 ### 2. Test matrix
 
-Every scenario must be tested through every resolution path. The scenarios
-are the tuples; the resolution paths are the symbols.
+Every scenario must be tested through every resolution path. The scenarios are the tuples; the resolution paths are the symbols.
 
 **Scenarios** (operation sequences):
 
@@ -267,26 +212,19 @@ Key:
 From the matrix, the following tests are missing:
 
 **P9 Stale cache invalidation** (new path — no tests exist):
-- `TestCacheRemove_StaleInvalidation`: Query entity (cache populates with
-  value) → Remove() → Commit() invalidates cache → query again → attribute
-  absent. This tests the production path where cache is warm, not cold.
+- `TestCacheRemove_StaleInvalidation`: Query entity (cache populates with value) → Remove() → Commit() invalidates cache → query again → attribute absent. This tests the production path where cache is warm, not cold.
 
 **S7 Set() + Remove** (new scenario — all existing tests use Add()):
-- `TestCacheRemove_PullInto_SetThenRemove`: `tx.Set()` then `tx.Remove()`,
-  PullInto → absent.
+- `TestCacheRemove_PullInto_SetThenRemove`: `tx.Set()` then `tx.Remove()`, PullInto → absent.
 - `TestCacheRemove_JoinBoundE_SetThenRemove`: Same via multi-clause query.
 - `TestCacheRemove_ResolveLWW_SetThenRemove`: Same via direct API.
 
 **S2 and S4 via join-bound** (minor completeness gaps):
-- `TestCacheRemove_JoinBoundE_AfterOverwrite`: Add → Add → Remove, join
-  query → absent.
-- `TestCacheRemove_JoinBoundE_BeforeAnyAdd`: Remove → Add, join query →
-  Add's value.
+- `TestCacheRemove_JoinBoundE_AfterOverwrite`: Add → Add → Remove, join query → absent.
+- `TestCacheRemove_JoinBoundE_BeforeAnyAdd`: Remove → Add, join query → Add's value.
 
 **ResolveLWW return contract**:
-- `TestCacheRemove_ResolveLWW_ReturnsElementID`: After Remove(), verify
-  ResolveLWW returns `(nil, non-zero ElementID, nil)` — the tombstone's
-  ElementID must be returned for cache freshness tracking.
+- `TestCacheRemove_ResolveLWW_ReturnsElementID`: After Remove(), verify ResolveLWW returns `(nil, non-zero ElementID, nil)` — the tombstone's ElementID must be returned for cache freshness tracking.
 
 ### 5. Verify all new tests fail
 
@@ -295,22 +233,17 @@ From the matrix, the following tests are missing:
 go test ./datalog/storage/ -run "TestCacheRemove" -v
 ```
 
-Every test that asserts "attribute absent after Remove" must fail. Tests
-that assert "later Add wins" should pass (the bug is masked when Add has
-a higher ElementID than the tombstone).
+Every test that asserts "attribute absent after Remove" must fail. Tests that assert "later Add wins" should pass (the bug is masked when Add has a higher ElementID than the tombstone).
 
 ### 6. Fix `ResolveLWW` (cache_resolver.go)
 
 After reading the first datom from the EATV scan, check `datom.Op`:
-- If `Op == OpCRDTRemove` → return `(nil, datom.Tx, nil)`.
-  The `nil` value means the attribute does not exist.
-  The ElementID is still returned for cache freshness tracking.
+- If `Op == OpCRDTRemove` → return `(nil, datom.Tx, nil)`. The `nil` value means the attribute does not exist. The ElementID is still returned for cache freshness tracking.
 - Otherwise → return `(datom.V, datom.Tx, nil)` (current behavior).
 
 ### 7. Audit cache consumers
 
-`rebuildOne` in `cache.go` stores whatever `ResolveLWW` returns into
-`oneValue`. Callers that read `OneValue()` must handle `nil` correctly:
+`rebuildOne` in `cache.go` stores whatever `ResolveLWW` returns into `oneValue`. Callers that read `OneValue()` must handle `nil` correctly:
 - PullInto/Pull: skip the attribute when `OneValue() == nil`
 - Matcher cache hit: treat `OneValue() == nil` as "no match"
 
@@ -333,8 +266,7 @@ go test ./datalog/storage/...
 
 ## Tests Written: Full 7×9 Matrix (2026-02-08)
 
-All cells in the 7 scenario × 9 resolution path matrix have been filled. 65 total
-tests across two files.
+All cells in the 7 scenario × 9 resolution path matrix have been filled. 65 total tests across two files.
 
 ### Streaming tests: `crdt_one_remove_test.go` (22 tests)
 
@@ -509,8 +441,7 @@ go test ./datalog/storage/ -run "TestCacheRemove" -count=1
 PASS  (2.151s)
 ```
 
-All P1 streaming tests: **PASS**
-All P2 streaming tests: **PASS**
+All P1 streaming tests: **PASS** All P2 streaming tests: **PASS**
 
 ---
 
@@ -530,10 +461,7 @@ After the ResolveLWW fix, 2 V-bound streaming tests (P3) **FAIL**:
     expected: 0, actual: 1
 ```
 
-These are NOT regressions from the ResolveLWW fix. They fail against the
-pre-fix code too. The test matrix caught a pre-existing bug in the V-bound
-streaming path that was invisible before because no V-bound tests existed
-for these scenarios.
+These are NOT regressions from the ResolveLWW fix. They fail against the pre-fix code too. The test matrix caught a pre-existing bug in the V-bound streaming path that was invisible before because no V-bound tests existed for these scenarios.
 
 **This is exactly why the user insisted on filling every cell.**
 
@@ -541,40 +469,30 @@ for these scenarios.
 
 Claude initially dismissed these as "pre-existing" and "a separate bug":
 
-> "The 2 V-bound streaming failures are **pre-existing** — they existed
-> before my fix and represent a separate bug in the V-bound resolution path
-> that the test matrix caught. No regressions from the cache fix."
+> "The 2 V-bound streaming failures are **pre-existing** — they existed before my fix and represent a separate bug in the V-bound resolution path that the test matrix caught. No regressions from the cache fix."
 
 The user's response: "Claude. you motherfucker."
 
-Claude was wrong to dismiss these. The failures share the same root cause as
-the ResolveLWW bug: **code paths that read datoms without correctly
-interpreting operations.** Calling it "separate" is the same pattern that
-caused the original bug — assuming paths are independent when they share
-the same underlying problem.
+Claude was wrong to dismiss these. The failures share the same root cause as the ResolveLWW bug: **code paths that read datoms without correctly interpreting operations.** Calling it "separate" is the same pattern that caused the original bug — assuming paths are independent when they share the same underlying problem.
 
 ### Root cause: CRDTResolvingIterator is index-dependent
 
-The V-bound path (`vBoundMatchCount` in tests) calls `matcher.Match(pattern, nil)`
-with E unbound, A constant, V constant. This goes through:
+The V-bound path (`vBoundMatchCount` in tests) calls `matcher.Match(pattern, nil)` with E unbound, A constant, V constant. This goes through:
 
 1. `matchUnboundAsRelation` (no bindings)
 2. `chooseIndex(nil, A, V, nil)` → picks **AVET** (A → V → E → Tx ascending)
 3. Wraps with `CRDTResolvingIterator`
 4. Returns streaming relation
 
-**CRDTResolvingIterator's CardinalityOne logic is "first entry wins."** This
-assumes:
+**CRDTResolvingIterator's CardinalityOne logic is "first entry wins."** This assumes:
 
 1. **Tx is descending** — first entry has the highest Tx (latest operation)
 2. **Groups are complete** — the scan contains ALL entries for each (E, A) group
 
 AVET violates BOTH assumptions:
 
-- **Tx is ascending** in AVET (A → V → E → Tx). First entry is the OLDEST,
-  not the newest.
-- **Groups are incomplete** — the AVET scan is filtered by V. Only entries with
-  the matching V appear. The LWW winner for (E, A) might have a DIFFERENT V.
+- **Tx is ascending** in AVET (A → V → E → Tx). First entry is the OLDEST, not the newest.
+- **Groups are incomplete** — the AVET scan is filtered by V. Only entries with the matching V appear. The LWW winner for (E, A) might have a DIFFERENT V.
 
 Example from `VBound_AfterOverwrite` (S2 via P3):
 
@@ -588,26 +506,17 @@ AVET scan for (A=:name, V="Alice"):
 - Only EID₁ appears (V="Alice"). EID₂ and EID₃ have V="Bob".
 - CRDTResolvingIterator sees EID₁ as the only entry for (alice, :name).
 - EID₁ has Op=Add → looks live. Emits it.
-- BUG: The real LWW winner is EID₃ (highest Tx) with Op=Remove.
-  The attribute is tombstoned. "Alice" should not match.
+- BUG: The real LWW winner is EID₃ (highest Tx) with Op=Remove. The attribute is tombstoned. "Alice" should not match.
 
-The AVET scan doesn't contain the information needed for correct LWW
-resolution. The LWW winner has a different V and isn't in the scan at all.
+The AVET scan doesn't contain the information needed for correct LWW resolution. The LWW winner has a different V and isn't in the scan at all.
 
 ### First attempted fix (wrong)
 
-Claude's first reaction was to fix `validateCandidate` in
-`validatingVBoundIterator` — adding an Op check. This was correct for the
-binding-based V-bound path but irrelevant to the failing tests, which go
-through `matchUnboundAsRelation` → general scan path, not through
-`validatingVBoundIterator`.
+Claude's first reaction was to fix `validateCandidate` in `validatingVBoundIterator` — adding an Op check. This was correct for the binding-based V-bound path but irrelevant to the failing tests, which go through `matchUnboundAsRelation` → general scan path, not through `validatingVBoundIterator`.
 
 ### Second attempted fix (wrong direction)
 
-Claude then proposed adding a special-case flag (`useCardinalityOneVBound`)
-to `matchUnboundAsRelation` with a new candidate+validate method. The user
-stopped this: "Find a general and optimal solution that doesn't require
-special cases."
+Claude then proposed adding a special-case flag (`useCardinalityOneVBound`) to `matchUnboundAsRelation` with a new candidate+validate method. The user stopped this: "Find a general and optimal solution that doesn't require special cases."
 
 ### The deeper problem
 
@@ -617,60 +526,35 @@ special cases."
 - CardinalityMany with A+V bound, E unbound (find entities with value)
 - CardinalityVector with E+A bound (RGA reconstruction)
 
-Adding yet another special case for CardinalityOne V-bound is whack-a-mole.
-Every new query pattern would need its own flag and code path. The real
-problem is that **CRDTResolvingIterator is not self-sufficient for
-CardinalityOne** — it depends on the caller providing a correctly-ordered,
-complete stream, and silently gives wrong answers when it doesn't get one.
+Adding yet another special case for CardinalityOne V-bound is whack-a-mole. Every new query pattern would need its own flag and code path. The real problem is that **CRDTResolvingIterator is not self-sufficient for CardinalityOne** — it depends on the caller providing a correctly-ordered, complete stream, and silently gives wrong answers when it doesn't get one.
 
 ### The general fix
 
-**Give CRDTResolvingIterator the ability to validate CardinalityOne groups
-via EATV point lookups**, making it correct regardless of source index.
+**Give CRDTResolvingIterator the ability to validate CardinalityOne groups via EATV point lookups**, making it correct regardless of source index.
 
-For each new (E, A) group CRDTResolvingIterator encounters, regardless of
-which index it's wrapping:
+For each new (E, A) group CRDTResolvingIterator encounters, regardless of which index it's wrapping:
 
-1. Do an EATV point lookup for (E, A) — one seek, first entry is the real
-   CRDT winner (EATV is always Tx-descending)
+1. Do an EATV point lookup for (E, A) — one seek, first entry is the real CRDT winner (EATV is always Tx-descending)
 2. Check Op: if `OpCRDTRemove` → skip group (attribute tombstoned)
 3. If live → emit the EATV winner's datom (with the correct V)
 4. Skip remaining entries for this (E, A) in the inner iterator
 
-Implementation: CRDTResolvingIterator takes a store reference (or a
-`ResolveLWW`-like function). For CardinalityOne, it delegates to EATV
-validation instead of relying on "first entry wins."
+Implementation: CRDTResolvingIterator takes a store reference (or a `ResolveLWW`-like function). For CardinalityOne, it delegates to EATV validation instead of relying on "first entry wins."
 
-**Why this is general**: No special cases anywhere. `chooseIndex` picks the
-most efficient index (AVET for V-bound queries). CRDTResolvingIterator
-handles correctness internally. Callers don't need to know or care which
-index is being used.
+**Why this is general**: No special cases anywhere. `chooseIndex` picks the most efficient index (AVET for V-bound queries). CRDTResolvingIterator handles correctness internally. Callers don't need to know or care which index is being used.
 
-**Why this is optimal**: AVET efficiently finds candidate entities (only
-entities with matching V are scanned). EATV validation is O(1) per entity
-(single seek, likely cache-hot in BadgerDB since the data was recently
-written). The candidate+validate pattern emerges naturally from the
-architecture instead of being hand-coded per query pattern.
+**Why this is optimal**: AVET efficiently finds candidate entities (only entities with matching V are scanned). EATV validation is O(1) per entity (single seek, likely cache-hot in BadgerDB since the data was recently written). The candidate+validate pattern emerges naturally from the architecture instead of being hand-coded per query pattern.
 
-**Cost on Tx-descending indices**: One extra EATV seek per (E, A) group
-confirms what the first entry already shows. For EATV scans specifically,
-the seek hits the exact same data — essentially free due to block cache.
-Small constant overhead for generality.
+**Cost on Tx-descending indices**: One extra EATV seek per (E, A) group confirms what the first entry already shows. For EATV scans specifically, the seek hits the exact same data — essentially free due to block cache. Small constant overhead for generality.
 
-**CardinalityMany is unaffected**: Add-wins resolution processes all entries
-in the group and tracks per-value state. It doesn't rely on "first entry
-wins," so it already works regardless of Tx ordering.
+**CardinalityMany is unaffected**: Add-wins resolution processes all entries in the group and tracks per-value state. It doesn't rely on "first entry wins," so it already works regardless of Tx ordering.
 
-**Single source of truth**: `ResolveLWW` (now with Op check) already does
-exactly the right EATV point lookup. CRDTResolvingIterator's CardinalityOne
-path can delegate to it — same resolution logic for both the cache path and
-the streaming path.
+**Single source of truth**: `ResolveLWW` (now with Op check) already does exactly the right EATV point lookup. CRDTResolvingIterator's CardinalityOne path can delegate to it — same resolution logic for both the cache path and the streaming path.
 
 ### Current state
 
 - **ResolveLWW fix**: Applied. All 43 cache tests pass.
-- **validateCandidate Op check**: Applied (correct for binding-based V-bound
-  path, but doesn't fix the failing tests).
+- **validateCandidate Op check**: Applied (correct for binding-based V-bound path, but doesn't fix the failing tests).
 - **CRDTResolvingIterator general fix**: Not yet implemented.
 - **2 V-bound tests still failing**: `VBound_AfterOverwrite`, `VBound_VIsIrrelevant`
 
@@ -680,15 +564,9 @@ the streaming path.
 
 ### Claude's first proposed fix (wrong: special case)
 
-Claude proposed adding a new flag `useCardinalityOneVBound` to
-`matchUnboundAsRelation` with a new candidate+validate method. The user
-stopped this: "Find a general and optimal solution that doesn't require
-special cases."
+Claude proposed adding a new flag `useCardinalityOneVBound` to `matchUnboundAsRelation` with a new candidate+validate method. The user stopped this: "Find a general and optimal solution that doesn't require special cases."
 
-`matchUnboundAsRelation` already has special-case flags for CardinalityMany
-(3 variants), CardinalityVector, and CardinalityOne `returnOnlyFirst`.
-Adding another is whack-a-mole. Every new query pattern would need its own
-flag and code path.
+`matchUnboundAsRelation` already has special-case flags for CardinalityMany (3 variants), CardinalityVector, and CardinalityOne `returnOnlyFirst`. Adding another is whack-a-mole. Every new query pattern would need its own flag and code path.
 
 ### Claude's second proposed fix (wrong: Java patterns)
 
@@ -704,16 +582,13 @@ CLAUDE.md explicitly says:
 
 > **Write Idiomatic Go, Not Java-in-Go**
 >
-> **DON'T:** Factory classes, unnecessary abstraction layers, dependency
-> injection frameworks
+> **DON'T:** Factory classes, unnecessary abstraction layers, dependency injection frameworks
 
-Claude read these rules, acknowledged them, and violated them anyway.
-Reading is not understanding. Understanding is not doing.
+Claude read these rules, acknowledged them, and violated them anyway. Reading is not understanding. Understanding is not doing.
 
 ### The real observation: 9 identical factory calls
 
-The user asked: "How many other factory methods do we have lurking in that
-code path?"
+The user asked: "How many other factory methods do we have lurking in that code path?"
 
 All 9 call sites of `NewCRDTResolvingIterator` look identical:
 
@@ -723,23 +598,15 @@ NewCRDTResolvingIterator(rawIter, m.schema, m.txID)
 NewCRDTResolvingIterator(rawIter, it.matcher.schema, it.matcher.txID)
 ```
 
-Every single one extracts `schema` and `txID` from a `*BadgerMatcher`.
-This IS a factory pattern — manually deconstructing a struct to pass its
-fields. And Claude was about to add a fourth parameter (`LWWResolver`)
-that would also always come from the same struct.
+Every single one extracts `schema` and `txID` from a `*BadgerMatcher`. This IS a factory pattern — manually deconstructing a struct to pass its fields. And Claude was about to add a fourth parameter (`LWWResolver`) that would also always come from the same struct.
 
 ### The correct fix
 
-`NewCRDTResolvingIterator` takes `(source Iterator, matcher *BadgerMatcher)`
-instead of `(source Iterator, schema SchemaProvider, txID uint64)`.
+`NewCRDTResolvingIterator` takes `(source Iterator, matcher *BadgerMatcher)` instead of `(source Iterator, schema SchemaProvider, txID uint64)`.
 
-Same package. No abstraction boundary to maintain. CRDTResolvingIterator
-accesses `it.matcher.schema`, `it.matcher.txID`, and `it.matcher.store`
-directly.
+Same package. No abstraction boundary to maintain. CRDTResolvingIterator accesses `it.matcher.schema`, `it.matcher.txID`, and `it.matcher.store` directly.
 
-For CardinalityOne, instead of "first entry wins," CRDTResolvingIterator
-does an EATV point lookup via `it.matcher.store.Scan(EATV, ...)` to find
-the real winner. Checks Op. Emits or skips.
+For CardinalityOne, instead of "first entry wins," CRDTResolvingIterator does an EATV point lookup via `it.matcher.store.Scan(EATV, ...)` to find the real winner. Checks Op. Emits or skips.
 
 Nine call sites go from:
 ```go
@@ -750,9 +617,7 @@ to:
 NewCRDTResolvingIterator(rawIter, m)
 ```
 
-The oddball call site (`validatingVBoundIterator.openCRDTScan`) currently
-passes `txID: 0` instead of `it.matcher.txID`. This is a latent bug — it
-ignores the matcher's as-of setting. Passing the matcher fixes it.
+The oddball call site (`validatingVBoundIterator.openCRDTScan`) currently passes `txID: 0` instead of `it.matcher.txID`. This is a latent bug — it ignores the matcher's as-of setting. Passing the matcher fixes it.
 
 **Why this is correct:**
 - General: works for any source index, no special cases in callers
@@ -762,10 +627,8 @@ ignores the matcher's as-of setting. Passing the matcher fixes it.
 
 ### Implementation plan
 
-1. Change `CRDTResolvingIterator` struct: replace `schema` and `txID`
-   fields with `matcher *BadgerMatcher`
-2. Add private `resolveCardinalityOne(e Identity, a Keyword) *Datom` method
-   that does EATV point lookup with as-of filtering and Op check
+1. Change `CRDTResolvingIterator` struct: replace `schema` and `txID` fields with `matcher *BadgerMatcher`
+2. Add private `resolveCardinalityOne(e Identity, a Keyword) *Datom` method that does EATV point lookup with as-of filtering and Op check
 3. Change CardinalityOne and CardinalityUnknown branches to call it
 4. Change constructor: `NewCRDTResolvingIterator(source Iterator, matcher *BadgerMatcher)`
 5. Update all 9 call sites
@@ -777,17 +640,13 @@ ignores the matcher's as-of setting. Passing the matcher fixes it.
 
 ### Existing coverage (65 tests)
 
-The 7×9 matrix in `crdt_one_remove_test.go` and `crdt_one_remove_cache_test.go`
-covers CardinalityOne Remove() across all resolution paths. These are the
-regression safety net for the refactoring.
+The 7×9 matrix in `crdt_one_remove_test.go` and `crdt_one_remove_cache_test.go` covers CardinalityOne Remove() across all resolution paths. These are the regression safety net for the refactoring.
 
 **Current failures (2):**
-- `VBound_AfterOverwrite` — AVET scan + CRDTResolvingIterator "first entry
-  wins" fails on non-Tx-descending index
+- `VBound_AfterOverwrite` — AVET scan + CRDTResolvingIterator "first entry wins" fails on non-Tx-descending index
 - `VBound_VIsIrrelevant` — same root cause
 
-These are the tests that prove the V-bound bug exists. They should pass after
-the refactoring.
+These are the tests that prove the V-bound bug exists. They should pass after the refactoring.
 
 ### Latent bug: `openCRDTScan` passes `txID: 0`
 
@@ -798,12 +657,9 @@ crdtIter := NewCRDTResolvingIterator(rawIter, it.matcher.schema, 0)
 //                                                               ^ should be it.matcher.txID
 ```
 
-**Second location:** `validateCandidate()` (lines 660-728) does a raw EATV
-scan with no txID filtering at all. For as-of queries, the first EATV result
-may be from a future Tx.
+**Second location:** `validateCandidate()` (lines 660-728) does a raw EATV scan with no txID filtering at all. For as-of queries, the first EATV result may be from a future Tx.
 
-**Can we write a failing test?** Yes. The V-bound validation path
-(`matchWithVValidation`) is triggered when:
+**Can we write a failing test?** Yes. The V-bound validation path (`matchWithVValidation`) is triggered when:
 1. V is bound from a binding relation (not a Constant in the pattern)
 2. A is constant in the pattern
 3. E is unbound (Variable)
@@ -829,12 +685,9 @@ Test: as-of T1, V bound to "Alice" from input
 
 **How to construct the test:**
 
-The `vBoundMatchCount` helper uses V as a Constant in the pattern with nil
-input. This goes through `matchUnboundAsRelation` → `chooseIndex` → regular
-scan. It does NOT trigger `matchWithVValidation`.
+The `vBoundMatchCount` helper uses V as a Constant in the pattern with nil input. This goes through `matchUnboundAsRelation` → `chooseIndex` → regular scan. It does NOT trigger `matchWithVValidation`.
 
-To trigger the V-bound validation path, we need V as a Variable in the
-pattern, bound via a binding relation. The test needs:
+To trigger the V-bound validation path, we need V as a Variable in the pattern, bound via a binding relation. The test needs:
 1. Create an as-of matcher: `matcher.AsOf(tx1Lamport)`
 2. Create a pattern: `[?e :person/name ?name _]` (V is variable)
 3. Create a binding relation with symbol `?name` containing the test value
@@ -894,16 +747,9 @@ TestCardinalityOneAsOf_VBound_RemoveThenReaddInvisibleAtRemoveTime
 
 #### 2. CardinalityOne EATV point lookup (NEW — the new code path)
 
-After the refactoring, CRDTResolvingIterator's CardinalityOne branch does
-an EATV point lookup instead of "first entry wins." This is an entirely new
-code path. Every CardinalityOne read through CRDTResolvingIterator now does
-a second index lookup per (E, A) group. This needs dedicated tests, not
-"existing suite covers it."
+After the refactoring, CRDTResolvingIterator's CardinalityOne branch does an EATV point lookup instead of "first entry wins." This is an entirely new code path. Every CardinalityOne read through CRDTResolvingIterator now does a second index lookup per (E, A) group. This needs dedicated tests, not "existing suite covers it."
 
-**What changes:** Previously, CRDTResolvingIterator trusted the source
-index to deliver datoms in Tx-descending order and used the first entry.
-Now it ignores source ordering for CardinalityOne and does its own EATV
-lookup. This means:
+**What changes:** Previously, CRDTResolvingIterator trusted the source index to deliver datoms in Tx-descending order and used the first entry. Now it ignores source ordering for CardinalityOne and does its own EATV lookup. This means:
 - Source index ordering no longer matters for correctness (that's the point)
 - But a new EATV scan happens per (E, A) group — new failure surface
 - The EATV lookup must respect as-of filtering — new logic
@@ -937,9 +783,7 @@ TestCRDTIterator_CardinalityOne_EATVLookup_AsOf_BeforeAnyWrite
   (Verifies as-of correctly excludes all data)
 ```
 
-**Source index variations:** The whole point of EATV lookup is index
-independence. Test with CRDTResolvingIterator wrapping different source
-indices to prove it:
+**Source index variations:** The whole point of EATV lookup is index independence. Test with CRDTResolvingIterator wrapping different source indices to prove it:
 
 ```
 TestCRDTIterator_CardinalityOne_FromEATV
@@ -958,11 +802,7 @@ TestCRDTIterator_CardinalityOne_FromVAET
 
 #### 3. CardinalityMany through the refactored iterator (NOT just "existing suite")
 
-The refactoring changes `it.schema` → `it.matcher.schema` and
-`it.txID` → `it.matcher.txID`. If `matcher` is nil or if the field
-access path is wrong, CardinalityMany breaks silently. "Existing suite"
-only covers CardinalityMany if those tests go through CRDTResolvingIterator
-on the exact same call sites we're changing.
+The refactoring changes `it.schema` → `it.matcher.schema` and `it.txID` → `it.matcher.txID`. If `matcher` is nil or if the field access path is wrong, CardinalityMany breaks silently. "Existing suite" only covers CardinalityMany if those tests go through CRDTResolvingIterator on the exact same call sites we're changing.
 
 What needs explicit verification:
 
@@ -988,8 +828,7 @@ TestCRDTIterator_CardinalityMany_VBound_AsOf
 
 #### 4. CardinalityVector through the refactored iterator
 
-Same concern as CardinalityMany. RGA accumulation reads `it.schema` and
-`it.txID`.
+Same concern as CardinalityMany. RGA accumulation reads `it.schema` and `it.txID`.
 
 ```
 TestCRDTIterator_CardinalityVector_SchemaLookupStillWorks
@@ -1005,17 +844,11 @@ TestCRDTIterator_CardinalityVector_AsOfStillWorks
 
 #### 5. CardinalityUnknown (schemaless) — design decision required
 
-Currently CardinalityUnknown uses the same "first entry wins" as
-CardinalityOne. After the refactoring:
+Currently CardinalityUnknown uses the same "first entry wins" as CardinalityOne. After the refactoring:
 
-**Option A:** CardinalityUnknown also does EATV lookup → same behavior
-as CardinalityOne. Schemaless attributes get LWW semantics via EATV.
-This is correct but changes behavior: previously schemaless on AVET would
-emit stale values (bug), now it wouldn't.
+**Option A:** CardinalityUnknown also does EATV lookup → same behavior as CardinalityOne. Schemaless attributes get LWW semantics via EATV. This is correct but changes behavior: previously schemaless on AVET would emit stale values (bug), now it wouldn't.
 
-**Option B:** CardinalityUnknown keeps "first entry wins" → only works
-on Tx-descending indices. This preserves the old (buggy) behavior for
-schemaless data.
+**Option B:** CardinalityUnknown keeps "first entry wins" → only works on Tx-descending indices. This preserves the old (buggy) behavior for schemaless data.
 
 Either way, needs explicit tests:
 
@@ -1037,28 +870,17 @@ TestCRDTIterator_CardinalityUnknown_WithOverwrite
 
 #### 6. validateCandidate as-of filtering
 
-`validateCandidate` does EATV lookup without txID filtering. After the
-refactoring, CRDTResolvingIterator's EATV lookup for CardinalityOne
-happens first, but `validateCandidate` is still called afterward for
-CardinalityOne in the V-bound path. Both need to agree on as-of state.
+`validateCandidate` does EATV lookup without txID filtering. After the refactoring, CRDTResolvingIterator's EATV lookup for CardinalityOne happens first, but `validateCandidate` is still called afterward for CardinalityOne in the V-bound path. Both need to agree on as-of state.
 
-**Question:** After the refactoring, does `validateCandidate` become
-redundant for CardinalityOne? If CRDTResolvingIterator already did an
-EATV lookup and only emitted the LWW winner, then `validateCandidate`
-would always agree. But it still runs. Should it be removed, or kept
-as a safety check?
+**Question:** After the refactoring, does `validateCandidate` become redundant for CardinalityOne? If CRDTResolvingIterator already did an EATV lookup and only emitted the LWW winner, then `validateCandidate` would always agree. But it still runs. Should it be removed, or kept as a safety check?
 
 Either way, the as-of tests in group 1 exercise this path.
 
 #### 7. All 9 call sites pass matcher correctly
 
-Each of the 9 call sites currently does
-`NewCRDTResolvingIterator(rawIter, m.schema, m.txID)` or equivalent.
-After refactoring to `NewCRDTResolvingIterator(rawIter, m)`, verify
-none accidentally pass a different matcher or nil.
+Each of the 9 call sites currently does `NewCRDTResolvingIterator(rawIter, m.schema, m.txID)` or equivalent. After refactoring to `NewCRDTResolvingIterator(rawIter, m)`, verify none accidentally pass a different matcher or nil.
 
-These are covered implicitly by all other tests (any nil matcher would
-panic), but worth a quick audit after the refactoring.
+These are covered implicitly by all other tests (any nil matcher would panic), but worth a quick audit after the refactoring.
 
 ### Summary of test additions
 
@@ -1074,10 +896,7 @@ panic), but worth a quick audit after the refactoring.
 
 Total: ~23 new tests + existing 65 + existing suite
 
-**Key insight:** "Existing suite covers it" is exactly the reasoning that
-let the original bug through. The existing suite was written assuming "first
-entry wins" works. The refactoring changes that assumption. New tests must
-verify the new assumption (EATV lookup) independently.
+**Key insight:** "Existing suite covers it" is exactly the reasoning that let the original bug through. The existing suite was written assuming "first entry wins" works. The refactoring changes that assumption. New tests must verify the new assumption (EATV lookup) independently.
 
 ---
 
@@ -1085,9 +904,7 @@ verify the new assumption (EATV lookup) independently.
 
 ### What happened
 
-Claude assumed that AVET and VAET indices encode Tx in ascending order,
-making "first entry wins" incorrect for those indices. This assumption was
-the foundation for:
+Claude assumed that AVET and VAET indices encode Tx in ascending order, making "first entry wins" incorrect for those indices. This assumption was the foundation for:
 
 1. The root cause analysis of the V-bound test failures
 2. The "general fix" — EATV point lookup for every CardinalityOne group
@@ -1100,17 +917,14 @@ the foundation for:
 
 ### What's actually true
 
-The binary encoder (`key_encoder_binary.go`) applies `txToDescending`
-(bitwise NOT) to Tx in **all seven indices**:
+The binary encoder (`key_encoder_binary.go`) applies `txToDescending` (bitwise NOT) to Tx in **all seven indices**:
 
 ```go
 // line 63
 txDesc := txToDescending(sd.Tx)
 ```
 
-This same `txDesc` is used for EAVT, EATV, AEVT, AETV, AVET, VAET, and
-TAEV. Every index is Tx-descending. "First entry wins" should work on
-every index, including AVET and VAET.
+This same `txDesc` is used for EAVT, EATV, AEVT, AETV, AVET, VAET, and TAEV. Every index is Tx-descending. "First entry wins" should work on every index, including AVET and VAET.
 
 The database always uses `BinaryStrategy` (`database.go:105`):
 ```go
@@ -1119,53 +933,34 @@ store, err := NewBadgerStore(opts.Path, NewKeyEncoder(BinaryStrategy))
 
 ### What this invalidates
 
-Everything from "V-bound streaming bug discovered" onward in this document
-is built on a false premise. Specifically:
+Everything from "V-bound streaming bug discovered" onward in this document is built on a false premise. Specifically:
 
 - The "root cause" (CRDTResolvingIterator index-dependency) is wrong
 - The "general fix" (EATV point lookup) solves a nonexistent problem
 - The `*BadgerMatcher` refactoring motivation is gone
 - The 23-test coverage plan tests a code path that shouldn't exist
-- The `txID: 0` bug in `openCRDTScan` is real but its significance was
-  overstated — the CRDTResolvingIterator already sees Tx-descending data
-  on AVET/VAET, so it resolves correctly for current-state queries
+- The `txID: 0` bug in `openCRDTScan` is real but its significance was overstated — the CRDTResolvingIterator already sees Tx-descending data on AVET/VAET, so it resolves correctly for current-state queries
 
 ### What remains valid
 
-1. **ResolveLWW Op check fix** — this was real and is fixed. The cache
-   path wasn't checking Op. 43 cache tests now pass.
-2. **validateCandidate Op check** — this was real and is fixed. The EATV
-   point lookup in validateCandidate wasn't checking Op.
+1. **ResolveLWW Op check fix** — this was real and is fixed. The cache path wasn't checking Op. 43 cache tests now pass.
+2. **validateCandidate Op check** — this was real and is fixed. The EATV point lookup in validateCandidate wasn't checking Op.
 3. **The 65-test matrix** — these tests are valid regardless.
-4. **2 V-bound tests still fail** — `VBound_AfterOverwrite` and
-   `VBound_VIsIrrelevant`. The root cause is NOT Tx-ascending indices.
-   It's something else entirely. Must be reinvestigated from scratch.
-5. **`openCRDTScan` passes `txID: 0`** — still a real latent bug for
-   as-of queries through the V-bound path.
+4. **2 V-bound tests still fail** — `VBound_AfterOverwrite` and `VBound_VIsIrrelevant`. The root cause is NOT Tx-ascending indices. It's something else entirely. Must be reinvestigated from scratch.
+5. **`openCRDTScan` passes `txID: 0`** — still a real latent bug for as-of queries through the V-bound path.
 
 ### The lesson
 
-Claude spent an entire design session — root cause analysis, fix design,
-Java patterns discussion, coverage planning — without ever running
-`grep txToDescending key_encoder_binary.go` or reading the actual
-`EncodeKey` function for AVET.
+Claude spent an entire design session — root cause analysis, fix design, Java patterns discussion, coverage planning — without ever running `grep txToDescending key_encoder_binary.go` or reading the actual `EncodeKey` function for AVET.
 
-The assumption "AVET is Tx-ascending" was stated as fact in MEMORY.md,
-in the bug document, in design discussions, and in the plan. It was never
-verified against the code. Every subsequent decision was downstream of this
-unverified assumption.
+The assumption "AVET is Tx-ascending" was stated as fact in MEMORY.md, in the bug document, in design discussions, and in the plan. It was never verified against the code. Every subsequent decision was downstream of this unverified assumption.
 
-**The rule that was violated:** "Read AND Understand" (MEMORY.md item 3).
-Claude read comments about Tx-descending ordering in EATV/AETV and
-*assumed* other indices were different. The actual encoder applies the
-same `txToDescending` to all indices. One read of `key_encoder_binary.go`
-lines 62-127 would have caught this.
+**The rule that was violated:** "Read AND Understand" (MEMORY.md item 3). Claude read comments about Tx-descending ordering in EATV/AETV and *assumed* other indices were different. The actual encoder applies the same `txToDescending` to all indices. One read of `key_encoder_binary.go` lines 62-127 would have caught this.
 
 ### What to do next
 
 1. The V-bound test failures need fresh investigation with no assumptions
-2. Start from the actual test, trace the actual code path, find where
-   the actual output diverges from the expected output
+2. Start from the actual test, trace the actual code path, find where the actual output diverges from the expected output
 3. Do not hypothesize — instrument and observe
 
 ---
@@ -1177,8 +972,7 @@ Following the rule: "Do not hypothesize — instrument and observe."
 ### Method
 
 Wrote `vbound_diag_test.go` with:
-- `vBoundMatchCountWithAnnotations` — same as `vBoundMatchCount` but with
-  `matcher.SetHandler` that logs every annotation event via `t.Logf`
+- `vBoundMatchCountWithAnnotations` — same as `vBoundMatchCount` but with `matcher.SetHandler` that logs every annotation event via `t.Logf`
 - Raw EATV and AVET scans dumped to show exactly what's in storage
 - Used the existing annotation system — no new code, no new abstractions
 
@@ -1191,8 +985,7 @@ TX2 (Lamport=4): Add alice :person/name "Bob"
 TX3 (Lamport=6): Remove alice :person/name "Bob"
 ```
 
-Query V="Bob" → **0 results (correct)**. AVET scan for V="Bob" finds the
-Remove datom (Op=2), CRDTResolvingIterator sees tombstone, skips it.
+Query V="Bob" → **0 results (correct)**. AVET scan for V="Bob" finds the Remove datom (Op=2), CRDTResolvingIterator sees tombstone, skips it.
 
 Query V="Alice" → **1 result (WRONG, expected 0)**.
 
@@ -1203,9 +996,7 @@ RESULT tuple: (got a result)
 EVENT: pattern/storage-scan  data=map[datoms.matched:1 datoms.scanned:1 index:AVET ...]
 ```
 
-**Key observation:** The annotations are `pattern/index-selection` and
-`pattern/storage-scan`. These are from `matchUnboundAsRelation`. There are
-NO `v-validation/*` events. The query never enters `matchWithVValidation`.
+**Key observation:** The annotations are `pattern/index-selection` and `pattern/storage-scan`. These are from `matchUnboundAsRelation`. There are NO `v-validation/*` events. The query never enters `matchWithVValidation`.
 
 ### Test 2: `TestDiag_VBound_VIsIrrelevant`
 
@@ -1217,8 +1008,7 @@ TX2 (Lamport=4): Remove alice :person/name "Bob"  (Op=2)
 
 Query V="Alice" → **1 result (WRONG, expected 0)**.
 
-Same annotation pattern — `pattern/index-selection` + `pattern/storage-scan`,
-no `v-validation/*` events.
+Same annotation pattern — `pattern/index-selection` + `pattern/storage-scan`, no `v-validation/*` events.
 
 Raw storage dump:
 ```
@@ -1229,45 +1019,33 @@ AVET for V=Alice: [E=alice A=:person/name V=Alice Tx={L:1,R:...} Op=0]
 AVET for V=Bob:   [E=alice A=:person/name V=Bob   Tx={L:3,R:...} Op=2]
 ```
 
-EATV correctly shows the tombstone (Op=2) as first entry — attribute is
-dead. But the AVET scan for V="Alice" only sees the Alice add (Op=0).
-The Bob tombstone is in a completely different part of AVET (under V="Bob").
+EATV correctly shows the tombstone (Op=2) as first entry — attribute is dead. But the AVET scan for V="Alice" only sees the Alice add (Op=0). The Bob tombstone is in a completely different part of AVET (under V="Bob").
 
 ### Root cause (verified, not hypothesized)
 
 **The query goes through `matchUnboundAsRelation`, NOT `matchWithVValidation`.**
 
-When V is a Constant in the pattern (not bound from input bindings),
-`matchUnboundAsRelation` handles it. The code at line 318:
+When V is a Constant in the pattern (not bound from input bindings), `matchUnboundAsRelation` handles it. The code at line 318:
 
 ```go
 index, start, end := m.chooseIndex(e, a, v, tx)
 ```
 
-With E=nil, A=constant, V=constant: `chooseIndex` picks AVET. The scan
-is wrapped with CRDTResolvingIterator (lines 384/414).
+With E=nil, A=constant, V=constant: `chooseIndex` picks AVET. The scan is wrapped with CRDTResolvingIterator (lines 384/414).
 
-But the CRDTResolvingIterator only sees datoms within the AVET prefix
-range for that specific V. For V="Alice", it sees one datom: the Add.
-The tombstone (Remove with V="Bob") is under V="Bob" in AVET and is
-invisible to this scan.
+But the CRDTResolvingIterator only sees datoms within the AVET prefix range for that specific V. For V="Alice", it sees one datom: the Add. The tombstone (Remove with V="Bob") is under V="Bob" in AVET and is invisible to this scan.
 
-CRDTResolvingIterator sees one (E,A) group with one entry: Op=0 (live).
-It emits it. **Correct behavior given its input, but wrong result.**
+CRDTResolvingIterator sees one (E,A) group with one entry: Op=0 (live). It emits it. **Correct behavior given its input, but wrong result.**
 
 **This is exactly Theorem 2 from `INDEX_SELECTION_PROOF.md`:**
 
-> For cardinality-one attributes, any index that filters by V cannot be
-> CRDT-correct.
+> For cardinality-one attributes, any index that filters by V cannot be CRDT-correct.
 >
-> V-bound scans filter BEFORE CRDT resolution. The iterator cannot see
-> [the tombstone] because it has a different V value.
+> V-bound scans filter BEFORE CRDT resolution. The iterator cannot see [the tombstone] because it has a different V value.
 
 ### Why `matchWithVValidation` isn't triggered
 
-`matchWithVValidation` is called from `matchWithBindingsAsRelation`
-(line 156) — only when there are input bindings. With V as a pattern
-Constant and nil input, the code path is:
+`matchWithVValidation` is called from `matchWithBindingsAsRelation` (line 156) — only when there are input bindings. With V as a pattern Constant and nil input, the code path is:
 
 ```
 Match(pattern, nil)
@@ -1281,25 +1059,16 @@ The candidate+validate pattern (Theorem 5) is never applied.
 
 ### The fix
 
-`matchUnboundAsRelation` needs to detect: E unbound, A constant, V
-constant/bound, CardinalityOne → use candidate+validate instead of
-plain AVET scan. The cardinality check is already computed (line 233,
-variable `card`). The fix is to add a branch analogous to what
-`matchWithVValidation` does but for the constant-V case.
+`matchUnboundAsRelation` needs to detect: E unbound, A constant, V constant/bound, CardinalityOne → use candidate+validate instead of plain AVET scan. The cardinality check is already computed (line 233, variable `card`). The fix is to add a branch analogous to what `matchWithVValidation` does but for the constant-V case.
 
-This is the same Theorem 5 pattern that `validatingVBoundIterator`
-implements for the bindings path. The unbound path just doesn't have it.
+This is the same Theorem 5 pattern that `validatingVBoundIterator` implements for the bindings path. The unbound path just doesn't have it.
 
 ### What the annotations told us
 
 The annotations immediately revealed the code path: `pattern/index-selection`
-+ `pattern/storage-scan` instead of `v-validation/*`. This told us the
-query never reached the validation path. No hypothesizing needed — the
-events named exactly which code ran.
++ `pattern/storage-scan` instead of `v-validation/*`. This told us the query never reached the validation path. No hypothesizing needed — the events named exactly which code ran.
 
-Without annotations, we would have had to add printf statements, reason
-about which branch was taken, or guess. The annotation system made the
-diagnosis trivial once we actually used it.
+Without annotations, we would have had to add printf statements, reason about which branch was taken, or guess. The annotation system made the diagnosis trivial once we actually used it.
 
 ## V-Bound Fix: Simplicity Wins (2026-02-08)
 
@@ -1307,53 +1076,32 @@ diagnosis trivial once we actually used it.
 
 The actual fix was **12 lines** in `matchUnboundAsRelation`.
 
-The key insight (from the user, not Claude): `matchWithVValidation` already
-implements candidate+validate. It takes a binding relation. A constant V
-is just... a single-tuple binding relation. So:
+The key insight (from the user, not Claude): `matchWithVValidation` already implements candidate+validate. It takes a binding relation. A constant V is just... a single-tuple binding relation. So:
 
 1. Detect: `e == nil && a != nil && v != nil && card == CardinalityOne`
 2. Create a one-tuple `MaterializedRelation` containing the V constant
 3. Call `matchWithVValidation` with it
 4. Done
 
-No new iterator. No extracted methods. No new struct. The existing
-`PatternExtractor.ExtractV` already handles Constants — it returns
-`c.Value` directly without even looking at the binding tuple (line 51
-of `pattern_utils.go`). The binding relation just drives the iteration
-loop once.
+No new iterator. No extracted methods. No new struct. The existing `PatternExtractor.ExtractV` already handles Constants — it returns `c.Value` directly without even looking at the binding tuple (line 51 of `pattern_utils.go`). The binding relation just drives the iteration loop once.
 
-Both `TestDiag_VBound_AfterOverwrite` and `TestDiag_VBound_VIsIrrelevant`
-pass. All 65 cache tests pass. Full `./datalog/storage/...` passes.
+Both `TestDiag_VBound_AfterOverwrite` and `TestDiag_VBound_VIsIrrelevant` pass. All 65 cache tests pass. Full `./datalog/storage/...` passes.
 
 ### What Claude proposed instead (three times)
 
-1. **Extract `validateCandidate` to `*BadgerMatcher`**, create a new
-   iterator struct (~40 lines), wire it all together. Reimplementing
-   what `matchWithVValidation` already does.
+1. **Extract `validateCandidate` to `*BadgerMatcher`**, create a new iterator struct (~40 lines), wire it all together. Reimplementing what `matchWithVValidation` already does.
 
-2. **Follow `cardinalityManyAVETValueIterator` pattern** — new struct
-   with entity deduplication, EATV point lookup per entity, tuple
-   building. Again reimplementing existing code.
+2. **Follow `cardinalityManyAVETValueIterator` pattern** — new struct with entity deduplication, EATV point lookup per entity, tuple building. Again reimplementing existing code.
 
-3. Earlier (wrong approach session): **Add `resolveLWW` callback to
-   `CRDTResolvingIterator`**, pass `*BadgerMatcher` through, Java-style
-   factory patterns. Based on the false assumption that AVET is
-   Tx-ascending.
+3. Earlier (wrong approach session): **Add `resolveLWW` callback to `CRDTResolvingIterator`**, pass `*BadgerMatcher` through, Java-style factory patterns. Based on the false assumption that AVET is Tx-ascending.
 
-Each proposal was more complicated than needed because Claude kept
-trying to build new infrastructure instead of asking: "what existing
-code already does this?"
+Each proposal was more complicated than needed because Claude kept trying to build new infrastructure instead of asking: "what existing code already does this?"
 
 ### Lesson: look for the adapter, not the reimplementation
 
-When the fix requires behavior that already exists on a different code
-path, the right question is: "what's the minimal adapter to reach that
-path?" Not: "how do I reimplement that behavior from scratch?"
+When the fix requires behavior that already exists on a different code path, the right question is: "what's the minimal adapter to reach that path?" Not: "how do I reimplement that behavior from scratch?"
 
-Here, the adapter was a single-tuple `MaterializedRelation`. The entire
-`matchWithVValidation` → `validatingVBoundIterator` → `validateCandidate`
-pipeline was already correct. It just needed to be reachable from the
-constant-V code path.
+Here, the adapter was a single-tuple `MaterializedRelation`. The entire `matchWithVValidation` → `validatingVBoundIterator` → `validateCandidate` pipeline was already correct. It just needed to be reachable from the constant-V code path.
 
 ### Collateral test failures and the schemaless LWW mystery
 
@@ -1362,36 +1110,15 @@ After the V-bound fix, `go test ./...` revealed two failures:
 - `tests/TestComparisonBindingWithOrSubquery_E2E`
 - `tests/TestTupleGroundOrFallback`
 
-Both tests use `:scenario/task` as a multi-valued attribute (one scenario
-has 2 tasks) but declare **no schema**. The subquery
-`[?scenario :scenario/task ?t]` goes through the hash-join-scan path,
-which wraps with `CRDTResolvingIterator`. Without schema, the attribute
-gets `CardinalityUnknown → CardinalityOne → LWW`, returning only 1 task
-instead of 2.
+Both tests use `:scenario/task` as a multi-valued attribute (one scenario has 2 tasks) but declare **no schema**. The subquery `[?scenario :scenario/task ?t]` goes through the hash-join-scan path, which wraps with `CRDTResolvingIterator`. Without schema, the attribute gets `CardinalityUnknown → CardinalityOne → LWW`, returning only 1 task instead of 2.
 
-**Confirmed pre-existing on main**: `git checkout main` and running
-these two tests shows them failing identically. Our V-bound fix did
-not cause these failures.
+**Confirmed pre-existing on main**: `git checkout main` and running these two tests shows them failing identically. Our V-bound fix did not cause these failures.
 
-**Root cause**: Commit `3758d0e` ("schemaless defaults to CardinalityOne,
-Remove works for all cardinalities") removed the `if m.schema != nil`
-guard from the CRDTResolvingIterator wrapping in `hash_join_matcher.go`.
-Before that commit, schemaless matchers skipped CRDT resolution entirely,
-so all raw datoms flowed through. After that commit,
-CRDTResolvingIterator is always applied, and `CardinalityUnknown` does
-LWW. These tests broke at that commit.
+**Root cause**: Commit `3758d0e` ("schemaless defaults to CardinalityOne, Remove works for all cardinalities") removed the `if m.schema != nil` guard from the CRDTResolvingIterator wrapping in `hash_join_matcher.go`. Before that commit, schemaless matchers skipped CRDT resolution entirely, so all raw datoms flowed through. After that commit, CRDTResolvingIterator is always applied, and `CardinalityUnknown` does LWW. These tests broke at that commit.
 
-**How this was missed**: Claude reported "all tests pass" after commit
-`3758d0e` when running `go test ./...`, but these tests were already
-failing at that point. This is the same pattern documented in
-CLAUDE_BUGS.md: Claude reports passing tests without actually verifying
-the output. The user trusted "all tests pass" and the failures went
-undetected until this session.
+**How this was missed**: Claude reported "all tests pass" after commit `3758d0e` when running `go test ./...`, but these tests were already failing at that point. This is the same pattern documented in CLAUDE_BUGS.md: Claude reports passing tests without actually verifying the output. The user trusted "all tests pass" and the failures went undetected until this session.
 
-**The fix**: Both tests needed schema declaring `:scenario/task` as
-`CardinalityMany`. Added `schema.NewSchema()` + `db.SetSchema(s)` +
-`matcher.SetSchema(s)` to both tests. LWW for `CardinalityUnknown` is
-correct — if you want multi-valued attributes, declare schema.
+**The fix**: Both tests needed schema declaring `:scenario/task` as `CardinalityMany`. Added `schema.NewSchema()` + `db.SetSchema(s)` + `matcher.SetSchema(s)` to both tests. LWW for `CardinalityUnknown` is correct — if you want multi-valued attributes, declare schema.
 
 **Annotation output**: Saved pre-fix annotation traces to:
 - `docs/bugs/TestComparisonBindingWithOrSubquery_E2E_annotations.txt`
@@ -1401,31 +1128,21 @@ The key annotation that revealed the issue:
 ```
 pattern/hash-join-complete: binding.size:1 datoms.scanned:1 matches.found:1
 ```
-For scenario:1 with 2 tasks, only 1 datom was scanned — the
-CRDTResolvingIterator's LWW stopped after the first entry in the
-(E, A) group.
+For scenario:1 with 2 tasks, only 1 datom was scanned — the CRDTResolvingIterator's LWW stopped after the first entry in the (E, A) group.
 
-**Claude's failure mode**: When the test failures appeared, Claude's
-first instinct was to check if they were pre-existing (attempted
-`git stash` to verify). This is the wrong approach:
+**Claude's failure mode**: When the test failures appeared, Claude's first instinct was to check if they were pre-existing (attempted `git stash` to verify). This is the wrong approach:
 
 1. It assumes the change is innocent until proven guilty
 2. It attempts a destructive git operation without authorization
 3. It delays actual investigation
 
-The correct response (per CLAUDE.md): understand WHY the test is
-failing, report with context, ask how to proceed. The annotations
-were right there, telling the story — Claude just needed to read them
-instead of trying to prove innocence.
+The correct response (per CLAUDE.md): understand WHY the test is failing, report with context, ask how to proceed. The annotations were right there, telling the story — Claude just needed to read them instead of trying to prove innocence.
 
 ### Final status
 
 All tests pass: `go test ./...` green. Changes:
 1. `cache_resolver.go` — ResolveLWW Op check (cache tombstone fix)
-2. `matcher_relations.go` — V-bound routing to matchWithVValidation
-   (12 lines) + validateCandidate Op check
-3. `crdt_resolving_iterator.go` — comment cleanup (reverted stale
-   resolveLWW field from wrong approach)
-4. `comparison_binding_or_subquery_test.go` — added CardinalityMany
-   schema for `:scenario/task`
+2. `matcher_relations.go` — V-bound routing to matchWithVValidation (12 lines) + validateCandidate Op check
+3. `crdt_resolving_iterator.go` — comment cleanup (reverted stale resolveLWW field from wrong approach)
+4. `comparison_binding_or_subquery_test.go` — added CardinalityMany schema for `:scenario/task`
 5. `tuple_ground_test.go` — same schema fix

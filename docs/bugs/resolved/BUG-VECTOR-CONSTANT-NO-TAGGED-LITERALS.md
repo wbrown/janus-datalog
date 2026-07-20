@@ -2,8 +2,7 @@
 
 ## Trigger
 
-A `(ground [...])` vector constant containing a tagged literal like `#inst`
-fails at parse time:
+A `(ground [...])` vector constant containing a tagged literal like `#inst` fails at parse time:
 
 ```
 error parsing expression argument 1: unsupported type in vector constant: 12
@@ -17,17 +16,13 @@ error parsing expression argument 1: unsupported type in vector constant: 12
 (ground [:none #inst "0001-01-01T00:00:00Z"])
 ```
 
-This is the EDN output of `FormatValueEDN` for a `time.Time` value inside a
-`VectorConstant`. The formatter correctly emits `#inst "..."`, but the parser
-can't parse it back — breaking round-trippability.
+This is the EDN output of `FormatValueEDN` for a `time.Time` value inside a `VectorConstant`. The formatter correctly emits `#inst "..."`, but the parser can't parse it back — breaking round-trippability.
 
 ## Root cause
 
 **File**: `datalog/parser/parser.go` — vector constant parsing (around line 730)
 
-The vector element switch handles `NodeInt`, `NodeFloat`, `NodeString`,
-`NodeBool`, `NodeKeyword`, `NodeSymbol` but not `NodeTagged`. Tagged literals
-(`#inst`, `#db/id`, etc.) hit the `default` case and error.
+The vector element switch handles `NodeInt`, `NodeFloat`, `NodeString`, `NodeBool`, `NodeKeyword`, `NodeSymbol` but not `NodeTagged`. Tagged literals (`#inst`, `#db/id`, etc.) hit the `default` case and error.
 
 ```go
 case edn.NodeVector:
@@ -47,10 +42,7 @@ case edn.NodeVector:
 
 ## Fix
 
-Add a `case edn.NodeTagged:` that delegates to `parseTaggedLiteral(elem)`.
-The tagged literal parser already handles `#inst` (→ `time.Time`) and
-`#db/id` (→ `datalog.Identity`). The vector constant parser just needs to
-call it.
+Add a `case edn.NodeTagged:` that delegates to `parseTaggedLiteral(elem)`. The tagged literal parser already handles `#inst` (→ `time.Time`) and `#db/id` (→ `datalog.Identity`). The vector constant parser just needs to call it.
 
 ```go
 case edn.NodeTagged:
@@ -64,6 +56,4 @@ case edn.NodeTagged:
 
 ## Impact
 
-This blocks round-trippability of any query containing `time.Time` or
-`Identity` values in vector constants (e.g., `TupleGround` with time
-defaults). `FormatValueEDN` emits valid EDN that the parser rejects.
+This blocks round-trippability of any query containing `time.Time` or `Identity` values in vector constants (e.g., `TupleGround` with time defaults). `FormatValueEDN` emits valid EDN that the parser rejects.

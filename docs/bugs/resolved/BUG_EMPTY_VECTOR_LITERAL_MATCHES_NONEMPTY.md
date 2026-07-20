@@ -1,9 +1,6 @@
 # Empty Vector Literal in Data Pattern Matches Non-Empty Vectors
 
-**Date**: 2026-02-24
-**Severity**: Correctness (High)
-**Status**: Fixed (2026-02-25)
-**Affected**: Any query using `[?e :attr []]` to match entities with empty vector attributes
+**Date**: 2026-02-24 **Severity**: Correctness (High) **Status**: Fixed (2026-02-25) **Affected**: Any query using `[?e :attr []]` to match entities with empty vector attributes
 
 ## Summary
 

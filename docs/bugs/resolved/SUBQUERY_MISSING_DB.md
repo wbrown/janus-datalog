@@ -97,20 +97,11 @@ The first option (automatic) is cleaner since the subquery already declares it n
 
 ## Resolution
 
-**Resolved.** The automatic option was implemented: `qb.Subquery()` emits `$`
-in the generated subquery invocation when the subquery's `:in` clause declares
-the database, so a correlated subquery built via the query builder produces
-`(q [...] $ ?scenario) [[...]]` rather than dropping the `$`.
+**Resolved.** The automatic option was implemented: `qb.Subquery()` emits `$` in the generated subquery invocation when the subquery's `:in` clause declares the database, so a correlated subquery built via the query builder produces `(q [...] $ ?scenario) [[...]]` rather than dropping the `$`.
 
-Verified by reading the tests directly (not delegated): `tests/subquery_db_bug_test.go`
-holds two active, non-skipped assertions, both passing against the current code —
+Verified by reading the tests directly (not delegated): `tests/subquery_db_bug_test.go` holds two active, non-skipped assertions, both passing against the current code —
 
-- `TestSubqueryMissingDB` asserts (via `t.Errorf`) that the generated EDN
-  contains `$ ?scenario) [[?taskCount]]`.
-- `TestSubqueryWithDBGeneratesCorrectEDN` asserts the same `$`-is-present
-  invariant on a second query shape. (This test previously contained a dead
-  `t.Skip` that was converted to a real assertion during the subquery
-  skip-hygiene pass.)
+- `TestSubqueryMissingDB` asserts (via `t.Errorf`) that the generated EDN contains `$ ?scenario) [[?taskCount]]`.
+- `TestSubqueryWithDBGeneratesCorrectEDN` asserts the same `$`-is-present invariant on a second query shape. (This test previously contained a dead `t.Skip` that was converted to a real assertion during the subquery skip-hygiene pass.)
 
-Both go through `qb.Query().…Subquery(...).MustBuild()` → `q.String()`, the exact
-path the reproduction exercises, and both confirm the `$` is now emitted.
+Both go through `qb.Query().…Subquery(...).MustBuild()` → `q.String()`, the exact path the reproduction exercises, and both confirm the `$` is now emitted.

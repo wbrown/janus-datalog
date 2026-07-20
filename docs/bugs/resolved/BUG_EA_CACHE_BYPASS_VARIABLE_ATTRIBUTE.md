@@ -1,9 +1,6 @@
 # EA Cache Bypass When Attribute Is a Variable Bound from Input
 
-**Date**: 2026-02-19
-**Severity**: Performance (Critical in write-heavy workloads)
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Affected**: All queries where A comes from bindings rather than being a pattern constant
+**Date**: 2026-02-19 **Severity**: Performance (Critical in write-heavy workloads) **Status**: Resolved (2026-05-25) — see Resolution below **Affected**: All queries where A comes from bindings rather than being a pattern constant
 
 ## Summary
 

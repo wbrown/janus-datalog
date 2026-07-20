@@ -1,24 +1,14 @@
 # BUG: Documentation and Option Surface Drift From Executable Defaults
 
-**Date**: 2026-05-24
-**Severity**: Medium - users can enable stale options or trust performance claims that are no longer wired to defaults
-**Status**: Resolved (2026-05-25) — see Resolution at the end
-**Affected**: `TODO.md`, `PERFORMANCE_STATUS.md`, `DATOMIC_COMPATIBILITY.md`, `storage.DefaultPlannerOptions`, `planner.PlannerOptions`
+**Date**: 2026-05-24 **Severity**: Medium - users can enable stale options or trust performance claims that are no longer wired to defaults **Status**: Resolved (2026-05-25) — see Resolution at the end **Affected**: `TODO.md`, `PERFORMANCE_STATUS.md`, `DATOMIC_COMPATIBILITY.md`, `storage.DefaultPlannerOptions`, `planner.PlannerOptions`
 
 ## Summary
 
-The repository's documentation, planner option names, and executable defaults
-have drifted apart.
+The repository's documentation, planner option names, and executable defaults have drifted apart.
 
-Several docs describe features as complete, default, or production-ready, while
-the current option surface marks related flags as disabled, deprecated, ignored,
-or moved to experimental. Conversely, some implemented optimization paths are
-documented as part of normal planning but are not enabled by the default database
-configuration.
+Several docs describe features as complete, default, or production-ready, while the current option surface marks related flags as disabled, deprecated, ignored, or moved to experimental. Conversely, some implemented optimization paths are documented as part of normal planning but are not enabled by the default database configuration.
 
-This creates a product/API correctness problem: users and future maintainers can
-turn on stale flags, assume optimizations are active when they are not, or trust
-performance claims that no longer correspond to the default code path.
+This creates a product/API correctness problem: users and future maintainers can turn on stale flags, assume optimizations are active when they are not, or trust performance claims that no longer correspond to the default code path.
 
 ## Evidence
 
@@ -47,13 +37,11 @@ type PlannerOptions struct {
 }
 ```
 
-The public option still exists, but its comment says it is disabled. The docs
-still advertise the feature as complete and performance-relevant.
+The public option still exists, but its comment says it is disabled. The docs still advertise the feature as complete and performance-relevant.
 
 ### 3. Semantic rewriting is documented as part of planning, but default options do not enable it
 
-The architecture docs describe time extraction folding as part of planner clause
-rewriting:
+The architecture docs describe time extraction folding as part of planner clause rewriting:
 
 ```markdown
 Time extraction folding: `[(year ?t) ?y] + [(= ?y 2025)]` is rewritten to
@@ -88,8 +76,7 @@ func (r *SemanticRewriter) Rewrite(clauses []query.Clause) []query.Clause {
 }
 ```
 
-So the documented optimization is not active by default unless another caller
-explicitly sets the option.
+So the documented optimization is not active by default unless another caller explicitly sets the option.
 
 ### 4. Some options are explicitly ignored but still exposed
 
@@ -102,9 +89,7 @@ MaxPhases               int  // Legacy option (ignored by clause-based planner)
 EnableFineGrainedPhases bool // Legacy option (ignored by clause-based planner)
 ```
 
-Keeping ignored options can be useful for compatibility, but the public docs
-should clearly identify them as compatibility no-ops. Otherwise advanced users
-will reasonably expect these flags to change planner behavior.
+Keeping ignored options can be useful for compatibility, but the public docs should clearly identify them as compatibility no-ops. Otherwise advanced users will reasonably expect these flags to change planner behavior.
 
 ## Expected Behavior
 
@@ -112,8 +97,7 @@ For any documented feature or option, one of the following should be true:
 
 1. The feature is active in the default path and documented as default.
 2. The feature is implemented but opt-in, and docs show exactly how to enable it.
-3. The feature is experimental/disabled, and docs do not present it as production
-   behavior.
+3. The feature is experimental/disabled, and docs do not present it as production behavior.
 4. The option is deprecated/ignored, and docs mark it as a compatibility no-op.
 
 ## Actual Behavior
@@ -123,21 +107,17 @@ The repository currently mixes all four states:
 - docs present some optimizations as complete/default
 - option comments mark related flags as disabled or deprecated
 - default options omit some documented rewrites
-- performance docs contain historical benchmark claims without always tying them
-  to the current default configuration
+- performance docs contain historical benchmark claims without always tying them to the current default configuration
 
 ## Why This Matters
 
 ### 1. Users Can Tune the Wrong Knobs
 
-An advanced user reading the docs may set `EnableConditionalAggregateRewriting`
-or `EnableDynamicReordering` expecting behavior changes. The comments say those
-paths are disabled, retired, or ignored.
+An advanced user reading the docs may set `EnableConditionalAggregateRewriting` or `EnableDynamicReordering` expecting behavior changes. The comments say those paths are disabled, retired, or ignored.
 
 ### 2. Performance Claims Become Hard to Trust
 
-The codebase has unusually detailed performance documentation, but performance
-claims need to say whether they apply to:
+The codebase has unusually detailed performance documentation, but performance claims need to say whether they apply to:
 
 - current defaults,
 - opt-in options,
@@ -148,15 +128,11 @@ Without that distinction, the docs overstate confidence in the shipped path.
 
 ### 3. Future Bug Triage Gets Noisy
 
-When behavior differs from docs, users report "planner bug" or "optimization
-regression" even when the actual issue is a disabled flag or stale doc.
+When behavior differs from docs, users report "planner bug" or "optimization regression" even when the actual issue is a disabled flag or stale doc.
 
 ### 4. Sole-Author Codebases Need Executable Truth
 
-This repository contains a lot of valuable design history. The risk is that
-history and current truth live side by side without a strong marker separating
-them. That is especially dangerous in a database, where stale architecture notes
-can lead to wrong assumptions during correctness work.
+This repository contains a lot of valuable design history. The risk is that history and current truth live side by side without a strong marker separating them. That is especially dangerous in a database, where stale architecture notes can lead to wrong assumptions during correctness work.
 
 ## Failure Modes
 
@@ -171,8 +147,7 @@ User writes:
         [(= ?y 2025)]]
 ```
 
-Docs imply this folds to a range predicate. Default options leave
-`EnableSemanticRewriting` false, so the expression path runs normally.
+Docs imply this folds to a range predicate. Default options leave `EnableSemanticRewriting` false, so the expression path runs normally.
 
 The query is correct but slower than documented.
 
@@ -186,15 +161,11 @@ planner.PlannerOptions{
 }
 ```
 
-The option exists, but the type comment says the feature is disabled/moved to
-experimental. The user has no clear way to know whether the flag is live,
-ignored, or partially live.
+The option exists, but the type comment says the feature is disabled/moved to experimental. The user has no clear way to know whether the flag is live, ignored, or partially live.
 
 ### Failure Mode 3: Maintainer Investigates an Ignored Option
 
-A maintainer sees a benchmark difference and toggles `MaxPhases` or
-`EnableFineGrainedPhases`, not realizing the current clause-based planner ignores
-those fields.
+A maintainer sees a benchmark difference and toggles `MaxPhases` or `EnableFineGrainedPhases`, not realizing the current clause-based planner ignores those fields.
 
 That wastes debugging time and can produce misleading conclusions.
 
@@ -219,15 +190,13 @@ Each option should state:
 
 ### 2. Align Top-Level Docs With Defaults
 
-Update `README.md`, `ARCHITECTURE.md`, `TODO.md`, and
-`PERFORMANCE_STATUS.md` to distinguish:
+Update `README.md`, `ARCHITECTURE.md`, `TODO.md`, and `PERFORMANCE_STATUS.md` to distinguish:
 
 - current default behavior
 - optional behavior
 - archived historical behavior
 
-Avoid "production-ready" claims immediately next to known disabled/experimental
-features unless the caveat is explicit.
+Avoid "production-ready" claims immediately next to known disabled/experimental features unless the caveat is explicit.
 
 ### 3. Consider Deprecation Enforcement
 
@@ -247,8 +216,7 @@ EnableDynamicReordering bool
 
 ### 4. Add Drift Tests
 
-If docs keep a machine-readable options table, add a small test that verifies
-the documented defaults match `DefaultPlannerOptions()`.
+If docs keep a machine-readable options table, add a small test that verifies the documented defaults match `DefaultPlannerOptions()`.
 
 At minimum, add tests around high-risk assumptions:
 
@@ -282,68 +250,39 @@ go test ./...
 
 ## Related
 
-- `docs/wip/QUERY_EXECUTOR_FEATURE_GAPS.md` already documents some remaining
-  QueryExecutor optimization gaps and is more careful about status than the
-  top-level roadmap.
-- `PERFORMANCE_STATUS.md` contains valuable benchmark history but needs sharper
-  labeling of current defaults versus historical/opt-in paths.
-- `TODO.md` currently mixes roadmap, marketing summary, and historical status in
-  one file; that makes drift more likely.
+- `docs/wip/QUERY_EXECUTOR_FEATURE_GAPS.md` already documents some remaining QueryExecutor optimization gaps and is more careful about status than the top-level roadmap.
+- `PERFORMANCE_STATUS.md` contains valuable benchmark history but needs sharper labeling of current defaults versus historical/opt-in paths.
+- `TODO.md` currently mixes roadmap, marketing summary, and historical status in one file; that makes drift more likely.
 
 ---
 
 ## Resolution (2026-05-25)
 
-**Resolved.** Fixed by removing the inert options outright (chosen over
-deprecation) and rewriting the docs to current truth, with a drift guard test.
+**Resolved.** Fixed by removing the inert options outright (chosen over deprecation) and rewriting the docs to current truth, with a drift guard test.
 
 ### Code
 
-Removed 8 inert `PlannerOptions` fields that the clause-based planner ignored:
-`UseClauseBasedPlanner`, `EnableDynamicReordering`, `EnablePredicatePushdown`,
-`EnableFineGrainedPhases`, `MaxPhases`, `EnableSubqueryDecorrelation`,
-`EnableParallelDecorrelation`, `EnableConditionalAggregateRewriting`.
-(`EnableCSE` never existed in `PlannerOptions`.) Predicate pushdown and
-decorrelation already run unconditionally inside `EnableAlgebraOptimizer`, and
-there is only one planner, so the phase-reordering / phase-count / fine-grained
-knobs had no consumer.
+Removed 8 inert `PlannerOptions` fields that the clause-based planner ignored: `UseClauseBasedPlanner`, `EnableDynamicReordering`, `EnablePredicatePushdown`, `EnableFineGrainedPhases`, `MaxPhases`, `EnableSubqueryDecorrelation`, `EnableParallelDecorrelation`, `EnableConditionalAggregateRewriting`. (`EnableCSE` never existed in `PlannerOptions`.) Predicate pushdown and decorrelation already run unconditionally inside `EnableAlgebraOptimizer`, and there is only one planner, so the phase-reordering / phase-count / fine-grained knobs had no consumer.
 
 - `datalog/planner/types.go` — struct trimmed to the live fields.
 - `datalog/storage/database.go` — `DefaultPlannerOptions()` trimmed to match.
-- `datalog/executor/{executor.go,options.go}` — removed the mirrored fields and
-  the `EnableSubqueryDecorrelation` pass-through.
-- Extracted the still-live `TimeRange` / `extractTimeRanges` into
-  `datalog/executor/time_range.go`, then deleted the now-dead
-  `datalog/executor/subquery_decorrelation.go`.
+- `datalog/executor/{executor.go,options.go}` — removed the mirrored fields and the `EnableSubqueryDecorrelation` pass-through.
+- Extracted the still-live `TimeRange` / `extractTimeRanges` into `datalog/executor/time_range.go`, then deleted the now-dead `datalog/executor/subquery_decorrelation.go`.
 - Swept ~27 test files that set the removed fields.
 
 ### Docs
 
-- Rewrote `docs/reference/PLANNER_OPTIONS.md` to current truth: every option is
-  labeled default-active or opt-in, defaults match `DefaultPlannerOptions()`, and
-  a "Removed options" table records what went away. Dropped the never-existing
-  `EnableCSE` and all dead-file references.
-- Archived `docs/reference/PLANNER_COMPARISON.md` → `docs/archive/completed/` (it
-  compared two planners; only one exists now). Fixed the links in `README.md`,
-  `PERFORMANCE_STATUS.md`, and `docs/wip/EXECUTION_STRATEGIES_AS_DATALOG.md`.
-- `PERFORMANCE_STATUS.md` / `TODO.md`: fixed config examples that set deleted
-  fields (they no longer compile), labeled `EnableSemanticRewriting` as opt-in,
-  and reframed conditional-aggregate rewriting (folded into the default algebra
-  optimizer; the standalone flag was inert; 7.7× is the original benchmark).
+- Rewrote `docs/reference/PLANNER_OPTIONS.md` to current truth: every option is labeled default-active or opt-in, defaults match `DefaultPlannerOptions()`, and a "Removed options" table records what went away. Dropped the never-existing `EnableCSE` and all dead-file references.
+- Archived `docs/reference/PLANNER_COMPARISON.md` → `docs/archive/completed/` (it compared two planners; only one exists now). Fixed the links in `README.md`, `PERFORMANCE_STATUS.md`, and `docs/wip/EXECUTION_STRATEGIES_AS_DATALOG.md`.
+- `PERFORMANCE_STATUS.md` / `TODO.md`: fixed config examples that set deleted fields (they no longer compile), labeled `EnableSemanticRewriting` as opt-in, and reframed conditional-aggregate rewriting (folded into the default algebra optimizer; the standalone flag was inert; 7.7× is the original benchmark).
 
 ### Test
 
-- `datalog/storage/planner_options_drift_test.go` —
-  `TestDefaultPlannerOptions_MatchesDocumentedDefaults` pins the
-  default-active / opt-in contract so the docs and `DefaultPlannerOptions()`
-  cannot drift apart again.
+- `datalog/storage/planner_options_drift_test.go` — `TestDefaultPlannerOptions_MatchesDocumentedDefaults` pins the default-active / opt-in contract so the docs and `DefaultPlannerOptions()` cannot drift apart again.
 
 ### Correction to this report
 
-This report claimed conditional-aggregate rewriting was "moved to `experimental/`"
-and "never wired." Neither is accurate: there is no `experimental/` directory, and
-the rewrite is performed by the algebra optimizer (which emits a `FindAggregate`
-carrying a predicate). What was inert was the standalone *flag* — now removed.
+This report claimed conditional-aggregate rewriting was "moved to `experimental/`" and "never wired." Neither is accurate: there is no `experimental/` directory, and the rewrite is performed by the algebra optimizer (which emits a `FindAggregate` carrying a predicate). What was inert was the standalone *flag* — now removed.
 
 ### Verification
 

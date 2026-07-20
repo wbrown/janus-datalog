@@ -1,9 +1,6 @@
 # BUG: V-bound cardinality-one byte queries return empty under `-race`
 
-**Date**: 2026-05-24
-**Severity**: High — silent wrong results for hash joins / dedup on byte-valued keys
-**Status**: Resolved (2026-05-25) — see Resolution below
-**Affected**: V-bound cardinality-one `TypeBytes` queries via the candidate+validate path (`validatingVBoundIterator`, AVET/VAET candidate scan + EATV validation). Observed in `datalog/storage/vbound_bytes_validation_test.go`.
+**Date**: 2026-05-24 **Severity**: High — silent wrong results for hash joins / dedup on byte-valued keys **Status**: Resolved (2026-05-25) — see Resolution below **Affected**: V-bound cardinality-one `TypeBytes` queries via the candidate+validate path (`validatingVBoundIterator`, AVET/VAET candidate scan + EATV validation). Observed in `datalog/storage/vbound_bytes_validation_test.go`.
 
 ## Summary
 

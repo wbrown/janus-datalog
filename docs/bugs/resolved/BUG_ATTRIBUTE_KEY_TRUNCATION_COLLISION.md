@@ -1,9 +1,6 @@
 # BUG: Attribute Keywords Collide After 32 Bytes
 
-**Date**: 2026-05-22
-**Severity**: Correctness (High)
-**Status**: Resolved (2026-05-22)
-**Affected**: Keyword interning, storage attribute encoding, schema lookup, all query/write paths using attributes longer than 32 bytes
+**Date**: 2026-05-22 **Severity**: Correctness (High) **Status**: Resolved (2026-05-22) **Affected**: Keyword interning, storage attribute encoding, schema lookup, all query/write paths using attributes longer than 32 bytes
 
 ## Summary
 
@@ -117,63 +114,33 @@ Also add a negative/contract test for the chosen policy:
 
 ## Resolution (2026-05-22)
 
-**Chosen policy: reject (hard failure).** Attribute names whose UTF-8 form
-exceeds the 32-byte storage cap are refused with a clear error rather than
-silently truncated. The cap stays at 32; hashing and raising the cap were
-considered and declined (see "Decision" below).
+**Chosen policy: reject (hard failure).** Attribute names whose UTF-8 form exceeds the 32-byte storage cap are refused with a clear error rather than silently truncated. The cap stays at 32; hashing and raising the cap were considered and declined (see "Decision" below).
 
 Two independent defects, two independent fixes:
 
 ### 1. Interning collision (`datalog/intern.go`)
 
-`InternKeyword` keyed its intern cache by a truncated `[32]byte`, so distinct
-keywords sharing their first 32 bytes interned to the same `*keyword` pointer.
-It now keys by the full string, so distinct names always get distinct pointers,
-at any length. `InternKeywordFromBytes` (the storage-decode path) was changed in
-lockstep — it trims the null padding to recover the string and keys by that —
-so a keyword decoded from storage stays pointer-identical to one created via
-`InternKeyword`. (This matters because keyword equality is pointer equality
-throughout the engine.)
+`InternKeyword` keyed its intern cache by a truncated `[32]byte`, so distinct keywords sharing their first 32 bytes interned to the same `*keyword` pointer. It now keys by the full string, so distinct names always get distinct pointers, at any length. `InternKeywordFromBytes` (the storage-decode path) was changed in lockstep — it trims the null padding to recover the string and keys by that — so a keyword decoded from storage stays pointer-identical to one created via `InternKeyword`. (This matters because keyword equality is pointer equality throughout the engine.)
 
-This fix is independent of the storage cap: interning is now correct for names
-of any length, even ones that can never be stored.
+This fix is independent of the storage cap: interning is now correct for names of any length, even ones that can never be stored.
 
 ### 2. Storage truncation (`copy(a[:], d.A.String())` into `[32]byte`)
 
-A single source-of-truth constant, `datalog.MaxAttributeBytes = 32`, with a
-compile-time assertion in `datalog/storage/types.go` that the storage
-`Attribute` array stays the same size (`var _ [datalog.MaxAttributeBytes]byte =
-Attribute{}`). Over-length attributes are rejected at every write/definition
-boundary:
+A single source-of-truth constant, `datalog.MaxAttributeBytes = 32`, with a compile-time assertion in `datalog/storage/types.go` that the storage `Attribute` array stays the same size (`var _ [datalog.MaxAttributeBytes]byte = Attribute{}`). Over-length attributes are rejected at every write/definition boundary:
 
-- `Transaction.Set`, `Add`, `Remove`, `Retract` call `validateAttributeStorable`
-  and return an error before building any datom. (`AddEntity`/`AddMap`/
-  `SaveStruct` funnel through these.)
-- `schema.Builder.Add()` records an error so `Build()` fails for an over-length
-  ident.
+- `Transaction.Set`, `Add`, `Remove`, `Retract` call `validateAttributeStorable` and return an error before building any datom. (`AddEntity`/`AddMap`/ `SaveStruct` funnel through these.)
+- `schema.Builder.Add()` records an error so `Build()` fails for an over-length ident.
 
-Because `reflect.SchemaFromStruct` routes through the schema `Builder`, and
-`SaveStruct` routes through `tx.Add`/`Set`, reflect usage hard-fails cleanly too.
+Because `reflect.SchemaFromStruct` routes through the schema `Builder`, and `SaveStruct` routes through `tx.Add`/`Set`, reflect usage hard-fails cleanly too.
 
 ### Decision: why reject, and a reflect caveat
 
-The cap was kept at 32 deliberately. During implementation, the reflect
-`OrderedSet` tests surfaced that `reflect` derives attribute names from Go struct
-names (`CharacterWithPreferences` → `:character-with-preferences/prefs`, 33
-bytes), so an ordinary struct name can exceed the cap. The decision was that
-this *should* be a straight-up failure rather than be accommodated by a larger
-key or a hash dictionary. Consequence: reflect users must keep
-`struct-name + field` within 32 bytes. The two offending test fixtures were
-renamed to valid names (`CharacterPrefs`, `EntityOrderedRefs`); they test
-`OrderedSet`, not the cap, which has its own dedicated rejection tests.
+The cap was kept at 32 deliberately. During implementation, the reflect `OrderedSet` tests surfaced that `reflect` derives attribute names from Go struct names (`CharacterWithPreferences` → `:character-with-preferences/prefs`, 33 bytes), so an ordinary struct name can exceed the cap. The decision was that this *should* be a straight-up failure rather than be accommodated by a larger key or a hash dictionary. Consequence: reflect users must keep `struct-name + field` within 32 bytes. The two offending test fixtures were renamed to valid names (`CharacterPrefs`, `EntityOrderedRefs`); they test `OrderedSet`, not the cap, which has its own dedicated rejection tests.
 
 ### Tests
 
-- `datalog/keyword_intern_collision_test.go`:
-  `TestKeywordInterning_LongNamesDoNotCollide` — distinct 42-byte names intern
-  to distinct pointers and round-trip their strings.
-- `datalog/storage/attribute_truncation_collision_test.go` (rewritten for the
-  reject policy):
+- `datalog/keyword_intern_collision_test.go`: `TestKeywordInterning_LongNamesDoNotCollide` — distinct 42-byte names intern to distinct pointers and round-trip their strings.
+- `datalog/storage/attribute_truncation_collision_test.go` (rewritten for the reject policy):
   - `TestStorage_LongAttributeNameRejectedOnWrite` — Set/Add/Remove/Retract all
     return an error for an over-length attribute.
   - `TestSchema_LongAttributeDefinitionRejected` — `Build()` errors on an
@@ -181,14 +148,8 @@ renamed to valid names (`CharacterPrefs`, `EntityOrderedRefs`); they test
   - `TestStorage_MaxLengthAttributeNameAccepted` — a name exactly at 32 bytes is
     accepted and round-trips (guards against off-by-one).
 
-The original plan's `TestStorage_LongAttributeNamesDoNotAlias` /
-`TestQuery_LongAttributeNamesRemainDistinct` were written for the "make distinct
-and storable" semantics; under the reject policy they were replaced by the
-rejection/boundary tests above. Full suite green: 15 packages, 0 failures.
+The original plan's `TestStorage_LongAttributeNamesDoNotAlias` / `TestQuery_LongAttributeNamesRemainDistinct` were written for the "make distinct and storable" semantics; under the reject policy they were replaced by the rejection/boundary tests above. Full suite green: 15 packages, 0 failures.
 
 ### Files changed
 
-`datalog/intern.go`, `datalog/types.go`, `datalog/storage/types.go`,
-`datalog/storage/database.go`, `datalog/schema/builder.go`,
-`datalog/reflect/ordered_set_test.go` (fixture renames), plus the two new test
-files.
+`datalog/intern.go`, `datalog/types.go`, `datalog/storage/types.go`, `datalog/storage/database.go`, `datalog/schema/builder.go`, `datalog/reflect/ordered_set_test.go` (fixture renames), plus the two new test files.
