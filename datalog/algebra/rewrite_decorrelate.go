@@ -150,7 +150,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit em
 			}
 		}
 
-		innerNode, compileErr := compileClauses(decorrelated.Where)
+		innerNode, compileErr := Compile(decorrelated)
 		if compileErr != nil || innerNode == nil {
 			return node
 		}
@@ -170,7 +170,7 @@ func decorrelateTransform(ctx *parse.TransformContext, node *parse.Node, emit em
 		// Compile the inner WHERE, recursively optimize to decorrelate nested
 		// subqueries (e.g., the max subquery in the argmax pattern), then
 		// decompile back to produce optimized WHERE clauses.
-		innerNode, compileErr := compileClauses(decorrelated.Where)
+		innerNode, compileErr := Compile(decorrelated)
 		if compileErr != nil || innerNode == nil {
 			return rebuildWithChildren(node, children)
 		}

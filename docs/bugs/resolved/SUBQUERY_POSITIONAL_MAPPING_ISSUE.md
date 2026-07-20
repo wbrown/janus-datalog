@@ -1,6 +1,8 @@
 # ⚠️ CRITICAL ISSUE: Subquery Variable Mapping is Positional, Not Named
 
-## The Problem
+**Status**: RESOLVED (2026-07-20 staleness triage) — the "long term" proposal below was implemented.
+
+> **Triage (2026-07-20)**: the current mapping is true positional *including* `$` — exactly proposed solutions 1/3. `createInputRelationsFromValuesWithOptions` (`datalog/executor/subquery.go`) counts every `DatabaseInput` as a required call-site argument ("Database REQUIRES explicit $"), validates arity loudly (mismatch → "subquery input arity mismatch"), and errors when a `$` position does not receive a source marker. The `continue`-skips-`$` code this entry quotes no longer exists. Each "BREAKS" example is now either correct or a loud error: reordered `:in ?a $ ?b` demands the marker at position 2; no-database `:in ?x ?y` works (and an omitted `:in` defaults to `[$]`); argument-count mismatch is a loud error. The requested tests exist (`subquery_input_arity_test.go`, `subquery_input_validation_test.go`), and multiple database sources landed with the multi-source arc (`$name`, `SourceRouter`). The original report is retained below.
 
 The current subquery implementation uses **positional mapping** between outer query variables and inner query `:in` clause variables. This is confusing, error-prone, and not what users expect.
 

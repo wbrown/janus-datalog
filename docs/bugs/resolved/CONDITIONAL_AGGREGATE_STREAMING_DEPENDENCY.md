@@ -1,6 +1,8 @@
 # Conditional Aggregate Rewriting Requires Streaming
 
-**Date**: 2025-10-13 **Status**: 🟡 KNOWN LIMITATION **Severity**: MEDIUM - Works with defaults, fails with non-standard config **Priority**: LOW - Default configuration works correctly
+**Date**: 2025-10-13 **Status**: OBSOLETE (2026-07-20 staleness triage) — the failing configuration is no longer representable **Severity**: MEDIUM - Works with defaults, fails with non-standard config **Priority**: LOW - Default configuration works correctly
+
+> **Triage (2026-07-20)**: every artifact this entry cites is gone from the tree. The reproducers (`tests/conditional_aggregate_streaming_benchmark_test.go`, `tests/conditional_aggregate_no_streaming_test.go`) no longer exist; the cited code (`datalog/planner/phase_reordering.go`, `datalog/planner/conditional_aggregate_rewriting.go`) no longer exists; and the "configuration that fails" cannot be expressed — `EnableConditionalAggregateRewriting` and `EnableIteratorComposition` were removed from the option surface, and there is no eager (streaming-disabled) mode anymore (`datalog/executor/iterator_contract_hardening_test.go` records the former `EnableIteratorComposition` false arm's removal). The documented failure mode — conditional aggregate rewriting with streaming explicitly disabled — is unreachable. The original report is retained below; if a symbol-projection nondeterminism resurfaces, it is a new entry against current code, not this one.
 
 ## Problem Statement
 

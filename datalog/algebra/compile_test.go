@@ -276,13 +276,16 @@ func TestCompileRejectsInvalidNotJoinHeaders(t *testing.T) {
 		want  string
 	}{
 		{
+			// The header demands ?missing, which no input or clause binds;
+			// the compile-order pass rejects it before the fold reaches
+			// compileNotJoin's own header checks.
 			name: "header symbol not bound outside",
 			query: `[:find ?goal
 				:where
 				[?goal :entity/type :type/goal]
 				(not-join [?goal ?missing]
 					[?event :event/goal ?goal])]`,
-			want: "header symbol ?missing is not bound by the outer relation",
+			want: "waits on ?missing (no input or clause binds it)",
 		},
 		{
 			name: "header symbol unused by body",
@@ -317,9 +320,12 @@ func TestCompileRejectsPlainNotWithUnboundOuterRequirement(t *testing.T) {
 			[(!= ?termType ?missing)])]`)
 	require.NoError(t, err)
 
+	// The body predicate demands ?missing, which neither the body, the outer
+	// query, nor any input binds; the body's compile-order pass rejects it.
 	_, err = Compile(q)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "NOT body requires unbound outer symbol ?missing")
+	require.Contains(t, err.Error(), "NOT inner clauses")
+	require.Contains(t, err.Error(), "waits on ?missing (no input or clause binds it)")
 }
 
 func TestOrJoinSchemaDiagnosticExplainsHeaderContract(t *testing.T) {

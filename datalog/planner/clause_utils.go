@@ -68,7 +68,7 @@ func clauseSelectable(
 			return false
 		}
 	}
-	return clauseReady(clause, available, inputs, providerCount)
+	return query.ClauseReady(clause, available, inputs, providerCount)
 }
 
 // subqueryDependsOnPendingProvider checks if a subquery binds a variable

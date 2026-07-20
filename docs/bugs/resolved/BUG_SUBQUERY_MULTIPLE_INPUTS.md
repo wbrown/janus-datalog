@@ -1,6 +1,21 @@
 # BUG: Subqueries With Multiple Inputs Silently Return Empty Results
 
-**Date**: 2026-05-31 **Severity**: Medium — wrong results (silent empty), not a crash; single-input subqueries are unaffected **Status**: Open **Affected**: subquery execution for `:in` clauses with more than one input beyond `$`
+**Date**: 2026-05-31 **Severity**: Medium — wrong results (silent empty), not a crash; single-input subqueries are unaffected **Status**: RESOLVED (2026-07-20) — misdiagnosis; the defect was in the reproducer's fixture, not the engine **Affected**: subquery execution for `:in` clauses with more than one input beyond `$`
+
+## Resolution (2026-07-20)
+
+The engine was never broken on this path. The reproducer passed its date constant as a bare EDN string — `"2025-01-01T00:00:00Z"` — while the fixture stores `:sale/date` as `time.Time` datoms. Type-strict matching correctly matches no sale against a string-typed date, the `sum` group is empty, the tuple binding drops the outer rows, and the totals read 0. That empty result is the *correct* answer to the question as asked; nothing about input forwarding was involved.
+
+Changing the constant to the typed literal — `#inst "2025-01-01T00:00:00Z"` — makes the test pass on both optimizer modes with no engine change. Both call-site inputs (correlated variable + typed constant) bind into the nested `:in` exactly as declared.
+
+The "Actual Behavior" hypothesis below ("only one input is bound, or the input binding collapses") is therefore refuted. Multi-input forwarding with a call-site constant is pinned green on both modes by two independent tests with two constant types:
+
+- `datalog/executor/executor_subquery_comprehensive_test.go` / `TestSubqueryWithTwoInputs` — variable + `#inst` constant (skip removed, totals asserted: Electronics 300, Books 50).
+- `datalog/executor/executor_subquery_datomic_test.go` / `TestSubqueryDatomicCompatible/MultipleInputsWithDatabase` — variable + float constant.
+
+**Lesson**: a reproducer is itself a claim that must be verified against the value domain of its fixture. This entry stood for seven weeks as a "silent-wrong-answer engine bug" — the worst class — on the strength of a test whose constant could never match its own data. Before root-causing a silent-empty, first confirm the query's constants inhabit the same types as the datoms they must match; under type-strict matching, a wrong-typed constant produces exactly this symptom.
+
+The sections below are the original report, retained unedited.
 
 ## Summary
 

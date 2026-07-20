@@ -225,14 +225,14 @@ func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 	}
 }
 
-// TestSubqueryWithTwoInputs tests subquery that takes multiple input variables.
-// This is a LIVE gap: with the skip removed the test fails (totals come back 0
-// instead of 300/50). Tracked in docs/bugs/BUG_SUBQUERY_MULTIPLE_INPUTS.md; the
-// skip points there rather than silently hiding the gap. Remove the skip and
-// assert the totals when the bug is fixed.
+// TestSubqueryWithTwoInputs pins multi-input subquery forwarding: the call
+// site passes a correlated variable and a typed constant (#inst) after $, and
+// both must bind in the nested :in. A long-lived skip here blamed the engine
+// for "multiple inputs not supported"; the defect was in this fixture — the
+// date constant was a bare EDN string matched against time.Time datoms, which
+// type-strict matching correctly rejects, so the totals read 0. See
+// docs/bugs/resolved/BUG_SUBQUERY_MULTIPLE_INPUTS.md.
 func TestSubqueryWithTwoInputs(t *testing.T) {
-	t.Skip("Multiple inputs to subqueries not yet supported — see docs/bugs/BUG_SUBQUERY_MULTIPLE_INPUTS.md")
-
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			"[:product/category _]": {
@@ -272,7 +272,7 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 	                         [?s :sale/product ?prod]
 	                         [?s :sale/date ?date]
 	                         [?s :sale/amount ?amount]]
-	                 $ ?category "%s") [[?total]]]]`, targetDate.Format(time.RFC3339))
+	                 $ ?category #inst "%s") [[?total]]]]`, targetDate.Format(time.RFC3339))
 
 	q, err := parser.ParseQuery(queryStr)
 	if err != nil {

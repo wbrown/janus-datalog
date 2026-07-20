@@ -6,6 +6,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/annotations"
+	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
 
@@ -1947,6 +1948,88 @@ func TestOrUnionIncludesAllBranches(t *testing.T) {
 			}
 			if !values["nobody"] {
 				t.Error("missing 'nobody' from ground expression branch")
+			}
+		})
+	}
+}
+
+// TestClauseOrderIndependenceForNot pins the language contract that clause
+// order must not change whether a query works, and the optimizer-transparency
+// invariant that the optimizer must never change it either. Two shapes from
+// docs/bugs/resolved/BUG_ALGEBRA_BRIDGE_COMPILES_IN_SOURCE_ORDER.md: a NOT
+// written before the clause that binds its correlate, and a NOT written after
+// a prefix that does not bind its correlate. The baseline path plans both by
+// canonical clause scope; the algebra bridge orders clauses by the same
+// readiness before folding (orderClausesForCompile over query.ClauseReady).
+func TestClauseOrderIndependenceForNot(t *testing.T) {
+	goalA := datalog.NewIdentity("goal:a")
+	goalB := datalog.NewIdentity("goal:b")
+	event1 := datalog.NewIdentity("event:1")
+	typeAttr := datalog.NewKeyword(":entity/type")
+	nameAttr := datalog.NewKeyword(":entity/name")
+	eventGoalAttr := datalog.NewKeyword(":event/goal")
+	goalType := datalog.NewKeyword(":type/goal")
+
+	datoms := []datalog.Datom{
+		{E: goalA, A: typeAttr, V: goalType, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: goalB, A: typeAttr, V: goalType, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: goalA, A: nameAttr, V: "alpha", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: goalB, A: nameAttr, V: "beta", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		// Only goal:a has an event; the NOT must leave exactly goal:b.
+		{E: event1, A: eventGoalAttr, V: goalA, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+
+	cases := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "not_before_binder",
+			text: `[:find ?goal
+			        :where (not [?x :event/goal ?goal])
+			               [?goal :entity/type :type/goal]]`,
+		},
+		{
+			// The prefix relation {?e ?name} shares no variable with the NOT;
+			// ?goal unifies through the clauses written after it.
+			name: "not_after_non_unifying_prefix",
+			text: `[:find ?goal
+			        :where [?e :entity/name ?name]
+			               (not [?x :event/goal ?goal])
+			               [?goal :entity/type :type/goal]
+			               [?goal :entity/name ?name]]`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(tc.text)
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
+
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+					result, err := executor.Execute(q)
+					if err != nil {
+						t.Fatalf("execution failed: %v", err)
+					}
+
+					if result.Size() != 1 {
+						t.Fatalf("expected exactly 1 result (goal:b), got %d", result.Size())
+					}
+					got, ok := result.Get(0)[0].(datalog.Identity)
+					if !ok {
+						t.Fatalf("expected an Identity result, got %T", result.Get(0)[0])
+					}
+					if !got.Equal(goalB) {
+						t.Errorf("expected goal:b (no event), got %v", got)
+					}
+				})
 			}
 		})
 	}

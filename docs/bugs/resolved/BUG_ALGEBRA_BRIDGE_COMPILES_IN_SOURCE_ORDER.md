@@ -1,6 +1,23 @@
 # BUG: The algebra bridge compiles clauses in source order — NOT before its binder fails only with the optimizer on
 
-**Status**: Open (2026-07-19). Confirmed mechanically from the code chain; reported by external review against `a58c0f8`. Loud error, no wrong data — but only on the default path, and only because of clause order, which Datalog semantics say must not matter. Fix direction pending an owner ruling; the red pin rides the optimizer mode matrix (`docs/wip/OPTIMIZER_MODE_MATRIX.md`).
+**Status**: RESOLVED (2026-07-20). Fix direction ruled: pre-order clauses entering `Compile` by the same `ScopeOf`-driven readiness the planner's phasing uses. Originally reported by external review against `a58c0f8`; loud error, no wrong data.
+
+## Resolution (2026-07-20)
+
+Readiness now has one home: `query.ClauseBlockers` / `query.ClauseReady` (`datalog/query/clause_ready.go`, moved verbatim from the planner's `clauseReady` together with `query.CountProviders`). The planner's `clauseSelectable` and the bridge's new compile-order pass both consume it, so the bridge and the planner agree by shared definition on which queries are schedulable.
+
+The bridge orders every clause list before folding: `orderClausesForCompile` (`datalog/algebra/compile_order.go`) repeatedly takes the first source-order clause that is ready under the symbols bound so far — the identity permutation for lists already in dependency order. `compileClausesFrom` applies it at every fold site, so OR branches and NOT/not-join bodies are ordered too (body ordering seeds availability from the enclosing relation's symbols). A stall — some clause's mandatory correlates bindable by no input and no clause — is rejected loudly naming each stuck clause and its blocking symbols, the same queries the planner's phasing rejects with its no-progress error.
+
+Two adjacent defects fell out of the same change:
+
+- `optimizeAlgebra` built `&query.Query{Where: clauses}`, stripping `:in` — the bridge could never know an input-bound correlate was bindable. It now passes the full query, and `Compile` seeds ordering with the `:in` symbol set (`ConstantInputSymbols` ∪ `IteratedInputSymbols`).
+- The decorrelation rewrite compiled inner queries via bare `compileClauses(decorrelated.Where)`, also dropping the inner `:in`; both sites now call `Compile(decorrelated)`.
+
+`compileNot`'s prefix-scoped unification check now evaluates against a prefix containing every binder, so the false rejection is gone; its checks remain as backstops. Two invalid-query rejection tests (`TestCompileRejectsInvalidNotJoinHeaders/header_symbol_not_bound_outside`, `TestCompileRejectsPlainNotWithUnboundOuterRequirement`) now reject at the ordering gate — upstream of the old sites — with messages that still name the unbindable symbol.
+
+## Reproducers (red-first, now green)
+
+- `datalog/executor/not_or_test.go` / `TestClauseOrderIndependenceForNot` — both documented shapes (NOT before its binder; NOT after a non-unifying prefix), executed on both optimizer modes with results asserted.
 
 ## Symptom
 

@@ -43,7 +43,7 @@ Reproducers (red `algebra_on` legs in-tree, baseline green):
 
 Both signatures point at the same root: the rewrite's treatment of inner-query `:in` symbols that are environment (predicate operands), not data. Whether the two symptoms share one fix is a root-cause question for fix time.
 
-**Related, pre-existing, distinct**: `BUG_SUBQUERY_MULTIPLE_INPUTS.md` (Open, 2026-05-31) covers the same query-shape family from the baseline side — a multi-input subquery whose second input is a call-site *constant* silently returns empty on the baseline path (tracked-pointer skip in `TestSubqueryWithTwoInputs`). The matrix reproducers above pass their second input as a *variable*, which the baseline handles and the algebra path rejects. Three behaviors in one family: baseline+constant = silent empty, baseline+variable = correct, algebra+variable = loud error. Root-cause work on either entry should read both.
+**Related, pre-existing, distinct**: `resolved/BUG_SUBQUERY_MULTIPLE_INPUTS.md` covered the same query-shape family from the baseline side — a multi-input subquery whose second input is a call-site *constant* appeared to silently return empty on the baseline path. RESOLVED (2026-07-20) as a misdiagnosis: the reproducer's constant was a bare EDN string matched against `time.Time` datoms, which type-strict matching correctly rejects; with a `#inst` constant the same query is green on both modes with no engine change (`TestSubqueryWithTwoInputs`, skip removed). The constant-forwarding path was never broken.
 
 ## Reading of the failure (hypothesis, to be verified at fix time)
 
