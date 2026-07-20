@@ -1,6 +1,10 @@
 # BUG: algebra bridge rejects a single-branch or-join inside a NOT body — algebra path only
 
-**Status**: Open (2026-07-20). Found by the optimizer mode matrix migration of `datalog/executor` (phase 5), which put that package's query tests on the algebra path for the first time. Loud error at planning, no wrong data; the baseline path executes the same query correctly.
+**Status**: RESOLVED (2026-07-20). Fixed by relaxing the union arity invariant to ≥1 at both IR sites (`analyzeUnionBranches` and the schema-refresh arms for Union and LateralUnion, `datalog/algebra/analysis.go`): a single-branch union carrying the declared header interface is the honest IR image of a legal single-branch or/or-join, and the identity-compile alternative was rejected because it would erase the clause from the IR and break the ratified or/or-join decompile round-trip. Clause-level branch minimums (or-default's two branches) remain language rules enforced by the clause's own `Validate` at the boundaries — not IR invariants. Guards: `TestNotClauseWithOrJoinBody` (the NOT-inner reproducer, both modes green) and the new `TestSingleBranchOrJoinExecutesAsItsBranch` (plain positional single-branch or and or-join, exact rows, both modes).
+
+Original entry follows.
+
+**Status (original)**: Open (2026-07-20). Found by the optimizer mode matrix migration of `datalog/executor` (phase 5), which put that package's query tests on the algebra path for the first time. Loud error at planning, no wrong data; the baseline path executes the same query correctly.
 
 ## Symptom
 

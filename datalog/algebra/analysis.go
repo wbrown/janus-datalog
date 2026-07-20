@@ -86,8 +86,10 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy.Output = cloneSymbols(children[0].Symbols())
 			refreshed.Data = &copy
 		case *Union:
-			if len(children) < 2 {
-				return nil, fmt.Errorf("refresh Union: expected at least two children, got %d", len(children))
+			// Single-branch unions are legal IR (single-branch or/or-join);
+			// see analyzeUnionBranches.
+			if len(children) < 1 {
+				return nil, fmt.Errorf("refresh Union: expected at least one child, got %d", len(children))
 			}
 			copy := *data
 			copy.Output = cloneSymbols(data.Output)
@@ -95,8 +97,11 @@ func RefreshSchemas(root *Node) (*Node, error) {
 			copy.Required = cloneSymbols(data.Required)
 			refreshed.Data = &copy
 		case *LateralUnion:
-			if len(children) < 2 {
-				return nil, fmt.Errorf("refresh LateralUnion: expected at least two children, got %d", len(children))
+			// Arity parity with Union: clause-level branch minimums (e.g.
+			// or-default's two branches) are language rules enforced by the
+			// clause's Validate at the boundaries, not IR invariants.
+			if len(children) < 1 {
+				return nil, fmt.Errorf("refresh LateralUnion: expected at least one child, got %d", len(children))
 			}
 			copy := *data
 			copy.Output = cloneSymbols(data.Output)
@@ -406,8 +411,13 @@ func analyzeLateralUnion(node *Node, children []Analysis) (Analysis, error) {
 }
 
 func analyzeUnionBranches(output, joinVars, outerRequired []query.Symbol, children []Analysis) (Analysis, error) {
-	if len(children) < 2 {
-		return Analysis{}, fmt.Errorf("union requires at least two branches")
+	// A single-branch union is the honest IR image of a legal single-branch
+	// or/or-join: the branch restricted to the declared header interface.
+	// The IR must accept every shape the language accepts; clause-level
+	// arity rules (e.g. or-default's two-branch minimum) are enforced at
+	// the language boundaries by the clause's own Validate, not here.
+	if len(children) == 0 {
+		return Analysis{}, fmt.Errorf("union requires at least one branch")
 	}
 	var required []query.Symbol
 	for i, child := range children {
