@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -433,6 +434,23 @@ func TestIndexedMatcher_WithBindings(t *testing.T) {
 	}
 }
 
+// timeWindowConstraint is a test-local StorageConstraint: V is a time.Time
+// within [start, end). The subject under test is the matcher's constraint
+// filtering, not any particular constraint's semantics — production
+// constraint implementations live in the constraints package.
+type timeWindowConstraint struct {
+	start, end time.Time
+}
+
+func (c *timeWindowConstraint) Evaluate(d *datalog.Datom) bool {
+	t, ok := d.V.(time.Time)
+	return ok && !t.Before(c.start) && t.Before(c.end)
+}
+
+func (c *timeWindowConstraint) String() string {
+	return fmt.Sprintf("V ∈ [%s, %s)", c.start, c.end)
+}
+
 // TestIndexedMatcher_WithConstraints tests constraint filtering
 func TestIndexedMatcher_WithConstraints(t *testing.T) {
 	now := time.Now()
@@ -444,11 +462,10 @@ func TestIndexedMatcher_WithConstraints(t *testing.T) {
 
 	matcher := NewIndexedMemoryMatcher(datoms)
 
-	// Create time extraction constraint
-	constraint := &timeExtractionConstraint{
-		position:  2, // Value position
-		extractFn: "hour",
-		expected:  int64(now.Hour()),
+	// A half-hour window around now matches exactly e1.
+	constraint := &timeWindowConstraint{
+		start: now.Add(-30 * time.Minute),
+		end:   now.Add(30 * time.Minute),
 	}
 
 	pattern := &query.DataPattern{

@@ -62,7 +62,7 @@ The codebase discipline is first-error-wins (`if e := it.Error(); err == nil { e
 - **Ratified behavior change**: vector indices must be integers. `(nth ?vec "1")` returned element 0 (string→0) and `(nth ?vec 1.5)` truncated; both now error (`toVectorIndex`, callers wrap context).
 - **Discovered live defect, fixed**: the memory matchers' element handling omitted `VectorConstant` — `matchesElement` returned false (a vector literal matched nothing) and `extractPatternValue` returned nil (treated as unbound). Both handle vectors now; `PatternElement` verified closed at four implementers; defaults panic. Pinned by `pattern_element_taxonomy_test.go`.
 - Closed-taxonomy defaults now panic: `extractValue` (storage matcher), `extractProbeKey`, `rangeConstraint` position.
-- **Still open**: the `timeExtractionConstraint` field switch (`constraints_impl.go`) — the type has no production constructors, so its fate is the C6 decision; not patched independently.
+- ~~Still open~~ RESOLVED (2026-07-20): the `timeExtractionConstraint` field switch went with the C6 deletion of `constraints_impl.go`.
 
 Verified non-hazards (documented, principled): schemaless cardinality-one defaults across cache/pull/database, `cardFromOp`'s explicit non-decisive `false`, display-type and `String()` fallbacks.
 
@@ -81,7 +81,7 @@ Per-tuple, production-reachable through the expression evaluation loop. The pars
 
 ### B2. `TimeExtractionFunction.Field` — string kind, switch triplicated
 
-**Status**: Resolved (2026-07-19) for the live copy: `Field` is an interned `Symbol` (pre-interned `SymYear`…`SymSecond`), resolved once in `parseTimeExtraction` and in the qb builders, dispatched by pointer equality in Eval. Pinned by `TestTimeExtractionFieldsResolveToInternedSymbols`. The two duplicated dead/test-only copies (`extractTimeComponent` in `custom_functions.go`, `timeExtractionConstraint`) remain with the C5/C6 decisions.
+**Status**: Resolved (2026-07-19) for the live copy: `Field` is an interned `Symbol` (pre-interned `SymYear`…`SymSecond`), resolved once in `parseTimeExtraction` and in the qb builders, dispatched by pointer equality in Eval. Pinned by `TestTimeExtractionFieldsResolveToInternedSymbols`. Of the two duplicated dead/test-only copies, `timeExtractionConstraint` went with the C6 deletion (2026-07-20); `extractTimeComponent` in `custom_functions.go` remains with the dead-value-functions deletion ruling flagged under C5.
 **Sites**: `datalog/query/function.go` (`Field string`, per-tuple switch in `Eval`); the same six-case switch duplicated in `datalog/executor/custom_functions.go` `extractTimeComponent` (dead — see C5) and `datalog/executor/constraints_impl.go` `timeExtractionConstraint.Evaluate` (per-datom, but test-only-constructed — see C6)
 
 One interned time-field symbol set would replace all three; two of the three copies are better deleted than symbolized.
@@ -151,8 +151,8 @@ The in-repo registration in `executor_subquery_test.go` registers `same-date?` a
 
 ### C6. Test-only constraint implementations
 
-**Status**: Open
-**Site**: `datalog/executor/constraints_impl.go` — `timeExtractionConstraint`, `rangeConstraint`, `equalityConstraint` have no production constructors (all construction is in `_test.go`); the production pushdown path uses `constraints.TimeRangeConstraint` and the fetch/`ValuesEqual` route in `query_executor.go`. `rangeConstraint` semantics are pinned by `canonical_comparison_test.go`. Decide: wire them into production pushdown, or delete.
+**Status**: Resolved (2026-07-20) — owner ruled delete; executed. `constraints_impl.go` (`timeExtractionConstraint`, `rangeConstraint`, `equalityConstraint`) is gone: a parallel constraint home only tests kept alive, while the production pushdown uses `constraints.TimeRangeConstraint` and the fetch/`ValuesEqual` route. Its pins moved to the homes of the semantics they pin: the canonical-comparison tests (2^53 int64 exactness, typed range ordering, `ValuesEqual` strictness) now assert directly against `datalog.CompareValues`/`ValuesEqual` in `datalog/compare_canonical_test.go`, and `TestIndexedMatcher_WithConstraints` exercises the matcher's constraint filtering through a test-local `timeWindowConstraint` fixture (the same pattern the storage package's pushdown tests use). This also removed the third copy of the six-way time-field switch (B2 residual).
+**Site**: `datalog/executor/constraints_impl.go` (deleted) — the original finding: the three types had no production constructors (all construction was in `_test.go`); the production pushdown path uses `constraints.TimeRangeConstraint` and the fetch/`ValuesEqual` route in `query_executor.go`.
 
 ### C7. Small dead exports
 
