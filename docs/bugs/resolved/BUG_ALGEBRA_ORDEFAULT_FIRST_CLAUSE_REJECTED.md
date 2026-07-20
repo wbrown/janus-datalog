@@ -1,6 +1,10 @@
 # BUG: algebra bridge rejects or-default as the first clause — algebra path only
 
-**Status**: Open (2026-07-20). Found by the optimizer mode matrix migration of `datalog/executor` (phase 5), which put that package's query tests on the algebra path for the first time. Loud error at planning, no wrong data; the baseline path executes the same queries correctly.
+**Status**: RESOLVED (2026-07-20). Fixed by extending the lowering rather than special-casing it: when `compileOrFallbackExclusive` receives no prior relation, the outer group is the unit relation — the join identity, `R ⋈ unit = R` — expressed as the same childless zero-symbol Project the branch-schema placeholder already uses. Branch evaluation is one global pass with first-non-empty-branch-wins semantics and an empty correlation interface; `joinWith(nil, union)` already returned the union directly, so first-clause and mid-query or-default now share one code path with no nil arm. Guards: `TestOrFallbackFirstBranchMatches` and `TestOrFallbackPatternWithStreamingRelation`, both modes green; algebra, executor, and storage sweeps clean.
+
+Original entry follows.
+
+**Status (original)**: Open (2026-07-20). Found by the optimizer mode matrix migration of `datalog/executor` (phase 5), which put that package's query tests on the algebra path for the first time. Loud error at planning, no wrong data; the baseline path executes the same queries correctly.
 
 ## Symptom
 

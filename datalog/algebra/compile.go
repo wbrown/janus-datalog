@@ -604,7 +604,15 @@ func compileOrFallbackWithVars(branches [][]query.Clause, requiredVars, outputVa
 // branch 2 only runs on tuples where branch 1 produced no results.
 func compileOrFallbackExclusive(branches [][]query.Clause, requiredVars, outputVars []query.Symbol, current *Node) (*Node, error) {
 	if current == nil {
-		return nil, fmt.Errorf("OR fallback requires prior relation")
+		// Uncorrelated global-fallback shape: an or-default opening :where
+		// has no prior relation, which means the outer group is the unit
+		// relation — the join identity — so branch evaluation is one global
+		// pass with first-non-empty-branch-wins semantics and an empty
+		// correlation interface. The unit is expressed as the same
+		// childless Project the schema placeholder below uses (zero
+		// symbols; decompiles to nothing), and the caller's
+		// joinWith(nil, union) returns the union directly.
+		current = &Node{Op: RuleProject, Data: &Project{}}
 	}
 	if len(branches) < 2 {
 		return nil, fmt.Errorf("OR fallback requires at least 2 branches")
