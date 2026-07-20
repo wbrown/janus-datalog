@@ -1,7 +1,6 @@
 package reflect_test
 
 import (
-	"os"
 	"reflect"
 	"testing"
 
@@ -247,12 +246,6 @@ func TestSchemaFromStruct_OrderedSetRef(t *testing.T) {
 
 // TestSaveStruct_OrderedSet_SchemaVerify verifies schema is correctly applied
 func TestSaveStruct_OrderedSet_SchemaVerify(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "reflect-orderedset-schema-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	// Create schema from struct
 	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
@@ -268,352 +261,373 @@ func TestSaveStruct_OrderedSet_SchemaVerify(t *testing.T) {
 	t.Logf("Schema attribute: %s cardinality=%s unique=%v",
 		prefsKw.String(), prefsAttr.Cardinality, prefsAttr.UniqueElements)
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("failed to create database: %v", err)
+			}
+			defer db.Close()
 
-	// Verify database schema has the attribute
-	dbSchema := db.Schema()
-	if dbSchema == nil {
-		t.Fatal("database has no schema")
-	}
-	dbAttr := dbSchema.GetAttribute(prefsKw)
-	if dbAttr == nil {
-		t.Fatal("prefs attribute not found in database schema")
-	}
-	t.Logf("DB schema attribute: %s cardinality=%s unique=%v",
-		prefsKw.String(), dbAttr.Cardinality, dbAttr.UniqueElements)
+			// Verify database schema has the attribute
+			dbSchema := db.Schema()
+			if dbSchema == nil {
+				t.Fatal("database has no schema")
+			}
+			dbAttr := dbSchema.GetAttribute(prefsKw)
+			if dbAttr == nil {
+				t.Fatal("prefs attribute not found in database schema")
+			}
+			t.Logf("DB schema attribute: %s cardinality=%s unique=%v",
+				prefsKw.String(), dbAttr.Cardinality, dbAttr.UniqueElements)
 
-	// Now test direct Set() on the transaction
-	tx := db.NewTransaction()
-	entityID := datalog.NewIdentity("test:entity")
+			// Now test direct Set() on the transaction
+			tx := db.NewTransaction()
+			entityID := datalog.NewIdentity("test:entity")
 
-	// Write 3 values via Set
-	vals := []interface{}{"a", "b", "c"}
-	if err := tx.Set(entityID, prefsKw, vals); err != nil {
-		t.Fatalf("Set failed: %v", err)
-	}
+			// Write 3 values via Set
+			vals := []interface{}{"a", "b", "c"}
+			if err := tx.Set(entityID, prefsKw, vals); err != nil {
+				t.Fatalf("Set failed: %v", err)
+			}
 
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Query to verify values stored
-	// Note: Vectors return the entire ordered list as a single value (array)
-	// This is different from sets where each element is a separate tuple
-	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
-		entityID,
-	))
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
+			// Query to verify values stored
+			// Note: Vectors return the entire ordered list as a single value (array)
+			// This is different from sets where each element is a separate tuple
+			tuples, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
+				entityID,
+			))
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
 
-	t.Logf("Query returned %d tuples: %v", len(tuples), tuples)
-	if len(tuples) != 1 {
-		t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
-	}
+			t.Logf("Query returned %d tuples: %v", len(tuples), tuples)
+			if len(tuples) != 1 {
+				t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
+			}
 
-	// The value should be a typed []string containing all 3 elements
-	vectorVal, ok := tuples[0][0].([]string)
-	if !ok {
-		t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
-	}
-	t.Logf("Vector value contains %d elements: %v", len(vectorVal), vectorVal)
-	if len(vectorVal) != 3 {
-		t.Errorf("expected 3 elements in vector, got %d", len(vectorVal))
+			// The value should be a typed []string containing all 3 elements
+			vectorVal, ok := tuples[0][0].([]string)
+			if !ok {
+				t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
+			}
+			t.Logf("Vector value contains %d elements: %v", len(vectorVal), vectorVal)
+			if len(vectorVal) != 3 {
+				t.Errorf("expected 3 elements in vector, got %d", len(vectorVal))
+			}
+		})
 	}
 }
 
 // TestSaveStruct_OrderedSet verifies that SaveStruct correctly writes OrderedSet fields
 func TestSaveStruct_OrderedSet(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "reflect-orderedset-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	// Create schema from struct
 	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("failed to create database: %v", err)
+			}
+			defer db.Close()
 
-	// Create character with OrderedSet of preferences
-	prefs := datalog.NewOrderedSet[string]()
-	prefs.Append("dark-mode")
-	prefs.Append("compact-view")
-	prefs.Append("notifications")
+			// Create character with OrderedSet of preferences
+			prefs := datalog.NewOrderedSet[string]()
+			prefs.Append("dark-mode")
+			prefs.Append("compact-view")
+			prefs.Append("notifications")
 
-	character := CharacterPrefs{
-		Name:  "Alice",
-		Prefs: *prefs,
-	}
+			character := CharacterPrefs{
+				Name:  "Alice",
+				Prefs: *prefs,
+			}
 
-	tx := db.NewTransaction()
-	charID, err := tx.SaveStruct(&character)
-	if err != nil {
-		t.Fatalf("SaveStruct failed: %v", err)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			tx := db.NewTransaction()
+			charID, err := tx.SaveStruct(&character)
+			if err != nil {
+				t.Fatalf("SaveStruct failed: %v", err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	t.Logf("Saved character with ID: %s", charID.L85())
+			t.Logf("Saved character with ID: %s", charID.L85())
 
-	// Query to verify values are stored
-	// Note: Vectors return entire ordered list as single array value
-	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
-		charID,
-	))
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
+			// Query to verify values are stored
+			// Note: Vectors return entire ordered list as single array value
+			tuples, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
+				charID,
+			))
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
 
-	t.Logf("Found %d tuples: %v", len(tuples), tuples)
-	if len(tuples) != 1 {
-		t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
-	}
+			t.Logf("Found %d tuples: %v", len(tuples), tuples)
+			if len(tuples) != 1 {
+				t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
+			}
 
-	// Verify the vector contains 3 elements
-	vectorVal, ok := tuples[0][0].([]string)
-	if !ok {
-		t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
-	}
-	if len(vectorVal) != 3 {
-		t.Errorf("expected 3 elements in vector, got %d: %v", len(vectorVal), vectorVal)
+			// Verify the vector contains 3 elements
+			vectorVal, ok := tuples[0][0].([]string)
+			if !ok {
+				t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
+			}
+			if len(vectorVal) != 3 {
+				t.Errorf("expected 3 elements in vector, got %d: %v", len(vectorVal), vectorVal)
+			}
+		})
 	}
 }
 
 // TestSaveStruct_OrderedSetDuplicates verifies that duplicates are rejected at storage level
 func TestSaveStruct_OrderedSetDuplicates(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "reflect-orderedset-dup-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("failed to create database: %v", err)
+			}
+			defer db.Close()
 
-	// Create character and save initial prefs
-	prefs := datalog.NewOrderedSet[string]()
-	prefs.Append("a")
-	prefs.Append("b")
+			// Create character and save initial prefs
+			prefs := datalog.NewOrderedSet[string]()
+			prefs.Append("a")
+			prefs.Append("b")
 
-	character := CharacterPrefs{
-		Name:  "Bob",
-		Prefs: *prefs,
-	}
+			character := CharacterPrefs{
+				Name:  "Bob",
+				Prefs: *prefs,
+			}
 
-	tx := db.NewTransaction()
-	charID, err := tx.SaveStruct(&character)
-	if err != nil {
-		t.Fatalf("SaveStruct failed: %v", err)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			tx := db.NewTransaction()
+			charID, err := tx.SaveStruct(&character)
+			if err != nil {
+				t.Fatalf("SaveStruct failed: %v", err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Try to add a duplicate via direct transaction
-	tx2 := db.NewTransaction()
-	kw := datalog.NewKeyword(":character-prefs/prefs")
-	// Adding "a" again should be a no-op due to UniqueElements enforcement
-	if err := tx2.Add(charID, kw, "a"); err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	if _, err := tx2.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			// Try to add a duplicate via direct transaction
+			tx2 := db.NewTransaction()
+			kw := datalog.NewKeyword(":character-prefs/prefs")
+			// Adding "a" again should be a no-op due to UniqueElements enforcement
+			if err := tx2.Add(charID, kw, "a"); err != nil {
+				t.Fatalf("Add failed: %v", err)
+			}
+			if _, err := tx2.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Query to verify - vectors return as single array value
-	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
-		charID,
-	))
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
+			// Query to verify - vectors return as single array value
+			tuples, err := executor.CollectTuples(db.Query(
+				`[:find ?v :in $ ?e :where [?e :character-prefs/prefs ?v]]`,
+				charID,
+			))
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
 
-	t.Logf("Found %d tuples: %v", len(tuples), tuples)
-	if len(tuples) != 1 {
-		t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
-	}
+			t.Logf("Found %d tuples: %v", len(tuples), tuples)
+			if len(tuples) != 1 {
+				t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
+			}
 
-	// Verify the vector still has only 2 unique values
-	vectorVal, ok := tuples[0][0].([]string)
-	if !ok {
-		t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
-	}
-	t.Logf("Vector contains %d elements: %v (expecting 2, no duplicates)", len(vectorVal), vectorVal)
-	if len(vectorVal) != 2 {
-		t.Errorf("expected 2 unique values (duplicate rejected), got %d", len(vectorVal))
+			// Verify the vector still has only 2 unique values
+			vectorVal, ok := tuples[0][0].([]string)
+			if !ok {
+				t.Fatalf("expected []string, got %T: %v", tuples[0][0], tuples[0][0])
+			}
+			t.Logf("Vector contains %d elements: %v (expecting 2, no duplicates)", len(vectorVal), vectorVal)
+			if len(vectorVal) != 2 {
+				t.Errorf("expected 2 unique values (duplicate rejected), got %d", len(vectorVal))
+			}
+		})
 	}
 }
 
 // TestPullInto_OrderedSet verifies that PullInto correctly populates OrderedSet fields
 func TestPullInto_OrderedSet(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "reflect-orderedset-pull-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("failed to create database: %v", err)
+			}
+			defer db.Close()
 
-	// Create and save character
-	prefs := datalog.NewOrderedSet[string]()
-	prefs.Append("dark-mode")
-	prefs.Append("compact-view")
-	prefs.Append("notifications")
+			// Create and save character
+			prefs := datalog.NewOrderedSet[string]()
+			prefs.Append("dark-mode")
+			prefs.Append("compact-view")
+			prefs.Append("notifications")
 
-	character := CharacterPrefs{
-		Name:  "Alice",
-		Prefs: *prefs,
-	}
+			character := CharacterPrefs{
+				Name:  "Alice",
+				Prefs: *prefs,
+			}
 
-	tx := db.NewTransaction()
-	charID, err := tx.SaveStruct(&character)
-	if err != nil {
-		t.Fatalf("SaveStruct failed: %v", err)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			tx := db.NewTransaction()
+			charID, err := tx.SaveStruct(&character)
+			if err != nil {
+				t.Fatalf("SaveStruct failed: %v", err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Pull back into new struct
-	var loaded CharacterPrefs
-	if err := db.PullInto(charID, &loaded); err != nil {
-		t.Fatalf("PullInto failed: %v", err)
-	}
+			// Pull back into new struct
+			var loaded CharacterPrefs
+			if err := db.PullInto(charID, &loaded); err != nil {
+				t.Fatalf("PullInto failed: %v", err)
+			}
 
-	t.Logf("Loaded name: %s", loaded.Name)
-	t.Logf("Loaded prefs count: %d", loaded.Prefs.Len())
+			t.Logf("Loaded name: %s", loaded.Name)
+			t.Logf("Loaded prefs count: %d", loaded.Prefs.Len())
 
-	if loaded.Name != "Alice" {
-		t.Errorf("expected Name='Alice', got %q", loaded.Name)
-	}
+			if loaded.Name != "Alice" {
+				t.Errorf("expected Name='Alice', got %q", loaded.Name)
+			}
 
-	if loaded.Prefs.Len() != 3 {
-		t.Errorf("expected 3 prefs, got %d", loaded.Prefs.Len())
-	}
+			if loaded.Prefs.Len() != 3 {
+				t.Errorf("expected 3 prefs, got %d", loaded.Prefs.Len())
+			}
 
-	// Verify the OrderedSet contains all expected values
-	if !loaded.Prefs.Contains("dark-mode") {
-		t.Error("expected prefs to contain 'dark-mode'")
-	}
-	if !loaded.Prefs.Contains("compact-view") {
-		t.Error("expected prefs to contain 'compact-view'")
-	}
-	if !loaded.Prefs.Contains("notifications") {
-		t.Error("expected prefs to contain 'notifications'")
+			// Verify the OrderedSet contains all expected values
+			if !loaded.Prefs.Contains("dark-mode") {
+				t.Error("expected prefs to contain 'dark-mode'")
+			}
+			if !loaded.Prefs.Contains("compact-view") {
+				t.Error("expected prefs to contain 'compact-view'")
+			}
+			if !loaded.Prefs.Contains("notifications") {
+				t.Error("expected prefs to contain 'notifications'")
+			}
+		})
 	}
 }
 
 // TestSaveStruct_OrderedSetUpdate verifies that updating an OrderedSet works correctly
 func TestSaveStruct_OrderedSetUpdate(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "reflect-orderedset-update-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("failed to create database: %v", err)
+			}
+			defer db.Close()
 
-	// Create and save character with initial prefs
-	prefs := datalog.NewOrderedSet[string]()
-	prefs.Append("a")
-	prefs.Append("b")
-	prefs.Append("c")
+			// Create and save character with initial prefs
+			prefs := datalog.NewOrderedSet[string]()
+			prefs.Append("a")
+			prefs.Append("b")
+			prefs.Append("c")
 
-	character := CharacterPrefs{
-		Name:  "Carol",
-		Prefs: *prefs,
-	}
+			character := CharacterPrefs{
+				Name:  "Carol",
+				Prefs: *prefs,
+			}
 
-	tx := db.NewTransaction()
-	charID, err := tx.SaveStruct(&character)
-	if err != nil {
-		t.Fatalf("SaveStruct failed: %v", err)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			tx := db.NewTransaction()
+			charID, err := tx.SaveStruct(&character)
+			if err != nil {
+				t.Fatalf("SaveStruct failed: %v", err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Update with new prefs (remove b, add d)
-	newPrefs := datalog.NewOrderedSet[string]()
-	newPrefs.Append("a")
-	newPrefs.Append("c")
-	newPrefs.Append("d")
+			// Update with new prefs (remove b, add d)
+			newPrefs := datalog.NewOrderedSet[string]()
+			newPrefs.Append("a")
+			newPrefs.Append("c")
+			newPrefs.Append("d")
 
-	character.Prefs = *newPrefs
+			character.Prefs = *newPrefs
 
-	tx2 := db.NewTransaction()
-	if _, err := tx2.SaveStruct(&character); err != nil {
-		t.Fatalf("SaveStruct update failed: %v", err)
-	}
-	if _, err := tx2.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			tx2 := db.NewTransaction()
+			if _, err := tx2.SaveStruct(&character); err != nil {
+				t.Fatalf("SaveStruct update failed: %v", err)
+			}
+			if _, err := tx2.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Pull back and verify
-	var loaded CharacterPrefs
-	if err := db.PullInto(charID, &loaded); err != nil {
-		t.Fatalf("PullInto failed: %v", err)
-	}
+			// Pull back and verify
+			var loaded CharacterPrefs
+			if err := db.PullInto(charID, &loaded); err != nil {
+				t.Fatalf("PullInto failed: %v", err)
+			}
 
-	t.Logf("Updated prefs: %v", loaded.Prefs.Slice())
+			t.Logf("Updated prefs: %v", loaded.Prefs.Slice())
 
-	if loaded.Prefs.Len() != 3 {
-		t.Errorf("expected 3 prefs after update, got %d", loaded.Prefs.Len())
-	}
+			if loaded.Prefs.Len() != 3 {
+				t.Errorf("expected 3 prefs after update, got %d", loaded.Prefs.Len())
+			}
 
-	if !loaded.Prefs.Contains("a") {
-		t.Error("expected prefs to contain 'a'")
-	}
-	if !loaded.Prefs.Contains("c") {
-		t.Error("expected prefs to contain 'c'")
-	}
-	if !loaded.Prefs.Contains("d") {
-		t.Error("expected prefs to contain 'd'")
-	}
-	if loaded.Prefs.Contains("b") {
-		t.Error("expected prefs NOT to contain 'b' after update")
+			if !loaded.Prefs.Contains("a") {
+				t.Error("expected prefs to contain 'a'")
+			}
+			if !loaded.Prefs.Contains("c") {
+				t.Error("expected prefs to contain 'c'")
+			}
+			if !loaded.Prefs.Contains("d") {
+				t.Error("expected prefs to contain 'd'")
+			}
+			if loaded.Prefs.Contains("b") {
+				t.Error("expected prefs NOT to contain 'b' after update")
+			}
+		})
 	}
 }
 
@@ -674,140 +688,146 @@ func TestAttributeDefinition_IsOrderedSet(t *testing.T) {
 
 // TestSaveStruct_OrderedSetEmpty verifies that empty OrderedSet works correctly
 func TestSaveStruct_OrderedSetEmpty(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "reflect-orderedset-empty-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	sch, err := dlreflect.SchemaFromStruct(CharacterPrefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("failed to create database: %v", err)
+			}
+			defer db.Close()
 
-	// Create character with empty OrderedSet
-	character := CharacterPrefs{
-		Name:  "Eve",
-		Prefs: datalog.OrderedSet[string]{}, // zero value
-	}
+			// Create character with empty OrderedSet
+			character := CharacterPrefs{
+				Name:  "Eve",
+				Prefs: datalog.OrderedSet[string]{}, // zero value
+			}
 
-	tx := db.NewTransaction()
-	charID, err := tx.SaveStruct(&character)
-	if err != nil {
-		t.Fatalf("SaveStruct failed: %v", err)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			tx := db.NewTransaction()
+			charID, err := tx.SaveStruct(&character)
+			if err != nil {
+				t.Fatalf("SaveStruct failed: %v", err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Pull back
-	var loaded CharacterPrefs
-	if err := db.PullInto(charID, &loaded); err != nil {
-		t.Fatalf("PullInto failed: %v", err)
-	}
+			// Pull back
+			var loaded CharacterPrefs
+			if err := db.PullInto(charID, &loaded); err != nil {
+				t.Fatalf("PullInto failed: %v", err)
+			}
 
-	if loaded.Name != "Eve" {
-		t.Errorf("expected Name='Eve', got %q", loaded.Name)
-	}
+			if loaded.Name != "Eve" {
+				t.Errorf("expected Name='Eve', got %q", loaded.Name)
+			}
 
-	// Empty OrderedSet should remain empty
-	if loaded.Prefs.Len() != 0 {
-		t.Errorf("expected 0 prefs for empty set, got %d", loaded.Prefs.Len())
+			// Empty OrderedSet should remain empty
+			if loaded.Prefs.Len() != 0 {
+				t.Errorf("expected 0 prefs for empty set, got %d", loaded.Prefs.Len())
+			}
+		})
 	}
 }
 
 // TestSaveStruct_OrderedSetRefs verifies OrderedSet with Identity references
 func TestSaveStruct_OrderedSetRefs(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "reflect-orderedset-refs-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	sch, err := dlreflect.SchemaFromStruct(EntityOrderedRefs{})
 	if err != nil {
 		t.Fatalf("failed to create schema: %v", err)
 	}
 
-	db, err := storage.NewDatabaseWithSchema(tmpDir, sch)
-	if err != nil {
-		t.Fatalf("failed to create database: %v", err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := storage.NewDatabaseWithOptions(storage.DatabaseOptions{
+				Path:           t.TempDir(),
+				Schema:         sch,
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("failed to create database: %v", err)
+			}
+			defer db.Close()
 
-	// Create some entities to reference
-	id1 := datalog.NewIdentity("person:alice")
-	id2 := datalog.NewIdentity("person:bob")
-	id3 := datalog.NewIdentity("person:carol")
+			// Create some entities to reference
+			id1 := datalog.NewIdentity("person:alice")
+			id2 := datalog.NewIdentity("person:bob")
+			id3 := datalog.NewIdentity("person:carol")
 
-	// Create entity with ordered refs
-	follows := datalog.NewOrderedSet[datalog.Identity]()
-	follows.Append(id1)
-	follows.Append(id2)
-	follows.Append(id3)
+			// Create entity with ordered refs
+			follows := datalog.NewOrderedSet[datalog.Identity]()
+			follows.Append(id1)
+			follows.Append(id2)
+			follows.Append(id3)
 
-	entity := EntityOrderedRefs{
-		Name:    "Dave",
-		Follows: *follows,
-	}
+			entity := EntityOrderedRefs{
+				Name:    "Dave",
+				Follows: *follows,
+			}
 
-	tx := db.NewTransaction()
-	entityID, err := tx.SaveStruct(&entity)
-	if err != nil {
-		t.Fatalf("SaveStruct failed: %v", err)
-	}
-	if _, err := tx.Commit(); err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
+			tx := db.NewTransaction()
+			entityID, err := tx.SaveStruct(&entity)
+			if err != nil {
+				t.Fatalf("SaveStruct failed: %v", err)
+			}
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Commit failed: %v", err)
+			}
 
-	// Query to verify refs are stored
-	// Note: Vectors return entire ordered list as single array value
-	tuples, err := executor.CollectTuples(db.Query(
-		`[:find ?f :in $ ?e :where [?e :entity-ordered-refs/follows ?f]]`,
-		entityID,
-	))
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
+			// Query to verify refs are stored
+			// Note: Vectors return entire ordered list as single array value
+			tuples, err := executor.CollectTuples(db.Query(
+				`[:find ?f :in $ ?e :where [?e :entity-ordered-refs/follows ?f]]`,
+				entityID,
+			))
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
 
-	t.Logf("Found %d tuples: %v", len(tuples), tuples)
-	if len(tuples) != 1 {
-		t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
-	}
+			t.Logf("Found %d tuples: %v", len(tuples), tuples)
+			if len(tuples) != 1 {
+				t.Fatalf("expected 1 tuple (vector as single value), got %d", len(tuples))
+			}
 
-	// Verify the vector contains 3 elements
-	vectorVal, ok := tuples[0][0].([]any)
-	if !ok {
-		t.Fatalf("expected []any, got %T: %v", tuples[0][0], tuples[0][0])
-	}
-	if len(vectorVal) != 3 {
-		t.Errorf("expected 3 refs in vector, got %d: %v", len(vectorVal), vectorVal)
-	}
+			// Verify the vector contains 3 elements
+			vectorVal, ok := tuples[0][0].([]any)
+			if !ok {
+				t.Fatalf("expected []any, got %T: %v", tuples[0][0], tuples[0][0])
+			}
+			if len(vectorVal) != 3 {
+				t.Errorf("expected 3 refs in vector, got %d: %v", len(vectorVal), vectorVal)
+			}
 
-	// Pull back and verify
-	var loaded EntityOrderedRefs
-	if err := db.PullInto(entityID, &loaded); err != nil {
-		t.Fatalf("PullInto failed: %v", err)
-	}
+			// Pull back and verify
+			var loaded EntityOrderedRefs
+			if err := db.PullInto(entityID, &loaded); err != nil {
+				t.Fatalf("PullInto failed: %v", err)
+			}
 
-	t.Logf("Loaded follows count: %d", loaded.Follows.Len())
-	if loaded.Follows.Len() != 3 {
-		t.Errorf("expected 3 follows, got %d", loaded.Follows.Len())
-	}
+			t.Logf("Loaded follows count: %d", loaded.Follows.Len())
+			if loaded.Follows.Len() != 3 {
+				t.Errorf("expected 3 follows, got %d", loaded.Follows.Len())
+			}
 
-	if !loaded.Follows.Contains(id1) {
-		t.Error("expected follows to contain id1")
-	}
-	if !loaded.Follows.Contains(id2) {
-		t.Error("expected follows to contain id2")
-	}
-	if !loaded.Follows.Contains(id3) {
-		t.Error("expected follows to contain id3")
+			if !loaded.Follows.Contains(id1) {
+				t.Error("expected follows to contain id1")
+			}
+			if !loaded.Follows.Contains(id2) {
+				t.Error("expected follows to contain id2")
+			}
+			if !loaded.Follows.Contains(id3) {
+				t.Error("expected follows to contain id3")
+			}
+		})
 	}
 }

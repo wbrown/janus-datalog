@@ -52,7 +52,6 @@ func TestQueryWithOrderBy(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
 	tests := []struct {
 		name     string
@@ -110,32 +109,38 @@ func TestQueryWithOrderBy(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Parse query
-			q, err := parser.ParseQuery(tt.query)
-			if err != nil {
-				t.Fatalf("failed to parse query: %v", err)
-			}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-			// Execute query
-			result, err := executor.Execute(q)
-			if err != nil {
-				t.Fatalf("execution failed: %v", err)
-			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					// Parse query
+					q, err := parser.ParseQuery(tt.query)
+					if err != nil {
+						t.Fatalf("failed to parse query: %v", err)
+					}
 
-			// Check result count
-			if result.Size() != 4 {
-				t.Errorf("expected 4 results, got %d", result.Size())
-			}
+					// Execute query
+					result, err := executor.Execute(q)
+					if err != nil {
+						t.Fatalf("execution failed: %v", err)
+					}
 
-			// Check order
-			for i := 0; i < result.Size(); i++ {
-				tuple := result.Get(i)
-				name := tuple[0].(string)
-				if name != tt.expected[i] {
-					t.Errorf("tuple %d: expected %s, got %s", i, tt.expected[i], name)
-				}
+					// Check result count
+					if result.Size() != 4 {
+						t.Errorf("expected 4 results, got %d", result.Size())
+					}
+
+					// Check order
+					for i := 0; i < result.Size(); i++ {
+						tuple := result.Get(i)
+						name := tuple[0].(string)
+						if name != tt.expected[i] {
+							t.Errorf("tuple %d: expected %s, got %s", i, tt.expected[i], name)
+						}
+					}
+				})
 			}
 		})
 	}
@@ -194,20 +199,25 @@ func TestSortingEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			matcher := NewMemoryPatternMatcher(tt.datoms)
-			executor := NewExecutor(matcher, nil)
 
-			q, err := parser.ParseQuery(tt.query)
-			if err != nil {
-				t.Fatalf("failed to parse query: %v", err)
-			}
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-			result, err := executor.Execute(q)
-			if err != nil {
-				t.Fatalf("execution failed: %v", err)
-			}
+					q, err := parser.ParseQuery(tt.query)
+					if err != nil {
+						t.Fatalf("failed to parse query: %v", err)
+					}
 
-			if result.Size() != tt.expectSize {
-				t.Errorf("expected %d results, got %d", tt.expectSize, result.Size())
+					result, err := executor.Execute(q)
+					if err != nil {
+						t.Fatalf("execution failed: %v", err)
+					}
+
+					if result.Size() != tt.expectSize {
+						t.Errorf("expected %d results, got %d", tt.expectSize, result.Size())
+					}
+				})
 			}
 		})
 	}
@@ -252,7 +262,6 @@ func nonProjectedSortDatoms() []datalog.Datom {
 
 func TestOrderByNonProjectedVariable(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
-	executor := NewExecutor(matcher, nil)
 
 	tests := []struct {
 		name     string
@@ -277,34 +286,40 @@ func TestOrderByNonProjectedVariable(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			q, err := parser.ParseQuery(tt.query)
-			if err != nil {
-				t.Fatalf("failed to parse query: %v", err)
-			}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-			result, err := executor.Execute(q)
-			if err != nil {
-				t.Fatalf("execution failed: %v", err)
-			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					q, err := parser.ParseQuery(tt.query)
+					if err != nil {
+						t.Fatalf("failed to parse query: %v", err)
+					}
 
-			// The sort variable must not leak into the result shape: the
-			// relation contains exactly the :find symbols.
-			symbols := result.Symbols()
-			if len(symbols) != 1 || symbols[0].String() != "?name" {
-				t.Fatalf("expected result symbols [?name], got %v", symbols)
-			}
+					result, err := executor.Execute(q)
+					if err != nil {
+						t.Fatalf("execution failed: %v", err)
+					}
 
-			if result.Size() != len(tt.expected) {
-				t.Fatalf("expected %d results, got %d", len(tt.expected), result.Size())
-			}
+					// The sort variable must not leak into the result shape: the
+					// relation contains exactly the :find symbols.
+					symbols := result.Symbols()
+					if len(symbols) != 1 || symbols[0].String() != "?name" {
+						t.Fatalf("expected result symbols [?name], got %v", symbols)
+					}
 
-			for i := 0; i < result.Size(); i++ {
-				name := result.Get(i)[0].(string)
-				if name != tt.expected[i] {
-					t.Errorf("tuple %d: expected %s, got %s", i, tt.expected[i], name)
-				}
+					if result.Size() != len(tt.expected) {
+						t.Fatalf("expected %d results, got %d", len(tt.expected), result.Size())
+					}
+
+					for i := 0; i < result.Size(); i++ {
+						name := result.Get(i)[0].(string)
+						if name != tt.expected[i] {
+							t.Errorf("tuple %d: expected %s, got %s", i, tt.expected[i], name)
+						}
+					}
+				})
 			}
 		})
 	}
@@ -341,87 +356,102 @@ func TestOrderByMixedProjectedAndNonProjectedKeys(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	// ?dept is projected, ?age is not. Both keys must be honored in the
-	// stated precedence: dept ascending, then age descending within dept.
-	q, err := parser.ParseQuery(`[:find ?dept ?name
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// ?dept is projected, ?age is not. Both keys must be honored in the
+			// stated precedence: dept ascending, then age descending within dept.
+			q, err := parser.ParseQuery(`[:find ?dept ?name
 	                              :where [?e :user/name ?name]
 	                                     [?e :user/dept ?dept]
 	                                     [?e :user/age ?age]
 	                              :order-by [[?dept :asc] [?age :desc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expected := []string{"Carol", "Alice", "Bob", "Erin", "Dave", "Frank"}
-	if result.Size() != len(expected) {
-		t.Fatalf("expected %d results, got %d", len(expected), result.Size())
-	}
+			expected := []string{"Carol", "Alice", "Bob", "Erin", "Dave", "Frank"}
+			if result.Size() != len(expected) {
+				t.Fatalf("expected %d results, got %d", len(expected), result.Size())
+			}
 
-	for i := 0; i < result.Size(); i++ {
-		name := result.Get(i)[1].(string)
-		if name != expected[i] {
-			t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
-		}
+			for i := 0; i < result.Size(); i++ {
+				name := result.Get(i)[1].(string)
+				if name != expected[i] {
+					t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
+				}
+			}
+		})
 	}
 }
 
 func TestOrderByNonProjectedVariableWithLimit(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
-	executor := NewExecutor(matcher, nil)
 
-	// Global top-N: the two youngest users, selected by a sort key that is
-	// not in :find. Sorting must happen before the limit is applied.
-	q, err := parser.ParseQuery(`[:find ?name
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// Global top-N: the two youngest users, selected by a sort key that is
+			// not in :find. Sorting must happen before the limit is applied.
+			q, err := parser.ParseQuery(`[:find ?name
 	                              :where [?e :user/name ?name]
 	                                     [?e :user/age ?age]
 	                              :order-by [[?age :asc]]
 	                              :limit 2]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expected := []string{"Frank", "Bob"}
-	if result.Size() != len(expected) {
-		t.Fatalf("expected %d results, got %d", len(expected), result.Size())
-	}
+			expected := []string{"Frank", "Bob"}
+			if result.Size() != len(expected) {
+				t.Fatalf("expected %d results, got %d", len(expected), result.Size())
+			}
 
-	for i := 0; i < result.Size(); i++ {
-		name := result.Get(i)[0].(string)
-		if name != expected[i] {
-			t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
-		}
+			for i := 0; i < result.Size(); i++ {
+				name := result.Get(i)[0].(string)
+				if name != expected[i] {
+					t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
+				}
+			}
+		})
 	}
 }
 
 func TestOrderByUnboundVariableIsError(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
-	executor := NewExecutor(matcher, nil)
 
-	// ?bogus is bound nowhere in the query — not in :find, :where, or :in.
-	// This must be rejected (at parse or execution time), not silently
-	// ignored.
-	q, err := parser.ParseQuery(`[:find ?name
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// ?bogus is bound nowhere in the query — not in :find, :where, or :in.
+			// This must be rejected (at parse or execution time), not silently
+			// ignored.
+			q, err := parser.ParseQuery(`[:find ?name
 	                              :where [?e :user/name ?name]
 	                              :order-by [[?bogus :asc]]]`)
-	if err != nil {
-		return // parse-time rejection satisfies the contract
-	}
+			if err != nil {
+				return // parse-time rejection satisfies the contract
+			}
 
-	_, err = executor.Execute(q)
-	if err == nil {
-		t.Fatal("expected error for order-by variable bound nowhere in the query, got success")
+			_, err = executor.Execute(q)
+			if err == nil {
+				t.Fatal("expected error for order-by variable bound nowhere in the query, got success")
+			}
+		})
 	}
 }
 
@@ -463,36 +493,41 @@ func statusUserDatoms() []datalog.Datom {
 // matching rows (in no particular order).
 func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(statusUserDatoms())
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?name
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?name
 	                              :in $ ?status
 	                              :where [?e :user/status ?status]
 	                                     [?e :user/name ?name]
 	                              :order-by [[?status :asc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	statusRel := NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?status")}, []Tuple{{"active"}})
+			statusRel := NewMaterializedRelation(
+				[]query.Symbol{datalog.NewSymbol("?status")}, []Tuple{{"active"}})
 
-	result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{statusRel})
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{statusRel})
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	if result.Size() != 3 {
-		t.Fatalf("expected 3 results, got %d", result.Size())
-	}
-	seen := map[string]bool{}
-	for i := 0; i < result.Size(); i++ {
-		seen[result.Get(i)[0].(string)] = true
-	}
-	for _, name := range []string{"Alice", "Bob", "Carol"} {
-		if !seen[name] {
-			t.Errorf("expected %s in results, got %v", name, seen)
-		}
+			if result.Size() != 3 {
+				t.Fatalf("expected 3 results, got %d", result.Size())
+			}
+			seen := map[string]bool{}
+			for i := 0; i < result.Size(); i++ {
+				seen[result.Get(i)[0].(string)] = true
+			}
+			for _, name := range []string{"Alice", "Bob", "Carol"} {
+				if !seen[name] {
+					t.Errorf("expected %s in results, got %v", name, seen)
+				}
+			}
+		})
 	}
 }
 
@@ -500,35 +535,40 @@ func TestOrderByScalarInputConstantKeyIsNoOp(t *testing.T) {
 // the constant contributes nothing (identity), the real key must be honored.
 func TestOrderByScalarConstantKeyThenRealKey(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(statusUserDatoms())
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?name
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?name
 	                              :in $ ?status
 	                              :where [?e :user/status ?status]
 	                                     [?e :user/name ?name]
 	                                     [?e :user/age ?age]
 	                              :order-by [[?status :asc] [?age :desc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	statusRel := NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?status")}, []Tuple{{"active"}})
+			statusRel := NewMaterializedRelation(
+				[]query.Symbol{datalog.NewSymbol("?status")}, []Tuple{{"active"}})
 
-	result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{statusRel})
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{statusRel})
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expected := []string{"Carol", "Alice", "Bob"} // ages 51, 34, 12
-	if result.Size() != len(expected) {
-		t.Fatalf("expected %d results, got %d", len(expected), result.Size())
-	}
-	for i := 0; i < result.Size(); i++ {
-		name := result.Get(i)[0].(string)
-		if name != expected[i] {
-			t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
-		}
+			expected := []string{"Carol", "Alice", "Bob"} // ages 51, 34, 12
+			if result.Size() != len(expected) {
+				t.Fatalf("expected %d results, got %d", len(expected), result.Size())
+			}
+			for i := 0; i < result.Size(); i++ {
+				name := result.Get(i)[0].(string)
+				if name != expected[i] {
+					t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
+				}
+			}
+		})
 	}
 }
 
@@ -562,34 +602,39 @@ func TestOrderByCollectionInputBoundVariable(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?name
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?name
 	                              :in $ [?dept ...]
 	                              :where [?e :user/dept ?dept]
 	                                     [?e :user/name ?name]
 	                              :order-by [[?dept :asc] [?name :asc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	deptRel := NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?dept")}, []Tuple{{"ops"}, {"eng"}})
+			deptRel := NewMaterializedRelation(
+				[]query.Symbol{datalog.NewSymbol("?dept")}, []Tuple{{"ops"}, {"eng"}})
 
-	result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{deptRel})
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{deptRel})
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expected := []string{"Bob", "Zoe", "Alice", "Dave"} // eng block, then ops block
-	if result.Size() != len(expected) {
-		t.Fatalf("expected %d results, got %d", len(expected), result.Size())
-	}
-	for i := 0; i < result.Size(); i++ {
-		name := result.Get(i)[0].(string)
-		if name != expected[i] {
-			t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
-		}
+			expected := []string{"Bob", "Zoe", "Alice", "Dave"} // eng block, then ops block
+			if result.Size() != len(expected) {
+				t.Fatalf("expected %d results, got %d", len(expected), result.Size())
+			}
+			for i := 0; i < result.Size(); i++ {
+				name := result.Get(i)[0].(string)
+				if name != expected[i] {
+					t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
+				}
+			}
+		})
 	}
 }
 
@@ -619,34 +664,39 @@ func TestOrderByRelationInputSymbolAcrossUnion(t *testing.T) {
 	add("b4", "B", 7)
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?v
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?v
 	                              :in $ [[?k] ...]
 	                              :where [?e :item/key ?k]
 	                                     [?e :item/val ?v]
 	                              :order-by [[?k :asc] [?v :desc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	inputRel := NewMaterializedRelation(
-		[]query.Symbol{datalog.NewSymbol("?k")}, []Tuple{{"B"}, {"A"}})
+			inputRel := NewMaterializedRelation(
+				[]query.Symbol{datalog.NewSymbol("?k")}, []Tuple{{"B"}, {"A"}})
 
-	result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expected := []int64{3, 2, 1, 7, 6, 5, 4} // A block desc, then B block desc
-	if result.Size() != len(expected) {
-		t.Fatalf("expected %d results, got %d", len(expected), result.Size())
-	}
-	for i := 0; i < result.Size(); i++ {
-		v := result.Get(i)[0].(int64)
-		if v != expected[i] {
-			t.Errorf("tuple %d: expected %d, got %d", i, expected[i], v)
-		}
+			expected := []int64{3, 2, 1, 7, 6, 5, 4} // A block desc, then B block desc
+			if result.Size() != len(expected) {
+				t.Fatalf("expected %d results, got %d", len(expected), result.Size())
+			}
+			for i := 0; i < result.Size(); i++ {
+				v := result.Get(i)[0].(int64)
+				if v != expected[i] {
+					t.Errorf("tuple %d: expected %d, got %d", i, expected[i], v)
+				}
+			}
+		})
 	}
 }
 
@@ -664,33 +714,38 @@ func TestOrderByAggregateGroupKey(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?city (count ?p)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?city (count ?p)
 	                              :where [?p :person/city ?city]
 	                              :order-by [[?city :asc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expectedCities := []string{"BOS", "LA", "NYC", "SF"}
-	expectedCounts := []int64{1, 1, 2, 1}
-	if result.Size() != len(expectedCities) {
-		t.Fatalf("expected %d groups, got %d", len(expectedCities), result.Size())
-	}
-	for i := 0; i < result.Size(); i++ {
-		tuple := result.Get(i)
-		if city := tuple[0].(string); city != expectedCities[i] {
-			t.Errorf("group %d: expected city %s, got %s", i, expectedCities[i], city)
-		}
-		if count := tuple[1].(int64); count != expectedCounts[i] {
-			t.Errorf("group %d: expected count %d, got %d", i, expectedCounts[i], count)
-		}
+			expectedCities := []string{"BOS", "LA", "NYC", "SF"}
+			expectedCounts := []int64{1, 1, 2, 1}
+			if result.Size() != len(expectedCities) {
+				t.Fatalf("expected %d groups, got %d", len(expectedCities), result.Size())
+			}
+			for i := 0; i < result.Size(); i++ {
+				tuple := result.Get(i)
+				if city := tuple[0].(string); city != expectedCities[i] {
+					t.Errorf("group %d: expected city %s, got %s", i, expectedCities[i], city)
+				}
+				if count := tuple[1].(int64); count != expectedCounts[i] {
+					t.Errorf("group %d: expected count %d, got %d", i, expectedCounts[i], count)
+				}
+			}
+		})
 	}
 }
 
@@ -700,19 +755,24 @@ func TestOrderByAggregateGroupKey(t *testing.T) {
 // ignored.
 func TestOrderByAggregateNonFindVariableIsError(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(statusUserDatoms())
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?status (count ?e)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?status (count ?e)
 	                              :where [?e :user/status ?status]
 	                                     [?e :user/age ?age]
 	                              :order-by [[?age :desc]]]`)
-	if err != nil {
-		return // parse-time rejection satisfies the contract
-	}
+			if err != nil {
+				return // parse-time rejection satisfies the contract
+			}
 
-	_, err = executor.Execute(q)
-	if err == nil {
-		t.Fatal("expected error for order-by on a non-group-key variable in an aggregate query, got success")
+			_, err = executor.Execute(q)
+			if err == nil {
+				t.Fatal("expected error for order-by on a non-group-key variable in an aggregate query, got success")
+			}
+		})
 	}
 }
 
@@ -736,30 +796,35 @@ func TestOrderByNonProjectedPreservesDuplicates(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find ?name
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find ?name
 	                              :where [?e :user/name ?name]
 	                                     [?e :user/age ?age]
 	                              :order-by [[?age :asc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expected := []string{"Alice", "Bob"} // first occurrence in sorted order wins
-	if result.Size() != len(expected) {
-		t.Fatalf("expected %d results (set semantics), got %d", len(expected), result.Size())
-	}
-	for i := 0; i < result.Size(); i++ {
-		name := result.Get(i)[0].(string)
-		if name != expected[i] {
-			t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
-		}
+			expected := []string{"Alice", "Bob"} // first occurrence in sorted order wins
+			if result.Size() != len(expected) {
+				t.Fatalf("expected %d results (set semantics), got %d", len(expected), result.Size())
+			}
+			for i := 0; i < result.Size(); i++ {
+				name := result.Get(i)[0].(string)
+				if name != expected[i] {
+					t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
+				}
+			}
+		})
 	}
 }
 
@@ -769,28 +834,33 @@ func TestOrderByNonProjectedPreservesDuplicates(t *testing.T) {
 // is TestOrderByPullWithTiedSortKeys below.
 func TestOrderByProjectedKeyWithPull(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find (pull ?e [:user/name]) ?age
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find (pull ?e [:user/name]) ?age
 	                              :where [?e :user/age ?age]
 	                              :order-by [[?age :asc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expectedAges := []int64{8, 12, 27, 34, 45, 51}
-	if result.Size() != len(expectedAges) {
-		t.Fatalf("expected %d results, got %d", len(expectedAges), result.Size())
-	}
-	for i := 0; i < result.Size(); i++ {
-		if age := result.Get(i)[1].(int64); age != expectedAges[i] {
-			t.Errorf("tuple %d: expected age %d, got %d", i, expectedAges[i], age)
-		}
+			expectedAges := []int64{8, 12, 27, 34, 45, 51}
+			if result.Size() != len(expectedAges) {
+				t.Fatalf("expected %d results, got %d", len(expectedAges), result.Size())
+			}
+			for i := 0; i < result.Size(); i++ {
+				if age := result.Get(i)[1].(int64); age != expectedAges[i] {
+					t.Errorf("tuple %d: expected age %d, got %d", i, expectedAges[i], age)
+				}
+			}
+		})
 	}
 }
 
@@ -800,32 +870,37 @@ func TestOrderByProjectedKeyWithPull(t *testing.T) {
 // the boundary pull renders the surviving rows.
 func TestOrderByNonProjectedWithPull(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(nonProjectedSortDatoms())
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find (pull ?e [:user/name])
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find (pull ?e [:user/name])
 	                              :where [?e :user/age ?age]
 	                              :order-by [[?age :asc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	expected := []string{"Frank", "Bob", "Dave", "Alice", "Erin", "Carol"}
-	if result.Size() != len(expected) {
-		t.Fatalf("expected %d results, got %d", len(expected), result.Size())
-	}
-	for i := 0; i < result.Size(); i++ {
-		pulled, ok := result.Get(i)[0].(map[string]interface{})
-		if !ok {
-			t.Fatalf("tuple %d: expected pulled map, got %T", i, result.Get(i)[0])
-		}
-		if name := pulled["user/name"]; name != expected[i] {
-			t.Errorf("tuple %d: expected %s, got %v", i, expected[i], name)
-		}
+			expected := []string{"Frank", "Bob", "Dave", "Alice", "Erin", "Carol"}
+			if result.Size() != len(expected) {
+				t.Fatalf("expected %d results, got %d", len(expected), result.Size())
+			}
+			for i := 0; i < result.Size(); i++ {
+				pulled, ok := result.Get(i)[0].(map[string]interface{})
+				if !ok {
+					t.Fatalf("tuple %d: expected pulled map, got %T", i, result.Get(i)[0])
+				}
+				if name := pulled["user/name"]; name != expected[i] {
+					t.Errorf("tuple %d: expected %s, got %v", i, expected[i], name)
+				}
+			}
+		})
 	}
 }
 
@@ -849,43 +924,48 @@ func TestOrderByProjectedKeyDeduplicates(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	baseline, err := parser.ParseQuery(`[:find ?name
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			baseline, err := parser.ParseQuery(`[:find ?name
 	                                     :where [?e :user/name ?name]
 	                                            [?e :user/age ?age]]`)
-	if err != nil {
-		t.Fatalf("failed to parse baseline query: %v", err)
-	}
-	baseResult, err := executor.Execute(baseline)
-	if err != nil {
-		t.Fatalf("baseline execution failed: %v", err)
-	}
-	baseCount := baseResult.Size()
+			if err != nil {
+				t.Fatalf("failed to parse baseline query: %v", err)
+			}
+			baseResult, err := executor.Execute(baseline)
+			if err != nil {
+				t.Fatalf("baseline execution failed: %v", err)
+			}
+			baseCount := baseResult.Size()
 
-	sorted, err := parser.ParseQuery(`[:find ?name
+			sorted, err := parser.ParseQuery(`[:find ?name
 	                                   :where [?e :user/name ?name]
 	                                          [?e :user/age ?age]
 	                                   :order-by [[?name :asc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse sorted query: %v", err)
-	}
-	sortResult, err := executor.Execute(sorted)
-	if err != nil {
-		t.Fatalf("sorted execution failed: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse sorted query: %v", err)
+			}
+			sortResult, err := executor.Execute(sorted)
+			if err != nil {
+				t.Fatalf("sorted execution failed: %v", err)
+			}
 
-	if sortResult.Size() != baseCount {
-		t.Fatalf("order-by changed result membership: %d rows without order-by, %d with", baseCount, sortResult.Size())
-	}
-	expected := []string{"Alice", "Bob"}
-	if sortResult.Size() != len(expected) {
-		t.Fatalf("expected %d deduplicated rows, got %d", len(expected), sortResult.Size())
-	}
-	for i := 0; i < sortResult.Size(); i++ {
-		if name := sortResult.Get(i)[0].(string); name != expected[i] {
-			t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
-		}
+			if sortResult.Size() != baseCount {
+				t.Fatalf("order-by changed result membership: %d rows without order-by, %d with", baseCount, sortResult.Size())
+			}
+			expected := []string{"Alice", "Bob"}
+			if sortResult.Size() != len(expected) {
+				t.Fatalf("expected %d deduplicated rows, got %d", len(expected), sortResult.Size())
+			}
+			for i := 0; i < sortResult.Size(); i++ {
+				if name := sortResult.Get(i)[0].(string); name != expected[i] {
+					t.Errorf("tuple %d: expected %s, got %s", i, expected[i], name)
+				}
+			}
+		})
 	}
 }
 
@@ -933,24 +1013,29 @@ func TestOrderByPullWithTiedSortKeys(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	q, err := parser.ParseQuery(`[:find (pull ?e [:user/name]) ?age
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			q, err := parser.ParseQuery(`[:find (pull ?e [:user/name]) ?age
 	                              :where [?e :user/age ?age]
 	                              :order-by [[?age :asc]]]`)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
-	if result.Size() != 3 {
-		t.Fatalf("expected 3 rows, got %d", result.Size())
-	}
-	if age := result.Get(0)[1].(int64); age != 10 {
-		t.Errorf("expected age 10 first, got %d", age)
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
+			if result.Size() != 3 {
+				t.Fatalf("expected 3 rows, got %d", result.Size())
+			}
+			if age := result.Get(0)[1].(int64); age != 10 {
+				t.Errorf("expected age 10 first, got %d", age)
+			}
+		})
 	}
 }
 
@@ -1003,27 +1088,32 @@ func TestSortingWithNulls(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	// Note: get-else is not implemented, so we test with a simpler query
-	// This is more about ensuring no panic than specific null handling
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	simpleQuery := `[:find ?name
+			// Note: get-else is not implemented, so we test with a simpler query
+			// This is more about ensuring no panic than specific null handling
+
+			simpleQuery := `[:find ?name
 	                 :where [?e :user/name ?name]
 	                 :order-by [[?name :asc]]]`
 
-	q, err := parser.ParseQuery(simpleQuery)
-	if err != nil {
-		t.Fatalf("failed to parse query: %v", err)
-	}
+			q, err := parser.ParseQuery(simpleQuery)
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	// Should have all 3 users
-	if result.Size() != 3 {
-		t.Errorf("expected 3 results, got %d", result.Size())
+			// Should have all 3 users
+			if result.Size() != 3 {
+				t.Errorf("expected 3 results, got %d", result.Size())
+			}
+		})
 	}
 }

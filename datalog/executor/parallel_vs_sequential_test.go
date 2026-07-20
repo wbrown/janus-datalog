@@ -6,7 +6,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestParallelVsSequentialDecorrelation compares parallel vs sequential decorrelation
@@ -150,82 +149,86 @@ func TestParallelVsSequentialDecorrelation(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	// Test 1: Sequential decorrelation
-	t.Run("Sequential", func(t *testing.T) {
-		execSeq := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Test 1: Sequential decorrelation
+			t.Run("Sequential", func(t *testing.T) {
+				execSeq := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-		start := time.Now()
-		result, err := execSeq.Execute(q)
-		duration := time.Since(start)
+				start := time.Now()
+				result, err := execSeq.Execute(q)
+				duration := time.Since(start)
 
-		if err != nil {
-			t.Fatalf("Sequential execution failed: %v", err)
-		}
-
-		// 10 hours, but query filters to 570-960 mod (7 hours: 10-16)
-		if result.Size() != 7 {
-			t.Errorf("Expected 7 hours, got %d", result.Size())
-		}
-
-		t.Logf("Sequential decorrelation: %v (%d results)", duration, result.Size())
-	})
-
-	// Test 2: Parallel decorrelation
-	t.Run("Parallel", func(t *testing.T) {
-		execPar := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
-
-		start := time.Now()
-		result, err := execPar.Execute(q)
-		duration := time.Since(start)
-
-		if err != nil {
-			t.Fatalf("Parallel execution failed: %v", err)
-		}
-
-		if result.Size() != 7 {
-			t.Errorf("Expected 7 hours, got %d", result.Size())
-		}
-
-		t.Logf("Parallel decorrelation: %v (%d results)", duration, result.Size())
-	})
-
-	// Test 3: Verify results are identical
-	t.Run("ResultsMatch", func(t *testing.T) {
-		execSeq := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
-
-		execPar := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
-
-		resultSeq, err := execSeq.Execute(q)
-		if err != nil {
-			t.Fatalf("Sequential execution failed: %v", err)
-		}
-
-		resultPar, err := execPar.Execute(q)
-		if err != nil {
-			t.Fatalf("Parallel execution failed: %v", err)
-		}
-
-		if resultSeq.Size() != resultPar.Size() {
-			t.Errorf("Size mismatch: sequential=%d, parallel=%d", resultSeq.Size(), resultPar.Size())
-		}
-
-		// Compare each tuple
-		for i := 0; i < resultSeq.Size(); i++ {
-			rowSeq := resultSeq.Get(i)
-			rowPar := resultPar.Get(i)
-
-			if len(rowSeq) != len(rowPar) {
-				t.Errorf("Tuple %d length mismatch: sequential=%d, parallel=%d",
-					i, len(rowSeq), len(rowPar))
-				continue
-			}
-
-			for j := range rowSeq {
-				if rowSeq[j] != rowPar[j] {
-					t.Errorf("Tuple %d, position %d mismatch: sequential=%v, parallel=%v",
-						i, j, rowSeq[j], rowPar[j])
+				if err != nil {
+					t.Fatalf("Sequential execution failed: %v", err)
 				}
-			}
-		}
-	})
+
+				// 10 hours, but query filters to 570-960 mod (7 hours: 10-16)
+				if result.Size() != 7 {
+					t.Errorf("Expected 7 hours, got %d", result.Size())
+				}
+
+				t.Logf("Sequential decorrelation: %v (%d results)", duration, result.Size())
+			})
+
+			// Test 2: Parallel decorrelation
+			t.Run("Parallel", func(t *testing.T) {
+				execPar := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+
+				start := time.Now()
+				result, err := execPar.Execute(q)
+				duration := time.Since(start)
+
+				if err != nil {
+					t.Fatalf("Parallel execution failed: %v", err)
+				}
+
+				if result.Size() != 7 {
+					t.Errorf("Expected 7 hours, got %d", result.Size())
+				}
+
+				t.Logf("Parallel decorrelation: %v (%d results)", duration, result.Size())
+			})
+
+			// Test 3: Verify results are identical
+			t.Run("ResultsMatch", func(t *testing.T) {
+				execSeq := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+
+				execPar := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+
+				resultSeq, err := execSeq.Execute(q)
+				if err != nil {
+					t.Fatalf("Sequential execution failed: %v", err)
+				}
+
+				resultPar, err := execPar.Execute(q)
+				if err != nil {
+					t.Fatalf("Parallel execution failed: %v", err)
+				}
+
+				if resultSeq.Size() != resultPar.Size() {
+					t.Errorf("Size mismatch: sequential=%d, parallel=%d", resultSeq.Size(), resultPar.Size())
+				}
+
+				// Compare each tuple
+				for i := 0; i < resultSeq.Size(); i++ {
+					rowSeq := resultSeq.Get(i)
+					rowPar := resultPar.Get(i)
+
+					if len(rowSeq) != len(rowPar) {
+						t.Errorf("Tuple %d length mismatch: sequential=%d, parallel=%d",
+							i, len(rowSeq), len(rowPar))
+						continue
+					}
+
+					for j := range rowSeq {
+						if rowSeq[j] != rowPar[j] {
+							t.Errorf("Tuple %d, position %d mismatch: sequential=%v, parallel=%v",
+								i, j, rowSeq[j], rowPar[j])
+						}
+					}
+				}
+			})
+		})
+	}
 }

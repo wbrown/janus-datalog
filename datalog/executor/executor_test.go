@@ -24,47 +24,52 @@ func TestExecutorBasicQuery(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	// Query: Find all names
-	q := &query.Query{
-		Find: []query.FindElement{
-			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
-		},
-		Where: []query.Clause{
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: nameAttr},
-					query.Variable{Name: datalog.NewSymbol("?name")},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// Query: Find all names
+			q := &query.Query{
+				Find: []query.FindElement{
+					query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 				},
-			},
-		},
-	}
+				Where: []query.Clause{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: nameAttr},
+							query.Variable{Name: datalog.NewSymbol("?name")},
+						},
+					},
+				},
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	// Collect results by iterating (works with streaming)
-	names := make(map[string]bool)
-	it := result.Iterator()
-	count := 0
-	for it.Next() {
-		name := it.Tuple()[0].(string)
-		names[name] = true
-		count++
-	}
-	it.Close()
+			// Collect results by iterating (works with streaming)
+			names := make(map[string]bool)
+			it := result.Iterator()
+			count := 0
+			for it.Next() {
+				name := it.Tuple()[0].(string)
+				names[name] = true
+				count++
+			}
+			it.Close()
 
-	// Should have 2 names
-	if count != 2 {
-		t.Errorf("expected 2 results, got %d", count)
-	}
+			// Should have 2 names
+			if count != 2 {
+				t.Errorf("expected 2 results, got %d", count)
+			}
 
-	if !names["Alice"] || !names["Bob"] {
-		t.Errorf("expected Alice and Bob, got %v", names)
+			if !names["Alice"] || !names["Bob"] {
+				t.Errorf("expected Alice and Bob, got %v", names)
+			}
+		})
 	}
 }
 
@@ -88,65 +93,70 @@ func TestExecutorJoinQuery(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	// Query: Find friends of friends
-	// [?p1 :user/friend ?p2]
-	// [?p2 :user/friend ?p3]
-	// [?p1 :user/name ?name1]
-	// [?p3 :user/name ?name3]
-	q := &query.Query{
-		Find: []query.FindElement{
-			query.FindVariable{Symbol: datalog.NewSymbol("?name1")},
-			query.FindVariable{Symbol: datalog.NewSymbol("?name3")},
-		},
-		Where: []query.Clause{
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?p1")},
-					query.Constant{Value: friendAttr},
-					query.Variable{Name: datalog.NewSymbol("?p2")},
-				},
-			},
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?p2")},
-					query.Constant{Value: friendAttr},
-					query.Variable{Name: datalog.NewSymbol("?p3")},
-				},
-			},
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?p1")},
-					query.Constant{Value: nameAttr},
-					query.Variable{Name: datalog.NewSymbol("?name1")},
-				},
-			},
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?p3")},
-					query.Constant{Value: nameAttr},
-					query.Variable{Name: datalog.NewSymbol("?name3")},
-				},
-			},
-		},
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			// Query: Find friends of friends
+			// [?p1 :user/friend ?p2]
+			// [?p2 :user/friend ?p3]
+			// [?p1 :user/name ?name1]
+			// [?p3 :user/name ?name3]
+			q := &query.Query{
+				Find: []query.FindElement{
+					query.FindVariable{Symbol: datalog.NewSymbol("?name1")},
+					query.FindVariable{Symbol: datalog.NewSymbol("?name3")},
+				},
+				Where: []query.Clause{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?p1")},
+							query.Constant{Value: friendAttr},
+							query.Variable{Name: datalog.NewSymbol("?p2")},
+						},
+					},
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?p2")},
+							query.Constant{Value: friendAttr},
+							query.Variable{Name: datalog.NewSymbol("?p3")},
+						},
+					},
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?p1")},
+							query.Constant{Value: nameAttr},
+							query.Variable{Name: datalog.NewSymbol("?name1")},
+						},
+					},
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?p3")},
+							query.Constant{Value: nameAttr},
+							query.Variable{Name: datalog.NewSymbol("?name3")},
+						},
+					},
+				},
+			}
 
-	// Should find Alice -> Charlie (through Bob)
-	if result.Size() != 1 {
-		t.Errorf("expected 1 result, got %d", result.Size())
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	if result.Size() > 0 {
-		tuple := result.Get(0)
-		if tuple[0] != "Alice" || tuple[1] != "Charlie" {
-			t.Errorf("expected [Alice Charlie], got %v", tuple)
-		}
+			// Should find Alice -> Charlie (through Bob)
+			if result.Size() != 1 {
+				t.Errorf("expected 1 result, got %d", result.Size())
+			}
+
+			if result.Size() > 0 {
+				tuple := result.Get(0)
+				if tuple[0] != "Alice" || tuple[1] != "Charlie" {
+					t.Errorf("expected [Alice Charlie], got %v", tuple)
+				}
+			}
+		})
 	}
 }
 
@@ -168,51 +178,56 @@ func TestExecutorWithFilter(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	// Query: Find people younger than 30
-	q := &query.Query{
-		Find: []query.FindElement{
-			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
-		},
-		Where: []query.Clause{
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: nameAttr},
-					query.Variable{Name: datalog.NewSymbol("?name")},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// Query: Find people younger than 30
+			q := &query.Query{
+				Find: []query.FindElement{
+					query.FindVariable{Symbol: datalog.NewSymbol("?name")},
 				},
-			},
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: ageAttr},
-					query.Variable{Name: datalog.NewSymbol("?age")},
+				Where: []query.Clause{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: nameAttr},
+							query.Variable{Name: datalog.NewSymbol("?name")},
+						},
+					},
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: ageAttr},
+							query.Variable{Name: datalog.NewSymbol("?age")},
+						},
+					},
+					&query.Comparison{
+						Op:    datalog.SymLT,
+						Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
+						Right: query.ConstantTerm{Value: int64(30)},
+					},
 				},
-			},
-			&query.Comparison{
-				Op:    datalog.SymLT,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
-				Right: query.ConstantTerm{Value: int64(30)},
-			},
-		},
-	}
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	// Should only find Bob (age 25)
-	if result.Size() != 1 {
-		t.Errorf("expected 1 result, got %d", result.Size())
-	}
+			// Should only find Bob (age 25)
+			if result.Size() != 1 {
+				t.Errorf("expected 1 result, got %d", result.Size())
+			}
 
-	if result.Size() > 0 {
-		name := result.Get(0)[0].(string)
-		if name != "Bob" {
-			t.Errorf("expected Bob, got %s", name)
-		}
+			if result.Size() > 0 {
+				name := result.Get(0)[0].(string)
+				if name != "Bob" {
+					t.Errorf("expected Bob, got %s", name)
+				}
+			}
+		})
 	}
 }
 
@@ -242,77 +257,82 @@ func TestExecutorMultipleFilters(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	// Query: Find people aged 25-30 with salary > 50000
-	q := &query.Query{
-		Find: []query.FindElement{
-			query.FindVariable{Symbol: datalog.NewSymbol("?name")},
-			query.FindVariable{Symbol: datalog.NewSymbol("?age")},
-			query.FindVariable{Symbol: datalog.NewSymbol("?salary")},
-		},
-		Where: []query.Clause{
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: nameAttr},
-					query.Variable{Name: datalog.NewSymbol("?name")},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// Query: Find people aged 25-30 with salary > 50000
+			q := &query.Query{
+				Find: []query.FindElement{
+					query.FindVariable{Symbol: datalog.NewSymbol("?name")},
+					query.FindVariable{Symbol: datalog.NewSymbol("?age")},
+					query.FindVariable{Symbol: datalog.NewSymbol("?salary")},
 				},
-			},
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: ageAttr},
-					query.Variable{Name: datalog.NewSymbol("?age")},
+				Where: []query.Clause{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: nameAttr},
+							query.Variable{Name: datalog.NewSymbol("?name")},
+						},
+					},
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: ageAttr},
+							query.Variable{Name: datalog.NewSymbol("?age")},
+						},
+					},
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: salaryAttr},
+							query.Variable{Name: datalog.NewSymbol("?salary")},
+						},
+					},
+					&query.Comparison{
+						Op:    datalog.SymGTE,
+						Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
+						Right: query.ConstantTerm{Value: int64(25)},
+					},
+					&query.Comparison{
+						Op:    datalog.SymLTE,
+						Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
+						Right: query.ConstantTerm{Value: int64(30)},
+					},
+					&query.Comparison{
+						Op:    datalog.SymGT,
+						Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?salary")},
+						Right: query.ConstantTerm{Value: int64(50000)},
+					},
 				},
-			},
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: salaryAttr},
-					query.Variable{Name: datalog.NewSymbol("?salary")},
-				},
-			},
-			&query.Comparison{
-				Op:    datalog.SymGTE,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
-				Right: query.ConstantTerm{Value: int64(25)},
-			},
-			&query.Comparison{
-				Op:    datalog.SymLTE,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?age")},
-				Right: query.ConstantTerm{Value: int64(30)},
-			},
-			&query.Comparison{
-				Op:    datalog.SymGT,
-				Left:  query.VariableTerm{Symbol: datalog.NewSymbol("?salary")},
-				Right: query.ConstantTerm{Value: int64(50000)},
-			},
-		},
-	}
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	// Should only find David (age 28, salary 55000)
-	if result.Size() != 1 {
-		t.Errorf("expected 1 result, got %d", result.Size())
-		for i := 0; i < result.Size(); i++ {
-			t.Logf("  %v", result.Get(i))
-		}
-	}
+			// Should only find David (age 28, salary 55000)
+			if result.Size() != 1 {
+				t.Errorf("expected 1 result, got %d", result.Size())
+				for i := 0; i < result.Size(); i++ {
+					t.Logf("  %v", result.Get(i))
+				}
+			}
 
-	if result.Size() > 0 {
-		tuple := result.Get(0)
-		name := tuple[0].(string)
-		age := tuple[1].(int64)
-		salary := tuple[2].(int64)
+			if result.Size() > 0 {
+				tuple := result.Get(0)
+				name := tuple[0].(string)
+				age := tuple[1].(int64)
+				salary := tuple[2].(int64)
 
-		if name != "David" || age != 28 || salary != 55000 {
-			t.Errorf("expected [David 28 55000], got %v", tuple)
-		}
+				if name != "David" || age != 28 || salary != 55000 {
+					t.Errorf("expected [David 28 55000], got %v", tuple)
+				}
+			}
+		})
 	}
 }
 
@@ -326,32 +346,37 @@ func TestExecutorEmptyResult(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
-	// Query for non-existent attribute
-	q := &query.Query{
-		Find: []query.FindElement{
-			query.FindVariable{Symbol: datalog.NewSymbol("?email")},
-		},
-		Where: []query.Clause{
-			&query.DataPattern{
-				Elements: []query.PatternElement{
-					query.Variable{Name: datalog.NewSymbol("?e")},
-					query.Constant{Value: datalog.NewKeyword(":user/email")},
-					query.Variable{Name: datalog.NewSymbol("?email")},
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// Query for non-existent attribute
+			q := &query.Query{
+				Find: []query.FindElement{
+					query.FindVariable{Symbol: datalog.NewSymbol("?email")},
 				},
-			},
-		},
-	}
+				Where: []query.Clause{
+					&query.DataPattern{
+						Elements: []query.PatternElement{
+							query.Variable{Name: datalog.NewSymbol("?e")},
+							query.Constant{Value: datalog.NewKeyword(":user/email")},
+							query.Variable{Name: datalog.NewSymbol("?email")},
+						},
+					},
+				},
+			}
 
-	result, err := executor.Execute(q)
-	if err != nil {
-		t.Fatalf("execution failed: %v", err)
-	}
+			result, err := executor.Execute(q)
+			if err != nil {
+				t.Fatalf("execution failed: %v", err)
+			}
 
-	// Should return empty result
-	if result.Size() != 0 {
-		t.Errorf("expected empty result, got %d tuples", result.Size())
+			// Should return empty result
+			if result.Size() != 0 {
+				t.Errorf("expected empty result, got %d tuples", result.Size())
+			}
+		})
 	}
 }
 

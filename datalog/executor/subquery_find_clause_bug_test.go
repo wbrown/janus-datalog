@@ -42,8 +42,6 @@ func TestSubqueryFindClauseBug(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	queryStr := `[:find ?symbol ?max-price ?min-price
 	             :where
 	             [?s :symbol/ticker ?symbol]
@@ -63,59 +61,55 @@ func TestSubqueryFindClauseBug(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	tuples := collectResult(result)
-	t.Logf("Result symbols: %v", result.Symbols())
-	t.Logf("Result count: %d", len(tuples))
-	if len(tuples) > 0 {
-		t.Logf("First tuple: %v", tuples[0])
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	if len(tuples) != 1 {
-		t.Errorf("Expected 1 result, got %d", len(tuples))
-	}
+			tuples := collectResult(result)
+			t.Logf("Result symbols: %v", result.Symbols())
+			t.Logf("Result count: %d", len(tuples))
+			if len(tuples) > 0 {
+				t.Logf("First tuple: %v", tuples[0])
+			}
 
-	tuple := tuples[0]
-	symbol := tuple[0]
-	maxPrice := tuple[1]
-	minPrice := tuple[2]
+			if len(tuples) != 1 {
+				t.Errorf("Expected 1 result, got %d", len(tuples))
+			}
 
-	t.Logf("symbol=%v (type %T)", symbol, symbol)
-	t.Logf("maxPrice=%v (type %T)", maxPrice, maxPrice)
-	t.Logf("minPrice=%v (type %T)", minPrice, minPrice)
+			tuple := tuples[0]
+			symbol := tuple[0]
+			maxPrice := tuple[1]
+			minPrice := tuple[2]
 
-	if symbol != "AAPL" {
-		t.Errorf("Expected symbol 'AAPL', got %v", symbol)
-	}
+			t.Logf("symbol=%v (type %T)", symbol, symbol)
+			t.Logf("maxPrice=%v (type %T)", maxPrice, maxPrice)
+			t.Logf("minPrice=%v (type %T)", minPrice, minPrice)
 
-	if maxPrice == nil || minPrice == nil {
-		t.Fatalf("BUG REPRODUCED: Aggregates are nil - decorrelation broke the query")
-	}
+			if symbol != "AAPL" {
+				t.Errorf("Expected symbol 'AAPL', got %v", symbol)
+			}
 
-	if price, ok := maxPrice.(float64); !ok || price != 155.0 {
-		t.Errorf("Expected maxPrice=155.0, got %v (type %T)", maxPrice, maxPrice)
-	}
-	if price, ok := minPrice.(float64); !ok || price != 150.0 {
-		t.Errorf("Expected minPrice=150.0, got %v (type %T)", minPrice, minPrice)
+			if maxPrice == nil || minPrice == nil {
+				t.Fatalf("BUG REPRODUCED: Aggregates are nil - decorrelation broke the query")
+			}
+
+			if price, ok := maxPrice.(float64); !ok || price != 155.0 {
+				t.Errorf("Expected maxPrice=155.0, got %v (type %T)", maxPrice, maxPrice)
+			}
+			if price, ok := minPrice.(float64); !ok || price != 150.0 {
+				t.Errorf("Expected minPrice=150.0, got %v (type %T)", minPrice, minPrice)
+			}
+		})
 	}
 }
 
 // TestSubqueryFindClauseBugWithAnnotations uses annotations to detect the bug
 func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
-	var aggregationEvents []annotations.Event
-	handler := func(event annotations.Event) {
-		if event.Name == annotations.AggregationExecuted {
-			aggregationEvents = append(aggregationEvents, event)
-		}
-		if strings.HasPrefix(event.Name, "subquery/decorrelation") {
-			t.Logf("[%s] %v", event.Name, event.Data)
-		}
-	}
-
 	matcher := &MockPatternMatcher{
 		data: map[string][]datalog.Datom{
 			`[:symbol/ticker "AAPL"]`: {
@@ -132,9 +126,6 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 		},
 	}
 
-	annotatedMatcher := WrapMatcher(matcher, handler)
-	exec := NewExecutor(annotatedMatcher, nil)
-
 	queryStr := `[:find ?symbol ?max-price ?min-price
 	             :where
 	             [?s :symbol/ticker ?symbol]
@@ -154,22 +145,39 @@ func TestSubqueryFindClauseBugWithAnnotations(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	ctx := NewContext(handler)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			var aggregationEvents []annotations.Event
+			handler := func(event annotations.Event) {
+				if event.Name == annotations.AggregationExecuted {
+					aggregationEvents = append(aggregationEvents, event)
+				}
+				if strings.HasPrefix(event.Name, "subquery/decorrelation") {
+					t.Logf("[%s] %v", event.Name, event.Data)
+				}
+			}
 
-	_, err = exec.ExecuteWithContext(ctx, q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+			annotatedMatcher := WrapMatcher(matcher, handler)
+			exec := NewExecutorWithOptions(annotatedMatcher, nil, mode.plannerOptions())
 
-	if len(aggregationEvents) == 0 {
-		t.Fatal("expected aggregation annotation events to be captured for the correlated subquery")
-	}
+			ctx := NewContext(handler)
 
-	// With the decorrelation cache, grouped aggregation (groupby_count=1) is
-	// CORRECT — the cache adds the correlation variable as a GROUP BY key so the
-	// query runs once and results are filtered per correlation value.
-	for i, event := range aggregationEvents {
-		t.Logf("Aggregation event %d: %+v", i, event.Data)
+			_, err := exec.ExecuteWithContext(ctx, q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
+
+			if len(aggregationEvents) == 0 {
+				t.Fatal("expected aggregation annotation events to be captured for the correlated subquery")
+			}
+
+			// With the decorrelation cache, grouped aggregation (groupby_count=1) is
+			// CORRECT — the cache adds the correlation variable as a GROUP BY key so the
+			// query runs once and results are filtered per correlation value.
+			for i, event := range aggregationEvents {
+				t.Logf("Aggregation event %d: %+v", i, event.Data)
+			}
+		})
 	}
 }
 
@@ -199,8 +207,6 @@ func TestSubqueryMultiValueFindClauseBug(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	queryStr := `[:find ?symbol ?high ?low
 	             :where
 	             [?s :symbol/ticker ?symbol]
@@ -224,36 +230,42 @@ func TestSubqueryMultiValueFindClauseBug(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	tuples := collectResult(result)
-	if len(tuples) != 1 {
-		t.Fatalf("Expected 1 result, got %d", len(tuples))
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	tuple := tuples[0]
-	symbol := tuple[0]
-	high := tuple[1]
-	low := tuple[2]
+			tuples := collectResult(result)
+			if len(tuples) != 1 {
+				t.Fatalf("Expected 1 result, got %d", len(tuples))
+			}
 
-	if symbol != "TEST" {
-		t.Errorf("Expected symbol 'TEST', got %v", symbol)
-	}
+			tuple := tuples[0]
+			symbol := tuple[0]
+			high := tuple[1]
+			low := tuple[2]
 
-	if high == nil {
-		t.Errorf("BUG REPRODUCED: high is nil (expected 110.0)")
-		t.Logf("Result tuple: %v", tuple)
-	} else if h, ok := high.(float64); !ok || h != 110.0 {
-		t.Errorf("Expected high=110.0, got %v (type %T)", high, high)
-	}
+			if symbol != "TEST" {
+				t.Errorf("Expected symbol 'TEST', got %v", symbol)
+			}
 
-	if low == nil {
-		t.Errorf("BUG REPRODUCED: low is nil (expected 95.0)")
-		t.Logf("Result tuple: %v", tuple)
-	} else if l, ok := low.(float64); !ok || l != 95.0 {
-		t.Errorf("Expected low=95.0, got %v (type %T)", low, low)
+			if high == nil {
+				t.Errorf("BUG REPRODUCED: high is nil (expected 110.0)")
+				t.Logf("Result tuple: %v", tuple)
+			} else if h, ok := high.(float64); !ok || h != 110.0 {
+				t.Errorf("Expected high=110.0, got %v (type %T)", high, high)
+			}
+
+			if low == nil {
+				t.Errorf("BUG REPRODUCED: low is nil (expected 95.0)")
+				t.Logf("Result tuple: %v", tuple)
+			} else if l, ok := low.(float64); !ok || l != 95.0 {
+				t.Errorf("Expected low=95.0, got %v (type %T)", low, low)
+			}
+		})
 	}
 }

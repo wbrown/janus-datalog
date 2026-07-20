@@ -44,20 +44,26 @@ func TestRelationInputSequential_PropagatesDeferredInputIteratorError(t *testing
 
 	// Iteration relation for [[?n ?y] ...]: yields one tuple, then defers
 	// errInjectedIterator via Iterator().Error().
-	base := NewMaterializedRelation(peopleInputSymbols(), []Tuple{
-		{"Alice", int64(2020)},
-		{"Bob", int64(2020)},
-	})
-	inputRel := failingRelation{Relation: base, failAfter: 1}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// failingRelation wraps a single-use iteration relation, so it must
+			// be rebuilt fresh per mode rather than shared across modes.
+			base := NewMaterializedRelation(peopleInputSymbols(), []Tuple{
+				{"Alice", int64(2020)},
+				{"Bob", int64(2020)},
+			})
+			inputRel := failingRelation{Relation: base, failAfter: 1}
 
-	exec := NewExecutor(matcher, nil)
-	exec.DisableParallelSubqueries()
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			exec.DisableParallelSubqueries()
 
-	_, err = exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.Error(t, err,
-		"deferred input-iterator error must propagate, not be laundered into clean partial results")
-	require.True(t, errors.Is(err, errInjectedIterator),
-		"error must unwrap to errInjectedIterator; got %v", err)
+			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.Error(t, err,
+				"deferred input-iterator error must propagate, not be laundered into clean partial results")
+			require.True(t, errors.Is(err, errInjectedIterator),
+				"error must unwrap to errInjectedIterator; got %v", err)
+		})
+	}
 }
 
 // TestRelationInputSequential_PropagatesInputCloseError pins the second signal:
@@ -75,17 +81,24 @@ func TestRelationInputSequential_PropagatesInputCloseError(t *testing.T) {
 		{"Alice", int64(2020)},
 		{"Bob", int64(2020)},
 	}
-	base := NewMaterializedRelation(peopleInputSymbols(), tuples)
-	// failAfter past the tuple count => no deferred iteration error; Close()
-	// returns closeErr.
-	inputRel := failingRelation{Relation: base, failAfter: len(tuples) + 1, closeErr: closeErr}
 
-	exec := NewExecutor(matcher, nil)
-	exec.DisableParallelSubqueries()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// failingRelation wraps a single-use iteration relation, so it must
+			// be rebuilt fresh per mode rather than shared across modes.
+			base := NewMaterializedRelation(peopleInputSymbols(), tuples)
+			// failAfter past the tuple count => no deferred iteration error; Close()
+			// returns closeErr.
+			inputRel := failingRelation{Relation: base, failAfter: len(tuples) + 1, closeErr: closeErr}
 
-	_, err = exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
-	require.Error(t, err,
-		"input Close() error must propagate, not be discarded by a deferred Close()")
-	require.True(t, errors.Is(err, closeErr),
-		"error must unwrap to the injected Close error; got %v", err)
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			exec.DisableParallelSubqueries()
+
+			_, err := exec.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+			require.Error(t, err,
+				"input Close() error must propagate, not be discarded by a deferred Close()")
+			require.True(t, errors.Is(err, closeErr),
+				"error must unwrap to the injected Close error; got %v", err)
+		})
+	}
 }

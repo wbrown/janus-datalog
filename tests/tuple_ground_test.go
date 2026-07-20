@@ -47,35 +47,38 @@ func TestTupleGroundBasic(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
 
-	// Collect results
-	var tuples [][]interface{}
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		row := make([]interface{}, len(tuple))
-		copy(row, tuple)
-		tuples = append(tuples, row)
-	}
-	iter.Close()
+			// Collect results
+			var tuples [][]interface{}
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				row := make([]interface{}, len(tuple))
+				copy(row, tuple)
+				tuples = append(tuples, row)
+			}
+			iter.Close()
 
-	// Should have 1 row with values [1, 2, 3]
-	if len(tuples) != 1 {
-		t.Errorf("Expected 1 row, got %d", len(tuples))
-	}
+			// Should have 1 row with values [1, 2, 3]
+			if len(tuples) != 1 {
+				t.Errorf("Expected 1 row, got %d", len(tuples))
+			}
 
-	if len(tuples) > 0 {
-		row := tuples[0]
-		if row[0] != int64(1) || row[1] != int64(2) || row[2] != int64(3) {
-			t.Errorf("Expected [1 2 3], got %v", row)
-		}
+			if len(tuples) > 0 {
+				row := tuples[0]
+				if row[0] != int64(1) || row[1] != int64(2) || row[2] != int64(3) {
+					t.Errorf("Expected [1 2 3], got %v", row)
+				}
+			}
+		})
 	}
 }
 
@@ -159,84 +162,87 @@ func TestTupleGroundOrFallback(t *testing.T) {
 
 	t.Logf("Parsed query: %s", q.String())
 
-	opts := storage.DefaultPlannerOptions()
-	matcher := storage.NewBadgerMatcher(db.Store())
-	matcher.SetSchema(s)
-	exec := executor.NewExecutorWithOptions(matcher, nil, opts)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher.SetSchema(s)
+			exec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	ctx := executor.NewContext(func(event annotations.Event) {
-		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
-	})
+			ctx := executor.NewContext(func(event annotations.Event) {
+				t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
+			})
 
-	result, err := exec.ExecuteWithContext(ctx, q)
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
+			result, err := exec.ExecuteWithContext(ctx, q)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
 
-	// Collect results
-	var tuples [][]interface{}
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		row := make([]interface{}, len(tuple))
-		copy(row, tuple)
-		tuples = append(tuples, row)
-	}
-	iter.Close()
+			// Collect results
+			var tuples [][]interface{}
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				row := make([]interface{}, len(tuple))
+				copy(row, tuple)
+				tuples = append(tuples, row)
+			}
+			iter.Close()
 
-	t.Logf("Result count: %d", len(tuples))
+			t.Logf("Result count: %d", len(tuples))
 
-	// Should have 3 rows
-	if len(tuples) != 3 {
-		t.Errorf("Expected 3 rows, got %d", len(tuples))
-	}
+			// Should have 3 rows
+			if len(tuples) != 3 {
+				t.Errorf("Expected 3 rows, got %d", len(tuples))
+			}
 
-	// Build result map (sum returns float64, count returns int64)
-	resultMap := make(map[string]struct {
-		taskCount  int64
-		totalValue float64
-	})
+			// Build result map (sum returns float64, count returns int64)
+			resultMap := make(map[string]struct {
+				taskCount  int64
+				totalValue float64
+			})
 
-	for _, tuple := range tuples {
-		name := tuple[1].(string)
-		taskCount := tuple[2].(int64)
-		// totalValue is float64 from sum, or int64 from ground fallback
-		var totalValue float64
-		switch v := tuple[3].(type) {
-		case float64:
-			totalValue = v
-		case int64:
-			totalValue = float64(v)
-		}
-		resultMap[name] = struct {
-			taskCount  int64
-			totalValue float64
-		}{taskCount, totalValue}
-		t.Logf("Row: name=%s, taskCount=%d, totalValue=%v", name, taskCount, totalValue)
-	}
+			for _, tuple := range tuples {
+				name := tuple[1].(string)
+				taskCount := tuple[2].(int64)
+				// totalValue is float64 from sum, or int64 from ground fallback
+				var totalValue float64
+				switch v := tuple[3].(type) {
+				case float64:
+					totalValue = v
+				case int64:
+					totalValue = float64(v)
+				}
+				resultMap[name] = struct {
+					taskCount  int64
+					totalValue float64
+				}{taskCount, totalValue}
+				t.Logf("Row: name=%s, taskCount=%d, totalValue=%v", name, taskCount, totalValue)
+			}
 
-	// Scenario One: 2 tasks, total value 30 (10 + 20)
-	if data, ok := resultMap["Scenario One"]; !ok {
-		t.Error("Missing Scenario One in results")
-	} else if data.taskCount != 2 || data.totalValue != 30 {
-		t.Errorf("Scenario One: expected taskCount=2, totalValue=30, got taskCount=%d, totalValue=%v",
-			data.taskCount, data.totalValue)
-	}
+			// Scenario One: 2 tasks, total value 30 (10 + 20)
+			if data, ok := resultMap["Scenario One"]; !ok {
+				t.Error("Missing Scenario One in results")
+			} else if data.taskCount != 2 || data.totalValue != 30 {
+				t.Errorf("Scenario One: expected taskCount=2, totalValue=30, got taskCount=%d, totalValue=%v",
+					data.taskCount, data.totalValue)
+			}
 
-	// Scenario Two: 1 task, total value 100
-	if data, ok := resultMap["Scenario Two"]; !ok {
-		t.Error("Missing Scenario Two in results")
-	} else if data.taskCount != 1 || data.totalValue != 100 {
-		t.Errorf("Scenario Two: expected taskCount=1, totalValue=100, got taskCount=%d, totalValue=%v",
-			data.taskCount, data.totalValue)
-	}
+			// Scenario Two: 1 task, total value 100
+			if data, ok := resultMap["Scenario Two"]; !ok {
+				t.Error("Missing Scenario Two in results")
+			} else if data.taskCount != 1 || data.totalValue != 100 {
+				t.Errorf("Scenario Two: expected taskCount=1, totalValue=100, got taskCount=%d, totalValue=%v",
+					data.taskCount, data.totalValue)
+			}
 
-	// Scenario Three: 0 tasks, 0 total (from tuple ground fallback)
-	if data, ok := resultMap["Scenario Three"]; !ok {
-		t.Error("Missing Scenario Three in results")
-	} else if data.taskCount != 0 || data.totalValue != 0 {
-		t.Errorf("Scenario Three: expected taskCount=0, totalValue=0, got taskCount=%d, totalValue=%v",
-			data.taskCount, data.totalValue)
+			// Scenario Three: 0 tasks, 0 total (from tuple ground fallback)
+			if data, ok := resultMap["Scenario Three"]; !ok {
+				t.Error("Missing Scenario Three in results")
+			} else if data.taskCount != 0 || data.totalValue != 0 {
+				t.Errorf("Scenario Three: expected taskCount=0, totalValue=0, got taskCount=%d, totalValue=%v",
+					data.taskCount, data.totalValue)
+			}
+		})
 	}
 }
 
@@ -273,32 +279,35 @@ func TestTupleGroundBackwardCompatibility(t *testing.T) {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
 
-	// Collect results
-	var tuples [][]interface{}
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		row := make([]interface{}, len(tuple))
-		copy(row, tuple)
-		tuples = append(tuples, row)
-	}
-	iter.Close()
+			// Collect results
+			var tuples [][]interface{}
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				row := make([]interface{}, len(tuple))
+				copy(row, tuple)
+				tuples = append(tuples, row)
+			}
+			iter.Close()
 
-	// Should have 1 row with value 42
-	if len(tuples) != 1 {
-		t.Errorf("Expected 1 row, got %d", len(tuples))
-	}
+			// Should have 1 row with value 42
+			if len(tuples) != 1 {
+				t.Errorf("Expected 1 row, got %d", len(tuples))
+			}
 
-	if len(tuples) > 0 && tuples[0][0] != int64(42) {
-		t.Errorf("Expected 42, got %v", tuples[0][0])
+			if len(tuples) > 0 && tuples[0][0] != int64(42) {
+				t.Errorf("Expected 42, got %v", tuples[0][0])
+			}
+		})
 	}
 }
 
@@ -338,40 +347,43 @@ func TestTupleGroundQB(t *testing.T) {
 
 	t.Logf("Query built: %s", q.String())
 
-	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
 
-	// Collect results
-	var tuples [][]interface{}
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		row := make([]interface{}, len(tuple))
-		copy(row, tuple)
-		tuples = append(tuples, row)
-	}
-	iter.Close()
+			// Collect results
+			var tuples [][]interface{}
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				row := make([]interface{}, len(tuple))
+				copy(row, tuple)
+				tuples = append(tuples, row)
+			}
+			iter.Close()
 
-	t.Logf("Result count: %d", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Row: %v", tuple)
-	}
+			t.Logf("Result count: %d", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Row: %v", tuple)
+			}
 
-	// Should have 1 row with [1, 2, 3]
-	if len(tuples) != 1 {
-		t.Errorf("Expected 1 row, got %d", len(tuples))
-	}
+			// Should have 1 row with [1, 2, 3]
+			if len(tuples) != 1 {
+				t.Errorf("Expected 1 row, got %d", len(tuples))
+			}
 
-	if len(tuples) > 0 {
-		row := tuples[0]
-		if row[0] != int64(1) || row[1] != int64(2) || row[2] != int64(3) {
-			t.Errorf("Expected [1 2 3], got %v", row)
-		}
+			if len(tuples) > 0 {
+				row := tuples[0]
+				if row[0] != int64(1) || row[1] != int64(2) || row[2] != int64(3) {
+					t.Errorf("Expected [1 2 3], got %v", row)
+				}
+			}
+		})
 	}
 }
 
@@ -441,53 +453,56 @@ func TestTupleGroundQBInOr(t *testing.T) {
 
 	t.Logf("Query built: %s", q.String())
 
-	opts := storage.DefaultPlannerOptions()
-	exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, opts)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := executor.NewExecutorWithOptions(storage.NewBadgerMatcher(db.Store()), nil, mode.plannerOptions())
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
 
-	// Collect results
-	var tuples [][]interface{}
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		row := make([]interface{}, len(tuple))
-		copy(row, tuple)
-		tuples = append(tuples, row)
-	}
-	iter.Close()
+			// Collect results
+			var tuples [][]interface{}
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				row := make([]interface{}, len(tuple))
+				copy(row, tuple)
+				tuples = append(tuples, row)
+			}
+			iter.Close()
 
-	t.Logf("Result count: %d", len(tuples))
-	for _, tuple := range tuples {
-		t.Logf("Row: %v", tuple)
-	}
+			t.Logf("Result count: %d", len(tuples))
+			for _, tuple := range tuples {
+				t.Logf("Row: %v", tuple)
+			}
 
-	// OR fallback correctly triggers for each scenario:
-	// - Scenario One: has tasks, pattern branch matches with count 5
-	// - Scenario Two: no tasks, fallback branch triggers with count 0
-	if len(tuples) != 2 {
-		t.Errorf("Expected 2 rows (both scenarios), got %d", len(tuples))
-	}
+			// OR fallback correctly triggers for each scenario:
+			// - Scenario One: has tasks, pattern branch matches with count 5
+			// - Scenario Two: no tasks, fallback branch triggers with count 0
+			if len(tuples) != 2 {
+				t.Errorf("Expected 2 rows (both scenarios), got %d", len(tuples))
+			}
 
-	// Build expected results map (order may vary)
-	expected := map[string]int64{
-		"Scenario One": 5,
-		"Scenario Two": 0,
-	}
+			// Build expected results map (order may vary)
+			expected := map[string]int64{
+				"Scenario One": 5,
+				"Scenario Two": 0,
+			}
 
-	for _, tuple := range tuples {
-		name := tuple[1].(string)
-		taskCount := tuple[2].(int64)
-		expectedCount, ok := expected[name]
-		if !ok {
-			t.Errorf("Unexpected scenario: %s", name)
-			continue
-		}
-		if taskCount != expectedCount {
-			t.Errorf("Scenario %s: expected count %d, got %d", name, expectedCount, taskCount)
-		}
+			for _, tuple := range tuples {
+				name := tuple[1].(string)
+				taskCount := tuple[2].(int64)
+				expectedCount, ok := expected[name]
+				if !ok {
+					t.Errorf("Unexpected scenario: %s", name)
+					continue
+				}
+				if taskCount != expectedCount {
+					t.Errorf("Scenario %s: expected count %d, got %d", name, expectedCount, taskCount)
+				}
+			}
+		})
 	}
 }

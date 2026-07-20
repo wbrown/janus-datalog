@@ -26,7 +26,6 @@ func TestPerformanceRegression(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	executor := NewExecutor(matcher, nil)
 
 	// Test queries
 	queries := []string{
@@ -57,20 +56,26 @@ func TestPerformanceRegression(t *testing.T) {
 		         [(+ ?score ?age) ?adjusted]]`,
 	}
 
-	for i, queryStr := range queries {
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			t.Fatalf("Query %d: Failed to parse: %v", i, err)
-		}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-		result, err := executor.Execute(q)
-		if err != nil {
-			t.Fatalf("Query %d: Execution failed: %v", i, err)
-		}
+			for i, queryStr := range queries {
+				q, err := parser.ParseQuery(queryStr)
+				if err != nil {
+					t.Fatalf("Query %d: Failed to parse: %v", i, err)
+				}
 
-		// Just verify we got results
-		if result.Size() == 0 && i != 3 { // Query 3 might have no results due to predicates
-			t.Errorf("Query %d: Expected results, got none", i)
-		}
+				result, err := executor.Execute(q)
+				if err != nil {
+					t.Fatalf("Query %d: Execution failed: %v", i, err)
+				}
+
+				// Just verify we got results
+				if result.Size() == 0 && i != 3 { // Query 3 might have no results due to predicates
+					t.Errorf("Query %d: Expected results, got none", i)
+				}
+			}
+		})
 	}
 }

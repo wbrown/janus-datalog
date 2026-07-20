@@ -95,74 +95,78 @@ func TestComparisonBindingWithOrSubquery_E2E(t *testing.T) {
 		t.Logf("  Clause %d: %T - %v", i, clause, clause)
 	}
 
-	// Use executor with annotations to trace execution
-	opts := storage.DefaultPlannerOptions()
-	matcher := storage.NewBadgerMatcher(db.Store())
-	matcher.SetSchema(s)
-	exec := executor.NewExecutorWithOptions(matcher, nil, opts)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Use executor with annotations to trace execution
+			opts := mode.plannerOptions()
+			matcher := storage.NewBadgerMatcher(db.Store())
+			matcher.SetSchema(s)
+			exec := executor.NewExecutorWithOptions(matcher, nil, opts)
 
-	ctx := executor.NewContext(func(event annotations.Event) {
-		t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
-	})
+			ctx := executor.NewContext(func(event annotations.Event) {
+				t.Logf("[ANNOTATION] %s: %v", event.Name, event.Data)
+			})
 
-	result, err := exec.ExecuteWithContext(ctx, q)
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
+			result, err := exec.ExecuteWithContext(ctx, q)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
 
-	// Collect results
-	var tuples [][]interface{}
-	iter := result.Iterator()
-	for iter.Next() {
-		tuple := iter.Tuple()
-		row := make([]interface{}, len(tuple))
-		copy(row, tuple)
-		tuples = append(tuples, row)
-	}
-	iter.Close()
+			// Collect results
+			var tuples [][]interface{}
+			iter := result.Iterator()
+			for iter.Next() {
+				tuple := iter.Tuple()
+				row := make([]interface{}, len(tuple))
+				copy(row, tuple)
+				tuples = append(tuples, row)
+			}
+			iter.Close()
 
-	t.Logf("Result count: %d", len(tuples))
+			t.Logf("Result count: %d", len(tuples))
 
-	// Verify we got 3 rows
-	if len(tuples) != 3 {
-		t.Errorf("Expected 3 rows, got %d", len(tuples))
-	}
+			// Verify we got 3 rows
+			if len(tuples) != 3 {
+				t.Errorf("Expected 3 rows, got %d", len(tuples))
+			}
 
-	// Verify results
-	resultMap := make(map[string]struct {
-		taskCount int64
-		complete  bool
-	})
+			// Verify results
+			resultMap := make(map[string]struct {
+				taskCount int64
+				complete  bool
+			})
 
-	for _, tuple := range tuples {
-		name := tuple[1].(string)
-		taskCount := tuple[2].(int64)
-		complete := tuple[3].(bool)
-		resultMap[name] = struct {
-			taskCount int64
-			complete  bool
-		}{taskCount, complete}
-		t.Logf("Row: name=%s, taskCount=%d, complete=%v", name, taskCount, complete)
-	}
+			for _, tuple := range tuples {
+				name := tuple[1].(string)
+				taskCount := tuple[2].(int64)
+				complete := tuple[3].(bool)
+				resultMap[name] = struct {
+					taskCount int64
+					complete  bool
+				}{taskCount, complete}
+				t.Logf("Row: name=%s, taskCount=%d, complete=%v", name, taskCount, complete)
+			}
 
-	// Scenario One: taskCount=2 > 0, complete=true
-	if data, ok := resultMap["Scenario One"]; !ok {
-		t.Error("Missing Scenario One in results")
-	} else if data.taskCount != 2 || data.complete != true {
-		t.Errorf("Scenario One: expected taskCount=2, complete=true, got taskCount=%d, complete=%v", data.taskCount, data.complete)
-	}
+			// Scenario One: taskCount=2 > 0, complete=true
+			if data, ok := resultMap["Scenario One"]; !ok {
+				t.Error("Missing Scenario One in results")
+			} else if data.taskCount != 2 || data.complete != true {
+				t.Errorf("Scenario One: expected taskCount=2, complete=true, got taskCount=%d, complete=%v", data.taskCount, data.complete)
+			}
 
-	// Scenario Two: taskCount=1 > 0, complete=true
-	if data, ok := resultMap["Scenario Two"]; !ok {
-		t.Error("Missing Scenario Two in results")
-	} else if data.taskCount != 1 || data.complete != true {
-		t.Errorf("Scenario Two: expected taskCount=1, complete=true, got taskCount=%d, complete=%v", data.taskCount, data.complete)
-	}
+			// Scenario Two: taskCount=1 > 0, complete=true
+			if data, ok := resultMap["Scenario Two"]; !ok {
+				t.Error("Missing Scenario Two in results")
+			} else if data.taskCount != 1 || data.complete != true {
+				t.Errorf("Scenario Two: expected taskCount=1, complete=true, got taskCount=%d, complete=%v", data.taskCount, data.complete)
+			}
 
-	// Scenario Three: taskCount=0 (from ground fallback), complete=false
-	if data, ok := resultMap["Scenario Three"]; !ok {
-		t.Error("Missing Scenario Three in results")
-	} else if data.taskCount != 0 || data.complete != false {
-		t.Errorf("Scenario Three: expected taskCount=0, complete=false, got taskCount=%d, complete=%v", data.taskCount, data.complete)
+			// Scenario Three: taskCount=0 (from ground fallback), complete=false
+			if data, ok := resultMap["Scenario Three"]; !ok {
+				t.Error("Missing Scenario Three in results")
+			} else if data.taskCount != 0 || data.complete != false {
+				t.Errorf("Scenario Three: expected taskCount=0, complete=false, got taskCount=%d, complete=%v", data.taskCount, data.complete)
+			}
+		})
 	}
 }

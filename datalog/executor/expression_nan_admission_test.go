@@ -32,12 +32,17 @@ func TestGroundExpressionProducingNaNIsError(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(NewMemoryPatternMatcher(nil), nil)
-	_, err := exec.Execute(q)
-	if err == nil {
-		t.Fatal("expected an error for a ground expression producing NaN, got none")
-	}
-	if !strings.Contains(err.Error(), "NaN") {
-		t.Errorf("error should name NaN; got: %v", err)
+	matcher := NewMemoryPatternMatcher(nil)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			_, err := exec.Execute(q)
+			if err == nil {
+				t.Fatal("expected an error for a ground expression producing NaN, got none")
+			}
+			if !strings.Contains(err.Error(), "NaN") {
+				t.Errorf("error should name NaN; got: %v", err)
+			}
+		})
 	}
 }

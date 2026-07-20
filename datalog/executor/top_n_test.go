@@ -287,12 +287,17 @@ func TestOrderedLimitWithNonProjectedKeyRetainsFullSortSemantics(t *testing.T) {
 	                              :limit 2]`)
 	require.NoError(t, err)
 
-	exec := NewExecutor(NewMemoryPatternMatcher(datoms), nil)
-	result, err := exec.Execute(q)
-	require.NoError(t, err)
-	got, err := CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"A"}, {"B"}}, got)
+	matcher := NewMemoryPatternMatcher(datoms)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.Execute(q)
+			require.NoError(t, err)
+			got, err := CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"A"}, {"B"}}, got)
+		})
+	}
 }
 
 func TestOrderedLimitAfterAggregationUsesGlobalTopN(t *testing.T) {
@@ -311,10 +316,15 @@ func TestOrderedLimitAfterAggregationUsesGlobalTopN(t *testing.T) {
 	                              :limit 2]`)
 	require.NoError(t, err)
 
-	exec := NewExecutor(NewMemoryPatternMatcher(datoms), nil)
-	result, err := exec.Execute(q)
-	require.NoError(t, err)
-	got, err := CollectTuples(result, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"BOS", int64(1)}, {"LA", int64(1)}}, got)
+	matcher := NewMemoryPatternMatcher(datoms)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.Execute(q)
+			require.NoError(t, err)
+			got, err := CollectTuples(result, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"BOS", int64(1)}, {"LA", int64(1)}}, got)
+		})
+	}
 }

@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 func TestLegacyDecorrelationPreservesInterleavedClauseDependencies(t *testing.T) {
@@ -40,17 +39,21 @@ func TestLegacyDecorrelationPreservesInterleavedClauseDependencies(t *testing.T)
 
 	matcher := NewMemoryPatternMatcher(datoms)
 
-	baseline := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
-	baselineResult, err := baseline.Execute(q)
-	require.NoError(t, err)
-	baselineTuples, err := CollectTuples(baselineResult, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{dept, int64(2)}}, baselineTuples)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			baseline := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+			baselineResult, err := baseline.Execute(q)
+			require.NoError(t, err)
+			baselineTuples, err := CollectTuples(baselineResult, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{dept, int64(2)}}, baselineTuples)
 
-	withLegacyDecor := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
-	decorResult, err := withLegacyDecor.Execute(q)
-	require.NoError(t, err)
-	decorTuples, err := CollectTuples(decorResult, nil)
-	require.NoError(t, err)
-	require.Equal(t, baselineTuples, decorTuples)
+			withLegacyDecor := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
+			decorResult, err := withLegacyDecor.Execute(q)
+			require.NoError(t, err)
+			decorTuples, err := CollectTuples(decorResult, nil)
+			require.NoError(t, err)
+			require.Equal(t, baselineTuples, decorTuples)
+		})
+	}
 }

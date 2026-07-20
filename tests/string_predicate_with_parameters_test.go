@@ -57,146 +57,162 @@ func TestStringPredicateWithParameter(t *testing.T) {
 		t.Fatalf("Failed to commit transaction: %v", err)
 	}
 
-	exec := db.NewExecutor()
-
 	// Test 1: Query with constant string (baseline - should work)
 	t.Run("WithConstant", func(t *testing.T) {
-		queryStr := `[:find (count ?p)
-		 :in $ ?symbol
-		 :where
-		        [?s :symbol/ticker ?symbol]
-		        [?p :price/symbol ?s]
-		        [?p :price/time ?time]
-		        [(str ?time) ?timeStr]
-		        [(str/starts-with? ?timeStr "2025-10")]]`
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				exec := db.NewExecutorWithOptions(mode.plannerOptions())
 
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
+				queryStr := `[:find (count ?p)
+				 :in $ ?symbol
+				 :where
+				        [?s :symbol/ticker ?symbol]
+				        [?p :price/symbol ?s]
+				        [?p :price/time ?time]
+				        [(str ?time) ?timeStr]
+				        [(str/starts-with? ?timeStr "2025-10")]]`
+
+				q, err := parser.ParseQuery(queryStr)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
+
+				// Create input relation for ?symbol
+				symbolInput := executor.NewMaterializedRelation(
+					[]query.Symbol{datalog.NewSymbol("?symbol")},
+					[]executor.Tuple{{"CRWV"}},
+				)
+
+				ctx := executor.NewContext(nil)
+				result, err := exec.ExecuteWithRelations(ctx, q, []executor.Relation{symbolInput})
+				if err != nil {
+					t.Fatalf("Query with constant failed: %v", err)
+				}
+
+				if result.Size() != 1 {
+					t.Errorf("Expected 1 result, got %d", result.Size())
+				}
+
+				it := result.Iterator()
+				if it.Next() {
+					tuple := it.Tuple()
+					count := tuple[0].(int64)
+					if count != 2 {
+						t.Errorf("Expected count of 2 (October bars), got %d", count)
+					}
+				}
+				it.Close()
+			})
 		}
-
-		// Create input relation for ?symbol
-		symbolInput := executor.NewMaterializedRelation(
-			[]query.Symbol{datalog.NewSymbol("?symbol")},
-			[]executor.Tuple{{"CRWV"}},
-		)
-
-		ctx := executor.NewContext(nil)
-		result, err := exec.ExecuteWithRelations(ctx, q, []executor.Relation{symbolInput})
-		if err != nil {
-			t.Fatalf("Query with constant failed: %v", err)
-		}
-
-		if result.Size() != 1 {
-			t.Errorf("Expected 1 result, got %d", result.Size())
-		}
-
-		it := result.Iterator()
-		if it.Next() {
-			tuple := it.Tuple()
-			count := tuple[0].(int64)
-			if count != 2 {
-				t.Errorf("Expected count of 2 (October bars), got %d", count)
-			}
-		}
-		it.Close()
 	})
 
 	// Test 2: Query with input parameter for string (THIS FAILS IN BUG)
 	t.Run("WithParameter", func(t *testing.T) {
-		queryStr := `[:find (count ?p)
-		 :in $ ?symbol ?month
-		 :where
-		        [?s :symbol/ticker ?symbol]
-		        [?p :price/symbol ?s]
-		        [?p :price/time ?time]
-		        [(str ?time) ?timeStr]
-		        [(str/starts-with? ?timeStr ?month)]]`
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				exec := db.NewExecutorWithOptions(mode.plannerOptions())
 
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				queryStr := `[:find (count ?p)
+				 :in $ ?symbol ?month
+				 :where
+				        [?s :symbol/ticker ?symbol]
+				        [?p :price/symbol ?s]
+				        [?p :price/time ?time]
+				        [(str ?time) ?timeStr]
+				        [(str/starts-with? ?timeStr ?month)]]`
 
-		// Create input relations for ?symbol and ?month
-		inputs := []executor.Relation{
-			executor.NewMaterializedRelation(
-				[]query.Symbol{datalog.NewSymbol("?symbol")},
-				[]executor.Tuple{{"CRWV"}},
-			),
-			executor.NewMaterializedRelation(
-				[]query.Symbol{datalog.NewSymbol("?month")},
-				[]executor.Tuple{{"2025-11"}},
-			),
-		}
+				q, err := parser.ParseQuery(queryStr)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		ctx := executor.NewContext(nil)
-		result, err := exec.ExecuteWithRelations(ctx, q, inputs)
-		if err != nil {
-			t.Fatalf("Query with parameter failed: %v", err)
-		}
+				// Create input relations for ?symbol and ?month
+				inputs := []executor.Relation{
+					executor.NewMaterializedRelation(
+						[]query.Symbol{datalog.NewSymbol("?symbol")},
+						[]executor.Tuple{{"CRWV"}},
+					),
+					executor.NewMaterializedRelation(
+						[]query.Symbol{datalog.NewSymbol("?month")},
+						[]executor.Tuple{{"2025-11"}},
+					),
+				}
 
-		if result.Size() != 1 {
-			t.Errorf("Expected 1 result, got %d", result.Size())
-		}
+				ctx := executor.NewContext(nil)
+				result, err := exec.ExecuteWithRelations(ctx, q, inputs)
+				if err != nil {
+					t.Fatalf("Query with parameter failed: %v", err)
+				}
 
-		it := result.Iterator()
-		if it.Next() {
-			tuple := it.Tuple()
-			count := tuple[0].(int64)
-			if count != 2 {
-				t.Errorf("Expected count of 2 (November bars), got %d", count)
-			}
+				if result.Size() != 1 {
+					t.Errorf("Expected 1 result, got %d", result.Size())
+				}
+
+				it := result.Iterator()
+				if it.Next() {
+					tuple := it.Tuple()
+					count := tuple[0].(int64)
+					if count != 2 {
+						t.Errorf("Expected count of 2 (November bars), got %d", count)
+					}
+				}
+				it.Close()
+			})
 		}
-		it.Close()
 	})
 
 	// Test 3: Query with parameter for different month
 	t.Run("WithParameterDecember", func(t *testing.T) {
-		queryStr := `[:find (count ?p)
-		 :in $ ?symbol ?month
-		 :where
-		        [?s :symbol/ticker ?symbol]
-		        [?p :price/symbol ?s]
-		        [?p :price/time ?time]
-		        [(str ?time) ?timeStr]
-		        [(str/starts-with? ?timeStr ?month)]]`
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				exec := db.NewExecutorWithOptions(mode.plannerOptions())
 
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				queryStr := `[:find (count ?p)
+				 :in $ ?symbol ?month
+				 :where
+				        [?s :symbol/ticker ?symbol]
+				        [?p :price/symbol ?s]
+				        [?p :price/time ?time]
+				        [(str ?time) ?timeStr]
+				        [(str/starts-with? ?timeStr ?month)]]`
 
-		// Create input relations for ?symbol and ?month
-		inputs := []executor.Relation{
-			executor.NewMaterializedRelation(
-				[]query.Symbol{datalog.NewSymbol("?symbol")},
-				[]executor.Tuple{{"CRWV"}},
-			),
-			executor.NewMaterializedRelation(
-				[]query.Symbol{datalog.NewSymbol("?month")},
-				[]executor.Tuple{{"2025-12"}},
-			),
-		}
+				q, err := parser.ParseQuery(queryStr)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		ctx := executor.NewContext(nil)
-		result, err := exec.ExecuteWithRelations(ctx, q, inputs)
-		if err != nil {
-			t.Fatalf("Query with parameter failed: %v", err)
-		}
+				// Create input relations for ?symbol and ?month
+				inputs := []executor.Relation{
+					executor.NewMaterializedRelation(
+						[]query.Symbol{datalog.NewSymbol("?symbol")},
+						[]executor.Tuple{{"CRWV"}},
+					),
+					executor.NewMaterializedRelation(
+						[]query.Symbol{datalog.NewSymbol("?month")},
+						[]executor.Tuple{{"2025-12"}},
+					),
+				}
 
-		if result.Size() != 1 {
-			t.Errorf("Expected 1 result, got %d", result.Size())
-		}
+				ctx := executor.NewContext(nil)
+				result, err := exec.ExecuteWithRelations(ctx, q, inputs)
+				if err != nil {
+					t.Fatalf("Query with parameter failed: %v", err)
+				}
 
-		it := result.Iterator()
-		if it.Next() {
-			tuple := it.Tuple()
-			count := tuple[0].(int64)
-			if count != 1 {
-				t.Errorf("Expected count of 1 (December bars), got %d", count)
-			}
+				if result.Size() != 1 {
+					t.Errorf("Expected 1 result, got %d", result.Size())
+				}
+
+				it := result.Iterator()
+				if it.Next() {
+					tuple := it.Tuple()
+					count := tuple[0].(int64)
+					if count != 1 {
+						t.Errorf("Expected count of 1 (December bars), got %d", count)
+					}
+				}
+				it.Close()
+			})
 		}
-		it.Close()
 	})
 }

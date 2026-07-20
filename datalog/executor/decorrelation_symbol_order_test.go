@@ -6,7 +6,6 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/parser"
-	"github.com/wbrown/janus-datalog/datalog/planner"
 )
 
 // TestParallelDecorrelationSymbolOrder tests that :find clause order is preserved
@@ -100,138 +99,142 @@ func TestParallelDecorrelationSymbolOrder(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	// Test with PARALLEL decorrelation
-	t.Run("ParallelDecorrelation", func(t *testing.T) {
-		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Test with PARALLEL decorrelation
+			t.Run("ParallelDecorrelation", func(t *testing.T) {
+				matcher := NewMemoryPatternMatcher(datoms)
+				exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-		result, err := exec.Execute(parsedQuery)
-		if err != nil {
-			t.Fatalf("Query execution failed: %v", err)
-		}
+				result, err := exec.Execute(parsedQuery)
+				if err != nil {
+					t.Fatalf("Query execution failed: %v", err)
+				}
 
-		if result.Size() == 0 {
-			t.Fatal("Expected 1 result, got 0")
-		}
+				if result.Size() == 0 {
+					t.Fatal("Expected 1 result, got 0")
+				}
 
-		// Get the result tuple
-		it := result.Iterator()
-		if !it.Next() {
-			t.Fatal("No result tuple")
-		}
-		tuple := it.Tuple()
-		it.Close()
+				// Get the result tuple
+				it := result.Iterator()
+				if !it.Next() {
+					t.Fatal("No result tuple")
+				}
+				tuple := it.Tuple()
+				it.Close()
 
-		// Verify tuple order matches :find clause
-		// Expected: [?date, ?first, ?second, ?third]
-		// Which should be: [date_string, 101.50 (max high), 99.50 (min low), 1000000 (sum volume)]
+				// Verify tuple order matches :find clause
+				// Expected: [?date, ?first, ?second, ?third]
+				// Which should be: [date_string, 101.50 (max high), 99.50 (min low), 1000000 (sum volume)]
 
-		if len(tuple) != 4 {
-			t.Fatalf("Expected 4 symbols, got %d: %v", len(tuple), tuple)
-		}
+				if len(tuple) != 4 {
+					t.Fatalf("Expected 4 symbols, got %d: %v", len(tuple), tuple)
+				}
 
-		// Log what we actually got
-		t.Logf("Parallel result tuple: %v", tuple)
-		t.Logf("  [0] = %v (%T)", tuple[0], tuple[0])
-		t.Logf("  [1] = %v (%T)", tuple[1], tuple[1])
-		t.Logf("  [2] = %v (%T)", tuple[2], tuple[2])
-		t.Logf("  [3] = %v (%T)", tuple[3], tuple[3])
+				// Log what we actually got
+				t.Logf("Parallel result tuple: %v", tuple)
+				t.Logf("  [0] = %v (%T)", tuple[0], tuple[0])
+				t.Logf("  [1] = %v (%T)", tuple[1], tuple[1])
+				t.Logf("  [2] = %v (%T)", tuple[2], tuple[2])
+				t.Logf("  [3] = %v (%T)", tuple[3], tuple[3])
 
-		// Position 0: ?date (string)
-		if _, ok := tuple[0].(string); !ok {
-			t.Errorf("Position 0 (?date) should be string, got %T: %v", tuple[0], tuple[0])
-		}
+				// Position 0: ?date (string)
+				if _, ok := tuple[0].(string); !ok {
+					t.Errorf("Position 0 (?date) should be string, got %T: %v", tuple[0], tuple[0])
+				}
 
-		// Position 1: ?first (max high = 101.50)
-		if val, ok := tuple[1].(float64); !ok {
-			t.Errorf("Position 1 (?first) should be float64, got %T: %v", tuple[1], tuple[1])
-		} else if val != 101.50 {
-			t.Errorf("Position 1 (?first) should be 101.50, got %v", val)
-		}
+				// Position 1: ?first (max high = 101.50)
+				if val, ok := tuple[1].(float64); !ok {
+					t.Errorf("Position 1 (?first) should be float64, got %T: %v", tuple[1], tuple[1])
+				} else if val != 101.50 {
+					t.Errorf("Position 1 (?first) should be 101.50, got %v", val)
+				}
 
-		// Position 2: ?second (min low = 99.50)
-		if val, ok := tuple[2].(float64); !ok {
-			t.Errorf("Position 2 (?second) should be float64, got %T: %v", tuple[2], tuple[2])
-		} else if val != 99.50 {
-			t.Errorf("Position 2 (?second) should be 99.50, got %v", val)
-		}
+				// Position 2: ?second (min low = 99.50)
+				if val, ok := tuple[2].(float64); !ok {
+					t.Errorf("Position 2 (?second) should be float64, got %T: %v", tuple[2], tuple[2])
+				} else if val != 99.50 {
+					t.Errorf("Position 2 (?second) should be 99.50, got %v", val)
+				}
 
-		// Position 3: ?third (sum volume = 1000000)
-		// Note: sum() can return either int64 or float64 depending on aggregation path
-		switch val := tuple[3].(type) {
-		case int64:
-			if val != 1000000 {
-				t.Errorf("Position 3 (?third) should be 1000000, got %v", val)
-			}
-		case float64:
-			if val != 1000000.0 {
-				t.Errorf("Position 3 (?third) should be 1000000, got %v", val)
-			}
-		default:
-			t.Errorf("Position 3 (?third) should be numeric, got %T: %v", tuple[3], tuple[3])
-		}
-	})
+				// Position 3: ?third (sum volume = 1000000)
+				// Note: sum() can return either int64 or float64 depending on aggregation path
+				switch val := tuple[3].(type) {
+				case int64:
+					if val != 1000000 {
+						t.Errorf("Position 3 (?third) should be 1000000, got %v", val)
+					}
+				case float64:
+					if val != 1000000.0 {
+						t.Errorf("Position 3 (?third) should be 1000000, got %v", val)
+					}
+				default:
+					t.Errorf("Position 3 (?third) should be numeric, got %T: %v", tuple[3], tuple[3])
+				}
+			})
 
-	// Test with SEQUENTIAL decorrelation (should work)
-	t.Run("SequentialDecorrelation", func(t *testing.T) {
-		matcher := NewMemoryPatternMatcher(datoms)
-		exec := NewExecutorWithOptions(matcher, nil, planner.PlannerOptions{})
+			// Test with SEQUENTIAL decorrelation (should work)
+			t.Run("SequentialDecorrelation", func(t *testing.T) {
+				matcher := NewMemoryPatternMatcher(datoms)
+				exec := NewExecutorWithOptions(matcher, nil, mode.zeroPlannerOptions())
 
-		result, err := exec.Execute(parsedQuery)
-		if err != nil {
-			t.Fatalf("Query execution failed: %v", err)
-		}
+				result, err := exec.Execute(parsedQuery)
+				if err != nil {
+					t.Fatalf("Query execution failed: %v", err)
+				}
 
-		if result.Size() == 0 {
-			t.Fatal("Expected 1 result, got 0")
-		}
+				if result.Size() == 0 {
+					t.Fatal("Expected 1 result, got 0")
+				}
 
-		// Get the result tuple
-		it := result.Iterator()
-		if !it.Next() {
-			t.Fatal("No result tuple")
-		}
-		tuple := it.Tuple()
-		it.Close()
+				// Get the result tuple
+				it := result.Iterator()
+				if !it.Next() {
+					t.Fatal("No result tuple")
+				}
+				tuple := it.Tuple()
+				it.Close()
 
-		// Verify tuple order matches :find clause
-		if len(tuple) != 4 {
-			t.Fatalf("Expected 4 symbols, got %d: %v", len(tuple), tuple)
-		}
+				// Verify tuple order matches :find clause
+				if len(tuple) != 4 {
+					t.Fatalf("Expected 4 symbols, got %d: %v", len(tuple), tuple)
+				}
 
-		// Log what we actually got
-		t.Logf("Sequential result tuple: %v", tuple)
-		t.Logf("  [0] = %v (%T)", tuple[0], tuple[0])
-		t.Logf("  [1] = %v (%T)", tuple[1], tuple[1])
-		t.Logf("  [2] = %v (%T)", tuple[2], tuple[2])
-		t.Logf("  [3] = %v (%T)", tuple[3], tuple[3])
+				// Log what we actually got
+				t.Logf("Sequential result tuple: %v", tuple)
+				t.Logf("  [0] = %v (%T)", tuple[0], tuple[0])
+				t.Logf("  [1] = %v (%T)", tuple[1], tuple[1])
+				t.Logf("  [2] = %v (%T)", tuple[2], tuple[2])
+				t.Logf("  [3] = %v (%T)", tuple[3], tuple[3])
 
-		// Position 1: ?first (max high = 101.50)
-		if val, ok := tuple[1].(float64); !ok {
-			t.Errorf("Sequential: Position 1 (?first) should be float64, got %T: %v", tuple[1], tuple[1])
-		} else if val != 101.50 {
-			t.Errorf("Sequential: Position 1 (?first) should be 101.50, got %v", val)
-		}
+				// Position 1: ?first (max high = 101.50)
+				if val, ok := tuple[1].(float64); !ok {
+					t.Errorf("Sequential: Position 1 (?first) should be float64, got %T: %v", tuple[1], tuple[1])
+				} else if val != 101.50 {
+					t.Errorf("Sequential: Position 1 (?first) should be 101.50, got %v", val)
+				}
 
-		// Position 2: ?second (min low = 99.50)
-		if val, ok := tuple[2].(float64); !ok {
-			t.Errorf("Sequential: Position 2 (?second) should be float64, got %T: %v", tuple[2], tuple[2])
-		} else if val != 99.50 {
-			t.Errorf("Sequential: Position 2 (?second) should be 99.50, got %v", val)
-		}
+				// Position 2: ?second (min low = 99.50)
+				if val, ok := tuple[2].(float64); !ok {
+					t.Errorf("Sequential: Position 2 (?second) should be float64, got %T: %v", tuple[2], tuple[2])
+				} else if val != 99.50 {
+					t.Errorf("Sequential: Position 2 (?second) should be 99.50, got %v", val)
+				}
 
-		// Position 3: ?third (sum volume = 1000000)
-		switch val := tuple[3].(type) {
-		case int64:
-			if val != 1000000 {
-				t.Errorf("Sequential: Position 3 (?third) should be 1000000, got %v", val)
-			}
-		case float64:
-			if val != 1000000.0 {
-				t.Errorf("Sequential: Position 3 (?third) should be 1000000, got %v", val)
-			}
-		default:
-			t.Errorf("Sequential: Position 3 (?third) should be numeric, got %T: %v", tuple[3], tuple[3])
-		}
-	})
+				// Position 3: ?third (sum volume = 1000000)
+				switch val := tuple[3].(type) {
+				case int64:
+					if val != 1000000 {
+						t.Errorf("Sequential: Position 3 (?third) should be 1000000, got %v", val)
+					}
+				case float64:
+					if val != 1000000.0 {
+						t.Errorf("Sequential: Position 3 (?third) should be 1000000, got %v", val)
+					}
+				default:
+					t.Errorf("Sequential: Position 3 (?third) should be numeric, got %T: %v", tuple[3], tuple[3])
+				}
+			})
+		})
+	}
 }

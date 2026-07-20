@@ -10,6 +10,7 @@ import (
 
 	"github.com/wbrown/janus-datalog/datalog"
 	"github.com/wbrown/janus-datalog/datalog/executor"
+	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/storage"
 )
 
@@ -150,21 +151,31 @@ func TestCLI_ImportFlag(t *testing.T) {
 		t.Error("Database was not created")
 	}
 
-	// Open and verify data
-	db, err := storage.NewDatabase(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open imported database: %v", err)
-	}
-	defer db.Close()
+	// Open and verify data. The import itself doesn't plan a query, so this
+	// is the only part of the test that reaches the algebra axis; the CLI's
+	// own -import path doesn't accept planner options, so re-query directly
+	// with each mode's executor instead of db.Query's fixed default.
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, err := storage.NewDatabase(dbPath)
+			if err != nil {
+				t.Fatalf("Failed to open imported database: %v", err)
+			}
+			defer db.Close()
 
-	// Query to verify data exists
-	result, err := executor.CollectTuples(db.Query(`[:find ?v :where [_ :test/value ?v]]`))
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
+			q, err := parser.ParseQuery(`[:find ?v :where [_ :test/value ?v]]`)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			result, err := executor.CollectTuples(db.NewExecutorWithOptions(mode.plannerOptions()).Execute(q))
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
 
-	if len(result) != 1 {
-		t.Errorf("Expected 1 result, got %d", len(result))
+			if len(result) != 1 {
+				t.Errorf("Expected 1 result, got %d", len(result))
+			}
+		})
 	}
 }
 
@@ -186,32 +197,41 @@ func TestCLI_ExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("Import failed: %v\n%s", err, out)
 	}
 
-	// Query both databases and compare
-	db1, err := storage.NewDatabase(db1Path)
-	if err != nil {
-		t.Fatalf("Failed to open db1: %v", err)
-	}
-	defer db1.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			// Query both databases and compare
+			db1, err := storage.NewDatabase(db1Path)
+			if err != nil {
+				t.Fatalf("Failed to open db1: %v", err)
+			}
+			defer db1.Close()
 
-	db2, err := storage.NewDatabase(db2Path)
-	if err != nil {
-		t.Fatalf("Failed to open db2: %v", err)
-	}
-	defer db2.Close()
+			db2, err := storage.NewDatabase(db2Path)
+			if err != nil {
+				t.Fatalf("Failed to open db2: %v", err)
+			}
+			defer db2.Close()
 
-	// Query names from both
-	result1, err := executor.CollectTuples(db1.Query(`[:find ?name :where [_ :person/name ?name]]`))
-	if err != nil {
-		t.Fatalf("Query db1 failed: %v", err)
-	}
+			q, err := parser.ParseQuery(`[:find ?name :where [_ :person/name ?name]]`)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
 
-	result2, err := executor.CollectTuples(db2.Query(`[:find ?name :where [_ :person/name ?name]]`))
-	if err != nil {
-		t.Fatalf("Query db2 failed: %v", err)
-	}
+			// Query names from both
+			result1, err := executor.CollectTuples(db1.NewExecutorWithOptions(mode.plannerOptions()).Execute(q))
+			if err != nil {
+				t.Fatalf("Query db1 failed: %v", err)
+			}
 
-	if len(result1) != len(result2) {
-		t.Errorf("Result sizes differ: db1=%d, db2=%d", len(result1), len(result2))
+			result2, err := executor.CollectTuples(db2.NewExecutorWithOptions(mode.plannerOptions()).Execute(q))
+			if err != nil {
+				t.Fatalf("Query db2 failed: %v", err)
+			}
+
+			if len(result1) != len(result2) {
+				t.Errorf("Result sizes differ: db1=%d, db2=%d", len(result1), len(result2))
+			}
+		})
 	}
 }
 
@@ -409,17 +429,26 @@ func TestCLI_ImportBinFlag(t *testing.T) {
 		t.Errorf("Expected import success message, got: %s", out)
 	}
 
-	db, err := storage.NewDatabase(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to open imported database: %v", err)
-	}
-	defer db.Close()
-	result, err := executor.CollectTuples(db.Query(`[:find ?v :where [_ :test/value ?v]]`))
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
-	if len(result) != 1 {
-		t.Errorf("Expected 1 result, got %d", len(result))
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, err := storage.NewDatabase(dbPath)
+			if err != nil {
+				t.Fatalf("Failed to open imported database: %v", err)
+			}
+			defer db.Close()
+
+			q, err := parser.ParseQuery(`[:find ?v :where [_ :test/value ?v]]`)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			result, err := executor.CollectTuples(db.NewExecutorWithOptions(mode.plannerOptions()).Execute(q))
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
+			if len(result) != 1 {
+				t.Errorf("Expected 1 result, got %d", len(result))
+			}
+		})
 	}
 }
 
@@ -606,17 +635,25 @@ func TestCLI_BareInvocationDoesNotWrite(t *testing.T) {
 	}
 
 	// The database must still be empty.
-	db, err = storage.NewDatabase(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to reopen database: %v", err)
-	}
-	defer db.Close()
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db, err := storage.NewDatabase(dbPath)
+			if err != nil {
+				t.Fatalf("Failed to reopen database: %v", err)
+			}
+			defer db.Close()
 
-	results, err := executor.CollectTuples(db.Query(`[:find ?e :where [?e _ _]]`))
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("Bare invocation wrote %d entities into an empty database", len(results))
+			q, err := parser.ParseQuery(`[:find ?e :where [?e _ _]]`)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			results, err := executor.CollectTuples(db.NewExecutorWithOptions(mode.plannerOptions()).Execute(q))
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
+			if len(results) != 0 {
+				t.Errorf("Bare invocation wrote %d entities into an empty database", len(results))
+			}
+		})
 	}
 }

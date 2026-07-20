@@ -35,101 +35,106 @@ func TestRelationInputIteration(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
-	ctx := NewContext(nil)
 
-	t.Run("direct query with RelationInput", func(t *testing.T) {
-		// Query that uses RelationInput directly
-		// Should iterate over each tuple and find max age for each
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			ctx := NewContext(nil)
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+			t.Run("direct query with RelationInput", func(t *testing.T) {
+				// Query that uses RelationInput directly
+				// Should iterate over each tuple and find max age for each
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		// Create input relation with name-year pairs
-		inputRel := NewMaterializedRelation(
-			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
-			[]Tuple{
-				{"Alice", int64(2020)},
-				{"Alice", int64(2021)},
-				{"Bob", int64(2020)},
-				{"Bob", int64(2021)},
-			},
-		)
-
-		// Execute with the relation input
-		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
-
-		if result.Size() != 4 {
-			t.Errorf("Expected 4 results, got %d", result.Size())
-			t.Logf("Results:\n%s", result.Table())
-		}
-
-		// Verify we got the right values
-		expectedResults := map[string]int64{
-			"Alice-2020": 25,
-			"Alice-2021": 26,
-			"Bob-2020":   30,
-			"Bob-2021":   31,
-		}
-
-		it := result.Iterator()
-		for it.Next() {
-			tuple := it.Tuple()
-			if len(tuple) != 3 {
-				t.Errorf("Expected 3 symbols, got %d", len(tuple))
-				continue
-			}
-			name := tuple[0].(string)
-			year := tuple[1].(int64)
-			maxAge := tuple[2].(int64)
-
-			key := fmt.Sprintf("%s-%d", name, year)
-			if expected, ok := expectedResults[key]; ok {
-				if maxAge != expected {
-					t.Errorf("%s: expected max age %d, got %d", key, expected, maxAge)
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
 				}
-			} else {
-				t.Errorf("Unexpected result: %s", key)
-			}
-		}
-		it.Close()
-	})
 
-	t.Run("subquery with RelationInput", func(t *testing.T) {
-		// Test that subqueries with RelationInput work correctly too
-		q := `[:find ?name ?max-age
-		          :where [?p :name ?name]
-		                 [(q [:find (max ?age)
-		                      :in $ [[?n] ...]
-		                      :where [?e :name ?n]
-		                             [?e :age ?age]]
-		                     $ ?name) [[?max-age]]]]`
+				// Create input relation with name-year pairs
+				inputRel := NewMaterializedRelation(
+					[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
+					[]Tuple{
+						{"Alice", int64(2020)},
+						{"Alice", int64(2021)},
+						{"Bob", int64(2020)},
+						{"Bob", int64(2021)},
+					},
+				)
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				// Execute with the relation input
+				result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
 
-		result, err := exec.ExecuteWithContext(ctx, parsed)
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
+				if result.Size() != 4 {
+					t.Errorf("Expected 4 results, got %d", result.Size())
+					t.Logf("Results:\n%s", result.Table())
+				}
 
-		if result.Size() != 2 { // Alice and Bob
-			t.Errorf("Expected 2 results, got %d", result.Size())
-			t.Logf("Results:\n%s", result.Table())
-		}
-	})
+				// Verify we got the right values
+				expectedResults := map[string]int64{
+					"Alice-2020": 25,
+					"Alice-2021": 26,
+					"Bob-2020":   30,
+					"Bob-2021":   31,
+				}
+
+				it := result.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					if len(tuple) != 3 {
+						t.Errorf("Expected 3 symbols, got %d", len(tuple))
+						continue
+					}
+					name := tuple[0].(string)
+					year := tuple[1].(int64)
+					maxAge := tuple[2].(int64)
+
+					key := fmt.Sprintf("%s-%d", name, year)
+					if expected, ok := expectedResults[key]; ok {
+						if maxAge != expected {
+							t.Errorf("%s: expected max age %d, got %d", key, expected, maxAge)
+						}
+					} else {
+						t.Errorf("Unexpected result: %s", key)
+					}
+				}
+				it.Close()
+			})
+
+			t.Run("subquery with RelationInput", func(t *testing.T) {
+				// Test that subqueries with RelationInput work correctly too
+				q := `[:find ?name ?max-age
+				          :where [?p :name ?name]
+				                 [(q [:find (max ?age)
+				                      :in $ [[?n] ...]
+				                      :where [?e :name ?n]
+				                             [?e :age ?age]]
+				                     $ ?name) [[?max-age]]]]`
+
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
+
+				result, err := exec.ExecuteWithContext(ctx, parsed)
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
+
+				if result.Size() != 2 { // Alice and Bob
+					t.Errorf("Expected 2 results, got %d", result.Size())
+					t.Logf("Results:\n%s", result.Table())
+				}
+			})
+		})
+	}
 }
 
 func TestRelationInputIterationParallel(t *testing.T) {
@@ -158,168 +163,173 @@ func TestRelationInputIterationParallel(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
-	exec.EnableParallelSubqueries(4) // Use 4 workers for testing
-	ctx := NewContext(nil)
 
-	t.Run("parallel query with RelationInput", func(t *testing.T) {
-		// Query that uses RelationInput directly
-		// Should iterate over each tuple and find max age for each
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			exec.EnableParallelSubqueries(4) // Use 4 workers for testing
+			ctx := NewContext(nil)
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+			t.Run("parallel query with RelationInput", func(t *testing.T) {
+				// Query that uses RelationInput directly
+				// Should iterate over each tuple and find max age for each
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		// Create input relation with name-year pairs
-		inputRel := NewMaterializedRelation(
-			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
-			[]Tuple{
-				{"Alice", int64(2020)},
-				{"Alice", int64(2021)},
-				{"Bob", int64(2020)},
-				{"Bob", int64(2021)},
-			},
-		)
-
-		// Execute with the relation input
-		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
-
-		if result.Size() != 4 {
-			t.Errorf("Expected 4 results, got %d", result.Size())
-			t.Logf("Results:\n%s", result.Table())
-		}
-
-		// Verify we got the right values
-		expectedResults := map[string]int64{
-			"Alice-2020": 25,
-			"Alice-2021": 26,
-			"Bob-2020":   30,
-			"Bob-2021":   31,
-		}
-
-		it := result.Iterator()
-		for it.Next() {
-			tuple := it.Tuple()
-			if len(tuple) != 3 {
-				t.Errorf("Expected 3 symbols, got %d", len(tuple))
-				continue
-			}
-			name := tuple[0].(string)
-			year := tuple[1].(int64)
-			maxAge := tuple[2].(int64)
-
-			key := fmt.Sprintf("%s-%d", name, year)
-			if expected, ok := expectedResults[key]; ok {
-				if maxAge != expected {
-					t.Errorf("%s: expected max age %d, got %d", key, expected, maxAge)
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
 				}
-			} else {
-				t.Errorf("Unexpected result: %s", key)
-			}
-		}
-		it.Close()
-	})
 
-	t.Run("parallel vs sequential correctness", func(t *testing.T) {
-		// Test that parallel execution produces same results as sequential
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+				// Create input relation with name-year pairs
+				inputRel := NewMaterializedRelation(
+					[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
+					[]Tuple{
+						{"Alice", int64(2020)},
+						{"Alice", int64(2021)},
+						{"Bob", int64(2020)},
+						{"Bob", int64(2021)},
+					},
+				)
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				// Execute with the relation input
+				result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
 
-		// Create input relation with name-year pairs
-		inputRel := NewMaterializedRelation(
-			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
-			[]Tuple{
-				{"Alice", int64(2020)},
-				{"Alice", int64(2021)},
-				{"Bob", int64(2020)},
-				{"Bob", int64(2021)},
-			},
-		)
+				if result.Size() != 4 {
+					t.Errorf("Expected 4 results, got %d", result.Size())
+					t.Logf("Results:\n%s", result.Table())
+				}
 
-		// Execute sequentially
-		seqExec := NewExecutor(matcher, nil)
-		seqExec.DisableParallelSubqueries()
-		seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
-		if err != nil {
-			t.Fatalf("Sequential query failed: %v", err)
-		}
+				// Verify we got the right values
+				expectedResults := map[string]int64{
+					"Alice-2020": 25,
+					"Alice-2021": 26,
+					"Bob-2020":   30,
+					"Bob-2021":   31,
+				}
 
-		// Execute in parallel
-		parExec := NewExecutor(matcher, nil)
-		parExec.EnableParallelSubqueries(4)
-		parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
-		if err != nil {
-			t.Fatalf("Parallel query failed: %v", err)
-		}
+				it := result.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					if len(tuple) != 3 {
+						t.Errorf("Expected 3 symbols, got %d", len(tuple))
+						continue
+					}
+					name := tuple[0].(string)
+					year := tuple[1].(int64)
+					maxAge := tuple[2].(int64)
 
-		// Compare sizes
-		if seqResult.Size() != parResult.Size() {
-			t.Errorf("Size mismatch: sequential=%d, parallel=%d", seqResult.Size(), parResult.Size())
-			t.Logf("Sequential:\n%s", seqResult.Table())
-			t.Logf("Parallel:\n%s", parResult.Table())
-		}
+					key := fmt.Sprintf("%s-%d", name, year)
+					if expected, ok := expectedResults[key]; ok {
+						if maxAge != expected {
+							t.Errorf("%s: expected max age %d, got %d", key, expected, maxAge)
+						}
+					} else {
+						t.Errorf("Unexpected result: %s", key)
+					}
+				}
+				it.Close()
+			})
 
-		// Compare results (collect into maps for order-independent comparison)
-		seqMap := make(map[string]int64)
-		it := seqResult.Iterator()
-		for it.Next() {
-			tuple := it.Tuple()
-			name := tuple[0].(string)
-			year := tuple[1].(int64)
-			maxAge := tuple[2].(int64)
-			key := fmt.Sprintf("%s-%d", name, year)
-			seqMap[key] = maxAge
-		}
-		it.Close()
+			t.Run("parallel vs sequential correctness", func(t *testing.T) {
+				// Test that parallel execution produces same results as sequential
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		parMap := make(map[string]int64)
-		it = parResult.Iterator()
-		for it.Next() {
-			tuple := it.Tuple()
-			name := tuple[0].(string)
-			year := tuple[1].(int64)
-			maxAge := tuple[2].(int64)
-			key := fmt.Sprintf("%s-%d", name, year)
-			parMap[key] = maxAge
-		}
-		it.Close()
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		// Verify maps are identical
-		if len(seqMap) != len(parMap) {
-			t.Errorf("Result count mismatch: sequential=%d, parallel=%d", len(seqMap), len(parMap))
-		}
+				// Create input relation with name-year pairs
+				inputRel := NewMaterializedRelation(
+					[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
+					[]Tuple{
+						{"Alice", int64(2020)},
+						{"Alice", int64(2021)},
+						{"Bob", int64(2020)},
+						{"Bob", int64(2021)},
+					},
+				)
 
-		for key, seqVal := range seqMap {
-			if parVal, ok := parMap[key]; !ok {
-				t.Errorf("Key %s missing in parallel results", key)
-			} else if seqVal != parVal {
-				t.Errorf("Value mismatch for %s: sequential=%d, parallel=%d", key, seqVal, parVal)
-			}
-		}
+				// Execute sequentially
+				seqExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				seqExec.DisableParallelSubqueries()
+				seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
+				if err != nil {
+					t.Fatalf("Sequential query failed: %v", err)
+				}
 
-		for key := range parMap {
-			if _, ok := seqMap[key]; !ok {
-				t.Errorf("Key %s in parallel results but not in sequential", key)
-			}
-		}
-	})
+				// Execute in parallel
+				parExec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				parExec.EnableParallelSubqueries(4)
+				parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
+				if err != nil {
+					t.Fatalf("Parallel query failed: %v", err)
+				}
+
+				// Compare sizes
+				if seqResult.Size() != parResult.Size() {
+					t.Errorf("Size mismatch: sequential=%d, parallel=%d", seqResult.Size(), parResult.Size())
+					t.Logf("Sequential:\n%s", seqResult.Table())
+					t.Logf("Parallel:\n%s", parResult.Table())
+				}
+
+				// Compare results (collect into maps for order-independent comparison)
+				seqMap := make(map[string]int64)
+				it := seqResult.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					name := tuple[0].(string)
+					year := tuple[1].(int64)
+					maxAge := tuple[2].(int64)
+					key := fmt.Sprintf("%s-%d", name, year)
+					seqMap[key] = maxAge
+				}
+				it.Close()
+
+				parMap := make(map[string]int64)
+				it = parResult.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					name := tuple[0].(string)
+					year := tuple[1].(int64)
+					maxAge := tuple[2].(int64)
+					key := fmt.Sprintf("%s-%d", name, year)
+					parMap[key] = maxAge
+				}
+				it.Close()
+
+				// Verify maps are identical
+				if len(seqMap) != len(parMap) {
+					t.Errorf("Result count mismatch: sequential=%d, parallel=%d", len(seqMap), len(parMap))
+				}
+
+				for key, seqVal := range seqMap {
+					if parVal, ok := parMap[key]; !ok {
+						t.Errorf("Key %s missing in parallel results", key)
+					} else if seqVal != parVal {
+						t.Errorf("Value mismatch for %s: sequential=%d, parallel=%d", key, seqVal, parVal)
+					}
+				}
+
+				for key := range parMap {
+					if _, ok := seqMap[key]; !ok {
+						t.Errorf("Key %s in parallel results but not in sequential", key)
+					}
+				}
+			})
+		})
+	}
 }
 
 func TestRelationInputParallelEdgeCases(t *testing.T) {
@@ -336,167 +346,171 @@ func TestRelationInputParallelEdgeCases(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(datoms)
 	ctx := NewContext(nil)
 
-	t.Run("empty input relation", func(t *testing.T) {
-		exec := NewExecutor(matcher, nil)
-		exec.EnableParallelSubqueries(4)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Run("empty input relation", func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec.EnableParallelSubqueries(4)
 
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		// Empty input relation
-		emptyRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")}, []Tuple{})
+				// Empty input relation
+				emptyRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")}, []Tuple{})
 
-		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{emptyRel})
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
+				result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{emptyRel})
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
 
-		if result.Size() != 0 {
-			t.Errorf("Expected 0 results, got %d", result.Size())
-		}
-	})
+				if result.Size() != 0 {
+					t.Errorf("Expected 0 results, got %d", result.Size())
+				}
+			})
 
-	t.Run("single tuple", func(t *testing.T) {
-		exec := NewExecutor(matcher, nil)
-		exec.EnableParallelSubqueries(4)
+			t.Run("single tuple", func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec.EnableParallelSubqueries(4)
 
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		// Single tuple
-		singleRel := NewMaterializedRelation(
-			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
-			[]Tuple{{"Alice", int64(2020)}},
-		)
+				// Single tuple
+				singleRel := NewMaterializedRelation(
+					[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
+					[]Tuple{{"Alice", int64(2020)}},
+				)
 
-		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{singleRel})
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
+				result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{singleRel})
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
 
-		if result.Size() != 1 {
-			t.Errorf("Expected 1 result, got %d", result.Size())
-		}
-	})
+				if result.Size() != 1 {
+					t.Errorf("Expected 1 result, got %d", result.Size())
+				}
+			})
 
-	t.Run("no matching results", func(t *testing.T) {
-		exec := NewExecutor(matcher, nil)
-		exec.EnableParallelSubqueries(4)
+			t.Run("no matching results", func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec.EnableParallelSubqueries(4)
 
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		// Non-matching tuples
-		noMatchRel := NewMaterializedRelation(
-			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
-			[]Tuple{
-				{"Bob", int64(2020)},
-				{"Charlie", int64(2021)},
-			},
-		)
+				// Non-matching tuples
+				noMatchRel := NewMaterializedRelation(
+					[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
+					[]Tuple{
+						{"Bob", int64(2020)},
+						{"Charlie", int64(2021)},
+					},
+				)
 
-		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{noMatchRel})
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
+				result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{noMatchRel})
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
 
-		if result.Size() != 0 {
-			t.Errorf("Expected 0 results, got %d", result.Size())
-		}
-	})
+				if result.Size() != 0 {
+					t.Errorf("Expected 0 results, got %d", result.Size())
+				}
+			})
 
-	t.Run("mixed matching and non-matching", func(t *testing.T) {
-		exec := NewExecutor(matcher, nil)
-		exec.EnableParallelSubqueries(4)
+			t.Run("mixed matching and non-matching", func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec.EnableParallelSubqueries(4)
 
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		// Mix of matching and non-matching
-		mixedRel := NewMaterializedRelation(
-			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
-			[]Tuple{
-				{"Alice", int64(2020)}, // matches
-				{"Bob", int64(2020)},   // no match
-				{"Alice", int64(2021)}, // no match
-			},
-		)
+				// Mix of matching and non-matching
+				mixedRel := NewMaterializedRelation(
+					[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
+					[]Tuple{
+						{"Alice", int64(2020)}, // matches
+						{"Bob", int64(2020)},   // no match
+						{"Alice", int64(2021)}, // no match
+					},
+				)
 
-		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{mixedRel})
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
+				result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{mixedRel})
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
 
-		if result.Size() != 1 {
-			t.Errorf("Expected 1 result, got %d", result.Size())
-			t.Logf("Results:\n%s", result.Table())
-		}
-	})
+				if result.Size() != 1 {
+					t.Errorf("Expected 1 result, got %d", result.Size())
+					t.Logf("Results:\n%s", result.Table())
+				}
+			})
 
-	t.Run("high worker count with small input", func(t *testing.T) {
-		exec := NewExecutor(matcher, nil)
-		exec.EnableParallelSubqueries(100) // Way more workers than tuples
+			t.Run("high worker count with small input", func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec.EnableParallelSubqueries(100) // Way more workers than tuples
 
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		// Only 1 tuple with 100 workers (tests that excess workers don't cause issues)
-		smallRel := NewMaterializedRelation(
-			[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
-			[]Tuple{
-				{"Alice", int64(2020)},
-			},
-		)
+				// Only 1 tuple with 100 workers (tests that excess workers don't cause issues)
+				smallRel := NewMaterializedRelation(
+					[]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")},
+					[]Tuple{
+						{"Alice", int64(2020)},
+					},
+				)
 
-		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{smallRel})
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
+				result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{smallRel})
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
 
-		if result.Size() != 1 {
-			t.Errorf("Expected 1 result, got %d", result.Size())
-		}
-	})
+				if result.Size() != 1 {
+					t.Errorf("Expected 1 result, got %d", result.Size())
+				}
+			})
+		})
+	}
 }
 
 func TestRelationInputParallelStress(t *testing.T) {
@@ -529,102 +543,106 @@ func TestRelationInputParallelStress(t *testing.T) {
 	matcher := NewMemoryPatternMatcher(datoms)
 	ctx := NewContext(nil)
 
-	t.Run("stress test with many iterations", func(t *testing.T) {
-		exec := NewExecutor(matcher, nil)
-		exec.EnableParallelSubqueries(16) // High worker count
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Run("stress test with many iterations", func(t *testing.T) {
+				exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				exec.EnableParallelSubqueries(16) // High worker count
 
-		q := `[:find ?n ?y ?m (max ?age)
-		          :in $ [[?n ?y ?m] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :month ?m]
-		                 [?e :age ?age]]`
+				q := `[:find ?n ?y ?m (max ?age)
+				          :in $ [[?n ?y ?m] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :month ?m]
+				                 [?e :age ?age]]`
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
-
-		// Create input relation with all 300 tuples
-		var inputTuples []Tuple
-		for _, name := range names {
-			for year := 2020; year <= 2029; year++ {
-				for month := 1; month <= 6; month++ {
-					inputTuples = append(inputTuples, Tuple{name, int64(year), int64(month)})
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
 				}
-			}
-		}
-		inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
-		// Execute and verify
-		result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
-
-		if result.Size() != 300 {
-			t.Errorf("Expected 300 results, got %d", result.Size())
-		}
-
-		// Verify results are correct by spot-checking
-		foundAlice2020Jan := false
-		it := result.Iterator()
-		for it.Next() {
-			tuple := it.Tuple()
-			if len(tuple) == 4 {
-				name := tuple[0].(string)
-				year := tuple[1].(int64)
-				month := tuple[2].(int64)
-				if name == "Alice" && year == 2020 && month == 1 {
-					foundAlice2020Jan = true
+				// Create input relation with all 300 tuples
+				var inputTuples []Tuple
+				for _, name := range names {
+					for year := 2020; year <= 2029; year++ {
+						for month := 1; month <= 6; month++ {
+							inputTuples = append(inputTuples, Tuple{name, int64(year), int64(month)})
+						}
+					}
 				}
-			}
-		}
-		it.Close()
+				inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
-		if !foundAlice2020Jan {
-			t.Error("Expected to find Alice 2020 January in results")
-		}
-	})
+				// Execute and verify
+				result, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
+				if err != nil {
+					t.Fatalf("Query failed: %v", err)
+				}
 
-	t.Run("concurrent sequential vs parallel comparison", func(t *testing.T) {
-		// Run both implementations multiple times concurrently to verify thread safety
-		q := `[:find ?n ?y (max ?age)
-		          :in $ [[?n ?y] ...]
-		          :where [?e :name ?n]
-		                 [?e :year ?y]
-		                 [?e :age ?age]]`
+				if result.Size() != 300 {
+					t.Errorf("Expected 300 results, got %d", result.Size())
+				}
 
-		parsed, err := parser.ParseQuery(q)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				// Verify results are correct by spot-checking
+				foundAlice2020Jan := false
+				it := result.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					if len(tuple) == 4 {
+						name := tuple[0].(string)
+						year := tuple[1].(int64)
+						month := tuple[2].(int64)
+						if name == "Alice" && year == 2020 && month == 1 {
+							foundAlice2020Jan = true
+						}
+					}
+				}
+				it.Close()
 
-		// Smaller input for faster concurrent runs
-		var inputTuples []Tuple
-		for _, name := range names {
-			for year := 2020; year <= 2024; year++ {
-				inputTuples = append(inputTuples, Tuple{name, int64(year)})
-			}
-		}
-		inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")}, inputTuples)
+				if !foundAlice2020Jan {
+					t.Error("Expected to find Alice 2020 January in results")
+				}
+			})
 
-		// Run 10 queries concurrently with parallel execution
-		errCh := make(chan error, 10)
-		for i := 0; i < 10; i++ {
-			go func() {
-				exec := NewExecutor(matcher, nil)
-				exec.EnableParallelSubqueries(8)
-				_, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
-				errCh <- err
-			}()
-		}
+			t.Run("concurrent sequential vs parallel comparison", func(t *testing.T) {
+				// Run both implementations multiple times concurrently to verify thread safety
+				q := `[:find ?n ?y (max ?age)
+				          :in $ [[?n ?y] ...]
+				          :where [?e :name ?n]
+				                 [?e :year ?y]
+				                 [?e :age ?age]]`
 
-		// Collect results
-		for i := 0; i < 10; i++ {
-			if err := <-errCh; err != nil {
-				t.Errorf("Concurrent execution %d failed: %v", i, err)
-			}
-		}
-	})
+				parsed, err := parser.ParseQuery(q)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
+
+				// Smaller input for faster concurrent runs
+				var inputTuples []Tuple
+				for _, name := range names {
+					for year := 2020; year <= 2024; year++ {
+						inputTuples = append(inputTuples, Tuple{name, int64(year)})
+					}
+				}
+				inputRel := NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y")}, inputTuples)
+
+				// Run 10 queries concurrently with parallel execution
+				errCh := make(chan error, 10)
+				for i := 0; i < 10; i++ {
+					go func() {
+						exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+						exec.EnableParallelSubqueries(8)
+						_, err := exec.ExecuteWithRelations(ctx, parsed, []Relation{inputRel})
+						errCh <- err
+					}()
+				}
+
+				// Collect results
+				for i := 0; i < 10; i++ {
+					if err := <-errCh; err != nil {
+						t.Errorf("Concurrent execution %d failed: %v", i, err)
+					}
+				}
+			})
+		})
+	}
 }

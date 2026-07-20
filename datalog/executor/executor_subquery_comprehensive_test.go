@@ -22,11 +22,9 @@ func TestSubqueryWithNoResults(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	// Subquery should return no results for max price
 	queryStr := `[:find ?symbol ?max-price
-	             :where 
+	             :where
 	             [?s :symbol/ticker ?symbol]
 	             [(q [:find (max ?price)
 	                  :in $ ?sym
@@ -39,21 +37,27 @@ func TestSubqueryWithNoResults(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Query execution failed: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// EXPECTED: Empty result (not an error)
-	// When subquery returns no results, the pattern fails to match
-	var results []Tuple
-	it := result.Iterator()
-	for it.Next() {
-		results = append(results, it.Tuple())
-	}
-	it.Close()
-	if len(results) != 0 {
-		t.Errorf("Expected 0 results (empty subquery = failed pattern), got %d", len(results))
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Query execution failed: %v", err)
+			}
+
+			// EXPECTED: Empty result (not an error)
+			// When subquery returns no results, the pattern fails to match
+			var results []Tuple
+			it := result.Iterator()
+			for it.Next() {
+				results = append(results, it.Tuple())
+			}
+			it.Close()
+			if len(results) != 0 {
+				t.Errorf("Expected 0 results (empty subquery = failed pattern), got %d", len(results))
+			}
+		})
 	}
 }
 
@@ -82,11 +86,9 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	// Subquery returns all prices for a symbol (relation binding)
 	queryStr := `[:find ?symbol ?time ?price
-	             :where 
+	             :where
 	             [?s :symbol/ticker ?symbol]
 	             [(q [:find ?t ?v
 	                  :in $ ?sym
@@ -100,33 +102,39 @@ func TestSubqueryWithRelationBinding(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// Should get 3 results (3 prices for AAPL)
-	var tuples []Tuple
-	it := result.Iterator()
-	for it.Next() {
-		t := it.Tuple()
-		cp := make(Tuple, len(t))
-		copy(cp, t)
-		tuples = append(tuples, cp)
-	}
-	it.Close()
-	if len(tuples) != 3 {
-		t.Errorf("Expected 3 results, got %d", len(tuples))
-		for i, tp := range tuples {
-			t.Logf("Result %d: %v", i, tp)
-		}
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	// Check that all results have AAPL as symbol
-	for i, tuple := range tuples {
-		if symbol := tuple[0].(string); symbol != "AAPL" {
-			t.Errorf("Result %d: expected symbol AAPL, got %s", i, symbol)
-		}
+			// Should get 3 results (3 prices for AAPL)
+			var tuples []Tuple
+			it := result.Iterator()
+			for it.Next() {
+				t := it.Tuple()
+				cp := make(Tuple, len(t))
+				copy(cp, t)
+				tuples = append(tuples, cp)
+			}
+			it.Close()
+			if len(tuples) != 3 {
+				t.Errorf("Expected 3 results, got %d", len(tuples))
+				for i, tp := range tuples {
+					t.Logf("Result %d: %v", i, tp)
+				}
+			}
+
+			// Check that all results have AAPL as symbol
+			for i, tuple := range tuples {
+				if symbol := tuple[0].(string); symbol != "AAPL" {
+					t.Errorf("Result %d: expected symbol AAPL, got %s", i, symbol)
+				}
+			}
+		})
 	}
 }
 
@@ -155,11 +163,9 @@ func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	// Find average salary per department using subquery
 	queryStr := `[:find ?dept-name ?avg-salary
-	             :where 
+	             :where
 	             [?d :department/name ?dept-name]
 	             [(q [:find (avg ?salary)
 	                  :in $ ?dept
@@ -172,44 +178,50 @@ func TestSubqueryWithMultipleOuterRows(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// Should get 2 results (one per department)
-	var tuples []Tuple
-	it := result.Iterator()
-	for it.Next() {
-		t := it.Tuple()
-		cp := make(Tuple, len(t))
-		copy(cp, t)
-		tuples = append(tuples, cp)
-	}
-	it.Close()
-	if len(tuples) != 2 {
-		t.Errorf("Expected 2 results, got %d", len(tuples))
-		for i, tp := range tuples {
-			t.Logf("Result %d: %v", i, tp)
-		}
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	// Check results
-	resultMap := make(map[string]float64)
-	for _, tuple := range tuples {
-		dept := tuple[0].(string)
-		avg := tuple[1].(float64)
-		resultMap[dept] = avg
-	}
+			// Should get 2 results (one per department)
+			var tuples []Tuple
+			it := result.Iterator()
+			for it.Next() {
+				t := it.Tuple()
+				cp := make(Tuple, len(t))
+				copy(cp, t)
+				tuples = append(tuples, cp)
+			}
+			it.Close()
+			if len(tuples) != 2 {
+				t.Errorf("Expected 2 results, got %d", len(tuples))
+				for i, tp := range tuples {
+					t.Logf("Result %d: %v", i, tp)
+				}
+			}
 
-	// Engineering average: (100000 + 120000) / 2 = 110000
-	if avg, ok := resultMap["Engineering"]; !ok || avg != 110000.0 {
-		t.Errorf("Expected Engineering avg salary 110000, got %v", avg)
-	}
+			// Check results
+			resultMap := make(map[string]float64)
+			for _, tuple := range tuples {
+				dept := tuple[0].(string)
+				avg := tuple[1].(float64)
+				resultMap[dept] = avg
+			}
 
-	// Sales average: (80000 + 90000 + 85000) / 3 = 85000
-	if avg, ok := resultMap["Sales"]; !ok || avg != 85000.0 {
-		t.Errorf("Expected Sales avg salary 85000, got %v", avg)
+			// Engineering average: (100000 + 120000) / 2 = 110000
+			if avg, ok := resultMap["Engineering"]; !ok || avg != 110000.0 {
+				t.Errorf("Expected Engineering avg salary 110000, got %v", avg)
+			}
+
+			// Sales average: (80000 + 90000 + 85000) / 3 = 85000
+			if avg, ok := resultMap["Sales"]; !ok || avg != 85000.0 {
+				t.Errorf("Expected Sales avg salary 85000, got %v", avg)
+			}
+		})
 	}
 }
 
@@ -249,12 +261,10 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	// Find sales for specific category and date using subquery with two inputs
 	targetDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	queryStr := fmt.Sprintf(`[:find ?category ?total
-	             :where 
+	             :where
 	             [?p :product/category ?category]
 	             [(q [:find (sum ?amount)
 	                  :in $ ?cat ?date
@@ -269,28 +279,34 @@ func TestSubqueryWithTwoInputs(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// Check results
-	resultMap := make(map[string]float64)
-	for i := 0; i < result.Size(); i++ {
-		tuple := result.Get(i)
-		category := tuple[0].(string)
-		total := tuple[1].(float64)
-		resultMap[category] = total
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	// Electronics on 2025-01-01: sale:1 (100) + sale:3 (200) = 300
-	if total, ok := resultMap["Electronics"]; !ok || total != 300.0 {
-		t.Errorf("Expected Electronics total 300, got %v", total)
-	}
+			// Check results
+			resultMap := make(map[string]float64)
+			for i := 0; i < result.Size(); i++ {
+				tuple := result.Get(i)
+				category := tuple[0].(string)
+				total := tuple[1].(float64)
+				resultMap[category] = total
+			}
 
-	// Books on 2025-01-01: sale:4 (50) = 50
-	if total, ok := resultMap["Books"]; !ok || total != 50.0 {
-		t.Errorf("Expected Books total 50, got %v", total)
+			// Electronics on 2025-01-01: sale:1 (100) + sale:3 (200) = 300
+			if total, ok := resultMap["Electronics"]; !ok || total != 300.0 {
+				t.Errorf("Expected Electronics total 300, got %v", total)
+			}
+
+			// Books on 2025-01-01: sale:4 (50) = 50
+			if total, ok := resultMap["Books"]; !ok || total != 50.0 {
+				t.Errorf("Expected Books total 50, got %v", total)
+			}
+		})
 	}
 }
 
@@ -316,12 +332,10 @@ func TestSubqueryWithNoInput(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	// Find products cheaper than max configured price
 	// NOTE: Changed order - subquery must come before its result is used
 	queryStr := `[:find ?name ?price
-	             :where 
+	             :where
 	             [(q [:find ?max
 	                  :in $
 	                  :where [?c :config/key "max_price"]
@@ -336,27 +350,33 @@ func TestSubqueryWithNoInput(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// Only Phone (800) should be under max_price (1000)
-	if result.Size() != 1 {
-		t.Errorf("Expected 1 result, got %d", result.Size())
-		for i := 0; i < result.Size(); i++ {
-			t.Logf("Result %d: %v", i, result.Get(i))
-		}
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	if result.Size() > 0 {
-		tuple := result.Get(0)
-		if name := tuple[0].(string); name != "Phone" {
-			t.Errorf("Expected Phone, got %s", name)
-		}
-		if price := tuple[1].(float64); price != 800.0 {
-			t.Errorf("Expected price 800, got %f", price)
-		}
+			// Only Phone (800) should be under max_price (1000)
+			if result.Size() != 1 {
+				t.Errorf("Expected 1 result, got %d", result.Size())
+				for i := 0; i < result.Size(); i++ {
+					t.Logf("Result %d: %v", i, result.Get(i))
+				}
+			}
+
+			if result.Size() > 0 {
+				tuple := result.Get(0)
+				if name := tuple[0].(string); name != "Phone" {
+					t.Errorf("Expected Phone, got %s", name)
+				}
+				if price := tuple[1].(float64); price != 800.0 {
+					t.Errorf("Expected price 800, got %f", price)
+				}
+			}
+		})
 	}
 }
 
@@ -378,11 +398,9 @@ func TestSubqueryInFilter(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	// Find employees earning more than average
 	queryStr := `[:find ?name ?salary
-	             :where 
+	             :where
 	             [(q [:find (avg ?s)
 	                  :in $
 	                  :where [?e :employee/salary ?s]]
@@ -396,24 +414,30 @@ func TestSubqueryInFilter(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// Average is 90000, so Alice (90000) is not included, but Charlie (95000) is
-	if result.Size() != 1 {
-		t.Errorf("Expected 1 result, got %d", result.Size())
-		for i := 0; i < result.Size(); i++ {
-			t.Logf("Result %d: %v", i, result.Get(i))
-		}
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	if result.Size() > 0 {
-		tuple := result.Get(0)
-		if name := tuple[0].(string); name != "Charlie" {
-			t.Errorf("Expected Charlie, got %s", name)
-		}
+			// Average is 90000, so Alice (90000) is not included, but Charlie (95000) is
+			if result.Size() != 1 {
+				t.Errorf("Expected 1 result, got %d", result.Size())
+				for i := 0; i < result.Size(); i++ {
+					t.Logf("Result %d: %v", i, result.Get(i))
+				}
+			}
+
+			if result.Size() > 0 {
+				tuple := result.Get(0)
+				if name := tuple[0].(string); name != "Charlie" {
+					t.Errorf("Expected Charlie, got %s", name)
+				}
+			}
+		})
 	}
 }
 
@@ -466,17 +490,22 @@ func TestSubqueryErrorHandling(t *testing.T) {
 				},
 			}
 
-			exec := NewExecutor(matcher, nil)
 			q, err := parser.ParseQuery(tt.queryStr)
 			if err != nil {
 				t.Fatalf("Failed to parse query: %v", err)
 			}
 
-			_, err = exec.Execute(q)
-			if err == nil {
-				t.Errorf("Expected error containing %q, got no error", tt.wantErr)
-			} else if !containsString(err.Error(), tt.wantErr) {
-				t.Errorf("Expected error containing %q, got %q", tt.wantErr, err.Error())
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+					_, err := exec.Execute(q)
+					if err == nil {
+						t.Errorf("Expected error containing %q, got no error", tt.wantErr)
+					} else if !containsString(err.Error(), tt.wantErr) {
+						t.Errorf("Expected error containing %q, got %q", tt.wantErr, err.Error())
+					}
+				})
 			}
 		})
 	}
@@ -495,10 +524,8 @@ func TestSubqueryWithEmptyOuterQuery(t *testing.T) {
 		},
 	}
 
-	exec := NewExecutor(matcher, nil)
-
 	queryStr := `[:find ?symbol ?max-price
-	             :where 
+	             :where
 	             [?s :symbol/ticker ?symbol]
 	             [(q [:find (max ?price)
 	                  :in $ ?sym
@@ -511,21 +538,27 @@ func TestSubqueryWithEmptyOuterQuery(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	// Should get 0 results since outer query produces nothing
-	// Use iterator pattern instead of Size() for streaming relations
-	count := 0
-	it := result.Iterator()
-	for it.Next() {
-		count++
-	}
-	it.Close()
-	if count != 0 {
-		t.Errorf("Expected 0 results, got %d", count)
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
+
+			// Should get 0 results since outer query produces nothing
+			// Use iterator pattern instead of Size() for streaming relations
+			count := 0
+			it := result.Iterator()
+			for it.Next() {
+				count++
+			}
+			it.Close()
+			if count != 0 {
+				t.Errorf("Expected 0 results, got %d", count)
+			}
+		})
 	}
 }
 
@@ -553,11 +586,10 @@ func TestSubqueryPerformance(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
 	// Count products per category using subquery
 	queryStr := `[:find ?cat-name ?count
-	             :where 
+	             :where
 	             [?c :category/name ?cat-name]
 	             [(q [:find (count ?p)
 	                  :in $ ?category
@@ -569,42 +601,48 @@ func TestSubqueryPerformance(t *testing.T) {
 		t.Fatalf("Failed to parse query: %v", err)
 	}
 
-	start := time.Now()
-	result, err := exec.Execute(q)
-	duration := time.Since(start)
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
 
-	if err != nil {
-		t.Fatalf("Failed to execute query: %v", err)
-	}
+			start := time.Now()
+			result, err := exec.Execute(q)
+			duration := time.Since(start)
 
-	// Should get 10 results (one per category)
-	var perfTuples []Tuple
-	perfIt := result.Iterator()
-	for perfIt.Next() {
-		t := perfIt.Tuple()
-		cp := make(Tuple, len(t))
-		copy(cp, t)
-		perfTuples = append(perfTuples, cp)
-	}
-	perfIt.Close()
-	if len(perfTuples) != 10 {
-		t.Errorf("Expected 10 results, got %d", len(perfTuples))
-	}
+			if err != nil {
+				t.Fatalf("Failed to execute query: %v", err)
+			}
 
-	// Check that each category has count of 100
-	for _, tuple := range perfTuples {
-		count := tuple[1].(int64)
-		if count != 100 {
-			t.Errorf("Expected count 100, got %d for %v", count, tuple[0])
-		}
-	}
+			// Should get 10 results (one per category)
+			var perfTuples []Tuple
+			perfIt := result.Iterator()
+			for perfIt.Next() {
+				t := perfIt.Tuple()
+				cp := make(Tuple, len(t))
+				copy(cp, t)
+				perfTuples = append(perfTuples, cp)
+			}
+			perfIt.Close()
+			if len(perfTuples) != 10 {
+				t.Errorf("Expected 10 results, got %d", len(perfTuples))
+			}
 
-	t.Logf("Query with 10 subqueries on 1000 products took %v", duration)
+			// Check that each category has count of 100
+			for _, tuple := range perfTuples {
+				count := tuple[1].(int64)
+				if count != 100 {
+					t.Errorf("Expected count 100, got %d for %v", count, tuple[0])
+				}
+			}
 
-	// This is a basic performance check - with deduplication,
-	// we should execute 10 subqueries, not more
-	if duration > 500*time.Millisecond {
-		t.Logf("Warning: Query took longer than expected: %v", duration)
+			t.Logf("Query with 10 subqueries on 1000 products took %v", duration)
+
+			// This is a basic performance check - with deduplication,
+			// we should execute 10 subqueries, not more
+			if duration > 500*time.Millisecond {
+				t.Logf("Warning: Query took longer than expected: %v", duration)
+			}
+		})
 	}
 }
 

@@ -71,6 +71,10 @@ wrong value. The related fix
 `BUG_SCALAR_PLUS_RELATION_INPUT_DROPS_OTHER_INPUTS` (resolved) shows the
 positional-forwarding shape that multiple subquery inputs must also satisfy.
 
+## Related (2026-07-20)
+
+The optimizer mode matrix migration surfaced the algebra-path side of this family: subqueries whose second `:in` input is a *variable* work on the baseline path but fail loudly under the algebra optimizer (`cannot resolve right term` — see the second-symptom section of `BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md`, reproducers `TestSubqueryDatomicCompatible/MultipleInputsWithDatabase` and `TestSubqueryMultiValueFindClauseBug`). This entry's silent-empty applies to call-site *constants* on the baseline path. Distinct defects, same input-forwarding territory; root-cause work on either should read both.
+
 ## Status of the Skip
 
 Per the project rule against using `t.Skip` to hide unimplemented features, the

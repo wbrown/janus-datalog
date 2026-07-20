@@ -86,13 +86,16 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 
 	// Create memory matcher with our test data
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	// Test 1: Single subquery (just get the open price for each day)
-	t.Run("SingleSubquery", func(t *testing.T) {
-		queryStr := `
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// Test 1: Single subquery (just get the open price for each day)
+			t.Run("SingleSubquery", func(t *testing.T) {
+				queryStr := `
 		[:find ?day ?open
-		 :where 
+		 :where
 		 [?s :symbol/ticker "TEST"]
 		 [?morning :price/symbol ?s]
 		 [?morning :price/minute-of-day 570]
@@ -100,7 +103,7 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 		 [(day ?t) ?day]
 		 [(q [:find (min ?o)
 		      :in $ ?sym ?d
-		      :where 
+		      :where
 		      [?b :price/symbol ?sym]
 		      [?b :price/time ?time]
 		      [(day ?time) ?bd]
@@ -108,55 +111,55 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 		      [?b :price/open ?o]]
 		     $ ?s ?day) [[?open]]]]`
 
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				q, err := parser.ParseQuery(queryStr)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		start := time.Now()
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("Failed to execute query: %v", err)
-		}
-		duration := time.Since(start)
+				start := time.Now()
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("Failed to execute query: %v", err)
+				}
+				duration := time.Since(start)
 
-		t.Logf("Single subquery returned %d tuples in %v", result.Size(), duration)
-	})
+				t.Logf("Single subquery returned %d tuples in %v", result.Size(), duration)
+			})
 
-	// Test 2: Multiple subqueries (open, high, low for each day)
-	t.Run("MultipleSubqueries", func(t *testing.T) {
-		queryStr := `
+			// Test 2: Multiple subqueries (open, high, low for each day)
+			t.Run("MultipleSubqueries", func(t *testing.T) {
+				queryStr := `
 		[:find ?day ?open ?high ?low
-		 :where 
+		 :where
 		 [?s :symbol/ticker "TEST"]
 		 [?morning :price/symbol ?s]
 		 [?morning :price/minute-of-day 570]
 		 [?morning :price/time ?t]
 		 [(day ?t) ?day]
-		 
+
 		 [(q [:find (min ?o)
 		      :in $ ?sym ?d
-		      :where 
+		      :where
 		      [?b :price/symbol ?sym]
 		      [?b :price/time ?time]
 		      [(day ?time) ?bd]
 		      [(= ?bd ?d)]
 		      [?b :price/open ?o]]
 		     $ ?s ?day) [[?open]]]
-		     
+
 		 [(q [:find (max ?h)
 		      :in $ ?sym ?d
-		      :where 
+		      :where
 		      [?b :price/symbol ?sym]
 		      [?b :price/time ?time]
 		      [(day ?time) ?bd]
 		      [(= ?bd ?d)]
 		      [?b :price/high ?h]]
 		     $ ?s ?day) [[?high]]]
-		     
+
 		 [(q [:find (min ?l)
 		      :in $ ?sym ?d
-		      :where 
+		      :where
 		      [?b :price/symbol ?sym]
 		      [?b :price/time ?time]
 		      [(day ?time) ?bd]
@@ -164,21 +167,23 @@ func TestOHLCSubqueryPerformance(t *testing.T) {
 		      [?b :price/low ?l]]
 		     $ ?s ?day) [[?low]]]]`
 
-		q, err := parser.ParseQuery(queryStr)
-		if err != nil {
-			t.Fatalf("Failed to parse query: %v", err)
-		}
+				q, err := parser.ParseQuery(queryStr)
+				if err != nil {
+					t.Fatalf("Failed to parse query: %v", err)
+				}
 
-		start := time.Now()
-		result, err := exec.Execute(q)
-		if err != nil {
-			t.Fatalf("Failed to execute query: %v", err)
-		}
-		duration := time.Since(start)
+				start := time.Now()
+				result, err := exec.Execute(q)
+				if err != nil {
+					t.Fatalf("Failed to execute query: %v", err)
+				}
+				duration := time.Since(start)
 
-		t.Logf("Multiple subqueries returned %d tuples in %v", result.Size(), duration)
-		t.Logf("This demonstrates the O(n×m) pattern: %d days × 3 aggregations", result.Size())
-	})
+				t.Logf("Multiple subqueries returned %d tuples in %v", result.Size(), duration)
+				t.Logf("This demonstrates the O(n×m) pattern: %d days × 3 aggregations", result.Size())
+			})
+		})
+	}
 }
 
 // BenchmarkOHLCSubqueries measures the performance difference between

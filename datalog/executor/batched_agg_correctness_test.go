@@ -39,10 +39,13 @@ func TestBatchedAggregationCorrectness(t *testing.T) {
 	}
 
 	matcher := NewMemoryPatternMatcher(datoms)
-	exec := NewExecutor(matcher, nil)
 
-	// Query with RelationInput (uses batched path)
-	queryStr := `
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+
+			// Query with RelationInput (uses batched path)
+			queryStr := `
 		[:find ?ticker ?max-price
 		 :where
 		 [?s :symbol/ticker ?ticker]
@@ -53,31 +56,33 @@ func TestBatchedAggregationCorrectness(t *testing.T) {
 		      [?b :price/value ?p]]
 		     $ ?s) [[?max-price]]]]`
 
-	q, err := parser.ParseQuery(queryStr)
-	if err != nil {
-		t.Fatalf("Failed to parse query: %v", err)
-	}
+			q, err := parser.ParseQuery(queryStr)
+			if err != nil {
+				t.Fatalf("Failed to parse query: %v", err)
+			}
 
-	result, err := exec.Execute(q)
-	if err != nil {
-		t.Fatalf("Query failed: %v", err)
-	}
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
 
-	// Build map of results
-	results := make(map[string]float64)
-	for i := 0; i < result.Size(); i++ {
-		tuple := result.Get(i)
-		ticker := tuple[0].(string)
-		maxPrice := tuple[1].(float64)
-		results[ticker] = maxPrice
-		t.Logf("Result: %s max = %.0f", ticker, maxPrice)
-	}
+			// Build map of results
+			results := make(map[string]float64)
+			for i := 0; i < result.Size(); i++ {
+				tuple := result.Get(i)
+				ticker := tuple[0].(string)
+				maxPrice := tuple[1].(float64)
+				results[ticker] = maxPrice
+				t.Logf("Result: %s max = %.0f", ticker, maxPrice)
+			}
 
-	// Verify per-group aggregation
-	if results["A"] != 30.0 {
-		t.Errorf("Expected A max = 30, got %.0f (batched aggregation computing over all groups?)", results["A"])
-	}
-	if results["B"] != 200.0 {
-		t.Errorf("Expected B max = 200, got %.0f", results["B"])
+			// Verify per-group aggregation
+			if results["A"] != 30.0 {
+				t.Errorf("Expected A max = 30, got %.0f (batched aggregation computing over all groups?)", results["A"])
+			}
+			if results["B"] != 200.0 {
+				t.Errorf("Expected B max = 200, got %.0f", results["B"])
+			}
+		})
 	}
 }

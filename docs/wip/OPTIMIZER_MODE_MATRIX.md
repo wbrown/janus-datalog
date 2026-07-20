@@ -1,6 +1,17 @@
 # Optimizer Mode Matrix — every query test runs both paths
 
-**Status**: Ruled 2026-07-19; `datalog/storage` migrated 2026-07-20 (~294 tests, committed `44edd06`). Remaining packages per the migration plan below. This document is the plan of record.
+**Status**: Ruled 2026-07-19; migration COMPLETE 2026-07-20. The five planned packages — `datalog/storage` (~294 tests, committed `44edd06`), `tests/` (40), `datalog/db` (23), `datalog/qb` (33), `datalog/executor` (117 across three batches) — plus three the plan's list missed, found by a repository-wide sweep for query-executing tests: `datalog/reflect` (32), `cmd/datalog` (8), `datalog/wasmtest` (1). Every other package is exempt (planner/algebra pin plan structure by nature) or executes no queries. One structural exemption class: six `cmd/datalog` tests whose queries run inside a subprocess of the built CLI binary, which has no flag to select the optimizer mode — reaching that axis requires new CLI surface, an owner decision. This document is the plan of record; the outcome sections below record what each phase surfaced.
+
+## Phase 2–5 outcome (2026-07-20)
+
+`tests/`, `db`, and `qb` migrated divergence-free (the qb and tests builder/AST test bulk is no-axis by the plan's own carve-out; one `tests/` case crosses the cache-mode axis for the honest product). The `executor` phase was the high-yield one: bare `NewExecutor`'s default profile leaves `EnableAlgebraOptimizer` false, so that package's ~120 query-planning tests had never run the algebra path. Putting them on the matrix surfaced:
+
+- **Seven more reproducers of `docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md`** (five OHLC-shaped grouped-decorrelation tests, plus a second symptom — `cannot resolve right term` — for subqueries with an extra scalar `:in` input consumed only by predicates).
+- **`docs/bugs/BUG_ALGEBRA_NOT_REJECTS_SINGLE_BRANCH_ORJOIN.md`** (new): the bridge's NOT-inner analysis rejects a legal single-branch or-join as an invalid union.
+- **`docs/bugs/BUG_ALGEBRA_ORDEFAULT_FIRST_CLAUSE_REJECTED.md`** (new): the bridge's or-fallback lowering refuses the uncorrelated global-fallback shape (`or-default` opening the `:where`).
+- **`docs/bugs/BUG_TEMPORAL_HANDLES_DROP_PLANNER_OPTIONS.md`** (new, found twice independently in the `db` and `tests/` phases): `AsOf()`/`History()` construct child handles without the parent's `plannerOptions`, silently reverting temporal queries to defaults and blinding the matrix's `algebra_off` legs on those tests.
+
+Ten test functions stand red on their `algebra_on` legs in-tree as regression guards for the three open algebra-path bugs; every other migrated test passes both modes. Where both modes reject an invalid query but phrase the error differently (planning-time vs execution-time), each mode pins its own message per the `correlated_not_join_test.go` convention. The executor axis lives in `datalog/executor/optimizer_modes_test.go` with two base profiles (NewExecutor's default via `defaultPlannerOptions()` — extracted from the constructor so the axis cannot drift — and the bare zero-value profile), preserved per test rather than normalized.
 
 ## Storage migration outcome (2026-07-20)
 

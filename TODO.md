@@ -92,8 +92,13 @@ These items have been completed and are preserved for historical context:
 ## Medium Term (1-2 Months)
 
 ### Query Engine Enhancements
-1. **Distinct Aggregation**: `(count-distinct ?x)` and a `distinct` modifier on existing aggregates
-2. **Subquery `:limit` (per-invocation)**: top-level `:limit` is done; inside a subquery it is currently a **parse error** (would otherwise be silently ignored). Supporting it requires per-invocation finalization, disabling batching when a cap is present, and guarding decorrelation. Forward-compatible tests already assert correctness once the parse rejection is removed (`datalog/executor/limit_edge_test.go`). Full design: [docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md](docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md).
+
+**Principle (owner ruling 2026-07-20): almost everything that works in a query should work in a subquery.** Exceptions require special handling at every layer that touches subqueries, and special handling breeds divergence; the carve-outs below are tolerated only until the uniform forms land.
+
+1. **N-ary aggregates `(min n ?x)` / `(max n ?x)` (Datomic parity) — priority**: return up to n smallest/largest values as a collection. Closes the top-N-per-group expressiveness hole: `(max ?x)` covers only top-1, and the only current encoding of top-N is quadratic rank-by-counting that silently drops each group's rank-0 row unless rescued with `(or-default ... [(ground 0) ?rank])`, and whose multi-input predicate-only shape collides with `docs/bugs/BUG_DECORRELATION_PREDICATE_ONLY_INPUT_SYMBOLS.md` on the algebra path. Composes with existing machinery — collections are in the value domain, `enumerate` unpacks them per row — and groups exactly like the existing aggregates, so the decorrelation rewrite carries over unchanged.
+2. **Distinct Aggregation**: `(count-distinct ?x)` and a `distinct` modifier on existing aggregates
+3. **Subquery `:limit`/`:order-by` (per-invocation) — second to the N-ary aggregates for the top-N use case**: top-level `:limit` is done; inside a subquery it is currently a **parse error** (would otherwise be silently ignored). Supporting it requires per-invocation finalization, disabling batching when a cap is present, and guarding decorrelation (per-group limit is non-monotone; decorrelation must skip limited subqueries or learn grouped top-N). Forward-compatible tests already assert correctness once the parse rejection is removed (`datalog/executor/limit_edge_test.go`). Full design: [docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md](docs/bugs/resolved/BUG_QUERY_LIMIT_CLAUSE_UNSUPPORTED.md).
+4. **Subquery result collection binding `(q ...) [?coll ...]`**: the input side of `[?x ...]` is complete (see Completed above), but the subquery *result* binding arm errors `"collection binding not yet implemented"` (`applyBindingForm`, `datalog/executor/subquery.go`) — the same query/subquery uniformity principle applies.
 
 ### Performance Optimizations
 1. **Parallel Pattern Execution**: For independent patterns (complex dependency analysis)

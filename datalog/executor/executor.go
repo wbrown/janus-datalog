@@ -19,9 +19,11 @@ type Executor struct {
 	maxSubqueryWorkers       int
 }
 
-// NewExecutor creates a new query executor with default options
-func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
-	defaultOpts := planner.PlannerOptions{
+// defaultPlannerOptions is the planner profile NewExecutor constructs with —
+// the single definition, consumed by NewExecutor and by the test suite's
+// optimizer mode axis so the two can never drift.
+func defaultPlannerOptions() planner.PlannerOptions {
+	return planner.PlannerOptions{
 		EnableTrueStreaming:        true,
 		EnableSymmetricHashJoin:    false,
 		EnableParallelSubqueries:   true,
@@ -30,7 +32,11 @@ func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
 		EnableStreamingAggregation: true,
 		EnableAttributeFetchFusion: true,
 	}
-	return NewExecutorWithOptions(matcher, resolver, defaultOpts)
+}
+
+// NewExecutor creates a new query executor with default options
+func NewExecutor(matcher PatternMatcher, resolver EntityResolver) *Executor {
+	return NewExecutorWithOptions(matcher, resolver, defaultPlannerOptions())
 }
 
 // NewExecutorWithOptions creates a new query executor with custom planner options

@@ -82,130 +82,144 @@ func TestParallelSubqueryWithBadgerDB(t *testing.T) {
 	inputRel := executor.NewMaterializedRelation([]query.Symbol{datalog.NewSymbol("?n"), datalog.NewSymbol("?y"), datalog.NewSymbol("?m")}, inputTuples)
 
 	t.Run("sequential with BadgerDB", func(t *testing.T) {
-		seqExec := executor.NewExecutor(matcher, nil)
-		seqExec.DisableParallelSubqueries()
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				seqExec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				seqExec.DisableParallelSubqueries()
 
-		start := time.Now()
-		seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
-		seqDuration := time.Since(start)
+				start := time.Now()
+				seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+				seqDuration := time.Since(start)
 
-		if err != nil {
-			t.Fatalf("Sequential query failed: %v", err)
+				if err != nil {
+					t.Fatalf("Sequential query failed: %v", err)
+				}
+
+				if seqResult.Size() != 500 {
+					t.Errorf("Expected 500 results, got %d", seqResult.Size())
+				}
+
+				t.Logf("Sequential (BadgerDB): %v (%d results)", seqDuration, seqResult.Size())
+			})
 		}
-
-		if seqResult.Size() != 500 {
-			t.Errorf("Expected 500 results, got %d", seqResult.Size())
-		}
-
-		t.Logf("Sequential (BadgerDB): %v (%d results)", seqDuration, seqResult.Size())
 	})
 
 	t.Run("parallel with BadgerDB", func(t *testing.T) {
-		parExec := executor.NewExecutor(matcher, nil)
-		parExec.EnableParallelSubqueries(8)
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				parExec := executor.NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				parExec.EnableParallelSubqueries(8)
 
-		start := time.Now()
-		parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
-		parDuration := time.Since(start)
+				start := time.Now()
+				parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+				parDuration := time.Since(start)
 
-		if err != nil {
-			t.Fatalf("Parallel query failed: %v", err)
+				if err != nil {
+					t.Fatalf("Parallel query failed: %v", err)
+				}
+
+				if parResult.Size() != 500 {
+					t.Errorf("Expected 500 results, got %d", parResult.Size())
+				}
+
+				t.Logf("Parallel (BadgerDB, 8 workers): %v (%d results)", parDuration, parResult.Size())
+			})
 		}
-
-		if parResult.Size() != 500 {
-			t.Errorf("Expected 500 results, got %d", parResult.Size())
-		}
-
-		t.Logf("Parallel (BadgerDB, 8 workers): %v (%d results)", parDuration, parResult.Size())
 	})
 
 	t.Run("correctness and performance: sequential vs parallel", func(t *testing.T) {
-		// Sequential execution
-		seqExec := executor.NewExecutor(matcher, nil)
-		seqExec.DisableParallelSubqueries()
-		seqStart := time.Now()
-		seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
-		seqDuration := time.Since(seqStart)
-		if err != nil {
-			t.Fatalf("Sequential query failed: %v", err)
-		}
+		for _, mode := range optimizerModes {
+			t.Run(mode.name, func(t *testing.T) {
+				popts := mode.plannerOptions()
 
-		// Parallel execution
-		parExec := executor.NewExecutor(matcher, nil)
-		parExec.EnableParallelSubqueries(8)
-		parStart := time.Now()
-		parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
-		parDuration := time.Since(parStart)
-		if err != nil {
-			t.Fatalf("Parallel query failed: %v", err)
-		}
+				// Sequential execution
+				seqExec := executor.NewExecutorWithOptions(matcher, nil, popts)
+				seqExec.DisableParallelSubqueries()
+				seqStart := time.Now()
+				seqResult, err := seqExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+				seqDuration := time.Since(seqStart)
+				if err != nil {
+					t.Fatalf("Sequential query failed: %v", err)
+				}
 
-		// Compare sizes
-		if seqResult.Size() != parResult.Size() {
-			t.Errorf("Size mismatch: sequential=%d, parallel=%d", seqResult.Size(), parResult.Size())
-		}
+				// Parallel execution
+				parExec := executor.NewExecutorWithOptions(matcher, nil, popts)
+				parExec.EnableParallelSubqueries(8)
+				parStart := time.Now()
+				parResult, err := parExec.ExecuteWithRelations(ctx, parsed, []executor.Relation{inputRel})
+				parDuration := time.Since(parStart)
+				if err != nil {
+					t.Fatalf("Parallel query failed: %v", err)
+				}
 
-		// Compare results (collect into maps for order-independent comparison)
-		seqMap := make(map[string]int64)
-		it := seqResult.Iterator()
-		for it.Next() {
-			tuple := it.Tuple()
-			if len(tuple) == 4 {
-				name := tuple[0].(string)
-				year := tuple[1].(int64)
-				month := tuple[2].(int64)
-				maxAge := tuple[3].(int64)
-				key := fmt.Sprintf("%s-%d-%d", name, year, month)
-				seqMap[key] = maxAge
-			}
-		}
-		it.Close()
+				// Compare sizes
+				if seqResult.Size() != parResult.Size() {
+					t.Errorf("Size mismatch: sequential=%d, parallel=%d", seqResult.Size(), parResult.Size())
+				}
 
-		parMap := make(map[string]int64)
-		it = parResult.Iterator()
-		for it.Next() {
-			tuple := it.Tuple()
-			if len(tuple) == 4 {
-				name := tuple[0].(string)
-				year := tuple[1].(int64)
-				month := tuple[2].(int64)
-				maxAge := tuple[3].(int64)
-				key := fmt.Sprintf("%s-%d-%d", name, year, month)
-				parMap[key] = maxAge
-			}
-		}
-		it.Close()
+				// Compare results (collect into maps for order-independent comparison)
+				seqMap := make(map[string]int64)
+				it := seqResult.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					if len(tuple) == 4 {
+						name := tuple[0].(string)
+						year := tuple[1].(int64)
+						month := tuple[2].(int64)
+						maxAge := tuple[3].(int64)
+						key := fmt.Sprintf("%s-%d-%d", name, year, month)
+						seqMap[key] = maxAge
+					}
+				}
+				it.Close()
 
-		// Verify maps are identical
-		if len(seqMap) != len(parMap) {
-			t.Errorf("Result count mismatch: sequential=%d, parallel=%d", len(seqMap), len(parMap))
-		}
+				parMap := make(map[string]int64)
+				it = parResult.Iterator()
+				for it.Next() {
+					tuple := it.Tuple()
+					if len(tuple) == 4 {
+						name := tuple[0].(string)
+						year := tuple[1].(int64)
+						month := tuple[2].(int64)
+						maxAge := tuple[3].(int64)
+						key := fmt.Sprintf("%s-%d-%d", name, year, month)
+						parMap[key] = maxAge
+					}
+				}
+				it.Close()
 
-		for key, seqVal := range seqMap {
-			if parVal, ok := parMap[key]; !ok {
-				t.Errorf("Key %s missing in parallel results", key)
-			} else if seqVal != parVal {
-				t.Errorf("Value mismatch for %s: sequential=%d, parallel=%d", key, seqVal, parVal)
-			}
-		}
+				// Verify maps are identical
+				if len(seqMap) != len(parMap) {
+					t.Errorf("Result count mismatch: sequential=%d, parallel=%d", len(seqMap), len(parMap))
+				}
 
-		for key := range parMap {
-			if _, ok := seqMap[key]; !ok {
-				t.Errorf("Key %s in parallel results but not in sequential", key)
-			}
-		}
+				for key, seqVal := range seqMap {
+					if parVal, ok := parMap[key]; !ok {
+						t.Errorf("Key %s missing in parallel results", key)
+					} else if seqVal != parVal {
+						t.Errorf("Value mismatch for %s: sequential=%d, parallel=%d", key, seqVal, parVal)
+					}
+				}
 
-		// Report performance
-		speedup := float64(seqDuration) / float64(parDuration)
-		t.Logf("BadgerDB Performance (500 tuples):")
-		t.Logf("  Sequential: %v", seqDuration)
-		t.Logf("  Parallel (8 workers): %v", parDuration)
-		t.Logf("  Speedup: %.2fx", speedup)
+				for key := range parMap {
+					if _, ok := seqMap[key]; !ok {
+						t.Errorf("Key %s in parallel results but not in sequential", key)
+					}
+				}
 
-		if speedup < 2.0 {
-			t.Logf("WARNING: Speedup %.2fx is less than expected (target: >2.5x)", speedup)
-		} else {
-			t.Logf("SUCCESS: Parallel execution with BadgerDB achieved %.2fx speedup", speedup)
+				// Report performance
+				speedup := float64(seqDuration) / float64(parDuration)
+				t.Logf("BadgerDB Performance (500 tuples):")
+				t.Logf("  Sequential: %v", seqDuration)
+				t.Logf("  Parallel (8 workers): %v", parDuration)
+				t.Logf("  Speedup: %.2fx", speedup)
+
+				if speedup < 2.0 {
+					t.Logf("WARNING: Speedup %.2fx is less than expected (target: >2.5x)", speedup)
+				} else {
+					t.Logf("SUCCESS: Parallel execution with BadgerDB achieved %.2fx speedup", speedup)
+				}
+			})
 		}
 	})
 }
