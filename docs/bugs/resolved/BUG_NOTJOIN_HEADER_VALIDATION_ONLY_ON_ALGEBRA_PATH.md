@@ -1,6 +1,10 @@
 # BUG: not-join header-completeness validation exists only on the algebra path
 
-**Status**: Open (2026-07-19). Found by the optimizer mode matrix migration's first fixture conversion (`docs/wip/OPTIMIZER_MODE_MATRIX.md`) — the exact divergence class the regime exists to catch. No wrong data on either path; the divergence is where and how clearly the language rule is enforced.
+**Status**: RESOLVED (2026-07-20). Hoisted to the shared user boundary rather than the planner specifically: `NotJoinClause.Validate()` (`datalog/query/clause_scope.go`) enforces header completeness — every variable the body consumes without binding, including predicate-only inputs, must be declared — using the same body-provided subtraction as `OrDefaultJoinClause.Validate`. Enforced via `query.ValidateStaticClauseShapes` at `parser.ParseQuery`, `qb.Build`, and `executor.ExecuteWithRelations` (pre-planning), so both planner modes reject identically with one message; the algebra bridge's own analysis remains as a backstop. The mode-conditional pin in `datalog/storage/correlated_not_join_test.go` is tightened to both modes, and `TestExecutorEntryRejectsStaticallyInvalidClauses` covers hand-built ASTs. The valid predicate-input shape (body-bound variables consumed by predicates) stays accepted — pinned by `TestCorrelatedNotJoinPredicateInputMatchesUnoptimizedExecution`.
+
+Original entry follows.
+
+**Status (original)**: Open (2026-07-19). Found by the optimizer mode matrix migration's first fixture conversion (`docs/wip/OPTIMIZER_MODE_MATRIX.md`) — the exact divergence class the regime exists to catch. No wrong data on either path; the divergence is where and how clearly the language rule is enforced.
 
 ## Symptom
 

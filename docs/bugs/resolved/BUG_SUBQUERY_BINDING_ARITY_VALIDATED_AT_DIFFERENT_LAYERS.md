@@ -1,6 +1,10 @@
 # BUG: subquery binding arity is validated at different layers with different messages per optimizer mode
 
-**Status**: Open (2026-07-20). Found by the optimizer mode matrix migration of `datalog/executor` (phase 5). Both modes correctly reject the malformed query — the matrix invariant (same error/no-error outcome) holds — but each mode detects the same static defect in a different layer with different vocabulary. Fix direction discussed with the owner; ratification pending.
+**Status**: RESOLVED (2026-07-20). The ratified boundary-validation design landed: `SubqueryPattern.Validate()` (`datalog/query/clause_scope.go`) owns the static binding-arity rules per binding form (scalar/collection ⇒ inner find arity 1; tuple/relation ⇒ binding arity ≡ inner find arity), recursing into nested inner queries, and `query.ValidateStaticClauseShapes` is the one walk all three user boundaries share — `parser.ParseQuery`, `qb.(*QueryBuilder).Build`, and `executor.ExecuteWithRelations` (before planning, so both modes agree). The general principle is now in force: static properties of the query text are validated at the shared user boundary; mode machinery is never where a static defect is first detected. The execution paths' deeper checks remain as backstops for internally constructed plans. Guards: `TestSubqueryErrorHandling/RelationBindingSymbolMismatch` (canonical message at parse), `TestExecutorEntryRejectsStaticallyInvalidClauses` (hand-built ASTs, both modes). Full native sweep green outside the known decorrelation guards.
+
+Original entry follows.
+
+**Status (original)**: Open (2026-07-20). Found by the optimizer mode matrix migration of `datalog/executor` (phase 5). Both modes correctly reject the malformed query — the matrix invariant (same error/no-error outcome) holds — but each mode detects the same static defect in a different layer with different vocabulary. Fix direction discussed with the owner; ratification pending.
 
 ## Symptom
 

@@ -167,6 +167,12 @@ func (b *QueryBuilder) Build() (*query.Query, error) {
 	if len(b.where) == 0 {
 		return nil, fmt.Errorf("query must have at least one where clause")
 	}
+	// Static clause-shape rules (subquery binding arity, not-join header
+	// completeness, or-default-join interface) are enforced at every user
+	// boundary with one message; this is the builder boundary's call.
+	if err := query.ValidateStaticClauseShapes(b.where); err != nil {
+		return nil, err
+	}
 
 	return &query.Query{
 		Find:    b.find,

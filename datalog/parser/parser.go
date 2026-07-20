@@ -25,7 +25,17 @@ func ParseQuery(input string) (*query.Query, error) {
 		return nil, fmt.Errorf("query must be a vector, got %v", node.Type)
 	}
 
-	return parseQueryVector(node)
+	q, err := parseQueryVector(node)
+	if err != nil {
+		return nil, err
+	}
+	// Static clause-shape rules (subquery binding arity, not-join header
+	// completeness, or-default-join interface) are enforced at every user
+	// boundary with one message; this is the parse boundary's call.
+	if err := query.ValidateStaticClauseShapes(q.Where); err != nil {
+		return nil, err
+	}
+	return q, nil
 }
 
 // parseQueryVector parses a query from an EDN vector node

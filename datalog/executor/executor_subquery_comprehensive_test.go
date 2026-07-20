@@ -468,7 +468,12 @@ func TestSubqueryErrorHandling(t *testing.T) {
 			                :in $ ?emp
 			                :where [?emp :employee/salary ?salary]]
 			               $ ?e) [[?a ?b ?c] ...]]]`, // Expects 3 symbols but query returns 1
-			wantErr: "relation binding expects 3 symbols, got 1",
+			// The canonical boundary message (SubqueryPattern.Validate):
+			// binding arity is a static property of the clause text, so
+			// both planner modes reject it identically at the executor
+			// entry, before planning. See
+			// docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
+			wantErr: "subquery relation binding declares 3 symbol(s), but the inner :find has 1 element(s)",
 		},
 	}
 
@@ -492,9 +497,18 @@ func TestSubqueryErrorHandling(t *testing.T) {
 
 			q, err := parser.ParseQuery(tt.queryStr)
 			if err != nil {
-				t.Fatalf("Failed to parse query: %v", err)
+				// Statically invalid queries (e.g. binding arity) are
+				// rejected at the parse boundary, before any mode exists —
+				// the parse rejection with the canonical message IS the
+				// expected outcome for those cases.
+				if !containsString(err.Error(), tt.wantErr) {
+					t.Fatalf("parse rejected the query, but with the wrong error: expected %q, got %q", tt.wantErr, err.Error())
+				}
+				return
 			}
 
+			// Dynamically invalid queries (data-dependent cardinality)
+			// parse fine and must fail identically under both modes.
 			for _, mode := range optimizerModes {
 				t.Run(mode.name, func(t *testing.T) {
 					exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())

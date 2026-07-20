@@ -223,15 +223,12 @@ func TestCorrelatedNotJoinRequiresOuterInputsInHeader(t *testing.T) {
 			_, err := db.Query(source)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "?goalSet")
-			if mode.algebra {
-				// The header-completeness rule is currently enforced only by
-				// the algebra bridge; the baseline path fails late in the
-				// executor instead. Divergence ledgered:
-				// docs/bugs/BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md
-				// When the planner-level check lands, this pin tightens to
-				// both modes.
-				require.Contains(t, err.Error(), "not-join header")
-			}
+			// Header completeness is a static property of the clause text,
+			// enforced by NotJoinClause.Validate at the user boundaries —
+			// both planner modes reject with the same message, before
+			// planning. (Previously algebra-only; divergence resolved:
+			// docs/bugs/BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.)
+			require.Contains(t, err.Error(), "not-join header")
 		})
 	}
 }

@@ -218,6 +218,99 @@ func (o *OrDefaultJoinClause) Validate() error {
 	return nil
 }
 
+// Validate enforces the subquery clause's static shape: the binding form's
+// arity must match the inner query's :find arity. This is a property of the
+// clause text alone — no data, planning, or mode is needed to check it — so
+// the parser, the qb builder, and the executor entry enforce it with one
+// message; the execution paths' deeper checks remain as backstops for
+// internally constructed plans. Result cardinality (tuple/scalar bindings
+// demanding exactly one row) is data-dependent and stays at execution.
+// Nested subqueries inside the inner query are part of this clause's text
+// and validate recursively. See
+// docs/bugs/BUG_SUBQUERY_BINDING_ARITY_VALIDATED_AT_DIFFERENT_LAYERS.md.
+func (p *SubqueryPattern) Validate() error {
+	if p.Query == nil {
+		return fmt.Errorf("subquery has no inner query")
+	}
+	if p.Binding == nil {
+		return fmt.Errorf("subquery has no binding form")
+	}
+	arity := len(p.Query.Find)
+	switch b := p.Binding.(type) {
+	case ScalarBinding:
+		if arity != 1 {
+			return fmt.Errorf("subquery scalar binding expects the inner :find to have exactly 1 element, got %d", arity)
+		}
+	case CollectionBinding:
+		if arity != 1 {
+			return fmt.Errorf("subquery collection binding expects the inner :find to have exactly 1 element, got %d", arity)
+		}
+	case TupleBinding:
+		if len(b.Variables) != arity {
+			return fmt.Errorf("subquery tuple binding declares %d symbol(s), but the inner :find has %d element(s)", len(b.Variables), arity)
+		}
+	case RelationBinding:
+		if len(b.Variables) != arity {
+			return fmt.Errorf("subquery relation binding declares %d symbol(s), but the inner :find has %d element(s)", len(b.Variables), arity)
+		}
+	default:
+		return fmt.Errorf("subquery has unknown binding form %T", p.Binding)
+	}
+	return ValidateStaticClauseShapes(p.Query.Where)
+}
+
+// Validate enforces the not-join clause's static header-completeness rule:
+// the header is the clause's complete declared interface, so every variable
+// the body consumes without binding — including predicate-only inputs — must
+// be declared in it. Enforced at the same boundaries as SubqueryPattern
+// above; the algebra bridge's own analysis remains as a backstop. See
+// docs/bugs/BUG_NOTJOIN_HEADER_VALIDATION_ONLY_ON_ALGEBRA_PATH.md.
+func (n *NotJoinClause) Validate() error {
+	if len(n.JoinVars) == 0 {
+		// The parser rejects empty headers at parse; this is the backstop
+		// for constructed ASTs.
+		return fmt.Errorf("not-join header cannot be empty")
+	}
+	provided, correlated := branchInterface(n.Clauses)
+	for _, sym := range correlated {
+		// branchInterface reports raw per-clause correlates; symbols the
+		// body itself binds are internal, not outer requirements (same
+		// subtraction as OrDefaultJoinClause.Validate).
+		if sym.IsSource() || ContainsSymbol(provided, sym) {
+			continue
+		}
+		if !ContainsSymbol(n.JoinVars, sym) {
+			return fmt.Errorf("not-join header %v does not declare %s, which the body consumes from the enclosing query; the header must declare every outer requirement, including predicate-only inputs", n.JoinVars, sym)
+		}
+	}
+	return ValidateStaticClauseShapes(n.Clauses)
+}
+
+// ValidateStaticClauseShapes walks clauses and validates every static
+// clause-shape rule — the checks that depend on the query text alone. It is
+// the one walk the user boundaries (parser, qb builder, executor entry)
+// share, so hand-built ASTs get the same rejections, with the same
+// messages, as parsed text. Compound clauses descend; subquery inner
+// queries are covered by SubqueryPattern.Validate's own recursion.
+func ValidateStaticClauseShapes(clauses []Clause) error {
+	var validateErr error
+	WalkClauses(clauses, func(c Clause) bool {
+		if validateErr != nil {
+			return false
+		}
+		switch v := c.(type) {
+		case *SubqueryPattern:
+			validateErr = v.Validate()
+		case *NotJoinClause:
+			validateErr = v.Validate()
+		case *OrDefaultJoinClause:
+			validateErr = v.Validate()
+		}
+		return validateErr == nil
+	})
+	return validateErr
+}
+
 // headerScope computes the scope of an explicit-join form: Provides is the
 // declared header restricted to what the branch combination produces —
 // branch locals never escape — and header variables the branches cannot

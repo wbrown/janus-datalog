@@ -113,6 +113,14 @@ func (e *Executor) ExecuteWithContext(ctx Context, q *query.Query) (Relation, er
 // For regular queries, pass an empty slice for inputRelations.
 // For subqueries, pass the relations corresponding to the :in clause variables.
 func (e *Executor) ExecuteWithRelations(ctx Context, q *query.Query, inputRelations []Relation) (Relation, error) {
+	// Static clause-shape rules are user-boundary contracts: a hand-built
+	// AST entering here gets the same rejection, with the same message, as
+	// parsed text — and before planning, so both planner modes agree on
+	// where and how a static defect surfaces.
+	if err := query.ValidateStaticClauseShapes(q.Where); err != nil {
+		return nil, err
+	}
+
 	// Apply decorator pattern: wrap matcher with annotations if context has a handler
 	matcher := e.matcher
 
