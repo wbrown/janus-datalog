@@ -34,17 +34,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Audit datalog/storage test files for wasm portability tags
-        run: go run datalog/storage/tag_nonportable_tests.go
-      - name: Build datalog for js/wasm
-        run: GOOS=js GOARCH=wasm go build ./datalog/...
-      - name: Build db package for js/wasm
-        run: GOOS=js GOARCH=wasm go build ./datalog/db
-      - name: Run portable storage contracts under wasm
-        run: |
-          PATH="$(go env GOROOT)/lib/wasm:$PATH"
-          GOOS=js GOARCH=wasm go test -count=1 ./datalog/storage -run 'TestStore|TestScanAndScan|TestDatabaseBackends|TestMemory'
-      - name: Run memory backend under wasm
-        run: |
-          PATH="$(go env GOROOT)/lib/wasm:$PATH"
-          GOOS=js GOARCH=wasm go test -count=1 ./datalog/wasmtest
+      - name: Full js/wasm suite (same gate as make test)
+        run: make test-wasm
