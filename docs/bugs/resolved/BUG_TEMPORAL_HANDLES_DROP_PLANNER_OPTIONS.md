@@ -1,6 +1,10 @@
 # BUG: AsOf/History handles drop the parent database's planner options
 
-**Status**: Open (2026-07-20). Found by the optimizer mode matrix migration of `datalog/db` (phase 3): the migrated `TestAsOf`/`TestHistory`/`TestLimitComposesWithAsOf` legs pass in both modes, but inspection shows both legs actually ran identical options — the mode never reached the temporal handle. No wrong results; an options-threading break and a matrix coverage gap.
+**Status**: RESOLVED (2026-07-20). Fixed as the class, not the instance: `AsOf()`/`History()` inherit `plannerOptions` **and** `parseCache` (the same drop, lesser symptom), and `TestTemporalHandleFieldClassification` (`datalog/storage/temporal_handle_inheritance_test.go`) now enumerates every `Database` field against a ruled disposition table (inherit / zero / per-handle) by reflection — a new field cannot ship unclassified, which is how this class regenerated after `BUG_TEMPORAL_DATABASE_HANDLES_ARE_SHALLOW` (resolved 2026-05) had already named `plannerOptions` as absent. `TestTemporalHandlesInheritPlannerOptions` pins the observable contract red-first; the matrix's AsOf/History legs are now genuinely two-mode (verified: storage, db, and tests packages green in both modes post-fix).
+
+Original entry follows.
+
+**Status (original)**: Open (2026-07-20). Found by the optimizer mode matrix migration of `datalog/db` (phase 3): the migrated `TestAsOf`/`TestHistory`/`TestLimitComposesWithAsOf` legs pass in both modes, but inspection shows both legs actually ran identical options — the mode never reached the temporal handle. No wrong results; an options-threading break and a matrix coverage gap.
 
 ## Symptom
 

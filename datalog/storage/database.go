@@ -523,12 +523,17 @@ var _ executor.PatternMatcher = (*Database)(nil)
 // but not writes: NewTransaction will panic. Close is a no-op — the parent
 // owns the store lifetime.
 func (d *Database) AsOf(txID datalog.ElementID) *Database {
+	// Field dispositions (inherit / zero / per-handle) are the ruled contract
+	// pinned by TestTemporalHandleFieldClassification — a new Database field
+	// must be classified there before it can ship.
 	return &Database{
 		store:             d.store,
 		encoder:           d.encoder,
 		schema:            d.schema,
 		annotationHandler: d.annotationHandler,
 		planCache:         d.planCache,
+		parseCache:        d.parseCache,
+		plannerOptions:    d.plannerOptions,
 		cache:             NewCache(),
 		clock:             d.clock,
 		replicaID:         d.replicaID,
@@ -544,6 +549,8 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 // but not writes: NewTransaction will panic. Close is a no-op — the parent
 // owns the store lifetime.
 func (d *Database) History() *Database {
+	// Field dispositions are the ruled contract pinned by
+	// TestTemporalHandleFieldClassification (see AsOf above).
 	empty := datalog.ElementID{}
 	return &Database{
 		store:             d.store,
@@ -551,6 +558,8 @@ func (d *Database) History() *Database {
 		schema:            d.schema,
 		annotationHandler: d.annotationHandler,
 		planCache:         d.planCache,
+		parseCache:        d.parseCache,
+		plannerOptions:    d.plannerOptions,
 		cache:             d.cache,
 		clock:             d.clock,
 		replicaID:         d.replicaID,
