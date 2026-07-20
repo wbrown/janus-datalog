@@ -156,27 +156,13 @@ func selectPhaseClauses(remaining []query.Clause, available map[query.Symbol]boo
 				continue
 			}
 
-			// Defer data patterns that use variables from pending expressions.
-			// Without this, the greedy scorer picks high-scoring patterns before
-			// low-scoring expressions, causing patterns to execute without the
-			// expression-provided variables and producing cross-product joins.
-			if p, ok := clause.(*query.DataPattern); ok {
-				if patternDependsOnPendingExpression(p, available, remaining, selected) {
-					continue
-				}
-			}
-
-			// Defer subqueries whose binding variables have ready pending
-			// providers. A subquery relation joins on its already-bound
-			// binding variables; selecting it before those providers run
-			// under-keys the join.
-			if sp, ok := clause.(*query.SubqueryPattern); ok {
-				if subqueryDependsOnPendingProvider(sp, available, inputs, providerCount, remaining, selected) {
-					continue
-				}
-			}
-
-			if !clauseReady(clause, available, inputs, providerCount) {
+			// Selectability is defined once, in clauseSelectable: the
+			// pattern gate (patterns wait for pending expressions they
+			// depend on), the subquery gate (subqueries wait for selectable
+			// providers of their binding variables), and readiness. The
+			// subquery gate consumes the same predicate, so it can never
+			// wait on a clause this loop would skip.
+			if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected) {
 				continue
 			}
 

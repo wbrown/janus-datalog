@@ -5,8 +5,67 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/parser"
 	"github.com/wbrown/janus-datalog/datalog/query"
 )
+
+// TestNotJoinAcceptsNestedExistentialNot pins that header completeness
+// demands only MANDATORY outer requirements. A plain (not ...) nested inside
+// a not-join body carries optional correlates: its free variables unify when
+// the environment binds them and are existential otherwise (Datomic's
+// unification rule) — they are not requirements the header must declare.
+// This exact shape was wrongly rejected when validation flattened correlates
+// through branchInterface and lost the CorrelatesOptional flag.
+func TestNotJoinAcceptsNestedExistentialNot(t *testing.T) {
+	goalAttr := datalog.NewKeyword(":event/goal")
+	nameAttr := datalog.NewKeyword(":goal/name")
+	tx := datalog.ElementID{Lamport: 1, ReplicaID: 1}
+	goalA := datalog.NewIdentity("goal:a")
+	goalB := datalog.NewIdentity("goal:b")
+	matcher := NewMemoryPatternMatcher([]datalog.Datom{
+		{E: goalA, A: nameAttr, V: "a", Tx: tx},
+		{E: goalB, A: nameAttr, V: "b", Tx: tx},
+		// goalA has an event, and that event's goal is flagged by some
+		// entity — so the nested (not ...) fails for goalA, the not-join
+		// body matches nothing, and goalA SURVIVES the outer not-join...
+		// unless the flag entity exists, in which case the body match
+		// stands and goalA is excluded. goalB has no event at all and
+		// always survives.
+		{E: datalog.NewIdentity("event:1"), A: goalAttr, V: goalA, Tx: tx},
+	})
+
+	q, err := parser.ParseQuery(`[:find ?name
+	  :where
+	  [?goal :goal/name ?name]
+	  (not-join [?goal]
+	    [?ev :event/goal ?goal]
+	    (not [?flagger :other/flag ?goal]))]`)
+	if err != nil {
+		t.Fatalf("parser rejected a legal nested-existential not-join: %v", err)
+	}
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			exec := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Fatalf("execution rejected a legal nested-existential not-join: %v", err)
+			}
+			// goalA has an event and no flagger exists, so the body's
+			// nested NOT holds, the body matches, and goalA is excluded.
+			// goalB has no event and survives.
+			if result.Size() != 1 {
+				for i := 0; i < result.Size(); i++ {
+					t.Logf("tuple %d: %v", i, result.Get(i))
+				}
+				t.Fatalf("expected only the event-less goal to survive, got %d rows", result.Size())
+			}
+			if !datalog.ValuesEqual(result.Get(0)[0], "b") {
+				t.Fatalf("expected goal b to survive, got %v", result.Get(0))
+			}
+		})
+	}
+}
 
 // Static clause-shape rules are user-boundary contracts enforced at three
 // doors with one message: the parser (EDN text), the qb builder (Go

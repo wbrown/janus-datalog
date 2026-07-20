@@ -43,15 +43,44 @@ func patternDependsOnPendingExpression(p *query.DataPattern, available map[query
 	return false
 }
 
-// subqueryDependsOnPendingProvider checks if a subquery binds a variable that
-// a pending (unselected), currently-ready, non-subquery clause also provides
-// but that isn't yet available. A subquery's result relation joins the
-// accumulated relation on whichever of its binding variables are already
-// bound; selecting it while a join key's provider is still pending joins on
-// a subset of the keys — an under-keyed join that inflates the intermediate
-// relation. This is patternDependsOnPendingExpression's invariant applied to
-// the subquery relation's interface (a decorrelated grouped subquery binds
-// its group keys to outer names precisely so they join).
+// clauseSelectable is the single definition of "the greedy selection loop
+// may choose this clause this iteration": every scheduling gate admits it
+// and it is ready. The selection loop and the subquery deferral gate both
+// consume this function — a gate that waits on a clause the loop itself
+// would skip deadlocks the phase, which is exactly the divergence that
+// occurs when the gate checks readiness alone (a DataPattern can be ready
+// yet skipped because it depends on a pending expression).
+func clauseSelectable(
+	clause query.Clause,
+	available map[query.Symbol]bool,
+	inputs map[query.Symbol]bool,
+	providerCount map[query.Symbol]int,
+	remaining []query.Clause,
+	selected map[int]bool,
+) bool {
+	if p, ok := clause.(*query.DataPattern); ok {
+		if patternDependsOnPendingExpression(p, available, remaining, selected) {
+			return false
+		}
+	}
+	if sp, ok := clause.(*query.SubqueryPattern); ok {
+		if subqueryDependsOnPendingProvider(sp, available, inputs, providerCount, remaining, selected) {
+			return false
+		}
+	}
+	return clauseReady(clause, available, inputs, providerCount)
+}
+
+// subqueryDependsOnPendingProvider checks if a subquery binds a variable
+// that a pending (unselected), currently-SELECTABLE, non-subquery clause
+// also provides but that isn't yet available. A subquery's result relation
+// joins the accumulated relation on whichever of its binding variables are
+// already bound; selecting it while a join key's provider is still pending
+// joins on a subset of the keys — an under-keyed join that inflates the
+// intermediate relation. This is patternDependsOnPendingExpression's
+// invariant applied to the subquery relation's interface (a decorrelated
+// grouped subquery binds its group keys to outer names precisely so they
+// join).
 //
 // Both restrictions on the provider scan make deferral unable to block
 // progress, by construction rather than by convention:
@@ -60,11 +89,13 @@ func patternDependsOnPendingExpression(p *query.DataPattern, available map[query
 //     decorrelated grouped subqueries binding the same group keys) must not
 //     defer on each other; once every other provider has run, whichever
 //     executes first supplies the keys the next one joins on.
-//   - Currently ready only: a deferring subquery therefore implies a
-//     selectable provider exists, so the phase always advances. A provider
-//     that is not yet ready cannot be waited on safely — it may need a
-//     symbol only this subquery provides — so the subquery runs first and
-//     the provider unifies against its output instead.
+//   - Selectable only — via clauseSelectable, the same predicate the
+//     selection loop applies, not bare readiness: a deferring subquery
+//     therefore implies the loop can select some provider this iteration,
+//     so the phase always advances. Readiness alone is not enough: a ready
+//     DataPattern that the pattern gate skips (it depends on a pending
+//     expression that in turn needs this subquery's output) is not
+//     selectable, and deferring on it deadlocks a valid query.
 func subqueryDependsOnPendingProvider(
 	sp *query.SubqueryPattern,
 	available map[query.Symbol]bool,
@@ -90,7 +121,7 @@ func subqueryDependsOnPendingProvider(
 		if _, ok := clause.(*query.SubqueryPattern); ok {
 			continue
 		}
-		if !clauseReady(clause, available, inputs, providerCount) {
+		if !clauseSelectable(clause, available, inputs, providerCount, remaining, selected) {
 			continue
 		}
 		for _, sym := range query.ScopeOf(clause).Provides {

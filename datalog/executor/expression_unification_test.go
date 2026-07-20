@@ -108,6 +108,65 @@ func TestExpressionOntoBoundVariableUnifies(t *testing.T) {
 	}
 }
 
+// TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource pins the
+// RequiresCopy discipline on the unify pass-through: when every binding
+// symbol is bound and the tuple survives unification unchanged, the
+// retained tuple must be copied out of a workspace-reusing source — the
+// same boundary rule every other retain-site honors. Without the copy,
+// every retained row aliases the iterator workspace and reads as the last
+// row.
+func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) {
+	xSym := datalog.NewSymbol("?x")
+	ySym := datalog.NewSymbol("?y")
+	src := newMockUnsafeRelation(
+		[]query.Symbol{xSym, ySym},
+		[][]interface{}{
+			{int64(1), int64(2)},
+			{int64(2), int64(3)},
+			{int64(3), int64(4)},
+		}, // every row unifies: ?y = ?x + 1
+	)
+
+	q, err := parser.ParseQuery(`[:find ?x ?y
+	  :where [?e :test/x ?x]
+	         [?e :test/y ?y]
+	         [(+ ?x 1) ?y]]`)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	expr := q.Where[2].(*query.Expression)
+
+	result := evaluateExpressionWithLookup(src, expr, nil, nil)
+
+	var got []Tuple
+	it := result.Iterator()
+	for it.Next() {
+		got = append(got, it.Tuple())
+	}
+	if err := it.Error(); err != nil {
+		t.Fatalf("iteration failed: %v", err)
+	}
+	if closeErr := it.Close(); closeErr != nil {
+		t.Fatalf("close failed: %v", closeErr)
+	}
+
+	want := []Tuple{
+		{int64(1), int64(2)},
+		{int64(2), int64(3)},
+		{int64(3), int64(4)},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d tuples, want %d", len(got), len(want))
+	}
+	for i := range want {
+		for j := range want[i] {
+			if !datalog.ValuesEqual(got[i][j], want[i][j]) {
+				t.Fatalf("tuple %d = %v, want %v (workspace aliasing corrupts retained rows)", i, got[i], want[i])
+			}
+		}
+	}
+}
+
 // TestEvaluateExpressionUnifiesBoundBindings pins the per-tuple evaluation
 // path directly, one case per write site: scalar binding with the symbol
 // bound, multi-row expansion (enumerate) with every binding symbol bound,

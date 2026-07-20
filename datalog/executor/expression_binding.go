@@ -53,6 +53,12 @@ func (a bindingAlignment) extensionSymbols() []query.Symbol {
 	return a.symbols[len(a.symbols)-a.extensions:]
 }
 
+// extendsTuple reports whether apply adds symbols to the tuple. When it
+// does, apply allocates a fresh output tuple; when it does not, apply
+// returns the input tuple itself, and the retainer owns the workspace-copy
+// decision for RequiresCopy sources.
+func (a bindingAlignment) extendsTuple() bool { return a.extensions > 0 }
+
 // apply unifies values against the tuple's bound positions and, on success,
 // returns the output tuple: the input unchanged when nothing extends, or
 // the input plus the extension values. ok=false means a bound position did

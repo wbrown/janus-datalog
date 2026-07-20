@@ -817,11 +817,17 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 			var resultRels []Relation
 			for _, rel := range groups {
 				align := alignBinding(rel.Symbols(), bindingSyms)
+				// Pass-through tuples (no extension) must be copied out of
+				// a workspace-reusing source; extension allocates fresh.
+				needsCopy := rel.RequiresCopy()
 
 				var outputTuples []Tuple
 				iter := rel.Iterator()
 				for iter.Next() {
 					if out, ok := align.apply(iter.Tuple(), bindingValues); ok {
+						if needsCopy && !align.extendsTuple() {
+							out = copyTuple(out)
+						}
 						outputTuples = append(outputTuples, out)
 					}
 				}

@@ -145,6 +145,46 @@ func TestUncorrelatedSubqueryDefersBehindPendingBindingProviders(t *testing.T) {
 		"uncorrelated subquery binding ?year must schedule after the pending expression that provides ?year")
 }
 
+// TestSubqueryDeferralNeverStallsOnGatedProvider pins the deferral gate's
+// progress guarantee against the composition that broke it: a subquery whose
+// outputs feed an expression that feeds a pattern. The pattern is a
+// clauseReady provider of the subquery's ?x — but the selection loop skips
+// it (it uses ?y from the pending expression), the expression is not ready
+// (it needs ?z from the subquery), and a gate that defers on merely-READY
+// providers deadlocks the phase: "cannot create phase" for a valid query.
+// Deferral may only wait on providers that are actually selectable this
+// iteration — ready AND unskipped by every sibling gate.
+func TestSubqueryDeferralNeverStallsOnGatedProvider(t *testing.T) {
+	q, err := parser.ParseQuery(`[:find ?x ?y
+	  :where
+	  [(q [:find ?x ?z
+	       :in $
+	       :where [?x :bar ?z]]
+	      $) [[?x ?z] ...]]
+	  [(+ ?z 1) ?y]
+	  [?x :rel ?y]]`)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	grouped := q.Where[0].(*query.SubqueryPattern)
+	pattern := q.Where[2]
+
+	phases, err := createPhasesGreedy(
+		q.Where,
+		[]query.Symbol{datalog.NewSymbol("?x"), datalog.NewSymbol("?y")},
+		map[query.Symbol]bool{},
+	)
+	if err != nil {
+		t.Fatalf("phasing failed on a valid query: %v", err)
+	}
+
+	// The subquery is the only selectable clause at the outset and must be
+	// scheduled, unblocking the expression and then the pattern.
+	assertScheduledAfter(t, phases, pattern, grouped,
+		"the pattern consumes the expression output derived from the subquery, so it schedules after the subquery")
+}
+
 // assertScheduledAfter fails unless later appears after earlier in the
 // flattened phase clause order.
 func assertScheduledAfter(t *testing.T, phases []ClausePhase, later, earlier query.Clause, msg string) {

@@ -149,9 +149,17 @@ func branchInterfaces(
 
 	branchProvides := make([][]Symbol, len(branches))
 	for i, branch := range branches {
-		provided, correlated := branchInterface(branch)
+		// Externals merge both obligation classes: at the enclosing
+		// clause's level the distinction is carried by that clause's own
+		// CorrelatesOptional, not per symbol.
+		provided, mandatory, optional := branchInterface(branch)
 		branchProvides[i] = provided
-		for _, sym := range correlated {
+		for _, sym := range mandatory {
+			if !ContainsSymbol(provided, sym) && !sym.IsSource() && !ContainsSymbol(externals, sym) {
+				externals = append(externals, sym)
+			}
+		}
+		for _, sym := range optional {
 			if !ContainsSymbol(provided, sym) && !sym.IsSource() && !ContainsSymbol(externals, sym) {
 				externals = append(externals, sym)
 			}
@@ -162,9 +170,17 @@ func branchInterfaces(
 }
 
 // branchInterface computes one branch's interface: the symbols its clauses
-// provide and the symbols they correlate on, each deduplicated in
-// first-appearance order.
-func branchInterface(branch []Clause) (provided, correlated []Symbol) {
+// provide, and the symbols they correlate on split by obligation. Mandatory
+// correlates must be supplied by the enclosing scope before the clause can
+// run — predicates, expressions, subquery inputs, explicit-join headers.
+// Optional correlates tolerate absence (a plain NOT's body variables are
+// existential when unbound; or-default falls back to global evaluation), so
+// they never create declaration requirements — flattening them into the
+// mandatory set is how legal nested-existential shapes get rejected. Each
+// list deduplicates in first-appearance order; the lists may overlap when
+// different clauses need the same symbol with different obligations, and
+// consumers deciding requirements read the mandatory list.
+func branchInterface(branch []Clause) (provided, mandatory, optional []Symbol) {
 	for _, clause := range branch {
 		scope := ScopeOf(clause)
 		for _, sym := range scope.Provides {
@@ -173,12 +189,16 @@ func branchInterface(branch []Clause) (provided, correlated []Symbol) {
 			}
 		}
 		for _, sym := range scope.Correlates {
-			if !ContainsSymbol(correlated, sym) {
-				correlated = append(correlated, sym)
+			if scope.CorrelatesOptional {
+				if !ContainsSymbol(optional, sym) {
+					optional = append(optional, sym)
+				}
+			} else if !ContainsSymbol(mandatory, sym) {
+				mandatory = append(mandatory, sym)
 			}
 		}
 	}
-	return provided, correlated
+	return provided, mandatory, optional
 }
 
 // Validate enforces the declared interface: at least one output variable, at
@@ -200,13 +220,16 @@ func (o *OrDefaultJoinClause) Validate() error {
 		}
 	}
 	for i, branch := range o.Branches {
-		provided, correlated := branchInterface(branch)
+		// Only MANDATORY correlates create declaration requirements; a
+		// nested plain NOT's existential body variables (optional
+		// correlates) unify when bound and are existential otherwise.
+		provided, mandatory, _ := branchInterface(branch)
 		for _, out := range o.OutputVars {
 			if !ContainsSymbol(provided, out) {
 				return fmt.Errorf("or-default-join branch %d does not bind output variable %s; every branch must bind every output", i+1, out)
 			}
 		}
-		for _, sym := range correlated {
+		for _, sym := range mandatory {
 			if sym.IsSource() || ContainsSymbol(provided, sym) {
 				continue
 			}
@@ -271,11 +294,13 @@ func (n *NotJoinClause) Validate() error {
 		// for constructed ASTs.
 		return fmt.Errorf("not-join header cannot be empty")
 	}
-	provided, correlated := branchInterface(n.Clauses)
-	for _, sym := range correlated {
-		// branchInterface reports raw per-clause correlates; symbols the
-		// body itself binds are internal, not outer requirements (same
-		// subtraction as OrDefaultJoinClause.Validate).
+	// Only MANDATORY correlates are outer requirements the header must
+	// declare; symbols the body itself binds are internal (same subtraction
+	// as OrDefaultJoinClause.Validate), and optional correlates — a nested
+	// plain NOT's existential body variables — unify when bound and are
+	// existential otherwise, never a header demand.
+	provided, mandatory, _ := branchInterface(n.Clauses)
+	for _, sym := range mandatory {
 		if sym.IsSource() || ContainsSymbol(provided, sym) {
 			continue
 		}

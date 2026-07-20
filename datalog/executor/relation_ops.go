@@ -163,6 +163,11 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	align := alignBinding(symbols, bindingSymbols)
 	newSymbols := align.symbols
 
+	// Retained pass-through tuples (unify and no-binding cases) must be
+	// copied out of a workspace-reusing source; extension always allocates
+	// a fresh tuple in align.apply.
+	needsCopy := rel.RequiresCopy()
+
 	// Reuse single bindings map to avoid repeated allocations
 	bindings := make(map[query.Symbol]interface{}, len(symbols)+len(constantBindings))
 
@@ -249,6 +254,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 						break
 					}
 					if out, ok := align.apply(tuple, subTuple); ok {
+						if needsCopy && !align.extendsTuple() {
+							out = copyTuple(out)
+						}
 						newTuples = append(newTuples, out)
 					}
 				}
@@ -263,7 +271,11 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		// binding symbols extend the tuple.
 		if len(bindingSymbols) == 0 {
 			// No binding, just keep original tuple
-			newTuples = append(newTuples, tuple)
+			out := tuple
+			if needsCopy {
+				out = copyTuple(out)
+			}
+			newTuples = append(newTuples, out)
 			continue
 		}
 		var values []interface{}
@@ -283,6 +295,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			values = []interface{}{evalResult}
 		}
 		if out, ok := align.apply(tuple, values); ok {
+			if needsCopy && !align.extendsTuple() {
+				out = copyTuple(out)
+			}
 			newTuples = append(newTuples, out)
 		}
 	}
