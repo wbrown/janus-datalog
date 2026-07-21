@@ -19,6 +19,45 @@ var (
 	sinkTx     [16]byte
 )
 
+// TestKeyEncodingAllocations pins the encoder family's allocation floors:
+// one owned buffer per index key (parts, AfterRef, and Op sized up front —
+// no append regrow, no second copy of the key), the value span plus
+// ValueBytes's own encoding per value, and two owned bounds per scan range.
+func TestKeyEncodingAllocations(t *testing.T) {
+	encoder := &BinaryKeyEncoder{}
+	datom := &datalog.Datom{
+		E:  datalog.NewIdentity("alloc-pin-entity"),
+		A:  datalog.NewKeyword(":alloc/pin"),
+		V:  "value",
+		Tx: datalog.ElementID{Lamport: 7, ReplicaID: 3},
+	}
+	vBytes, _ := encoder.EncodeValueBytes(datom.V)
+	sd := ToStorageDatom(*datom)
+
+	perKey := testing.AllocsPerRun(100, func() {
+		sinkKey = encoder.EncodeKeyWithValueBytes(EAVT, datom, vBytes)
+	})
+	if perKey != 1 {
+		t.Errorf("EncodeKeyWithValueBytes allocated %v per key, want 1", perKey)
+	}
+
+	perSpan := testing.AllocsPerRun(100, func() {
+		sinkBytes, _ = encoder.EncodeValueBytes(datom.V)
+	})
+	if perSpan != 2 {
+		t.Errorf("EncodeValueBytes allocated %v per value span, want 2 (the span and ValueBytes's encoding)", perSpan)
+	}
+
+	perRange := testing.AllocsPerRun(100, func() {
+		start, end := encoder.EncodePrefixRange(EATV, sd.E[:], sd.A[:])
+		sinkBytes = start
+		sinkKey = end
+	})
+	if perRange != 2 {
+		t.Errorf("EncodePrefixRange allocated %v per range, want 2 (start and end bounds)", perRange)
+	}
+}
+
 func TestKeyEncoders(t *testing.T) {
 	// Create test datom
 	entity := sha1.Sum([]byte("entity1"))

@@ -93,8 +93,10 @@ func (s *MemoryStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 		return 0, errMemoryStoreClosed
 	}
 	for i := range datoms {
+		sd := ToStorageDatom(datoms[i])
+		vBytes, _ := s.encoder.EncodeValueBytes(sd.V)
 		for _, index := range Indices {
-			key := string(s.encoder.EncodeKey(index, &datoms[i]))
+			key := string(s.encoder.encodeKeyWithParts(index, &sd, vBytes))
 			if _, ok := s.entries[key]; !ok {
 				continue
 			}
@@ -440,8 +442,9 @@ func assertMemoryDatom(store *MemoryStore, datom *datalog.Datom, undo *[]memoryE
 		copy(key[1:], blob.Hash[:])
 		putMemoryEntry(store, undo, string(key[:]), blob.CompressedBytes)
 	}
+	sd := ToStorageDatom(*datom)
 	for _, index := range Indices {
-		key := store.encoder.EncodeKeyWithValueBytes(index, datom, valueBytes)
+		key := store.encoder.encodeKeyWithParts(index, &sd, valueBytes)
 		putMemoryEntry(store, undo, string(key), nil)
 	}
 }
@@ -466,8 +469,10 @@ func retractMemoryDatom(
 		if err != nil {
 			return err
 		}
+		sdStored := ToStorageDatom(stored)
+		storedVBytes, _ := store.encoder.EncodeValueBytes(sdStored.V)
 		for _, index := range Indices {
-			deleteMemoryEntry(store, undo, string(store.encoder.EncodeKey(index, &stored)))
+			deleteMemoryEntry(store, undo, string(store.encoder.encodeKeyWithParts(index, &sdStored, storedVBytes)))
 		}
 	}
 	return nil

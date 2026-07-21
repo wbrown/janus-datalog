@@ -66,7 +66,9 @@ func (e *BinaryKeyEncoder) EncodeValueBytes(v interface{}) (vBytes []byte, blobD
 		vType = byte(datalog.Type(v))
 		vData = datalog.ValueBytes(v)
 	}
-	vBytes = append([]byte{vType}, vData...)
+	vBytes = make([]byte, 1+len(vData))
+	vBytes[0] = vType
+	copy(vBytes[1:], vData)
 	return
 }
 
@@ -85,90 +87,67 @@ func (e *BinaryKeyEncoder) EncodeKeyWithValueBytes(index IndexType, d *datalog.D
 }
 
 func (e *BinaryKeyEncoder) encodeKeyWithParts(index IndexType, sd *StorageDatom, vBytes []byte) []byte {
-	prefix := []byte{byte(index)}
-
 	// Encode Tx with bitwise NOT for descending sort order
 	txDesc := txToDescending(sd.Tx)
 
-	// Build key based on index type using raw bytes.
-	// Op is always appended LAST, after AfterRef (if present).
-	// This eliminates the AfterRef length heuristic in DecodeKey.
+	// Each index arm declares its component order; assembly below sizes the
+	// key once for parts, AfterRef (if present), and Op, so the key is built
+	// in a single allocation with no append regrow.
+	// Op is always LAST, after AfterRef (if present) — this eliminates the
+	// AfterRef length heuristic in DecodeKey.
+	prefix := [1]byte{byte(index)}
+	var parts [5][]byte
+	parts[0] = prefix[:]
 	switch index {
 	case EAVT:
 		// [E][A][V][Tx↓][AfterRef?][Op]
-		key := concatBytes(prefix, sd.E[:], sd.A[:], vBytes, txDesc[:])
-		if sd.Op.HasAfterRef() {
-			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc[:]...)
-		}
-		key = append(key, byte(sd.Op))
-		return key
+		parts[1], parts[2], parts[3], parts[4] = sd.E[:], sd.A[:], vBytes, txDesc[:]
 	case EATV:
 		// [E][A][Tx↓][V][AfterRef?][Op]
-		key := concatBytes(prefix, sd.E[:], sd.A[:], txDesc[:], vBytes)
-		if sd.Op.HasAfterRef() {
-			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc[:]...)
-		}
-		key = append(key, byte(sd.Op))
-		return key
+		parts[1], parts[2], parts[3], parts[4] = sd.E[:], sd.A[:], txDesc[:], vBytes
 	case AEVT:
 		// [A][E][V][Tx↓][AfterRef?][Op]
-		key := concatBytes(prefix, sd.A[:], sd.E[:], vBytes, txDesc[:])
-		if sd.Op.HasAfterRef() {
-			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc[:]...)
-		}
-		key = append(key, byte(sd.Op))
-		return key
+		parts[1], parts[2], parts[3], parts[4] = sd.A[:], sd.E[:], vBytes, txDesc[:]
 	case AETV:
 		// [A][E][Tx↓][V][AfterRef?][Op]
-		key := concatBytes(prefix, sd.A[:], sd.E[:], txDesc[:], vBytes)
-		if sd.Op.HasAfterRef() {
-			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc[:]...)
-		}
-		key = append(key, byte(sd.Op))
-		return key
+		parts[1], parts[2], parts[3], parts[4] = sd.A[:], sd.E[:], txDesc[:], vBytes
 	case ATEV:
 		// [A][Tx↓][E][V][AfterRef?][Op]
-		key := concatBytes(prefix, sd.A[:], txDesc[:], sd.E[:], vBytes)
-		if sd.Op.HasAfterRef() {
-			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc[:]...)
-		}
-		key = append(key, byte(sd.Op))
-		return key
+		parts[1], parts[2], parts[3], parts[4] = sd.A[:], txDesc[:], sd.E[:], vBytes
 	case AVET:
 		// [A][V][E][Tx↓][AfterRef?][Op]
-		key := concatBytes(prefix, sd.A[:], vBytes, sd.E[:], txDesc[:])
-		if sd.Op.HasAfterRef() {
-			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc[:]...)
-		}
-		key = append(key, byte(sd.Op))
-		return key
+		parts[1], parts[2], parts[3], parts[4] = sd.A[:], vBytes, sd.E[:], txDesc[:]
 	case VAET:
 		// [V][A][E][Tx↓][AfterRef?][Op]
-		key := concatBytes(prefix, vBytes, sd.A[:], sd.E[:], txDesc[:])
-		if sd.Op.HasAfterRef() {
-			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc[:]...)
-		}
-		key = append(key, byte(sd.Op))
-		return key
+		parts[1], parts[2], parts[3], parts[4] = vBytes, sd.A[:], sd.E[:], txDesc[:]
 	case TAEV:
 		// [Tx↓][A][E][V][AfterRef?][Op]
-		key := concatBytes(prefix, txDesc[:], sd.A[:], sd.E[:], vBytes)
-		if sd.Op.HasAfterRef() {
-			afterRefDesc := txToDescending(sd.AfterRef)
-			key = append(key, afterRefDesc[:]...)
-		}
-		key = append(key, byte(sd.Op))
-		return key
+		parts[1], parts[2], parts[3], parts[4] = txDesc[:], sd.A[:], sd.E[:], vBytes
 	default:
 		panic(fmt.Sprintf("unknown index type: %v", index))
 	}
+
+	hasAfterRef := sd.Op.HasAfterRef()
+	var afterRefDesc [16]byte
+	size := 1 // Op
+	if hasAfterRef {
+		afterRefDesc = txToDescending(sd.AfterRef)
+		size += len(afterRefDesc)
+	}
+	for _, p := range parts {
+		size += len(p)
+	}
+
+	key := make([]byte, size)
+	offset := 0
+	for _, p := range parts {
+		offset += copy(key[offset:], p)
+	}
+	if hasAfterRef {
+		offset += copy(key[offset:], afterRefDesc[:])
+	}
+	key[offset] = byte(sd.Op)
+	return key
 }
 
 // DecodeKey extracts components from a binary index key.
@@ -322,9 +301,17 @@ func (e *BinaryKeyEncoder) DecodeKey(index IndexType, key []byte) (entity [20]by
 
 // EncodePrefix creates a binary prefix key for range scans
 func (e *BinaryKeyEncoder) EncodePrefix(index IndexType, parts ...[]byte) []byte {
-	prefix := []byte{byte(index)}
-	allParts := append([][]byte{prefix}, parts...)
-	return concatBytes(allParts...)
+	size := 1
+	for _, p := range parts {
+		size += len(p)
+	}
+	result := make([]byte, size)
+	result[0] = byte(index)
+	offset := 1
+	for _, p := range parts {
+		offset += copy(result[offset:], p)
+	}
+	return result
 }
 
 // EncodeTxForPrefix encodes a Tx with bitwise NOT for use in prefix keys.

@@ -83,9 +83,11 @@ func (s *BadgerStore) assertDatom(txn *badger.Txn, d *datalog.Datom) error {
 		}
 	}
 
-	// Write to all indices using pre-encoded value bytes
+	// Write to all indices using pre-encoded value bytes and one storage
+	// conversion (E/A/Tx fixed arrays are index-independent)
+	sd := ToStorageDatom(*d)
 	for _, idx := range Indices {
-		key := s.encoder.EncodeKeyWithValueBytes(idx, d, vBytes)
+		key := s.encoder.encodeKeyWithParts(idx, &sd, vBytes)
 		if err := txn.Set(key, nil); err != nil {
 			return fmt.Errorf("failed to write to %v index: %w", idx, err)
 		}
@@ -149,9 +151,12 @@ func (s *BadgerStore) retractDatom(txn *badger.Txn, d *datalog.Datom) error {
 			return fmt.Errorf("failed to decode key for retraction: %w", err)
 		}
 
-		// Delete from all CRDT indices using the actual stored Tx
+		// Delete from all CRDT indices using the actual stored Tx; one
+		// storage conversion and value encoding for all eight keys
+		sdStored := ToStorageDatom(storedDatom)
+		storedVBytes, _ := s.encoder.EncodeValueBytes(sdStored.V)
 		for _, idx := range Indices {
-			key := s.encoder.EncodeKey(idx, &storedDatom)
+			key := s.encoder.encodeKeyWithParts(idx, &sdStored, storedVBytes)
 			if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
 				return fmt.Errorf("failed to delete from %v index: %w", idx, err)
 			}
@@ -230,8 +235,10 @@ func (s *BadgerStore) DeleteDatoms(datoms []datalog.Datom) (int, error) {
 	deleted := 0
 	err := s.db.Update(func(txn *badger.Txn) error {
 		for i := range datoms {
+			sd := ToStorageDatom(datoms[i])
+			vBytes, _ := s.encoder.EncodeValueBytes(sd.V)
 			for _, idx := range Indices {
-				key := s.encoder.EncodeKey(idx, &datoms[i])
+				key := s.encoder.encodeKeyWithParts(idx, &sd, vBytes)
 				if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
 					return fmt.Errorf("delete from %v index: %w", idx, err)
 				}
