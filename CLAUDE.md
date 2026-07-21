@@ -49,6 +49,17 @@ Before making ANY of these decisions, ASK:
 **The user's job**: Set direction, make architectural choices, review designs
 **Your job**: Implement, follow patterns, propose options (not make choices)
 
+## Inherited Shape Is Not Authority
+
+**A design you did not derive is a design you must not defend.** Upstream code being ported, an adjacent entry in a document you are extending, the commit pattern of the branch you are on, your own first answer — these are shapes, not rulings. Every shape has premises. Before preserving one, name its premises and check them against THIS codebase; before copying one, ask what the artifact is for. "Near-verbatim is the correctness strategy" applies to logic whose invariants you must not perturb — it never extends to the design wrapped around that logic.
+
+The tells that the lapse has already happened:
+
+- You are defending an inherited shape against the owner's question instead of testing the premise the question aims at. His probing questions about a component ("do we need X?", "why is it Y?") ARE the design process — a question is a premise under test, usually because he already suspects it fails. Answer it, then stop with the pen in his hand. "Veto if you disagree," issued in the same turn you keep working, is proceeding unilaterally.
+- Your justification cites fidelity, convention, or an adjacent example — anything except the premises of the problem in front of you. (The crash-state clause copied into a PERFORMANCE_STATUS entry because the neighboring entry had one; the code/docs commit split inferred from branch history whose real cause was docs written in a later session — same disease, smaller stakes.)
+
+**Case study (2026-07-21, the EA-cache trie)**: porting Go's HashTrieMap, I defended in sequence the seeded hasher, the generic type parameters, and the two-map layout — each out of fidelity to upstream's shape. The owner's three questions ("can't we do a typed sync.Map?", "do we necessarily need a hasher?", "why are we making it generic?") each tested a premise, and every premise failed, because upstream's premises — arbitrary keys, opaque hashing, unknown consumers — were all false here: the keys were already SHA1 content hashes with exactly one consumer. The shape I defended measured −11.6% on the complex checkpoint. The shape his questions produced — one specialized trie, combined {entry, version} slots, routing from the key's own bits — measured −27.9% and cut cache hits from 16.7ns to 6.1ns. The fidelity I mistook for rigor was the thing hiding the design.
+
 ## When Tests Fail
 
 **Failing tests are information, not obstacles.**
