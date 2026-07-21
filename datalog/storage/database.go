@@ -2764,12 +2764,18 @@ func (d *Database) ResolveEntityAttributes(entity datalog.Identity, attrs []data
 }
 
 // resolveAttributeViaMatcher resolves a single (entity, attribute) by
-// querying the matcher directly. Used when the EA cache is disabled — the
-// matcher applies CRDT resolution (LWW for one, add-wins for many, RGA for
-// vector) via CRDTResolvingIterator. Returns nil if the entity has no
-// current value for the attribute.
+// querying the matcher directly. Used when the EA cache is disabled or the
+// handle is in history mode. Resolved reads (LWW for one, add-wins for many,
+// RGA for vector) go through LookupAttribute's direct index scans;
+// history-mode reads fall through to Match for raw datoms. Returns nil if
+// the entity has no current value for the attribute.
 func (d *Database) resolveAttributeViaMatcher(entity datalog.Identity, attr datalog.Keyword, matcher *BadgerMatcher, card schema.Cardinality, valueType schema.ValueType) (interface{}, error) {
-	if card == schema.CardinalityVector && d.cache == nil {
+	// LookupAttribute applies the same CRDT resolution a matched pattern
+	// would, without the relational Match machinery (pattern construction,
+	// streaming relation, tuple builders). History mode falls through to
+	// Match for raw datom reads — except cache-off vector reads, which
+	// return the RGA-resolved vector.
+	if !matcher.isHistoryMode() || (card == schema.CardinalityVector && d.cache == nil) {
 		value, found, err := matcher.LookupAttribute(entity, attr)
 		if err != nil || !found {
 			return nil, err

@@ -764,64 +764,20 @@ func (m *BadgerMatcher) LookupAttribute(
 		return typedVector(result.Elements, valueType), true, nil
 	}
 
-	// For cardinality-many, use AEVT and apply add-wins resolution
-	// Must return ALL values that are currently in the set
-	start, end := encoder.EncodePrefixRange(AEVT, aStorage[:], eBytes[:])
-
-	iter, err := m.store.ScanKeysOnly(AEVT, start, end)
+	// For cardinality-many, resolve the full set membership with add-wins
+	// semantics.
+	set, err := m.resolveAddWinsSet(eBytes[:], aStorage[:])
 	if err != nil {
 		return nil, false, err
 	}
-	defer func() {
-		if closeErr := iter.Close(); lookupErr == nil {
-			lookupErr = closeErr
-		}
-	}()
-
-	// For cardinality-many, we need add-wins resolution
-	// Track the highest add and remove lamport for each value
-	valueAddLamport := make(map[interface{}]uint64)
-	valueRemoveLamport := make(map[interface{}]uint64)
-
-	for iter.Next() {
-		datom, err := iter.Datom()
-		if err != nil {
-			return nil, false, err
-		}
-
-		// Check transaction filter for as-of queries
-		if m.shouldFilterTx(datom.Tx) {
-			continue
-		}
-
-		if datom.Op == datalog.OpCRDTRemove {
-			if datom.Tx.Lamport > valueRemoveLamport[datom.V] {
-				valueRemoveLamport[datom.V] = datom.Tx.Lamport
-			}
-		} else {
-			// OpCRDTAdd or no op (legacy)
-			if datom.Tx.Lamport > valueAddLamport[datom.V] {
-				valueAddLamport[datom.V] = datom.Tx.Lamport
-			}
-		}
+	if len(set.Members) == 0 {
+		return nil, false, nil
 	}
-	if err := iter.Error(); err != nil {
-		return nil, false, err
+	members := make([]interface{}, 0, len(set.Members))
+	for _, v := range set.Members {
+		members = append(members, v)
 	}
-
-	// Build result: include values where add >= remove (add-wins on tie)
-	var result []interface{}
-	for v, addLamport := range valueAddLamport {
-		removeLamport := valueRemoveLamport[v]
-		if addLamport >= removeLamport { // add-wins on tie
-			result = append(result, v)
-		}
-	}
-
-	if len(result) > 0 {
-		return result, true, nil
-	}
-	return nil, false, nil
+	return members, true, nil
 }
 
 // typedVector converts []any to a typed slice when the schema value type is known.

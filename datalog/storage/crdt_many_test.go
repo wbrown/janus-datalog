@@ -2146,3 +2146,72 @@ func TestHistoryModeCardinalityMany(t *testing.T) {
 		t.Errorf("History mode: expected 3 results (2 adds + 1 remove), got %d", historyCount)
 	}
 }
+
+// TestLookupAttributeManyBytesMembers exercises the storage-scan fallback of
+// LookupAttribute (matcher without a cache) for a cardinality-many bytes
+// attribute. []byte members must resolve through add-wins like any other
+// value type.
+func TestLookupAttributeManyBytesMembers(t *testing.T) {
+	dir, err := os.MkdirTemp("", "crdt-many-bytes-lookup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := NewDatabase(dir)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	s := schema.NewSchema()
+	s.Add(&schema.AttributeDefinition{
+		Ident:       datalog.NewKeyword(":doc/chunks"),
+		ValueType:   schema.TypeBytes,
+		Cardinality: schema.CardinalityMany,
+	})
+	db.SetSchema(s)
+
+	entityID := datalog.NewIdentity("bytes-entity")
+	attr := datalog.NewKeyword(":doc/chunks")
+
+	tx1 := db.NewTransaction()
+	if err := tx1.Add(entityID, attr, []byte("alpha")); err != nil {
+		t.Fatalf("Add alpha failed: %v", err)
+	}
+	if err := tx1.Add(entityID, attr, []byte("beta")); err != nil {
+		t.Fatalf("Add beta failed: %v", err)
+	}
+	if _, err := tx1.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	tx2 := db.NewTransaction()
+	if err := tx2.Remove(entityID, attr, []byte("alpha")); err != nil {
+		t.Fatalf("Remove alpha failed: %v", err)
+	}
+	if _, err := tx2.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	matcher := NewBadgerMatcher(db.Store())
+	matcher.SetSchema(s)
+	value, found := requireAttributeLookup(t, matcher, entityID, attr)
+	if !found {
+		t.Fatal("LookupAttribute returned not found")
+	}
+	members, ok := value.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{}, got %T", value)
+	}
+	if len(members) != 1 {
+		t.Fatalf("expected 1 member after remove, got %d: %v", len(members), members)
+	}
+	b, ok := members[0].([]byte)
+	if !ok {
+		t.Fatalf("expected []byte member, got %T", members[0])
+	}
+	if string(b) != "beta" {
+		t.Errorf("expected beta to survive, got %q", b)
+	}
+}
