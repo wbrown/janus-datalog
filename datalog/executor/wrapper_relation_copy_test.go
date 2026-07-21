@@ -32,7 +32,6 @@ func newMockUnsafeRelation(symbols []query.Symbol, data [][]interface{}) *mockUn
 func (r *mockUnsafeRelation) Symbols() []query.Symbol                                { return r.symbols }
 func (r *mockUnsafeRelation) Properties() RelationProperties                         { return r.properties }
 func (r *mockUnsafeRelation) Size() int                                              { return len(r.data) }
-func (r *mockUnsafeRelation) IsEmpty() bool                                          { return len(r.data) == 0 }
 func (r *mockUnsafeRelation) Get(i int) Tuple                                        { return nil }
 func (r *mockUnsafeRelation) String() string                                         { return "mockUnsafeRelation" }
 func (r *mockUnsafeRelation) Table() string                                          { return "" }

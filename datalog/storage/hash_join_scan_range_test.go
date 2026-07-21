@@ -121,7 +121,7 @@ func TestHashJoinScanRangeBug(t *testing.T) {
 			elapsed := time.Since(start)
 
 			assert.NoError(t, err)
-			assert.False(t, result.IsEmpty(), "Should have aggregation results")
+			assert.NotZero(t, result.Materialize().Size(), "Should have aggregation results")
 
 			t.Logf("Query took %v for aggregation over %d AAPL bars (but scanned all %d bars)",
 				elapsed, 1000, 10000)

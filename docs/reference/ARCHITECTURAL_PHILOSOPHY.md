@@ -192,8 +192,6 @@ Pattern match → StreamingRelation (lazy)
 ### The Failure Modes Are Brutal
 
 ```go
-// CRITICAL: Don't call IsEmpty() - it consumes streaming iterators!
-
 // CRITICAL: Check if build relation was already consumed
 if alreadyConsumed {
     panic("BUG: HashJoin received a StreamingRelation that was already consumed...")
@@ -207,8 +205,7 @@ if r.iteratorCalled && !r.shouldCache {
 
 | Mistake | Consequence |
 |---------|-------------|
-| Call `Size()` on streaming relation | Forces materialization, may lose data |
-| Call `IsEmpty()` to check | Consumes first tuple, silently wrong results |
+| Probe emptiness by stepping an iterator you don't capture | Spends the first tuple, silently wrong results (the reason `IsEmpty()` no longer exists — `Size()` returns -1 when unknown instead) |
 | Iterate twice without cache | Panic (if caught) or silent data loss |
 | Forget to copy tuple from reused workspace | Data corruption on next iteration |
 

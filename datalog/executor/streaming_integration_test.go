@@ -85,8 +85,8 @@ func TestStreamingIntegration(t *testing.T) {
 		_, isStreaming = projected.(*StreamingRelation)
 		assert.True(t, isStreaming, "Project should return StreamingRelation")
 
-		// Check empty without materialization
-		assert.False(t, projected.IsEmpty())
+		// Still unmaterialized: a streaming relation declines to size itself
+		assert.Equal(t, -1, projected.Size())
 
 		// Iterate results
 		it := projected.Iterator()

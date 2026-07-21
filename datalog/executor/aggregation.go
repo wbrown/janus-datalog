@@ -723,11 +723,6 @@ func (r *StreamingAggregateRelation) Size() int {
 	return r.materialized.Size()
 }
 
-// IsEmpty returns true if there are no groups
-func (r *StreamingAggregateRelation) IsEmpty() bool {
-	return r.Size() == 0
-}
-
 // Get returns a specific tuple by index (requires materialization)
 func (r *StreamingAggregateRelation) Get(i int) Tuple {
 	r.Iterator()

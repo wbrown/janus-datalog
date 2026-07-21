@@ -38,7 +38,7 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 	if bindingRel == nil {
 		return PatternToRelation(allDatoms, pattern), nil
 	}
-	if bindingRel.IsEmpty() {
+	if bindingRel.Size() == 0 {
 		// An errored relation that materialized empty is not an empty
 		// binding — the fixture honors the same contract as the production
 		// matchers.

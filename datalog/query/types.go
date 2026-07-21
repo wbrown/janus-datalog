@@ -564,11 +564,6 @@ type Relation struct {
 	Tuples  [][]interface{}
 }
 
-// IsEmpty returns true if the relation has no tuples
-func (r Relation) IsEmpty() bool {
-	return len(r.Tuples) == 0
-}
-
 // Size returns the number of tuples
 func (r Relation) Size() int {
 	return len(r.Tuples)

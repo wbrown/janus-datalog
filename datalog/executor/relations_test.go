@@ -219,7 +219,6 @@ func TestRelationsCollapse(t *testing.T) {
 		assert.Equal(t, 1, len(groups))
 
 		result := groups[0]
-		assert.False(t, result.IsEmpty())
 		assert.Equal(t, 2, result.Size()) // Alice and Bob's full paths
 
 		// Check symbols
@@ -284,7 +283,7 @@ func TestRelationsCollapse(t *testing.T) {
 
 		// Should have one group with empty result
 		assert.Equal(t, 1, len(groups))
-		assert.True(t, groups[0].IsEmpty())
+		assert.Equal(t, 0, groups[0].Materialize().Size())
 	})
 
 	t.Run("handles empty relations", func(t *testing.T) {

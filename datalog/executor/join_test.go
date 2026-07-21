@@ -109,7 +109,7 @@ func TestEmptyJoin(t *testing.T) {
 
 	joined := left.HashJoin(right, []query.Symbol{datalog.NewSymbol("?y")})
 
-	if !joined.IsEmpty() {
+	if joined.Materialize().Size() != 0 {
 		t.Error("expected empty join result")
 	}
 }

@@ -64,10 +64,6 @@ func (r *LazySeqRelation) Get(i int) Tuple {
 	return nil
 }
 
-func (r *LazySeqRelation) IsEmpty() bool {
-	return r.seq.Empty()
-}
-
 // Iterator returns a new cursor over the shared LazySeq.
 // Each call creates an independent cursor starting from the head.
 func (r *LazySeqRelation) Iterator() Iterator {

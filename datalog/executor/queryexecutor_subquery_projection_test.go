@@ -55,7 +55,7 @@ func TestQueryExecutorSubqueryProjection(t *testing.T) {
 			result, err := exec.Execute(q)
 			assert.NoError(t, err, "QueryExecutor should preserve subquery result symbol names")
 
-			// Collect results (don't check Size() or IsEmpty() - may be streaming and would consume first tuple)
+			// Collect results
 			it := result.Iterator()
 			defer it.Close()
 			count := 0

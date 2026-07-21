@@ -54,19 +54,12 @@ func analyzeReuseStrategy(pattern *query.DataPattern, bindingRel executor.Relati
 		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
 
-	// CRITICAL FIX: Don't call IsEmpty() on StreamingRelations
-	// IsEmpty() peeks at the first tuple by calling Next(), which CONSUMES it!
-	// When Size() is later called, materialization only captures remaining tuples.
-	// Result: Entity joins lose first tuple (returns 4/5 results instead of 5/5)
-	// If the relation is empty, subsequent iteration will discover that naturally.
-	// Skip the IsEmpty() check - it's a minor optimization that causes data loss.
-	// See: docs/bugs/BUG_ENTITY_JOIN_LOSES_FIRST_TUPLE.md
-
-	// Check if empty - but only for MaterializedRelations where it's safe
-	if _, isStreaming := bindingRel.(*executor.StreamingRelation); !isStreaming {
-		if bindingRel.IsEmpty() {
-			return ReuseStrategy{Type: NoReuse}, bindingRel
-		}
+	// Size() declines with -1 on streaming relations rather than consuming
+	// a tuple to answer, so the empty-binding shortcut applies exactly when
+	// the count is already free; an empty stream is discovered naturally by
+	// iteration.
+	if bindingRel.Size() == 0 {
+		return ReuseStrategy{Type: NoReuse}, bindingRel
 	}
 
 	// For streaming relations with unknown size, we can't optimize for size==1

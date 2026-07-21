@@ -289,8 +289,8 @@ func TestIndexedMatcher_EdgeCases(t *testing.T) {
 			t.Fatalf("Match failed: %v", err)
 		}
 
-		if !result.IsEmpty() {
-			t.Errorf("Expected empty result, got %d tuples", result.Size())
+		if size := result.Materialize().Size(); size != 0 {
+			t.Errorf("Expected empty result, got %d tuples", size)
 		}
 	})
 

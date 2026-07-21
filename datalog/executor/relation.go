@@ -119,8 +119,6 @@ type Relation interface {
 	// Size returns the number of tuples (may be expensive for iterators)
 	Size() int
 
-	// IsEmpty returns true if the relation has no tuples
-	IsEmpty() bool
 
 	// Get returns a specific tuple by index (may be expensive for streaming relations)
 	Get(i int) Tuple
@@ -545,9 +543,9 @@ func (r *MaterializedRelation) carryErr(derived Relation) Relation {
 // turned a mandated loud failure into a silent empty
 // (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md).
 //
-// Call only on relations reporting Size() >= 0 / IsEmpty() true: probing
-// iterates one step, which is destructive on a single-use stream (streaming
-// relations report Size() -1 and never take emptiness branches).
+// Call only on relations reporting Size() == 0: probing iterates one step,
+// which is destructive on a single-use stream (streaming relations report
+// Size() -1 and never take emptiness branches).
 func EmptyRelationError(rel Relation) error {
 	it := rel.Iterator()
 	_ = it.Next()
@@ -560,10 +558,6 @@ func EmptyRelationError(rel Relation) error {
 
 func (r *MaterializedRelation) Size() int {
 	return len(r.tuples)
-}
-
-func (r *MaterializedRelation) IsEmpty() bool {
-	return len(r.tuples) == 0
 }
 
 // Options returns the executor options for this materialized relation
@@ -1160,44 +1154,6 @@ func (r *StreamingRelation) RequiresCopy() bool {
 	return true
 }
 
-func (r *StreamingRelation) IsEmpty() bool {
-	// If materialized, check materialized relation
-	if r.materialized != nil {
-		return r.materialized.IsEmpty()
-	}
-
-	// If iterator has been consumed, check count
-	if r.counter != nil && r.counter.IsDone() {
-		return r.counter.Count() == 0
-	}
-
-	// With EnableTrueStreaming or Materialize()'d relations, don't peek —
-	// consuming the first tuple via CountingIterator would cause the
-	// CachingIterator (created later by Iterator()) to miss it.
-	if r.options.EnableTrueStreaming || r.shouldCache {
-		return false
-	}
-
-	// If cache is ready (already iterated), check cache
-	if r.cacheReady {
-		return len(r.cache) == 0
-	}
-
-	// Non-streaming mode: safe to peek
-	if r.counter == nil {
-		r.counter = NewCountingIterator(r.iterator)
-	}
-
-	// Check if there's at least one tuple
-	hasOne := r.counter.Next()
-	if !hasOne {
-		return true // Empty
-	}
-
-	// Not empty - but we've consumed the first tuple
-	return false
-}
-
 // Get returns a specific tuple by index
 func (r *StreamingRelation) Get(i int) Tuple {
 	if i < 0 {
@@ -1634,15 +1590,6 @@ func (p *ProductRelation) Size() int {
 		size *= relSize
 	}
 	return size
-}
-
-func (p *ProductRelation) IsEmpty() bool {
-	for _, rel := range p.relations {
-		if rel.IsEmpty() {
-			return true
-		}
-	}
-	return len(p.relations) == 0
 }
 
 func (p *ProductRelation) Get(i int) Tuple {

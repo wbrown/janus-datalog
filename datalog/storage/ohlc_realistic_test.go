@@ -99,7 +99,6 @@ func TestOHLCRealisticQueries(t *testing.T) {
 
 				result, err := exec.Execute(q)
 				assert.NoError(t, err)
-				assert.False(t, result.IsEmpty(), "Should have datoms")
 
 				// Should have: 1 symbol entity with 1 attribute + 78 bars × 8 attributes each = 625 datoms
 				it := result.Iterator()
@@ -156,11 +155,8 @@ func TestOHLCRealisticQueries(t *testing.T) {
 				assert.NoError(t, err)
 
 				// Debug output
-				t.Logf("Result IsEmpty: %v", result.IsEmpty())
 				t.Logf("Result Size: %d", result.Size())
 				t.Logf("Result Symbols: %v", result.Symbols())
-
-				assert.False(t, result.IsEmpty(), "Should have aggregation results")
 
 				it := result.Iterator()
 				defer it.Close()
@@ -272,7 +268,6 @@ func TestOHLCRealisticQueries(t *testing.T) {
 
 				result, err := exec.Execute(q)
 				assert.NoError(t, err)
-				assert.False(t, result.IsEmpty(), "Should have OHLC results with subqueries")
 
 				it := result.Iterator()
 				defer it.Close()
@@ -319,7 +314,6 @@ func TestOHLCRealisticQueries(t *testing.T) {
 
 				result, err := exec.Execute(q)
 				assert.NoError(t, err)
-				assert.False(t, result.IsEmpty(), "Should have day count")
 
 				it := result.Iterator()
 				defer it.Close()
@@ -363,7 +357,6 @@ func TestOHLCRealisticQueries(t *testing.T) {
 
 				result, err := exec.Execute(q)
 				assert.NoError(t, err)
-				assert.False(t, result.IsEmpty(), "Should have bar data")
 
 				// Count results
 				it := result.Iterator()

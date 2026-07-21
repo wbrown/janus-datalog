@@ -64,20 +64,19 @@ func (m *BadgerMatcher) MatchWithConstraints(
 		return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
 	}
 
-	// CRITICAL FIX: Don't call IsEmpty() on StreamingRelations - it consumes first tuple!
-	// See docs/bugs/BUG_ENTITY_JOIN_LOSES_FIRST_TUPLE.md
-	// If relation is empty, subsequent iteration will discover that naturally.
-	if _, isStreaming := bindingRel.(*executor.StreamingRelation); !isStreaming {
-		if bindingRel.IsEmpty() {
-			// An errored relation that materialized empty is not an empty
-			// binding: its zero rows mean the upstream scan failed. Falling
-			// back to an unbound scan here would launder that failure into
-			// a silent result.
-			if err := executor.EmptyRelationError(bindingRel); err != nil {
-				return nil, err
-			}
-			return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
+	// Size() declines with -1 on streaming relations rather than consuming
+	// a tuple to answer, so the empty-binding shortcut applies exactly when
+	// the count is already free; an empty stream is discovered naturally by
+	// iteration.
+	if bindingRel.Size() == 0 {
+		// An errored relation that materialized empty is not an empty
+		// binding: its zero rows mean the upstream scan failed. Falling
+		// back to an unbound scan here would launder that failure into
+		// a silent result.
+		if err := executor.EmptyRelationError(bindingRel); err != nil {
+			return nil, err
 		}
+		return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
 	}
 
 	// Project the binding relation to only include symbols used in the pattern

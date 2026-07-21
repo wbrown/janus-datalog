@@ -41,7 +41,7 @@ func TestProductRelation(t *testing.T) {
 		if rel == nil {
 			t.Fatal("Product() should not return nil for empty input")
 		}
-		if !rel.IsEmpty() {
+		if rel.Materialize().Size() != 0 {
 			t.Error("Product() of empty relations should be empty")
 		}
 	})

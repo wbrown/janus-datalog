@@ -479,12 +479,6 @@ func (r *OrFallbackRelation) Size() int {
 	return -1 // Streaming - unknown size
 }
 
-func (r *OrFallbackRelation) IsEmpty() bool {
-	it := r.Iterator()
-	defer it.Close()
-	return !it.Next()
-}
-
 func (r *OrFallbackRelation) Get(i int) Tuple {
 	return nil // Not supported for streaming
 }

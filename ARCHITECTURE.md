@@ -334,7 +334,6 @@ type Relation interface {
     Properties() RelationProperties
     Iterator() Iterator
     Size() int
-    IsEmpty() bool
     Project(symbols []query.Symbol) (Relation, error)
     Join(other Relation) Relation
     HashJoin(other Relation, joinCols []query.Symbol) Relation

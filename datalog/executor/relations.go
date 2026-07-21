@@ -171,9 +171,6 @@ func (rs Relations) Collapse(ctx Context) Relations {
 					remaining = append(remaining[:i], remaining[i+1:]...)
 					changed = true
 
-					// CRITICAL: Don't call IsEmpty() - it consumes streaming iterators!
-					// Empty detection happens naturally in subsequent operations
-
 					break // Restart the loop
 				}
 			}

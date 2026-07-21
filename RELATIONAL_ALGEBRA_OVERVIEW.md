@@ -64,8 +64,7 @@ type Relation interface {
     Symbols() []Symbol                    // Schema
     Properties() RelationProperties       // Proven ordering and candidate keys
     Iterator() Iterator                   // Streaming access
-    Size() int                            // Cardinality
-    IsEmpty() bool                        // Empty check
+    Size() int                            // Cardinality (-1 when unknown; never consumes)
     Materialize() Relation                // Force materialization
 }
 ```

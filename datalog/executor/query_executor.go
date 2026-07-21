@@ -97,8 +97,6 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 				if err != nil {
 					return nil, fmt.Errorf("clause %d (pattern) failed: %w", i, err)
 				}
-				// Always append the relation - don't check IsEmpty() as that consumes iterators
-				// Collapse will handle empty relations correctly
 				if newRel != nil {
 					groups = append(groups, newRel)
 				}
@@ -166,8 +164,6 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 			if err != nil {
 				return nil, fmt.Errorf("clause %d (subquery) failed: %w", i, err)
 			}
-			// Always append the relation - don't check IsEmpty() as that consumes iterators
-			// Collapse will handle empty relations correctly
 			if newRel != nil {
 				groups = append(groups, newRel)
 			}

@@ -132,37 +132,6 @@ func (it *BufferedIterator) Size() int {
 	return len(it.buffer)
 }
 
-// IsEmpty checks if the iterator has any tuples without full consumption
-// This only consumes the first tuple if needed
-func (it *BufferedIterator) IsEmpty() bool {
-	it.mu.Lock()
-	defer it.mu.Unlock()
-
-	// If we have buffered data, we're not empty
-	if len(it.buffer) > 0 {
-		return false
-	}
-
-	// If source is consumed and buffer is empty, we're empty
-	if it.consumed {
-		return true
-	}
-
-	// Try to get one tuple from source
-	if it.source.Next() {
-		tuple := it.source.Tuple()
-		tupleCopy := make(Tuple, len(tuple))
-		copy(tupleCopy, tuple)
-		it.buffer = append(it.buffer, tupleCopy)
-		return false
-	}
-
-	// Source is empty
-	it.consumed = true
-	it.captureSourceError()
-	return true
-}
-
 // Clone creates a new independent iterator over the same buffered data
 // The clone shares the buffer but has independent iteration position
 func (it *BufferedIterator) Clone() Iterator {

@@ -114,11 +114,6 @@ func (s *OrderedSet[T]) Clear() {
 	s.seen = make(map[T]struct{})
 }
 
-// IsEmpty returns true if the set has no elements.
-func (s *OrderedSet[T]) IsEmpty() bool {
-	return len(s.Items) == 0
-}
-
 // Union returns a new OrderedSet containing all elements from both sets.
 // Elements from this set appear first (in order), followed by new elements from other.
 func (s *OrderedSet[T]) Union(other *OrderedSet[T]) *OrderedSet[T] {

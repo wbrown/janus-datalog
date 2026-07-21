@@ -82,7 +82,6 @@ func TestHashJoinSymbolIndexBug(t *testing.T) {
 
 			result, err := exec.Execute(q)
 			assert.NoError(t, err)
-			assert.False(t, result.IsEmpty(), "Should have results when HashJoinScan correctly uses symbol index")
 
 			// Should find all 5 price entities
 			assert.Equal(t, 5, result.Size(), "Should find 5 price entities")
@@ -164,7 +163,6 @@ func TestHashJoinSymbolIndexMultiSymbol(t *testing.T) {
 
 			result, err := exec.Execute(q)
 			assert.NoError(t, err)
-			assert.False(t, result.IsEmpty(), "Should find the joined entities")
 			assert.Equal(t, 1, result.Size(), "Should find one pair")
 
 			it := result.Iterator()
