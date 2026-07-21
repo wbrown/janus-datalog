@@ -375,6 +375,61 @@ func TestComplexQuerySubqueryExecutionCounts(t *testing.T) {
 	require.Equal(t, int64(1), narrowedOuterMaterializations.Load())
 }
 
+// TestComplexQueryCheckpointCacheSteadyState observes the EA cache's rebuild
+// traffic on the complex checkpoint after warmup, via cache/rebuild events.
+// A warm read-only steady state is expected to rebuild nothing; the
+// allocation profile attributed ~190 storage scans per execution to cache
+// rebuilds, and this reports that population by attribute and reason.
+func TestComplexQueryCheckpointCacheSteadyState(t *testing.T) {
+	const (
+		numScenarios     = 75
+		tasksPerScenario = 100
+		resultLimit      = 25
+	)
+	var recording atomic.Bool
+	type rebuildKey struct{ attribute, reason string }
+	counts := map[rebuildKey]int{}
+	db, err := NewDatabaseWithOptions(DatabaseOptions{
+		Path:   t.TempDir(),
+		Schema: optimizationMatrixSchema(),
+		AnnotationHandler: func(event annotations.Event) {
+			if event.Name != annotations.CacheRebuild || !recording.Load() {
+				return
+			}
+			counts[rebuildKey{
+				attribute: event.Data["attribute"].(string),
+				reason:    event.Data["reason"].(string),
+			}]++
+		},
+	})
+	require.NoError(t, err)
+	defer db.Close()
+
+	populateOptimizationMatrix(t, db, numScenarios, tasksPerScenario)
+	queryText := optimizationMatrixQuery(resultLimit)
+
+	// Warm parse, plan, storage, and entity-attribute caches.
+	warm, err := db.Query(queryText)
+	require.NoError(t, err)
+	_, err = executor.CollectTuples(warm, nil)
+	require.NoError(t, err)
+
+	recording.Store(true)
+	result, err := db.Query(queryText)
+	require.NoError(t, err)
+	_, err = executor.CollectTuples(result, nil)
+	require.NoError(t, err)
+	recording.Store(false)
+
+	total := 0
+	for key, n := range counts {
+		total += n
+		t.Logf("cache/rebuild attribute=%s reason=%s count=%d", key.attribute, key.reason, n)
+	}
+	require.Zero(t, total,
+		"a warm read-only checkpoint must not rebuild any cache entry: every rebuild is a storage scan plus a transaction, and the freshness model says a warmed key stays fresh until a write touches it")
+}
+
 func BenchmarkComplexQueryJoinMaterialization(b *testing.B) {
 	b.Run("materialized", func(b *testing.B) {
 		options := DefaultPlannerOptions()

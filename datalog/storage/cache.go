@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
 
@@ -80,6 +81,11 @@ type Cache struct {
 	// in-flight, check freshness — is a single trie walk.
 	slots *cacheTrie
 
+	// handler, when set, receives cache/rebuild events. Callers guard on
+	// nil at every emission site: a disabled handler costs one branch on
+	// the rebuild path and nothing on the hit path.
+	handler annotations.Handler
+
 	// Per-attribute version tracking for fast A-bound query freshness checks
 	// When querying [?e :name "Bob"], we can check if ANY :name has changed
 	// without checking every individual (E, :name) pair
@@ -94,6 +100,26 @@ type Cache struct {
 // NewCache creates a new cache instance
 func NewCache() *Cache {
 	return &Cache{slots: newCacheTrie()}
+}
+
+// SetHandler configures the handler for cache resolution events, following
+// the storage layer's SetHandler convention. Pass nil to disable.
+func (c *Cache) SetHandler(handler annotations.Handler) {
+	c.handler = handler
+}
+
+// annotateRebuild reports one cache rebuild and why it happened. Callers
+// check c.handler != nil before calling; the emission itself never guards.
+func (c *Cache) annotateRebuild(key CacheKey, reason string, slot cacheSlot) {
+	data := map[string]interface{}{
+		"attribute":    datalog.InternKeywordFromBytes(key.A).String(),
+		"reason":       reason,
+		"slot_version": slot.version.Lamport,
+	}
+	if slot.entry != nil {
+		data["entry_version"] = slot.entry.version.Lamport
+	}
+	c.handler(annotations.Event{Name: annotations.CacheRebuild, Data: data})
 }
 
 // inFlightEntry is the shared sentinel stored for an (E, A) while its commit is
@@ -163,11 +189,15 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 // False negatives (returning stale data) are NOT acceptable.
 func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
 	// Fast path: one trie walk yields the entry and its freshness bound.
-	if slot, ok := c.slots.Load(key); ok && slot.entry != nil {
+	slot, ok := c.slots.Load(key)
+	if ok && slot.entry != nil {
 		// In-flight: a commit to this (E, A) is in progress. Resolve from storage
 		// (the rebuild below) without caching, so the result reflects whichever
 		// side of the commit is currently durable — never a stale cache hit.
 		if slot.entry.inFlight {
+			if c.handler != nil {
+				c.annotateRebuild(key, "in-flight", slot)
+			}
 			return c.rebuild(key, resolver)
 		}
 
@@ -176,6 +206,11 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
 			return slot.entry // Fresh - cache hit
 		}
 		// Stale - fall through to rebuild
+		if c.handler != nil {
+			c.annotateRebuild(key, "stale", slot)
+		}
+	} else if c.handler != nil {
+		c.annotateRebuild(key, "absent", slot)
 	}
 
 	// Slow path: rebuild and store

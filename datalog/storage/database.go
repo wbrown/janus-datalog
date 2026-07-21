@@ -202,9 +202,15 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		clock.Restore(maxElementID)
 	}
 
+	// One Synchronized wrapper serves every emitter — collectors, the storage
+	// matcher, and the cache — so handler authors see a single serialization
+	// domain across all annotation sources.
+	annotationHandler := annotations.Synchronized(opts.AnnotationHandler)
+
 	var cache *Cache
 	if !opts.DisableCache {
 		cache = NewCache()
+		cache.SetHandler(annotationHandler)
 	}
 
 	// When the caller supplies no schema, reconstruct one from the CRDT ops
@@ -232,7 +238,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		planCache:         planner.NewPlanCache(1000, 0),
 		parseCache:        NewParseCache(1000),
 		schema:            effectiveSchema,
-		annotationHandler: annotations.Synchronized(opts.AnnotationHandler),
+		annotationHandler: annotationHandler,
 		plannerOptions:    opts.PlannerOptions,
 		clock:             clock,
 		replicaID:         replicaID,
@@ -443,6 +449,9 @@ func (d *Database) SetAnnotationHandler(handler annotations.Handler) {
 	// Serialize: the engine emits annotations from parallel workers, so the
 	// handler must be safe to call concurrently.
 	d.annotationHandler = annotations.Synchronized(handler)
+	if d.cache != nil {
+		d.cache.SetHandler(d.annotationHandler)
+	}
 }
 
 // NewTransaction starts a new write transaction.
@@ -528,7 +537,7 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 	// Field dispositions (inherit / zero / per-handle) are the ruled contract
 	// pinned by TestTemporalHandleFieldClassification — a new Database field
 	// must be classified there before it can ship.
-	return &Database{
+	handle := &Database{
 		store:             d.store,
 		encoder:           d.encoder,
 		schema:            d.schema,
@@ -542,6 +551,8 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 		replicaID:         d.replicaID,
 		temporalTxID:      &txID,
 	}
+	handle.cache.SetHandler(d.annotationHandler)
+	return handle
 }
 
 // History returns a read-only Database handle that returns all raw datoms
