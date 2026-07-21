@@ -136,7 +136,10 @@ func TestEvaluateExpressionUnifyPassThroughCopiesFromUnsafeSource(t *testing.T) 
 	}
 	expr := q.Where[2].(*query.Expression)
 
-	result := evaluateExpressionWithLookup(src, expr, nil, nil)
+	result, err := evaluateExpressionWithLookup(src, expr, nil, nil)
+	if err != nil {
+		t.Fatalf("evaluation failed: %v", err)
+	}
 
 	var got []Tuple
 	it := result.Iterator()
@@ -247,7 +250,10 @@ func TestEvaluateExpressionUnifiesBoundBindings(t *testing.T) {
 			}
 
 			rel := NewMaterializedRelation(tc.symbols, tc.tuples)
-			result := evaluateExpressionWithLookup(rel, expr, nil, nil)
+			result, err := evaluateExpressionWithLookup(rel, expr, nil, nil)
+			if err != nil {
+				t.Fatalf("evaluation failed: %v", err)
+			}
 
 			gotSymbols := result.Symbols()
 			if len(gotSymbols) != len(tc.wantSymbols) {

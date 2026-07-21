@@ -58,7 +58,15 @@ func materializeRelationsForPattern(pattern *query.DataPattern, relations Relati
 
 // filterWithPredicateAndLookup filters a relation using a predicate with optional database lookup.
 // constantBindings are pre-resolved scalar values that are not present as relation symbols.
-func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation) {
+//
+// Eager: the scan completes before returning, so every error — predicate
+// evaluation, source iteration, close — is knowable synchronously and
+// returns in-band. The deferred-error convention is exclusively for
+// lazily-discovered errors on streaming relations; deferring a known error
+// here left it to consumers that inspect relations structurally (emptiness
+// branches) and laundered it into a silent empty
+// (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md).
+func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation, resultErr error) {
 	symbols := rel.Symbols()
 	needsCopy := rel.RequiresCopy()
 
@@ -76,22 +84,13 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 	// Check if this is a DatabaseFunctionPredicate that needs lookup
 	dbFuncPred, isDbFuncPred := pred.(*query.DatabaseFunctionPredicate)
 
-	// Failed iteration or evaluation surfaces via result.err — replayed at the
-	// next public boundary by Iterator().Error(). Named return + closure so the
-	// deferred Close() also runs on panic (predicate Eval is user-supplied code
-	// and can panic), without losing the Close error.
-	var iterErr error
+	// Named return + closure so the deferred Close() also runs on panic
+	// (predicate Eval is user-supplied code and can panic), without losing
+	// the Close error.
 	iter := rel.Iterator()
 	defer func() {
-		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
-			iterErr = closeErr
-		}
-		// Panic path: result is nil; iter.Close above still ran.
-		if iterErr == nil || result == nil {
-			return
-		}
-		if m, ok := result.(*MaterializedRelation); ok && m.err == nil {
-			m.err = iterErr
+		if closeErr := iter.Close(); closeErr != nil && resultErr == nil {
+			resultErr = closeErr
 		}
 	}()
 
@@ -118,10 +117,8 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 		}
 		if err != nil {
 			// Fail fast — predicate eval errors are real errors, not
-			// "treat as false." Surface to the consumer; do not silently
-			// drop the tuple as if the predicate had said no.
-			iterErr = err
-			break
+			// "treat as false."
+			return nil, err
 		}
 
 		if passes {
@@ -131,21 +128,20 @@ func filterWithPredicateAndLookup(rel Relation, pred query.Predicate, lookup que
 			filtered = append(filtered, tuple)
 		}
 	}
-	if iterErr == nil {
-		iterErr = iter.Error()
+	if err := iter.Error(); err != nil {
+		return nil, err
 	}
 
 	// Extract options from source relation to preserve configuration
 	opts := rel.Options()
-	result = NewMaterializedRelationWithProperties(symbols, filtered, opts, rel.Properties())
-	return
+	return NewMaterializedRelationWithProperties(symbols, filtered, opts, rel.Properties()), nil
 }
 
 // evaluateExpressionWithLookup evaluates an expression with optional database lookup support.
 // If lookup is non-nil and the expression is a DatabaseFunction, it uses EvalWithLookup.
 // Otherwise, it falls back to the standard Eval method.
 // constantBindings are pre-resolved scalar values that are not present as relation symbols.
-func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation) {
+func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup query.EntityLookup, constantBindings map[query.Symbol]interface{}) (result Relation, resultErr error) {
 	symbols := rel.Symbols()
 
 	// Determine binding symbols and whether they already exist
@@ -179,22 +175,18 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 		}
 	}
 
-	// Failed iteration or evaluation surfaces via result.err — replayed at the
-	// next public boundary by Iterator().Error(). Named return + closure so the
-	// deferred Close() also runs on panic (expression Function.Eval is
-	// user-supplied code and can panic), without losing the Close error.
+	// Eager: the scan completes before returning, so evaluation and
+	// iteration errors are knowable synchronously and return in-band (the
+	// deferred-error convention is exclusively for lazily-discovered errors
+	// on streaming relations). Named return + closure so the deferred
+	// Close() also runs on panic (expression Function.Eval is user-supplied
+	// code and can panic), without losing the Close error.
 	var iterErr error
 	expanded := false
 	iter := rel.Iterator()
 	defer func() {
-		if closeErr := iter.Close(); closeErr != nil && iterErr == nil {
-			iterErr = closeErr
-		}
-		if iterErr == nil || result == nil {
-			return
-		}
-		if m, ok := result.(*MaterializedRelation); ok && m.err == nil {
-			m.err = iterErr
+		if closeErr := iter.Close(); closeErr != nil && resultErr == nil {
+			resultErr = closeErr
 		}
 	}()
 
@@ -304,6 +296,9 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 	if iterErr == nil {
 		iterErr = iter.Error()
 	}
+	if iterErr != nil {
+		return nil, iterErr
+	}
 
 	// Extract options from source relation to preserve configuration.
 	// Only extension symbols touch the properties: bound positions are
@@ -318,8 +313,7 @@ func evaluateExpressionWithLookup(rel Relation, expr *query.Expression, lookup q
 			properties = properties.addSymbol(symbol)
 		}
 	}
-	result = NewMaterializedRelationWithProperties(newSymbols, newTuples, opts, properties)
-	return
+	return NewMaterializedRelationWithProperties(newSymbols, newTuples, opts, properties), nil
 }
 
 // projectToSymbols projects a relation to the specified symbols

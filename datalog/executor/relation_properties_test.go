@@ -474,12 +474,13 @@ func TestExpandingExpressionDoesNotPreserveOuterKey(t *testing.T) {
 		ExecutorOptions{},
 		RelationProperties{Keys: [][]query.Symbol{{entity}}},
 	)
-	expanded := evaluateExpressionWithLookup(source, &query.Expression{
+	expanded, err := evaluateExpressionWithLookup(source, &query.Expression{
 		Function: query.EnumerateFunction{
 			VecTerm: query.VariableTerm{Symbol: vector},
 		},
 		Binding: query.TupleBinding{Variables: []query.Symbol{index, value}},
 	}, nil, nil)
+	require.NoError(t, err)
 
 	require.False(t, containsSymbolSet(expanded.Properties().Keys, []query.Symbol{entity}),
 		"one entity expands to multiple rows, so the outer key is no longer unique")

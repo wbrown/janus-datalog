@@ -35,7 +35,16 @@ func (m *MockPatternMatcher) Match(q *query.Query, bindings Relations) (Relation
 
 	// Find best binding relation for this pattern
 	bindingRel := bindings.FindBestForPattern(pattern)
-	if bindingRel == nil || bindingRel.IsEmpty() {
+	if bindingRel == nil {
+		return PatternToRelation(allDatoms, pattern), nil
+	}
+	if bindingRel.IsEmpty() {
+		// An errored relation that materialized empty is not an empty
+		// binding — the fixture honors the same contract as the production
+		// matchers.
+		if err := EmptyRelationError(bindingRel); err != nil {
+			return nil, err
+		}
 		return PatternToRelation(allDatoms, pattern), nil
 	}
 

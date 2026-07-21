@@ -7,9 +7,11 @@ import (
 // thetaJoinWithPredicate performs a nested-loop join with a predicate filter.
 // This replaces Product() + filterWithPredicateAndLookup for multi-relation predicates,
 // avoiding the StreamingRelation.Iterator() panic by using BufferedIterator for the inner.
-func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) Relation {
+//
+// Eager: errors are knowable synchronously and return in-band.
+func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) (Relation, error) {
 	if len(relevantRels) == 0 {
-		return NewMaterializedRelationWithOptions(nil, nil, opts)
+		return NewMaterializedRelationWithOptions(nil, nil, opts), nil
 	}
 	if len(relevantRels) == 1 {
 		return filterWithPredicateAndLookup(relevantRels[0], pred, lookup, constants)
@@ -22,9 +24,15 @@ func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, looku
 
 	// For 3+ relations: iteratively pair-wise theta-join
 	// Buffer all inner relations, join the first two, then join result with third, etc.
-	result := thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
+	result, err := thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
+	if err != nil {
+		return nil, err
+	}
 	for i := 2; i < len(relevantRels); i++ {
-		result = thetaJoinPair(result, relevantRels[i], nil, nil, constants, opts)
+		result, err = thetaJoinPair(result, relevantRels[i], nil, nil, constants, opts)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Apply predicate filter on final combined result
 	return filterWithPredicateAndLookup(result, pred, lookup, constants)
@@ -32,7 +40,10 @@ func thetaJoinWithPredicate(relevantRels []Relation, pred query.Predicate, looku
 
 // thetaJoinPair performs a nested-loop join between two relations with optional predicate.
 // The outer relation streams; the inner is buffered for re-iteration via BufferedIterator.
-func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) Relation {
+//
+// Eager: evaluation, iteration, and close errors are knowable synchronously
+// and return in-band.
+func thetaJoinPair(outer, inner Relation, pred query.Predicate, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) (Relation, error) {
 	outerSyms := outer.Symbols()
 	innerSyms := inner.Symbols()
 	combinedSyms := make([]query.Symbol, 0, len(outerSyms)+len(innerSyms))
@@ -104,8 +115,8 @@ outerLoop:
 			filtered = append(filtered, combined)
 		}
 	}
-	// Deferred scan errors: a failed outer or inner iteration must not be
-	// presented as a completed join. First error wins.
+	// A failed outer or inner iteration must not be presented as a
+	// completed join. First error wins; all errors return in-band.
 	if err := outerIt.Error(); joinErr == nil {
 		joinErr = err
 	}
@@ -118,35 +129,36 @@ outerLoop:
 	if closeErr := innerBuf.Close(); joinErr == nil {
 		joinErr = closeErr
 	}
-
-	result := NewMaterializedRelationWithOptions(combinedSyms, filtered, opts)
 	if joinErr != nil {
-		result.err = joinErr
+		return nil, joinErr
 	}
-	return result
+
+	return NewMaterializedRelationWithOptions(combinedSyms, filtered, opts), nil
 }
 
 // crossJoinWithExpression performs a nested-loop cross-join between multiple relations,
 // then evaluates an expression on each combined tuple.
 // This replaces Product() + evaluateExpressionWithLookup for multi-relation expressions,
 // avoiding the StreamingRelation.Iterator() panic.
-func crossJoinWithExpression(relevantRels []Relation, expr *query.Expression, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) Relation {
+//
+// Eager: errors are knowable synchronously and return in-band.
+func crossJoinWithExpression(relevantRels []Relation, expr *query.Expression, lookup query.EntityLookup, constants map[query.Symbol]interface{}, opts ExecutorOptions) (Relation, error) {
 	if len(relevantRels) == 0 {
-		return NewMaterializedRelationWithOptions(nil, nil, opts)
+		return NewMaterializedRelationWithOptions(nil, nil, opts), nil
 	}
 	if len(relevantRels) == 1 {
 		return evaluateExpressionWithLookup(relevantRels[0], expr, lookup, constants)
 	}
 
 	// Cross-join all relations first (no predicate filter)
-	var joined Relation
-	if len(relevantRels) == 2 {
-		joined = thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
-	} else {
-		// Iteratively pair-wise cross-join
-		joined = thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
-		for i := 2; i < len(relevantRels); i++ {
-			joined = thetaJoinPair(joined, relevantRels[i], nil, nil, constants, opts)
+	joined, err := thetaJoinPair(relevantRels[0], relevantRels[1], nil, nil, constants, opts)
+	if err != nil {
+		return nil, err
+	}
+	for i := 2; i < len(relevantRels); i++ {
+		joined, err = thetaJoinPair(joined, relevantRels[i], nil, nil, constants, opts)
+		if err != nil {
+			return nil, err
 		}
 	}
 

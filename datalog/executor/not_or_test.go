@@ -2116,12 +2116,14 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 // TestMissingOnLookupLessMatcherFailsLoudly pins the loud-failure contract
 // for database-function predicates on a matcher without entity lookup.
 // MemoryPatternMatcher implements no LookupAttribute, so [(missing? $ ?e
-// :attr)] cannot be answered here; the required behavior is a loud error —
-// DatabaseFunctionPredicate.Eval errors when reached without a lookup, so a
-// silent empty result means the predicate was never reached and the input
-// relation was dropped upstream without a sound. This test is committed RED
-// by owner ruling: the baseline path currently returns 0 rows with err=nil.
-// Tracked in docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md.
+// :attr)] cannot be answered here; the required behavior is a loud error.
+// Both execution contexts are pinned independently — they fail through
+// different defects (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md):
+// bare, the predicate's Eval error is deferred and was laundered by
+// emptiness-branching consumers (0 rows, err=nil); annotated, the collector
+// wrapper fabricated "attribute absent" for every lookup (wrong rows,
+// err=nil). Observability must never change results: both contexts must
+// yield the same loud error.
 func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
 	goalA := datalog.NewIdentity("goal:a")
 	goalB := datalog.NewIdentity("goal:b")
@@ -2145,23 +2147,25 @@ func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
 		t.Fatalf("failed to parse query: %v", err)
 	}
 
+	contexts := []struct {
+		name string
+		ctx  func() Context
+	}{
+		{"bare", func() Context { return NewContext(nil) }},
+		{"annotated", func() Context { return NewContext(func(annotations.Event) {}) }},
+	}
+
 	for _, mode := range optimizerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
-			inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
+		for _, tc := range contexts {
+			t.Run(mode.name+"/"+tc.name, func(t *testing.T) {
+				executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+				inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
 
-			// Capture the execution event stream: the reproducer documents
-			// not just the silent empty but where the rows vanish.
-			var events []annotations.Event
-			handler := func(event annotations.Event) { events = append(events, event) }
-
-			result, err := executor.ExecuteWithRelations(NewContext(handler), q, []Relation{inputRel})
-			if err == nil {
-				for _, ev := range events {
-					t.Logf("event: %s %v", ev.Name, ev.Data)
+				result, err := executor.ExecuteWithRelations(tc.ctx(), q, []Relation{inputRel})
+				if err == nil {
+					t.Fatalf("missing? on a matcher without entity lookup completed silently (rows=%d); want a loud error", result.Size())
 				}
-				t.Fatalf("missing? on a matcher without entity lookup completed silently (rows=%d); want a loud error", result.Size())
-			}
-		})
+			})
+		}
 	}
 }

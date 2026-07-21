@@ -536,8 +536,16 @@ func (e *Executor) executeRealizedWithRelationInputIteration(ctx Context, plan *
 		}
 	}
 
-	if iterationRelation == nil || iterationRelation.Size() == 0 {
-		// No iteration needed or empty input
+	if iterationRelation == nil {
+		// No iteration needed
+		return emptyRelationForQuery(plan.Query), nil
+	}
+	if iterationRelation.Size() == 0 {
+		// An errored relation that materialized empty is not an empty
+		// input; surface the taint instead of answering from it.
+		if err := EmptyRelationError(iterationRelation); err != nil {
+			return nil, err
+		}
 		return emptyRelationForQuery(plan.Query), nil
 	}
 

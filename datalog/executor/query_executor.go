@@ -913,13 +913,17 @@ func (e *DefaultQueryExecutor) executeExpression(ctx Context, expr *query.Expres
 	}
 
 	var result Relation
+	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — evaluate directly, no join needed
-		result = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, e.constantBindings)
+		result, err = evaluateExpressionWithLookup(relevantRels[0], expr, lookup, e.constantBindings)
 	} else {
 		// Multiple disjoint relations — cross-join with expression evaluation
 		// Uses BufferedIterator for inner re-iteration instead of Product()
-		result = crossJoinWithExpression(relevantRels, expr, lookup, e.constantBindings, e.options)
+		result, err = crossJoinWithExpression(relevantRels, expr, lookup, e.constantBindings, e.options)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Return result + unchanged relations
@@ -991,13 +995,17 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 	}
 
 	var result Relation
+	var err error
 	if len(relevantRels) == 1 {
 		// Single relation — filter directly, no join needed
-		result = filterWithPredicateAndLookup(relevantRels[0], pred, lookup, e.constantBindings)
+		result, err = filterWithPredicateAndLookup(relevantRels[0], pred, lookup, e.constantBindings)
 	} else {
 		// Multiple disjoint relations — theta-join with predicate filter
 		// Uses BufferedIterator for inner re-iteration instead of Product()
-		result = thetaJoinWithPredicate(relevantRels, pred, lookup, e.constantBindings, e.options)
+		result, err = thetaJoinWithPredicate(relevantRels, pred, lookup, e.constantBindings, e.options)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Return result + unchanged relations

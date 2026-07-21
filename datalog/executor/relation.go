@@ -537,6 +537,27 @@ func (r *MaterializedRelation) carryErr(derived Relation) Relation {
 	return derived
 }
 
+// EmptyRelationError returns the deferred (taint) error of a relation that
+// reports zero tuples. An errored relation that materialized empty is not an
+// empty relation — its zero rows mean "the scan failed", not "no data" — so
+// every consumer that branches on emptiness must consult this before
+// treating absence of tuples as absence of data. Laundering the distinction
+// turned a mandated loud failure into a silent empty
+// (docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md).
+//
+// Call only on relations reporting Size() >= 0 / IsEmpty() true: probing
+// iterates one step, which is destructive on a single-use stream (streaming
+// relations report Size() -1 and never take emptiness branches).
+func EmptyRelationError(rel Relation) error {
+	it := rel.Iterator()
+	_ = it.Next()
+	err := it.Error()
+	if closeErr := it.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
 func (r *MaterializedRelation) Size() int {
 	return len(r.tuples)
 }

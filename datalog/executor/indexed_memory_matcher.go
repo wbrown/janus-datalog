@@ -201,8 +201,19 @@ func (m *IndexedMemoryMatcher) MatchWithConstraints(
 
 	// Find best binding relation
 	bindingRel := bindings.FindBestForPattern(pattern)
-	if bindingRel == nil || bindingRel.Size() == 0 {
+	if bindingRel == nil {
 		// No relevant bindings - use index
+		datoms := m.matchWithIndex(pattern, constraints)
+		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
+	}
+	if bindingRel.Size() == 0 {
+		// An errored relation that materialized empty is not an empty
+		// binding: its zero rows mean the upstream scan failed. Falling
+		// back to an unbound scan here laundered that failure into a
+		// silent empty result.
+		if err := EmptyRelationError(bindingRel); err != nil {
+			return nil, err
+		}
 		datoms := m.matchWithIndex(pattern, constraints)
 		return datomsToRelationWithOptions(datoms, pattern, symbols, opts), nil
 	}

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/wbrown/janus-datalog/datalog"
@@ -198,8 +199,18 @@ func (m *AnnotatedMatcher) WithCollector(collector *annotations.Collector) Colle
 	return m
 }
 
-// LookupAttribute implements EntityLookupMatcher if the underlying matcher supports it.
-// This ensures get-else, missing?, and get-some work through the annotation wrapper.
+// LookupAttribute forwards to the underlying matcher so get-else, missing?,
+// and get-some work through the annotation wrapper.
+//
+// LookupAttribute is a data-answer method: its return states a fact about
+// the database ((value, present) for the entity's attribute). When the
+// underlying matcher cannot look up, "capability absent" must be an error —
+// never encoded as a value in the answer domain, where (nil, false, nil)
+// reads as "attribute absent" and turns every missing? true and every
+// get-else into its default. Attaching an annotation handler wraps the
+// matcher, so a fabricated answer here also made observability change query
+// results. Best-effort forwards (PrefetchEntities' no-op, the boolean
+// capability queries) are different: declining is their true answer.
 func (m *AnnotatedMatcher) LookupAttribute(
 	entity datalog.Identity,
 	attr datalog.Keyword,
@@ -207,7 +218,7 @@ func (m *AnnotatedMatcher) LookupAttribute(
 	if elm, ok := m.underlying.(EntityLookupMatcher); ok {
 		return elm.LookupAttribute(entity, attr)
 	}
-	return nil, false, nil
+	return nil, false, fmt.Errorf("entity lookup unavailable: underlying matcher %T does not support attribute lookup", m.underlying)
 }
 
 // CanFuseAttributeFetch implements AttributeFetchFusable if the underlying

@@ -69,6 +69,13 @@ func (m *BadgerMatcher) MatchWithConstraints(
 	// If relation is empty, subsequent iteration will discover that naturally.
 	if _, isStreaming := bindingRel.(*executor.StreamingRelation); !isStreaming {
 		if bindingRel.IsEmpty() {
+			// An errored relation that materialized empty is not an empty
+			// binding: its zero rows mean the upstream scan failed. Falling
+			// back to an unbound scan here would launder that failure into
+			// a silent result.
+			if err := executor.EmptyRelationError(bindingRel); err != nil {
+				return nil, err
+			}
 			return m.matchUnboundAsRelation(q, pattern, symbols, constraints)
 		}
 	}

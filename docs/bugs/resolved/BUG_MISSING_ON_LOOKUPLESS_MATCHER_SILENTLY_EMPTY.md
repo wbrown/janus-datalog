@@ -1,6 +1,21 @@
 # BUG: missing? on a matcher without entity lookup returns silent empty instead of a loud error
 
-**Date**: 2026-07-20 **Severity**: Medium — silent wrong answer (worst class), but only reachable on matchers that implement no `LookupAttribute`; every production storage matcher implements it **Status**: Open — committed-red reproducer in the tree by owner ruling **Affected**: database-function predicates (`missing?`, and presumably `get-else`/`get-some` in predicate-adjacent positions) executed against a `PatternMatcher` that does not implement `EntityLookupMatcher`
+**Date**: 2026-07-20 **Severity**: Medium — silent wrong answer (worst class), but only reachable on matchers that implement no `LookupAttribute`; every production storage matcher implements it **Status**: RESOLVED (2026-07-20, same day) — both defects fixed at their invariants; the committed-red reproducer is green on all four legs (both modes × bare/annotated contexts) **Affected**: database-function predicates (`missing?`, and presumably `get-else`/`get-some` in predicate-adjacent positions) executed against a `PatternMatcher` that does not implement `EntityLookupMatcher`
+
+## Resolution (2026-07-20)
+
+Both defects fixed where their invariants live; each half also fixed as its class:
+
+**Defect B — the capability lie.** "Capability absent" must never be encoded as a value in the capability's answer domain. `AnnotatedMatcher.LookupAttribute` and both arms of `SourceRouter.LookupAttribute` now return an error ("entity lookup unavailable: ...") when the underlying matcher cannot look up, instead of `(nil, false, nil)` — which read as "attribute absent" and made `missing?` always-true / `get-else` always-default. The class line is stated at the wrapper: **data-answer** methods (returns state facts about the database) error on absent capability; **best-effort** methods (`PrefetchEntities`' no-op, the boolean capability queries) correctly decline — declining is their true answer. Observability restored: attaching an annotation handler now yields the same loud error the bare path gives, never different rows.
+
+**Defect A — the laundering.** An error's channel is determined by when it is knowable. The eager producer family — `filterWithPredicateAndLookup`, `evaluateExpressionWithLookup`, `thetaJoinPair`, `thetaJoinWithPredicate`, `crossJoinWithExpression` — completes its scan before returning, so evaluation/iteration/close errors return **in-band** (`(Relation, error)` signatures; `executePredicate`/`executeExpression` fail the clause). The deferred-error convention is now exclusively for lazily-discovered errors on streaming relations, stated at the converted functions. For the irreducible remainder (a failed stream materializes into an errored-empty relation, e.g. `Sort`'s tail), every emptiness-branching consumer must probe the taint before treating zero rows as no data: the new `executor.EmptyRelationError` is the single-home probe, applied at `IndexedMemoryMatcher.Match`'s empty-binding fallback, `BadgerMatcher`'s empty-binding fallback (`matcher_relations.go`), the relation-input iteration entry (`executor.go`), and the `MockPatternMatcher` fixture. Swept and dispositioned: `matcher_strategy.go`'s empty arm is safe (the binding continues into `matchWithoutIteratorReuse`, whose propagation is pinned); the hash join already surfaces errored-empty sides (verified and now pinned rather than assumed); the table formatter is display-only.
+
+## Reproducers (committed red by owner ruling; now green)
+
+- `datalog/executor/not_or_test.go` / `TestMissingOnLookupLessMatcherFailsLoudly` — both modes × bare/annotated contexts; the two contexts failed through the two distinct defects and both now yield the loud error.
+- `datalog/executor/relation_ops_error_propagation_test.go` / `TestMatchTreatsErroredEmptyBindingAsError` — the genuine irreducible route (failed stream → `Sort` → errored-empty materialized → binding), erroring at the Match fallback.
+- `TestHashJoinSurfacesErroredEmptySide` — pins the verified-correct join behavior.
+- The converted error-propagation suite asserts the eager family's in-band returns directly.
 
 ## Symptom
 
