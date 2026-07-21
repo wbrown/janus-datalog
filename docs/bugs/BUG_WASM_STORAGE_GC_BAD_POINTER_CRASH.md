@@ -66,7 +66,42 @@ What the instruments established:
 
 **Filed upstream**: https://github.com/golang/go/issues/80472 (2026-07-19) — traces, the per-binary-constant poison observation, the crashes-at-tip result, and the turnkey reproduction pinned to `ce6baf7`.
 
+## Upstream diagnosis and fix verification (2026-07-21)
+
+Upstream diagnosed the mechanism (Zxilly on golang/go#80472): `runtime.itabInit`
+fills an itab's `Fun` array by storing code pointers through an
+`unsafe.Pointer` slice, for which the compiler emits a write barrier. On wasm a
+code PC is `funcIndex<<16` — small enough to land inside a live heap span, so
+the GC treats the recorded value as a bad heap pointer. Fix: CL 803460
+(`runtime: don't emit write barrier for code pointers in itabInit`) stores
+through a `uintptr` slice and marks `itabInit` `//go:nowritebarrier`.
+
+Local corroboration and verification, from the reproducer side:
+
+1. **The poison is the entry PC of the same interface method in every crash.**
+   Symbolizing each crashing binary's poison against its own wasm name section
+   (Go `PC_F` = wasm function index + `funcValueOffset(0x1000)` − 22 imports;
+   calibration cross-checked against three symbolized frames per binary):
+   `0x22300000` (2026-07-19 binary, also directly visible as frame pc
+   `0x22300046` in run 1), `0x22430000` (runs 13–16's binary), and `0x22ac0000`
+   (tip binary, 2026-07-21) all resolve to
+   `executor.(*ScanSharingMatcher).Match`. The "per-binary constant" was never
+   arbitrary — it is this method's entry PC in each layout. `*ScanSharingMatcher`
+   is first converted to its matcher interface mid-suite, when the heap has
+   grown enough to contain the PC value — explaining both the late-suite timing
+   and the extreme layout sensitivity (test selection shifts when that itab
+   first initializes and how large the heap is at that moment). This answers
+   the upstream request to identify the write barrier's caller: `itabInit`.
+2. **CL 803460 (PS2) fixes the turnkey reproducer.** Same tree, same host
+   (darwin/arm64, node runner), same command, back to back: gotip `9f236fbe`
+   unpatched **crashes** (poison `0x22ac0000`); gotip + CL 803460 cherry-picked
+   (`a583f0a9`) **passes 3/3** `GOGC=1` runs. The patched toolchain remains at
+   `~/sdk/gotip` (detached HEAD `a583f0a9`); `gotip download` restores plain tip.
+
 ## Remaining next steps
 
-1. Track golang/go#80472; run instrumented builds or candidate fixes against the `GOGC=1` reproducer on request.
-2. Until an upstream fix: the CI wasm job will flake at roughly the stochastic rate; reruns are sanctioned for this signature only, with this doc as the reference.
+1. Track CL 803460 to submission; the crash class ends at the first Go release
+   carrying it.
+2. Until then: the CI wasm job will flake at roughly the stochastic rate;
+   reruns are sanctioned for this signature only, with this doc as the
+   reference.
