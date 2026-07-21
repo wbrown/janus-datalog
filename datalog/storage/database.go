@@ -2915,38 +2915,89 @@ func (d *Database) ResolveAllAttributes(entity datalog.Identity) (map[datalog.Ke
 		}
 	}
 
-	// No schema: scan EAVT to discover all attributes for this entity, then
-	// delegate per-attribute resolution to ResolveEntityAttributes.
-	eBytes := entity.Bytes()
-	encoder := d.encoder
-	start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
+	matcher := d.Matcher().(*BadgerMatcher)
 
-	iter, err := d.store.Scan(EAVT, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("EAVT scan failed: %w", err)
-	}
-	defer iter.Close()
+	// History mode: the entity walk below applies CRDT resolution, so raw
+	// reads keep the discovery-then-resolve path. Discovery reads only the
+	// attribute span of each key — values stay undecoded and Tier-3 blobs
+	// are never dereferenced.
+	if matcher.isHistoryMode() {
+		eBytes := entity.Bytes()
+		encoder := d.encoder
+		start, end := encoder.EncodePrefixRange(EAVT, eBytes[:])
 
-	seenAttrs := make(map[Attribute]datalog.Keyword)
-	for iter.Next() {
-		datom, err := iter.Datom()
+		iter, err := d.store.ScanKeysOnly(EAVT, start, end)
 		if err != nil {
 			return nil, fmt.Errorf("EAVT scan failed: %w", err)
 		}
-		sd := ToStorageDatom(*datom)
-		if _, seen := seenAttrs[sd.A]; !seen {
-			seenAttrs[sd.A] = datom.A
+		defer iter.Close()
+
+		seenAttrs := make(map[Attribute]datalog.Keyword)
+		for iter.Next() {
+			if key, ok := iteratorCurrentKey(iter); ok {
+				_, aBytes, _, _, _, _, decodeErr := encoder.DecodeKey(EAVT, key)
+				if decodeErr != nil {
+					return nil, fmt.Errorf("EAVT scan failed: %w", decodeErr)
+				}
+				if _, seen := seenAttrs[aBytes]; !seen {
+					seenAttrs[aBytes] = datalog.InternKeywordFromBytes(aBytes)
+				}
+				continue
+			}
+			// Iterators that do not expose raw index keys decode the full datom.
+			datom, err := iter.Datom()
+			if err != nil {
+				return nil, fmt.Errorf("EAVT scan failed: %w", err)
+			}
+			sd := ToStorageDatom(*datom)
+			if _, seen := seenAttrs[sd.A]; !seen {
+				seenAttrs[sd.A] = datom.A
+			}
 		}
-	}
-	if err := iter.Error(); err != nil {
-		return nil, fmt.Errorf("EAVT scan failed: %w", err)
+		if err := iter.Error(); err != nil {
+			return nil, fmt.Errorf("EAVT scan failed: %w", err)
+		}
+
+		keywords := make([]datalog.Keyword, 0, len(seenAttrs))
+		for _, kw := range seenAttrs {
+			keywords = append(keywords, kw)
+		}
+		return d.ResolveEntityAttributes(entity, keywords)
 	}
 
-	keywords := make([]datalog.Keyword, 0, len(seenAttrs))
-	for _, kw := range seenAttrs {
-		keywords = append(keywords, kw)
+	// No schema, latest or as-of: walk the entity's EATV range once,
+	// discovering and resolving every attribute from the same scan — one
+	// store read session instead of a discovery scan plus one lookup per
+	// attribute. This is the batch wildcard walk applied to one entity.
+	eBytes := entity.Bytes()
+	start, end := d.encoder.EncodePrefixRange(EATV, eBytes[:])
+	iterator, err := d.store.ScanKeysOnly(EATV, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("EATV scan failed: %w", err)
 	}
-	return d.ResolveEntityAttributes(entity, keywords)
+	result, pending, err := d.resolveWildcardEntity(matcher, iterator, entity, nil)
+	if err != nil {
+		_ = iterator.Close()
+		return nil, err
+	}
+	iterErr := iterator.Error()
+	closeErr := iterator.Close()
+	if iterErr != nil {
+		return nil, fmt.Errorf("EATV scan failed: %w", iterErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("EATV scan close failed: %w", closeErr)
+	}
+	for _, lookup := range pending {
+		value, err := d.ResolveEntityAttributes(lookup.entity, []datalog.Keyword{lookup.attr})
+		if err != nil {
+			return nil, err
+		}
+		if resolvedValue, ok := value[lookup.attr]; ok {
+			result[lookup.attr] = resolvedValue
+		}
+	}
+	return result, nil
 }
 
 // PullInto retrieves entity data and populates the provided struct.
