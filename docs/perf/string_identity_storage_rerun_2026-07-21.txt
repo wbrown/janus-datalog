@@ -1,0 +1,31 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkResolveAllAttributesMany/entities=230/batch-10   	    3118	    382026 ns/op	  420289 B/op	    7407 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10   	    3217	    377972 ns/op	  420301 B/op	    7407 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10   	    3175	    373073 ns/op	  420300 B/op	    7407 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10   	    3219	    375654 ns/op	  420302 B/op	    7407 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10   	    3260	    372170 ns/op	  420302 B/op	    7407 allocs/op
+BenchmarkVBoundValidation/N=100/nocache-10                	    7872	    133849 ns/op	  181482 B/op	    3294 allocs/op
+BenchmarkVBoundValidation/N=100/nocache-10                	    8706	    147778 ns/op	  181396 B/op	    3294 allocs/op
+BenchmarkVBoundValidation/N=100/nocache-10                	    8733	    151506 ns/op	  181393 B/op	    3294 allocs/op
+BenchmarkVBoundValidation/N=100/nocache-10                	    8688	    144813 ns/op	  181397 B/op	    3294 allocs/op
+BenchmarkVBoundValidation/N=100/nocache-10                	    8498	    168172 ns/op	  181422 B/op	    3294 allocs/op
+BenchmarkVBoundValidation/N=1000/nocache-10               	     775	   1424170 ns/op	 1727799 B/op	   31198 allocs/op
+BenchmarkVBoundValidation/N=1000/nocache-10               	     759	   1428618 ns/op	 1727996 B/op	   31198 allocs/op
+BenchmarkVBoundValidation/N=1000/nocache-10               	     762	   1444921 ns/op	 1728038 B/op	   31198 allocs/op
+BenchmarkVBoundValidation/N=1000/nocache-10               	     792	   1787498 ns/op	 1727654 B/op	   31198 allocs/op
+BenchmarkVBoundValidation/N=1000/nocache-10               	     759	   1425646 ns/op	 1728016 B/op	   31198 allocs/op
+BenchmarkVBoundValidationSupersession/N=100/nocache-10    	    7674	    153044 ns/op	  179917 B/op	    3194 allocs/op
+BenchmarkVBoundValidationSupersession/N=100/nocache-10    	    6660	    151340 ns/op	  180059 B/op	    3194 allocs/op
+BenchmarkVBoundValidationSupersession/N=100/nocache-10    	    8535	    145976 ns/op	  179812 B/op	    3194 allocs/op
+BenchmarkVBoundValidationSupersession/N=100/nocache-10    	    6699	    151208 ns/op	  180055 B/op	    3194 allocs/op
+BenchmarkVBoundValidationSupersession/N=100/nocache-10    	    7882	    149072 ns/op	  179890 B/op	    3194 allocs/op
+BenchmarkVBoundValidationSupersession/N=1000/nocache-10   	     668	   1540998 ns/op	 1713570 B/op	   30200 allocs/op
+BenchmarkVBoundValidationSupersession/N=1000/nocache-10   	     673	   1668410 ns/op	 1713496 B/op	   30199 allocs/op
+BenchmarkVBoundValidationSupersession/N=1000/nocache-10   	     788	   1315325 ns/op	 1711788 B/op	   30199 allocs/op
+BenchmarkVBoundValidationSupersession/N=1000/nocache-10   	     718	   1706549 ns/op	 1712844 B/op	   30199 allocs/op
+BenchmarkVBoundValidationSupersession/N=1000/nocache-10   	     744	   1708530 ns/op	 1712414 B/op	   30199 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	41.836s

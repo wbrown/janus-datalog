@@ -1,0 +1,113 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+                                                     │ docs/perf/string_identity_storage_baseline_2026-07-21.txt │ docs/perf/string_identity_storage_after_2026-07-21.txt │
+                                                     │                          sec/op                           │             sec/op               vs base               │
+BadgerAssertBulk/Size1000-10                                                                        5.351m ± ∞ ¹                      5.260m ± ∞ ¹        ~ (p=0.421 n=5)
+BadgerAssertBulk/Size4000-10                                                                        20.33m ± ∞ ¹                      20.97m ± ∞ ¹        ~ (p=0.095 n=5)
+BatchScanning/RegularIteratorReuse-10                                                               5.247m ± ∞ ¹                      4.518m ± ∞ ¹        ~ (p=0.151 n=5)
+BatchScanning/BatchScanning-10                                                                      5.486m ± ∞ ¹                      4.460m ± ∞ ¹        ~ (p=0.151 n=5)
+BatchScanning/NoConstraints-10                                                                      5.493m ± ∞ ¹                      4.432m ± ∞ ¹  -19.32% (p=0.008 n=5)
+CRDTWrite/CardinalityOne-10                                                                         23.48µ ± ∞ ¹                      23.91µ ± ∞ ¹        ~ (p=0.095 n=5)
+CRDTWrite/CardinalityMany/Add-10                                                                    23.26µ ± ∞ ¹                      23.58µ ± ∞ ¹   +1.35% (p=0.032 n=5)
+CRDTWrite/CardinalityMany/AddRemove-10                                                              28.19µ ± ∞ ¹                      30.28µ ± ∞ ¹        ~ (p=0.056 n=5)
+CRDTWrite/CardinalityVector/Append-10                                                               23.75µ ± ∞ ¹                      24.25µ ± ∞ ¹        ~ (p=0.056 n=5)
+CachePathTupleBuilding/Query_CacheHit-10                                                            29.52µ ± ∞ ¹                      28.37µ ± ∞ ¹        ~ (p=0.548 n=5)
+ComplexQueryCheckpoint-10                                                                           38.34m ± ∞ ¹                      39.01m ± ∞ ¹        ~ (p=0.548 n=5)
+IteratorTupleAllocation/10_tuples-10                                                                3.178µ ± ∞ ¹                      2.781µ ± ∞ ¹  -12.49% (p=0.008 n=5)
+IteratorTupleAllocation/100_tuples-10                                                               17.44µ ± ∞ ¹                      18.40µ ± ∞ ¹        ~ (p=0.151 n=5)
+IteratorTupleAllocation/1000_tuples-10                                                              172.1µ ± ∞ ¹                      146.9µ ± ∞ ¹  -14.64% (p=0.008 n=5)
+DatomFromKeyToTuple-10                                                                              89.08n ± ∞ ¹                      76.89n ± ∞ ¹  -13.68% (p=0.008 n=5)
+ResolveAllAttributesMany/entities=230/per-entity-10                                                 2.701m ± ∞ ¹                      2.742m ± ∞ ¹        ~ (p=0.690 n=5)
+ResolveAllAttributesMany/entities=230/batch-10                                                      400.0µ ± ∞ ¹                      507.3µ ± ∞ ¹  +26.84% (p=0.008 n=5)
+ResolveAllAttributesMany/entities=3899/per-entity-10                                                46.18m ± ∞ ¹                      48.11m ± ∞ ¹   +4.16% (p=0.008 n=5)
+ResolveAllAttributesMany/entities=3899/batch-10                                                     7.417m ± ∞ ¹                      7.997m ± ∞ ¹   +7.83% (p=0.016 n=5)
+VBoundValidation/N=100/cache-10                                                                     41.26µ ± ∞ ¹                      37.56µ ± ∞ ¹   -8.98% (p=0.008 n=5)
+VBoundValidation/N=100/nocache-10                                                                   150.6µ ± ∞ ¹                      190.3µ ± ∞ ¹  +26.35% (p=0.008 n=5)
+VBoundValidation/N=1000/cache-10                                                                    339.8µ ± ∞ ¹                      312.2µ ± ∞ ¹        ~ (p=0.056 n=5)
+VBoundValidation/N=1000/nocache-10                                                                  1.431m ± ∞ ¹                      1.597m ± ∞ ¹        ~ (p=0.690 n=5)
+VBoundValidation/N=5000/cache-10                                                                    1.782m ± ∞ ¹                      1.655m ± ∞ ¹   -7.14% (p=0.008 n=5)
+VBoundValidation/N=5000/nocache-10                                                                  7.746m ± ∞ ¹                      9.489m ± ∞ ¹  +22.50% (p=0.032 n=5)
+VBoundValidationSupersession/N=100/cache-10                                                         37.52µ ± ∞ ¹                      35.91µ ± ∞ ¹        ~ (p=0.690 n=5)
+VBoundValidationSupersession/N=100/nocache-10                                                       149.6µ ± ∞ ¹                      169.8µ ± ∞ ¹        ~ (p=0.095 n=5)
+VBoundValidationSupersession/N=1000/cache-10                                                        322.4µ ± ∞ ¹                      293.0µ ± ∞ ¹        ~ (p=0.056 n=5)
+VBoundValidationSupersession/N=1000/nocache-10                                                      1.629m ± ∞ ¹                      1.666m ± ∞ ¹        ~ (p=0.310 n=5)
+VBoundValidationSupersession/N=5000/cache-10                                                        1.730m ± ∞ ¹                      1.593m ± ∞ ¹        ~ (p=0.690 n=5)
+VBoundValidationSupersession/N=5000/nocache-10                                                      7.717m ± ∞ ¹                      9.275m ± ∞ ¹        ~ (p=0.095 n=5)
+geomean                                                                                             427.7µ                            426.8µ         -0.23%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                                                     │ docs/perf/string_identity_storage_baseline_2026-07-21.txt │ docs/perf/string_identity_storage_after_2026-07-21.txt │
+                                                     │                           B/op                            │              B/op               vs base                │
+BadgerAssertBulk/Size1000-10                                                                       6.084Mi ± ∞ ¹                    6.080Mi ± ∞ ¹       ~ (p=0.841 n=5)
+BadgerAssertBulk/Size4000-10                                                                       24.63Mi ± ∞ ¹                    24.70Mi ± ∞ ¹       ~ (p=0.421 n=5)
+BatchScanning/RegularIteratorReuse-10                                                              4.763Mi ± ∞ ¹                    4.762Mi ± ∞ ¹       ~ (p=0.151 n=5)
+BatchScanning/BatchScanning-10                                                                     4.763Mi ± ∞ ¹                    4.762Mi ± ∞ ¹       ~ (p=0.151 n=5)
+BatchScanning/NoConstraints-10                                                                     4.763Mi ± ∞ ¹                    4.762Mi ± ∞ ¹  -0.00% (p=0.008 n=5)
+CRDTWrite/CardinalityOne-10                                                                        18.92Ki ± ∞ ¹                    18.91Ki ± ∞ ¹       ~ (p=0.421 n=5)
+CRDTWrite/CardinalityMany/Add-10                                                                   18.89Ki ± ∞ ¹                    18.97Ki ± ∞ ¹       ~ (p=0.548 n=5)
+CRDTWrite/CardinalityMany/AddRemove-10                                                             25.94Ki ± ∞ ¹                    26.12Ki ± ∞ ¹       ~ (p=0.690 n=5)
+CRDTWrite/CardinalityVector/Append-10                                                              19.81Ki ± ∞ ¹                    19.58Ki ± ∞ ¹       ~ (p=0.151 n=5)
+CachePathTupleBuilding/Query_CacheHit-10                                                           28.12Ki ± ∞ ¹                    28.12Ki ± ∞ ¹       ~ (p=1.000 n=5)
+ComplexQueryCheckpoint-10                                                                          47.15Mi ± ∞ ¹                    47.14Mi ± ∞ ¹       ~ (p=0.421 n=5)
+IteratorTupleAllocation/10_tuples-10                                                               2.770Ki ± ∞ ¹                    2.768Ki ± ∞ ¹  -0.07% (p=0.008 n=5)
+IteratorTupleAllocation/100_tuples-10                                                              5.680Ki ± ∞ ¹                    5.673Ki ± ∞ ¹       ~ (p=0.151 n=5)
+IteratorTupleAllocation/1000_tuples-10                                                             40.59Ki ± ∞ ¹                    40.46Ki ± ∞ ¹  -0.32% (p=0.008 n=5)
+DatomFromKeyToTuple-10                                                                               96.00 ± ∞ ¹                      96.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+ResolveAllAttributesMany/entities=230/per-entity-10                                                3.625Mi ± ∞ ¹                    3.625Mi ± ∞ ¹       ~ (p=0.548 n=5)
+ResolveAllAttributesMany/entities=230/batch-10                                                     410.5Ki ± ∞ ¹                    410.5Ki ± ∞ ¹  +0.00% (p=0.008 n=5)
+ResolveAllAttributesMany/entities=3899/per-entity-10                                               61.44Mi ± ∞ ¹                    61.44Mi ± ∞ ¹       ~ (p=0.333 n=5)
+ResolveAllAttributesMany/entities=3899/batch-10                                                    6.761Mi ± ∞ ¹                    6.762Mi ± ∞ ¹  +0.00% (p=0.016 n=5)
+VBoundValidation/N=100/cache-10                                                                    23.44Ki ± ∞ ¹                    23.41Ki ± ∞ ¹  -0.11% (p=0.008 n=5)
+VBoundValidation/N=100/nocache-10                                                                  177.2Ki ± ∞ ¹                    177.5Ki ± ∞ ¹  +0.16% (p=0.008 n=5)
+VBoundValidation/N=1000/cache-10                                                                   148.5Ki ± ∞ ¹                    148.2Ki ± ∞ ¹  -0.17% (p=0.008 n=5)
+VBoundValidation/N=1000/nocache-10                                                                 1.648Mi ± ∞ ¹                    1.649Mi ± ∞ ¹       ~ (p=0.056 n=5)
+VBoundValidation/N=5000/cache-10                                                                   722.2Ki ± ∞ ¹                    717.5Ki ± ∞ ¹  -0.65% (p=0.032 n=5)
+VBoundValidation/N=5000/nocache-10                                                                 8.263Mi ± ∞ ¹                    8.269Mi ± ∞ ¹       ~ (p=0.690 n=5)
+VBoundValidationSupersession/N=100/cache-10                                                        21.85Ki ± ∞ ¹                    21.85Ki ± ∞ ¹       ~ (p=0.865 n=5)
+VBoundValidationSupersession/N=100/nocache-10                                                      175.6Ki ± ∞ ¹                    175.8Ki ± ∞ ¹  +0.12% (p=0.032 n=5)
+VBoundValidationSupersession/N=1000/cache-10                                                       132.7Ki ± ∞ ¹                    132.5Ki ± ∞ ¹       ~ (p=0.151 n=5)
+VBoundValidationSupersession/N=1000/nocache-10                                                     1.633Mi ± ∞ ¹                    1.633Mi ± ∞ ¹       ~ (p=0.841 n=5)
+VBoundValidationSupersession/N=5000/cache-10                                                       641.5Ki ± ∞ ¹                    639.0Ki ± ∞ ¹       ~ (p=0.690 n=5)
+VBoundValidationSupersession/N=5000/nocache-10                                                     8.197Mi ± ∞ ¹                    8.203Mi ± ∞ ¹       ~ (p=0.151 n=5)
+geomean                                                                                            346.2Ki                          346.1Ki        -0.04%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal
+
+                                                     │ docs/perf/string_identity_storage_baseline_2026-07-21.txt │ docs/perf/string_identity_storage_after_2026-07-21.txt │
+                                                     │                         allocs/op                         │           allocs/op             vs base                │
+BadgerAssertBulk/Size1000-10                                                                        123.1k ± ∞ ¹                     123.1k ± ∞ ¹       ~ (p=0.730 n=5)
+BadgerAssertBulk/Size4000-10                                                                        492.3k ± ∞ ¹                     492.3k ± ∞ ¹       ~ (p=0.587 n=5)
+BatchScanning/RegularIteratorReuse-10                                                               82.63k ± ∞ ¹                     82.63k ± ∞ ¹       ~ (p=1.000 n=5)
+BatchScanning/BatchScanning-10                                                                      82.63k ± ∞ ¹                     82.63k ± ∞ ¹       ~ (p=0.206 n=5)
+BatchScanning/NoConstraints-10                                                                      82.63k ± ∞ ¹                     82.63k ± ∞ ¹  -0.00% (p=0.008 n=5)
+CRDTWrite/CardinalityOne-10                                                                          294.0 ± ∞ ¹                      294.0 ± ∞ ¹       ~ (p=1.000 n=5)
+CRDTWrite/CardinalityMany/Add-10                                                                     294.0 ± ∞ ¹                      294.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+CRDTWrite/CardinalityMany/AddRemove-10                                                               422.0 ± ∞ ¹                      422.0 ± ∞ ¹       ~ (p=1.000 n=5)
+CRDTWrite/CardinalityVector/Append-10                                                                295.0 ± ∞ ¹                      295.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+CachePathTupleBuilding/Query_CacheHit-10                                                             690.0 ± ∞ ¹                      690.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+ComplexQueryCheckpoint-10                                                                           633.4k ± ∞ ¹                     633.4k ± ∞ ¹       ~ (p=0.802 n=5)
+IteratorTupleAllocation/10_tuples-10                                                                 45.00 ± ∞ ¹                      45.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+IteratorTupleAllocation/100_tuples-10                                                                135.0 ± ∞ ¹                      135.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+IteratorTupleAllocation/1000_tuples-10                                                              1.779k ± ∞ ¹                     1.779k ± ∞ ¹       ~ (p=1.000 n=5) ²
+DatomFromKeyToTuple-10                                                                               4.000 ± ∞ ¹                      4.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+ResolveAllAttributesMany/entities=230/per-entity-10                                                 51.54k ± ∞ ¹                     51.54k ± ∞ ¹       ~ (p=0.635 n=5)
+ResolveAllAttributesMany/entities=230/batch-10                                                      7.407k ± ∞ ¹                     7.407k ± ∞ ¹       ~ (p=1.000 n=5) ²
+ResolveAllAttributesMany/entities=3899/per-entity-10                                                873.4k ± ∞ ¹                     873.4k ± ∞ ¹       ~ (p=0.492 n=5)
+ResolveAllAttributesMany/entities=3899/batch-10                                                     124.8k ± ∞ ¹                     124.8k ± ∞ ¹       ~ (p=1.000 n=5)
+VBoundValidation/N=100/cache-10                                                                      894.0 ± ∞ ¹                      894.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+VBoundValidation/N=100/nocache-10                                                                   3.294k ± ∞ ¹                     3.294k ± ∞ ¹       ~ (p=1.000 n=5) ²
+VBoundValidation/N=1000/cache-10                                                                    7.194k ± ∞ ¹                     7.194k ± ∞ ¹       ~ (p=0.444 n=5)
+VBoundValidation/N=1000/nocache-10                                                                  31.20k ± ∞ ¹                     31.20k ± ∞ ¹       ~ (p=0.556 n=5)
+VBoundValidation/N=5000/cache-10                                                                    35.21k ± ∞ ¹                     35.21k ± ∞ ¹       ~ (p=0.127 n=5)
+VBoundValidation/N=5000/nocache-10                                                                  155.3k ± ∞ ¹                     155.3k ± ∞ ¹       ~ (p=0.714 n=5)
+VBoundValidationSupersession/N=100/cache-10                                                          794.0 ± ∞ ¹                      794.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+VBoundValidationSupersession/N=100/nocache-10                                                       3.194k ± ∞ ¹                     3.194k ± ∞ ¹       ~ (p=1.000 n=5) ²
+VBoundValidationSupersession/N=1000/cache-10                                                        6.195k ± ∞ ¹                     6.195k ± ∞ ¹       ~ (p=1.000 n=5)
+VBoundValidationSupersession/N=1000/nocache-10                                                      30.20k ± ∞ ¹                     30.20k ± ∞ ¹       ~ (p=0.722 n=5)
+VBoundValidationSupersession/N=5000/cache-10                                                        30.21k ± ∞ ¹                     30.21k ± ∞ ¹       ~ (p=0.667 n=5)
+VBoundValidationSupersession/N=5000/nocache-10                                                      150.3k ± ∞ ¹                     150.3k ± ∞ ¹       ~ (p=0.111 n=5)
+geomean                                                                                             7.627k                           7.627k        -0.00%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal

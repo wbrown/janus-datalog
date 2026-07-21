@@ -1,0 +1,140 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/executor
+cpu: Apple M5
+                                                            │ docs/perf/string_identity_executor_baseline_2026-07-21.txt │ docs/perf/string_identity_executor_after_2026-07-21.txt │
+                                                            │                           sec/op                           │              sec/op               vs base               │
+PatternMatch_LinearVsIndexed/Linear/100/EA_bound-10                                                         149.7n ± ∞ ¹                       164.2n ± ∞ ¹   +9.69% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/100/EA_bound-10                                                        150.1n ± ∞ ¹                       161.8n ± ∞ ¹   +7.79% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/100/E_bound-10                                                          286.7n ± ∞ ¹                       308.0n ± ∞ ¹   +7.43% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/100/E_bound-10                                                         287.8n ± ∞ ¹                       306.6n ± ∞ ¹   +6.53% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/100/A_bound-10                                                          3.921µ ± ∞ ¹                       4.156µ ± ∞ ¹   +5.99% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/100/A_bound-10                                                         3.908µ ± ∞ ¹                       4.167µ ± ∞ ¹   +6.63% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/100/V_bound-10                                                          303.2n ± ∞ ¹                       312.6n ± ∞ ¹   +3.10% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/100/V_bound-10                                                         303.7n ± ∞ ¹                       310.7n ± ∞ ¹   +2.30% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/100/Nothing_bound-10                                                    15.05µ ± ∞ ¹                       16.24µ ± ∞ ¹   +7.89% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/100/Nothing_bound-10                                                   15.05µ ± ∞ ¹                       16.29µ ± ∞ ¹   +8.24% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/1000/EA_bound-10                                                        186.7n ± ∞ ¹                       204.8n ± ∞ ¹        ~ (p=0.095 n=5)
+PatternMatch_LinearVsIndexed/Indexed/1000/EA_bound-10                                                       187.5n ± ∞ ¹                       204.5n ± ∞ ¹   +9.07% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/1000/E_bound-10                                                         365.4n ± ∞ ¹                       416.8n ± ∞ ¹  +14.07% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/1000/E_bound-10                                                        365.1n ± ∞ ¹                       414.2n ± ∞ ¹        ~ (p=0.151 n=5)
+PatternMatch_LinearVsIndexed/Linear/1000/A_bound-10                                                         52.19µ ± ∞ ¹                       58.33µ ± ∞ ¹  +11.76% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/1000/A_bound-10                                                        55.11µ ± ∞ ¹                       62.66µ ± ∞ ¹  +13.70% (p=0.016 n=5)
+PatternMatch_LinearVsIndexed/Linear/1000/V_bound-10                                                         400.0n ± ∞ ¹                       416.6n ± ∞ ¹        ~ (p=0.056 n=5)
+PatternMatch_LinearVsIndexed/Indexed/1000/V_bound-10                                                        389.2n ± ∞ ¹                       423.1n ± ∞ ¹   +8.71% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/1000/Nothing_bound-10                                                   275.8µ ± ∞ ¹                       267.2µ ± ∞ ¹        ~ (p=0.690 n=5)
+PatternMatch_LinearVsIndexed/Indexed/1000/Nothing_bound-10                                                  250.6µ ± ∞ ¹                       263.3µ ± ∞ ¹        ~ (p=0.151 n=5)
+PatternMatch_LinearVsIndexed/Linear/10000/EA_bound-10                                                       178.8n ± ∞ ¹                       187.9n ± ∞ ¹   +5.09% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/EA_bound-10                                                      182.9n ± ∞ ¹                       188.9n ± ∞ ¹   +3.28% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/10000/E_bound-10                                                        348.9n ± ∞ ¹                       371.3n ± ∞ ¹   +6.42% (p=0.016 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/E_bound-10                                                       355.7n ± ∞ ¹                       375.9n ± ∞ ¹        ~ (p=0.310 n=5)
+PatternMatch_LinearVsIndexed/Linear/10000/A_bound-10                                                        607.7µ ± ∞ ¹                       669.6µ ± ∞ ¹  +10.17% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/A_bound-10                                                       609.5µ ± ∞ ¹                       657.2µ ± ∞ ¹        ~ (p=0.690 n=5)
+PatternMatch_LinearVsIndexed/Linear/10000/V_bound-10                                                        378.1n ± ∞ ¹                       394.6n ± ∞ ¹   +4.36% (p=0.016 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/V_bound-10                                                       386.3n ± ∞ ¹                       387.6n ± ∞ ¹        ~ (p=1.000 n=5)
+PatternMatch_LinearVsIndexed/Linear/10000/Nothing_bound-10                                                  3.058m ± ∞ ¹                       2.874m ± ∞ ¹        ~ (p=0.310 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/Nothing_bound-10                                                 2.698m ± ∞ ¹                       2.907m ± ∞ ¹   +7.74% (p=0.008 n=5)
+IndexBuildTime/BuildIndices_100-10                                                                          41.06µ ± ∞ ¹                       44.91µ ± ∞ ¹   +9.38% (p=0.032 n=5)
+IndexBuildTime/BuildIndices_1000-10                                                                         461.6µ ± ∞ ¹                       546.7µ ± ∞ ¹  +18.44% (p=0.008 n=5)
+IndexBuildTime/BuildIndices_10000-10                                                                        4.269m ± ∞ ¹                       4.233m ± ∞ ¹        ~ (p=0.548 n=5)
+IndexBuildTime/BuildIndices_100000-10                                                                       78.29m ± ∞ ¹                       58.52m ± ∞ ¹  -25.25% (p=0.008 n=5)
+AttributeScan/Linear/1000-10                                                                               171.60µ ± ∞ ¹                       99.03µ ± ∞ ¹        ~ (p=0.056 n=5)
+AttributeScan/Indexed/1000-10                                                                              123.58µ ± ∞ ¹                       99.05µ ± ∞ ¹        ~ (p=0.310 n=5)
+AttributeScan/Linear/10000-10                                                                               1.335m ± ∞ ¹                       1.187m ± ∞ ¹  -11.09% (p=0.008 n=5)
+AttributeScan/Indexed/10000-10                                                                              1.247m ± ∞ ¹                       1.151m ± ∞ ¹   -7.69% (p=0.008 n=5)
+AttributeScan/Linear/100000-10                                                                              13.82m ± ∞ ¹                       12.36m ± ∞ ¹        ~ (p=0.151 n=5)
+AttributeScan/Indexed/100000-10                                                                             13.44m ± ∞ ¹                       12.44m ± ∞ ¹   -7.42% (p=0.016 n=5)
+geomean                                                                                                     13.97µ                             14.21µ         +1.73%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                                                            │ docs/perf/string_identity_executor_baseline_2026-07-21.txt │ docs/perf/string_identity_executor_after_2026-07-21.txt │
+                                                            │                            B/op                            │              B/op                vs base                │
+PatternMatch_LinearVsIndexed/Linear/100/EA_bound-10                                                          680.0 ± ∞ ¹                       680.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/EA_bound-10                                                         680.0 ± ∞ ¹                       680.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/100/E_bound-10                                                         1.320Ki ± ∞ ¹                     1.320Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/E_bound-10                                                        1.320Ki ± ∞ ¹                     1.320Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/100/A_bound-10                                                         29.20Ki ± ∞ ¹                     29.20Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/A_bound-10                                                        29.20Ki ± ∞ ¹                     29.20Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/100/V_bound-10                                                         1.336Ki ± ∞ ¹                     1.336Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/V_bound-10                                                        1.336Ki ± ∞ ¹                     1.336Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/100/Nothing_bound-10                                                   125.0Ki ± ∞ ¹                     125.0Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/Nothing_bound-10                                                  125.0Ki ± ∞ ¹                     125.0Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/EA_bound-10                                                         680.0 ± ∞ ¹                       680.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/1000/EA_bound-10                                                        680.0 ± ∞ ¹                       680.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/E_bound-10                                                        1.320Ki ± ∞ ¹                     1.320Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/1000/E_bound-10                                                       1.320Ki ± ∞ ¹                     1.320Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/A_bound-10                                                        248.8Ki ± ∞ ¹                     248.8Ki ± ∞ ¹  +0.00% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Indexed/1000/A_bound-10                                                       248.8Ki ± ∞ ¹                     248.8Ki ± ∞ ¹  +0.00% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/1000/V_bound-10                                                        1.336Ki ± ∞ ¹                     1.336Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/1000/V_bound-10                                                       1.336Ki ± ∞ ¹                     1.336Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/Nothing_bound-10                                                  1.292Mi ± ∞ ¹                     1.292Mi ± ∞ ¹       ~ (p=1.000 n=5)
+PatternMatch_LinearVsIndexed/Indexed/1000/Nothing_bound-10                                                 1.292Mi ± ∞ ¹                     1.292Mi ± ∞ ¹       ~ (p=0.651 n=5)
+PatternMatch_LinearVsIndexed/Linear/10000/EA_bound-10                                                        681.0 ± ∞ ¹                       681.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/10000/EA_bound-10                                                       681.0 ± ∞ ¹                       681.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/10000/E_bound-10                                                       1.323Ki ± ∞ ¹                     1.323Ki ± ∞ ¹       ~ (p=1.000 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/E_bound-10                                                      1.323Ki ± ∞ ¹                     1.323Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/10000/A_bound-10                                                       4.005Mi ± ∞ ¹                     4.006Mi ± ∞ ¹       ~ (p=0.151 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/A_bound-10                                                      4.005Mi ± ∞ ¹                     4.006Mi ± ∞ ¹  +0.01% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/10000/V_bound-10                                                       1.339Ki ± ∞ ¹                     1.339Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/10000/V_bound-10                                                      1.339Ki ± ∞ ¹                     1.339Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/10000/Nothing_bound-10                                                 18.42Mi ± ∞ ¹                     18.42Mi ± ∞ ¹       ~ (p=0.151 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/Nothing_bound-10                                                18.42Mi ± ∞ ¹                     18.42Mi ± ∞ ¹  +0.00% (p=0.008 n=5)
+IndexBuildTime/BuildIndices_100-10                                                                         83.67Ki ± ∞ ¹                     83.17Ki ± ∞ ¹  -0.60% (p=0.008 n=5)
+IndexBuildTime/BuildIndices_1000-10                                                                        1.141Mi ± ∞ ¹                     1.125Mi ± ∞ ¹  -1.37% (p=0.008 n=5)
+IndexBuildTime/BuildIndices_10000-10                                                                       9.994Mi ± ∞ ¹                     9.869Mi ± ∞ ¹  -1.25% (p=0.008 n=5)
+IndexBuildTime/BuildIndices_100000-10                                                                      87.43Mi ± ∞ ¹                     86.43Mi ± ∞ ¹  -1.14% (p=0.008 n=5)
+AttributeScan/Linear/1000-10                                                                               280.1Ki ± ∞ ¹                     280.0Ki ± ∞ ¹  -0.02% (p=0.016 n=5)
+AttributeScan/Indexed/1000-10                                                                              280.0Ki ± ∞ ¹                     280.0Ki ± ∞ ¹       ~ (p=0.817 n=5)
+AttributeScan/Linear/10000-10                                                                              4.317Mi ± ∞ ¹                     4.315Mi ± ∞ ¹  -0.04% (p=0.032 n=5)
+AttributeScan/Indexed/10000-10                                                                             4.316Mi ± ∞ ¹                     4.315Mi ± ∞ ¹  -0.03% (p=0.008 n=5)
+AttributeScan/Linear/100000-10                                                                             50.25Mi ± ∞ ¹                     50.20Mi ± ∞ ¹       ~ (p=0.222 n=5)
+AttributeScan/Indexed/100000-10                                                                            50.26Mi ± ∞ ¹                     50.19Mi ± ∞ ¹  -0.14% (p=0.008 n=5)
+geomean                                                                                                    55.96Ki                           55.89Ki        -0.12%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal
+
+                                                            │ docs/perf/string_identity_executor_baseline_2026-07-21.txt │ docs/perf/string_identity_executor_after_2026-07-21.txt │
+                                                            │                         allocs/op                          │            allocs/op             vs base                │
+PatternMatch_LinearVsIndexed/Linear/100/EA_bound-10                                                          7.000 ± ∞ ¹                       7.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/EA_bound-10                                                         7.000 ± ∞ ¹                       7.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/100/E_bound-10                                                           12.00 ± ∞ ¹                       12.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/E_bound-10                                                          12.00 ± ∞ ¹                       12.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/100/A_bound-10                                                           113.0 ± ∞ ¹                       113.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/A_bound-10                                                          113.0 ± ∞ ¹                       113.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/100/V_bound-10                                                           13.00 ± ∞ ¹                       13.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/V_bound-10                                                          13.00 ± ∞ ¹                       13.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/100/Nothing_bound-10                                                     417.0 ± ∞ ¹                       417.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/100/Nothing_bound-10                                                    417.0 ± ∞ ¹                       417.0 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/EA_bound-10                                                         7.000 ± ∞ ¹                       7.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/1000/EA_bound-10                                                        7.000 ± ∞ ¹                       7.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/E_bound-10                                                          12.00 ± ∞ ¹                       12.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/1000/E_bound-10                                                         12.00 ± ∞ ¹                       12.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/A_bound-10                                                         1.016k ± ∞ ¹                      1.016k ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/1000/A_bound-10                                                        1.016k ± ∞ ¹                      1.016k ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/V_bound-10                                                          13.00 ± ∞ ¹                       13.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/1000/V_bound-10                                                         13.00 ± ∞ ¹                       13.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/1000/Nothing_bound-10                                                   4.024k ± ∞ ¹                      4.024k ± ∞ ¹       ~ (p=1.000 n=5)
+PatternMatch_LinearVsIndexed/Indexed/1000/Nothing_bound-10                                                  4.024k ± ∞ ¹                      4.024k ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/10000/EA_bound-10                                                        7.000 ± ∞ ¹                       7.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/10000/EA_bound-10                                                       7.000 ± ∞ ¹                       7.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/10000/E_bound-10                                                         12.00 ± ∞ ¹                       12.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/10000/E_bound-10                                                        12.00 ± ∞ ¹                       12.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/10000/A_bound-10                                                        10.08k ± ∞ ¹                      10.08k ± ∞ ¹       ~ (p=0.151 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/A_bound-10                                                       10.08k ± ∞ ¹                      10.08k ± ∞ ¹  +0.04% (p=0.008 n=5)
+PatternMatch_LinearVsIndexed/Linear/10000/V_bound-10                                                         13.00 ± ∞ ¹                       13.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Indexed/10000/V_bound-10                                                        13.00 ± ∞ ¹                       13.00 ± ∞ ¹       ~ (p=1.000 n=5) ²
+PatternMatch_LinearVsIndexed/Linear/10000/Nothing_bound-10                                                  40.28k ± ∞ ¹                      40.27k ± ∞ ¹       ~ (p=0.151 n=5)
+PatternMatch_LinearVsIndexed/Indexed/10000/Nothing_bound-10                                                 40.26k ± ∞ ¹                      40.27k ± ∞ ¹  +0.02% (p=0.008 n=5)
+IndexBuildTime/BuildIndices_100-10                                                                          1.074k ± ∞ ¹                      1.074k ± ∞ ¹       ~ (p=1.000 n=5) ²
+IndexBuildTime/BuildIndices_1000-10                                                                         10.12k ± ∞ ¹                      10.12k ± ∞ ¹       ~ (p=1.000 n=5) ²
+IndexBuildTime/BuildIndices_10000-10                                                                        100.4k ± ∞ ¹                      100.4k ± ∞ ¹       ~ (p=1.000 n=5) ²
+IndexBuildTime/BuildIndices_100000-10                                                                       1.003M ± ∞ ¹                      1.003M ± ∞ ¹       ~ (p=1.000 n=5) ²
+AttributeScan/Linear/1000-10                                                                                2.017k ± ∞ ¹                      2.016k ± ∞ ¹       ~ (p=0.206 n=5)
+AttributeScan/Indexed/1000-10                                                                               2.016k ± ∞ ¹                      2.016k ± ∞ ¹       ~ (p=1.000 n=5)
+AttributeScan/Linear/10000-10                                                                               20.15k ± ∞ ¹                      20.13k ± ∞ ¹  -0.08% (p=0.024 n=5)
+AttributeScan/Indexed/10000-10                                                                              20.13k ± ∞ ¹                      20.12k ± ∞ ¹  -0.06% (p=0.008 n=5)
+AttributeScan/Linear/100000-10                                                                              211.1k ± ∞ ¹                      210.7k ± ∞ ¹       ~ (p=0.357 n=5)
+AttributeScan/Indexed/100000-10                                                                             211.2k ± ∞ ¹                      210.5k ± ∞ ¹  -0.33% (p=0.040 n=5)
+geomean                                                                                                      353.2                             353.2        -0.02%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal
