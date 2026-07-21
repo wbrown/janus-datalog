@@ -2034,3 +2034,134 @@ func TestClauseOrderIndependenceForNot(t *testing.T) {
 		})
 	}
 }
+
+// TestClauseOrderIndependenceForInBoundCorrelates pins the same language
+// contract for consumer-only clauses whose sole correlate is bound by :in.
+// An input-bound correlate is available from iteration zero, so a leading
+// NOT / not-join / missing? is ready before any clause has produced a
+// relation; the fold must still place a generator first rather than fail
+// with "requires prior relation". The baseline planner executes all three
+// shapes; the bridge must agree.
+func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
+	goalA := datalog.NewIdentity("goal:a")
+	goalB := datalog.NewIdentity("goal:b")
+	event1 := datalog.NewIdentity("event:1")
+	nameAttr := datalog.NewKeyword(":entity/name")
+	eventGoalAttr := datalog.NewKeyword(":event/goal")
+
+	datoms := []datalog.Datom{
+		{E: goalA, A: nameAttr, V: "alpha", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: goalB, A: nameAttr, V: "beta", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		// Only goal:a has an event; queries bind ?goal to goal:b, so the
+		// leading negation clause must keep the row.
+		{E: event1, A: eventGoalAttr, V: goalA, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	goalSym := datalog.NewSymbol("?goal")
+
+	cases := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "leading_not_with_in_bound_correlate",
+			text: `[:find ?name
+			        :in $ ?goal
+			        :where (not [?x :event/goal ?goal])
+			               [?goal :entity/name ?name]]`,
+		},
+		{
+			name: "leading_not_join_with_in_bound_correlate",
+			text: `[:find ?name
+			        :in $ ?goal
+			        :where (not-join [?goal] [?x :event/goal ?goal])
+			               [?goal :entity/name ?name]]`,
+		},
+		// The missing? analogue on a capable matcher is pinned in the storage
+		// package (TestLeadingMissingWithInBoundEntity, BadgerMatcher). Its
+		// behavior on THIS lookup-less matcher is pinned separately below —
+		// red — by TestMissingOnLookupLessMatcherFailsLoudly.
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(tc.text)
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
+
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+					inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
+
+					result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+					if err != nil {
+						t.Fatalf("execution failed: %v", err)
+					}
+
+					if result.Size() != 1 {
+						t.Fatalf("expected exactly 1 result (beta), got %d", result.Size())
+					}
+					if got := result.Get(0)[0].(string); got != "beta" {
+						t.Errorf("expected beta, got %q", got)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestMissingOnLookupLessMatcherFailsLoudly pins the loud-failure contract
+// for database-function predicates on a matcher without entity lookup.
+// MemoryPatternMatcher implements no LookupAttribute, so [(missing? $ ?e
+// :attr)] cannot be answered here; the required behavior is a loud error —
+// DatabaseFunctionPredicate.Eval errors when reached without a lookup, so a
+// silent empty result means the predicate was never reached and the input
+// relation was dropped upstream without a sound. This test is committed RED
+// by owner ruling: the baseline path currently returns 0 rows with err=nil.
+// Tracked in docs/bugs/BUG_MISSING_ON_LOOKUPLESS_MATCHER_SILENTLY_EMPTY.md.
+func TestMissingOnLookupLessMatcherFailsLoudly(t *testing.T) {
+	goalA := datalog.NewIdentity("goal:a")
+	goalB := datalog.NewIdentity("goal:b")
+	nameAttr := datalog.NewKeyword(":entity/name")
+	flagAttr := datalog.NewKeyword(":goal/flag")
+
+	datoms := []datalog.Datom{
+		{E: goalA, A: nameAttr, V: "alpha", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: goalB, A: nameAttr, V: "beta", Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+		{E: goalA, A: flagAttr, V: true, Tx: datalog.ElementID{Lamport: 2, ReplicaID: 1}},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	goalSym := datalog.NewSymbol("?goal")
+
+	q, err := parser.ParseQuery(`[:find ?name
+		:in $ ?goal
+		:where [(missing? $ ?goal :goal/flag)]
+		       [?goal :entity/name ?name]]`)
+	if err != nil {
+		t.Fatalf("failed to parse query: %v", err)
+	}
+
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+			inputRel := NewMaterializedRelation([]query.Symbol{goalSym}, []Tuple{{goalB}})
+
+			// Capture the execution event stream: the reproducer documents
+			// not just the silent empty but where the rows vanish.
+			var events []annotations.Event
+			handler := func(event annotations.Event) { events = append(events, event) }
+
+			result, err := executor.ExecuteWithRelations(NewContext(handler), q, []Relation{inputRel})
+			if err == nil {
+				for _, ev := range events {
+					t.Logf("event: %s %v", ev.Name, ev.Data)
+				}
+				t.Fatalf("missing? on a matcher without entity lookup completed silently (rows=%d); want a loud error", result.Size())
+			}
+		})
+	}
+}

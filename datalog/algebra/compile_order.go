@@ -8,13 +8,22 @@ import (
 )
 
 // orderClausesForCompile returns the clauses in a dependency-honoring order:
-// repeatedly the first (source-order) clause that is ready under the symbols
-// bound so far, per query.ClauseReady — the same readiness the planner's
-// phasing consumes, so the bridge and the planner agree on which queries are
-// schedulable. Clause order in query text carries no meaning (the language
-// contract), so a NOT, predicate, expression, or subquery written before the
-// clauses that bind its correlates compiles after them. For a clause list
-// already in dependency order the result is the input order.
+// repeatedly the first (source-order) ready clause, per query.ClauseReady —
+// the same readiness the planner's phasing consumes, so the bridge and the
+// planner agree on which queries are schedulable. Clause order in query text
+// carries no meaning (the language contract), so a NOT, predicate,
+// expression, or subquery written before the clauses that bind its
+// correlates compiles after them.
+//
+// The first pick prefers generators (non-empty Provides) among ready
+// clauses. Readiness alone does not capture the fold's other requirement:
+// NOT, not-join, and database-function predicates need a prior relation to
+// filter, and a correlate bound by :in makes them ready from iteration zero
+// with nothing yet folded. Once anything is folded a relation exists, so
+// every later pick is plain first-ready source order — deferring ready
+// consumers any further would push Selects above Joins and defeat the
+// selective-child lowerings. The fold's requires-prior-relation guards
+// remain for clause lists containing no generator at all.
 //
 // available seeds the bound set: the query's :in symbols plus whatever the
 // enclosing context supplies (an outer relation for NOT bodies, a schema
@@ -44,9 +53,15 @@ func orderClausesForCompile(clauses []query.Clause, available, inputs map[query.
 			if placed[i] {
 				continue
 			}
-			if query.ClauseReady(clause, bound, inputs, providerCount) {
+			if !query.ClauseReady(clause, bound, inputs, providerCount) {
+				continue
+			}
+			if len(ordered) > 0 || len(query.ScopeOf(clause).Provides) > 0 {
 				picked = i
 				break
+			}
+			if picked < 0 {
+				picked = i
 			}
 		}
 		if picked < 0 {

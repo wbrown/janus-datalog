@@ -235,6 +235,61 @@ func TestMissingAsPredicate(t *testing.T) {
 	}
 }
 
+// TestLeadingMissingWithInBoundEntity pins a leading [(missing? $ ?e :attr)]
+// whose entity is bound only by :in. Clause order carries no meaning, and an
+// input-bound entity makes the predicate ready before any pattern has run —
+// the engine must evaluate it against the input binding, not against an
+// empty relation, and the algebra bridge must not reject it for lacking a
+// prior relation.
+func TestLeadingMissingWithInBoundEntity(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			popts := mode.plannerOptions()
+			db, err := NewDatabaseWithOptions(DatabaseOptions{
+				Path:           t.TempDir(),
+				PlannerOptions: &popts,
+			})
+			if err != nil {
+				t.Fatalf("Failed to create database: %v", err)
+			}
+			defer db.Close()
+
+			tx := db.NewTransaction()
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			tx.Add(alice, datalog.NewKeyword(":user/name"), "Alice")
+			tx.Add(alice, datalog.NewKeyword(":user/email"), "alice@example.com")
+			tx.Add(bob, datalog.NewKeyword(":user/name"), "Bob")
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
+			// Bob has no email: missing? is true, the row survives.
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?name :in $ ?e :where [(missing? $ ?e :user/email)] [?e :user/name ?name]]`, bob))
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("Expected 1 result (Bob), got %d", len(results))
+			}
+			if results[0][0].(string) != "Bob" {
+				t.Errorf("Expected 'Bob', got %v", results[0][0])
+			}
+
+			// Alice has an email: missing? is false, no rows.
+			results, err = executor.CollectTuples(db.Query(
+				`[:find ?name :in $ ?e :where [(missing? $ ?e :user/email)] [?e :user/name ?name]]`, alice))
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
+			if len(results) != 0 {
+				t.Errorf("Expected 0 results (Alice has email), got %d", len(results))
+			}
+		})
+	}
+}
+
 func TestMissingAsExpression(t *testing.T) {
 	for _, mode := range optimizerModes {
 		t.Run(mode.name, func(t *testing.T) {

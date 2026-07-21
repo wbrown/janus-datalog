@@ -387,6 +387,21 @@ type FunctionPredicate struct {
 	Args []PatternElement
 }
 
+// Validate rejects a FunctionPredicate whose name has no registered
+// implementation. Enforced through ValidateStaticClauseShapes at the user
+// boundaries (parser, qb builder, executor entry): the per-tuple Eval guard
+// alone never fires when upstream clauses match nothing, which turned typo'd
+// predicate names into silent empty results. Registration is runtime state,
+// not query text — so the boundary contract is "registered by the time the
+// query enters the engine", and Eval remains the backstop for names
+// unregistered between validation and evaluation.
+func (f FunctionPredicate) Validate() error {
+	if _, ok := DefaultRegistry.Implementation(f.Fn); !ok {
+		return fmt.Errorf("unknown predicate function: %s", f.Fn)
+	}
+	return nil
+}
+
 func (f FunctionPredicate) RequiredSymbols() []Symbol {
 	var syms []Symbol
 	for _, arg := range f.Args {

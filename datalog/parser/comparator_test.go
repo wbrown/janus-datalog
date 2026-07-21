@@ -145,27 +145,6 @@ func TestParseComparatorPatterns(t *testing.T) {
 				return nil
 			},
 		},
-		{
-			name: "mathematical operations",
-			input: `[:find ?qty ?price
-                     :where [?order :order/quantity ?qty]
-                            [?order :order/price ?price]
-                            [(* ?qty ?price)]]`,
-			validate: func(q *query.Query) error {
-				// Mathematical operations without binding are predicates
-				fnPred, ok := q.Where[2].(*query.FunctionPredicate)
-				if !ok {
-					return fmt.Errorf("expected FunctionPredicate, got %T", q.Where[2])
-				}
-				if fnPred.Fn != "*" {
-					return fmt.Errorf("expected '*' function, got %s", fnPred.Fn)
-				}
-				if len(fnPred.Args) != 2 {
-					return fmt.Errorf("expected 2 args, got %d", len(fnPred.Args))
-				}
-				return nil
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -212,6 +191,19 @@ func TestComparatorErrors(t *testing.T) {
                      :where [?x :foo ?y]
                             [(42 ?x)]]`,
 			error: "function name must be a symbol",
+		},
+		{
+			// Previously parsed to a FunctionPredicate and errored per tuple
+			// at Eval ("unknown predicate function: *") — never reached when
+			// upstream matched nothing, yielding silent empty results. A
+			// non-boolean/unregistered function in predicate position is now
+			// rejected at the parse boundary.
+			name: "bare arithmetic in predicate position",
+			input: `[:find ?qty ?price
+                     :where [?order :order/quantity ?qty]
+                            [?order :order/price ?price]
+                            [(* ?qty ?price)]]`,
+			error: "unknown predicate function: *",
 		},
 	}
 

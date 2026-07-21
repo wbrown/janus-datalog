@@ -117,6 +117,16 @@ func TestExecutorEntryRejectsStaticallyInvalidClauses(t *testing.T) {
 			},
 			wantErr: "not-join header",
 		},
+		"unregistered predicate function": {
+			// Hand-built AST bypassing the parser: the boundary walk must
+			// reject the unregistered name here too — the per-tuple Eval
+			// guard alone never fires when upstream clauses match nothing.
+			clause: &query.FunctionPredicate{
+				Fn:   "test/never-registered-executor-door?",
+				Args: []query.PatternElement{query.Variable{Name: v}},
+			},
+			wantErr: "unknown predicate function: test/never-registered-executor-door?",
+		},
 	}
 
 	for name, tc := range cases {

@@ -330,6 +330,8 @@ func ValidateStaticClauseShapes(clauses []Clause) error {
 			validateErr = v.Validate()
 		case *OrDefaultJoinClause:
 			validateErr = v.Validate()
+		case *FunctionPredicate:
+			validateErr = v.Validate()
 		}
 		return validateErr == nil
 	})

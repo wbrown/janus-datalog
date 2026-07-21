@@ -34,8 +34,11 @@ func parsePredicate(fn string, args []query.PatternElement) (query.Predicate, er
 	case "tx-between":
 		return parseTxBetweenPredicate(args)
 	default:
-		// All other predicates become FunctionPredicates
-		// This handles things like str/starts-with?, custom predicates, etc.
+		// User-defined predicate functions. Name validation lives in
+		// FunctionPredicate.Validate, enforced by ValidateStaticClauseShapes
+		// at every user boundary (ParseQuery included) — constructing here
+		// and rejecting there keeps one home for the rule across parsed,
+		// qb-built, and hand-built queries.
 		return &query.FunctionPredicate{
 			Fn:   fn,
 			Args: args,
