@@ -75,12 +75,10 @@ func (e *CacheEntry) VectorIndex() []datalog.ElementID {
 // Freshness is tracked via maxVersions, updated atomically on every write.
 // This provides O(1) freshness checks without storage seeks.
 type Cache struct {
-	// Per-(E,A) resolved views
-	entries sync.Map // map[CacheKey]*CacheEntry
-
-	// Per-(E,A) max ElementID tracking - updated atomically on every write
-	// This avoids storage seeks for freshness checks
-	maxVersions sync.Map // map[CacheKey]datalog.ElementID
+	// Per-(E,A) combined state: the resolved view and its max-version
+	// high-water mark live in one slot, so the hot path — load, check
+	// in-flight, check freshness — is a single trie walk.
+	slots *cacheTrie
 
 	// Per-attribute version tracking for fast A-bound query freshness checks
 	// When querying [?e :name "Bob"], we can check if ANY :name has changed
@@ -95,7 +93,7 @@ type Cache struct {
 
 // NewCache creates a new cache instance
 func NewCache() *Cache {
-	return &Cache{}
+	return &Cache{slots: newCacheTrie()}
 }
 
 // inFlightEntry is the shared sentinel stored for an (E, A) while its commit is
@@ -112,7 +110,18 @@ var inFlightEntry = &CacheEntry{inFlight: true}
 // a reader's perspective.
 func (c *Cache) BeginInFlight(keys []CacheKey) {
 	for _, key := range keys {
-		c.entries.Store(key, inFlightEntry)
+		for {
+			slot, ok := c.slots.Load(key)
+			if !ok {
+				if _, loaded := c.slots.LoadOrStore(key, cacheSlot{entry: inFlightEntry}); !loaded {
+					break
+				}
+				continue // lost the race; re-read and CAS
+			}
+			if c.slots.CompareAndSwap(key, slot, cacheSlot{entry: inFlightEntry, version: slot.version}) {
+				break
+			}
+		}
 	}
 }
 
@@ -121,19 +130,26 @@ func (c *Cache) BeginInFlight(keys []CacheKey) {
 // window where a concurrent rebuild, having resolved the pre-commit value, could
 // otherwise clobber a sentinel that BeginInFlight set in the meantime: if the
 // slot turned into (or already holds) a sentinel, the store is abandoned.
+// storeIfNotInFlight also advances the slot's max-version high-water mark to
+// the entry's version, folding what the two-map layout did in a separate
+// UpdateMaxVersion call into the same atomic slot swap.
 func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 	for {
-		cur, ok := c.entries.Load(key)
-		if ok && cur.(*CacheEntry).inFlight {
+		slot, ok := c.slots.Load(key)
+		if ok && slot.entry != nil && slot.entry.inFlight {
 			return false // a commit owns this key; do not cache
 		}
 		if !ok {
-			if _, loaded := c.entries.LoadOrStore(key, entry); !loaded {
+			if _, loaded := c.slots.LoadOrStore(key, cacheSlot{entry: entry, version: entry.version}); !loaded {
 				return true
 			}
 			continue // lost the race; re-check (the winner may be a sentinel)
 		}
-		if c.entries.CompareAndSwap(key, cur, entry) {
+		version := slot.version
+		if entry.version.Compare(version) > 0 {
+			version = entry.version
+		}
+		if c.slots.CompareAndSwap(key, slot, cacheSlot{entry: entry, version: version}) {
 			return true
 		}
 		// The slot changed under us (possibly to a sentinel); re-evaluate.
@@ -146,25 +162,20 @@ func (c *Cache) storeIfNotInFlight(key CacheKey, entry *CacheEntry) bool {
 // This provides O(1) freshness checks without any storage seeks.
 // False negatives (returning stale data) are NOT acceptable.
 func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
-	// Fast path: load existing entry
-	if val, ok := c.entries.Load(key); ok {
-		entry := val.(*CacheEntry)
-
+	// Fast path: one trie walk yields the entry and its freshness bound.
+	if slot, ok := c.slots.Load(key); ok && slot.entry != nil {
 		// In-flight: a commit to this (E, A) is in progress. Resolve from storage
 		// (the rebuild below) without caching, so the result reflects whichever
 		// side of the commit is currently durable — never a stale cache hit.
-		if entry.inFlight {
+		if slot.entry.inFlight {
 			return c.rebuild(key, resolver)
 		}
 
-		// Check freshness: compare stored version with maxVersions (O(1) map lookup)
-		if maxVal, ok := c.maxVersions.Load(key); ok {
-			currentMax := maxVal.(datalog.ElementID)
-			if entry.version == currentMax {
-				return entry // Fresh - cache hit
-			}
+		// Fresh iff the entry's version matches the slot's high-water mark.
+		if slot.entry.version == slot.version {
+			return slot.entry // Fresh - cache hit
 		}
-		// Stale or no max tracked - fall through to rebuild
+		// Stale - fall through to rebuild
 	}
 
 	// Slow path: rebuild and store
@@ -174,9 +185,8 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
 	if entry != nil {
 		// storeIfNotInFlight refuses to overwrite an in-flight sentinel, so a
 		// rebuild that raced a commit doesn't re-cache the pre-commit value.
+		// It also advances the slot's high-water mark to the entry's version.
 		if c.storeIfNotInFlight(key, entry) {
-			// Update maxVersions to reflect what we just resolved
-			c.UpdateMaxVersion(key, entry.version)
 			// Track that we've cached this attribute for this entity
 			c.TrackEntityAttr(key.E, key.A)
 		}
@@ -189,22 +199,17 @@ func (c *Cache) GetOrResolve(key CacheKey, resolver CacheResolver) *CacheEntry {
 // This enables O(1) cache freshness checks without storage seeks.
 func (c *Cache) UpdateMaxVersion(key CacheKey, elemID datalog.ElementID) {
 	for {
-		val, loaded := c.maxVersions.Load(key)
-		if !loaded {
-			// No existing value - try to store
-			if _, swapped := c.maxVersions.LoadOrStore(key, elemID); swapped {
-				// We stored successfully
+		slot, ok := c.slots.Load(key)
+		if !ok {
+			if _, loaded := c.slots.LoadOrStore(key, cacheSlot{version: elemID}); !loaded {
 				return
 			}
-			// LoadOrStore returned existing value, retry
-			continue
+			continue // lost the race; re-read and CAS
 		}
-		current := val.(datalog.ElementID)
-		if current.Compare(elemID) >= 0 {
+		if slot.version.Compare(elemID) >= 0 {
 			return // Current is already >= new value
 		}
-		// Try to update to new max using CompareAndSwap
-		if c.maxVersions.CompareAndSwap(key, current, elemID) {
+		if c.slots.CompareAndSwap(key, slot, cacheSlot{entry: slot.entry, version: elemID}) {
 			return
 		}
 		// CAS failed, retry
@@ -217,7 +222,15 @@ func (c *Cache) UpdateMaxVersion(key CacheKey, elemID datalog.ElementID) {
 // during commit, preserving the max for freshness checks.
 func (c *Cache) Invalidate(touched []CacheKey) {
 	for _, key := range touched {
-		c.entries.Delete(key)
+		for {
+			slot, ok := c.slots.Load(key)
+			if !ok || slot.entry == nil {
+				break // nothing cached; the version high-water mark stands
+			}
+			if c.slots.CompareAndSwap(key, slot, cacheSlot{version: slot.version}) {
+				break
+			}
+		}
 	}
 	// Note: attrVersions invalidation is implicit -
 	// next IsAttributeFresh() call will fetch current max from store
@@ -233,8 +246,7 @@ func (c *Cache) Invalidate(touched []CacheKey) {
 func (c *Cache) InvalidateRewind(touched []CacheKey) {
 	seenAttr := make(map[Attribute]struct{}, len(touched))
 	for _, key := range touched {
-		c.entries.Delete(key)
-		c.maxVersions.Delete(key)
+		c.slots.Delete(key)
 		if _, ok := seenAttr[key.A]; !ok {
 			seenAttr[key.A] = struct{}{}
 			c.attrVersions.Delete(key.A)
@@ -258,15 +270,9 @@ func (c *Cache) InvalidateRewind(touched []CacheKey) {
 // whole-attribute freshness) is not touched here — subsequent writes
 // on any E still advance the per-key max.
 func (c *Cache) InvalidateAttribute(a Attribute) {
-	c.entries.Range(func(k, _ any) bool {
-		if key, ok := k.(CacheKey); ok && key.A == a {
-			c.entries.Delete(key)
-		}
-		return true
-	})
-	c.maxVersions.Range(func(k, _ any) bool {
-		if key, ok := k.(CacheKey); ok && key.A == a {
-			c.maxVersions.Delete(key)
+	c.slots.Range(func(key CacheKey, _ cacheSlot) bool {
+		if key.A == a {
+			c.slots.Delete(key)
 		}
 		return true
 	})
@@ -313,8 +319,7 @@ func (c *Cache) UpdateAttributeVersion(a Attribute, version datalog.ElementID) {
 // Clear removes all entries from the cache
 // Useful for testing or forced cache invalidation
 func (c *Cache) Clear() {
-	c.entries = sync.Map{}
-	c.maxVersions = sync.Map{}
+	c.slots.Clear()
 	c.attrVersions = sync.Map{}
 	c.entityAttrs = sync.Map{}
 }
@@ -355,15 +360,12 @@ func (c *Cache) GetCachedAttrs(e Entity) map[Attribute]bool {
 func (c *Cache) PopulateFromDatoms(key CacheKey, card schema.Cardinality, datoms []datalog.Datom) {
 	// Skip if a commit to this (E, A) is in flight (the committer owns the cache
 	// for this key), or if already cached and fresh.
-	if val, ok := c.entries.Load(key); ok {
-		entry := val.(*CacheEntry)
-		if entry.inFlight {
+	if slot, ok := c.slots.Load(key); ok && slot.entry != nil {
+		if slot.entry.inFlight {
 			return
 		}
-		if maxVal, ok := c.maxVersions.Load(key); ok {
-			if entry.version == maxVal.(datalog.ElementID) {
-				return
-			}
+		if slot.entry.version == slot.version {
+			return
 		}
 	}
 
@@ -405,9 +407,9 @@ func (c *Cache) PopulateFromDatoms(key CacheKey, card schema.Cardinality, datoms
 	}
 
 	if entry != nil {
-		// Refuse to cache if a commit grabbed this key after the freshness check.
+		// Refuse to cache if a commit grabbed this key after the freshness
+		// check; the store advances the slot's high-water mark itself.
 		if c.storeIfNotInFlight(key, entry) {
-			c.UpdateMaxVersion(key, entry.version)
 			c.TrackEntityAttr(key.E, key.A)
 		}
 	}

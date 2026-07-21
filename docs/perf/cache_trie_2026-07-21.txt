@@ -1,0 +1,19 @@
+Specialized EA-cache trie vs sync.Map baseline (commit 5e6b915), n=10,
+Apple M5, same-session back-to-back via worktree.
+
+benchstat (before = sync.Map two-map cache, after = combined-slot cacheTrie):
+
+GetOrResolve_FreshHit-10    16.705n ± 2%    6.061n ± 2%   -63.72% (p=0.000 n=10)
+ComplexQueryCheckpoint-10    33.48m ± 10%   24.15m ± 1%   -27.89% (p=0.000 n=10)
+B/op, allocs/op: unchanged (checkpoint 44.6Mi / 550.4k, FreshHit 0/0)
+
+Profiled 200x ladder (total CPU samples; Cache.GetOrResolve cum; lookup machinery):
+
+sync.Map, two maps        32.8ms/op   7.50s   1.23s (16.4%)   1.14s
+locked typed maps         26.1ms/op   5.97s   0.53s (8.9%)    0.39s
+specialized trie, 1 slot  24.3ms/op   5.79s   0.37s (6.4%)    0.31s
+
+Intermediate experiment (locked typed maps, same benchmarks):
+GetOrResolve_FreshHit 17.89n -> 20.59n (+15.03%); checkpoint -11.56% (p=0.003,
+baseline noisy at ±21%). Single-hot-key RLock overhead inverted on the real
+key distribution.

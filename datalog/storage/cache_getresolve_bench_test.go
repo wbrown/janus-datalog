@@ -22,12 +22,14 @@ func BenchmarkGetOrResolve_FreshHit(b *testing.B) {
 	key := CacheKey{E: e, A: a}
 
 	ver := datalog.ElementID{}
-	c.entries.Store(key, &CacheEntry{
-		version:     ver,
-		cardinality: schema.CardinalityOne,
-		oneValue:    int64(42),
+	c.slots.Store(key, cacheSlot{
+		entry: &CacheEntry{
+			version:     ver,
+			cardinality: schema.CardinalityOne,
+			oneValue:    int64(42),
+		},
+		version: ver,
 	})
-	c.maxVersions.Store(key, ver)
 
 	b.ReportAllocs()
 	b.ResetTimer()

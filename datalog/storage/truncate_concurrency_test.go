@@ -47,17 +47,14 @@ func TestTruncateToInvalidatesCache(t *testing.T) {
 			require.Equal(t, []int64{30}, ages)
 
 			key := cacheKeyFor(e, ageAttr)
-			_, hadEntry := d.cache.entries.Load(key)
-			require.True(t, hadEntry, "the read should have populated the cache")
+			slot, hadSlot := d.cache.slots.Load(key)
+			require.True(t, hadSlot && slot.entry != nil, "the read should have populated the cache")
 
 			// Rewind past the age write.
 			require.NoError(t, d.TruncateTo("cp1"))
 
-			if _, ok := d.cache.entries.Load(key); ok {
-				t.Error("rewound cache entry must be dropped")
-			}
-			if _, ok := d.cache.maxVersions.Load(key); ok {
-				t.Error("rewound maxVersions must be reset, not left at the pre-rollback high-water")
+			if _, ok := d.cache.slots.Load(key); ok {
+				t.Error("rewound slot must be dropped entirely — a surviving slot leaves either a stale entry or a stranded version high-water mark")
 			}
 
 			// The read now reflects the erasure, not a stale-cached 30.
