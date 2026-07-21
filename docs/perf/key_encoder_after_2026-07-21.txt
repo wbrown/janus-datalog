@@ -1,0 +1,56 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkBadgerAssertBulk/Size1000-10   	     228	   5344721 ns/op	 5087413 B/op	  114114 allocs/op
+BenchmarkBadgerAssertBulk/Size1000-10   	     229	   5140984 ns/op	 5097491 B/op	  114115 allocs/op
+BenchmarkBadgerAssertBulk/Size1000-10   	     247	   4792196 ns/op	 5101915 B/op	  114115 allocs/op
+BenchmarkBadgerAssertBulk/Size1000-10   	     255	   4605127 ns/op	 5083340 B/op	  114114 allocs/op
+BenchmarkBadgerAssertBulk/Size1000-10   	     235	   5318273 ns/op	 5102439 B/op	  114115 allocs/op
+BenchmarkBadgerAssertBulk/Size4000-10   	      61	  19303859 ns/op	20593925 B/op	  456311 allocs/op
+BenchmarkBadgerAssertBulk/Size4000-10   	      64	  18942988 ns/op	20691820 B/op	  456312 allocs/op
+BenchmarkBadgerAssertBulk/Size4000-10   	      61	  18883325 ns/op	20794193 B/op	  456313 allocs/op
+BenchmarkBadgerAssertBulk/Size4000-10   	      67	  17442824 ns/op	20355823 B/op	  456308 allocs/op
+BenchmarkBadgerAssertBulk/Size4000-10   	      61	  17578776 ns/op	20760732 B/op	  456313 allocs/op
+BenchmarkCRDTWrite/CardinalityOne-10    	   60102	     20931 ns/op	   16554 B/op	     278 allocs/op
+BenchmarkCRDTWrite/CardinalityOne-10    	   59079	     22212 ns/op	   16510 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityOne-10    	   63118	     21601 ns/op	   16203 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityOne-10    	   58483	     22288 ns/op	   16557 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityOne-10    	   63932	     21831 ns/op	   16140 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/Add-10         	   58898	     22398 ns/op	   16505 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/Add-10         	   58764	     22352 ns/op	   16516 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/Add-10         	   59685	     22357 ns/op	   16443 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/Add-10         	   57460	     22259 ns/op	   16628 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/Add-10         	   58195	     22564 ns/op	   16564 B/op	     276 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/AddRemove-10   	   43159	     28382 ns/op	   22826 B/op	     396 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/AddRemove-10   	   42361	     34686 ns/op	   22888 B/op	     395 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/AddRemove-10   	   42217	     28713 ns/op	   22911 B/op	     395 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/AddRemove-10   	   42445	     29202 ns/op	   22874 B/op	     395 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/AddRemove-10   	   42346	     29199 ns/op	   22890 B/op	     395 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=4-10         	    6180	   2096402 ns/op	   64260 B/op	    1177 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=4-10         	    5988	   2051507 ns/op	   64210 B/op	    1175 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=4-10         	    4944	   1655827 ns/op	   66785 B/op	    1175 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=4-10         	    5902	   1993419 ns/op	   64389 B/op	    1175 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=4-10         	    5578	   1874081 ns/op	   65109 B/op	    1175 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=32-10        	    1641	   5980512 ns/op	  468367 B/op	    8075 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=32-10        	    1598	   5548537 ns/op	  470689 B/op	    8073 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=32-10        	    1554	   6328710 ns/op	  473479 B/op	    8073 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=32-10        	    1659	   6307541 ns/op	  470090 B/op	    8074 allocs/op
+BenchmarkCRDTWrite/CardinalityMany/SetMembership/members=32-10        	    1642	   6639010 ns/op	  468370 B/op	    8074 allocs/op
+BenchmarkCRDTWrite/CardinalityVector/Append-10                        	   56973	     23052 ns/op	   17595 B/op	     277 allocs/op
+BenchmarkCRDTWrite/CardinalityVector/Append-10                        	   57007	     22957 ns/op	   17591 B/op	     277 allocs/op
+BenchmarkCRDTWrite/CardinalityVector/Append-10                        	   56499	     25936 ns/op	   17637 B/op	     277 allocs/op
+BenchmarkCRDTWrite/CardinalityVector/Append-10                        	   27840	     44548 ns/op	   17650 B/op	     277 allocs/op
+BenchmarkCRDTWrite/CardinalityVector/Append-10                        	   29595	     42236 ns/op	   17346 B/op	     277 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10          	     309	   3242431 ns/op	 3587267 B/op	   45328 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10          	     372	   3240775 ns/op	 3587549 B/op	   45329 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10          	     284	   3804428 ns/op	 3587634 B/op	   45330 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10          	     392	   2948538 ns/op	 3587506 B/op	   45329 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10          	     417	   2653550 ns/op	 3587464 B/op	   45329 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10               	    2829	    413899 ns/op	  372467 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10               	    3004	    402908 ns/op	  372465 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10               	    2980	    402970 ns/op	  372465 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10               	    3003	    401413 ns/op	  372465 B/op	    5796 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10               	    3028	    402011 ns/op	  372465 B/op	    5796 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	215.655s

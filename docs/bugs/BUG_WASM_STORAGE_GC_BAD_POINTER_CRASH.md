@@ -19,12 +19,14 @@ Three crashes across eleven runs:
 | 10 | `make test` (full gate, later the same day) | **crash**, ~27s in |
 | 11 | manual re-run, same package | pass |
 | 12 | CI `make test-wasm`, linux/amd64, go1.25.12 (two runs of the same commit) | one pass, one **crash** ~30s into storage |
+| 13 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, branch `fix/tuple-builder-string-key` (uncommitted key-encoder rewrite in tree) | **crash** ~35s into storage |
 
-All three crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
+All crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
 
 - Run 1: `runtime: pointer 0x22300000 to unallocated span` → `fatal error: found bad pointer in Go heap (incorrect use of unsafe or cgo?)`. Discovered in `runtime.wbBufFlush1`; the running goroutine (3932) was in `runtime.wbMove` inside `executor.(*ScanSharingMatcher).Match` (`scan_sharing_matcher.go:81`), under `DefaultQueryExecutor.executePattern` (`query_executor.go:404`).
 - Run 2: `runtime: pointer 0x22300000 to unused region of span` (span base `0x12f30000`) — same fatal, different stack: `bulkBarrierPreWriteSrcOnly` during `growslice`, an append in `storage.(*MemoryStore).scan.func1` (`memory_store.go:153`) inside a btree `AscendRange`, reached from `validatingVBoundIterator.openCRDTScan` (`matcher_relations.go:1077`) via `Next` ← `CountingIterator` ← `LazySeq` realize. Same goroutine number (3932).
 - Run 10: `runtime: pointer 0x21970000 to unallocated span` — and this time the crashing goroutine's **stack itself is corrupted**: `runtime: g 4129: unexpected return pc for gcWriteBarrier called from 0x82ed80` (a stack address in a return-PC slot). The dumped stack memory around the frame contains storage key material — the ASCII bytes `entity/type` and hash-like byte runs — and the symbolizer mis-attributes a data word to `BenchmarkElementID.func3`, i.e. raw data is sitting where the runtime expects frame structure.
+- Run 13: `runtime: pointer 0x22430000 to unallocated span` — same 0x10000-multiple poison shape, discovered in `runtime.wbBufFlush1` from `runtime.wbMove` inside `executor.(*DefaultQueryExecutor).tryFuseAttributeFetchBundle` (`query_executor.go:681`) under `DefaultQueryExecutor.Execute`, goroutine 4697, go1.26.3. Same late-suite timing (~35s), same full-pipeline context.
 
 What the signature says:
 
