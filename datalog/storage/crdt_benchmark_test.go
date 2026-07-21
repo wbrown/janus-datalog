@@ -72,6 +72,45 @@ func BenchmarkCRDTWrite(b *testing.B) {
 		}
 	})
 
+	// Set() on a cardinality-many attribute resolves current membership and
+	// diffs it against the new member list (the memberKey-keyed maps in
+	// Transaction.Set) — a path no Add/Remove benchmark reaches.
+	b.Run("CardinalityMany/SetMembership", func(b *testing.B) {
+		for _, size := range []int{4, 32} {
+			b.Run(fmt.Sprintf("members=%d", size), func(b *testing.B) {
+				db := setupCRDTBenchDB(b)
+				defer db.Close()
+
+				s, _ := schema.NewBuilder().
+					Attribute(":person/tags").Type(schema.TypeString).Many().Add().
+					Build()
+				db.SetSchema(s)
+
+				entity := datalog.NewIdentity("bench-entity")
+				attr := datalog.NewKeyword(":person/tags")
+
+				// Two disjoint member lists, alternated so every Set replaces
+				// the full membership: N removes + N adds per iteration.
+				sets := [2][]string{make([]string, size), make([]string, size)}
+				for j := 0; j < size; j++ {
+					sets[0][j] = fmt.Sprintf("a-tag%d", j)
+					sets[1][j] = fmt.Sprintf("b-tag%d", j)
+				}
+
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					tx := db.NewTransaction()
+					if err := tx.Set(entity, attr, sets[i%2]); err != nil {
+						b.Fatal(err)
+					}
+					if _, err := tx.Commit(); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	})
+
 	b.Run("CardinalityVector/Append", func(b *testing.B) {
 		db := setupCRDTBenchDB(b)
 		defer db.Close()
