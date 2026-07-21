@@ -56,6 +56,7 @@ type Database struct {
 	clock             *LamportClock           // CRDT: Lamport clock for ordering (nil if not in CRDT mode)
 	replicaID         uint64                  // CRDT: This database's replica identifier
 	cache             *Cache                  // CRDT: Unified cache for resolved CRDT views
+	builderCache      *tupleBuilderCache      // Shared tuple-builder population for every matcher this database mints
 	temporalTxID      *datalog.ElementID      // nil = current; set = temporal mode (AsOf/History)
 
 	// onCommitWindow, if set, is invoked inside Commit after the storage commit
@@ -236,6 +237,7 @@ func NewDatabaseWithOptions(opts DatabaseOptions) (*Database, error) {
 		clock:             clock,
 		replicaID:         replicaID,
 		cache:             cache,
+		builderCache:      newTupleBuilderCache(),
 	}
 	d.drainCond = sync.NewCond(&d.mu)
 	return d, nil
@@ -535,6 +537,7 @@ func (d *Database) AsOf(txID datalog.ElementID) *Database {
 		parseCache:        d.parseCache,
 		plannerOptions:    d.plannerOptions,
 		cache:             NewCache(),
+		builderCache:      d.builderCache,
 		clock:             d.clock,
 		replicaID:         d.replicaID,
 		temporalTxID:      &txID,
@@ -561,6 +564,7 @@ func (d *Database) History() *Database {
 		parseCache:        d.parseCache,
 		plannerOptions:    d.plannerOptions,
 		cache:             d.cache,
+		builderCache:      d.builderCache,
 		clock:             d.clock,
 		replicaID:         d.replicaID,
 		temporalTxID:      &empty,
@@ -625,6 +629,7 @@ func (d *Database) NewExecutorWithOptions(opts planner.PlannerOptions) *executor
 // Matcher() funnels through here with the database's effective options.
 func (d *Database) matcherWithExecOptions(opts planner.PlannerOptions) executor.PatternMatcher {
 	matcher := NewBadgerMatcherWithOptions(d.store, executor.ExecutorOptionsFromPlanner(opts))
+	matcher.builderCache = d.builderCache
 	matcher.SetHandler(d.annotationHandler)
 	if d.schema != nil {
 		matcher.SetSchema(d.schema)

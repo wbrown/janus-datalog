@@ -87,6 +87,37 @@ func TestTupleBuilderCacheSharing(t *testing.T) {
 	}
 }
 
+// TestDatabaseMatchersShareTupleBuilders pins that every matcher a Database
+// mints shares one structurally-keyed builder population: builders warmed by
+// one matcher serve the next, instead of every Matcher() call starting with
+// an empty cache. Temporal handles inherit the parent's population.
+func TestDatabaseMatchersShareTupleBuilders(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Variable{Name: datalog.NewSymbol("?e")},
+			query.Constant{Value: datalog.NewKeyword(":test/attr")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+		},
+	}
+	symbols := []query.Symbol{datalog.NewSymbol("?e"), datalog.NewSymbol("?v")}
+
+	first := db.Matcher().(*BadgerMatcher)
+	second := db.Matcher().(*BadgerMatcher)
+	builder1 := first.getTupleBuilder(pattern, symbols)
+	builder2 := second.getTupleBuilder(pattern, symbols)
+	if builder1 != builder2 {
+		t.Error("matchers minted by one Database must share tuple builders")
+	}
+
+	histBuilder := db.History().Matcher().(*BadgerMatcher).getTupleBuilder(pattern, symbols)
+	if histBuilder != builder1 {
+		t.Error("temporal-handle matchers must share the parent Database's tuple builders")
+	}
+}
+
 // TestTupleBuilderCacheKeysOnStructure pins that the cache key is the
 // builder's structural identity — position-variable placement and output
 // symbols — never the pattern's rendered text. Constants contribute nothing

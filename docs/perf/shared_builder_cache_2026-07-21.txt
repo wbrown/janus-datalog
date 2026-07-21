@@ -1,0 +1,19 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2510	    467344 ns/op	  547073 B/op	    8988 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2569	    507969 ns/op	  547113 B/op	    8988 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2322	    519665 ns/op	  547114 B/op	    8988 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2294	    488464 ns/op	  547109 B/op	    8988 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	    2552	    477134 ns/op	  547108 B/op	    8988 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     812	   1482424 ns/op	   10719 B/op	     239 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     806	   1471050 ns/op	   10685 B/op	     239 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     846	   1453558 ns/op	   10741 B/op	     239 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     844	   1425799 ns/op	   10704 B/op	     239 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     840	   1422024 ns/op	   10679 B/op	     239 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	12.958s
+
+Baseline (single-scan wildcard resolution, commit 0d6d076): docs/perf/single_scan_resolve_2026-07-21.txt
+entities=230/per-entity median 527189 ns/op / 565514 B/op / 9448 allocs/op

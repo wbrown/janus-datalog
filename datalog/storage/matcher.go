@@ -74,22 +74,22 @@ func (m *BadgerMatcher) cacheKey(e Entity, a Attribute) (CacheKey, bool) {
 }
 
 // NewBadgerMatcher creates a new pattern matcher for a storage backend.
+// The tuple-builder cache initializes lazily on first use; Database-minted
+// matchers arrive with the database's shared cache already set.
 func NewBadgerMatcher(store Store) *BadgerMatcher {
 	return &BadgerMatcher{
-		store:        store,
-		encoder:      store.Encoder(),
-		builderCache: newTupleBuilderCache(),
-		options:      executor.ExecutorOptions{}, // Default options
+		store:   store,
+		encoder: store.Encoder(),
+		options: executor.ExecutorOptions{}, // Default options
 	}
 }
 
 // NewBadgerMatcherWithOptions creates a new pattern matcher with specific options
 func NewBadgerMatcherWithOptions(store Store, opts executor.ExecutorOptions) *BadgerMatcher {
 	return &BadgerMatcher{
-		store:        store,
-		encoder:      store.Encoder(),
-		builderCache: newTupleBuilderCache(),
-		options:      opts,
+		store:   store,
+		encoder: store.Encoder(),
+		options: opts,
 	}
 }
 
@@ -187,9 +187,10 @@ func tuplePosition(symbols []query.Symbol, element query.PatternElement) int8 {
 	return -1
 }
 
-// tupleBuilderCache shares structurally-keyed InternedTupleBuilders across a
-// matcher and its temporal-handle copies. A typed map under RWMutex keeps
-// the warm lookup allocation-free (a sync.Map key would box per call).
+// tupleBuilderCache shares structurally-keyed InternedTupleBuilders across
+// every matcher a Database mints and their temporal-handle copies. A typed
+// map under RWMutex keeps the warm lookup allocation-free (a sync.Map key
+// would box per call).
 type tupleBuilderCache struct {
 	mu       sync.RWMutex
 	builders map[tupleBuilderKey]*query.InternedTupleBuilder
@@ -221,7 +222,8 @@ func (c *tupleBuilderCache) getOrStore(key tupleBuilderKey, builder *query.Inter
 // getTupleBuilder returns the cached tuple builder for the pattern's
 // structural identity, creating it on first use.
 func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *query.InternedTupleBuilder {
-	// Initialize cache exactly once (for tests or code paths that don't use NewBadgerMatcher)
+	// Standalone matchers initialize their cache lazily here; Database-minted
+	// matchers arrive with the database's shared cache already set.
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
 			m.builderCache = newTupleBuilderCache()

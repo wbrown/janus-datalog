@@ -1,0 +1,15 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+                          │ /private/tmp/claude-501/-Users-wbrown-src-janus-datalog/98574c29-f8bf-49f5-a57c-b5158da54f52/scratchpad/checkpoint_before.txt │ /private/tmp/claude-501/-Users-wbrown-src-janus-datalog/98574c29-f8bf-49f5-a57c-b5158da54f52/scratchpad/checkpoint_after.txt │
+                          │                                                            sec/op                                                             │                                                   sec/op                                                    vs base          │
+ComplexQueryCheckpoint-10                                                                                                                     34.46m ± 8%                                                                                                 34.75m ± 14%  ~ (p=0.796 n=10)
+
+                          │ /private/tmp/claude-501/-Users-wbrown-src-janus-datalog/98574c29-f8bf-49f5-a57c-b5158da54f52/scratchpad/checkpoint_before.txt │ /private/tmp/claude-501/-Users-wbrown-src-janus-datalog/98574c29-f8bf-49f5-a57c-b5158da54f52/scratchpad/checkpoint_after.txt │
+                          │                                                             B/op                                                              │                                                 B/op                                                   vs base               │
+ComplexQueryCheckpoint-10                                                                                                                    47.15Mi ± 0%                                                                                            44.63Mi ± 0%  -5.36% (p=0.000 n=10)
+
+                          │ /private/tmp/claude-501/-Users-wbrown-src-janus-datalog/98574c29-f8bf-49f5-a57c-b5158da54f52/scratchpad/checkpoint_before.txt │ /private/tmp/claude-501/-Users-wbrown-src-janus-datalog/98574c29-f8bf-49f5-a57c-b5158da54f52/scratchpad/checkpoint_after.txt │
+                          │                                                           allocs/op                                                           │                                              allocs/op                                                vs base                │
+ComplexQueryCheckpoint-10                                                                                                                     633.5k ± 0%                                                                                            550.4k ± 0%  -13.11% (p=0.000 n=10)
