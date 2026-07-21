@@ -43,74 +43,141 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 	copy(prefix[1:21], eBytes)
 	copy(prefix[21:53], aBytes)
 
-	// Scan EAVT for all entries with this E+A
-	iter, err := m.store.Scan(EAVT, prefix, prefixEnd(prefix))
+	// Values live in the index keys; nothing here needs Badger values.
+	iter, err := m.store.ScanKeysOnly(EAVT, prefix, prefixEnd(prefix))
 	if err != nil {
 		return nil, err
 	}
 	defer iter.Close()
 
-	result := &SetResolutionResult{
-		Members: make(map[interface{}]interface{}),
-	}
+	acc := newAddWinsAccumulator(m)
 
-	// Track state per value: map[valueKey] -> {highestAddTx, highestRemoveTx, hasAdd, hasRemove, value}
-	type valueState struct {
-		highestAddTx    datalog.ElementID
-		highestRemoveTx datalog.ElementID
-		hasAdd          bool
-		hasRemove       bool
-		value           interface{}
+	// The scan prefix fixes E and A of every entry; only the value span,
+	// Tx, and Op vary. The in-tree iterators expose their raw keys, so
+	// those spans are read directly and values decode only for members
+	// that survive resolution — a full datom decode per historical entry
+	// was 78% of the Set path's allocations. Concrete iterator types keep
+	// the per-entry calls direct and inlinable; iterators from external
+	// Store implementations resolve through Datom() with identical
+	// semantics.
+	if it, ok := iter.(*memoryIterator); ok {
+		if err := scanAddWinsMemory(m.encoder, it, acc); err != nil {
+			return nil, err
+		}
+		if err := it.Error(); err != nil {
+			return nil, err
+		}
+		return acc.finish(it.blobs)
 	}
-	valueStates := make(map[string]*valueState)
+	if blobs, ok, err := scanAddWinsBadger(m.encoder, iter, acc); ok {
+		if err != nil {
+			return nil, err
+		}
+		if err := iter.Error(); err != nil {
+			return nil, err
+		}
+		return acc.finish(blobs)
+	}
 
 	for iter.Next() {
 		datom, err := iter.Datom()
 		if err != nil {
 			return nil, err
 		}
-		if m.shouldFilterTx(datom.Tx) {
-			continue
-		}
-
-		elemID := datom.Tx
-
-		// Track global max ElementID
-		if elemID.Compare(result.MaxElementID) > 0 {
-			result.MaxElementID = elemID
-		}
-
-		// Build a key for this value (type + bytes)
-		vType := byte(datalog.Type(datom.V))
-		vBytes := datalog.ValueBytes(datom.V)
-		valueKey := string(append([]byte{vType}, vBytes...))
-
-		state, exists := valueStates[valueKey]
-		if !exists {
-			state = &valueState{value: datom.V}
-			valueStates[valueKey] = state
-		}
-
-		// Track highest Tx for each operation type
-		// Op is now directly on the datom (not decoded from value)
-		if datom.Op == datalog.OpCRDTAdd {
-			if !state.hasAdd || elemID.Compare(state.highestAddTx) > 0 {
-				state.highestAddTx = elemID
-				state.hasAdd = true
-			}
-		} else if datom.Op == datalog.OpCRDTRemove {
-			if !state.hasRemove || elemID.Compare(state.highestRemoveTx) > 0 {
-				state.highestRemoveTx = elemID
-				state.hasRemove = true
-			}
-		}
+		acc.observeDatom(datom)
 	}
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
+	return acc.finish(nil)
+}
 
-	// Resolve each value's membership using add-wins semantics
-	for _, state := range valueStates {
+// addWinsState is the per-value resolution state: the highest add/remove
+// Lamports plus the value in one of two forms — decoded (observeDatom), or
+// its key-encoded span (observeSpan), decoded only if the member survives.
+type addWinsState struct {
+	highestAddTx    datalog.ElementID
+	highestRemoveTx datalog.ElementID
+	hasAdd          bool
+	hasRemove       bool
+	value           interface{}
+	raw             []byte
+}
+
+func (s *addWinsState) record(tx datalog.ElementID, op datalog.CRDTOp) {
+	if op == datalog.OpCRDTAdd {
+		if !s.hasAdd || tx.Compare(s.highestAddTx) > 0 {
+			s.highestAddTx = tx
+			s.hasAdd = true
+		}
+	} else if op == datalog.OpCRDTRemove {
+		if !s.hasRemove || tx.Compare(s.highestRemoveTx) > 0 {
+			s.highestRemoveTx = tx
+			s.hasRemove = true
+		}
+	}
+}
+
+// addWinsAccumulator is the single home of add-wins set resolution state:
+// every scan variant feeds it, and finish applies the membership rule.
+type addWinsAccumulator struct {
+	matcher *BadgerMatcher
+	result  *SetResolutionResult
+	states  map[string]*addWinsState
+}
+
+func newAddWinsAccumulator(m *BadgerMatcher) *addWinsAccumulator {
+	return &addWinsAccumulator{
+		matcher: m,
+		result:  &SetResolutionResult{Members: make(map[interface{}]interface{})},
+		states:  make(map[string]*addWinsState),
+	}
+}
+
+// observeSpan records one entry from its key-encoded value span. The span
+// may alias iterator memory: the lookup does not allocate, and the span is
+// copied once on first sight of a distinct value.
+func (a *addWinsAccumulator) observeSpan(vSpan []byte, tx datalog.ElementID, op datalog.CRDTOp) {
+	if a.matcher.shouldFilterTx(tx) {
+		return
+	}
+	if tx.Compare(a.result.MaxElementID) > 0 {
+		a.result.MaxElementID = tx
+	}
+	state, exists := a.states[string(vSpan)]
+	if !exists {
+		raw := append([]byte(nil), vSpan...)
+		state = &addWinsState{raw: raw}
+		a.states[string(raw)] = state
+	}
+	state.record(tx, op)
+}
+
+// observeDatom records one fully-decoded entry, for iterator types that do
+// not expose raw keys.
+func (a *addWinsAccumulator) observeDatom(datom *datalog.Datom) {
+	if a.matcher.shouldFilterTx(datom.Tx) {
+		return
+	}
+	if datom.Tx.Compare(a.result.MaxElementID) > 0 {
+		a.result.MaxElementID = datom.Tx
+	}
+	vType := byte(datalog.Type(datom.V))
+	vBytes := datalog.ValueBytes(datom.V)
+	valueKey := string(append([]byte{vType}, vBytes...))
+	state, exists := a.states[valueKey]
+	if !exists {
+		state = &addWinsState{value: datom.V}
+		a.states[valueKey] = state
+	}
+	state.record(datom.Tx, datom.Op)
+}
+
+// finish resolves each value's membership using add-wins semantics.
+// Members observed as spans decode here, through blobs — only survivors
+// pay for a value decode.
+func (a *addWinsAccumulator) finish(blobs BlobReader) (*SetResolutionResult, error) {
+	for _, state := range a.states {
 		inSet := false
 		if state.hasAdd && !state.hasRemove {
 			// Only adds, no removes - definitely in set
@@ -128,16 +195,38 @@ func (m *BadgerMatcher) resolveAddWinsSet(eBytes, aBytes []byte) (*SetResolution
 		}
 		// If only removes (no adds), not in set
 
-		if inSet {
-			key := state.value
-			if b, ok := key.([]byte); ok {
-				key = string(b) // []byte is not hashable as a Go map key
-			}
-			result.Members[key] = state.value
+		if !inSet {
+			continue
 		}
+		value := state.value
+		if value == nil {
+			decoded, err := valueFromKeySpan(state.raw, blobs)
+			if err != nil {
+				return nil, err
+			}
+			value = decoded
+		}
+		key := value
+		if b, ok := key.([]byte); ok {
+			key = string(b) // []byte is not hashable as a Go map key
+		}
+		a.result.Members[key] = value
 	}
 
-	return result, nil
+	return a.result, nil
+}
+
+// scanAddWinsMemory drives the accumulator from a memory-store iterator's
+// raw keys with direct, inlinable per-entry calls.
+func scanAddWinsMemory(encoder *BinaryKeyEncoder, it *memoryIterator, acc *addWinsAccumulator) error {
+	for it.Next() {
+		_, _, vBytes, tx, op, _, err := encoder.DecodeKey(EAVT, it.Key())
+		if err != nil {
+			return err
+		}
+		acc.observeSpan(vBytes, Tx(tx).ToElementID(), datalog.CRDTOp(op))
+	}
+	return nil
 }
 
 // prefixEnd returns the end key for a prefix scan (exclusive)

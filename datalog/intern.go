@@ -32,22 +32,37 @@ func InternKeyword(s string) Keyword {
 	return actual.(Keyword)
 }
 
-// InternKeywordFromBytes returns an interned keyword from storage bytes.
-// The null padding is trimmed to recover the keyword string, which is the
-// cache key — so a keyword decoded from storage shares the same interned
-// pointer as one created via InternKeyword.
-func InternKeywordFromBytes(key [32]byte) Keyword {
-	str := strings.TrimRight(string(key[:]), "\x00")
+// keywordByteCache maps the fixed 32-byte storage encoding of a keyword to
+// its interned instance, so decode-path lookups by array key allocate
+// nothing on a hit. The string-keyed cache remains the single authority for
+// canonical instances: misses route through InternKeyword, and this map
+// only ever holds pointers that cache produced.
+type keywordByteCache struct {
+	mu sync.RWMutex
+	m  map[[32]byte]Keyword
+}
 
-	// Fast path: load existing (lock-free)
-	if val, ok := keywordIntern.cache.Load(str); ok {
-		return val.(Keyword)
+var keywordBytes = &keywordByteCache{m: make(map[[32]byte]Keyword)}
+
+// InternKeywordFromBytes returns an interned keyword from storage bytes.
+// The null padding is trimmed to recover the keyword string, which keys the
+// canonical cache — so a keyword decoded from storage shares the same
+// interned pointer as one created via InternKeyword.
+func InternKeywordFromBytes(key [32]byte) Keyword {
+	keywordBytes.mu.RLock()
+	kw, ok := keywordBytes.m[key]
+	keywordBytes.mu.RUnlock()
+	if ok {
+		return kw
 	}
 
-	// Slow path: create and store
-	kw := &keyword{value: str}
-	actual, _ := keywordIntern.cache.LoadOrStore(str, kw)
-	return actual.(Keyword)
+	str := strings.TrimRight(string(key[:]), "\x00")
+	kw = InternKeyword(str)
+
+	keywordBytes.mu.Lock()
+	keywordBytes.m[key] = kw
+	keywordBytes.mu.Unlock()
+	return kw
 }
 
 // Kw creates an interned keyword from namespace and name parts.
