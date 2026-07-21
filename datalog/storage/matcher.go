@@ -16,7 +16,7 @@ type BadgerMatcher struct {
 	store             Store
 	encoder           *BinaryKeyEncoder
 	txID              *datalog.ElementID       // nil=latest CRDT-resolved, &ElementID{}=raw history, &ElementID{L,R}=as-of
-	builderCache      *sync.Map                // map[string]*query.InternedTupleBuilder - Thread-safe cache for tuple builders
+	builderCache      *tupleBuilderCache       // Structurally-keyed tuple builders, shared with temporal-handle copies
 	builderCacheOnce  sync.Once                // Ensures builderCache is initialized exactly once
 	handler           annotations.Handler      // Set from HandlerProvider for detailed storage events
 	options           executor.ExecutorOptions // Options for creating relations
@@ -78,7 +78,7 @@ func NewBadgerMatcher(store Store) *BadgerMatcher {
 	return &BadgerMatcher{
 		store:        store,
 		encoder:      store.Encoder(),
-		builderCache: &sync.Map{},
+		builderCache: newTupleBuilderCache(),
 		options:      executor.ExecutorOptions{}, // Default options
 	}
 }
@@ -88,7 +88,7 @@ func NewBadgerMatcherWithOptions(store Store, opts executor.ExecutorOptions) *Ba
 	return &BadgerMatcher{
 		store:        store,
 		encoder:      store.Encoder(),
-		builderCache: &sync.Map{},
+		builderCache: newTupleBuilderCache(),
 		options:      opts,
 	}
 }
@@ -99,7 +99,7 @@ func (m *BadgerMatcher) AsOf(txID datalog.ElementID) *BadgerMatcher {
 	// Ensure cache is initialized before sharing it
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
-			m.builderCache = &sync.Map{}
+			m.builderCache = newTupleBuilderCache()
 		}
 	})
 
@@ -145,27 +145,94 @@ func (m *BadgerMatcher) SetCache(c *Cache) {
 	m.cache = c
 }
 
-// getTupleBuilder returns a cached tuple builder or creates a new one
+// tupleBuilderKey is the structural identity of an InternedTupleBuilder:
+// where each datom position lands in the output tuple, and the output
+// symbols themselves. Constants contribute nothing to a builder, so they are
+// no part of the key — patterns differing only in constants share one
+// builder, and building the key never renders the pattern.
+type tupleBuilderKey struct {
+	e, a, v, t int8
+	out        [4]query.Symbol
+	n          int8
+}
+
+func newTupleBuilderKey(pattern *query.DataPattern, symbols []query.Symbol) tupleBuilderKey {
+	if len(symbols) > 4 {
+		panic(fmt.Sprintf("a data pattern provides at most 4 symbols, got %d: %v", len(symbols), symbols))
+	}
+	key := tupleBuilderKey{
+		e: tuplePosition(symbols, pattern.GetE()),
+		a: tuplePosition(symbols, pattern.GetA()),
+		v: tuplePosition(symbols, pattern.GetV()),
+		t: tuplePosition(symbols, pattern.GetT()),
+		n: int8(len(symbols)),
+	}
+	copy(key.out[:], symbols)
+	return key
+}
+
+// tuplePosition returns the output-tuple position of a pattern element's
+// variable, or -1 when the element is a constant, a wildcard, or a variable
+// the output does not carry.
+func tuplePosition(symbols []query.Symbol, element query.PatternElement) int8 {
+	variable, ok := element.(query.Variable)
+	if !ok {
+		return -1
+	}
+	for i, sym := range symbols {
+		if sym == variable.Name {
+			return int8(i)
+		}
+	}
+	return -1
+}
+
+// tupleBuilderCache shares structurally-keyed InternedTupleBuilders across a
+// matcher and its temporal-handle copies. A typed map under RWMutex keeps
+// the warm lookup allocation-free (a sync.Map key would box per call).
+type tupleBuilderCache struct {
+	mu       sync.RWMutex
+	builders map[tupleBuilderKey]*query.InternedTupleBuilder
+}
+
+func newTupleBuilderCache() *tupleBuilderCache {
+	return &tupleBuilderCache{builders: make(map[tupleBuilderKey]*query.InternedTupleBuilder)}
+}
+
+func (c *tupleBuilderCache) get(key tupleBuilderKey) (*query.InternedTupleBuilder, bool) {
+	c.mu.RLock()
+	builder, ok := c.builders[key]
+	c.mu.RUnlock()
+	return builder, ok
+}
+
+// getOrStore keeps the first builder stored for a key, so concurrent misses
+// converge on a single instance.
+func (c *tupleBuilderCache) getOrStore(key tupleBuilderKey, builder *query.InternedTupleBuilder) *query.InternedTupleBuilder {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if existing, ok := c.builders[key]; ok {
+		return existing
+	}
+	c.builders[key] = builder
+	return builder
+}
+
+// getTupleBuilder returns the cached tuple builder for the pattern's
+// structural identity, creating it on first use.
 func (m *BadgerMatcher) getTupleBuilder(pattern *query.DataPattern, symbols []query.Symbol) *query.InternedTupleBuilder {
 	// Initialize cache exactly once (for tests or code paths that don't use NewBadgerMatcher)
 	m.builderCacheOnce.Do(func() {
 		if m.builderCache == nil {
-			m.builderCache = &sync.Map{}
+			m.builderCache = newTupleBuilderCache()
 		}
 	})
 
-	key := pattern.String()
-	for _, sym := range symbols {
-		key += "|" + sym.String()
+	key := newTupleBuilderKey(pattern, symbols)
+	if builder, ok := m.builderCache.get(key); ok {
+		return builder
 	}
-
-	if val, ok := m.builderCache.Load(key); ok {
-		return val.(*query.InternedTupleBuilder)
-	}
-
-	builder := query.NewInternedTupleBuilder(pattern, symbols)
-	actual, _ := m.builderCache.LoadOrStore(key, builder)
-	return actual.(*query.InternedTupleBuilder)
+	return m.builderCache.getOrStore(key, query.NewInternedTupleBuilder(pattern, symbols))
 }
 
 // ForceJoinStrategy overrides the join strategy selection for testing
@@ -323,9 +390,8 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 	} else if a != nil {
 		// A is bound but not E
 		if aKw, ok := a.(datalog.Keyword); ok {
-			// Convert to storage format (intern the keyword)
-			aPtr := datalog.NewKeyword(aKw.String())
-			aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
+			// Convert to storage format; the keyword is already interned
+			aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
 
 			// A and Tx bound (V unbound) — ATEV gives a direct [A][Tx↓] prefix scan,
 			// landing on the exact (or nearest-descending) Tx for the attribute. The
@@ -353,7 +419,7 @@ func (m *BadgerMatcher) chooseIndex(e, a, v, tx interface{}) (IndexType, []byte,
 			// - CardinalityOne/Vector: AETV orders by Tx first, first entry is current
 			card := schema.CardinalityOne
 			if m.schema != nil {
-				if attrDef := m.schema.GetAttribute(aPtr); attrDef != nil {
+				if attrDef := m.schema.GetAttribute(aKw); attrDef != nil {
 					card = attrDef.Cardinality
 				}
 			}

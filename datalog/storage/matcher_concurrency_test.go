@@ -87,6 +87,63 @@ func TestTupleBuilderCacheSharing(t *testing.T) {
 	}
 }
 
+// TestTupleBuilderCacheKeysOnStructure pins that the cache key is the
+// builder's structural identity — position-variable placement and output
+// symbols — never the pattern's rendered text. Constants contribute nothing
+// to a builder, so patterns differing only in a constant share one cache
+// entry; keying on rendered constants grew the cache per distinct entity
+// and paid an L85 render per Match (the per-entity resolve allocation
+// regression in docs/perf/storage_correctness_campaign_benchstat_2026-07-20.txt).
+func TestTupleBuilderCacheKeysOnStructure(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	matcher := NewBadgerMatcher(db.Store())
+	symbols := []query.Symbol{datalog.NewSymbol("?v")}
+
+	patternBoundTo := func(seed string) *query.DataPattern {
+		return &query.DataPattern{
+			Elements: []query.PatternElement{
+				query.Constant{Value: datalog.NewIdentity(seed)},
+				query.Constant{Value: datalog.NewKeyword(":test/attr")},
+				query.Variable{Name: datalog.NewSymbol("?v")},
+			},
+		}
+	}
+
+	builderAlice := matcher.getTupleBuilder(patternBoundTo("alice"), symbols)
+	builderBob := matcher.getTupleBuilder(patternBoundTo("bob"), symbols)
+	if builderAlice != builderBob {
+		t.Error("patterns differing only in a constant must share one builder")
+	}
+}
+
+// TestTupleBuilderCacheLookupDoesNotAllocate pins the warm-cache lookup at
+// zero allocations: the key is a stack-built struct over a typed map, so a
+// cache whose purpose is avoiding work never allocates to ask for it.
+func TestTupleBuilderCacheLookupDoesNotAllocate(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	matcher := NewBadgerMatcher(db.Store())
+	pattern := &query.DataPattern{
+		Elements: []query.PatternElement{
+			query.Constant{Value: datalog.NewIdentity("alice")},
+			query.Constant{Value: datalog.NewKeyword(":test/attr")},
+			query.Variable{Name: datalog.NewSymbol("?v")},
+		},
+	}
+	symbols := []query.Symbol{datalog.NewSymbol("?v")}
+	matcher.getTupleBuilder(pattern, symbols)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		matcher.getTupleBuilder(pattern, symbols)
+	})
+	if allocs != 0 {
+		t.Errorf("warm tuple-builder lookup allocated %v times per call, want 0", allocs)
+	}
+}
+
 func createTestDB(t *testing.T) *Database {
 	t.Helper()
 	db, err := NewDatabase(t.TempDir())
