@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wbrown/janus-datalog/datalog"
+	"github.com/wbrown/janus-datalog/datalog/annotations"
 	"github.com/wbrown/janus-datalog/datalog/executor"
 	"github.com/wbrown/janus-datalog/datalog/schema"
 )
@@ -285,6 +286,61 @@ func TestLeadingMissingWithInBoundEntity(t *testing.T) {
 			}
 			if len(results) != 0 {
 				t.Errorf("Expected 0 results (Alice has email), got %d", len(results))
+			}
+
+			// Consumer-only WHERE: the predicate is the entire clause list,
+			// filtering the :in-bound input directly — no generator anywhere.
+			// The input relation is the relation; both modes must execute it.
+			// The event stream is logged on failure so the reproducer shows
+			// where the row vanishes, not just that it did.
+			var events []annotations.Event
+			db.SetAnnotationHandler(func(event annotations.Event) { events = append(events, event) })
+			results, err = executor.CollectTuples(db.Query(
+				`[:find ?e :in $ ?e :where [(missing? $ ?e :user/email)]]`, bob))
+			db.SetAnnotationHandler(nil)
+			if err != nil {
+				t.Fatalf("Consumer-only query failed: %v", err)
+			}
+			if len(results) != 1 {
+				for _, ev := range events {
+					t.Logf("event: %s %v", ev.Name, ev.Data)
+				}
+				t.Fatalf("Expected 1 result (Bob lacks email), got %d", len(results))
+			}
+			results, err = executor.CollectTuples(db.Query(
+				`[:find ?e :in $ ?e :where [(missing? $ ?e :user/email)]]`, alice))
+			if err != nil {
+				t.Fatalf("Consumer-only query failed: %v", err)
+			}
+			if len(results) != 0 {
+				t.Errorf("Expected 0 results (Alice has email), got %d", len(results))
+			}
+
+			// Mixed shape: a generator provides ?name while ?e stays a pure
+			// predicate input that the :find also returns. The predicate's
+			// verdict applies uniformly to every generated row, and the
+			// constant ?e must render into each surviving row.
+			results, err = executor.CollectTuples(db.Query(
+				`[:find ?e ?name :in $ ?e :where [?p :user/name ?name] [(missing? $ ?e :user/email)]]`, bob))
+			if err != nil {
+				t.Fatalf("Mixed query failed: %v", err)
+			}
+			if len(results) != 2 {
+				t.Fatalf("Expected 2 results (both names, ?e passes), got %d", len(results))
+			}
+			for _, tuple := range results {
+				id, ok := tuple[0].(datalog.Identity)
+				if !ok || id.String() != bob.String() {
+					t.Errorf("Expected ?e to render as bob, got %v", tuple[0])
+				}
+			}
+			results, err = executor.CollectTuples(db.Query(
+				`[:find ?e ?name :in $ ?e :where [?p :user/name ?name] [(missing? $ ?e :user/email)]]`, alice))
+			if err != nil {
+				t.Fatalf("Mixed query failed: %v", err)
+			}
+			if len(results) != 0 {
+				t.Errorf("Expected 0 results (Alice has email, uniform fail), got %d", len(results))
 			}
 		})
 	}

@@ -255,6 +255,38 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		return groups, nil
 	}
 
+	// A zero-symbol group is a constant-only verdict, not data. With one
+	// empty tuple it is the join identity: once data groups exist it gates
+	// nothing further, so it is absorbed here (unit × R = R). With zero
+	// tuples it is the join zero: the whole result is empty (∅ × R = ∅).
+	// Left in place, projection would silently drop it — losing a fail
+	// verdict, or erroring aggregation on "disjoint" groups.
+	if len(groups) > 1 {
+		dataGroups := make([]Relation, 0, len(groups))
+		for _, rel := range groups {
+			if len(rel.Symbols()) > 0 {
+				dataGroups = append(dataGroups, rel)
+				continue
+			}
+			verdict := rel.Materialize()
+			if verdict.Size() == 0 {
+				return []Relation{}, nil
+			}
+		}
+		groups = dataGroups
+	}
+
+	// Constant :in bindings are environment, not data — except where the
+	// find clause consumes one, which makes it result data. Render those
+	// values into a relation group before aggregation/projection consume
+	// the symbols: projection treats a missing symbol as empty, so any
+	// later rendering would silently drop rows.
+	rendered, renderErr := e.renderConstantFindSymbols(q, groups)
+	if renderErr != nil {
+		return nil, renderErr
+	}
+	groups = rendered
+
 	hasAggregates := false
 	for _, elem := range q.Find {
 		if elem.IsAggregate() {
@@ -383,6 +415,105 @@ func (e *DefaultQueryExecutor) Execute(ctx Context, q *query.Query, inputs []Rel
 		}
 		return groups, nil
 	}
+}
+
+// renderConstantFindSymbols extends one relation group with find-consumed
+// symbols that were resolved as constant :in bindings and are absent from
+// every group. Constants are environment, not data — :find membership is the
+// one place environment becomes result data, so the value is rendered into
+// the relation at the find boundary, where variables, pull entity variables,
+// and aggregate arguments are about to be consumed. Extension preserves set
+// semantics: distinct tuples stay distinct under an every-row-identical
+// column.
+func (e *DefaultQueryExecutor) renderConstantFindSymbols(q *query.Query, groups []Relation) ([]Relation, error) {
+	if len(e.constantBindings) == 0 || len(groups) == 0 {
+		return groups, nil
+	}
+
+	var consumed []query.Symbol
+	for _, elem := range q.Find {
+		switch f := elem.(type) {
+		case query.FindVariable:
+			consumed = append(consumed, f.Symbol)
+		case query.FindAggregate:
+			consumed = append(consumed, f.Arg)
+		case query.FindPull:
+			consumed = append(consumed, f.Variable)
+		}
+	}
+
+	var missing []query.Symbol
+	for _, sym := range consumed {
+		if _, isConstant := e.constantBindings[sym]; !isConstant {
+			continue
+		}
+		present := false
+		for _, rel := range groups {
+			if query.ContainsSymbol(rel.Symbols(), sym) {
+				present = true
+				break
+			}
+		}
+		if !present && !query.ContainsSymbol(missing, sym) {
+			missing = append(missing, sym)
+		}
+	}
+	if len(missing) == 0 {
+		return groups, nil
+	}
+
+	// Extend exactly one group — the same symbol in two groups would read as
+	// a join key it is not. Pick the group already carrying the most
+	// find-consumed symbols so the extension doesn't manufacture a product
+	// between otherwise-independent groups.
+	target := 0
+	best := -1
+	for i, rel := range groups {
+		count := 0
+		for _, sym := range consumed {
+			if query.ContainsSymbol(rel.Symbols(), sym) {
+				count++
+			}
+		}
+		if count > best {
+			best = count
+			target = i
+		}
+	}
+
+	rel := groups[target]
+	symbols := append(append([]query.Symbol{}, rel.Symbols()...), missing...)
+	values := make([]interface{}, len(missing))
+	for i, sym := range missing {
+		values[i] = e.constantBindings[sym]
+	}
+
+	var tuples []Tuple
+	if size := rel.Size(); size > 0 {
+		tuples = make([]Tuple, 0, size)
+	}
+	iter := rel.Iterator()
+	for iter.Next() {
+		src := iter.Tuple()
+		out := make(Tuple, 0, len(symbols))
+		out = append(out, src...)
+		out = append(out, values...)
+		tuples = append(tuples, out)
+	}
+	iterErr := iter.Error()
+	if closeErr := iter.Close(); iterErr == nil {
+		iterErr = closeErr
+	}
+	if iterErr != nil {
+		return nil, iterErr
+	}
+
+	properties := rel.Properties()
+	for _, sym := range missing {
+		properties = properties.addSymbol(sym)
+	}
+	groups[target] = NewMaterializedRelationWithProperties(symbols, tuples, rel.Options(), properties)
+	return groups, nil
 }
 
 // executePattern executes a data pattern using the PatternMatcher
@@ -984,7 +1115,45 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 	}
 
 	if len(relevantRels) == 0 {
-		// No relation has required symbols - skip predicate
+		if len(unresolvedSyms) > 0 {
+			// The planner assigns predicates where their symbols are
+			// Available; unresolved symbols no group provides means the
+			// contract is broken upstream. Skipping would silently drop
+			// the filter and report unfiltered rows as the answer.
+			return nil, fmt.Errorf("predicate %s requires symbols %v that no relation group provides",
+				pred.String(), unresolvedSyms)
+		}
+
+		// Every required symbol is a resolved constant: the environment
+		// alone decides the predicate. Evaluate it once; the verdict
+		// applies uniformly to every tuple of every group.
+		passes, err := evalPredicateOnce(pred, e.matcher, e.constantBindings)
+		if err != nil {
+			return nil, err
+		}
+		if !passes {
+			// Uniform fail. With data groups, empty each one
+			// schema-preserving so downstream clauses and Keep projection
+			// see the declared symbols. With no groups, nothing can match:
+			// signal it with empty groups — the same early-termination
+			// convention every other annihilating clause uses.
+			if len(groups) == 0 {
+				return []Relation{}, nil
+			}
+			emptied := make([]Relation, len(groups))
+			for i, rel := range groups {
+				emptied[i] = NewMaterializedRelationWithProperties(rel.Symbols(), nil, rel.Options(), rel.Properties())
+			}
+			return emptied, nil
+		}
+		if len(groups) == 0 {
+			// Uniform pass with no data groups: the verdict itself is the
+			// relation — the zero-symbol unit (join identity, one empty
+			// tuple). It renders constant :find symbols in consumer-only
+			// queries and is absorbed at the find boundary once data
+			// groups exist.
+			return []Relation{NewMaterializedRelationWithOptions([]query.Symbol{}, []Tuple{{}}, e.options)}, nil
+		}
 		return groups, nil
 	}
 
@@ -1010,6 +1179,25 @@ func (e *DefaultQueryExecutor) executePredicate(ctx Context, pred query.Predicat
 
 	// Return result + unchanged relations
 	return append([]Relation{result}, otherRels...), nil
+}
+
+// evalPredicateOnce evaluates a predicate whose required symbols are all
+// resolved constants — the all-constants arm of executePredicate, where no
+// relation symbol participates. Database-function predicates evaluate through
+// entity lookup when the matcher supports it; without it, Eval fails loudly
+// (a data-answer path never degrades to a silent skip), mirroring the
+// per-tuple dispatch in filterWithPredicateAndLookup.
+func evalPredicateOnce(pred query.Predicate, matcher PatternMatcher, constantBindings map[query.Symbol]interface{}) (bool, error) {
+	bindings := make(map[query.Symbol]interface{}, len(constantBindings))
+	for sym, val := range constantBindings {
+		bindings[sym] = val
+	}
+	if dbFuncPred, ok := pred.(*query.DatabaseFunctionPredicate); ok {
+		if lookupMatcher, ok := matcher.(EntityLookupMatcher); ok {
+			return dbFuncPred.EvalWithLookup(bindings, entityLookupAdapter{lookupMatcher})
+		}
+	}
+	return pred.Eval(bindings)
 }
 
 // executeSubquery executes a nested subquery

@@ -165,6 +165,107 @@ func TestRelationInput_RefAndKeywordSymbols(t *testing.T) {
 	}
 }
 
+// TestConstantOnlyPredicateFiltersUniformly pins predicates whose required
+// symbols are all constant-resolved scalar :in bindings (the symbol appears in
+// no data pattern). Such a predicate is decided by the environment alone: it
+// must be evaluated exactly once, and its verdict applies uniformly — pass
+// leaves the result untouched, fail empties it. Skipping it silently returns
+// unfiltered rows: a wrong answer, not an optimization.
+func TestConstantOnlyPredicateFiltersUniformly(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
+
+			tx := db.NewTransaction()
+			alice := datalog.NewIdentity("alice")
+			bob := datalog.NewIdentity("bob")
+			tx.Add(alice, datalog.NewKeyword(":person/name"), "Alice")
+			tx.Add(bob, datalog.NewKeyword(":person/name"), "Bob")
+			if _, err := tx.Commit(); err != nil {
+				t.Fatalf("Failed to commit: %v", err)
+			}
+
+			check := func(label, q string, want int, args ...any) {
+				t.Helper()
+				got, err := executor.CollectTuples(db.Query(q, args...))
+				if err != nil {
+					t.Fatalf("%s: %v", label, err)
+				}
+				if len(got) != want {
+					t.Errorf("%s: expected %d results, got %d", label, want, len(got))
+				}
+			}
+
+			// Over generated rows: the constant verdict gates the whole result.
+			check("generator + passing constant predicate",
+				`[:find ?name :in $ ?min :where [?p :person/name ?name] [(> ?min 5)]]`,
+				2, int64(10))
+			check("generator + failing constant predicate",
+				`[:find ?name :in $ ?min :where [?p :person/name ?name] [(> ?min 5)]]`,
+				0, int64(3))
+
+			// Consumer-only WHERE: the predicate is the entire clause list and
+			// its input is also the :find. Pass yields the one input row with
+			// the constant rendered; fail yields zero rows.
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?min :in $ ?min :where [(> ?min 5)]]`, int64(10)))
+			if err != nil {
+				t.Fatalf("consumer-only pass: %v", err)
+			}
+			if len(results) != 1 || results[0][0] != int64(10) {
+				t.Fatalf("consumer-only pass: expected [[10]], got %v", results)
+			}
+			check("consumer-only failing constant predicate",
+				`[:find ?min :in $ ?min :where [(> ?min 5)]]`,
+				0, int64(3))
+		})
+	}
+}
+
+// TestConstantInputRenderedInFind pins :in scalars that are resolved as
+// constants (no data pattern consumes them) but appear in :find. Constants
+// are environment, not data — :find membership is the one place environment
+// becomes result data, so the value must render into every returned row,
+// including as an aggregate argument.
+func TestConstantInputRenderedInFind(t *testing.T) {
+	for _, mode := range optimizerModes {
+		t.Run(mode.name, func(t *testing.T) {
+			db := createOptimizerModeDB(t, mode)
+
+			// Expression output alone in :find (control: no rendering needed).
+			results, err := executor.CollectTuples(db.Query(
+				`[:find ?y :in $ ?x :where [(+ ?x 1) ?y]]`, int64(10)))
+			if err != nil {
+				t.Fatalf("expression-only find: %v", err)
+			}
+			if len(results) != 1 || results[0][0] != int64(11) {
+				t.Fatalf("expression-only find: expected [[11]], got %v", results)
+			}
+
+			// Constant alongside the expression output.
+			results, err = executor.CollectTuples(db.Query(
+				`[:find ?x ?y :in $ ?x :where [(+ ?x 1) ?y]]`, int64(10)))
+			if err != nil {
+				t.Fatalf("constant + expression find: %v", err)
+			}
+			if len(results) != 1 || results[0][0] != int64(10) || results[0][1] != int64(11) {
+				t.Fatalf("constant + expression find: expected [[10 11]], got %v", results)
+			}
+
+			// Constant as an aggregate argument: the surviving unit row carries
+			// the rendered constant, so the count is 1.
+			results, err = executor.CollectTuples(db.Query(
+				`[:find (count ?min) :in $ ?min :where [(> ?min 5)]]`, int64(10)))
+			if err != nil {
+				t.Fatalf("aggregate over constant: %v", err)
+			}
+			if len(results) != 1 || results[0][0] != int64(1) {
+				t.Fatalf("aggregate over constant: expected [[1]], got %v", results)
+			}
+		})
+	}
+}
+
 // TestExecuteQueryWithScalarInput tests single scalar input parameter
 func TestExecuteQueryWithScalarInput(t *testing.T) {
 	for _, mode := range optimizerModes {
