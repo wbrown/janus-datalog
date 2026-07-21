@@ -1355,8 +1355,8 @@ func (d *Database) GetExecutor() *executor.Executor {
 // entityAttrKey is used to track per-(E, A) state within a transaction.
 // Used for vector appends to chain elements correctly.
 type entityAttrKey struct {
-	E [20]byte // Entity hash
-	A string   // Attribute string
+	E datalog.Identity // Entity (interned pointer)
+	A datalog.Keyword  // Attribute (interned pointer)
 }
 
 // Transaction represents a write transaction
@@ -1477,7 +1477,7 @@ func (t *Transaction) Add(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			//
 			// This is NOT last-writer-wins - all concurrent writes are preserved.
 			// See docs/reference/CRDT.md for detailed semantics.
-			key := entityAttrKey{E: e.Hash(), A: a.String()}
+			key := entityAttrKey{E: e, A: a}
 
 			// OrderedSet uniqueness check: if UniqueElements is true, check if value already exists
 			if def.UniqueElements {
@@ -1837,7 +1837,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 		pendingRemoves := make(map[string]datalog.ElementID)
 		pendingValues := make(map[string]interface{})
 		for _, datom := range t.datoms {
-			if datom.E.Hash() != eBytes || datom.A.String() != a.String() {
+			if datom.E != e || datom.A != a {
 				continue
 			}
 			k := memberKey(datom.V)
@@ -1987,7 +1987,7 @@ func (t *Transaction) Set(e datalog.Identity, a datalog.Keyword, v interface{}) 
 			afterRef = oldIndex[commonPrefix-1]
 		}
 
-		eaKey := entityAttrKey{E: e.Hash(), A: a.String()}
+		eaKey := entityAttrKey{E: e, A: a}
 		for _, val := range newSlice[commonPrefix:] {
 			elemID := t.db.clock.Next()
 

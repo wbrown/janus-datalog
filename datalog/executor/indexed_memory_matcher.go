@@ -17,7 +17,7 @@ type IndexedMemoryMatcher struct {
 	// Lazy-initialized indices (protected by buildMutex)
 	buildMutex     sync.Once
 	entityIndex    map[datalog.Identity][]int // E (interned pointer) → datom positions
-	attributeIndex map[string][]int           // A.String() → datom positions
+	attributeIndex map[datalog.Keyword][]int  // A (interned pointer) → datom positions
 	valueIndex     map[uint64][]int           // hash(V) → datom positions (NOTE: values are interface{}, indexed by hash; collisions filtered by exact match)
 	eavIndex       map[eaIndexKey][]int       // (E, A) interned pointers → datom positions (all, for cardinality-many)
 
@@ -108,7 +108,7 @@ func (m *IndexedMemoryMatcher) buildIndices() {
 		}
 
 		m.entityIndex = make(map[datalog.Identity][]int, estimatedSize)
-		m.attributeIndex = make(map[string][]int, estimatedSize)
+		m.attributeIndex = make(map[datalog.Keyword][]int, estimatedSize)
 		m.valueIndex = make(map[uint64][]int, estimatedSize)
 		m.eavIndex = make(map[eaIndexKey][]int, estimatedSize)
 
@@ -116,9 +116,8 @@ func (m *IndexedMemoryMatcher) buildIndices() {
 			// Entity index: E → [positions]
 			m.entityIndex[datom.E] = append(m.entityIndex[datom.E], i)
 
-			// Attribute index: A → [positions]
-			aKey := datom.A.String()
-			m.attributeIndex[aKey] = append(m.attributeIndex[aKey], i)
+			// Attribute index: A → [positions] (interned pointer key)
+			m.attributeIndex[datom.A] = append(m.attributeIndex[datom.A], i)
 
 			// Value index: hash(V) → [positions]
 			// Values are interface{} (string, int64, float64, bool, Identity, Keyword, time.Time, etc.)
@@ -397,9 +396,8 @@ func (m *IndexedMemoryMatcher) getCandidates(strategy matchStrategy) []int {
 		return m.entityIndex[s.e]
 
 	case useAttributeIndex:
-		// O(1) lookup in attribute index
-		key := s.a.String()
-		return m.attributeIndex[key]
+		// O(1) lookup in attribute index by interned pointer
+		return m.attributeIndex[s.a]
 
 	case useValueIndex:
 		// O(1) lookup in value index by hash

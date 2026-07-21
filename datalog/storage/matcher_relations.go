@@ -857,9 +857,8 @@ func (it *validatingVBoundIterator) validateCandidate(e datalog.Identity, a data
 	// Convert E to storage bytes
 	eBytes := ToStorageDatom(datalog.Datom{E: e}).E
 
-	// Convert A to storage bytes
-	aPtr := datalog.NewKeyword(a.String())
-	aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
+	// Convert A to storage bytes; the keyword is already interned
+	aStorage := ToStorageDatom(datalog.Datom{A: a}).A
 
 	// Latest-mode CardinalityOne fast path. The EA cache resolves the current
 	// (E, A) value with the same EATV-first-entry + tombstone semantics this
@@ -1053,9 +1052,8 @@ func (it *validatingVBoundIterator) openCRDTScan() (*CRDTResolvingIterator, Iter
 			return nil, nil, fmt.Errorf("boundA is not a Keyword")
 		}
 
-		// Convert A to storage bytes
-		aPtr := datalog.NewKeyword(aKw.String())
-		aStorage := ToStorageDatom(datalog.Datom{A: aPtr}).A
+		// Convert A to storage bytes; the keyword is already interned
+		aStorage := ToStorageDatom(datalog.Datom{A: aKw}).A
 
 		// Encode V with type prefix
 		valueBytes := it.encodeValue(it.currentBoundV)

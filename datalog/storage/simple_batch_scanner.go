@@ -435,7 +435,7 @@ func (s *simpleBatchScanner) matchesPattern(datom *datalog.Datom, bindingTuple e
 	// Check attribute if it's constant in pattern
 	if c, ok := s.pattern.GetA().(query.Constant); ok {
 		if kw, ok := c.Value.(datalog.Keyword); ok {
-			if datom.A.String() != kw.String() {
+			if datom.A != kw {
 				return false
 			}
 		}

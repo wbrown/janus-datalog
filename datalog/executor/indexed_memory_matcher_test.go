@@ -35,14 +35,12 @@ func TestIndexedMatcher_IndexBuilding(t *testing.T) {
 
 	// Verify attribute index
 	nameKw := datalog.NewKeyword("name")
-	nameKey := nameKw.String()
-	if positions := matcher.attributeIndex[nameKey]; len(positions) != 2 {
+	if positions := matcher.attributeIndex[nameKw]; len(positions) != 2 {
 		t.Errorf("Attribute index for :name: expected 2 datoms, got %d", len(positions))
 	}
 
 	ageKw := datalog.NewKeyword("age")
-	ageKey := ageKw.String()
-	if positions := matcher.attributeIndex[ageKey]; len(positions) != 2 {
+	if positions := matcher.attributeIndex[ageKw]; len(positions) != 2 {
 		t.Errorf("Attribute index for :age: expected 2 datoms, got %d", len(positions))
 	}
 
