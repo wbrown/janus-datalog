@@ -2,6 +2,7 @@ package algebra
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/wbrown/janus-datalog/datalog/query"
@@ -30,8 +31,16 @@ func Compile(q *query.Query) (*Node, error) {
 //
 // The clauses fold in the order orderClausesForCompile returns. context lists
 // symbols the enclosing scope supplies without an initial node (a NOT body's
-// outer relation); inputs is the query's :in symbol set. Both feed ordering
-// only — the folded tree never embeds context or input scans.
+// outer relation); inputs is the query's :in symbol set. Both feed ordering,
+// and — when the clause list contains no generator at all — the environment
+// they name becomes the prior relation the fold starts from: a clause list
+// that is consumer-only with environment-bound correlates filters the bound
+// environment (the baseline executes exactly that against the input groups),
+// so the fold seeds a childless Project carrying the environment's symbols —
+// the schema-placeholder idiom, which decompiles to nothing. Ordering prefers
+// generators for the first pick, so the placeholder appears only for
+// genuinely generator-free lists; the folded tree never embeds environment
+// scans.
 func compileClausesFrom(clauses []query.Clause, initial *Node, context []query.Symbol, inputs map[query.Symbol]bool) (*Node, error) {
 	available := make(map[query.Symbol]bool, len(inputs)+len(context))
 	for sym := range inputs {
@@ -51,6 +60,11 @@ func compileClausesFrom(clauses []query.Clause, initial *Node, context []query.S
 	}
 
 	current := initial
+	if current == nil && len(ordered) > 0 && len(query.ScopeOf(ordered[0]).Provides) == 0 {
+		if env := environmentSymbols(context, inputs); len(env) > 0 {
+			current = &Node{Op: RuleProject, Data: &Project{Symbols: env}}
+		}
+	}
 	for _, clause := range ordered {
 		node, err := compileClause(clause, current, inputs)
 		if err != nil {
@@ -63,6 +77,29 @@ func compileClausesFrom(clauses []query.Clause, initial *Node, context []query.S
 		return nil, fmt.Errorf("no clauses produced a relation")
 	}
 	return current, nil
+}
+
+// environmentSymbols collects the environment a clause list folds within —
+// the enclosing context symbols plus the :in-bound symbols — deduplicated
+// and in deterministic order (map iteration must not leak into the tree).
+func environmentSymbols(context []query.Symbol, inputs map[query.Symbol]bool) []query.Symbol {
+	seen := make(map[query.Symbol]bool, len(context)+len(inputs))
+	env := make([]query.Symbol, 0, len(context)+len(inputs))
+	for _, sym := range context {
+		if !seen[sym] {
+			seen[sym] = true
+			env = append(env, sym)
+		}
+	}
+	inputSyms := make([]query.Symbol, 0, len(inputs))
+	for sym := range inputs {
+		if !seen[sym] {
+			seen[sym] = true
+			inputSyms = append(inputSyms, sym)
+		}
+	}
+	sort.Slice(inputSyms, func(i, j int) bool { return inputSyms[i].Compare(inputSyms[j]) < 0 })
+	return append(env, inputSyms...)
 }
 
 // compileClause compiles a single clause, potentially joining it with

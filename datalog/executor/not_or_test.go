@@ -2113,6 +2113,75 @@ func TestClauseOrderIndependenceForInBoundCorrelates(t *testing.T) {
 	}
 }
 
+// TestConsumerOnlyWhereWithInBoundCorrelates pins the shape where the WHERE
+// contains only consumer-only clauses (no generator anywhere) and every
+// correlate is bound by :in: the input relation IS the relation being
+// filtered. The baseline executes it — of the input entities, those the
+// negation keeps — so the bridge must too; "no generator" is not "invalid".
+// Third re-review finding at 00fc6e4 (pre-existing: reproduces on base main).
+func TestConsumerOnlyWhereWithInBoundCorrelates(t *testing.T) {
+	e1 := datalog.NewIdentity("entity:1")
+	e2 := datalog.NewIdentity("entity:2")
+	flagAttr := datalog.NewKeyword(":x/flag")
+
+	datoms := []datalog.Datom{
+		// Only entity:2 is flagged; the NOT keeps entity:1.
+		{E: e2, A: flagAttr, V: true, Tx: datalog.ElementID{Lamport: 1, ReplicaID: 1}},
+	}
+
+	matcher := NewMemoryPatternMatcher(datoms)
+	eSym := datalog.NewSymbol("?e")
+
+	cases := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "not_only",
+			text: `[:find ?e
+			        :in $ ?e
+			        :where (not [?e :x/flag true])]`,
+		},
+		{
+			name: "not_join_only",
+			text: `[:find ?e
+			        :in $ ?e
+			        :where (not-join [?e] [?e :x/flag true])]`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := parser.ParseQuery(tc.text)
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
+
+			for _, mode := range optimizerModes {
+				t.Run(mode.name, func(t *testing.T) {
+					executor := NewExecutorWithOptions(matcher, nil, mode.plannerOptions())
+					inputRel := NewMaterializedRelation([]query.Symbol{eSym}, []Tuple{{e1}})
+
+					result, err := executor.ExecuteWithRelations(NewContext(nil), q, []Relation{inputRel})
+					if err != nil {
+						t.Fatalf("execution failed: %v", err)
+					}
+					if result.Size() != 1 {
+						t.Fatalf("expected exactly 1 result (entity:1), got %d", result.Size())
+					}
+					got, ok := result.Get(0)[0].(datalog.Identity)
+					if !ok {
+						t.Fatalf("expected an Identity result, got %T", result.Get(0)[0])
+					}
+					if !got.Equal(e1) {
+						t.Errorf("expected entity:1 (unflagged), got %v", got)
+					}
+				})
+			}
+		})
+	}
+}
+
 // TestMissingOnLookupLessMatcherFailsLoudly pins the loud-failure contract
 // for database-function predicates on a matcher without entity lookup.
 // MemoryPatternMatcher implements no LookupAttribute, so [(missing? $ ?e
