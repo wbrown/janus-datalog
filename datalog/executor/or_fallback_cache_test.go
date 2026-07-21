@@ -219,3 +219,140 @@ func TestBuildCachedBranch(t *testing.T) {
 		assert.Nil(t, matches, "should return nil for missing project")
 	})
 }
+
+func TestCachedBranchSpanGrouping(t *testing.T) {
+	e1 := datalog.NewIdentity("entity:1")
+	e2 := datalog.NewIdentity("entity:2")
+	e3 := datalog.NewIdentity("entity:3")
+	symE := datalog.NewSymbol("?e")
+	symCount := datalog.NewSymbol("?count")
+
+	// Interleaved keys: grouping must make each key's rows contiguous.
+	branchResult := NewMaterializedRelation(
+		[]query.Symbol{symE, symCount},
+		[]Tuple{
+			{e1, int64(10)},
+			{e2, int64(20)},
+			{e1, int64(11)},
+			{e3, int64(30)},
+			{e2, int64(21)},
+			{e1, int64(12)},
+		},
+	)
+
+	cb, err := buildCachedBranch(branchResult, []query.Symbol{symE}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cb)
+
+	// Spans tile the shared backing: every row belongs to exactly one span,
+	// and every row within an unmixed span carries the span's key.
+	require.Len(t, cb.spans, 3, "one span per distinct key")
+	total := int32(0)
+	for _, span := range cb.spans {
+		require.False(t, span.mixed, "distinct real values must not collide")
+		segment := cb.rows[span.start:span.end]
+		require.NotEmpty(t, segment)
+		for _, row := range segment[1:] {
+			assert.True(t, branchKeysEqual(segment[0], row, cb.branchIdx),
+				"rows within an unmixed span must share one key")
+		}
+		total += span.end - span.start
+	}
+	assert.Equal(t, int32(len(cb.rows)), total, "spans cover every row exactly once")
+
+	// Fanout probes return all rows for the key, in collection order.
+	matches := cb.probe(Tuple{e1})
+	require.Len(t, matches, 3)
+	assert.Equal(t, int64(10), matches[0][1])
+	assert.Equal(t, int64(11), matches[1][1])
+	assert.Equal(t, int64(12), matches[2][1])
+
+	// The probe result is a window into the shared backing, not a copy.
+	span := cb.spans[hashTuplePositions(Tuple{e1}, cb.outerIdx)]
+	assert.True(t, &matches[0] == &cb.rows[span.start],
+		"probe must return a subslice of the shared backing")
+}
+
+func TestCachedBranchMixedSpanCollision(t *testing.T) {
+	// Two distinct keys sharing one hash cannot be constructed from real
+	// values, so drive regroupCollidingSpans on a hand-placed state: rows of
+	// two keys laid into one span, with each probe hash mapping to it — the
+	// state counting-sort placement produces when key hashes collide.
+	e1 := datalog.NewIdentity("entity:1")
+	e2 := datalog.NewIdentity("entity:2")
+	e3 := datalog.NewIdentity("entity:3")
+	symE := datalog.NewSymbol("?e")
+	symCount := datalog.NewSymbol("?count")
+
+	rows := []Tuple{
+		{e1, int64(10)},
+		{e2, int64(20)},
+		{e1, int64(11)},
+	}
+	h1 := hashTuplePositions(Tuple{e1}, []int{0})
+	h2 := hashTuplePositions(Tuple{e2}, []int{0})
+	h3 := hashTuplePositions(Tuple{e3}, []int{0})
+	cb := &cachedBranch{
+		rows: rows,
+		spans: map[uint64]rowSpan{
+			h1: {start: 0, end: 3},
+			h2: {start: 0, end: 3},
+			h3: {start: 0, end: 3}, // hash resolves to the span, key absent
+		},
+		branchSyms: []query.Symbol{symE, symCount},
+		outerIdx:   []int{0},
+		branchIdx:  []int{0},
+	}
+	cb.regroupCollidingSpans()
+
+	require.True(t, cb.spans[h1].mixed)
+	require.True(t, cb.spans[h2].mixed)
+	require.Len(t, cb.collisions[h1], 2, "two distinct keys → two groups")
+
+	matches := cb.probe(Tuple{e1})
+	require.Len(t, matches, 2, "mixed-span probe returns only the probed key's rows")
+	assert.Equal(t, int64(10), matches[0][1])
+	assert.Equal(t, int64(11), matches[1][1])
+
+	matches = cb.probe(Tuple{e2})
+	require.Len(t, matches, 1)
+	assert.Equal(t, int64(20), matches[0][1])
+
+	// A key whose hash resolves to a mixed span but matches no group misses.
+	assert.Nil(t, cb.probe(Tuple{e3}))
+
+	// The mixed probe path allocates nothing either.
+	probeTuple := Tuple{e1}
+	var got []Tuple
+	allocs := testing.AllocsPerRun(1000, func() { got = cb.probe(probeTuple) })
+	assert.Zero(t, allocs, "mixed-span probe must not allocate")
+	_ = got
+}
+
+func TestCachedBranchProbeAllocations(t *testing.T) {
+	e1 := datalog.NewIdentity("entity:1")
+	e2 := datalog.NewIdentity("entity:2")
+	symE := datalog.NewSymbol("?e")
+	symCount := datalog.NewSymbol("?count")
+
+	branchResult := NewMaterializedRelation(
+		[]query.Symbol{symE, symCount},
+		[]Tuple{
+			{e1, int64(10)},
+			{e1, int64(11)},
+			{e2, int64(20)},
+		},
+	)
+	cb, err := buildCachedBranch(branchResult, []query.Symbol{symE}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cb)
+
+	hit := Tuple{e1}
+	miss := Tuple{datalog.NewIdentity("entity:999")}
+	var got []Tuple
+	assert.Zero(t, testing.AllocsPerRun(1000, func() { got = cb.probe(hit) }),
+		"hit probe must not allocate")
+	assert.Zero(t, testing.AllocsPerRun(1000, func() { got = cb.probe(miss) }),
+		"miss probe must not allocate")
+	_ = got
+}

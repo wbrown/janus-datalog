@@ -25,6 +25,7 @@ Three crashes across eleven runs:
 | 16 | 2026-07-21, second manual `make test-wasm` re-run, same tree | **crash** ~28s into storage |
 | 17 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted tuple-key split-overflow work in tree | **crash** ~29s into storage, poison `0x223f0000` (new per-binary constant; layout shifted by the tuple-key changes), gcWriteBarrier corrupted-return-pc discovery shape |
 | 18 | 2026-07-21, manual `make test-wasm` re-run of the same tree | **crash** ~28s, same poison and goroutine — this binary's layout is in the near-deterministic window, as runs 14–16's was. Root cause is upstream-confirmed (itabInit, CL 803460); reruns stopped per the run-14–16 precedent |
+| 19 | 2026-07-21, full `make test` pipeline, darwin/arm64, go1.26.3, uncommitted span-grouped branch cache in tree | **crash** ~28s into storage, poison `0x22430000` — the runs-13–16 value recurring in a third distinct binary — gcWriteBarrier corrupted-return-pc discovery shape (`called from 0xd1ea0`, frame dump shows `newobject`/`mallocgc`/`gcmarknewobject`), goroutine 4720 |
 
 All crashes are the same fatal — the GC write barrier discovering a poisoned pointer slot:
 

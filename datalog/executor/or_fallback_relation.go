@@ -645,13 +645,115 @@ func (it *OrFallbackIterator) branchInput(outerTuple Tuple) (Relation, Tuple) {
 	), visible
 }
 
-// cachedBranch holds a hash index over an uncorrelated branch result.
-// Uses TupleKeyMap from tuple_key.go (same infrastructure as HashJoin).
+// cachedBranch holds an uncorrelated branch result grouped for per-outer-tuple
+// probing. All rows live in one shared backing, contiguous by key hash; a probe
+// hashes the outer tuple's key positions, verifies the key against the span's
+// first row, and returns the subslice — zero allocations. A span whose rows
+// carry more than one distinct key (same-hash collision) is marked mixed and
+// diverts to per-key row groups for that hash only.
 type cachedBranch struct {
-	index      *TupleKeyMap
+	rows       []Tuple
+	spans      map[uint64]rowSpan
+	collisions map[uint64][][]Tuple
 	branchSyms []query.Symbol
 	outerIdx   []int
 	branchIdx  []int
+}
+
+// rowSpan is a contiguous region of cachedBranch.rows holding every row whose
+// key hashes to the span's map key.
+type rowSpan struct {
+	start, end int32
+	mixed      bool
+}
+
+// groupBranchRows arranges collected branch rows into hash-contiguous spans
+// over one shared backing. Counting-sort placement: one pass counts rows per
+// key hash, a second places each row into its span, spans laid out in
+// first-seen order. Rows within a span keep their collection order.
+func groupBranchRows(collected []Tuple, branchSyms []query.Symbol, oIdx, bIdx []int) *cachedBranch {
+	offsets := make(map[uint64]int32, len(collected))
+	for _, t := range collected {
+		offsets[hashTuplePositions(t, bIdx)]++
+	}
+	rows := make([]Tuple, len(collected))
+	spans := make(map[uint64]rowSpan, len(offsets))
+	cursor := int32(0)
+	for _, t := range collected {
+		h := hashTuplePositions(t, bIdx)
+		if _, ok := spans[h]; !ok {
+			count := offsets[h]
+			spans[h] = rowSpan{start: cursor, end: cursor + count}
+			// offsets[h] becomes the span's fill position from here on.
+			offsets[h] = cursor
+			cursor += count
+		}
+		rows[offsets[h]] = t
+		offsets[h]++
+	}
+	cb := &cachedBranch{
+		rows:       rows,
+		spans:      spans,
+		branchSyms: branchSyms,
+		outerIdx:   oIdx,
+		branchIdx:  bIdx,
+	}
+	cb.regroupCollidingSpans()
+	return cb
+}
+
+// regroupCollidingSpans finds spans whose rows carry more than one distinct
+// key — distinct keys sharing a hash — marks them mixed, and builds per-key
+// row groups for those hashes. Unmixed spans (the overwhelmingly common case)
+// are untouched.
+func (cb *cachedBranch) regroupCollidingSpans() {
+	for h, span := range cb.spans {
+		segment := cb.rows[span.start:span.end]
+		if len(segment) < 2 {
+			continue
+		}
+		mixed := false
+		for _, row := range segment[1:] {
+			if !branchKeysEqual(segment[0], row, cb.branchIdx) {
+				mixed = true
+				break
+			}
+		}
+		if !mixed {
+			continue
+		}
+		if cb.collisions == nil {
+			cb.collisions = make(map[uint64][][]Tuple)
+		}
+		var groups [][]Tuple
+		for _, row := range segment {
+			placed := false
+			for gi := range groups {
+				if branchKeysEqual(groups[gi][0], row, cb.branchIdx) {
+					groups[gi] = append(groups[gi], row)
+					placed = true
+					break
+				}
+			}
+			if !placed {
+				groups = append(groups, []Tuple{row})
+			}
+		}
+		cb.collisions[h] = groups
+		span.mixed = true
+		cb.spans[h] = span
+	}
+}
+
+// branchKeysEqual reports whether two branch rows carry equal values at the
+// key positions.
+func branchKeysEqual(a, b Tuple, bIdx []int) bool {
+	for _, idx := range bIdx {
+		if !datalog.ValuesEqual(a[idx], b[idx]) {
+			return false
+		}
+	}
+	return true
 }
 
 // buildBranchFromEACache builds a cached branch for a DataPattern-only or-join
@@ -709,12 +811,15 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 		return nil
 	}
 
-	// Build branch result from EA cache lookups.
+	// Build branch rows from EA cache lookups.
 	// Iterate the materialized outer relation (safe to create second iterator).
 	branchSyms := []query.Symbol{eVar.Name, vVar.Name}
-	idx := NewTupleKeyMap()
 	bIdx := []int{0} // E is at position 0 in branch tuples
 
+	var collected []Tuple
+	if n := it.outerRel.Size(); n >= 0 {
+		collected = make([]Tuple, 0, n)
+	}
 	outerIt := it.outerRel.Iterator()
 	for outerIt.Next() {
 		t := outerIt.Tuple()
@@ -734,13 +839,7 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 		if !found {
 			continue
 		}
-		tuple := Tuple{entity, value}
-		key := NewTupleKey(tuple, bIdx)
-		if existing, ok := idx.Get(key); ok {
-			idx.Put(key, append(existing.([]Tuple), tuple))
-		} else {
-			idx.Put(key, []Tuple{tuple})
-		}
+		collected = append(collected, Tuple{entity, value})
 	}
 	outerErr := outerIt.Error()
 	closeErr := outerIt.Close()
@@ -753,19 +852,43 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 		return nil
 	}
 
-	return &cachedBranch{
-		index:      idx,
-		branchSyms: branchSyms,
-		outerIdx:   []int{eIdx},
-		branchIdx:  bIdx,
-	}
+	return groupBranchRows(collected, branchSyms, []int{eIdx}, bIdx)
 }
 
+// probe returns the branch rows whose key positions equal the outer tuple's
+// key positions, or nil. The hit path returns a subslice of the shared
+// backing — zero allocations. A hash hit is not a key match: the key is
+// verified against the span's first row (every row of an unmixed span
+// carries the same key).
 func (cb *cachedBranch) probe(outerTuple Tuple) []Tuple {
-	if matches, ok := cb.index.GetPositions(outerTuple, cb.outerIdx); ok {
-		return matches.([]Tuple)
+	h := hashTuplePositions(outerTuple, cb.outerIdx)
+	span, ok := cb.spans[h]
+	if !ok {
+		return nil
 	}
-	return nil
+	if span.mixed {
+		for _, group := range cb.collisions[h] {
+			if cb.outerKeyMatches(outerTuple, group[0]) {
+				return group
+			}
+		}
+		return nil
+	}
+	if !cb.outerKeyMatches(outerTuple, cb.rows[span.start]) {
+		return nil
+	}
+	return cb.rows[span.start:span.end]
+}
+
+// outerKeyMatches compares the outer tuple's key positions against a branch
+// row's key positions.
+func (cb *cachedBranch) outerKeyMatches(outer, row Tuple) bool {
+	for k, oi := range cb.outerIdx {
+		if !datalog.ValuesEqual(outer[oi], row[cb.branchIdx[k]]) {
+			return false
+		}
+	}
+	return true
 }
 
 // isCacheableBranch returns true if the branch can be evaluated once with
@@ -879,18 +1002,22 @@ func buildCachedBranch(
 		return nil, nil
 	}
 
-	idx := NewTupleKeyMap()
+	// Copy only when the branch iterator reuses its tuple workspace; the
+	// cache retains these tuples for the query's lifetime.
+	needsCopy := branchResult.RequiresCopy()
+	var collected []Tuple
+	if n := branchResult.Size(); n >= 0 {
+		collected = make([]Tuple, 0, n)
+	}
 	iter := branchResult.Iterator()
 	for iter.Next() {
 		t := iter.Tuple()
-		cp := make(Tuple, len(t))
-		copy(cp, t)
-		key := NewTupleKey(cp, bIdx)
-		if existing, ok := idx.Get(key); ok {
-			idx.Put(key, append(existing.([]Tuple), cp))
-		} else {
-			idx.Put(key, []Tuple{cp})
+		if needsCopy {
+			cp := make(Tuple, len(t))
+			copy(cp, t)
+			t = cp
 		}
+		collected = append(collected, t)
 	}
 	iterErr := iter.Error()
 	if closeErr := iter.Close(); iterErr == nil {
@@ -900,12 +1027,7 @@ func buildCachedBranch(
 		return nil, iterErr
 	}
 
-	return &cachedBranch{
-		index:      idx,
-		branchSyms: branchSyms,
-		outerIdx:   oIdx,
-		branchIdx:  bIdx,
-	}, nil
+	return groupBranchRows(collected, branchSyms, oIdx, bIdx), nil
 }
 
 func (it *OrFallbackIterator) Next() bool {
