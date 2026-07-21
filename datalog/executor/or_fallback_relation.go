@@ -593,13 +593,28 @@ type OrFallbackIterator struct {
 	branchVisibleIdx  []int
 
 	// Current state
-	currentBranchIter     Iterator
-	currentBranchRelation Relation // Track relation for RequiresCopy check
-	currentTuple          Tuple
-	outputSyms            []query.Symbol
-	seen                  *TupleKeyMap
-	done                  bool
-	err                   error
+	currentBranchIter Iterator
+	currentTuple      Tuple
+	outputSyms        []query.Symbol
+	seen              *TupleKeyMap
+	done              bool
+	err               error
+
+	// Cached-branch emit state: a probe result being emitted directly from
+	// the branch cache's shared backing — no wrapper relation, no
+	// re-deduplication (the rows are a contiguous span of a relation that is
+	// already a set), no per-probe iterator.
+	cachedMatches  []Tuple
+	cachedMatchPos int
+	cachedPlan     projectionPlan
+	cachedOuter    Tuple
+
+	// branchPlans memoizes each branch's output projection, keyed by branch
+	// index with the branch's result symbols as the plan's cache key. Per
+	// branch the symbols are fixed for the iterator's lifetime (same clauses,
+	// same input shape), so the projection is planned once instead of
+	// building symbol maps per emitted tuple.
+	branchPlans map[int]branchPlan
 
 	// Cache for uncorrelated branch results. Key: branch index.
 	// See ALGEBRA.md "OR-Fallback Branch Caching" for specification.
@@ -820,6 +835,9 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 	if n := it.outerRel.Size(); n >= 0 {
 		collected = make([]Tuple, 0, n)
 	}
+	// Outer tuples are distinct but their entity column can repeat; one
+	// lookup and one row per distinct entity keeps the collected rows a set.
+	seenEntities := make(map[datalog.Identity]struct{})
 	outerIt := it.outerRel.Iterator()
 	for outerIt.Next() {
 		t := outerIt.Tuple()
@@ -830,6 +848,10 @@ func (it *OrFallbackIterator) buildBranchFromEACache(branch []query.Clause) *cac
 		if !ok {
 			continue
 		}
+		if _, dup := seenEntities[entity]; dup {
+			continue
+		}
+		seenEntities[entity] = struct{}{}
 		value, found, err := lookupMatcher.LookupAttribute(entity, aKw)
 		if err != nil {
 			it.err = err
@@ -1082,7 +1104,6 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 			branchErr := it.currentBranchIter.Error()
 			closeErr := it.currentBranchIter.Close()
 			it.currentBranchIter = nil
-			it.currentBranchRelation = nil
 			if branchErr != nil {
 				it.err = branchErr
 				it.done = true
@@ -1115,21 +1136,19 @@ func (it *OrFallbackIterator) nextCorrelatedUnion() bool {
 				branchSyms := branchResult.Symbols()
 				firstTuple := branchIter.Tuple()
 
-				if len(branchSyms) != len(it.outputSyms) || !symbolsMatch(branchSyms, it.outputSyms) {
-					it.currentTuple = projectTupleWithFallback(firstTuple, branchSyms, it.outputSyms, it.unionOuterTuple, it.outerSyms)
+				plan := it.projectionFor(it.unionBranchIdx-1, branchSyms)
+				if !plan.identity {
+					it.currentTuple = plan.project(firstTuple, it.unionOuterTuple)
 				} else if branchResult.RequiresCopy() {
 					it.currentTuple = copyTuple(firstTuple)
 				} else {
 					it.currentTuple = firstTuple
 				}
-				it.currentBranchRelation = branchResult
 				it.currentBranchIter = &projectedIterator{
 					inner:          branchIter,
 					branchRelation: branchResult,
-					branchSyms:     branchSyms,
-					outputSyms:     it.outputSyms,
+					plan:           plan,
 					outerTuple:     it.unionOuterTuple,
-					outerSyms:      it.outerSyms,
 				}
 				return true
 			}
@@ -1202,30 +1221,29 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 		}
 	}
 
-	// Collect distinct join-key tuples.
-	keyIdx := make([]int, len(it.joinSyms))
-	for i := range keyIdx {
-		keyIdx[i] = i
-	}
+	// Collect distinct join-key tuples. Deduplication probes the outer tuple
+	// positions directly; the key tuple materializes only on first sight.
 	seen := NewTupleKeyMap()
 	var keys []Tuple
 	oit := it.outerRel.Iterator()
 	for oit.Next() {
 		t := oit.Tuple()
-		key := make(Tuple, len(pos))
 		ok := true
-		for i, p := range pos {
+		for _, p := range pos {
 			if p >= len(t) {
 				ok = false
 				break
 			}
-			key[i] = t[p]
 		}
 		if !ok {
 			continue
 		}
-		if existed := seen.PutIfAbsentPositions(key, keyIdx, true); existed {
+		if existed := seen.PutIfAbsentPositions(t, pos, true); existed {
 			continue
+		}
+		key := make(Tuple, len(pos))
+		for i, p := range pos {
+			key[i] = t[p]
 		}
 		keys = append(keys, key)
 	}
@@ -1255,6 +1273,23 @@ func (it *OrFallbackIterator) outerJoinKeys() Relation {
 // nextShortCircuit tries branches in order until one returns results (fallback semantics).
 func (it *OrFallbackIterator) nextShortCircuit() bool {
 	for {
+		// Drain an in-progress cached-branch emit: remaining probe rows come
+		// straight off the branch cache's backing.
+		if it.cachedMatches != nil {
+			if it.cachedMatchPos < len(it.cachedMatches) {
+				row := it.cachedMatches[it.cachedMatchPos]
+				it.cachedMatchPos++
+				if it.cachedPlan.identity {
+					it.currentTuple = row
+				} else {
+					it.currentTuple = it.cachedPlan.project(row, it.cachedOuter)
+				}
+				return true
+			}
+			it.cachedMatches = nil
+			it.cachedOuter = nil
+		}
+
 		// If we have a current branch iterator, try to get next tuple from it
 		if it.currentBranchIter != nil {
 			if it.currentBranchIter.Next() {
@@ -1265,7 +1300,6 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 			branchErr := it.currentBranchIter.Error()
 			closeErr := it.currentBranchIter.Close()
 			it.currentBranchIter = nil
-			it.currentBranchRelation = nil
 			if branchErr != nil {
 				it.err = branchErr
 				it.done = true
@@ -1308,16 +1342,24 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 			})
 		}
 
-		inputRel, visibleTuple := it.branchInput(outerTuple)
+		// The single-tuple branch input is only consumed by non-cached
+		// branches; once every branch is cached it is never built.
+		var inputRel Relation
+		var visibleTuple Tuple
+		inputReady := false
 
 		// Try each branch until one returns results
 		for branchIdx, branch := range it.branches {
 			var branchResult Relation
 
-			// Check cache for uncorrelated branches (O(1) probe)
+			// Check cache for uncorrelated branches (O(1) probe): matching
+			// rows emit directly from the cache's backing, and an empty probe
+			// falls through to the next branch.
 			if cb, cached := it.branchCache[branchIdx]; cached {
-				matches := cb.probe(outerTuple)
-				branchResult = NewMaterializedRelation(cb.branchSyms, matches)
+				if it.emitCachedMatches(branchIdx, cb, cb.probe(outerTuple), outerTuple) {
+					return true
+				}
+				continue
 			} else {
 				// Execute the branch once, then cache + probe per outer tuple.
 				// Cacheable branches are not given the single outer tuple as
@@ -1336,19 +1378,23 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				// the branch cache from EA cache (LookupAttribute) instead of
 				// a storage scan. Falls back to the scan path if the EA cache
 				// isn't warm.
-				execInput := inputRel
 				isOrJoin := len(it.joinSyms) > 0
 				isCacheable := isCacheableBranch(branch, isOrJoin)
 				// A DataPattern-only branch in an or-join benefits from join-key
 				// narrowing; uncorrelated subqueries (also cacheable) must still
 				// run with no input.
 				narrowable := isOrJoin && isDataPatternOnlyBranch(branch)
+				var execInput Relation
 				if isCacheable {
 					if narrowable {
 						execInput = it.outerJoinKeys()
-					} else {
-						execInput = nil
 					}
+				} else {
+					if !inputReady {
+						inputRel, visibleTuple = it.branchInput(outerTuple)
+						inputReady = true
+					}
+					execInput = inputRel
 				}
 
 				// Report the narrowing decision so the choice (and any silent
@@ -1379,7 +1425,6 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 				// The prefetch triggers at executeOrJoinClauseFallback for entities
 				// in the outer relation. For inner subquery or-joins, the prefetch
 				// hasn't run yet, so fall back to the storage scan path.
-				eaCacheUsed := false
 				if isCacheable && isOrJoin && !isCacheableBranch(branch, false) && it.prefetched {
 					cb := it.buildBranchFromEACache(branch)
 					if it.err != nil {
@@ -1391,67 +1436,67 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 							it.branchCache = make(map[int]*cachedBranch)
 						}
 						it.branchCache[branchIdx] = cb
-						matches := cb.probe(outerTuple)
-						branchResult = NewMaterializedRelation(cb.branchSyms, matches)
-						eaCacheUsed = true
+						if it.emitCachedMatches(branchIdx, cb, cb.probe(outerTuple), outerTuple) {
+							return true
+						}
+						continue
 					}
 				}
 
-				if !eaCacheUsed {
-					var err error
-					branchResult, err = it.executor.executeInnerClauses(it.ctx, branch, execInput)
-					if err != nil {
-						it.err = err
-						it.done = true
-						return false
-					}
+				var err error
+				branchResult, err = it.executor.executeInnerClauses(it.ctx, branch, execInput)
+				if err != nil {
+					it.err = err
+					it.done = true
+					return false
+				}
 
-					if branchResult != nil {
-						// First evaluation: cache the once-evaluated branch.
-						// Cacheable branches (execInput is the narrowed join-key
-						// relation for DataPattern or-join branches, or nil for
-						// uncorrelated subqueries) are indexed and probed;
-						// correlated branches with a real per-tuple inputRel are
-						// filtered instead. execInput==nil also covers a unit
-						// outer relation (no join keys) whose pass-through
-						// behavior must be preserved.
-						if isCacheable || execInput == nil {
-							if collector := it.ctx.Collector(); collector != nil {
-								collector.Add(annotations.Event{
-									Name: "or-fallback/cache-build",
-									Data: map[string]interface{}{
-										"branch":      branchIdx,
-										"branch_syms": fmt.Sprintf("%v", branchResult.Symbols()),
-										"outer_syms":  fmt.Sprintf("%v", it.outerSyms),
-										"branch_size": branchResult.Size(),
-									},
-								})
-							}
-							cb, err := buildCachedBranch(branchResult, it.outerSyms, it.joinSyms)
-							if err != nil {
-								it.err = err
-								it.done = true
-								return false
-							}
-							if cb != nil {
-								if it.branchCache == nil {
-									it.branchCache = make(map[int]*cachedBranch)
-								}
-								it.branchCache[branchIdx] = cb
-								// Probe the freshly-built cache instead of scanning
-								matches := cb.probe(outerTuple)
-								branchResult = NewMaterializedRelation(cb.branchSyms, matches)
-							} else {
-								// No shared symbols — pass through unfiltered
-							}
-						} else {
-							// Correlated branch — filter per tuple, matching only
-							// branch-visible symbols: a branch local sharing an
-							// outer name must not be filtered against it.
-							branchResult = filterBranchToOuterTuple(branchResult, visibleTuple, it.branchVisibleSyms)
+				if branchResult != nil {
+					// First evaluation: cache the once-evaluated branch.
+					// Cacheable branches (execInput is the narrowed join-key
+					// relation for DataPattern or-join branches, or nil for
+					// uncorrelated subqueries) are indexed and probed;
+					// correlated branches with a real per-tuple inputRel are
+					// filtered instead. execInput==nil also covers a unit
+					// outer relation (no join keys) whose pass-through
+					// behavior must be preserved.
+					if isCacheable || execInput == nil {
+						if collector := it.ctx.Collector(); collector != nil {
+							collector.Add(annotations.Event{
+								Name: "or-fallback/cache-build",
+								Data: map[string]interface{}{
+									"branch":      branchIdx,
+									"branch_syms": fmt.Sprintf("%v", branchResult.Symbols()),
+									"outer_syms":  fmt.Sprintf("%v", it.outerSyms),
+									"branch_size": branchResult.Size(),
+								},
+							})
 						}
+						cb, err := buildCachedBranch(branchResult, it.outerSyms, it.joinSyms)
+						if err != nil {
+							it.err = err
+							it.done = true
+							return false
+						}
+						if cb != nil {
+							if it.branchCache == nil {
+								it.branchCache = make(map[int]*cachedBranch)
+							}
+							it.branchCache[branchIdx] = cb
+							// Emit from the freshly-built cache instead of scanning
+							if it.emitCachedMatches(branchIdx, cb, cb.probe(outerTuple), outerTuple) {
+								return true
+							}
+							continue
+						}
+						// No shared symbols — pass through unfiltered
+					} else {
+						// Correlated branch — filter per tuple, matching only
+						// branch-visible symbols: a branch local sharing an
+						// outer name must not be filtered against it.
+						branchResult = filterBranchToOuterTuple(branchResult, visibleTuple, it.branchVisibleSyms)
 					}
-				} // end if !eaCacheUsed
+				}
 			}
 
 			if branchResult != nil {
@@ -1472,21 +1517,19 @@ func (it *OrFallbackIterator) nextShortCircuit() bool {
 					branchSyms := branchResult.Symbols()
 					firstTuple := branchIter.Tuple()
 
-					if len(branchSyms) != len(it.outputSyms) || !symbolsMatch(branchSyms, it.outputSyms) {
-						it.currentTuple = projectTupleWithFallback(firstTuple, branchSyms, it.outputSyms, outerTuple, it.outerSyms)
+					plan := it.projectionFor(branchIdx, branchSyms)
+					if !plan.identity {
+						it.currentTuple = plan.project(firstTuple, outerTuple)
 					} else if branchResult.RequiresCopy() {
 						it.currentTuple = copyTuple(firstTuple)
 					} else {
 						it.currentTuple = firstTuple
 					}
-					it.currentBranchRelation = branchResult
 					it.currentBranchIter = &projectedIterator{
 						inner:          branchIter,
 						branchRelation: branchResult,
-						branchSyms:     branchSyms,
-						outputSyms:     it.outputSyms,
+						plan:           plan,
 						outerTuple:     outerTuple,
-						outerSyms:      it.outerSyms,
 					}
 					return true
 				}
@@ -1545,44 +1588,111 @@ func symbolsMatch(a, b []query.Symbol) bool {
 	return true
 }
 
-// projectTupleWithFallback projects a tuple from source symbols to target symbols.
-// For symbols not in the source, falls back to the outer tuple if provided.
-// This is needed when a branch (e.g., ground default) doesn't produce all
-// output symbols — the outer tuple's values fill the gaps.
-func projectTupleWithFallback(tuple Tuple, srcSyms, dstSyms []query.Symbol, outerTuple Tuple, outerSyms []query.Symbol) Tuple {
-	// Build index for source symbols
-	srcIdx := make(map[query.Symbol]int)
-	for i, sym := range srcSyms {
-		srcIdx[sym] = i
-	}
+// projectionPlan precomputes, per output position, where a branch row's
+// value comes from: a branch-tuple position, else an outer-tuple position
+// (a branch such as a ground default doesn't produce every output symbol —
+// the outer tuple's values fill the gaps), else nothing. The mapping depends
+// only on the branch, output, and outer symbol lists — per-branch constants —
+// so one plan serves every tuple the branch emits. identity means the branch
+// symbols already match the output symbols exactly and rows pass through
+// unprojected; the emit sites own the copy-vs-alias decision for that case.
+type projectionPlan struct {
+	identity  bool
+	branchPos []int // per output position; -1 = not in the branch tuple
+	outerPos  []int // per output position; -1 = not in the outer tuple
+}
 
-	// Build index for outer symbols (fallback)
-	outerIdx := make(map[query.Symbol]int)
-	for i, sym := range outerSyms {
-		outerIdx[sym] = i
+func newProjectionPlan(srcSyms, dstSyms, outerSyms []query.Symbol) projectionPlan {
+	if symbolsMatch(srcSyms, dstSyms) {
+		return projectionPlan{identity: true}
 	}
-
-	// Create projected tuple
-	result := make(Tuple, len(dstSyms))
+	branchPos := make([]int, len(dstSyms))
+	outerPos := make([]int, len(dstSyms))
 	for i, sym := range dstSyms {
-		if idx, ok := srcIdx[sym]; ok {
-			result[i] = tuple[idx]
-		} else if idx, ok := outerIdx[sym]; ok && idx < len(outerTuple) {
-			// Symbol not in branch result — use outer tuple's value
-			result[i] = outerTuple[idx]
+		branchPos[i] = query.SymbolIndex(srcSyms, sym)
+		outerPos[i] = query.SymbolIndex(outerSyms, sym)
+	}
+	return projectionPlan{branchPos: branchPos, outerPos: outerPos}
+}
+
+// project maps a branch tuple to the output symbols, filling positions the
+// branch doesn't produce from the outer tuple. Not called on identity plans.
+func (p projectionPlan) project(tuple, outerTuple Tuple) Tuple {
+	result := make(Tuple, len(p.branchPos))
+	for i, bp := range p.branchPos {
+		if bp >= 0 {
+			result[i] = tuple[bp]
+			continue
+		}
+		if op := p.outerPos[i]; op >= 0 && op < len(outerTuple) {
+			result[i] = outerTuple[op]
 		}
 	}
 	return result
 }
 
-// projectedIterator wraps an iterator and projects tuples to a different schema
+// branchPlan is a memoized projectionPlan together with the branch symbols
+// it was computed from — the symbols are the memo's validity key.
+type branchPlan struct {
+	srcSyms []query.Symbol
+	plan    projectionPlan
+}
+
+// projectionFor returns the memoized output projection for a branch,
+// computing and storing it on first sight of the branch's result symbols.
+func (it *OrFallbackIterator) projectionFor(branchIdx int, branchSyms []query.Symbol) projectionPlan {
+	if bp, ok := it.branchPlans[branchIdx]; ok && symbolsMatch(bp.srcSyms, branchSyms) {
+		return bp.plan
+	}
+	plan := newProjectionPlan(branchSyms, it.outputSyms, it.outerSyms)
+	if it.branchPlans == nil {
+		it.branchPlans = make(map[int]branchPlan)
+	}
+	it.branchPlans[branchIdx] = branchPlan{srcSyms: branchSyms, plan: plan}
+	return plan
+}
+
+// emitCachedMatches begins emitting a probe result directly from the branch
+// cache's backing, setting the first output tuple as current. Returns false
+// when there are no matches (the caller falls through to the next branch).
+// The rows already form a set — a contiguous span of a deduplicated branch
+// relation — so nothing re-deduplicates here, and identity-shaped rows alias
+// the cache's backing exactly as the wrapper relation's tuples did.
+func (it *OrFallbackIterator) emitCachedMatches(branchIdx int, cb *cachedBranch, matches []Tuple, outerTuple Tuple) bool {
+	if len(matches) == 0 {
+		return false
+	}
+	if collector := it.ctx.Collector(); collector != nil {
+		collector.Add(annotations.Event{
+			Name:  "or-fallback/branch.success",
+			Start: time.Now(),
+			Data: map[string]interface{}{
+				"branch_index": branchIdx,
+				"branch_syms":  fmt.Sprintf("%v", cb.branchSyms),
+				"first_tuple":  fmt.Sprintf("%v", matches[0]),
+			},
+		})
+	}
+	plan := it.projectionFor(branchIdx, cb.branchSyms)
+	if plan.identity {
+		it.currentTuple = matches[0]
+	} else {
+		it.currentTuple = plan.project(matches[0], outerTuple)
+	}
+	it.cachedMatches = matches
+	it.cachedMatchPos = 1
+	it.cachedPlan = plan
+	it.cachedOuter = outerTuple
+	return true
+}
+
+// projectedIterator wraps an iterator and projects tuples to the output
+// symbols through a precomputed per-branch plan.
 type projectedIterator struct {
 	inner          Iterator
 	branchRelation Relation // For RequiresCopy check
-	branchSyms     []query.Symbol
-	outputSyms     []query.Symbol
-	outerTuple     Tuple          // Fallback values for symbols not in branch
-	outerSyms      []query.Symbol // Symbols from the outer tuple
+	plan           projectionPlan
+	outerTuple     Tuple // Fallback values for symbols the branch doesn't produce
 }
 
 func (it *projectedIterator) Next() bool {
@@ -1592,8 +1702,8 @@ func (it *projectedIterator) Next() bool {
 func (it *projectedIterator) Tuple() Tuple {
 	tuple := it.inner.Tuple()
 
-	if len(it.branchSyms) != len(it.outputSyms) || !symbolsMatch(it.branchSyms, it.outputSyms) {
-		return projectTupleWithFallback(tuple, it.branchSyms, it.outputSyms, it.outerTuple, it.outerSyms)
+	if !it.plan.identity {
+		return it.plan.project(tuple, it.outerTuple)
 	}
 
 	// No projection - copy if source is unsafe

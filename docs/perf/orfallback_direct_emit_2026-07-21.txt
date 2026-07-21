@@ -1,0 +1,38 @@
+Or-fallback direct probe emit + per-branch projection plans vs baseline
+(commit 53377d7), n=10, Apple M5, same-session back-to-back via worktree.
+
+benchstat:
+
+ComplexQueryCheckpoint-10    21.62m ± 4%    17.78m ± 7%  -17.79% (p=0.000 n=10)
+B/op                        40.61Mi ± 0%   31.66Mi ± 0%  -22.03% (p=0.000 n=10)
+allocs/op                    338.4k ± 0%    216.6k ± 0%  -35.99% (p=0.000 n=10)
+
+The reprofile after the span-grouped branch cache landed put ~29% of
+checkpoint allocations (~107k/op) in nextShortCircuit's per-outer-tuple
+scaffolding, each site 100%-attributed by pprof peek: branchInput built a
+visible-tuple copy plus a single-tuple relation before the branch loop even
+when every branch was cached and neither was consumed (~30k/op);
+each probe's []Tuple result was wrapped in NewMaterializedRelation, whose
+constructor re-deduplicated rows that are a contiguous span of an
+already-deduplicated branch relation (~15k/op wrapper + ~14k/op
+deduplicateTuples — a set-invariant violation: set-preserving operators
+must not defensively deduplicate); the wrapper then allocated an iterator
+per probe (~16k/op); projectTupleWithFallback built two symbol maps per
+emitted tuple from per-branch constants (~15k/op); and outerJoinKeys
+materialized a key tuple per outer row including duplicates (~17k/op).
+
+The rebuild: cached branches emit directly from the probe slice (cursor on
+the iterator — no wrapper, no re-dedup, no per-probe iterator);
+projectTupleWithFallback is replaced by a per-branch precomputed
+projectionPlan (output position <- branch position, else outer position)
+memoized per branch index and shared by the short-circuit, correlated-union,
+and projectedIterator paths; branchInput is computed lazily only when a
+non-cached branch consumes it; outerJoinKeys deduplicates positionally on
+the outer tuple and materializes keys only on first sight; and the fused
+EA-cache builder deduplicates outer entities at collection (one lookup, one
+row per entity — previously duplicate rows were masked by the downstream
+wrapper's re-dedup). The write-only currentBranchRelation field is removed.
+
+The measured -121.8k allocs/op exceeds the attributed ~107k because the
+eliminated re-dedup's internal allocations and the duplicate join-key
+tuples ride along.
