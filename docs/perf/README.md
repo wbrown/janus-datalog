@@ -40,6 +40,25 @@ go tool pprof -top -cum -nodecount=40 /tmp/exec.test <prof>.prof
 
 ## Current baselines
 
+### Correctness-campaign A/B (`*_correctness_campaign_*_2026-07-20.txt`)
+
+Same-session A/B measuring the fix/identity-hash-only correctness campaign (PR #112, 27 commits): `baseline` = the branch merge-base (`9bd60a4`, main at fork), `after` = branch HEAD (`d6d4721`), run back to back on the same machine so cross-session thermal artifacts (see the M3 Ultra rerun note below) cancel. Both sides carry the May–June perf findings identically, so the delta is attributable to the campaign alone.
+
+Machine: Apple M5, go1.26.3 darwin/arm64.
+
+| Stem | What | n |
+|------|------|---|
+| `hash_join_correctness_campaign_{baseline,after,benchstat}_2026-07-20.txt` | executor int64 + Identity hash-join suites (39 sub-benchmarks) | 10 |
+| `storage_correctness_campaign_{baseline,after,benchstat}_2026-07-20.txt` | OHLC pair, time-range scan, complex checkpoint, key scan/decode, resolve, compiled matching | 5 |
+
+Headlines (benchstat):
+
+- **Executor hash joins: sec/op geomean −3.56%; B/op and allocs/op identical (−0.01%).** Every significant delta is an improvement; largest wins on mat×mat (−5.4 to −8.5%), Identity high-fanout (−5.8 to −7.4%), and large results (−4.6 to −6.2%). Duplicates and stream×stream shapes are washes.
+- **Storage: sec/op geomean −2.57%.** OHLC family −4.3 to −8.6%, time-range scan −6.4%, key scanning/decoding −4.7 to −7.2%; complex checkpoint and compiled matching are time washes.
+- **Costs, stated**: `ResolveAllAttributesMany` per-entity arms +1.63% allocs / +3.6–4.1% B/op (time not significant); `entities=3899/batch` +5.21% sec/op at byte-identical allocations; `ComplexQueryCheckpoint` +2.42% allocs at wash time (all p=0.008, the floor for n=5). These are the resolve/pull paths that gained scan-error propagation in the campaign — a failed scan previously read as a clean empty — so part of the prior number was the speed of a wrong answer on failure paths. Attribution beyond that requires a profile diff against these baselines.
+
+The July 15 checkpoint below reads −19 to −23% on OHLC against the same HEAD; that delta includes main-side movement between the checkpoint and the fork plus cross-session conditions, and is not attributable to the campaign — the A/B above is the attributable measurement.
+
 ### `wasm_memory_backend_2026-07-15/`
 
 Post-Store-injection / Scan-workspace-unification checkpoint for the WASM

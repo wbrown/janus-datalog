@@ -1,0 +1,107 @@
+📦 Test database not found, building it now...
+   (This is a one-time setup, will be cached)
+
+Writing 50400 datoms to testdata/ohlc_benchmark.db in batches of 5000...
+  Written 5000/50400 datoms (9.9%)
+  Written 10000/50400 datoms (19.8%)
+  Written 15000/50400 datoms (29.8%)
+  Written 20000/50400 datoms (39.7%)
+  Written 25000/50400 datoms (49.6%)
+  Written 30000/50400 datoms (59.5%)
+  Written 35000/50400 datoms (69.4%)
+  Written 40000/50400 datoms (79.4%)
+  Written 45000/50400 datoms (89.3%)
+  Written 50000/50400 datoms (99.2%)
+  Written 50400/50400 datoms (100.0%)
+✅ Database created: testdata/ohlc_benchmark.db
+   Total datoms: 50400
+   Symbols: 10, Days: 30, Bars/day: 24
+
+✅ Test database built successfully!
+
+goos: darwin
+goarch: arm64
+pkg: github.com/wbrown/janus-datalog/datalog/storage
+cpu: Apple M5
+BenchmarkKeyOnlyScanning/Size1000/Binary-10    	    9450	    121816 ns/op	   40065 B/op	    1761 allocs/op
+BenchmarkKeyOnlyScanning/Size1000/Binary-10    	    9660	    124913 ns/op	   40050 B/op	    1761 allocs/op
+BenchmarkKeyOnlyScanning/Size1000/Binary-10    	    9464	    122499 ns/op	   40061 B/op	    1761 allocs/op
+BenchmarkKeyOnlyScanning/Size1000/Binary-10    	    9598	    121537 ns/op	   40054 B/op	    1761 allocs/op
+BenchmarkKeyOnlyScanning/Size1000/Binary-10    	    9538	    121578 ns/op	   40058 B/op	    1761 allocs/op
+BenchmarkKeyOnlyScanning/Size10000/Binary-10   	     890	   1395162 ns/op	  439186 B/op	   19780 allocs/op
+BenchmarkKeyOnlyScanning/Size10000/Binary-10   	     842	   1388107 ns/op	  441447 B/op	   19781 allocs/op
+BenchmarkKeyOnlyScanning/Size10000/Binary-10   	     831	   1367454 ns/op	  442028 B/op	   19782 allocs/op
+BenchmarkKeyOnlyScanning/Size10000/Binary-10   	     896	   1318769 ns/op	  438920 B/op	   19780 allocs/op
+BenchmarkKeyOnlyScanning/Size10000/Binary-10   	     891	   1325744 ns/op	  439155 B/op	   19780 allocs/op
+BenchmarkDatomFromKeyDirect/Size100/Binary-10  	  240160	      5153 ns/op	       100.0 datoms/op	    3200 B/op	     100 allocs/op
+BenchmarkDatomFromKeyDirect/Size100/Binary-10  	  229719	      5180 ns/op	       100.0 datoms/op	    3200 B/op	     100 allocs/op
+BenchmarkDatomFromKeyDirect/Size100/Binary-10  	  244956	      4908 ns/op	       100.0 datoms/op	    3200 B/op	     100 allocs/op
+BenchmarkDatomFromKeyDirect/Size100/Binary-10  	  246157	      4959 ns/op	       100.0 datoms/op	    3200 B/op	     100 allocs/op
+BenchmarkDatomFromKeyDirect/Size100/Binary-10  	  228972	      5114 ns/op	       100.0 datoms/op	    3200 B/op	     100 allocs/op
+BenchmarkDatomFromKeyDirect/Size1000/Binary-10 	   20341	     58355 ns/op	      1000 datoms/op	   37952 B/op	    1744 allocs/op
+BenchmarkDatomFromKeyDirect/Size1000/Binary-10 	   20514	     58394 ns/op	      1000 datoms/op	   37952 B/op	    1744 allocs/op
+BenchmarkDatomFromKeyDirect/Size1000/Binary-10 	   20154	     60913 ns/op	      1000 datoms/op	   37952 B/op	    1744 allocs/op
+BenchmarkDatomFromKeyDirect/Size1000/Binary-10 	   19320	     60915 ns/op	      1000 datoms/op	   37952 B/op	    1744 allocs/op
+BenchmarkDatomFromKeyDirect/Size1000/Binary-10 	   20343	     60267 ns/op	      1000 datoms/op	   37952 B/op	    1744 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10          	      49	  22338205 ns/op	24534651 B/op	  397527 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10          	      51	  22083864 ns/op	24531698 B/op	  397528 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10          	      52	  21252954 ns/op	24531689 B/op	  397528 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10          	      52	  21699570 ns/op	24534905 B/op	  397528 allocs/op
+BenchmarkOHLCQuery/WithoutPushdown-10          	      55	  21872005 ns/op	24534996 B/op	  397528 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10             	      50	  22027257 ns/op	24533256 B/op	  397528 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10             	      52	  22393932 ns/op	24533394 B/op	  397528 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10             	      51	  22171996 ns/op	24534966 B/op	  397528 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10             	      55	  21222380 ns/op	24534901 B/op	  397527 allocs/op
+BenchmarkOHLCQuery/WithPushdown-10             	      52	  21160946 ns/op	24534833 B/op	  397528 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       2	 819115542 ns/op	1560498548 B/op	 6763393 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       3	 524604306 ns/op	211143600 B/op	 3917964 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       3	 475894528 ns/op	211137578 B/op	 3917939 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       3	 474156486 ns/op	211136144 B/op	 3917932 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithoutPushdown-10         	       3	 476287611 ns/op	211137466 B/op	 3917939 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       2	 503253584 ns/op	211140964 B/op	 3917955 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       3	 473968958 ns/op	211135144 B/op	 3917927 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       3	 489736458 ns/op	211140056 B/op	 3917945 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       3	 487411111 ns/op	211138858 B/op	 3917943 allocs/op
+BenchmarkOHLCQueryLargeDataset/WithPushdown-10            	       3	 487743736 ns/op	211138450 B/op	 3917941 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	3717722083 ns/op	5112532416 B/op	71689715 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	3787109042 ns/op	5112540744 B/op	71689743 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	3567067042 ns/op	5112512448 B/op	71689649 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	3697037459 ns/op	5112529672 B/op	71689695 allocs/op
+BenchmarkOHLCBadgerDBTimeRanges/Hourly_260hours_10bars-10 	       1	3779526459 ns/op	5112535408 B/op	71689722 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      34	  38015137 ns/op	49191474 B/op	  618490 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      31	  37006458 ns/op	49174164 B/op	  618489 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      32	  35744423 ns/op	49162612 B/op	  618486 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      34	  36543966 ns/op	49168980 B/op	  618486 allocs/op
+BenchmarkComplexQueryCheckpoint-10                        	      33	  35535289 ns/op	49202151 B/op	  618489 allocs/op
+BenchmarkDatomFromKeyToTuple-10                           	12205292	        92.47 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDatomFromKeyToTuple-10                           	10488806	        98.52 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDatomFromKeyToTuple-10                           	12751839	        92.83 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDatomFromKeyToTuple-10                           	11878418	        93.07 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDatomFromKeyToTuple-10                           	11622514	        91.76 ns/op	      96 B/op	       4 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     403	   2922627 ns/op	 4723523 B/op	   70765 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     429	   2803094 ns/op	 4723752 B/op	   70766 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     427	   2806003 ns/op	 4723887 B/op	   70767 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     429	   2799829 ns/op	 4723657 B/op	   70765 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/per-entity-10         	     430	   2789046 ns/op	 4723611 B/op	   70765 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3013	    402896 ns/op	  420273 B/op	    7406 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    2959	    404341 ns/op	  420273 B/op	    7406 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3075	    394875 ns/op	  420272 B/op	    7406 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3100	    394505 ns/op	  420272 B/op	    7406 allocs/op
+BenchmarkResolveAllAttributesMany/entities=230/batch-10              	    3060	    396920 ns/op	  420272 B/op	    7406 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	      21	  53846208 ns/op	80420496 B/op	 1199346 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	      22	  51696015 ns/op	80421173 B/op	 1199343 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	      22	  51866170 ns/op	80422315 B/op	 1199350 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	      22	  51924504 ns/op	80424308 B/op	 1199363 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/per-entity-10        	      22	  51661188 ns/op	80421632 B/op	 1199346 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     157	   7585012 ns/op	 7089919 B/op	  124848 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     150	   7769764 ns/op	 7089934 B/op	  124848 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     160	   7459233 ns/op	 7089899 B/op	  124848 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     157	   7555060 ns/op	 7089908 B/op	  124848 allocs/op
+BenchmarkResolveAllAttributesMany/entities=3899/batch-10             	     159	   7527921 ns/op	 7089905 B/op	  124848 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     632	   1895177 ns/op	  331030 B/op	   10249 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     643	   1875592 ns/op	  330990 B/op	   10249 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     642	   1878769 ns/op	  330910 B/op	   10249 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     640	   1877265 ns/op	  330964 B/op	   10249 allocs/op
+BenchmarkStorageHashJoinCompiledMatching-10                          	     631	   1902510 ns/op	  330951 B/op	   10249 allocs/op
+PASS
+ok  	github.com/wbrown/janus-datalog/datalog/storage	177.163s
